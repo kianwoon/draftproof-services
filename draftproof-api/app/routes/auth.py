@@ -121,8 +121,12 @@ async def auth_microsoft(request: Request):
 
 @router.get("/microsoft/callback")
 async def auth_microsoft_callback(request: Request, db: Session = Depends(get_db)):
-    token = await oauth.microsoft.authorize_access_token(request)
-    user_info = token.get("userinfo") or await oauth.microsoft.userinfo(token=token)
+    token = await oauth.microsoft.authorize_access_token(
+        request, claims_options={"iss": {"essential": False}}
+    )
+    user_info = token.get("userinfo")
+    if not user_info:
+        user_info = await oauth.microsoft.userinfo(token=token)
 
     _validate_email_domain(user_info["email"])
     user = _upsert_user(db, "microsoft", user_info)
