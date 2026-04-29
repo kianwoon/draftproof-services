@@ -38,10 +38,13 @@ def read_input(args) -> str:
     sys.exit(1)
 
 
-def run_detect(text: str, output_dir: str, verbose: bool = False) -> dict:
+def run_detect(text: str, output_dir: str, verbose: bool = False, model_name: str | None = None) -> dict:
     t0 = time.time()
     runner = DetectionRunner()
-    det_report = runner.run_all(text)
+    kwargs = {}
+    if model_name:
+        kwargs["predictability_model"] = model_name
+    det_report = runner.run_all(text, **kwargs)
     elapsed = time.time() - t0
 
     builder = ReportBuilder()

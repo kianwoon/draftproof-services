@@ -27,7 +27,8 @@ def scan_document(self, job_id: str, text: str) -> dict:
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = run_detect(text, tmpdir, verbose=True)
+            model_name = os.environ.get("PREDICTABILITY_MODEL", "gpt2")
+            result = run_detect(text, tmpdir, verbose=True, model_name=model_name)
 
             md_path = result["md_path"]
             pdf_path = result["pdf_path"]
