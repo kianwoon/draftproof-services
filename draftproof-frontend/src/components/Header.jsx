@@ -25,6 +25,7 @@ export default function Header() {
       <nav className="nav-links" aria-label="Primary">
         {user ? <Link to="/dashboard">Dashboard</Link> : <Link to="/">Home</Link>}
         {user && <Link to="/scan">Scan</Link>}
+        {user && <Link to="/buy">Buy Tokens</Link>}
         <Link to="/pricing">Pricing</Link>
         <a href="#engine">How it works</a>
       </nav>

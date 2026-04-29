@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from starlette.middleware.sessions import SessionMiddleware
-from app.routes import documents, scans, reports, rewrites, auth
+from app.routes import documents, scans, reports, rewrites, auth, payments
 from app.models.db import init_db
 from app.config import SECRET_KEY
 
@@ -34,6 +34,7 @@ app.include_router(documents.router, prefix="/api/documents", tags=["documents"]
 app.include_router(scans.router, prefix="/api/scans", tags=["scans"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(rewrites.router, prefix="/api/rewrites", tags=["rewrites"])
+app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
 
 
 @app.get("/api/health")

@@ -22,5 +22,17 @@ MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "")
 MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET", "")
 MICROSOFT_TENANT = os.getenv("MICROSOFT_TENANT", "common")
 
+# Stripe
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
+# Token pricing (SGD)
+TOKEN_PRICE_SGD = 2.90
+TOKEN_PACKS = {
+    "starter": {"tokens": 5, "name": "Starter Pack"},
+    "standard": {"tokens": 10, "name": "Standard Pack"},
+    "pro": {"tokens": 25, "name": "Pro Pack"},
+}
+
 # Frontend URL for redirects
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
