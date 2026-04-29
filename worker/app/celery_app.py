@@ -1,0 +1,29 @@
+"""Celery application — broker via Upstash Redis (TLS)."""
+
+import ssl
+
+from celery import Celery
+
+from .config import settings
+
+app = Celery(
+    "draftproof",
+    broker=settings.REDIS_URL,
+    backend=settings.REDIS_URL,
+)
+
+# Upstash requires TLS
+if settings.REDIS_URL.startswith("rediss://"):
+    app.conf.update(
+        broker_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
+        redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
+    )
+
+app.conf.update(
+    task_serializer="json",
+    result_serializer="json",
+    accept_content=["json"],
+    task_track_started=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+)
