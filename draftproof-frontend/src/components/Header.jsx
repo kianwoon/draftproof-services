@@ -51,7 +51,10 @@ export default function Header() {
       <nav className="nav-links" aria-label="Primary">
         {user ? <Link to="/dashboard">Dashboard</Link> : <Link to="/">Home</Link>}
         {user && (
-          <div className="nav-dropdown" ref={dropdownRef}>
+          <div className="nav-dropdown" ref={dropdownRef}
+            onMouseEnter={() => setScanOpen(true)}
+            onMouseLeave={() => setScanOpen(false)}
+          >
             <button
               className={`nav-dropdown-trigger${isScanActive ? ' active' : ''}`}
               onClick={() => setScanOpen(!scanOpen)}
