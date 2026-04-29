@@ -65,7 +65,9 @@ async def list_scans(user_id: str) -> list[dict]:
         return [
             {
                 "id": str(j.id),
+                "document_id": "",
                 "status": j.status,
+                "report_id": str(j.id) if j.status == "completed" else None,
                 "tier": j.tier,
                 "finding_count": j.finding_count,
                 "word_count": j.word_count,

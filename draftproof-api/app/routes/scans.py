@@ -6,7 +6,7 @@ from app.routes.auth import get_current_user
 router = APIRouter()
 
 
-@router.get("/", response_model=list[ScanOut])
+@router.get("/")
 async def list_scans_route(user: dict = Depends(get_current_user)):
     return await list_scans(user["id"])
 
