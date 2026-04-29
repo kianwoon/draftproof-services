@@ -182,6 +182,18 @@ async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(g
     return response
 
 
+async def get_current_user(request: Request) -> dict:
+    """Dependency: extracts user_id from JWT cookie."""
+    token = request.cookies.get("token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return {"id": payload["sub"], "email": payload["email"]}
+    except jwt.JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
 @router.get("/me")
 async def get_me(request: Request):
     token = request.cookies.get("token")

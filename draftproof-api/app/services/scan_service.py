@@ -20,7 +20,7 @@ def _read_document_text(document_id: str) -> str:
     return ""
 
 
-async def create_scan(document_id: str) -> dict:
+async def create_scan(document_id: str, user_id: str | None = None) -> dict:
     """Create a scan_job row, enqueue Celery task, return scan info."""
     text = _read_document_text(document_id)
     if not text:
@@ -33,6 +33,7 @@ async def create_scan(document_id: str) -> dict:
     async with async_session() as session:
         job = ScanJob(
             id=job_id,
+            user_id=uuid.UUID(user_id) if user_id else None,
             input_text_hash=text_hash,
             word_count=word_count,
             scan_type="scan",
