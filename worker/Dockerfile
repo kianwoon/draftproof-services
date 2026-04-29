@@ -16,10 +16,12 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
     pip install --no-cache-dir -r requirements.txt
 
 # Pre-download GPT2 (small, ~500MB) — fits nano instance RAM
-RUN python3 -c "from transformers import GPT2LMHeadModel, GPT2Tokenizer; \
+# Clear any previously cached models first
+RUN rm -rf /root/.cache/huggingface/ 2>/dev/null; \
+    python3 -c "from transformers import GPT2LMHeadModel, GPT2Tokenizer; \
     GPT2LMHeadModel.from_pretrained('gpt2'); \
     GPT2Tokenizer.from_pretrained('gpt2'); \
-    print('Model cached')"
+    print('GPT2-small cached')"
 
 # Copy both worker/ and poc/ so worker can import poc modules
 COPY poc/ /app/poc/
