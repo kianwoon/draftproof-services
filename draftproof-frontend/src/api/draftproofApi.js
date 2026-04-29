@@ -11,6 +11,9 @@ export const uploadDocument = (formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 
+export const uploadText = (text) =>
+  api.post('/documents/text', { text });
+
 export const getDocument = (id) => api.get(`/documents/${id}`);
 
 // Scans

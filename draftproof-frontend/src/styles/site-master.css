@@ -1281,6 +1281,61 @@ th {
   color: var(--blue-700);
 }
 
+/* ── Scan Page ──────────────────────────── */
+
+.scan-page { max-width: 720px; margin: 0 auto; padding: 3rem 1.5rem; }
+.scan-page h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+
+.scan-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--line);
+  margin-bottom: 1.5rem;
+}
+
+.scan-tabs .tab {
+  padding: .65rem 1.5rem;
+  background: none;
+  border: none;
+  font-size: .92rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+
+.scan-tabs .tab:hover { color: var(--ink); }
+.scan-tabs .tab.active { color: var(--blue-700); border-bottom-color: var(--blue-700); }
+
+.scan-form { display: flex; flex-direction: column; gap: 1.25rem; }
+
+.scan-textarea {
+  width: 100%;
+  padding: 1rem;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  font-size: .92rem;
+  line-height: 1.6;
+  resize: vertical;
+  font-family: inherit;
+  transition: border-color .15s;
+  box-sizing: border-box;
+}
+
+.scan-textarea:focus { outline: none; border-color: var(--blue-400); }
+
+.upload-zone {
+  padding: 2rem;
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  text-align: center;
+}
+
+.upload-zone input[type="file"] { margin-bottom: .5rem; }
+.file-name { display: block; color: var(--muted); font-size: .85rem; margin-top: .5rem; }
+
 /* ── Global Footer ──────────────────────────── */
 
 .global-footer-wrap {
