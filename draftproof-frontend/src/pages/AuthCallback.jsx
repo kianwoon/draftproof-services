@@ -11,7 +11,7 @@ export default function AuthCallback() {
       getMe()
         .then(({ data }) => {
           setUser(data);
-          navigate('/scan', { replace: true });
+          navigate('/dashboard', { replace: true });
         })
         .catch(() => navigate('/signin', { replace: true }));
     });

@@ -1,27 +1,31 @@
-import { Routes, Route } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
 import ProtectedRoute from './components/ProtectedRoute';
 import Landing from './pages/Landing';
+import Dashboard from './pages/Dashboard';
 import SignIn from './pages/SignIn';
 import AuthCallback from './pages/AuthCallback';
 import Scan from './pages/Scan';
 import Report from './pages/Report';
+
+function HomeRedirect() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  return user ? <Navigate to="/dashboard" replace /> : <Landing />;
+}
 
 export default function App() {
   return (
     <AuthProvider>
       <Header />
       <Routes>
-        <Route path="/" element={<Landing />} />
+        <Route path="/" element={<HomeRedirect />} />
+        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/signin" element={<SignIn />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
-        <Route path="/scan" element={
-          <ProtectedRoute><Scan /></ProtectedRoute>
-        } />
-        <Route path="/report/:id" element={
-          <ProtectedRoute><Report /></ProtectedRoute>
-        } />
+        <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
+        <Route path="/report/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
       </Routes>
     </AuthProvider>
   );

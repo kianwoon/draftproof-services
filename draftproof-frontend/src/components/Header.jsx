@@ -17,7 +17,7 @@ export default function Header() {
       </Link>
 
       <nav className="nav-links" aria-label="Primary">
-        <Link to="/">Home</Link>
+        {user ? <Link to="/dashboard">Dashboard</Link> : <Link to="/">Home</Link>}
         {user && <Link to="/scan">Scan</Link>}
         <a href="#engine">How it works</a>
       </nav>
