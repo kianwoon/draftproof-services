@@ -2,7 +2,6 @@
 
 import sys
 import os
-import time
 import json
 import traceback
 
@@ -25,27 +24,22 @@ def scan_document(self, job_id: str, text: str) -> dict:
         update_job_status(job_id, "processing")
 
         from poc.detect_pipeline import run_detect
-        from poc.report.pdf import render_pdf
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            results = run_detect(text, tmpdir)
+            result = run_detect(text, tmpdir, verbose=True)
 
-            tier = results.get("overall_tier", "unrated")
-            findings = results.get("findings", [])
-            finding_count = len(findings)
+            md_path = result["md_path"]
+            pdf_path = result["pdf_path"]
+            tier = result["tier"]
+            finding_count = result["findings"]
 
-            md_path = os.path.join(tmpdir, "report.md")
-            pdf_path = os.path.join(tmpdir, "report.pdf")
-
-            with open(md_path) as f:
-                md_text = f.read()
-
-            pdf_path = render_pdf(md_text, pdf_path)
+            with open(result["json_path"]) as f:
+                results_json = json.load(f)
 
             urls = upload_report_files(job_id, md_path, pdf_path)
 
-            capture_credits(job_id, results)
+            capture_credits(job_id, results_json)
             update_job_status(
                 job_id,
                 "completed",
@@ -53,7 +47,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 finding_count=finding_count,
                 report_md_url=urls.get("md"),
                 report_pdf_url=urls.get("pdf"),
-                results_json=results,
+                results_json=results_json,
             )
 
             return {"status": "completed", "tier": tier, "findings": finding_count}
