@@ -8,6 +8,7 @@ import SignIn from './pages/SignIn';
 import AuthCallback from './pages/AuthCallback';
 import Scan from './pages/Scan';
 import Report from './pages/Report';
+import Pricing from './pages/Pricing';
 
 function HomeRedirect() {
   const { user, loading } = useAuth();
@@ -22,6 +23,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomeRedirect />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/pricing" element={<Pricing />} />
         <Route path="/signin" element={<SignIn />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
