@@ -3,11 +3,15 @@
 import hashlib
 import os
 import uuid
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
 from app.config import UPLOAD_DIR
-from app.models.db import async_session, ScanJob
+from app.models.db import async_session, ScanJob, CreditAccount, CreditReservation
+
+
+SCAN_COST = 1  # tokens per scan
 
 
 def _read_document_text(document_id: str) -> str:
@@ -40,6 +44,31 @@ async def create_scan(document_id: str, user_id: str | None = None) -> dict:
             status="pending",
         )
         session.add(job)
+
+        # Reserve 1 token for this scan
+        if user_id:
+            uid = uuid.UUID(user_id)
+            result = await session.execute(
+                select(CreditAccount).where(CreditAccount.user_id == uid)
+            )
+            acct = result.scalar_one_or_none()
+            if not acct:
+                raise ValueError("No credit account found — please purchase tokens first")
+            if acct.balance_tokens - acct.reserved_tokens < SCAN_COST:
+                raise ValueError("Insufficient tokens — please purchase more")
+
+            acct.reserved_tokens += SCAN_COST
+            reservation = CreditReservation(
+                user_id=uid,
+                credit_account_id=acct.id,
+                job_type="scan",
+                job_id=job_id,
+                tokens_reserved=SCAN_COST,
+                status="active",
+                expires_at=datetime.utcnow() + timedelta(minutes=30),
+            )
+            session.add(reservation)
+
         await session.commit()
 
     from app.services.celery_client import scan_document

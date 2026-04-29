@@ -97,8 +97,8 @@ def capture_credits(user_id: str, job_id: str, word_count: int):
             (res_id,),
         )
         cur.execute(
-            "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s WHERE id = %s",
-            (tokens_reserved, acct_id),
+            "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s, reserved_tokens = reserved_tokens - %s WHERE id = %s",
+            (tokens_reserved, tokens_reserved, acct_id),
         )
         cur.execute(
             """INSERT INTO usage_events
