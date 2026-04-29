@@ -35,10 +35,14 @@ def scan_document(self, job_id: str, text: str) -> dict:
             tier = result["tier"]
             finding_count = result["findings"]
 
+            with open(md_path) as f:
+                md_text = f.read()
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
             with open(result["json_path"]) as f:
                 results_json = json.load(f)
 
-            urls = upload_report_files(job_id, md_path, pdf_path)
+            urls = upload_report_files(job_id, md_text, pdf_bytes, results_json)
 
             capture_credits(job_id, results_json)
             update_job_status(
