@@ -10,6 +10,7 @@ app = Celery(
     "draftproof",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
+    include=["app.tasks"],
 )
 
 # Upstash requires TLS
