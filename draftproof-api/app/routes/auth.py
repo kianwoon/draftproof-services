@@ -155,6 +155,7 @@ async def get_me(request: Request):
 
 @router.post("/logout")
 async def logout():
-    response = RedirectResponse(url=FRONTEND_URL)
-    response.delete_cookie("token")
+    from starlette.responses import JSONResponse
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("token", httponly=True, secure=True, samesite="lax")
     return response

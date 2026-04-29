@@ -1,8 +1,14 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Header() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/', { replace: true });
+  };
 
   return (
     <header className="site-header" aria-label="Main navigation">
@@ -25,7 +31,7 @@ export default function Header() {
       {user ? (
         <div className="header-user">
           <span className="user-email">{user.email}</span>
-          <button onClick={logout} className="btn btn-secondary btn-small">Sign out</button>
+          <button onClick={handleLogout} className="btn btn-secondary btn-small">Sign out</button>
         </div>
       ) : (
         <Link to="/signin" className="btn btn-primary btn-small">

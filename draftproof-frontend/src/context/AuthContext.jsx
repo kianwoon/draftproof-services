@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getMe, logout as authLogout } from '../api/authApi';
 
 const AuthContext = createContext(null);
@@ -14,10 +14,14 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const logout = async () => {
-    await authLogout();
+  const logout = useCallback(async () => {
+    try {
+      await authLogout();
+    } catch {
+      // cookie may already be gone
+    }
     setUser(null);
-  };
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, loading, logout }}>
