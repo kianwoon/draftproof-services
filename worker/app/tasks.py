@@ -24,24 +24,22 @@ def scan_document(self, job_id: str, text: str) -> dict:
     try:
         update_job_status(job_id, "processing")
 
-        from poc.detect.run import run_detection
-        from poc.report.render import render_markdown
+        from poc.detect_pipeline import run_detect
         from poc.report.pdf import render_pdf
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            results = run_detection(text)
+            results = run_detect(text, tmpdir)
 
             tier = results.get("overall_tier", "unrated")
             findings = results.get("findings", [])
             finding_count = len(findings)
 
-            md_text = render_markdown(results)
             md_path = os.path.join(tmpdir, "report.md")
             pdf_path = os.path.join(tmpdir, "report.pdf")
 
-            with open(md_path, "w") as f:
-                f.write(md_text)
+            with open(md_path) as f:
+                md_text = f.read()
 
             pdf_path = render_pdf(md_text, pdf_path)
 
