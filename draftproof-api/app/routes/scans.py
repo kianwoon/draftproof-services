@@ -1,9 +1,14 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.models import ScanRequest, ScanOut
-from app.services.scan_service import create_scan, get_scan
+from app.services.scan_service import create_scan, get_scan, list_scans
 from app.routes.auth import get_current_user
 
 router = APIRouter()
+
+
+@router.get("/", response_model=list[ScanOut])
+async def list_scans_route(user: dict = Depends(get_current_user)):
+    return await list_scans(user["id"])
 
 
 @router.post("/", response_model=ScanOut)

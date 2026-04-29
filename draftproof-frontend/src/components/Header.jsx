@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState, useRef } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/draftproofApi';
 
 export default function Header() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [balance, setBalance] = useState(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     if (!user) { setBalance(null); return; }
@@ -15,10 +18,23 @@ export default function Header() {
       .catch(() => setBalance(null));
   }, [user]);
 
+  useEffect(() => { setScanOpen(false); }, [location.pathname]);
+
+  useEffect(() => {
+    if (!scanOpen) return;
+    const close = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setScanOpen(false);
+    };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [scanOpen]);
+
   const handleLogout = async () => {
     await logout();
     navigate('/', { replace: true });
   };
+
+  const isScanActive = ['/scan', '/reports'].includes(location.pathname);
 
   return (
     <header className="site-header" aria-label="Main navigation">
@@ -34,7 +50,37 @@ export default function Header() {
 
       <nav className="nav-links" aria-label="Primary">
         {user ? <Link to="/dashboard">Dashboard</Link> : <Link to="/">Home</Link>}
-        {user && <Link to="/scan">Scan</Link>}
+        {user && (
+          <div className="nav-dropdown" ref={dropdownRef}>
+            <button
+              className={`nav-dropdown-trigger${isScanActive ? ' active' : ''}`}
+              onClick={() => setScanOpen(!scanOpen)}
+            >
+              Scan
+              <svg width="10" height="6" viewBox="0 0 10 6" style={{ marginLeft: 5, transition: 'transform .2s', transform: scanOpen ? 'rotate(180deg)' : 'rotate(0)' }}>
+                <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+              </svg>
+            </button>
+            {scanOpen && (
+              <div className="nav-dropdown-menu">
+                <Link to="/scan" className="nav-dropdown-item" onClick={() => setScanOpen(false)}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M2 4.5A2.5 2.5 0 014.5 2h7A2.5 2.5 0 0114 4.5v7a2.5 2.5 0 01-2.5 2.5h-7A2.5 2.5 0 012 11.5v-7z" stroke="currentColor" strokeWidth="1.4"/>
+                    <path d="M5 8h6M8 5v6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                  </svg>
+                  Scanning
+                </Link>
+                <Link to="/reports" className="nav-dropdown-item" onClick={() => setScanOpen(false)}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M3 2h7l3 3v8a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.4"/>
+                    <path d="M6 7h4M6 9.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  View Reports
+                </Link>
+              </div>
+            )}
+          </div>
+        )}
         {user && <Link to="/buy">Buy Tokens</Link>}
         <Link to="/pricing">Pricing</Link>
         <a href="#engine">How it works</a>

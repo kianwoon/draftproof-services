@@ -19,6 +19,7 @@ export const getDocument = (id) => api.get(`/documents/${id}`);
 // Scans
 export const startScan = (documentId) => api.post('/scans/', { document_id: documentId });
 export const getScanStatus = (scanId) => api.get(`/scans/${scanId}`);
+export const listScans = () => api.get('/scans/');
 
 // Reports
 export const getReport = (reportId) => api.get(`/reports/${reportId}`);

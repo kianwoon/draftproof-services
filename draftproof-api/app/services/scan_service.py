@@ -53,6 +53,29 @@ async def create_scan(document_id: str, user_id: str | None = None) -> dict:
     }
 
 
+async def list_scans(user_id: str) -> list[dict]:
+    """List all scan_jobs for a user, newest first."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(ScanJob)
+            .where(ScanJob.user_id == uuid.UUID(user_id))
+            .order_by(ScanJob.created_at.desc())
+        )
+        jobs = result.scalars().all()
+        return [
+            {
+                "id": str(j.id),
+                "status": j.status,
+                "tier": j.tier,
+                "finding_count": j.finding_count,
+                "word_count": j.word_count,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+                "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+            }
+            for j in jobs
+        ]
+
+
 async def get_scan(scan_id: str) -> dict | None:
     """Look up scan_job by ID."""
     async with async_session() as session:

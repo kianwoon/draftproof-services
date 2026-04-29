@@ -9,6 +9,7 @@ import SignIn from './pages/SignIn';
 import AuthCallback from './pages/AuthCallback';
 import Scan from './pages/Scan';
 import Report from './pages/Report';
+import Reports from './pages/Reports';
 import Pricing from './pages/Pricing';
 import BuyTokens from './pages/BuyTokens';
 
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/signin" element={<SignIn />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
+        <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
         <Route path="/report/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
       </Routes>
       {!hideFooter && <Footer />}
