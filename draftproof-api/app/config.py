@@ -29,6 +29,7 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 # Token pricing (SGD)
 TOKEN_PRICE_SGD = 2.90
 TOKEN_PACKS = {
+    "single": {"tokens": 1, "name": "Single Token"},
     "starter": {"tokens": 5, "name": "Starter Pack"},
     "standard": {"tokens": 10, "name": "Standard Pack"},
     "pro": {"tokens": 25, "name": "Pro Pack"},
