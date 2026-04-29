@@ -373,6 +373,72 @@ svg { display: block; }
   color: var(--muted);
 }
 
+/* Sign in */
+.signin-card {
+  max-width: 420px;
+  margin: 0 auto;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: 2.5rem;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+  text-align: center;
+}
+
+.signin-card h2 {
+  font-size: 1.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.signin-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.btn-signin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.8rem 1.2rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.95rem;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  transition: background .18s var(--ease), border-color .18s var(--ease);
+}
+
+.btn-signin:hover {
+  background: var(--surface-soft);
+  border-color: var(--navy-800);
+}
+
+.signin-note {
+  margin-top: 1.5rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* Header user */
+.header-user {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.user-email {
+  font-size: 0.84rem;
+  color: var(--muted);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Features / sections */
 .split-heading {
   display: grid;

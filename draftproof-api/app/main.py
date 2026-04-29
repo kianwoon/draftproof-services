@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import documents, scans, reports, rewrites
+from app.routes import documents, scans, reports, rewrites, auth
+from app.models.db import init_db
 
 app = FastAPI(title="DraftProof API", version="1.0.0")
 
@@ -12,10 +13,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(scans.router, prefix="/api/scans", tags=["scans"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(rewrites.router, prefix="/api/rewrites", tags=["rewrites"])
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
 
 
 @app.get("/api/health")

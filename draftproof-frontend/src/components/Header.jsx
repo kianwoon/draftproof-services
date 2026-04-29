@@ -1,6 +1,9 @@
 import { Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 export default function Header() {
+  const { user, logout } = useAuth();
+
   return (
     <header className="site-header" aria-label="Main navigation">
       <Link to="/" className="brand" aria-label="DraftProof home">
@@ -14,15 +17,21 @@ export default function Header() {
       </Link>
 
       <nav className="nav-links" aria-label="Primary">
-        <a href="#product">Product</a>
+        <Link to="/">Home</Link>
+        {user && <Link to="/scan">Scan</Link>}
         <a href="#engine">How it works</a>
-        <a href="#report">Sample report</a>
-        <a href="#audience">Resources</a>
       </nav>
 
-      <Link to="/scan" className="btn btn-primary btn-small">
-        Run a pre-submission check
-      </Link>
+      {user ? (
+        <div className="header-user">
+          <span className="user-email">{user.email}</span>
+          <button onClick={logout} className="btn btn-secondary btn-small">Sign out</button>
+        </div>
+      ) : (
+        <Link to="/signin" className="btn btn-primary btn-small">
+          Sign in
+        </Link>
+      )}
     </header>
   );
 }
