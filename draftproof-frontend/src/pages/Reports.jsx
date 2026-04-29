@@ -35,29 +35,29 @@ export default function Reports() {
 
   if (loading) {
     return (
-      <div className="page-wrap reports-page">
+      <main className="dash-shell">
         <div className="container">
           <div className="reports-loading">
             <div className="reports-spinner" />
             <p>Loading your reports...</p>
           </div>
         </div>
-      </div>
+      </main>
     );
   }
 
   if (error) {
     return (
-      <div className="page-wrap reports-page">
+      <main className="dash-shell">
         <div className="container">
           <p className="error">{error}</p>
         </div>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="page-wrap reports-page">
+    <main className="dash-shell">
       <div className="container">
         <div className="reports-header">
           <div>
@@ -134,6 +134,6 @@ export default function Reports() {
           </div>
         )}
       </div>
-    </div>
+    </main>
   );
 }

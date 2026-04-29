@@ -36,26 +36,26 @@ export default function Report() {
   }, [id]);
 
   if (loading) return (
-    <div className="page-wrap report-page-enhanced">
+    <main className="dash-shell">
       <div className="container">
         <div className="report-loading">
           <div className="report-pulse" />
           <p>Analyzing your report...</p>
         </div>
       </div>
-    </div>
+    </main>
   );
 
   if (error) return (
-    <div className="page-wrap report-page-enhanced">
+    <main className="dash-shell">
       <div className="container"><p className="error">{error}</p></div>
-    </div>
+    </main>
   );
 
   if (!report) return (
-    <div className="page-wrap report-page-enhanced">
+    <main className="dash-shell">
       <div className="container"><p>Report not found.</p></div>
-    </div>
+    </main>
   );
 
   const tier = TIER_CONFIG[report.tier] || TIER_CONFIG.moderate;
@@ -63,7 +63,7 @@ export default function Report() {
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
 
   return (
-    <div className="page-wrap report-page-enhanced">
+    <main className="dash-shell">
       <div className="container">
         {/* Back link */}
         <Link to="/reports" className="report-back">
@@ -186,6 +186,6 @@ export default function Report() {
           </details>
         )}
       </div>
-    </div>
+    </main>
   );
 }

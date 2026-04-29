@@ -64,6 +64,7 @@ export default function Scan() {
   };
 
   return (
+    <main className="dash-shell">
     <div className="container scan-page">
       <h1>Scan Document</h1>
 
@@ -103,6 +104,7 @@ export default function Scan() {
 
       {error && <p className="error">{error}</p>}
     </div>
+    </main>
   );
 }
 
