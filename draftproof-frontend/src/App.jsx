@@ -25,19 +25,23 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <Header />
-      <Routes>
-        <Route path="/" element={<HomeRedirect />} />
-        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/pricing" element={<Pricing />} />
-        <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />
-        <Route path="/signin" element={<SignIn />} />
-        <Route path="/auth/callback" element={<AuthCallback />} />
-        <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
-        <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
-        <Route path="/report/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
-      </Routes>
-      {!hideFooter && <Footer />}
+      <div className="app-shell">
+        <Header />
+        <main className="app-main">
+          <Routes>
+            <Route path="/" element={<HomeRedirect />} />
+            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/pricing" element={<Pricing />} />
+            <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />
+            <Route path="/signin" element={<SignIn />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
+            <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+            <Route path="/report/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
+          </Routes>
+        </main>
+        {!hideFooter && <Footer />}
+      </div>
     </AuthProvider>
   );
 }

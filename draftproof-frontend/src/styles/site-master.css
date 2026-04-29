@@ -29,15 +29,29 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; height: 100%; }
 
 body {
   margin: 0;
+  height: 100%;
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background:
     radial-gradient(circle at top left, rgba(35, 92, 170, .10), transparent 34rem),
     linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%);
+}
+
+#root { height: 100%; }
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.app-main {
+  flex: 1 0 auto;
+  padding-top: var(--header-h);
 }
 
 h1, h2, h3, p { margin-top: 0; }
@@ -934,7 +948,6 @@ th {
    Dashboard
 ------------------------------------------------------------------- */
 .dash-shell {
-  padding-top: var(--header-h);
   min-height: 100vh;
   background: var(--surface-soft);
 }
@@ -1079,7 +1092,6 @@ th {
    Pricing
 ------------------------------------------------------------------- */
 .pricing-shell {
-  padding-top: var(--header-h);
   min-height: 100vh;
   background: var(--surface-soft);
 }
@@ -1406,10 +1418,10 @@ th {
 /* ── Global Footer ──────────────────────────── */
 
 .global-footer-wrap {
+  flex-shrink: 0;
   background: var(--navy-950);
   color: #fff;
   padding: 0 clamp(1.25rem, 4vw, 4rem) 2rem;
-  margin-top: auto;
 }
 
 .global-footer-wrap .site-footer {
