@@ -103,7 +103,7 @@ class UsageEvent(Base):
     word_count = Column(Integer)
     file_type = Column(Text)
     status = Column(Text, nullable=False, default="completed")
-    metadata = Column(JSONB, nullable=False, default=dict)
+    event_metadata = Column("metadata", JSONB, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -120,7 +120,7 @@ class Payment(Base):
     tokens_purchased = Column(Integer, nullable=False, default=0)
     status = Column(Text, nullable=False)
     idempotency_key = Column(Text, unique=True)
-    metadata = Column(JSONB, nullable=False, default=dict)
+    payment_metadata = Column("metadata", JSONB, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
