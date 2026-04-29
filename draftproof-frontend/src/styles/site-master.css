@@ -1518,7 +1518,7 @@ th {
   background: var(--surface);
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
-  overflow: hidden;
+  overflow-x: auto;
   box-shadow: var(--shadow-sm);
 }
 
