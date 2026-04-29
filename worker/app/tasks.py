@@ -3,7 +3,6 @@
 import sys
 import os
 import json
-import traceback
 
 # Make poc/ importable — on Koyeb: /app/poc/, locally: ../../poc/
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,19 +29,24 @@ def scan_document(self, job_id: str, text: str) -> dict:
             model_name = os.environ.get("PREDICTABILITY_MODEL", "gpt2")
             result = run_detect(text, tmpdir, verbose=True, model_name=model_name)
 
-            md_path = result["md_path"]
-            pdf_path = result["pdf_path"]
             tier = result["tier"]
             finding_count = result["findings"]
 
-            with open(md_path) as f:
+            with open(result["md_path"]) as f:
                 md_text = f.read()
-            with open(pdf_path, "rb") as f:
+            with open(result["pdf_path"], "rb") as f:
                 pdf_bytes = f.read()
             with open(result["json_path"]) as f:
                 results_json = json.load(f)
 
             urls = upload_report_files(job_id, md_text, pdf_bytes, results_json)
+
+            report_urls = {
+                "md": urls.get("md"),
+                "pdf": urls.get("pdf"),
+                "json": urls.get("json"),
+            }
+
 
             word_count = len(text.split())
             job = get_scan_job(job_id)
@@ -52,9 +56,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 "completed",
                 tier=tier,
                 finding_count=finding_count,
-                report_md_url=urls.get("md"),
-                report_pdf_url=urls.get("pdf"),
-                results_json=results_json,
+                report_urls=report_urls,
             )
 
             return {"status": "completed", "tier": tier, "findings": finding_count}

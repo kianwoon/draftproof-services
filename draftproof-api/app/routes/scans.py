@@ -1,21 +1,22 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from app.models import ScanRequest, ScanOut
+from app.services.scan_service import create_scan, get_scan
 
 router = APIRouter()
 
 
 @router.post("/", response_model=ScanOut)
-async def create_scan(req: ScanRequest):
-    # TODO: trigger scan_service.run_scan(req.document_id)
-    return ScanOut(
-        id="scan-placeholder",
-        document_id=req.document_id,
-        status="pending",
-        report_id=None,
-    )
+async def create_scan_route(req: ScanRequest):
+    try:
+        result = await create_scan(req.document_id)
+        return ScanOut(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{scan_id}", response_model=ScanOut)
-async def get_scan(scan_id: str):
-    # TODO: look up scan status
-    return ScanOut(id=scan_id, document_id="", status="pending", report_id=None)
+async def get_scan_route(scan_id: str):
+    result = await get_scan(scan_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return ScanOut(**result)

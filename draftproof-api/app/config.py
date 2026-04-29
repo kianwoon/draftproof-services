@@ -37,3 +37,6 @@ TOKEN_PACKS = {
 
 # Frontend URL for redirects
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# Redis / Celery
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

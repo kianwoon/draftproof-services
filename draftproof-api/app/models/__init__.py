@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
 
 
@@ -18,6 +18,8 @@ class ScanOut(BaseModel):
     document_id: str
     status: str
     report_id: Optional[str] = None
+    tier: Optional[str] = None
+    finding_count: Optional[int] = None
 
 
 class IssueOut(BaseModel):
@@ -32,6 +34,10 @@ class ReportOut(BaseModel):
     document_name: str
     issues: list[IssueOut]
     created_at: datetime
+    tier: Optional[str] = None
+    report_md_url: Optional[str] = None
+    report_pdf_url: Optional[str] = None
+    results_json: Optional[Any] = None
 
 
 class SuggestionOut(BaseModel):

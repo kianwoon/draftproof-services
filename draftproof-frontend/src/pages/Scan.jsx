@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadDocument, uploadText, startScan } from '../api/draftproofApi';
+import { uploadDocument, uploadText, startScan, getScanStatus } from '../api/draftproofApi';
+
+const POLL_INTERVAL = 3000;
+const MAX_POLLS = 100;
 
 export default function Scan() {
   const [tab, setTab] = useState('paste');
   const [text, setText] = useState('');
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
@@ -14,6 +18,7 @@ export default function Scan() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setStatus('Uploading...');
 
     try {
       let doc;
@@ -26,13 +31,36 @@ export default function Scan() {
         fd.append('file', file);
         ({ data: doc } = await uploadDocument(fd));
       }
+
+      setStatus('Queuing scan...');
       const { data: scan } = await startScan(doc.id);
-      navigate(`/report/${scan.report_id}`);
+
+      setStatus('Scanning...');
+      const completed = await pollUntilDone(scan.id);
+      if (completed) {
+        navigate(`/report/${scan.id}`);
+      }
     } catch (err) {
       setError(err.response?.data?.detail || 'Scan failed');
     } finally {
       setBusy(false);
+      setStatus(null);
     }
+  };
+
+  const pollUntilDone = async (scanId) => {
+    for (let i = 0; i < MAX_POLLS; i++) {
+      await sleep(POLL_INTERVAL);
+      const { data } = await getScanStatus(scanId);
+      setStatus(`Scanning... (${data.status})`);
+      if (data.status === 'completed') return true;
+      if (data.status === 'failed') {
+        setError('Scan failed on the server');
+        return false;
+      }
+    }
+    setError('Scan timed out');
+    return false;
   };
 
   return (
@@ -69,11 +97,15 @@ export default function Scan() {
         )}
 
         <button type="submit" className="btn btn-primary" disabled={busy}>
-          {busy ? 'Scanning...' : 'Start Scan'}
+          {busy ? (status || 'Scanning...') : 'Start Scan'}
         </button>
       </form>
 
       {error && <p className="error">{error}</p>}
     </div>
   );
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }

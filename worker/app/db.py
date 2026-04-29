@@ -53,8 +53,9 @@ def update_job_status(job_id: str, status: str, **fields):
     for key in ("tier", "finding_count", "report_urls", "error"):
         if key in fields:
             sets.append(f"{key} = %s")
-            vals.append(fields[key])
-    if status == "running":
+            val = psycopg2.extras.Json(fields[key]) if key == "report_urls" else fields[key]
+            vals.append(val)
+    if status == "processing":
         sets.append("started_at = now()")
     if status == "completed":
         sets.append("completed_at = now()")

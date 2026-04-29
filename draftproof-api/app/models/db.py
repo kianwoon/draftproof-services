@@ -140,6 +140,24 @@ class PricingPlan(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
+class ScanJob(Base):
+    __tablename__ = "scan_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    input_text_hash = Column(Text, nullable=False)
+    word_count = Column(Integer, nullable=False, default=0)
+    scan_type = Column(Text, nullable=False, default="scan")
+    status = Column(Text, nullable=False, default="pending")
+    tier = Column(Text)
+    finding_count = Column(Integer)
+    report_urls = Column(JSONB, default=dict)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+
+
 async def init_db():
     pass  # Tables managed by migrations — no auto-create needed
 
