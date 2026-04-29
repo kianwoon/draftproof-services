@@ -3,13 +3,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.middleware.sessions import SessionMiddleware
 from app.routes import documents, scans, reports, rewrites, auth
 from app.models.db import init_db
+from app.config import SECRET_KEY
 
 app = FastAPI(title="DraftProof API", version="1.0.0")
 
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[frontend_url],
