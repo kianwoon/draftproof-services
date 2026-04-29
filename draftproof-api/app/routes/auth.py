@@ -36,6 +36,14 @@ oauth.register(
 )
 
 
+def _build_callback_url(request: Request, callback_name: str) -> str:
+    url = str(request.url_for(callback_name))
+    # Koyeb terminates SSL at LB — force https for OAuth redirect URIs
+    if url.startswith("http://"):
+        url = "https://" + url[7:]
+    return url
+
+
 def _validate_email_domain(email: str) -> str:
     domain = email.split("@")[-1].lower()
     if domain not in ALLOWED_EMAIL_DOMAINS:
@@ -83,7 +91,7 @@ def _upsert_user(db: Session, provider: str, user_info: dict) -> User:
 
 @router.get("/google")
 async def auth_google(request: Request):
-    redirect_uri = str(request.url_for("auth_google_callback"))
+    redirect_uri = _build_callback_url(request, "auth_google_callback")
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
@@ -107,7 +115,7 @@ async def auth_google_callback(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/microsoft")
 async def auth_microsoft(request: Request):
-    redirect_uri = str(request.url_for("auth_microsoft_callback"))
+    redirect_uri = _build_callback_url(request, "auth_microsoft_callback")
     return await oauth.microsoft.authorize_redirect(request, redirect_uri)
 
 
