@@ -1057,6 +1057,12 @@ th {
   border-radius: 16px;
   padding: 2.5rem 2rem;
   margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pricing-card .pricing-cta {
+  margin-top: auto;
 }
 
 .pricing-card-header {
