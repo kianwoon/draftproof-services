@@ -1261,11 +1261,37 @@ th {
 
 /* ── Global Footer ──────────────────────────── */
 
-.footer {
+.global-footer-wrap {
+  background: var(--navy-950);
+  color: #fff;
+  padding: 0 clamp(1.25rem, 4vw, 4rem) 2rem;
   margin-top: auto;
-  padding: 2rem 0;
-  text-align: center;
-  color: var(--muted);
-  font-size: 0.85rem;
-  border-top: 1px solid var(--line);
+}
+
+.global-footer-wrap .site-footer {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 2.5rem 0 1rem;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 2rem;
+}
+
+.global-footer-wrap .footer-brand { color: #fff; }
+
+.global-footer-wrap .footer-links {
+  display: flex;
+  gap: 1.5rem;
+  font-size: .88rem;
+  color: rgba(255, 255, 255, .7);
+}
+
+.global-footer-wrap .footer-links a:hover { color: #fff; }
+
+.global-footer-wrap .site-footer p {
+  color: rgba(255, 255, 255, .68);
+  font-size: .82rem;
+  line-height: 1.5;
 }
