@@ -198,8 +198,8 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* CTA */}
-      <div className="cta-footer">
+      {/* CTA + Footer */}
+      <section id="cta" className="snap-section cta-footer">
         <div className="cta-inner">
           <h2>Use DraftProof to find what actually needs fixing before submission.</h2>
           <div className="hero-actions" style={{justifyContent: 'center'}}>
@@ -233,7 +233,7 @@ export default function Landing() {
             It does not determine misconduct, plagiarism, or AI authorship.
           </p>
         </footer>
-      </div>
+      </section>
     </main>
   );
 }

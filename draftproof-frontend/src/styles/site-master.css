@@ -627,7 +627,7 @@ svg { display: block; }
 .cta-footer {
   background: var(--navy-950);
   color: #fff;
-  padding: 5rem clamp(1.25rem, 4vw, 4rem) 0;
+  padding: 5rem clamp(1.25rem, 4vw, 4rem) 2rem;
 }
 
 .cta-inner {
