@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -8,7 +9,14 @@ from app.routes import documents, scans, reports, rewrites, auth
 from app.models.db import init_db
 from app.config import SECRET_KEY
 
-app = FastAPI(title="DraftProof API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+
+app = FastAPI(title="DraftProof API", version="1.0.0", lifespan=lifespan)
 
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
@@ -26,11 +34,6 @@ app.include_router(documents.router, prefix="/api/documents", tags=["documents"]
 app.include_router(scans.router, prefix="/api/scans", tags=["scans"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(rewrites.router, prefix="/api/rewrites", tags=["rewrites"])
-
-
-@app.on_event("startup")
-def startup():
-    init_db()
 
 
 @app.get("/api/health")

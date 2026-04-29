@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from authlib.integrations.starlette_client import OAuth
 from jose import jwt
 
@@ -11,7 +12,7 @@ from app.config import (
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
     MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_TENANT,
 )
-from app.models.db import get_db, User
+from app.models.db import get_db, User, UserIdentity, CreditAccount
 
 router = APIRouter()
 
@@ -38,7 +39,6 @@ oauth.register(
 
 def _build_callback_url(request: Request, callback_name: str) -> str:
     url = str(request.url_for(callback_name))
-    # Koyeb terminates SSL at LB — force https for OAuth redirect URIs
     if url.startswith("http://"):
         url = "https://" + url[7:]
     return url
@@ -56,36 +56,75 @@ def _validate_email_domain(email: str) -> str:
 
 def _create_jwt(user_id: str, email: str) -> str:
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "email": email,
         "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
-def _upsert_user(db: Session, provider: str, user_info: dict) -> User:
-    email = user_info["email"].lower()
-    provider_id = user_info.get("sub", user_info.get("id", ""))
+async def _upsert_user(db: AsyncSession, provider: str, user_info: dict) -> User:
+    email = user_info["email"].lower().strip()
+    email_normalized = email
+    provider_user_id = str(user_info.get("sub", user_info.get("id", "")))
+    provider_email_verified = user_info.get("email_verified", True)
 
-    user = db.query(User).filter(User.email == email).first()
-    if user:
-        user.last_login = datetime.utcnow()
+    # Find existing identity by provider + provider_user_id
+    result = await db.execute(
+        select(UserIdentity).where(
+            UserIdentity.provider == provider,
+            UserIdentity.provider_user_id == provider_user_id,
+        )
+    )
+    identity = result.scalar_one_or_none()
+
+    if identity:
+        # Existing user — update
+        identity.last_login_at = datetime.utcnow()
+        identity.provider_email = email
+        identity.provider_email_verified = provider_email_verified
+
+        result = await db.execute(select(User).where(User.id == identity.user_id))
+        user = result.scalar_one()
         user.display_name = user_info.get("name", user.display_name)
         user.avatar_url = user_info.get("picture", user.avatar_url)
-        user.provider = provider
-        user.provider_id = provider_id
+        user.updated_at = datetime.utcnow()
     else:
-        user = User(
-            email=email,
-            display_name=user_info.get("name", ""),
-            provider=provider,
-            provider_id=provider_id,
-            avatar_url=user_info.get("picture"),
+        # Check if user exists by email
+        result = await db.execute(
+            select(User).where(User.email_normalized == email_normalized)
         )
-        db.add(user)
+        user = result.scalar_one_or_none()
 
-    db.commit()
-    db.refresh(user)
+        if not user:
+            # Create new user
+            user = User(
+                email=email,
+                email_normalized=email_normalized,
+                display_name=user_info.get("name", ""),
+                avatar_url=user_info.get("picture"),
+                status="active",
+            )
+            db.add(user)
+            await db.flush()
+
+            # Create credit account
+            account = CreditAccount(user_id=user.id)
+            db.add(account)
+
+        # Create identity
+        identity = UserIdentity(
+            user_id=user.id,
+            provider=provider,
+            provider_user_id=provider_user_id,
+            provider_email=email,
+            provider_email_verified=provider_email_verified,
+            last_login_at=datetime.utcnow(),
+        )
+        db.add(identity)
+
+    await db.commit()
+    await db.refresh(user)
     return user
 
 
@@ -96,12 +135,14 @@ async def auth_google(request: Request):
 
 
 @router.get("/google/callback")
-async def auth_google_callback(request: Request, db: Session = Depends(get_db)):
+async def auth_google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     token = await oauth.google.authorize_access_token(request)
-    user_info = token.get("userinfo") or await oauth.google.userinfo(token=token)
+    user_info = token.get("userinfo")
+    if not user_info:
+        user_info = await oauth.google.userinfo(token=token)
 
     _validate_email_domain(user_info["email"])
-    user = _upsert_user(db, "google", user_info)
+    user = await _upsert_user(db, "google", user_info)
     jwt_token = _create_jwt(user.id, user.email)
 
     response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
@@ -120,7 +161,7 @@ async def auth_microsoft(request: Request):
 
 
 @router.get("/microsoft/callback")
-async def auth_microsoft_callback(request: Request, db: Session = Depends(get_db)):
+async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(get_db)):
     token = await oauth.microsoft.authorize_access_token(
         request, claims_options={"iss": {"essential": False}}
     )
@@ -129,7 +170,7 @@ async def auth_microsoft_callback(request: Request, db: Session = Depends(get_db
         user_info = await oauth.microsoft.userinfo(token=token)
 
     _validate_email_domain(user_info["email"])
-    user = _upsert_user(db, "microsoft", user_info)
+    user = await _upsert_user(db, "microsoft", user_info)
     jwt_token = _create_jwt(user.id, user.email)
 
     response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
