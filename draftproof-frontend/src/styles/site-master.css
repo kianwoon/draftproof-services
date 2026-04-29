@@ -957,7 +957,6 @@ th {
    Dashboard
 ------------------------------------------------------------------- */
 .dash-shell {
-  min-height: 100vh;
   background: var(--surface-soft);
 }
 
@@ -1101,7 +1100,6 @@ th {
    Pricing
 ------------------------------------------------------------------- */
 .pricing-shell {
-  min-height: 100vh;
   background: var(--surface-soft);
 }
 
