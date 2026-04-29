@@ -1,9 +1,19 @@
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import api from '../api/draftproofApi';
 
 export default function Header() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [balance, setBalance] = useState(null);
+
+  useEffect(() => {
+    if (!user) { setBalance(null); return; }
+    api.get('/payments/balance')
+      .then(r => setBalance(r.data.balance))
+      .catch(() => setBalance(null));
+  }, [user]);
 
   const handleLogout = async () => {
     await logout();
@@ -32,6 +42,9 @@ export default function Header() {
 
       {user ? (
         <div className="header-user">
+          <Link to="/buy" className="token-badge">
+            {balance !== null ? `${balance} tokens` : '—'}
+          </Link>
           <span className="user-email">{user.email}</span>
           <button onClick={handleLogout} className="btn btn-secondary btn-small">Sign out</button>
         </div>
