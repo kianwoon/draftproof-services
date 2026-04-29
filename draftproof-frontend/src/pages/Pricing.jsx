@@ -64,6 +64,46 @@ export default function Pricing() {
           </Link>
         </div>
 
+        <div className="pricing-card pricing-card--rewrite">
+          <div className="pricing-card-header">
+            <h2>Re-Write</h2>
+            <div className="pricing-amount">
+              <span className="pricing-value pricing-value--sm">2</span>
+              <span className="pricing-unit">tokens / rewrite</span>
+            </div>
+          </div>
+
+          <ul className="pricing-features">
+            <li>
+              <span className="check" aria-hidden="true">&#10003;</span>
+              <span>Requires <strong>2 tokens</strong> per rewrite</span>
+            </li>
+            <li>
+              <span className="check" aria-hidden="true">&#10003;</span>
+              <span>Up to <strong>1,000 words</strong> per rewrite</span>
+            </li>
+            <li>
+              <span className="check" aria-hidden="true">&#10003;</span>
+              <span>Reduce AI footprint by <strong>20%</strong></span>
+            </li>
+            <li>
+              <span className="check" aria-hidden="true">&#10003;</span>
+              <span>Human-like phrasing improvements</span>
+            </li>
+            <li>
+              <span className="check" aria-hidden="true">&#10003;</span>
+              <span>Preserves original meaning and structure</span>
+            </li>
+          </ul>
+
+          <Link
+            to={user ? '/scan' : '/signin'}
+            className="btn btn-primary pricing-cta"
+          >
+            {user ? 'Start a rewrite' : 'Sign in to get started'}
+          </Link>
+        </div>
+
         <section className="pricing-faq">
           <h2>Questions</h2>
           <div className="faq-item">
