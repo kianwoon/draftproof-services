@@ -15,10 +15,10 @@ COPY worker/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
-# Pre-download GPT2-medium model during build
+# Pre-download GPT2 (small, ~500MB) — fits nano instance RAM
 RUN python3 -c "from transformers import GPT2LMHeadModel, GPT2Tokenizer; \
-    GPT2LMHeadModel.from_pretrained('gpt2-medium'); \
-    GPT2Tokenizer.from_pretrained('gpt2-medium'); \
+    GPT2LMHeadModel.from_pretrained('gpt2'); \
+    GPT2Tokenizer.from_pretrained('gpt2'); \
     print('Model cached')"
 
 # Copy both worker/ and poc/ so worker can import poc modules
