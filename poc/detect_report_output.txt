@@ -1,0 +1,415 @@
+================================================================================
+DRAFTPROOF — Pre-Submission Integrity Report
+================================================================================
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXECUTIVE SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Overall Tier:   [H] HIGH
+  Total Findings: 34
+    [!] Critical: 0  [H] High: 5  [M] Medium: 23  [L] Low: 6
+  Scan Time:      8.4s
+
+  Scanners Run:
+    • predictability: 34 findings (5 critical/high)
+
+  Predictability Risk: 0.4297
+    Distribution: {'high': 5, 'medium': 23, 'low': 6}
+
+  Verdict: Significant concerns found. Review findings before submission.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FINDINGS OUTLINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [H] HIGH — 5 finding(s)
+  ────────────────────────────────────────────────────────────────────────────
+
+  # 1  [predictability] high_predictability
+      Detail:         Sentence scored 0.5523 predictability risk (top-10 ratio: 70.4%)
+      Evidence:       "Strip away the foils and blow-dryers and you are left with two strangers in a mirror, one of them holding scissors."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.5523
+      avg_probability: 0.179302
+      avg_surprisal: 3.8528
+      top10_ratio: 0.7037
+      top50_ratio: 0.7778
+
+  # 2  [predictability] high_predictability
+      Detail:         Sentence scored 0.5517 predictability risk (top-10 ratio: 68.8%)
+      Evidence:       "Then again, I have seen a Tuesday morning appointment stretch to three hours because the client needed to talk about her"
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.5517
+      avg_probability: 0.166379
+      avg_surprisal: 4.0979
+      top10_ratio: 0.6875
+      top50_ratio: 0.8125
+
+  # 3  [predictability] high_predictability
+      Detail:         Sentence scored 0.6042 predictability risk (top-10 ratio: 76.9%)
+      Evidence:       "That is not in any training manual, but maybe it should be."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.6042
+      avg_probability: 0.168757
+      avg_surprisal: 3.2964
+      top10_ratio: 0.7692
+      top50_ratio: 0.8462
+
+  # 4  [predictability] high_predictability
+      Detail:         Sentence scored 0.5897 predictability risk (top-10 ratio: 77.8%)
+      Evidence:       "Maybe that is giving the trade too much credit."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.5897
+      avg_probability: 0.255305
+      avg_surprisal: 3.421
+      top10_ratio: 0.7778
+      top50_ratio: 0.7778
+
+  # 5  [predictability] high_predictability
+      Detail:         Sentence scored 0.5746 predictability risk (top-10 ratio: 75.0%)
+      Evidence:       "But I doubt it."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.5746
+      avg_probability: 0.131512
+      avg_surprisal: 3.0324
+      top10_ratio: 0.75
+      top50_ratio: 0.75
+
+  [M] MEDIUM — 23 finding(s)
+  ────────────────────────────────────────────────────────────────────────────
+
+  # 6  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4924 predictability risk (top-10 ratio: 61.8%)
+      Evidence:       "Hairdressing sits at the intersection of chemistry, geometry, and gut instinct — a trade where a 2 mm trimming error can"
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4924
+      avg_probability: 0.174549
+      avg_surprisal: 4.2705
+      top10_ratio: 0.6176
+      top50_ratio: 0.7059
+
+  # 7  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4449 predictability risk (top-10 ratio: 53.3%)
+      Evidence:       "From the curled wigs of Versailles courtiers to the fade cuts of 1990s Brooklyn barbershops, hair has carried meaning fa"
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4449
+      avg_probability: 0.293732
+      avg_surprisal: 4.2253
+      top10_ratio: 0.5333
+      top50_ratio: 0.6667
+
+  # 8  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4856 predictability risk (top-10 ratio: 57.6%)
+      Evidence:       "Today, a stylist who bleaches a client's hair to platinum on Monday must still ensure it doesn't snap off by Thursday — "
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4856
+      avg_probability: 0.188138
+      avg_surprisal: 4.389
+      top10_ratio: 0.5758
+      top50_ratio: 0.7576
+
+  # 9  [predictability] medium_predictability
+      Detail:         Sentence scored 0.3776 predictability risk (top-10 ratio: 50.0%)
+      Evidence:       "The craft rests on a paradox."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.3776
+      avg_probability: 0.14169
+      avg_surprisal: 6.2373
+      top10_ratio: 0.5
+      top50_ratio: 0.5
+
+  #10  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4685 predictability risk (top-10 ratio: 54.8%)
+      Evidence:       "Hold a section at 90 degrees with too much tension and the graduation disappears; hold it at 45 with too little and the "
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4685
+      avg_probability: 0.177012
+      avg_surprisal: 4.515
+      top10_ratio: 0.5484
+      top50_ratio: 0.7419
+
+  #11  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4352 predictability risk (top-10 ratio: 45.5%)
+      Evidence:       "I once watched a junior stylist learn this the hard way on a Friday afternoon — the client was her landlord."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4352
+      avg_probability: 0.200447
+      avg_surprisal: 4.3402
+      top10_ratio: 0.4545
+      top50_ratio: 0.7727
+
+  #12  [predictability] medium_predictability
+      Detail:         Sentence scored 0.3663 predictability risk (top-10 ratio: 42.3%)
+      Evidence:       "A bleach bath left on two minutes too long at pH 11 will lift pigment and melt the disulfide bonds in the same stroke."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.3663
+      avg_probability: 0.151209
+      avg_surprisal: 5.3127
+      top10_ratio: 0.4231
+      top50_ratio: 0.5769
+
+  #13  [predictability] medium_predictability
+      Detail:         Sentence scored 0.3679 predictability risk (top-10 ratio: 43.8%)
+      Evidence:       "Complex color correction, chemical straightening — these are, frankly, controlled damage."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.3679
+      avg_probability: 0.160485
+      avg_surprisal: 5.5846
+      top10_ratio: 0.4375
+      top50_ratio: 0.5625
+
+  #14  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4983 predictability risk (top-10 ratio: 62.5%)
+      Evidence:       "The professional has to know which bonds to break and which to leave alone, and the margin is narrower than most clients"
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4983
+      avg_probability: 0.101592
+      avg_surprisal: 4.003
+      top10_ratio: 0.625
+      top50_ratio: 0.7083
+
+  #15  [predictability] medium_predictability
+      Detail:         Sentence scored 0.3520 predictability risk (top-10 ratio: 42.1%)
+      Evidence:       "Miss that balance and the hair goes gummy — technically "achieved" but structurally wrecked."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.352
+      avg_probability: 0.115156
+      avg_surprisal: 5.4641
+      top10_ratio: 0.4211
+      top50_ratio: 0.5263
+
+  #16  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4734 predictability risk (top-10 ratio: 58.3%)
+      Evidence:       "A client will say "just a trim" and mean "make me look like I did at 22." Perhaps the hardest skill in the trade is hear"
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4734
+      avg_probability: 0.123049
+      avg_surprisal: 4.3691
+      top10_ratio: 0.5833
+      top50_ratio: 0.6944
+
+  #17  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4464 predictability risk (top-10 ratio: 52.8%)
+      Evidence:       "Fine, colour-treated hair won't hold a bleached pixie cut no matter how many reference photos arrive on Instagram — and "
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4464
+      avg_probability: 0.170906
+      avg_surprisal: 4.6686
+      top10_ratio: 0.5278
+      top50_ratio: 0.6944
+
+  #18  [predictability] medium_predictability
+      Detail:         Sentence scored 0.3968 predictability risk (top-10 ratio: 43.3%)
+      Evidence:       "Few other professionals stand close enough to notice a client's hands shaking after a breakup — and the chair doesn't al"
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.3968
+      avg_probability: 0.151046
+      avg_surprisal: 4.6878
+      top10_ratio: 0.4333
+      top50_ratio: 0.6667
+
+  #19  [predictability] medium_predictability
+      Detail:         Sentence scored 0.3864 predictability risk (top-10 ratio: 41.7%)
+      Evidence:       "A stylist who remembers that a client's mother preferred a side part — and why — keeps that chair booked for years."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.3864
+      avg_probability: 0.068001
+      avg_surprisal: 5.2104
+      top10_ratio: 0.4167
+      top50_ratio: 0.6667
+
+  #20  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4521 predictability risk (top-10 ratio: 55.6%)
+      Evidence:       "The trade reinvents itself roughly every decade."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4521
+      avg_probability: 0.199785
+      avg_surprisal: 4.6405
+      top10_ratio: 0.5556
+      top50_ratio: 0.6667
+
+  #21  [predictability] medium_predictability
+      Detail:         Sentence scored 0.3516 predictability risk (top-10 ratio: 37.5%)
+      Evidence:       "A bob that takes off on TikTok on Monday can fill appointment books by Friday."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.3516
+      avg_probability: 0.029177
+      avg_surprisal: 6.5131
+      top10_ratio: 0.375
+      top50_ratio: 0.625
+
+  #22  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4338 predictability risk (top-10 ratio: 48.0%)
+      Evidence:       "I suspect half of those bookings are people who will hate the cut by Wednesday — but that is also part of the job."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4338
+      avg_probability: 0.151158
+      avg_surprisal: 4.2885
+      top10_ratio: 0.48
+      top50_ratio: 0.72
+
+  #23  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4451 predictability risk (top-10 ratio: 50.0%)
+      Evidence:       "Tools change, though."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4451
+      avg_probability: 0.077904
+      avg_surprisal: 5.1301
+      top10_ratio: 0.5
+      top50_ratio: 0.75
+
+  #24  [predictability] medium_predictability
+      Detail:         Sentence scored 0.4646 predictability risk (top-10 ratio: 58.3%)
+      Evidence:       "Ergonomic shears, tourmaline-barrel irons, ammonia-free lighteners that sort of work."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.4646
+      avg_probability: 0.172661
+      avg_surprisal: 4.6436
+      top10_ratio: 0.5833
+      top50_ratio: 0.6667
+
+  #25  [predictability] medium_predictability
+      Detail:         Sentence scored 0.5019 predictability risk (top-10 ratio: 57.5%)
+      Evidence:       "Sustainability has moved from marketing copy to licensing requirements in parts of the EU, and I think that is probably "
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.5019
+      avg_probability: 0.245911
+      avg_surprisal: 3.6365
+      top10_ratio: 0.575
+      top50_ratio: 0.8
+
+  #26  [predictability] medium_predictability
+      Detail:         Sentence scored 0.5440 predictability risk (top-10 ratio: 69.2%)
+      Evidence:       "Whether the client sits straighter in the car on the way home."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.544
+      avg_probability: 0.185716
+      avg_surprisal: 3.9845
+      top10_ratio: 0.6923
+      top50_ratio: 0.7692
+
+  #27  [predictability] medium_predictability
+      Detail:         Sentence scored 0.3837 predictability risk (top-10 ratio: 42.3%)
+      Evidence:       "A fringe trimmed 5 mm too short or a copper toner left on 30 seconds too long can alter how a stranger reads your face."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.3837
+      avg_probability: 0.094955
+      avg_surprisal: 5.71
+      top10_ratio: 0.4231
+      top50_ratio: 0.6538
+
+  #28  [predictability] medium_predictability
+      Detail:         Sentence scored 0.5248 predictability risk (top-10 ratio: 50.0%)
+      Evidence:       "Or not."
+      Recommendation: → Add specific evidence, cited claims, or original phrasing.
+      score: 0.5248
+      avg_probability: 0.218777
+      avg_surprisal: 3.0136
+      top10_ratio: 0.5
+      top50_ratio: 1.0
+
+  [L] LOW — 6 finding(s)
+  ────────────────────────────────────────────────────────────────────────────
+
+  #29  [predictability] style_shift
+      Detail:         Predictability more_predictable (Δ0.2003)
+      Evidence:       "Strip away the foils and blow-dryers and you are left with two strangers in a mi"
+      Recommendation: → Review for consistency in writing voice.
+      from: Miss that balance and the hair goes gummy — technically "achieved" but structura
+      to: Strip away the foils and blow-dryers and you are left with two strangers in a mi
+      magnitude: 0.2003
+      direction: more_predictable
+
+  #30  [predictability] style_shift
+      Detail:         Predictability less_predictable (Δ0.2453)
+      Evidence:       "The haircut was almost incidental."
+      Recommendation: → Review for consistency in writing voice.
+      from: Then again, I have seen a Tuesday morning appointment stretch to three hours bec
+      to: The haircut was almost incidental.
+      magnitude: 0.2453
+      direction: less_predictable
+
+  #31  [predictability] style_shift
+      Detail:         Predictability more_predictable (Δ0.2978)
+      Evidence:       "That is not in any training manual, but maybe it should be."
+      Recommendation: → Review for consistency in writing voice.
+      from: The haircut was almost incidental.
+      to: That is not in any training manual, but maybe it should be.
+      magnitude: 0.2978
+      direction: more_predictable
+
+  #32  [predictability] style_shift
+      Detail:         Predictability less_predictable (Δ0.3958)
+      Evidence:       "The real metric?"
+      Recommendation: → Review for consistency in writing voice.
+      from: Sustainability has moved from marketing copy to licensing requirements in parts 
+      to: The real metric?
+      magnitude: 0.3958
+      direction: less_predictable
+
+  #33  [predictability] style_shift
+      Detail:         Predictability more_predictable (Δ0.4379)
+      Evidence:       "Whether the client sits straighter in the car on the way home."
+      Recommendation: → Review for consistency in writing voice.
+      from: The real metric?
+      to: Whether the client sits straighter in the car on the way home.
+      magnitude: 0.4379
+      direction: more_predictable
+
+  #34  [predictability] style_shift
+      Detail:         Predictability less_predictable (Δ0.2113)
+      Evidence:       "A colour correction after a botched box dye job has been known to change which m"
+      Recommendation: → Review for consistency in writing voice.
+      from: Whether the client sits straighter in the car on the way home.
+      to: A colour correction after a botched box dye job has been known to change which m
+      magnitude: 0.2113
+      direction: less_predictable
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PREDICTABILITY — Per-Sentence Detail
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Overall Risk: 0.4297
+  Distribution: {'high': 5, 'medium': 23, 'low': 6}
+  Style Shifts: 6
+
+    #  Tier      Risk  Top10   Surp  Sentence
+  ──────────────────────────────────────────────────────────────────────────
+    1   [M]   0.4924   62%   4.27  Hairdressing sits at the intersection of
+    2   [M]   0.4449   53%   4.23  From the curled wigs of Versailles court
+    3   [M]   0.4856   58%   4.39  Today, a stylist who bleaches a client's
+    4   [M]   0.3776   50%   6.24  The craft rests on a paradox.
+    5   [M]   0.4685   55%   4.51  Hold a section at 90 degrees with too mu
+    6   [M]   0.4352   45%   4.34  I once watched a junior stylist learn th
+    7   [M]   0.3663   42%   5.31  A bleach bath left on two minutes too lo
+    8   [M]   0.3679   44%   5.58  Complex color correction, chemical strai
+    9   [M]   0.4983   62%   4.00  The professional has to know which bonds
+   10   [M]   0.3520   42%   5.46  Miss that balance and the hair goes gumm
+   11   [H]   0.5523   70%   3.85  Strip away the foils and blow-dryers and
+   12   [M]   0.4734   58%   4.37  A client will say "just a trim" and mean
+   13   [M]   0.4464   53%   4.67  Fine, colour-treated hair won't hold a b
+   14   [M]   0.3968   43%   4.69  Few other professionals stand close enou
+   15   [M]   0.3864   42%   5.21  A stylist who remembers that a client's 
+   16   [H]   0.5517   69%   4.10  Then again, I have seen a Tuesday mornin
+   17   [L]   0.3064   40%   6.58  The haircut was almost incidental.
+   18   [H]   0.6042   77%   3.30  That is not in any training manual, but 
+   19   [M]   0.4521   56%   4.64  The trade reinvents itself roughly every
+   20   [M]   0.3516   38%   6.51  A bob that takes off on TikTok on Monday
+   21   [M]   0.4338   48%   4.29  I suspect half of those bookings are peo
+   22   [M]   0.4451   50%   5.13  Tools change, though.
+   23   [M]   0.4646   58%   4.64  Ergonomic shears, tourmaline-barrel iron
+   24   [L]   0.3196   38%   6.74  A stylist who ignores the equipment curv
+   25   [M]   0.5019   57%   3.64  Sustainability has moved from marketing 
+   26   [L]   0.1061    0%   7.80  The real metric?
+   27   [M]   0.5440   69%   3.98  Whether the client sits straighter in th
+   28   [L]   0.3327   38%   5.59  A colour correction after a botched box 
+   29   [L]   0.2560   33%   7.81  Steel meets keratin meets psychology.
+   30   [L]   0.3242   35%   5.86  Has done since barbers also pulled teeth
+   31   [M]   0.3837   42%   5.71  A fringe trimmed 5 mm too short or a cop
+   32   [M]   0.5248   50%   3.01  Or not.
+   33   [H]   0.5897   78%   3.42  Maybe that is giving the trade too much 
+   34   [H]   0.5746   75%   3.03  But I doubt it.
+
+================================================================================
+  Note: This is a pre-submission integrity check, not a plagiarism
+  or AI-authorship verdict. Signals should be reviewed in context.
+================================================================================
