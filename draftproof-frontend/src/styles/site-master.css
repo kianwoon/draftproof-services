@@ -1258,3 +1258,14 @@ th {
   color: var(--red);
   border: 1px solid #f5c6c6;
 }
+
+/* ── Global Footer ──────────────────────────── */
+
+.footer {
+  margin-top: auto;
+  padding: 2rem 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  border-top: 1px solid var(--line);
+}

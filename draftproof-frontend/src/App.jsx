@@ -1,6 +1,7 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
+import Footer from './components/Footer';
 import ProtectedRoute from './components/ProtectedRoute';
 import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
@@ -18,6 +19,9 @@ function HomeRedirect() {
 }
 
 export default function App() {
+  const { pathname } = useLocation();
+  const hideFooter = pathname === '/';
+
   return (
     <AuthProvider>
       <Header />
@@ -31,6 +35,7 @@ export default function App() {
         <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
         <Route path="/report/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
       </Routes>
+      {!hideFooter && <Footer />}
     </AuthProvider>
   );
 }
