@@ -44,7 +44,9 @@ def scan_document(self, job_id: str, text: str) -> dict:
 
             urls = upload_report_files(job_id, md_text, pdf_bytes, results_json)
 
-            capture_credits(job_id, results_json)
+            word_count = len(text.split())
+            job = get_scan_job(job_id)
+            capture_credits(job.get("user_id", ""), job_id, word_count)
             update_job_status(
                 job_id,
                 "completed",
