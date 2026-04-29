@@ -1018,9 +1018,20 @@ th {
 }
 
 .pricing-shell .container {
-  max-width: 640px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 4rem 1.5rem 6rem;
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  margin-bottom: 3rem;
+}
+
+@media (max-width: 700px) {
+  .pricing-grid { grid-template-columns: 1fr; }
 }
 
 .pricing-hero {
@@ -1045,7 +1056,7 @@ th {
   border: 2px solid var(--blue-700);
   border-radius: 16px;
   padding: 2.5rem 2rem;
-  margin-bottom: 3rem;
+  margin-bottom: 0;
 }
 
 .pricing-card-header {
@@ -1123,7 +1134,6 @@ th {
 
 .pricing-card--rewrite {
   border-color: var(--gold);
-  margin-top: 2rem;
 }
 
 .pricing-value--sm {

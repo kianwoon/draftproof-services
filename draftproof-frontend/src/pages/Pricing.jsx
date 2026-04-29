@@ -15,6 +15,7 @@ export default function Pricing() {
           </p>
         </section>
 
+        <div className="pricing-grid">
         <div className="pricing-card">
           <div className="pricing-card-header">
             <h2>Per-Scan Token</h2>
@@ -64,7 +65,7 @@ export default function Pricing() {
           </Link>
         </div>
 
-        <div className="pricing-card pricing-card--rewrite">
+        <div className="pricing-card pricing-card--rewrite pricing-card--right">
           <div className="pricing-card-header">
             <h2>Re-Write</h2>
             <div className="pricing-amount">
@@ -102,6 +103,7 @@ export default function Pricing() {
           >
             {user ? 'Start a rewrite' : 'Sign in to get started'}
           </Link>
+        </div>
         </div>
 
         <section className="pricing-faq">
