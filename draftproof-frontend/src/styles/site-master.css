@@ -214,7 +214,7 @@ svg { display: block; }
 .snap-shell {
   height: 100vh;
   overflow-y: auto;
-  scroll-snap-type: y proximity;
+  scroll-snap-type: y mandatory;
   scroll-padding-top: var(--header-h);
 }
 
