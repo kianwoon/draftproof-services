@@ -162,24 +162,45 @@ async def auth_microsoft(request: Request):
 
 @router.get("/microsoft/callback")
 async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(get_db)):
-    token = await oauth.microsoft.authorize_access_token(
-        request, claims_options={"iss": {"essential": False}}
-    )
-    user_info = token.get("userinfo")
-    if not user_info:
-        user_info = await oauth.microsoft.userinfo(token=token)
+    import logging
+    logger = logging.getLogger("auth.microsoft")
+    try:
+        token = await oauth.microsoft.authorize_access_token(
+            request, claims_options={"iss": {"essential": False}}
+        )
+        logger.info("Microsoft token keys: %s", list(token.keys()))
+        user_info = token.get("userinfo")
+        if not user_info:
+            # Microsoft returns user info in the ID token claims, not as a top-level key
+            id_token = token.get("id_token")
+            if id_token and isinstance(id_token, dict):
+                user_info = id_token
+            else:
+                user_info = await oauth.microsoft.userinfo(token=token)
+            logger.info("Userinfo keys: %s", list(user_info.keys()) if user_info else "None")
 
-    _validate_email_domain(user_info["email"])
-    user = await _upsert_user(db, "microsoft", user_info)
-    jwt_token = _create_jwt(user.id, user.email)
+        email = user_info.get("email") or user_info.get("preferred_username") or user_info.get("upn")
+        if not email:
+            raise HTTPException(status_code=400, detail="Could not retrieve email from Microsoft account")
 
-    response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
-    response.set_cookie(
-        "token", jwt_token,
-        httponly=True, secure=True, samesite="lax",
-        max_age=JWT_EXPIRATION_HOURS * 3600,
-    )
-    return response
+        user_info["email"] = email
+        _validate_email_domain(email)
+        user = await _upsert_user(db, "microsoft", user_info)
+        jwt_token = _create_jwt(user.id, user.email)
+
+        response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
+        response.set_cookie(
+            "token", jwt_token,
+            httponly=True, secure=True, samesite="lax",
+            max_age=JWT_EXPIRATION_HOURS * 3600,
+        )
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.getLogger("auth.microsoft").error("Microsoft OAuth callback failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Microsoft sign-in failed: {str(e)}")
 
 
 async def get_current_user(request: Request) -> dict:
