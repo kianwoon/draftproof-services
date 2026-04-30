@@ -2,7 +2,8 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from authlib.integrations.starlette_client import OAuth
 from jose import jwt
 
@@ -90,14 +91,16 @@ async def _upsert_user(db: AsyncSession, provider: str, user_info: dict) -> User
         user.avatar_url = user_info.get("picture", user.avatar_url)
         user.updated_at = datetime.utcnow()
     else:
-        # Check if user exists by email
+        # Check if user exists by email (case-insensitive to handle prior casing differences)
         result = await db.execute(
-            select(User).where(User.email_normalized == email_normalized)
+            select(User).where(
+                func.lower(User.email_normalized) == email_normalized.lower()
+            )
         )
         user = result.scalar_one_or_none()
 
         if not user:
-            # Create new user
+            # Create new user (handle race: another request may have inserted)
             user = User(
                 email=email,
                 email_normalized=email_normalized,
@@ -106,11 +109,20 @@ async def _upsert_user(db: AsyncSession, provider: str, user_info: dict) -> User
                 status="active",
             )
             db.add(user)
-            await db.flush()
-
-            # Create credit account
-            account = CreditAccount(user_id=user.id)
-            db.add(account)
+            try:
+                await db.flush()
+                # Only create credit account for truly new users
+                account = CreditAccount(user_id=user.id)
+                db.add(account)
+            except IntegrityError:
+                # Race condition: user was created by a concurrent request or prior sign-in
+                await db.rollback()
+                result = await db.execute(
+                    select(User).where(
+                        func.lower(User.email_normalized) == email_normalized.lower()
+                    )
+                )
+                user = result.scalar_one()
 
         # Create identity
         identity = UserIdentity(
