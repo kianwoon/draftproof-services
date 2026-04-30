@@ -349,13 +349,13 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             "specificity": "Specificity",
             "domain_grounding": "Domain Grounding",
         }
-        axis_icons = {"clear": "✓", "review": "~", "attention": "!", "strong": "●", "moderate": "◐", "weak": "○"}
+        axis_icons = {"clear": "[OK]", "review": "[~]", "attention": "[!]", "strong": "[*]", "moderate": "[+]", "weak": "[-]"}
         parts = []
         for key, label in axis_labels.items():
             val = axis_scores.get(key, "clear")
-            icon = axis_icons.get(val, "?")
+            icon = axis_icons.get(val, "[?]")
             parts.append(f"{label}: {icon} {val}")
-        lines.append(f"> **Signal Axes:** {' · '.join(parts)}")
+        lines.append(f"> **Signal Axes:** {'  |  '.join(parts)}")
         lines.append("")
 
     # Reason codes
