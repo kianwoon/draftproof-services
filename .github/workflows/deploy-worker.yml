@@ -31,7 +31,7 @@ jobs:
           # GET current definition, PUT with updated git.sha
           CURRENT=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}")
-          DEFINITION=$(echo "$CURRENT" | jq '.service.latest_deployment.definition')
+          DEFINITION=$(echo "$CURRENT" | jq '.service.latest_deployment.definition | dels(.. | .scopes? // empty)')
           UPDATED=$(echo "$DEFINITION" | jq --arg sha "$COMMIT_SHA" '.git.sha = $sha')
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
