@@ -60,6 +60,9 @@ export default function Scan() {
         setError('Scan failed on the server');
         return false;
       }
+      if (data.status === 'retrying') {
+        setStatus('Retrying scan...');
+      }
     }
     setError('Scan timed out');
     return false;

@@ -62,5 +62,8 @@ def scan_document(self, job_id: str, text: str) -> dict:
             return {"status": "completed", "tier": tier, "findings": finding_count}
 
     except Exception as e:
-        update_job_status(job_id, "failed", error=str(e))
+        if self.request.retries < self.max_retries:
+            update_job_status(job_id, "retrying", error=str(e))
+        else:
+            update_job_status(job_id, "failed", error=str(e))
         raise self.retry(exc=e)
