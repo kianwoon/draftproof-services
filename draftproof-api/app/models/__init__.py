@@ -11,6 +11,7 @@ class DocumentOut(BaseModel):
 
 class ScanRequest(BaseModel):
     document_id: str
+    text: Optional[str] = None
 
 
 class ScanOut(BaseModel):

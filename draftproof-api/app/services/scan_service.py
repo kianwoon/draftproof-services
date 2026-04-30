@@ -24,9 +24,10 @@ def _read_document_text(document_id: str) -> str:
     return ""
 
 
-async def create_scan(document_id: str, user_id: str | None = None) -> dict:
+async def create_scan(document_id: str, user_id: str | None = None, text: str | None = None) -> dict:
     """Create a scan_job row, enqueue Celery task, return scan info."""
-    text = _read_document_text(document_id)
+    if not text:
+        text = _read_document_text(document_id)
     if not text:
         raise ValueError("Document text not found or empty")
 

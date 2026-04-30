@@ -18,6 +18,7 @@ export const getDocument = (id) => api.get(`/documents/${id}`);
 
 // Scans
 export const startScan = (documentId) => api.post('/scans/', { document_id: documentId });
+export const startScanWithText = (text) => api.post('/scans/', { document_id: 'paste', text });
 export const getScanStatus = (scanId) => api.get(`/scans/${scanId}`);
 export const listScans = () => api.get('/scans/');
 

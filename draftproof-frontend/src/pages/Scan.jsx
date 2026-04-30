@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadDocument, uploadText, startScan, getScanStatus } from '../api/draftproofApi';
+import { uploadDocument, startScan, startScanWithText, getScanStatus } from '../api/draftproofApi';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 100;
@@ -22,19 +22,20 @@ export default function Scan() {
     setStatus('Uploading...');
 
     try {
-      let doc;
+      let scan;
       if (tab === 'paste') {
         if (!text.trim()) { setError('Please enter some text'); setBusy(false); return; }
-        ({ data: doc } = await uploadText(text));
+        setStatus('Queuing scan...');
+        ({ data: scan } = await startScanWithText(text));
       } else {
         if (!file) { setError('Please select a file'); setBusy(false); return; }
+        setStatus('Uploading...');
         const fd = new FormData();
         fd.append('file', file);
-        ({ data: doc } = await uploadDocument(fd));
+        const { data: doc } = await uploadDocument(fd);
+        setStatus('Queuing scan...');
+        ({ data: scan } = await startScan(doc.id));
       }
-
-      setStatus('Queuing scan...');
-      const { data: scan } = await startScan(doc.id);
 
       setStatus('Scanning...');
       const completed = await pollUntilDone(scan.id);
