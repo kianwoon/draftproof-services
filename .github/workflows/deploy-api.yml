@@ -13,11 +13,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Koyeb API redeploy
-        env:
-          KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
-          SERVICE_ID: "c70d5b2b-52e8-4ed3-8f79-a7c727e60320"
-        run: |
-          curl -sf -X POST "https://app.koyeb.com/v1/services/${SERVICE_ID}/redeploy" \
-            -H "Authorization: Bearer ${KOYEB_TOKEN}" \
-            -H "Content-Type: application/json" | jq '.deployment.status'
+      - name: Deploy API service to Koyeb
+        uses: koyeb/action-git-deploy@v3
+        with:
+          api-token: ${{ secrets.KOYEB_TOKEN }}
+          service-id: "c70d5b2b-52e8-4ed3-8f79-a7c727e60320"
