@@ -67,11 +67,15 @@ def _flatten_findings(results_json: dict) -> list[dict]:
             if evidence and sentence_text and not evidence.get("sentence"):
                 evidence["sentence"] = sentence_text
 
+            # Sanitize legacy "top-10" labels in description
+            description = f.get("detail") or f.get("title", "")
+            description = description.replace("top-10 ratio", "common ratio").replace("Top-10 ratio", "Common ratio")
+
             issues.append({
                 "id": f.get("finding_id", str(len(issues) + 1)),
                 "severity": severity,
                 "title": f.get("title", ""),
-                "description": f.get("detail") or f.get("title", ""),
+                "description": description,
                 "location": sentence_id or None,
                 "sentence_text": sentence_text or None,
                 "scanner": f.get("scanner", ""),
