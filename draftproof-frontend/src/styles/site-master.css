@@ -1131,7 +1131,8 @@ th {
 
 .pricing-hero h1 {
   font-size: 2rem;
-  margin: 0.5rem 0;
+  margin: 0.5rem auto;
+  max-width: none;
   color: var(--ink);
 }
 
