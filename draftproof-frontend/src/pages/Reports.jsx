@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listScans } from '../api/draftproofApi';
+import ErrorReload from '../components/ErrorReload';
 
 const STATUS_MAP = {
   pending:   { label: 'Pending',   color: '#94a3b8', bg: '#f1f5f9' },
@@ -50,7 +51,7 @@ export default function Reports() {
     return (
       <main className="dash-shell">
         <div className="container">
-          <p className="error">{error}</p>
+          <ErrorReload message={error} />
         </div>
       </main>
     );

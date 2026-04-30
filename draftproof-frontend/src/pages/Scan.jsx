@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { uploadDocument, startScan, startScanWithText, getScanStatus } from '../api/draftproofApi';
+import ErrorReload from '../components/ErrorReload';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 100;
@@ -12,6 +13,7 @@ export default function Scan() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
+  const [serverError, setServerError] = useState(null);
   const navigate = useNavigate();
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const tokensRequired = wordCount > 0 ? Math.max(1, Math.ceil(wordCount / 1000)) : 0;
@@ -20,6 +22,7 @@ export default function Scan() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setServerError(null);
     setStatus('Uploading...');
 
     try {
@@ -44,7 +47,9 @@ export default function Scan() {
         navigate(`/report/${scan.id}`);
       }
     } catch (err) {
-      setError(err.response?.data?.detail || 'Scan failed');
+      const msg = err.response?.data?.detail || 'Scan failed';
+      const status = err.response?.status;
+      if (status >= 400) { setServerError(msg); } else { setError(msg); }
     } finally {
       setBusy(false);
       setStatus(null);
@@ -58,14 +63,14 @@ export default function Scan() {
       setStatus(`Scanning... (${data.status})`);
       if (data.status === 'completed') return true;
       if (data.status === 'failed') {
-        setError('Scan failed on the server');
+        setServerError('Scan failed on the server');
         return false;
       }
       if (data.status === 'retrying') {
         setStatus('Retrying scan...');
       }
     }
-    setError('Scan timed out');
+    setServerError('Scan timed out');
     return false;
   };
 
@@ -122,6 +127,7 @@ export default function Scan() {
       </form>
 
       {error && <p className="error">{error}</p>}
+      {serverError && <ErrorReload message={serverError} />}
     </div>
     </main>
   );

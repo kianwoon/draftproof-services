@@ -852,6 +852,9 @@ th {
 
 .error { color: var(--red); margin-top: .5rem; font-size: .9rem; }
 
+.error-reload { margin-top: .5rem; }
+.error-reload-hint { font-size: .8rem; color: var(--muted); margin-top: .25rem; }
+
 /* Scan page */
 .scan-page {
   padding-top: calc(var(--header-h) + 3rem);

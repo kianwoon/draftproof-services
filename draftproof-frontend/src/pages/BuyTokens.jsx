@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../api/draftproofApi';
+import ErrorReload from '../components/ErrorReload';
 
 export default function BuyTokens() {
   const [packs, setPacks] = useState([]);
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
+  const [serverError, setServerError] = useState(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -27,7 +29,9 @@ export default function BuyTokens() {
       const { data } = await api.post('/payments/checkout', { pack_id: packId });
       window.location.href = data.url;
     } catch (err) {
-      setMessage({ type: 'error', text: err.response?.data?.detail || 'Failed to start checkout' });
+      const msg = err.response?.data?.detail || 'Failed to start checkout';
+      const status = err.response?.status;
+      if (status >= 400) { setServerError(msg); } else { setMessage({ type: 'error', text: msg }); }
       setLoading(false);
     }
   };
@@ -47,6 +51,8 @@ export default function BuyTokens() {
           {message.text}
         </div>
       )}
+
+      {serverError && <ErrorReload message={serverError} />}
 
       <div className="pack-grid">
         {packs.map(pack => (

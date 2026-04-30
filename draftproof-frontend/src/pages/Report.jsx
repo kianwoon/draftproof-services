@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { getReport } from '../api/draftproofApi';
+import ErrorReload from '../components/ErrorReload';
 
 const TIER_CONFIG = {
   low:      { label: 'Low Risk',      color: '#22c55e', bg: '#f0fdf4', icon: 'M12 15.5l-3-3 1.4-1.4L12 12.6l4.6-4.6L18 9.5z' },
@@ -48,7 +49,7 @@ export default function Report() {
 
   if (error) return (
     <main className="dash-shell">
-      <div className="container"><p className="error">{error}</p></div>
+      <div className="container"><ErrorReload message={error} /></div>
     </main>
   );
 
