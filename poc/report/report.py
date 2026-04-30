@@ -169,6 +169,8 @@ class DraftReport:
     rewrite_priority_reason: str = ""
     rewrite_decision: Optional[Dict[str, Any]] = None
     actionability_distribution: Optional[Dict[str, int]] = None
+    axis_scores: Optional[Dict[str, str]] = None
+    reason_codes: List[str] = field(default_factory=list)
     def to_dict(self) -> dict:
         """Serialize the report to a JSON-ready dict."""
         import json
@@ -664,6 +666,10 @@ class ReportBuilder:
     # ── Build ────────────────────────────────────────────────────────
 
     @staticmethod
+    def _evidence_weight(strength: str) -> float:
+        return {"strong": 1.0, "moderate": 0.6, "weak": 0.2}.get(strength, 0.2)
+
+    @staticmethod
     def _derive_weighted_tier(findings: List[Finding], raw_tier: Tier) -> Tier:
         """Weighted multi-signal tier derivation.
 
@@ -671,7 +677,9 @@ class ReportBuilder:
         - Critical findings always escalate
         - Similarity/citation high findings escalate
         - low_specificity only escalates to HIGH if paired with high AI-generation
-        - Predictability only escalates if overall risk is high enough
+        - Predictability only escalates with corroborating signals
+        - Evidence strength weights findings (strong > moderate > weak)
+        - Review-only/weak findings don't drive tier escalation
         """
         critical_count = sum(1 for f in findings if f.tier == Tier.CRITICAL)
         high_count = sum(1 for f in findings if f.tier == Tier.HIGH)
@@ -694,16 +702,41 @@ class ReportBuilder:
             if f.metadata and isinstance(f.metadata, dict):
                 pred_risk = max(pred_risk, f.metadata.get("predictability_risk", 0.0))
 
-        # Extract specificity confidence
-        low_spec_confidence = "moderate"
+        # Extract domain grounding strength
+        domain_grounding_strong = False
         for f in findings:
-            if f.title == "low_specificity" and f.metadata:
-                dt_count = f.metadata.get("domain_term_count", 0)
-                ne_count = f.metadata.get("named_entities", 0)
-                if dt_count == 0 and ne_count > 20:
-                    low_spec_confidence = "low"
-                elif dt_count > 0:
-                    low_spec_confidence = "high"
+            if f.metadata and isinstance(f.metadata, dict):
+                dg = f.metadata.get("domain_grounding_index", 0)
+                if dg >= 0.8:
+                    domain_grounding_strong = True
+
+        # Evidence-weighted effective counts
+        ew = ReportBuilder._evidence_weight
+        effective_high = sum(ew(getattr(f, 'evidence_strength', 'weak'))
+                            for f in findings if f.tier == Tier.HIGH)
+        effective_medium = sum(ew(getattr(f, 'evidence_strength', 'weak'))
+                              for f in findings if f.tier == Tier.MEDIUM)
+
+        # Count actionable (non-review-only) medium findings
+        actionable_medium = sum(
+            1 for f in findings
+            if f.tier == Tier.MEDIUM
+            and determine_actionability(f, findings) not in ("review_only", "no_action")
+        )
+        strong_evidence_medium = sum(
+            1 for f in findings
+            if f.tier == Tier.MEDIUM
+            and getattr(f, 'evidence_strength', 'weak') in ('strong', 'moderate')
+        )
+
+        # Corroborating signals check
+        has_corroborating = (
+            "similarity" in high_categories
+            or any(f.tier == Tier.HIGH and f.category == "citation" for f in findings)
+            or manual_count > 0
+            or ai_likelihood >= 0.40
+            or any(f.title == "low_specificity" and f.tier == Tier.HIGH for f in findings)
+        )
 
         # Critical always escalates
         if critical_count > 0:
@@ -740,21 +773,25 @@ class ReportBuilder:
                     return Tier.MEDIUM
                 return Tier.MEDIUM if manual_count > 0 else Tier.LOW
 
-        # High predictability overall risk
+        # Predictability: only escalates with corroborating signals
         if pred_risk >= 0.60:
-            return Tier.HIGH
+            return Tier.HIGH if has_corroborating else Tier.MEDIUM
         if pred_risk >= 0.45:
-            return Tier.MEDIUM
+            return Tier.MEDIUM if has_corroborating else Tier.LOW
 
         # Manual-required issues
         if manual_count >= 2:
             return Tier.MEDIUM
         if manual_count == 1:
-            return Tier.MEDIUM if medium_count >= 3 else Tier.LOW
+            return Tier.MEDIUM if effective_medium >= 1.8 else Tier.LOW
 
-        # Medium findings count
-        if medium_count >= 5 and high_count == 0:
+        # Medium findings: only escalate if actionable or strong-evidence
+        effective_for_threshold = max(actionable_medium, strong_evidence_medium)
+        if effective_for_threshold >= 5 and high_count == 0:
             return Tier.MEDIUM
+        # Mostly weak/review-only — don't let quantity alone escalate
+        if actionable_medium < 2 and strong_evidence_medium < 3 and medium_count >= 5:
+            return Tier.LOW
 
         # Fall through to raw tier, but cap at MEDIUM if no critical/high signals
         if raw_tier in (Tier.CRITICAL, Tier.HIGH) and effective_high_count == 0:
@@ -1015,6 +1052,65 @@ class ReportBuilder:
             rp_parts.append(f"Use targeted {'specificity revision' if any(f.title == 'low_specificity' for f in auto_fixable) else 'rewrite'}")
         rp_reason = "; ".join(rp_parts) + "." if rp_parts else "No actionable rewrite issues."
 
+        # ── Axis scores: per-signal status ──
+        axis_scores = {}
+        # Predictability axis
+        pred_meta_risk = 0.0
+        for f in self._findings:
+            if f.metadata and isinstance(f.metadata, dict):
+                pred_meta_risk = max(pred_meta_risk, f.metadata.get("predictability_risk", 0.0))
+        if pred_meta_risk >= 0.60:
+            axis_scores["predictability"] = "attention"
+        elif pred_meta_risk >= 0.40:
+            axis_scores["predictability"] = "review"
+        else:
+            axis_scores["predictability"] = "clear"
+        # Similarity axis
+        has_sim_issue = any(f.category == "similarity" and f.tier in (Tier.HIGH, Tier.MEDIUM)
+                           for f in self._findings)
+        axis_scores["similarity"] = "attention" if has_sim_issue else "clear"
+        # Citation axis
+        cite_count = sum(1 for f in self._findings if f.category == "citation"
+                        and f.tier.value not in ("low", "clean"))
+        if cite_count >= 2:
+            axis_scores["citation"] = "attention"
+        elif cite_count == 1:
+            axis_scores["citation"] = "review"
+        else:
+            axis_scores["citation"] = "clear"
+        # Specificity axis
+        spec_risk = 0.0
+        for f in self._findings:
+            if f.title == "low_specificity" and f.metadata:
+                spec_risk = f.metadata.get("specificity_risk", 0.0)
+        if spec_risk >= 0.50:
+            axis_scores["specificity"] = "attention"
+        elif spec_risk >= 0.30:
+            axis_scores["specificity"] = "review"
+        else:
+            axis_scores["specificity"] = "clear"
+        # Domain grounding axis
+        dg_level = "weak"
+        for f in self._findings:
+            if f.title == "low_specificity" and f.metadata:
+                dg_level = f.metadata.get("domain_grounding_level", "weak")
+        axis_scores["domain_grounding"] = dg_level
+
+        # ── Reason codes: structured tier explanation ──
+        reason_codes = []
+        if not has_high_critical:
+            reason_codes.append("no_high_or_critical_findings")
+        if ai_val < 0.25:
+            reason_codes.append("low_ai_pattern_score")
+        if axis_scores.get("domain_grounding") == "strong":
+            reason_codes.append("strong_domain_grounding")
+        if len(review_only) > len(auto_fixable) + len(manual_required):
+            reason_codes.append("mostly_review_only_findings")
+        if pred_meta_risk < 0.40:
+            reason_codes.append("predictability_unconfirmed")
+        if not self._rewrite_summary or self._rewrite_summary.outcome != "improved":
+            reason_codes.append("no_rewrite_triggered")
+
         return DraftReport(
             overall_tier=adjusted_tier,
             finding_count=len(self._findings),
@@ -1035,6 +1131,8 @@ class ReportBuilder:
             rewrite_priority_reason=rp_reason,
             rewrite_decision=self._summaries.get("rewrite_decision"),
             actionability_distribution=self._summaries.get("actionability_distribution"),
+            axis_scores=axis_scores,
+            reason_codes=reason_codes,
         )
 
 
@@ -1310,6 +1408,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         "rewrite_priority_reason": report.rewrite_priority_reason,
         "rewrite_decision": report.rewrite_decision,
         "actionability_distribution": report.actionability_distribution,
+        "axis_scores": report.axis_scores,
+        "reason_codes": report.reason_codes,
         "document_context": {
             "word_count": len(report.original_text.split()) if report.original_text else 0,
             "sentence_count": len(report.predictability.sentences) if report.predictability else 0,

@@ -458,6 +458,15 @@ def score(
     # Low specificity = more AI-like; invert for our score
     value = max(0.0, min(1.0, 1.0 - specificity / 0.5))
 
+    # Cap concern when strong domain grounding present
+    grounding_index = strong_domain_count / max(word_count / 100, 1)
+    if grounding_index >= 2.0:
+        # Strong grounding reduces specificity concern significantly
+        value = min(value, 0.40 + (value * 0.15))
+    elif grounding_index >= 1.0:
+        # Moderate grounding provides some reduction
+        value = min(value, 0.60 + (value * 0.10))
+
     if specificity < specificity_threshold:
         label = "high"
     elif specificity < specificity_threshold * 1.5:

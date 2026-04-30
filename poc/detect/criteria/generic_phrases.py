@@ -14,6 +14,22 @@ from poc.predictability.phrase_packs import get_generic_phrases, get_phrases_for
 
 ALL_PHRASES = get_generic_phrases()
 
+# Low-value transitions — only flag if repeated 3+ times
+LOW_VALUE_TRANSITIONS = frozenset({
+    "therefore", "however", "moreover", "ultimately", "furthermore",
+    "additionally", "consequently", "nevertheless", "nonetheless",
+})
+
+# Research-claim phrases — stronger signal, check for citation context
+RESEARCH_CLAIM_PHRASES = frozenset({
+    "research suggests", "studies show", "evidence indicates",
+    "the literature suggests", "research indicates", "studies indicate",
+    "research shows", "it has been shown", "it is well established",
+})
+
+# Citation proximity pattern
+_CITE_PATTERN = re.compile(r'\([^)]*\d{4}[^)]*\)|\[\d+\]')
+
 
 def _split_sentences(text: str) -> List[str]:
     from poc.detect.utils import split_sentences
@@ -40,8 +56,32 @@ def score(
     text_lower = content.lower()
 
     matched_phrases = [p for p in phrases if p in text_lower]
-    phrase_count = len(matched_phrases)
-    density = phrase_count / len(sentences)
+
+    # Context-aware weighting: not all phrases count equally
+    weighted_count = 0.0
+    low_value_counts = {}
+
+    for p in matched_phrases:
+        p_lower = p.lower().strip()
+
+        # Low-value transitions: only count after 3+ occurrences
+        if p_lower in LOW_VALUE_TRANSITIONS:
+            low_value_counts[p_lower] = low_value_counts.get(p_lower, 0) + 1
+            if low_value_counts[p_lower] >= 3:
+                weighted_count += 0.3
+            continue
+
+        # Research-claim phrases: reduce weight if citation nearby
+        if p_lower in RESEARCH_CLAIM_PHRASES:
+            has_cite = bool(_CITE_PATTERN.search(content))
+            weighted_count += 0.2 if has_cite else 1.0
+            continue
+
+        # Everything else: standard weight
+        weighted_count += 1.0
+
+    density = weighted_count / len(sentences)
+    raw_phrase_count = len(matched_phrases)
 
     # Normalise: density 0.5+ = very generic (value=1), 0 = no phrases (value=0)
     value = min(1.0, density / 0.5)
@@ -67,9 +107,11 @@ def score(
         value=round(value, 4),
         label=label,
         details={
-            "generic_phrase_count": phrase_count,
+            "generic_phrase_count": raw_phrase_count,
+            "weighted_phrase_count": round(weighted_count, 1),
             "total_sentences": len(sentences),
             "density": round(density, 4),
+            "raw_density": round(raw_phrase_count / len(sentences), 4),
             "threshold": density_threshold,
         },
         flagged_excerpts=flagged,

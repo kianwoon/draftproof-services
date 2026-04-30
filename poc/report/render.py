@@ -339,6 +339,40 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"> **Tier Adjustment:** Raw `{report.raw_overall_tier.upper()}` → Adjusted `{report.adjusted_overall_tier.upper()}`")
         lines.append("")
 
+    # Axis scores
+    axis_scores = data.get("axis_scores")
+    if axis_scores:
+        axis_labels = {
+            "predictability": "Predictability",
+            "similarity": "Similarity",
+            "citation": "Citation",
+            "specificity": "Specificity",
+            "domain_grounding": "Domain Grounding",
+        }
+        axis_icons = {"clear": "✓", "review": "~", "attention": "!", "strong": "●", "moderate": "◐", "weak": "○"}
+        parts = []
+        for key, label in axis_labels.items():
+            val = axis_scores.get(key, "clear")
+            icon = axis_icons.get(val, "?")
+            parts.append(f"{label}: {icon} {val}")
+        lines.append(f"> **Signal Axes:** {' · '.join(parts)}")
+        lines.append("")
+
+    # Reason codes
+    reason_codes = data.get("reason_codes")
+    if reason_codes:
+        code_labels = {
+            "no_high_or_critical_findings": "No high/critical findings",
+            "low_ai_pattern_score": "Low AI pattern score",
+            "strong_domain_grounding": "Strong domain grounding",
+            "mostly_review_only_findings": "Mostly review-only findings",
+            "predictability_unconfirmed": "Predictability unconfirmed",
+            "no_rewrite_triggered": "No rewrite triggered",
+        }
+        readable = [code_labels.get(c, c) for c in reason_codes]
+        lines.append(f"> **Tier Rationale:** {'; '.join(readable)}")
+        lines.append("")
+
     # Short-text confidence warning
     doc_ctx = data.get("document_context", {})
     word_count = doc_ctx.get("word_count", 0)
