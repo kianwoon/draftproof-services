@@ -1,11 +1,36 @@
 """Report service — fetches completed scan results."""
 
+import json
+import logging
 import uuid
-import httpx
 
+import boto3
+from botocore.config import Config as BotoConfig
 from sqlalchemy import select
 
+from app.config import R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME
 from app.models.db import async_session, ScanJob
+
+logger = logging.getLogger("report_service")
+
+
+def _r2_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=R2_ENDPOINT_URL,
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        config=BotoConfig(signature_version="s3v4"),
+    )
+
+
+def _presign(key: str, expires: int = 3600) -> str:
+    s3 = _r2_client()
+    return s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": R2_BUCKET_NAME, "Key": key},
+        ExpiresIn=expires,
+    )
 
 
 def _flatten_findings(results_json: dict) -> list[dict]:
@@ -45,19 +70,27 @@ async def get_report(report_id: str) -> dict | None:
         if not job or job.status != "completed":
             return None
 
-        report_urls = job.report_urls or {}
         results_json = None
         issues = []
-        json_url = report_urls.get("json")
-        if json_url:
-            try:
-                async with httpx.AsyncClient(timeout=15) as client:
-                    resp = await client.get(json_url)
-                    if resp.status_code == 200:
-                        results_json = resp.json()
-                        issues = _flatten_findings(results_json)
-            except Exception:
-                pass
+
+        # Fetch JSON directly from R2 (avoids stale presigned URLs)
+        r2_key = f"reports/{report_id}/report.json"
+        try:
+            s3 = _r2_client()
+            obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=r2_key)
+            results_json = json.loads(obj["Body"].read())
+            issues = _flatten_findings(results_json)
+        except Exception as e:
+            logger.warning("Failed to fetch report JSON from R2 for %s: %s", report_id, e)
+
+        # Generate fresh presigned URLs for downloads
+        report_md_url = None
+        report_pdf_url = None
+        try:
+            report_md_url = _presign(f"reports/{report_id}/report.md")
+            report_pdf_url = _presign(f"reports/{report_id}/report.pdf")
+        except Exception:
+            pass
 
         return {
             "id": str(job.id),
@@ -65,7 +98,7 @@ async def get_report(report_id: str) -> dict | None:
             "issues": issues,
             "created_at": job.completed_at or job.created_at,
             "tier": job.tier,
-            "report_md_url": report_urls.get("md"),
-            "report_pdf_url": report_urls.get("pdf"),
+            "report_md_url": report_md_url,
+            "report_pdf_url": report_pdf_url,
             "results_json": results_json,
         }
