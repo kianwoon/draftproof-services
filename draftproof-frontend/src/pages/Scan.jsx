@@ -13,6 +13,7 @@ export default function Scan() {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -79,6 +80,7 @@ export default function Scan() {
 
       <form onSubmit={handleSubmit} className="scan-form">
         {tab === 'paste' ? (
+          <>
           <textarea
             className="scan-textarea"
             placeholder="Paste your document text here..."
@@ -86,6 +88,11 @@ export default function Scan() {
             onChange={(e) => setText(e.target.value)}
             rows={14}
           />
+          <div className="word-count">
+            {wordCount.toLocaleString()} word{wordCount !== 1 ? 's' : ''}
+            {wordCount > 1000 && <span className="word-limit"> — exceeds 1,000 word limit per scan</span>}
+          </div>
+          </>
         ) : (
           <div className="upload-zone">
             <input

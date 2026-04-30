@@ -1417,6 +1417,15 @@ th {
 
 .scan-textarea:focus { outline: none; border-color: var(--blue-400); }
 
+.word-count {
+  text-align: right;
+  font-size: .85rem;
+  color: var(--muted);
+  margin-top: .4rem;
+}
+
+.word-limit { color: #c0392b; font-weight: 600; }
+
 .upload-zone {
   padding: 2rem;
   border: 2px dashed var(--line);
