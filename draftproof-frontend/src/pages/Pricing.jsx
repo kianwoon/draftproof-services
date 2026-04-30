@@ -29,11 +29,11 @@ export default function Pricing() {
           <ul className="pricing-features">
             <li>
               <span className="check" aria-hidden="true">&#10003;</span>
-              <span><strong>1 token</strong> per document scan</span>
+              <span><strong>1 token</strong> per 1,000 words</span>
             </li>
             <li>
               <span className="check" aria-hidden="true">&#10003;</span>
-              <span>Up to <strong>1,000 words</strong> per scan</span>
+              <span><strong>1,000 words included</strong> per token (larger documents use more tokens)</span>
             </li>
             <li>
               <span className="check" aria-hidden="true">&#10003;</span>
@@ -111,7 +111,7 @@ export default function Pricing() {
           <h2>Frequently asked questions</h2>
           <div className="faq-item">
             <h3>What counts as a scan?</h3>
-            <p>One scan covers one document up to 1,000 words. If your document exceeds 1,000 words, split it into multiple scans.</p>
+            <p>1 token covers up to 1,000 words. Documents over 1,000 words are automatically charged at 1 token per 1,000 words (rounded up). For example, a 2,500-word document costs 3 tokens.</p>
           </div>
           <div className="faq-item">
             <h3>What does a rewrite do?</h3>

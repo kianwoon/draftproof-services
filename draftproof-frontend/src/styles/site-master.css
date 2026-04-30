@@ -1425,6 +1425,7 @@ th {
 }
 
 .word-limit { color: #c0392b; font-weight: 600; }
+.word-tokens { color: var(--blue-500, #2563eb); font-weight: 500; }
 
 .upload-zone {
   padding: 2rem;

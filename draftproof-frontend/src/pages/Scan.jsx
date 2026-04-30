@@ -14,6 +14,7 @@ export default function Scan() {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const tokensRequired = wordCount > 0 ? Math.max(1, Math.ceil(wordCount / 1000)) : 0;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -94,7 +95,14 @@ export default function Scan() {
           />
           <div className="word-count">
             {wordCount.toLocaleString()} word{wordCount !== 1 ? 's' : ''}
-            {wordCount > 1000 && <span className="word-limit"> — exceeds 1,000 word limit per scan</span>}
+            {tokensRequired > 0 && (
+              <span className="word-tokens">
+                {' '}— {tokensRequired} token{tokensRequired !== 1 ? 's' : ''} required
+                {tokensRequired > 1 && (
+                  <span className="word-limit"> (1 token per 1,000 words)</span>
+                )}
+              </span>
+            )}
           </div>
           </>
         ) : (
