@@ -151,6 +151,7 @@ async def auth_google_callback(request: Request, db: AsyncSession = Depends(get_
             "token", jwt_token,
             httponly=True, secure=True, samesite="lax",
             max_age=JWT_EXPIRATION_HOURS * 3600,
+            path="/",
         )
         return response
     except HTTPException:
@@ -200,6 +201,7 @@ async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(g
             "token", jwt_token,
             httponly=True, secure=True, samesite="lax",
             max_age=JWT_EXPIRATION_HOURS * 3600,
+            path="/",
         )
         return response
     except HTTPException:
@@ -238,5 +240,5 @@ async def get_me(request: Request):
 async def logout():
     from starlette.responses import JSONResponse
     response = JSONResponse({"ok": True})
-    response.delete_cookie("token", httponly=True, secure=True, samesite="lax")
+    response.delete_cookie("token", httponly=True, secure=True, samesite="lax", path="/")
     return response
