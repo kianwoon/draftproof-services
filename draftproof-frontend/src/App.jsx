@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
@@ -15,8 +16,28 @@ import BuyTokens from './pages/BuyTokens';
 
 function HomeRedirect() {
   const { user, loading } = useAuth();
+  const location = useLocation();
   if (loading) return null;
-  return user ? <Navigate to="/dashboard" replace /> : <Landing />;
+  // Allow hash anchors (e.g. #engine) to show landing page for signed-in users
+  if (user && !location.hash) return <Navigate to="/dashboard" replace />;
+  return (
+    <>
+      <Landing />
+      <ScrollToHash />
+    </>
+  );
+}
+
+function ScrollToHash() {
+  const location = useLocation();
+  useEffect(() => {
+    if (location.hash) {
+      const id = location.hash.slice(1);
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [location.hash]);
+  return null;
 }
 
 export default function App() {

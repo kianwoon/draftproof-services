@@ -77,7 +77,7 @@ export default function Header() {
         )}
         {user && <Link to="/buy">Buy Tokens</Link>}
         <Link to="/pricing">Pricing</Link>
-        <a href="#engine">How it works</a>
+        <Link to="/#engine">How it works</Link>
       </nav>
 
       {user ? (
