@@ -21,20 +21,43 @@ _SCANNER_CODES = {
 }
 
 _SIGNAL_CODES = {
+    # Predictability
     "high_predictability": "HP",
     "medium_predictability": "MP",
     "low_predictability": "LP",
     "review_predictability": "RP",
+    "high_topk_predictability": "HT",
     "style_shift": "SS",
+    "low_burstiness": "LB",
+    "repetitive_sentence_structure": "RS",
+    # Genericity
+    "generic_phrase": "GP",
+    "generic_policy_claim": "GC",
+    "broad_education_claim": "BE",
+    "formulaic_conclusion": "FC",
+    "template_personal_reflection": "TP",
+    "weak_source_grounding": "WG",
     "low_specificity": "LS",
+    # Authorship / AI
     "elevated_ai_generation_likelihood": "EA",
+    "high_ai_generation_likelihood": "HA",
     "moderate_ai_generation_likelihood": "MA",
+    "medium_ai_generation_likelihood": "ME",
     "low_ai_generation_likelihood": "LA",
     "minimal_ai_generation_likelihood": "MI",
+    "similarity_overlap": "SO",
+    # Similarity
     "high_similarity": "HS",
     "medium_similarity": "MS",
+    "paragraph_level_overlap": "PO",
+    # Citation / Writing quality
     "missing_citation": "MC",
     "broken_citation": "BC",
+    "uncited_claim": "UC",
+    "grammar_issue": "GI",
+    "fragment_sentence": "FS",
+    "spelling_issue": "SI",
+    "punctuation_issue": "PI",
 }
 
 _RISK_CODES = {
@@ -260,6 +283,37 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         for sl in signal_lines:
             lines.append(sl)
         lines.append("")
+
+    # ── Authorship Concern ──────────────────────────────────────────
+    if report.authorship_concern_score > 0 or report.authorship_concern_signals:
+        lines.append("### Authorship Concern")
+        lines.append("")
+        score = report.authorship_concern_score
+        conf = report.authorship_concern_confidence
+        signals = report.authorship_concern_signals or {}
+        available = sum(1 for v in signals.values() if v is not None)
+        lines.append(
+            f"**Score:** `{score:.0%}` | "
+            f"**Confidence:** {conf} | "
+            f"**Signals:** {available}/7 available"
+        )
+        lines.append("")
+        # Signal detail
+        active = [(k, v) for k, v in signals.items() if v is not None]
+        if active:
+            for name, val in active:
+                lines.append(f"- {name}: `{val:.0%}`")
+            lines.append("")
+        # Weak-signal note
+        strong = {"source_grounding", "citation_integrity", "draft_evolution", "structural_reuse"}
+        has_strong = any(signals.get(k) is not None and signals.get(k, 0) >= 0.25 for k in strong)
+        if not has_strong and available > 0:
+            lines.append(
+                "> Only weak signals available (predictability/genericity/specificity). "
+                "Score capped at 0.30. Provide bibliography, source documents, or draft "
+                "history for higher-confidence assessment."
+            )
+            lines.append("")
 
     if report.similarity:
         s = report.similarity
@@ -497,12 +551,13 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append("<details>")
             lines.append("<summary>Sentence Comparison</summary>")
             lines.append("")
-            lines.append("| # | Original | Rewritten |")
-            lines.append("|---|----------|-----------|")
             for i, sc in enumerate(rw.sentence_comparison, 1):
-                orig = sc.get("original", "").replace("|", "-").replace("\n", " ")
-                rew = sc.get("rewritten", "").replace("|", "-").replace("\n", " ")
-                lines.append(f"| {i} | {orig} | {rew} |")
+                orig = sc.get("original", "").replace("\n", " ")
+                rew = sc.get("rewritten", "").replace("\n", " ")
+                lines.append(f"**#{i}**")
+                lines.append(f"- Original: {orig}")
+                lines.append(f"- Rewritten: {rew}")
+                lines.append("")
             lines.append("")
             lines.append("</details>")
             lines.append("")

@@ -100,7 +100,7 @@ class SimilarityDetector(BaseDetector):
                     f"exact={m.exact_score:.0%}, fuzzy={m.fuzzy_score:.0%}, "
                     f"semantic={m.semantic_score:.0%}"
                 ),
-                evidence=m.draft_sentence[:120],
+                evidence=m.draft_sentence,
                 recommendation=self._recommendation_for(m.risk_level, citation_nearby, quotation_detected),
                 suggested_action_type=self._action_type_for(m.risk_level, citation_nearby, quotation_detected),
                 location=self._locate_sentence(content, m.draft_sentence),
@@ -164,7 +164,7 @@ class SimilarityDetector(BaseDetector):
                         f"Paragraph {pi+1} has {best_score:.0%} semantic overlap "
                         f"with source paragraph {best_src_idx+1}"
                     ),
-                    evidence=dp[:120],
+                    evidence=dp,
                     recommendation=(
                         "Review paragraph structure and argument flow. "
                         "Restructure with original argument sequencing."

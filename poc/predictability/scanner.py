@@ -5,7 +5,6 @@ High predictability across many tokens = formulaic / generic writing.
 """
 
 import math
-import os
 import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
@@ -77,7 +76,7 @@ class PredictabilityScanner:
 
     def __init__(
         self,
-        model_name: str = os.environ.get("PREDICTABILITY_MODEL", "gpt2-medium"),
+        model_name: str = "gpt2-medium",
         custom_phrases: Optional[List[str]] = None,
         weights: Optional[Dict[str, float]] = None,
         high_threshold: float = 0.55,

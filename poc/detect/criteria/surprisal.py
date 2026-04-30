@@ -63,7 +63,7 @@ def score(
         label = "low"
 
     flagged = [
-        m.get("sentence", "")[:120]
+        m.get("sentence", "")
         for m in sentence_metrics
         if m.get("avg_surprisal", 99) < surprisal_threshold and m.get("sentence")
     ][:10]

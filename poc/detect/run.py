@@ -119,6 +119,9 @@ class DetectionRunner:
             top_findings, actionability_dist, overall_risk
         )
 
+        # Collect criterion scores from AIGenerationSignalDetector
+        criterion_scores = self._collect_criterion_scores(scanner_results)
+
         return DetectionReport(
             overall_review_priority=overall_priority,
             overall_risk=overall_risk,
@@ -130,6 +133,7 @@ class DetectionRunner:
             postprocess_results=pp_results,
             rewrite_decision=rewrite_decision,
             actionability_distribution=actionability_dist,
+            criterion_scores=criterion_scores,
         )
 
     def run_single(self, content: str, scanner: str, **kwargs) -> DetectResult:
@@ -288,6 +292,25 @@ class DetectionRunner:
             if r.policy_message and r.policy_message not in caveats:
                 caveats.append(r.policy_message)
         return caveats
+
+    @staticmethod
+    def _collect_criterion_scores(results: List[DetectResult]) -> dict:
+        """Extract criterion scores from AIGenerationSignalDetector's raw output."""
+        for r in results:
+            if r.scanner != "ai_generation":
+                continue
+            raw = r.raw if hasattr(r, "raw") and r.raw else {}
+            criteria_list = raw.get("criteria", [])
+            if not criteria_list:
+                continue
+            scores = {}
+            for c in criteria_list:
+                name = c.get("name") if isinstance(c, dict) else getattr(c, "name", None)
+                value = c.get("value") if isinstance(c, dict) else getattr(c, "value", None)
+                if name and value is not None:
+                    scores[name] = c if isinstance(c, dict) else c
+            return scores
+        return {}
 
     @staticmethod
     def _generate_summary(results: List[DetectResult], risk: float,

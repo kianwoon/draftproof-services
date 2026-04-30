@@ -17,6 +17,7 @@ from .specificity import score as specificity_score
 from .polish_vs_grounding import score as polish_vs_grounding_score
 from .paragraph_uniformity import score as paragraph_uniformity_score
 from .style_shift import score as style_shift_score
+from .source_grounding import score as source_grounding_score
 
 
 # Ordered list used by the composite classifier to iterate criteria.
@@ -31,6 +32,8 @@ ALL_CRITERIA = [
     ("citation_grounding_gap", polish_vs_grounding_score, 0.05),
     # paragraph_uniformity is diagnostic only (weight 0) until StructuralDetector
     ("paragraph_uniformity", paragraph_uniformity_score, 0.00),
+    # Source grounding: claim-citation alignment (used primarily by authorship concern scoring)
+    ("source_grounding", source_grounding_score, 0.00),
 ]
 
 __all__ = [
@@ -45,4 +48,5 @@ __all__ = [
     "polish_vs_grounding_score",
     "paragraph_uniformity_score",
     "style_shift_score",
+    "source_grounding_score",
 ]

@@ -62,6 +62,8 @@ class DetectionReport:
     # Rewrite handoff — detection owns the rewrite decision
     rewrite_decision: Any = None  # RewriteDecision (set after aggregation)
     actionability_distribution: Dict[str, int] = field(default_factory=dict)
+    # Criterion scores from AIGenerationSignalDetector (Phase 2)
+    criterion_scores: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

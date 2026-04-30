@@ -83,7 +83,7 @@ def score(
     if max_delta >= shift_threshold * 0.5 and max_delta_pos < len(sentences):
         start = max(0, max_delta_pos - 2)
         end = min(len(sentences), max_delta_pos + 3)
-        flagged = [sentences[j][:120] for j in range(start, end)]
+        flagged = [sentences[j] for j in range(start, end)]
 
     return CriterionScore(
         name="style_shift",

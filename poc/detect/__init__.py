@@ -17,6 +17,7 @@ from .run import DetectionRunner
 from .profiles import DomainProfile, resolve_profile, auto_detect_domain, list_available_profiles
 from .thresholds import ThresholdConfig
 from .utils import split_sentences
+from .scoring import SignalScores, calculate_authorship_concern, extract_signals
 
 __all__ = [
     "BaseDetector",
@@ -41,4 +42,7 @@ __all__ = [
     "list_available_profiles",
     "ThresholdConfig",
     "split_sentences",
+    "SignalScores",
+    "calculate_authorship_concern",
+    "extract_signals",
 ]

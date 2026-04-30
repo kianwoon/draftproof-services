@@ -1,5 +1,7 @@
 """Markdown → PDF renderer using WeasyPrint."""
 
+import re
+
 import markdown as md_lib
 from weasyprint import HTML
 
@@ -47,7 +49,6 @@ td {
     vertical-align: top;
     word-wrap: break-word;
     overflow-wrap: break-word;
-    overflow: hidden;
 }
 
 code {
@@ -103,6 +104,15 @@ def render_pdf(markdown_text: str, output_path: str) -> str:
     """
     extensions = ["tables", "fenced_code"]
     html_body = md_lib.markdown(markdown_text, extensions=extensions)
+
+    # Inject colgroup into wide tables (6-column: findings & false-positives)
+    colgroup_6 = '<colgroup><col style="width:4%"/><col style="width:5%"/><col style="width:5%"/><col style="width:38%"/><col style="width:24%"/><col style="width:24%"/></colgroup>'
+    # Only tables whose header row starts with # (findings/false-positives pattern)
+    html_body = re.sub(
+        r'(<table>\s*<thead>\s*<tr>\s*<th[^>]*>\s*#\s*</th>)',
+        lambda m: m.group(1).replace('<table>', '<table>' + colgroup_6),
+        html_body,
+    )
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="en">

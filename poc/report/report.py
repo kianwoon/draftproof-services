@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
+from detect.scoring import extract_signals, calculate_authorship_concern
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -171,6 +173,9 @@ class DraftReport:
     actionability_distribution: Optional[Dict[str, int]] = None
     axis_scores: Optional[Dict[str, str]] = None
     reason_codes: List[str] = field(default_factory=list)
+    authorship_concern_score: float = 0.0
+    authorship_concern_confidence: str = "low"
+    authorship_concern_signals: Optional[Dict[str, Any]] = None
     def to_dict(self) -> dict:
         """Serialize the report to a JSON-ready dict."""
         import json
@@ -444,6 +449,10 @@ class ReportBuilder:
         if hasattr(detection_report, "actionability_distribution") and detection_report.actionability_distribution:
             self._summaries["actionability_distribution"] = dict(detection_report.actionability_distribution)
 
+        # Thread criterion scores for Phase 2 authorship concern signals
+        if hasattr(detection_report, "criterion_scores") and detection_report.criterion_scores:
+            self._summaries["criterion_scores"] = detection_report.criterion_scores
+
         return self
 
     def _build_predictability_summary(self, result: "DetectResult"):
@@ -654,7 +663,7 @@ class ReportBuilder:
                 category="rewrite",
                 scanner="rewriter",
                 title="Text near predictability floor",
-                detail=f"Rewrite only improved common ratio by {improvement_top10:.0%} "
+                detail=f"Rewrite only improved top-10 ratio by {improvement_top10:.0%} "
                        f"over {len(mp.passes)} pass(es)",
                 evidence=f"Converged: {mp.convergence_reason}",
                 recommendation="The remaining predictability is likely structural. "
@@ -1111,6 +1120,22 @@ class ReportBuilder:
         if not self._rewrite_summary or self._rewrite_summary.outcome != "improved":
             reason_codes.append("no_rewrite_triggered")
 
+        # ── Authorship concern score ──
+        concern_signals = extract_signals(
+            predictability_summary=self._pred_summary,
+            similarity_summary=self._sim_summary,
+            citation_summary=self._cite_summary,
+            findings=self._findings,
+            criterion_scores=self._summaries.get("criterion_scores"),
+        )
+        concern = calculate_authorship_concern(
+            signals=concern_signals,
+            word_count=len(self._original_text.split()) if self._original_text else 0,
+            has_sources=bool(self._sim_summary and self._sim_summary.matches),
+            has_bibliography=bool(self._cite_summary and self._cite_summary.bib_entry_count > 0),
+            has_draft_history=False,
+        )
+
         return DraftReport(
             overall_tier=adjusted_tier,
             finding_count=len(self._findings),
@@ -1133,10 +1158,36 @@ class ReportBuilder:
             actionability_distribution=self._summaries.get("actionability_distribution"),
             axis_scores=axis_scores,
             reason_codes=reason_codes,
+            authorship_concern_score=concern["score"],
+            authorship_concern_confidence=concern["confidence_label"],
+            authorship_concern_signals=concern["signals"],
         )
 
 
 # ── Report to dict ──────────────────────────────────────────────────
+
+
+def _concern_tier_from_score(score: float) -> str:
+    if score >= 0.65:
+        return "urgent_review"
+    if score >= 0.40:
+        return "needs_attention"
+    if score >= 0.25:
+        return "review_recommended"
+    if score >= 0.15:
+        return "light_review"
+    return "clear"
+
+
+def _is_weak_only(signals: Optional[Dict[str, Any]]) -> bool:
+    if not signals:
+        return False
+    strong = {"source_grounding", "citation_integrity", "draft_evolution", "structural_reuse"}
+    has_weak = any(signals.get(k) is not None and signals.get(k, 0) > 0
+                   for k in ("predictability", "genericity", "specificity"))
+    has_strong = any(signals.get(k) is not None and signals.get(k, 0) >= 0.25 for k in strong)
+    return has_weak and not has_strong
+
 
 def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     """Convert report to JSON-serializable dict with full rewrite intelligence."""
@@ -1410,6 +1461,18 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         "actionability_distribution": report.actionability_distribution,
         "axis_scores": report.axis_scores,
         "reason_codes": report.reason_codes,
+        "authorship_concern": {
+            "score": report.authorship_concern_score,
+            "concern_tier": _concern_tier_from_score(report.authorship_concern_score),
+            "confidence": report.authorship_concern_confidence,
+            "weak_signal_only": _is_weak_only(report.authorship_concern_signals),
+            "signals": report.authorship_concern_signals,
+            "available_signal_count": sum(
+                1 for v in (report.authorship_concern_signals or {}).values()
+                if v is not None
+            ),
+            "total_signal_count": 7,
+        },
         "document_context": {
             "word_count": len(report.original_text.split()) if report.original_text else 0,
             "sentence_count": len(report.predictability.sentences) if report.predictability else 0,
@@ -1516,7 +1579,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "generic_phrases": report.predictability.generic_phrases_found,
             "sentences": [
                 {"sentence_id": s.get("sentence_id", ""),
-                 "text": s["sentence"], "risk": s["risk_label"],
+                 "text": s["sentence"][:100], "risk": s["risk_label"],
                  "score": s["risk"], "top10": s["top10_ratio"]}
                 for s in report.predictability.sentences
             ],

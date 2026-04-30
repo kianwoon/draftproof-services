@@ -201,7 +201,7 @@ class PredictabilityDetector(BaseDetector):
                         f"(common ratio: {s.top_10_ratio:.1%}, "
                         f"category: {subtype.replace('_', ' ')})"
                     ),
-                    evidence=s.sentence[:120],
+                    evidence=s.sentence,
                     recommendation=recommendation,
                     suggested_action_type=action_type,
                     location=self._locate_sentence(content, s.sentence, idx),
