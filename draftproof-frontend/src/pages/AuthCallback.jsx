@@ -19,7 +19,9 @@ export default function AuthCallback() {
       getMe()
         .then(({ data }) => {
           setUser(data);
-          navigate('/dashboard', { replace: true });
+          const next = sessionStorage.getItem('auth_next') || '/dashboard';
+          sessionStorage.removeItem('auth_next');
+          navigate(next, { replace: true });
         })
         .catch(() => {
           navigate('/signin?error=Session expired. Please sign in again.', { replace: true });

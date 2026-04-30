@@ -11,6 +11,10 @@ export default function SignIn() {
   if (user) return <Navigate to="/" replace />;
 
   const errorMsg = searchParams.get('error');
+  const next = searchParams.get('next');
+  if (next && !sessionStorage.getItem('auth_next')) {
+    sessionStorage.setItem('auth_next', next);
+  }
 
   return (
     <div className="container" style={{ paddingTop: 'calc(var(--header-h) + 4rem)' }}>
