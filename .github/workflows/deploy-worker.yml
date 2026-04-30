@@ -15,16 +15,15 @@ jobs:
       - name: Trigger Koyeb redeploy
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
-          APP_NAME: "draftproof"
-          SERVICE_NAME: "draftproof-worker"
+          APP_ID: "d33cd2b0-feeb-4249-8ea1-f348bf544ac2"
         run: |
-          # Look up service ID from app/service name
-          SERVICE_ID=$(curl -sf \
-            -H "Authorization: Bearer ${KOYEB_TOKEN}" \
-            "https://app.koyeb.com/v1/apps" \
-            | jq -r ".apps[] | select(.name == \"${APP_NAME}\") | .services[] | select(.name == \"${SERVICE_NAME}\") | .id")
+          # Look up worker service ID
+          SVC_RAW=$(curl -s -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            "https://app.koyeb.com/v1/services?app_id=${APP_ID}")
+          SERVICE_ID=$(echo "$SVC_RAW" | jq -r '.services[] | select(.name == "draftproof-worker") | .id')
           if [ -z "$SERVICE_ID" ]; then
-            echo "ERROR: Could not find service ${APP_NAME}/${SERVICE_NAME}"
+            echo "ERROR: Could not find draftproof-worker service"
+            echo "$SVC_RAW" | jq -r '.services[] | "\(.name) \(.id)"' >&2
             exit 1
           fi
           echo "Redeploying service ${SERVICE_ID}..."
@@ -34,9 +33,10 @@ jobs:
             -H "Content-Type: application/json")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-          echo "HTTP status: ${HTTP_CODE}"
-          echo "Response: ${BODY}" | head -50
+          STATUS=$(echo "$BODY" | jq -r '.deployment.status // "unknown"')
+          echo "HTTP ${HTTP_CODE} — deployment ${STATUS}"
           if [ "$HTTP_CODE" -ge 400 ]; then
             echo "ERROR: Koyeb redeploy failed"
+            echo "$BODY" | jq '.' >&2
             exit 1
           fi
