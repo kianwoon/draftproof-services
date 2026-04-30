@@ -263,7 +263,12 @@ async def get_me(request: Request):
 async def logout():
     from starlette.responses import JSONResponse
     response = JSONResponse({"ok": True})
-    # Delete with both secure=True and secure=False to cover HTTP proxies
-    response.delete_cookie("token", httponly=True, secure=True, samesite="lax", path="/")
-    response.delete_cookie("token", httponly=True, secure=False, samesite="lax", path="/")
+    # Explicitly expire the cookie by setting max_age=0 with empty value
+    response.set_cookie(
+        "token", "",
+        httponly=True, secure=True, samesite="lax",
+        max_age=0, path="/",
+    )
+    # Also try delete_cookie for good measure
+    response.delete_cookie("token", path="/")
     return response
