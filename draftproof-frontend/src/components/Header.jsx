@@ -1,22 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import api from '../api/draftproofApi';
 
 export default function Header() {
-  const { user, logout } = useAuth();
+  const { user, logout, balance } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [balance, setBalance] = useState(null);
   const [scanOpen, setScanOpen] = useState(false);
   const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    if (!user) { setBalance(null); return; }
-    api.get('/payments/balance')
-      .then(r => setBalance(r.data.balance))
-      .catch(() => setBalance(null));
-  }, [user]);
 
   useEffect(() => { setScanOpen(false); }, [location.pathname]);
 

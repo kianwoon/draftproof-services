@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { uploadDocument, startScan, startScanWithText, getScanStatus } from '../api/draftproofApi';
+import { useAuth } from '../context/AuthContext';
 import ErrorReload from '../components/ErrorReload';
 
 const POLL_INTERVAL = 3000;
@@ -15,6 +16,7 @@ export default function Scan() {
   const [error, setError] = useState(null);
   const [serverError, setServerError] = useState(null);
   const navigate = useNavigate();
+  const { refreshBalance } = useAuth();
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const tokensRequired = wordCount > 0 ? Math.max(1, Math.ceil(wordCount / 1000)) : 0;
 
@@ -44,6 +46,7 @@ export default function Scan() {
       setStatus('Scanning...');
       const completed = await pollUntilDone(scan.id);
       if (completed) {
+        refreshBalance();
         navigate(`/report/${scan.id}`);
       }
     } catch (err) {

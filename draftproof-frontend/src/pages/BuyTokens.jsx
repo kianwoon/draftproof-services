@@ -1,23 +1,26 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../api/draftproofApi';
+import { useAuth } from '../context/AuthContext';
 import ErrorReload from '../components/ErrorReload';
 
 export default function BuyTokens() {
   const [packs, setPacks] = useState([]);
-  const [balance, setBalance] = useState(null);
+  const [localBalance, setLocalBalance] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
   const [serverError, setServerError] = useState(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { refreshBalance } = useAuth();
 
   useEffect(() => {
     api.get('/payments/packs').then(r => setPacks(r.data)).catch(() => {});
-    api.get('/payments/balance').then(r => setBalance(r.data)).catch(() => {});
+    api.get('/payments/balance').then(r => setLocalBalance(r.data)).catch(() => {});
 
     if (searchParams.get('success')) {
       setMessage({ type: 'success', text: 'Payment successful! Your tokens have been added.' });
+      refreshBalance();
     } else if (searchParams.get('canceled')) {
       setMessage({ type: 'info', text: 'Payment was canceled.' });
     }
@@ -41,8 +44,8 @@ export default function BuyTokens() {
       <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
         <h2 style={{ marginBottom: '0.5rem' }}>Buy Tokens</h2>
         <p style={{ color: 'var(--text-2)' }}>SGD $2.90 per token — each scan costs 1 token per document.</p>
-        {balance !== null && (
-          <p className="balance-display">Current balance: <strong>{balance.balance} tokens</strong></p>
+        {localBalance !== null && (
+          <p className="balance-display">Current balance: <strong>{localBalance.balance} tokens</strong></p>
         )}
       </div>
 
