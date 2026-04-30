@@ -1,0 +1,21 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - 'poc/**'
+      - '.github/workflows/deploy-worker.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Koyeb CLI
+        run: curl -L https://raw.githubusercontent.com/koyeb/koyeb-cli/master/install.sh | bash
+
+      - name: Redeploy worker service
+        env:
+          KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
+        run: koyeb service redeploy draftproof-worker --app draftproof --wait --wait-timeout 10m
