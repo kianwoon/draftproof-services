@@ -199,7 +199,7 @@ class PredictabilityDetector(BaseDetector):
                     detail=(
                         f"Sentence scored {s.predictability_risk:.1%} predictability "
                         f"(common ratio: {s.top_10_ratio:.1%}, "
-                        f"subtype: {subtype})"
+                        f"category: {subtype.replace('_', ' ')})"
                     ),
                     evidence=s.sentence[:120],
                     recommendation=recommendation,

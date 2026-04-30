@@ -9,7 +9,7 @@ _CSS = """
     size: A4;
     margin: 2cm 2.5cm;
     @bottom-center {
-        content: "DraftProof Report · page " counter(page) " of " counter(pages);
+        content: "DraftProof Report | page " counter(page) " of " counter(pages);
         font-size: 8pt;
         color: #999;
     }
@@ -28,6 +28,7 @@ h3 { font-size: 12pt; color: #444; }
 
 table {
     width: 100%;
+    table-layout: auto;
     border-collapse: collapse;
     margin: 8pt 0;
     font-size: 9pt;
@@ -38,6 +39,7 @@ th {
     text-align: left;
     padding: 4pt 6pt;
     border: 1px solid #ddd;
+    overflow-wrap: break-word;
 }
 td {
     padding: 3pt 6pt;
@@ -45,6 +47,7 @@ td {
     vertical-align: top;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    overflow: hidden;
 }
 
 code {

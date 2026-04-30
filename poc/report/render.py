@@ -68,36 +68,36 @@ _TIER_BADGE = {
 }
 
 _TIER_EMOJI = {
-    Tier.CRITICAL: "🔴",
-    Tier.HIGH:     "🟠",
-    Tier.MEDIUM:   "🟡",
-    Tier.LOW:      "🔵",
-    Tier.CLEAN:    "🟢",
+    Tier.CRITICAL: "[!!!]",
+    Tier.HIGH:     "[!!]",
+    Tier.MEDIUM:   "[!]",
+    Tier.LOW:      "[ok]",
+    Tier.CLEAN:    "[clean]",
 }
 
 _SEVERITY_LABEL = {
-    Tier.CRITICAL: "🔴 Critical",
-    Tier.HIGH:     "🟠 High",
-    Tier.MEDIUM:   "🟡 Medium",
-    Tier.LOW:      "🔵 Low",
-    Tier.CLEAN:    "🟢 Clean",
+    Tier.CRITICAL: "[!!!] Critical",
+    Tier.HIGH:     "[!!] High",
+    Tier.MEDIUM:   "[!] Medium",
+    Tier.LOW:      "[ok] Low",
+    Tier.CLEAN:    "[clean] Clean",
 }
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
 def _risk_gauge(value: float, width: int = 20) -> str:
-    """Render a text risk gauge bar: `[████████░░░░░░░░░░░░] 0.42`"""
+    """Render a text risk gauge bar: `[========............] 0.42`"""
     filled = round(value * width)
     empty = width - filled
-    bar = "█" * filled + "░" * empty
+    bar = "=" * filled + "." * empty
     return f"`[{bar}]` `{value:.1%}`"
 
 
 def _truncate(text: str, limit: int = 80) -> str:
     if len(text) <= limit:
         return text
-    return text[: limit - 1] + "…"
+    return text[: limit - 1] + "..."
 
 def _pct(value) -> str:
     """Format a numeric value as percentage string."""
@@ -131,7 +131,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
     # ── HEADER ────────────────────────────────────────────────────
     tier = report.overall_tier
-    emoji = _TIER_EMOJI.get(tier, "⚪")
+    emoji = _TIER_EMOJI.get(tier, "[?]")
     badge = _TIER_BADGE.get(tier, tier.value.upper())
 
     n_critical = len(fb.get(Tier.CRITICAL.value, []))
@@ -167,7 +167,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     max_n = max(n_critical, n_high, n_medium, n_low, 1)
     def _bar(count):
         bar_w = round(count / max_n * 15) if max_n else 0
-        return "▓" * bar_w + "░" * (15 - bar_w)
+        return "#" * bar_w + "-" * (15 - bar_w)
 
     # Build scanner rows
     scanners_present = set()
@@ -182,49 +182,32 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         score_str = _scanner_score(report, scanner)
         scanner_rows.append((code, count, hc, score_str))
 
-    # Three tables side-by-side via pure HTML
-    lines.append("<table align='left' cellspacing='0' cellpadding='0'><tr>")
-
-    # ── Table 1: Metrics ──
-    lines.append("<td valign='top'>")
-    lines.append("<table style='white-space:nowrap'>")
-    lines.append("<tr><th align='left'>Metric</th><th align='left'>Value</th></tr>")
-    lines.append(f"<tr><td><strong>Overall Tier</strong></td><td>{emoji} <strong>{tier.value.upper()}</strong></td></tr>")
-    lines.append(f"<tr><td><strong>Total Findings</strong></td><td><strong>{total}</strong></td></tr>")
-    lines.append(f"<tr><td>Scan Time</td><td><code>{report.scan_time_seconds:.1f}s</code></td></tr>")
+    # Metrics table
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
+    lines.append(f"| **Overall Tier** | {emoji} **{tier.value.upper()}** |")
+    lines.append(f"| **Total Findings** | **{total}** |")
+    lines.append(f"| Scan Time | `{report.scan_time_seconds:.1f}s` |")
     if report.generated_at:
-        lines.append(f"<tr><td>Generated</td><td>{report.generated_at}</td></tr>")
-    lines.append("</table>")
-    lines.append("</td>")
+        lines.append(f"| Generated | {report.generated_at} |")
 
-    # ── Table 2: Finding Breakdown ──
-    lines.append("<td valign='top' style='padding-left:8px'>")
-    lines.append("<table style='white-space:nowrap'>")
-    lines.append("<tr><th align='left'>Severity</th><th>Count</th><th align='left'>Bar</th></tr>")
-    for label, count in [
-        ("🔴 Critical", n_critical),
-        ("🟠 High", n_high),
-        ("🟡 Medium", n_medium),
-        ("🔵 Low", n_low),
-    ]:
-        lines.append(f"<tr><td>{label}</td><td align='center'>{count}</td><td><code>{_bar(count)}</code></td></tr>")
-    lines.append("</table>")
-    lines.append("</td>")
-
-    # ── Table 3: Scanner Results ──
-    if scanner_rows:
-        lines.append("<td valign='top'>&nbsp;</td>")
-        lines.append("<td valign='top'>")
-        lines.append("<table style='white-space:nowrap'>")
-        lines.append("<tr><th align='left'>Src</th><th>Fnd</th><th>H/C</th><th align='left'>Score</th></tr>")
-        for code, count, hc, score_str in scanner_rows:
-            sc = f"<code>{score_str}</code>" if "%" in score_str else score_str
-            lines.append(f"<tr><td>{code}</td><td align='center'>{count}</td><td align='center'>{hc}</td><td>{sc}</td></tr>")
-        lines.append("</table>")
-        lines.append("</td>")
-
-    lines.append("</tr></table>")
+    # Severity counts inline
+    sev_parts = []
+    if n_critical: sev_parts.append(f"[!!!] {n_critical} Critical")
+    if n_high: sev_parts.append(f"[!!] {n_high} High")
+    if n_medium: sev_parts.append(f"[!] {n_medium} Medium")
+    if n_low: sev_parts.append(f"[ok] {n_low} Low")
+    if sev_parts:
+        lines.append(f"| **Breakdown** | {' / '.join(sev_parts)} |")
     lines.append("")
+
+    # Scanner results table
+    if scanner_rows:
+        lines.append("| Src | Found | H/C | Score |")
+        lines.append("|-----|-------|-----|-------|")
+        for code, count, hc, score_str in scanner_rows:
+            lines.append(f"| {code} | {count} | {hc} | {score_str} |")
+        lines.append("")
 
     # Risk gauges — separate signals, not conflated
     signal_lines = []
@@ -235,7 +218,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             phrases = ", ".join(f"`{ph}`" for ph in p.generic_phrases_found[:5])
             signal_lines.append(f"- **Generic Phrases**: {phrases}")
         dist_parts = [f"{k}: {v}" for k, v in p.risk_distribution.items()]
-        signal_lines.append(f"- **Distribution**: {' · '.join(dist_parts)}")
+        signal_lines.append(f"- **Distribution**: {' | '.join(dist_parts)}")
 
     # Check for specificity and AI signals in findings
     for fl in fb.values():
@@ -282,13 +265,13 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         s = report.similarity
         lines.append(f"- **Similarity Risk**: `{_pct(s.overall_risk)}`")
         dist_parts = [f"{k}: {v}" for k, v in s.risk_distribution.items()]
-        lines.append(f"- **Distribution**: {' · '.join(dist_parts)}")
+        lines.append(f"- **Distribution**: {' | '.join(dist_parts)}")
         lines.append("")
 
     if report.citation:
         c = report.citation
         lines.append(f"- **Citation Style**: `{c.citation_style}`")
-        lines.append(f"- **In-text**: {c.in_text_count} · **Bibliography**: {c.bib_entry_count}")
+        lines.append(f"- **In-text**: {c.in_text_count} | **Bibliography**: {c.bib_entry_count}")
         lines.append("")
 
     # Verdict
@@ -417,11 +400,11 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append("")
 
         lines.append("| # | Src | Sig | Detail | Evidence | Action |")
-        lines.append("|---|-----|-----|--------|----------|--------|")
+        lines.append("|--:|:---:|:---:|--------|----------|--------|")
 
         def _cell(text):
             if not text:
-                return "—"
+                return "-"
             return text.replace("|", "·").replace("\n", " ")
 
         for f in findings:
@@ -449,11 +432,13 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append("")
         lines.append(f"## False Positives Filtered ({len(fp)})")
         lines.append("")
+
         lines.append("| # | Orig | Adj | Reason | Filter | Sentence |")
-        lines.append("|---|------|-----|--------|--------|----------|")
+        lines.append("|--:|:----:|:---:|--------|:------:|----------|")
+
         def _fp_cell(text):
             if not text:
-                return "—"
+                return "-"
             return text.replace("|", "·").replace("\n", " ")
 
         for i, entry in enumerate(fp, 1):
@@ -499,7 +484,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append("<summary>Pass Progression</summary>")
             lines.append("")
             lines.append("| Pass | Risk | Common Ratio |")
-            lines.append("|------|------|--------------|")
+            lines.append("|------|------|--------|")
             for i, p in enumerate(rw.pass_progression, 1):
                 risk = p.get("risk", p.get("predictability_score", 0))
                 top10 = p.get("top10_ratio", 0)
@@ -515,8 +500,8 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append("| # | Original | Rewritten |")
             lines.append("|---|----------|-----------|")
             for i, sc in enumerate(rw.sentence_comparison, 1):
-                orig = _truncate(sc.get("original", ""), 40)
-                rew = _truncate(sc.get("rewritten", ""), 40)
+                orig = sc.get("original", "").replace("|", "-").replace("\n", " ")
+                rew = sc.get("rewritten", "").replace("|", "-").replace("\n", " ")
                 lines.append(f"| {i} | {orig} | {rew} |")
             lines.append("")
             lines.append("</details>")
@@ -560,8 +545,8 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     # ── FOOTER ────────────────────────────────────────────────────
     lines.append("---")
     lines.append("")
-    ts = f" · {report.generated_at}" if report.generated_at else ""
-    lines.append(f"*Report generated by DraftProof{ts} · {report.scan_time_seconds:.1f}s scan time*")
+    ts = f" | {report.generated_at}" if report.generated_at else ""
+    lines.append(f"*Report generated by DraftProof{ts} | {report.scan_time_seconds:.1f}s scan time*")
     lines.append("")
     lines.append("> **Note:** This is a pre-submission integrity check, not a plagiarism or AI-authorship verdict. Signals should be reviewed in context.")
     lines.append("")
