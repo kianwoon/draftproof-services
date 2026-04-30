@@ -198,7 +198,7 @@ class PredictabilityDetector(BaseDetector):
                     evidence_strength=evidence_strength,
                     detail=(
                         f"Sentence scored {s.predictability_risk:.1%} predictability "
-                        f"(top-10 ratio: {s.top_10_ratio:.1%}, "
+                        f"(common ratio: {s.top_10_ratio:.1%}, "
                         f"subtype: {subtype})"
                     ),
                     evidence=s.sentence[:120],

@@ -206,7 +206,7 @@ export default function Report() {
                             )}
                             {issue.top10_ratio != null && (
                               <div className="finding-score-item">
-                                <span className="finding-score-label">Top-10 Predictability</span>
+                                <span className="finding-score-label">Common Predictability</span>
                                 <div className="finding-score-bar">
                                   <div className="finding-score-fill" style={{ width: `${Math.min(issue.top10_ratio * 100, 100)}%`, background: '#8b5cf6' }} />
                                 </div>

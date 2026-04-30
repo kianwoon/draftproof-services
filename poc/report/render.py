@@ -480,7 +480,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append("| Metric | Before | After | Change |")
         lines.append("|--------|--------|-------|--------|")
         lines.append(f"| **Risk Score** | `{rw.original_risk:.1%}` | `{rw.final_risk:.1%}` | `{rw.improvement_risk:+.1%}` |")
-        lines.append(f"| **Top-10 Ratio** | `{rw.original_top10:.1%}` | `{rw.final_top10:.1%}` | `{rw.improvement_top10:+.1%}` |")
+        lines.append(f"| **Common Ratio** | `{rw.original_top10:.1%}` | `{rw.final_top10:.1%}` | `{rw.improvement_top10:+.1%}` |")
         if rw.original_tier:
             lines.append(f"| **Tier** | {rw.original_tier.upper()} | {rw.rewritten_tier.upper()} | |")
         if rw.original_findings or rw.rewritten_findings:
@@ -498,8 +498,8 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append("<details>")
             lines.append("<summary>Pass Progression</summary>")
             lines.append("")
-            lines.append("| Pass | Risk | Top-10 |")
-            lines.append("|------|------|--------|")
+            lines.append("| Pass | Risk | Common Ratio |")
+            lines.append("|------|------|--------------|")
             for i, p in enumerate(rw.pass_progression, 1):
                 risk = p.get("risk", p.get("predictability_score", 0))
                 top10 = p.get("top10_ratio", 0)

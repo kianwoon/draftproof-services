@@ -654,7 +654,7 @@ class ReportBuilder:
                 category="rewrite",
                 scanner="rewriter",
                 title="Text near predictability floor",
-                detail=f"Rewrite only improved top-10 ratio by {improvement_top10:.0%} "
+                detail=f"Rewrite only improved common ratio by {improvement_top10:.0%} "
                        f"over {len(mp.passes)} pass(es)",
                 evidence=f"Converged: {mp.convergence_reason}",
                 recommendation="The remaining predictability is likely structural. "
