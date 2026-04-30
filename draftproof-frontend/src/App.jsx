@@ -12,6 +12,7 @@ import Scan from './pages/Scan';
 import Report from './pages/Report';
 import Reports from './pages/Reports';
 import Pricing from './pages/Pricing';
+import Why from './pages/Why';
 import BuyTokens from './pages/BuyTokens';
 
 function HomeRedirect() {
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/pricing" element={<Pricing />} />
+            <Route path="/why" element={<Why />} />
             <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />
             <Route path="/signin" element={<SignIn />} />
             <Route path="/auth/callback" element={<AuthCallback />} />

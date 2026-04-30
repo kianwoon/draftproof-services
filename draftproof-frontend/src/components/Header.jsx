@@ -76,6 +76,7 @@ export default function Header() {
           </div>
         )}
         {user && <Link to="/buy">Buy Tokens</Link>}
+        <Link to="/why">Why</Link>
         <Link to="/pricing">Pricing</Link>
         <Link to="/#engine">How it works</Link>
       </nav>
