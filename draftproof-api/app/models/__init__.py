@@ -26,8 +26,20 @@ class ScanOut(BaseModel):
 class IssueOut(BaseModel):
     id: str
     severity: str
+    title: Optional[str] = None
     description: str
     location: Optional[str] = None
+    scanner: Optional[str] = None
+    category: Optional[str] = None
+    signal_category: Optional[str] = None
+    score: Optional[float] = None
+    top10_ratio: Optional[float] = None
+    raw_risk: Optional[str] = None
+    adjusted_risk: Optional[str] = None
+    actionability: Optional[str] = None
+    evidence: Optional[Any] = None
+    recommendation: Optional[str] = None
+    adjustment: Optional[Any] = None
 
 
 class ReportOut(BaseModel):
