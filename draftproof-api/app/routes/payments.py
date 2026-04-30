@@ -125,7 +125,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             amount_cents=amount_cents,
             currency="SGD",
             tokens_purchased=tokens,
-            status="completed",
+            status="paid",
             idempotency_key=stripe_session_id,
         )
         db.add(payment)
