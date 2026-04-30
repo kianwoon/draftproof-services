@@ -26,6 +26,9 @@ export const listScans = () => api.get('/scans/');
 // Reports
 export const getReport = (reportId) => api.get(`/reports/${reportId}`);
 
+// Payments
+export const getPurchaseHistory = () => api.get('/payments/history');
+
 // Rewrites
 export const getSuggestion = (issueId) => api.get(`/rewrites/${issueId}`);
 export const applySuggestion = (issueId, suggestionId) =>

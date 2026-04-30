@@ -82,6 +82,28 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
     return {"balance": account.balance_tokens, "reserved": account.reserved_tokens}
 
 
+@router.get("/history")
+async def get_history(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = _get_user_id(request)
+    result = await db.execute(
+        select(Payment)
+        .where(Payment.user_id == user_id)
+        .order_by(Payment.created_at.desc())
+    )
+    payments = result.scalars().all()
+    return [
+        {
+            "id": str(p.id),
+            "tokens": p.tokens_purchased,
+            "amount_cents": p.amount_cents,
+            "currency": p.currency,
+            "status": p.status,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+        for p in payments
+    ]
+
+
 @router.post("/webhook")
 async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     payload = await request.body()

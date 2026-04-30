@@ -14,6 +14,7 @@ import Reports from './pages/Reports';
 import Pricing from './pages/Pricing';
 import Why from './pages/Why';
 import BuyTokens from './pages/BuyTokens';
+import PurchaseHistory from './pages/PurchaseHistory';
 
 function HomeRedirect() {
   const { user, loading } = useAuth();
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="/pricing" element={<Pricing />} />
             <Route path="/why" element={<Why />} />
             <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />
+            <Route path="/history" element={<ProtectedRoute><PurchaseHistory /></ProtectedRoute>} />
             <Route path="/signin" element={<SignIn />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />

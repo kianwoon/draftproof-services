@@ -76,6 +76,7 @@ export default function Header() {
           </div>
         )}
         {user && <Link to="/buy">Buy Tokens</Link>}
+        {user && <Link to="/history">History</Link>}
         <Link to="/why">Why</Link>
         <Link to="/pricing">Pricing</Link>
         <Link to="/#engine">How it works</Link>
@@ -83,7 +84,7 @@ export default function Header() {
 
       {user ? (
         <div className="header-user">
-          <Link to="/buy" className="token-badge">
+          <Link to="/history" className="token-badge">
             {balance !== null ? `${balance} tokens` : '—'}
           </Link>
           <span className="user-email">{user.email}</span>
