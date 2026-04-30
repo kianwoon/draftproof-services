@@ -129,6 +129,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             idempotency_key=stripe_session_id,
         )
         db.add(payment)
+        await db.flush()  # populate payment.id
 
         # Record ledger entry
         ledger = CreditLedger(
