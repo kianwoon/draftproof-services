@@ -15,8 +15,18 @@ jobs:
       - name: Trigger Koyeb redeploy
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
-          SERVICE_ID: "2af91bbc-6519-4559-a3cc-1b6349ce020e"
+          APP_NAME: "draftproof"
+          SERVICE_NAME: "draftproof-worker"
         run: |
+          # Look up service ID from app/service name
+          SERVICE_ID=$(curl -sf \
+            -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            "https://app.koyeb.com/v1/apps" \
+            | jq -r ".apps[] | select(.name == \"${APP_NAME}\") | .services[] | select(.name == \"${SERVICE_NAME}\") | .id")
+          if [ -z "$SERVICE_ID" ]; then
+            echo "ERROR: Could not find service ${APP_NAME}/${SERVICE_NAME}"
+            exit 1
+          fi
           echo "Redeploying service ${SERVICE_ID}..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}/redeploy" \
