@@ -112,24 +112,14 @@ export default function Report() {
         </div>
 
         {/* Download links */}
-        {(report.report_pdf_url || report.report_md_url) && (
+        {report.report_pdf_url && (
           <div className="report-downloads">
-            {report.report_pdf_url && (
-              <a href={report.report_pdf_url} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ marginRight: 6 }}>
-                  <path d="M3 10v2.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V10M8 2v8M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                Download PDF
-              </a>
-            )}
-            {report.report_md_url && (
-              <a href={report.report_md_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ marginRight: 6 }}>
-                  <path d="M3 2h10v12H3zM6 5h4M6 7.5h4M6 10h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-                </svg>
-                View Markdown
-              </a>
-            )}
+            <a href={report.report_pdf_url} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ marginRight: 6 }}>
+                <path d="M3 10v2.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V10M8 2v8M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Download PDF
+            </a>
           </div>
         )}
 
