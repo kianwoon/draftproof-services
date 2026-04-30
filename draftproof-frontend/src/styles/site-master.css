@@ -756,6 +756,7 @@ svg { display: block; }
 .footer-links a:hover { color: #fff; }
 
 .site-footer p {
+  grid-column: 1 / -1;
   color: rgba(255, 255, 255, .68);
   font-size: .82rem;
   line-height: 1.5;
@@ -1454,6 +1455,7 @@ th {
 .global-footer-wrap .footer-links a:hover { color: #fff; }
 
 .global-footer-wrap .site-footer p {
+  grid-column: 1 / -1;
   color: rgba(255, 255, 255, .68);
   font-size: .82rem;
   line-height: 1.5;
