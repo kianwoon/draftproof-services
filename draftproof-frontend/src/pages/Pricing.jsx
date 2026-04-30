@@ -94,7 +94,7 @@ export default function Pricing() {
             </li>
             <li>
               <span className="check" aria-hidden="true">&#10003;</span>
-              <span>Downloadable revised document</span>
+              <span>Revised text with improvements highlighted</span>
             </li>
           </ul>
 
@@ -126,8 +126,8 @@ export default function Pricing() {
             <p>No. Your tokens stay in your account until you use them.</p>
           </div>
           <div className="faq-item">
-            <h3>What file formats are supported?</h3>
-            <p>We support .docx, .pdf, and .txt files up to 10 MB.</p>
+            <h3>How do I submit my text?</h3>
+            <p>Paste your text directly into the scan page. File upload coming soon.</p>
           </div>
         </section>
       </div>

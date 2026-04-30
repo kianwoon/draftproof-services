@@ -23,7 +23,7 @@ export default function Scan() {
     setBusy(true);
     setError(null);
     setServerError(null);
-    setStatus('Uploading...');
+    setStatus('Submitting...');
 
     try {
       let scan;

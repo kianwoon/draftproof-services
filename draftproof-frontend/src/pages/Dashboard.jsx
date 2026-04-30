@@ -43,7 +43,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h3>New Scan</h3>
-              <p>Upload a document for a pre-submission integrity review</p>
+              <p>Paste your text for a pre-submission integrity review</p>
             </div>
           </Link>
         </section>
@@ -55,8 +55,8 @@ export default function Dashboard() {
             <div className="dash-step">
               <span className="step-num">1</span>
               <div>
-                <strong>Upload your document</strong>
-                <p>Supports .docx, .pdf, and .txt files up to 10 MB</p>
+                <strong>Paste your text</strong>
+                <p>Copy and paste your document text into the scan page</p>
               </div>
             </div>
             <div className="dash-step">

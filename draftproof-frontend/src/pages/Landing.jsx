@@ -105,8 +105,8 @@ export default function Landing() {
           <div className="process-line">
             <div>
               <div className="step-icon">📄</div>
-              <h3>Upload</h3>
-              <p>Submit your draft as PDF, DOCX, or plain text.</p>
+              <h3>Paste</h3>
+              <p>Paste your draft text for a pre-submission review.</p>
             </div>
             <div>
               <div className="step-icon">🔬</div>
