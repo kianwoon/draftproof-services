@@ -12,12 +12,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Koyeb CLI
-        run: |
-          curl -sL https://raw.githubusercontent.com/koyeb/koyeb-cli/master/install.sh | bash
-          echo "$HOME/.koyeb/bin" >> "$GITHUB_PATH"
-
-      - name: Redeploy worker service
+      - name: Trigger Koyeb worker redeploy
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
-        run: koyeb service redeploy draftproof-worker --app draftproof --wait --wait-timeout 10m
+          SERVICE_ID: "2af91bbc-6519-4559-a3cc-1b6349ce020e"
+        run: |
+          curl -sf -X POST "https://app.koyeb.com/v1/services/${SERVICE_ID}/redeploy" \
+            -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            -H "Content-Type: application/json" | jq '.deployment.status'
