@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy API service to Koyeb
-        uses: koyeb/action-git-deploy@v3
+        uses: koyeb/action-git-deploy@v1
         with:
           api-token: ${{ secrets.KOYEB_TOKEN }}
           service-id: "c70d5b2b-52e8-4ed3-8f79-a7c727e60320"
