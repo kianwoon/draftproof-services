@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { listScans } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
+
+const PAGE_SIZE = 10;
 
 const STATUS_MAP = {
   pending:   { label: 'Pending',   color: '#94a3b8', bg: '#f1f5f9' },
@@ -26,6 +28,16 @@ export default function Reports() {
   const [scans, setScans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.ceil(scans.length / PAGE_SIZE);
+  const pageScans = useMemo(
+    () => scans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [scans, page],
+  );
+
+  // Reset to page 1 if scans shrink below current page
+  useEffect(() => { if (page > totalPages && totalPages > 0) setPage(1); }, [page, totalPages]);
 
   useEffect(() => {
     listScans()
@@ -63,7 +75,10 @@ export default function Reports() {
         <div className="reports-header">
           <div>
             <h1>Your Reports</h1>
-            <p className="reports-subtitle">{scans.length} scan{scans.length !== 1 ? 's' : ''} completed</p>
+            <p className="reports-subtitle">
+              {scans.length} scan{scans.length !== 1 ? 's' : ''} total
+              {totalPages > 1 && ` — Page ${page} of ${totalPages}`}
+            </p>
           </div>
           <Link to="/scan" className="btn btn-primary">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ marginRight: 6 }}>
@@ -98,7 +113,7 @@ export default function Reports() {
                 </tr>
               </thead>
               <tbody>
-                {scans.map((scan) => {
+                {pageScans.map((scan) => {
                   const st = STATUS_MAP[scan.status] || STATUS_MAP.pending;
                   const tierColor = TIER_COLORS[scan.tier];
                   return (
@@ -132,6 +147,36 @@ export default function Reports() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div className="pagination">
+            <button
+              className="btn btn-secondary btn-small"
+              disabled={page === 1}
+              onClick={() => setPage(p => p - 1)}
+            >
+              Previous
+            </button>
+            <span className="pagination-info">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                <button
+                  key={p}
+                  className={`pagination-btn${p === page ? ' active' : ''}`}
+                  onClick={() => setPage(p)}
+                >
+                  {p}
+                </button>
+              ))}
+            </span>
+            <button
+              className="btn btn-secondary btn-small"
+              disabled={page === totalPages}
+              onClick={() => setPage(p => p + 1)}
+            >
+              Next
+            </button>
           </div>
         )}
       </div>

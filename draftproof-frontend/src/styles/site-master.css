@@ -1966,6 +1966,55 @@ th {
 
 /* ── Why page ─────────────────────────────── */
 
+/* ── Pagination ─────────────────────────────── */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.pagination-info {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.pagination-btn {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s, border-color .15s;
+}
+
+.pagination-btn:hover {
+  background: var(--blue-50);
+  border-color: var(--blue-700);
+}
+
+.pagination-btn.active {
+  background: var(--blue-700);
+  border-color: var(--blue-700);
+  color: #fff;
+  font-weight: 600;
+}
+
+.pagination .btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .why-shell {
   background: var(--surface-soft);
 }
