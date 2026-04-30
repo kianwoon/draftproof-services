@@ -28,10 +28,11 @@ app = FastAPI(title="DraftProof API", version="1.0.0", lifespan=lifespan)
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    # OAuth callback routes: redirect to frontend with error param
-    if request.url.path.startswith("/api/auth/"):
+    # Only redirect OAuth callback routes (google/callback, microsoft/callback) — NOT /me or /logout
+    auth_api_paths = ("/api/auth/google/", "/api/auth/microsoft/")
+    if request.url.path.startswith(auth_api_paths):
         return _auth_error_redirect(exc.status_code, exc.detail or "Authentication failed")
-    # API routes: return generic JSON
+    # All other routes: return JSON
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": _friendly_message(exc.status_code)},
