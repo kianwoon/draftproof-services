@@ -141,6 +141,7 @@ export default function Report() {
               {report.issues.map((issue, i) => {
                 const sc = SEVERITY_CONFIG[issue.severity] || SEVERITY_CONFIG.info;
                 const isExpanded = expandedIssue === i;
+                const hasScores = issue.score != null || issue.top10_ratio != null;
                 return (
                   <div
                     key={issue.id || i}
@@ -153,6 +154,7 @@ export default function Report() {
                         {sc.label}
                       </span>
                       <span className="finding-number">#{i + 1}</span>
+                      {issue.title && <span className="finding-title-tag">{issue.title.replace(/_/g, ' ')}</span>}
                       {issue.location && <span className="finding-location">{issue.location}</span>}
                       <svg
                         className="finding-chevron"
@@ -163,6 +165,73 @@ export default function Report() {
                       </svg>
                     </div>
                     <p className="finding-desc">{issue.description}</p>
+                    {isExpanded && (
+                      <div className="finding-detail" onClick={(e) => e.stopPropagation()}>
+                        {issue.scanner && (
+                          <div className="finding-meta-row">
+                            <span className="finding-meta-label">Scanner</span>
+                            <span className="finding-meta-value">{issue.scanner}</span>
+                          </div>
+                        )}
+                        {issue.category && (
+                          <div className="finding-meta-row">
+                            <span className="finding-meta-label">Category</span>
+                            <span className="finding-meta-value">{issue.category}</span>
+                          </div>
+                        )}
+                        {issue.signal_category && (
+                          <div className="finding-meta-row">
+                            <span className="finding-meta-label">Signal</span>
+                            <span className="finding-meta-value">{issue.signal_category.replace(/_/g, ' ')}</span>
+                          </div>
+                        )}
+                        {issue.actionability && (
+                          <div className="finding-meta-row">
+                            <span className="finding-meta-label">Action</span>
+                            <span className={`finding-action-badge finding-action-${issue.actionability}`}>
+                              {issue.actionability.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                        )}
+                        {hasScores && (
+                          <div className="finding-scores">
+                            {issue.score != null && (
+                              <div className="finding-score-item">
+                                <span className="finding-score-label">Risk Score</span>
+                                <div className="finding-score-bar">
+                                  <div className="finding-score-fill" style={{ width: `${Math.min(issue.score * 100, 100)}%`, background: sc.color }} />
+                                </div>
+                                <span className="finding-score-value">{(issue.score * 100).toFixed(0)}%</span>
+                              </div>
+                            )}
+                            {issue.top10_ratio != null && (
+                              <div className="finding-score-item">
+                                <span className="finding-score-label">Top-10 Predictability</span>
+                                <div className="finding-score-bar">
+                                  <div className="finding-score-fill" style={{ width: `${Math.min(issue.top10_ratio * 100, 100)}%`, background: '#8b5cf6' }} />
+                                </div>
+                                <span className="finding-score-value">{(issue.top10_ratio * 100).toFixed(0)}%</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {issue.evidence && (
+                          <div className="finding-evidence">
+                            <span className="finding-meta-label">Evidence</span>
+                            {issue.evidence.summary && <p>{issue.evidence.summary}</p>}
+                            {issue.evidence.sentence && (
+                              <blockquote className="finding-quote">&ldquo;{issue.evidence.sentence}&rdquo;</blockquote>
+                            )}
+                          </div>
+                        )}
+                        {issue.recommendation && (
+                          <div className="finding-recommendation">
+                            <span className="finding-meta-label">Recommendation</span>
+                            <p>{issue.recommendation}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -17,8 +17,20 @@ def _flatten_findings(results_json: dict) -> list[dict]:
             issues.append({
                 "id": f.get("finding_id", str(len(issues) + 1)),
                 "severity": severity,
+                "title": f.get("title", ""),
                 "description": f.get("detail") or f.get("title", ""),
                 "location": f.get("sentence_id"),
+                "scanner": f.get("scanner", ""),
+                "category": f.get("category", ""),
+                "signal_category": f.get("signal_category"),
+                "score": f.get("score"),
+                "top10_ratio": f.get("top10_ratio"),
+                "raw_risk": f.get("raw_risk", ""),
+                "adjusted_risk": f.get("adjusted_risk", ""),
+                "actionability": f.get("actionability", ""),
+                "evidence": f.get("evidence"),
+                "recommendation": f.get("recommendation", ""),
+                "adjustment": f.get("adjustment"),
             })
     return issues
 
