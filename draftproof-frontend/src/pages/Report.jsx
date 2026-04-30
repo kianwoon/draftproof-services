@@ -218,10 +218,22 @@ export default function Report() {
                         {issue.evidence && (
                           <div className="finding-evidence">
                             <span className="finding-meta-label">Evidence</span>
-                            {issue.evidence.summary && <p>{issue.evidence.summary}</p>}
-                            {issue.evidence.sentence && (
-                              <blockquote className="finding-quote">&ldquo;{issue.evidence.sentence}&rdquo;</blockquote>
+                            {typeof issue.evidence === 'string' ? (
+                              <p>{issue.evidence}</p>
+                            ) : (
+                              <>
+                                {issue.evidence.summary && <p>{issue.evidence.summary}</p>}
+                                {issue.evidence.sentence && (
+                                  <blockquote className="finding-quote">&ldquo;{issue.evidence.sentence}&rdquo;</blockquote>
+                                )}
+                              </>
                             )}
+                          </div>
+                        )}
+                        {issue.sentence_text && !(issue.evidence && typeof issue.evidence === 'object' && issue.evidence.sentence) && (
+                          <div className="finding-evidence">
+                            <span className="finding-meta-label">Sentence</span>
+                            <blockquote className="finding-quote">&ldquo;{issue.sentence_text}&rdquo;</blockquote>
                           </div>
                         )}
                         {issue.recommendation && (

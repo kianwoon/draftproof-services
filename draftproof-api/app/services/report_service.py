@@ -35,16 +35,45 @@ def _presign(key: str, expires: int = 3600) -> str:
 
 def _flatten_findings(results_json: dict) -> list[dict]:
     """Convert tiered findings dict into flat issues list for the frontend."""
+    # Build sentence_id -> full sentence text lookup
+    sentence_map = {}
+    pred = results_json.get("predictability", {})
+    input_text = results_json.get("input_text", "")
+    for s in pred.get("sentences", []):
+        sid = s.get("sentence_id", "")
+        # Use full text from input_text via char offsets if available
+        start = s.get("start_char")
+        end = s.get("end_char")
+        if sid and start is not None and end is not None and input_text:
+            sentence_map[sid] = input_text[start:end]
+        elif sid:
+            sentence_map[sid] = s.get("text", s.get("sentence", ""))
+
     issues = []
     findings_by_tier = results_json.get("findings", {})
     for severity in ("critical", "high", "medium", "low"):
         for f in findings_by_tier.get(severity, []):
+            sentence_id = f.get("sentence_id", "")
+            sentence_text = sentence_map.get(sentence_id, "")
+
+            # Normalize evidence: can be string, dict, or None
+            raw_evidence = f.get("evidence")
+            evidence = None
+            if isinstance(raw_evidence, dict):
+                evidence = raw_evidence
+            elif isinstance(raw_evidence, str) and raw_evidence:
+                evidence = {"summary": raw_evidence}
+            # Attach sentence text to evidence
+            if evidence and sentence_text and not evidence.get("sentence"):
+                evidence["sentence"] = sentence_text
+
             issues.append({
                 "id": f.get("finding_id", str(len(issues) + 1)),
                 "severity": severity,
                 "title": f.get("title", ""),
                 "description": f.get("detail") or f.get("title", ""),
-                "location": f.get("sentence_id"),
+                "location": sentence_id or None,
+                "sentence_text": sentence_text or None,
                 "scanner": f.get("scanner", ""),
                 "category": f.get("category", ""),
                 "signal_category": f.get("signal_category"),
@@ -53,7 +82,7 @@ def _flatten_findings(results_json: dict) -> list[dict]:
                 "raw_risk": f.get("raw_risk", ""),
                 "adjusted_risk": f.get("adjusted_risk", ""),
                 "actionability": f.get("actionability", ""),
-                "evidence": f.get("evidence"),
+                "evidence": evidence,
                 "recommendation": f.get("recommendation", ""),
                 "adjustment": f.get("adjustment"),
             })

@@ -1516,7 +1516,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "generic_phrases": report.predictability.generic_phrases_found,
             "sentences": [
                 {"sentence_id": s.get("sentence_id", ""),
-                 "text": s["sentence"][:100], "risk": s["risk_label"],
+                 "text": s["sentence"], "risk": s["risk_label"],
                  "score": s["risk"], "top10": s["top10_ratio"]}
                 for s in report.predictability.sentences
             ],

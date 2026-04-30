@@ -29,6 +29,7 @@ class IssueOut(BaseModel):
     title: Optional[str] = None
     description: str
     location: Optional[str] = None
+    sentence_text: Optional[str] = None
     scanner: Optional[str] = None
     category: Optional[str] = None
     signal_category: Optional[str] = None
