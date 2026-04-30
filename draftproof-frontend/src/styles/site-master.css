@@ -741,6 +741,7 @@ svg { display: block; }
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
+  justify-items: center;
   gap: 2rem;
 }
 
@@ -751,12 +752,14 @@ svg { display: block; }
   gap: 1.5rem;
   font-size: .88rem;
   color: rgba(255, 255, 255, .7);
+  justify-content: center;
 }
 
 .footer-links a:hover { color: #fff; }
 
 .site-footer p {
   grid-column: 1 / -1;
+  text-align: center;
   color: rgba(255, 255, 255, .68);
   font-size: .82rem;
   line-height: 1.5;
@@ -1440,6 +1443,7 @@ th {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
+  justify-items: center;
   gap: 2rem;
 }
 
@@ -1450,12 +1454,14 @@ th {
   gap: 1.5rem;
   font-size: .88rem;
   color: rgba(255, 255, 255, .7);
+  justify-content: center;
 }
 
 .global-footer-wrap .footer-links a:hover { color: #fff; }
 
 .global-footer-wrap .site-footer p {
   grid-column: 1 / -1;
+  text-align: center;
   color: rgba(255, 255, 255, .68);
   font-size: .82rem;
   line-height: 1.5;
