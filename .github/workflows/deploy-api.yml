@@ -24,7 +24,7 @@ jobs:
           CURRENT=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}")
           echo "Service keys: $(echo "$CURRENT" | jq 'keys')"
-          echo "Latest deployment id: $(echo "$CURRENT" | jq '.service.latest_deployment.id // "NONE"')"
+          echo "Inner service keys: $(echo "$CURRENT" | jq '.service | keys')"
           DEFINITION=$(echo "$CURRENT" | jq '.service.latest_deployment.definition')
           echo "Definition keys: $(echo "$DEFINITION" | jq 'keys // "NULL"')"
           echo "Definition name: $(echo "$DEFINITION" | jq '.name // "NULL"')"
