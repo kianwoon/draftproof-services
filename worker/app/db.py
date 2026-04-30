@@ -103,6 +103,6 @@ def capture_credits(user_id: str, job_id: str, word_count: int):
         cur.execute(
             """INSERT INTO usage_events
                (user_id, credit_account_id, event_type, tokens_charged, job_id, word_count)
-               VALUES (%s, %s, 'scan_completed', %s, %s, %s)""",
+               VALUES (%s, %s, 'scan', %s, %s, %s)""",
             (user_id, acct_id, tokens_reserved, job_id, word_count),
         )
