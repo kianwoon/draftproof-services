@@ -158,6 +158,7 @@ class DraftReport:
     manual_actions: List[Dict[str, str]] = None
 
     scan_time_seconds: float = 0.0
+    generated_at: str = ""
     original_text: str = ""
     rewritten_text: str = ""
     false_positives: Optional[List[Dict[str, str]]] = None
@@ -305,7 +306,14 @@ class ReportBuilder:
         self._scan_time = scan_time
         self._original_text = original_text
         self._rewritten_text = rewritten_text
+        self._generated_at = self._sgt_now()
         return self
+
+    @staticmethod
+    def _sgt_now() -> str:
+        from datetime import datetime, timezone, timedelta
+        sgt = timezone(timedelta(hours=8))
+        return datetime.now(sgt).strftime("%Y-%m-%d %H:%M SGT")
 
     def add_postprocess_results(self, pp_results: list) -> "ReportBuilder":
         """Extract false-positive reclassifications from PostProcessResult list."""
@@ -1016,6 +1024,7 @@ class ReportBuilder:
             citation=self._cite_summary,
             rewrite=self._rewrite_summary,
             scan_time_seconds=self._scan_time,
+            generated_at=getattr(self, "_generated_at", ""),
             original_text=self._original_text,
             rewritten_text=self._rewritten_text,
             false_positives=self._false_positives or None,
@@ -1481,5 +1490,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         }
 
     result["scan_time_seconds"] = report.scan_time_seconds
+    if report.generated_at:
+        result["generated_at"] = report.generated_at
 
     return result
