@@ -136,15 +136,22 @@ async def auth_google(request: Request):
 
 @router.get("/google/callback")
 async def auth_google_callback(request: Request, db: AsyncSession = Depends(get_db)):
+    import logging
+    log = logging.getLogger("auth.google")
     try:
         token = await oauth.google.authorize_access_token(request)
         user_info = token.get("userinfo")
         if not user_info:
             user_info = await oauth.google.userinfo(token=token)
 
+        email = user_info.get("email", "MISSING")
+        log.info("Google callback success — email=%s sub=%s", email, user_info.get("sub"))
+
         _validate_email_domain(user_info["email"])
         user = await _upsert_user(db, "google", user_info)
         jwt_token = _create_jwt(user.id, user.email)
+
+        log.info("User upserted — user_id=%s, redirecting to %s/auth/callback", user.id, FRONTEND_URL)
 
         response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
         response.set_cookie(
@@ -157,8 +164,7 @@ async def auth_google_callback(request: Request, db: AsyncSession = Depends(get_
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logging.getLogger("auth.google").error("Google OAuth callback failed: %s", e, exc_info=True)
+        log.error("Google OAuth callback failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Google sign-in failed")
 
 
@@ -226,13 +232,18 @@ async def get_current_user(request: Request) -> dict:
 
 @router.get("/me")
 async def get_me(request: Request):
+    import logging
+    log = logging.getLogger("auth.me")
     token = request.cookies.get("token")
     if not token:
+        log.info("/me — no token cookie found. Cookies: %s", list(request.cookies.keys()))
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        log.info("/me — resolved user_id=%s email=%s", payload["sub"], payload["email"])
         return {"id": payload["sub"], "email": payload["email"]}
     except jwt.JWTError:
+        log.warning("/me — JWT decode failed")
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
