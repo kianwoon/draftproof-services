@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { getPurchaseHistory } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 5;
 
 const STATUS_MAP = {
   paid:      { label: 'Paid',      color: '#16a34a', bg: '#f0fdf4' },
