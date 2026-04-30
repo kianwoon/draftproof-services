@@ -19,21 +19,22 @@ jobs:
           APP_NAME: "draftproof"
           SERVICE_NAME: "draftproof"
         run: |
-          # Debug: list apps
-          APPS_RAW=$(curl -s -w "\n%{http_code}" \
+          # Get service ID from /v1/services
+          SVC_RAW=$(curl -s -w "\n%{http_code}" \
             -H "Authorization: Bearer ${KOYEB_TOKEN}" \
-            "https://app.koyeb.com/v1/apps")
-          APPS_HTTP=$(echo "$APPS_RAW" | tail -1)
-          APPS_BODY=$(echo "$APPS_RAW" | sed '$d')
-          echo "GET /v1/apps HTTP ${APPS_HTTP}"
-          echo "${APPS_BODY}" | jq '.' | head -80
+            "https://app.koyeb.com/v1/services?app_id=d33cd2b0-feeb-4249-8ea1-f348bf544ac2&name=draftproof")
+          SVC_HTTP=$(echo "$SVC_RAW" | tail -1)
+          SVC_BODY=$(echo "$SVC_RAW" | sed '$d')
+          echo "Services lookup HTTP ${SVC_HTTP}"
+          echo "${SVC_BODY}" | jq '.' | head -30
 
-          # Get service ID for draftproof/draftproof
-          SERVICE_ID=$(echo "${APPS_BODY}" | jq -r '[.apps[] | select(.name == "draftproof") | .updated_services // .services // [] | .[] | select(.name == "draftproof") | .id] | first // empty')
+          SERVICE_ID=$(echo "${SVC_BODY}" | jq -r '.services[0].id // empty')
           echo "Resolved SERVICE_ID=${SERVICE_ID}"
 
           if [ -z "$SERVICE_ID" ]; then
-            echo "ERROR: Could not find service draftproof/draftproof"
+            echo "Listing all services to find match..."
+            ALL_SVCS=$(curl -s -H "Authorization: Bearer ${KOYEB_TOKEN}" "https://app.koyeb.com/v1/services")
+            echo "${ALL_SVCS}" | jq -r '.services[] | "\(.name) \(.id)"'
             exit 1
           fi
 
