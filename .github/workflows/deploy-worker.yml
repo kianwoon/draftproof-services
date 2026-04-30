@@ -18,7 +18,7 @@ jobs:
           APP_ID: "d33cd2b0-feeb-4249-8ea1-f348bf544ac2"
           COMMIT_SHA: ${{ github.sha }}
         run: |
-          # Look up worker service ID
+          # Step 0: Look up worker service ID
           SVC_RAW=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             "https://app.koyeb.com/v1/services?app_id=${APP_ID}")
           SERVICE_ID=$(echo "$SVC_RAW" | jq -r '.services[] | select(.name == "draftproof-worker") | .id')
@@ -28,11 +28,19 @@ jobs:
             exit 1
           fi
           echo "Deploying commit ${COMMIT_SHA:0:7} to service ${SERVICE_ID}..."
-          # GET current definition, PUT with updated git.sha
-          CURRENT=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+          # Step 1: GET service to find latest deployment ID
+          SVC=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}")
-          DEFINITION=$(echo "$CURRENT" | jq '.service.latest_deployment.definition')
+          DEPLOY_ID=$(echo "$SVC" | jq -r '.service.latest_deployment_id')
+          echo "Latest deployment: ${DEPLOY_ID}"
+          # Step 2: GET that deployment to get its definition
+          DEPLOY=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            "https://app.koyeb.com/v1/deployments/${DEPLOY_ID}")
+          DEFINITION=$(echo "$DEPLOY" | jq '.deployment.definition')
+          echo "Definition name: $(echo "$DEFINITION" | jq -r '.name')"
+          # Step 3: Patch git.sha with the new commit
           UPDATED=$(echo "$DEFINITION" | jq --arg sha "$COMMIT_SHA" '.git.sha = $sha')
+          # Step 4: PUT service with updated definition
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
             -H "Authorization: Bearer ${KOYEB_TOKEN}" \
