@@ -1,21 +1,31 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function AuthCallback() {
   const navigate = useNavigate();
   const { setUser } = useAuth();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
+    // If backend redirected here with an error, send user to sign-in with message
+    const error = searchParams.get('error');
+    if (error) {
+      navigate(`/signin?error=${encodeURIComponent(error)}`, { replace: true });
+      return;
+    }
+
     import('../api/authApi').then(({ getMe }) => {
       getMe()
         .then(({ data }) => {
           setUser(data);
           navigate('/dashboard', { replace: true });
         })
-        .catch(() => navigate('/signin', { replace: true }));
+        .catch(() => {
+          navigate('/signin?error=Session expired. Please sign in again.', { replace: true });
+        });
     });
-  }, [navigate, setUser]);
+  }, [navigate, setUser, searchParams]);
 
   return (
     <div className="container" style={{ paddingTop: 'calc(var(--header-h) + 4rem)' }}>

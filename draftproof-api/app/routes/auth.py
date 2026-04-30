@@ -136,22 +136,29 @@ async def auth_google(request: Request):
 
 @router.get("/google/callback")
 async def auth_google_callback(request: Request, db: AsyncSession = Depends(get_db)):
-    token = await oauth.google.authorize_access_token(request)
-    user_info = token.get("userinfo")
-    if not user_info:
-        user_info = await oauth.google.userinfo(token=token)
+    try:
+        token = await oauth.google.authorize_access_token(request)
+        user_info = token.get("userinfo")
+        if not user_info:
+            user_info = await oauth.google.userinfo(token=token)
 
-    _validate_email_domain(user_info["email"])
-    user = await _upsert_user(db, "google", user_info)
-    jwt_token = _create_jwt(user.id, user.email)
+        _validate_email_domain(user_info["email"])
+        user = await _upsert_user(db, "google", user_info)
+        jwt_token = _create_jwt(user.id, user.email)
 
-    response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
-    response.set_cookie(
-        "token", jwt_token,
-        httponly=True, secure=True, samesite="lax",
-        max_age=JWT_EXPIRATION_HOURS * 3600,
-    )
-    return response
+        response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
+        response.set_cookie(
+            "token", jwt_token,
+            httponly=True, secure=True, samesite="lax",
+            max_age=JWT_EXPIRATION_HOURS * 3600,
+        )
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.getLogger("auth.google").error("Google OAuth callback failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Google sign-in failed")
 
 
 @router.get("/microsoft")
@@ -200,7 +207,7 @@ async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(g
     except Exception as e:
         import logging
         logging.getLogger("auth.microsoft").error("Microsoft OAuth callback failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Microsoft sign-in failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Microsoft sign-in failed")
 
 
 async def get_current_user(request: Request) -> dict:

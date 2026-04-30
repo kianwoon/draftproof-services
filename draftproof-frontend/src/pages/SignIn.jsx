@@ -1,12 +1,16 @@
 import { useAuth } from '../context/AuthContext';
 import { googleAuthUrl, microsoftAuthUrl } from '../api/authApi';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams, useNavigate } from 'react-router-dom';
 
 export default function SignIn() {
   const { user, loading } = useAuth();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   if (loading) return <div className="container"><p>Loading...</p></div>;
   if (user) return <Navigate to="/" replace />;
+
+  const errorMsg = searchParams.get('error');
 
   return (
     <div className="container" style={{ paddingTop: 'calc(var(--header-h) + 4rem)' }}>
@@ -15,6 +19,18 @@ export default function SignIn() {
         <p style={{ marginBottom: '2rem' }}>
           Use your Google or Microsoft account to continue.
         </p>
+
+        {errorMsg && (
+          <div className="alert alert-error" style={{ marginBottom: '1.5rem' }}>
+            {errorMsg}
+            <button
+              onClick={() => navigate('/signin', { replace: true })}
+              style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1 }}
+            >
+              &times;
+            </button>
+          </div>
+        )}
 
         <div className="signin-buttons">
           <a href={googleAuthUrl} className="btn btn-signin btn-google">
