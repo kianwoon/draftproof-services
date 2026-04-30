@@ -20,10 +20,10 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           echo "Deploying commit ${COMMIT_SHA:0:7} to service ${SERVICE_ID}..."
-          # GET current definition, strip scopes (PUT rejects them), update git.sha
+          # GET current definition, only patch git.sha — pass everything else as-is
           CURRENT=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}")
-          DEFINITION=$(echo "$CURRENT" | jq '.service.latest_deployment.definition' | jq 'walk(if type == "object" then del(.scopes) else . end)')
+          DEFINITION=$(echo "$CURRENT" | jq '.service.latest_deployment.definition')
           UPDATED=$(echo "$DEFINITION" | jq --arg sha "$COMMIT_SHA" '.git.sha = $sha')
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
