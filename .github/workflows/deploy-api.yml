@@ -13,8 +13,21 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy API service to Koyeb
-        uses: koyeb/action-git-deploy@v1
-        with:
-          api-token: ${{ secrets.KOYEB_TOKEN }}
-          service-id: "c70d5b2b-52e8-4ed3-8f79-a7c727e60320"
+      - name: Trigger Koyeb redeploy
+        env:
+          KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
+          SERVICE_ID: "c70d5b2b-52e8-4ed3-8f79-a7c727e60320"
+        run: |
+          echo "Redeploying service ${SERVICE_ID}..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://app.koyeb.com/v1/services/${SERVICE_ID}/redeploy" \
+            -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            -H "Content-Type: application/json")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP status: ${HTTP_CODE}"
+          echo "Response: ${BODY}" | head -50
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "ERROR: Koyeb redeploy failed"
+            exit 1
+          fi
