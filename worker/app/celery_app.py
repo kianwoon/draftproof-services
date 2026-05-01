@@ -31,4 +31,6 @@ app.conf.update(
         "app.tasks.scan_document": {"queue": "scan"},
     },
     task_default_queue="default",
+    # Re-deliver unacked tasks after 2 minutes if worker crashed
+    broker_transport_options={"visibility_timeout": 120},
 )
