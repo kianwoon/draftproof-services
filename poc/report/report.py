@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
-from detect.scoring import extract_signals, calculate_authorship_concern
+from detect.scoring import extract_signals, calculate_authorship_concern, calibrate_ai_risk
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -176,6 +176,7 @@ class DraftReport:
     authorship_concern_score: float = 0.0
     authorship_concern_confidence: str = "low"
     authorship_concern_signals: Optional[Dict[str, Any]] = None
+    ai_risk_badge: Optional[Dict[str, Any]] = None
     def to_dict(self) -> dict:
         """Serialize the report to a JSON-ready dict."""
         import json
@@ -1136,6 +1137,24 @@ class ReportBuilder:
             has_draft_history=False,
         )
 
+        # ── AI Risk Badge ──
+        sig = concern["signals"] or {}
+        ai_lik = 0.0
+        dg_idx = 0.0
+        for f in self._findings:
+            if f.metadata and isinstance(f.metadata, dict):
+                ai_lik = max(ai_lik, f.metadata.get("ai_likelihood", 0.0))
+                dg_idx = max(dg_idx, f.metadata.get("domain_grounding_index", 0.0))
+
+        ai_risk_badge = calibrate_ai_risk(
+            ai_likelihood=ai_lik,
+            predictability=sig.get("predictability", 0.0) or 0.0,
+            specificity_raw=sig.get("specificity", 0.0) or 0.0,
+            genericity=sig.get("genericity", 0.0) or 0.0,
+            source_grounding=sig.get("source_grounding", 0.0) or 0.0,
+            domain_grounding_index=dg_idx,
+        )
+
         return DraftReport(
             overall_tier=adjusted_tier,
             finding_count=len(self._findings),
@@ -1161,6 +1180,7 @@ class ReportBuilder:
             authorship_concern_score=concern["score"],
             authorship_concern_confidence=concern["confidence_label"],
             authorship_concern_signals=concern["signals"],
+            ai_risk_badge=ai_risk_badge,
         )
 
 
@@ -1473,6 +1493,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             ),
             "total_signal_count": 7,
         },
+        "ai_risk_badge": report.ai_risk_badge,
         "document_context": {
             "word_count": len(report.original_text.split()) if report.original_text else 0,
             "sentence_count": len(report.predictability.sentences) if report.predictability else 0,

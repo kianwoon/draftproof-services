@@ -186,6 +186,32 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     lines.append("## Executive Summary")
     lines.append("")
 
+    # AI Risk Badge
+    if report.ai_risk_badge:
+        badge = report.ai_risk_badge
+        badge_tier = badge.get("tier", "")
+        badge_score = badge.get("calibrated_ai_score", 0)
+        badge_band = badge.get("turnitin_like_band", "").replace("_", " ").title()
+        badge_raw = badge.get("raw_ai_concern", 0)
+        badge_gp = badge.get("grounding_protection", 0)
+
+        tier_styles = {
+            "LOW": ("LOW", "#22c55e"),
+            "LOW_REVIEW": ("LOW-REVIEW", "#84cc16"),
+            "MEDIUM": ("MEDIUM", "#f59e0b"),
+            "HIGH": ("HIGH", "#ef4444"),
+        }
+        tier_label, _ = tier_styles.get(badge_tier, (badge_tier, "#999"))
+
+        lines.append("### AI Risk Badge")
+        lines.append("")
+        lines.append(f"- **Tier**: {tier_label}")
+        lines.append(f"- **Score**: `{badge_score:.2f}%`")
+        lines.append(f"- **Band**: {badge_band}")
+        if badge_gp > 0:
+            lines.append(f"- **Grounding protection**: `{badge_gp:.1f}%` (reduces raw concern from `{badge_raw:.2f}%`)")
+        lines.append("")
+
     # Build bar strings
     max_n = max(n_critical, n_high, n_medium, n_low, 1)
     def _bar(count):

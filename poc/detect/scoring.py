@@ -162,6 +162,74 @@ def derive_concern_tier(score: float, signals: SignalScores, confidence_label: s
     return "clear"
 
 
+# ── AI Risk Badge ─────────────────────────────────────────────────────
+
+def calibrate_ai_risk(
+    ai_likelihood: float,
+    predictability: float,
+    specificity_raw: float,
+    genericity: float,
+    source_grounding: float,
+    domain_grounding_index: float,
+) -> Dict[str, Any]:
+    """Calibrated AI-risk badge for executive summary.
+
+    All inputs are decimals (0.085 = 8.5%).
+    Returns calibrated score, Turnitin-style band, tier, and component breakdown.
+    """
+
+    # 1. Domain strength
+    if domain_grounding_index >= 2.5:
+        domain_strength = 1.0
+    elif domain_grounding_index >= 1.5:
+        domain_strength = 0.6
+    else:
+        domain_strength = 0.2
+
+    # 2. Grounding protection (max 60%)
+    grounding_protection = min(0.35 * source_grounding + 0.25 * domain_strength, 0.60)
+
+    # 3. Excess above academic baseline
+    pred_excess = max(predictability - 0.35, 0)
+    spec_excess = max(specificity_raw - 0.45, 0)
+
+    # 4. Raw AI concern
+    raw_ai_concern = (
+        0.60 * ai_likelihood
+        + 0.20 * pred_excess
+        + 0.10 * genericity
+        + 0.10 * spec_excess
+    )
+
+    # 5. Apply grounding protection
+    calibrated_score = raw_ai_concern * (1 - grounding_protection)
+
+    # 6. Banding
+    if calibrated_score < 0.025:
+        band = "likely_0"
+        tier = "LOW"
+    elif calibrated_score < 0.055:
+        band = "likely_0_or_star"
+        tier = "LOW"
+    elif calibrated_score < 0.090:
+        band = "likely_star"
+        tier = "LOW_REVIEW"
+    elif calibrated_score < 0.160:
+        band = "review_zone"
+        tier = "MEDIUM"
+    else:
+        band = "elevated_concern"
+        tier = "HIGH"
+
+    return {
+        "calibrated_ai_score": round(calibrated_score * 100, 2),
+        "turnitin_like_band": band,
+        "tier": tier,
+        "raw_ai_concern": round(raw_ai_concern * 100, 2),
+        "grounding_protection": round(grounding_protection * 100, 2),
+    }
+
+
 # ── Main entry point ──────────────────────────────────────────────────
 
 def calculate_authorship_concern(
