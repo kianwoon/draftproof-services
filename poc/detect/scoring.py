@@ -13,7 +13,7 @@ Key design:
 """
 
 from dataclasses import dataclass, asdict
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 
 
 def clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -162,7 +162,56 @@ def derive_concern_tier(score: float, signals: SignalScores, confidence_label: s
     return "clear"
 
 
-# ── AI Risk Badge ─────────────────────────────────────────────────────
+# ── AI Risk Badge (v3) ─────────────────────────────────────────────────
+
+Tier = Literal["LOW", "LOW_REVIEW", "MEDIUM", "HIGH"]
+TurnitinBand = Literal[
+    "likely_0",
+    "likely_0_or_star",
+    "likely_star",
+    "review_zone",
+    "elevated_concern",
+]
+
+_TIER_ORDER = {"LOW": 0, "LOW_REVIEW": 1, "MEDIUM": 2, "HIGH": 3}
+_TIER_BY_VAL = {v: k for k, v in _TIER_ORDER.items()}
+
+
+def _max_tier(current: Tier, minimum: Tier) -> Tier:
+    return _TIER_BY_VAL[max(_TIER_ORDER[current], _TIER_ORDER[minimum])]
+
+
+def _min_tier(current: Tier, maximum: Tier) -> Tier:
+    return _TIER_BY_VAL[min(_TIER_ORDER[current], _TIER_ORDER[maximum])]
+
+
+def _confidence_weight(confidence: str) -> float:
+    if confidence == "high":
+        return 1.00
+    if confidence == "medium":
+        return 0.65
+    return 0.35
+
+
+def _domain_strength_from_index(domain_grounding_index: float) -> float:
+    if domain_grounding_index >= 2.5:
+        return 1.0
+    if domain_grounding_index >= 1.5:
+        return 0.6
+    return 0.2
+
+
+def _band_from_score(score: float) -> tuple:
+    if score < 0.025:
+        return "likely_0", "LOW"
+    if score < 0.055:
+        return "likely_0_or_star", "LOW_REVIEW"
+    if score < 0.090:
+        return "likely_star", "LOW_REVIEW"
+    if score < 0.140:
+        return "review_zone", "MEDIUM"
+    return "elevated_concern", "HIGH"
+
 
 def calibrate_ai_risk(
     ai_likelihood: float,
@@ -171,62 +220,107 @@ def calibrate_ai_risk(
     genericity: float,
     source_grounding: float,
     domain_grounding_index: float,
+    confidence: str = "low",
+    high_findings: int = 0,
+    critical_findings: int = 0,
 ) -> Dict[str, Any]:
-    """Calibrated AI-risk badge for executive summary.
+    """Calibrated AI-risk badge v3.
 
-    All inputs are decimals (0.085 = 8.5%).
-    Returns calibrated score, Turnitin-style band, tier, and component breakdown.
+    All percentage inputs are decimals (0.085 = 8.5%).
     """
+    ai = clamp(ai_likelihood)
+    pred = clamp(predictability)
+    spec = clamp(specificity_raw)
+    gen = clamp(genericity)
+    src = clamp(source_grounding)
 
-    # 1. Domain strength
-    if domain_grounding_index >= 2.5:
-        domain_strength = 1.0
-    elif domain_grounding_index >= 1.5:
-        domain_strength = 0.6
-    else:
-        domain_strength = 0.2
+    domain_strength = _domain_strength_from_index(domain_grounding_index)
+    conf_w = _confidence_weight(confidence)
 
-    # 2. Grounding protection (max 60%)
-    grounding_protection = min(0.35 * source_grounding + 0.25 * domain_strength, 0.60)
+    # 1. Excess signals above normal academic baseline
+    pred_excess = max(pred - 0.35, 0.0)
+    spec_excess = max(spec - 0.45, 0.0)
 
-    # 3. Excess above academic baseline
-    pred_excess = max(predictability - 0.35, 0)
-    spec_excess = max(specificity_raw - 0.45, 0)
-
-    # 4. Raw AI concern
-    raw_ai_concern = (
-        0.60 * ai_likelihood
-        + 0.20 * pred_excess
-        + 0.10 * genericity
-        + 0.10 * spec_excess
+    # 2. Base style risk
+    base_style_risk = (
+        0.50 * ai
+        + 0.25 * pred_excess
+        + 0.20 * gen
+        + 0.05 * spec_excess
     )
 
-    # 5. Apply grounding protection
-    calibrated_score = raw_ai_concern * (1 - grounding_protection)
+    # 3. Grounding credit, capped LOW (max 30%)
+    grounding_credit = min(0.30, 0.15 * src + 0.15 * domain_strength)
+    score_after_grounding = base_style_risk * (1 - grounding_credit)
 
-    # 6. Banding
-    if calibrated_score < 0.025:
-        band = "likely_0"
-        tier = "LOW"
-    elif calibrated_score < 0.055:
-        band = "likely_0_or_star"
-        tier = "LOW"
-    elif calibrated_score < 0.090:
-        band = "likely_star"
-        tier = "LOW_REVIEW"
-    elif calibrated_score < 0.160:
-        band = "review_zone"
-        tier = "MEDIUM"
+    # 4. Synergy boosts
+    synergy = 0.0
+
+    if ai >= 0.12 and pred >= 0.45 and gen >= 0.10:
+        synergy += 0.050
+
+    if ai >= 0.10 and pred >= 0.43 and gen >= 0.08:
+        synergy += 0.025
+
+    if gen >= 0.10 and confidence in ("medium", "high"):
+        synergy += 0.020 * conf_w
+
+    if high_findings > 0:
+        synergy += min(0.040, 0.015 * high_findings)
+
+    if critical_findings > 0:
+        synergy += min(0.080, 0.040 * critical_findings)
+
+    calibrated_score = clamp(score_after_grounding + synergy)
+    band, tier = _band_from_score(calibrated_score)
+
+    # 5. Safety caps and floor rules
+    if (
+        ai < 0.10 and gen == 0 and pred < 0.40
+        and src >= 0.90 and domain_strength == 1.0
+        and high_findings == 0 and critical_findings == 0
+    ):
+        tier, band = "LOW", "likely_0"
+
+    if (
+        ai < 0.12 and src >= 0.80 and domain_strength == 1.0
+        and high_findings == 0 and critical_findings == 0
+    ):
+        tier = _min_tier(tier, "LOW_REVIEW")
+        if band in ("review_zone", "elevated_concern"):
+            band = "likely_0_or_star"
+
+    if (
+        ai >= 0.12 and pred >= 0.45 and gen >= 0.10
+        and confidence in ("medium", "high")
+    ):
+        tier = _max_tier(tier, "MEDIUM")
+        if band in ("likely_0", "likely_0_or_star"):
+            band = "likely_star"
+
+    if critical_findings > 0:
+        tier, band = "HIGH", "elevated_concern"
+
+    # 6. Separate writing review score
+    writing_review_score = clamp(0.40 * pred + 0.35 * spec + 0.25 * gen)
+    if writing_review_score < 0.35:
+        writing_band = "clean"
+    elif writing_review_score < 0.50:
+        writing_band = "light_review"
+    elif writing_review_score < 0.65:
+        writing_band = "review"
     else:
-        band = "elevated_concern"
-        tier = "HIGH"
+        writing_band = "heavy_review"
 
     return {
-        "calibrated_ai_score": round(calibrated_score * 100, 2),
-        "turnitin_like_band": band,
         "tier": tier,
-        "raw_ai_concern": round(raw_ai_concern * 100, 2),
-        "grounding_protection": round(grounding_protection * 100, 2),
+        "turnitin_like_band": band,
+        "calibrated_ai_score": round(calibrated_score * 100, 2),
+        "base_style_risk": round(base_style_risk * 100, 2),
+        "grounding_credit": round(grounding_credit * 100, 2),
+        "synergy_boost": round(synergy * 100, 2),
+        "writing_review_score": round(writing_review_score * 100, 2),
+        "writing_review_band": writing_band,
     }
 
 

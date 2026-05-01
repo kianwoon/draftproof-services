@@ -192,8 +192,10 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         badge_tier = badge.get("tier", "")
         badge_score = badge.get("calibrated_ai_score", 0)
         badge_band = badge.get("turnitin_like_band", "").replace("_", " ").title()
-        badge_raw = badge.get("raw_ai_concern", 0)
-        badge_gp = badge.get("grounding_protection", 0)
+        badge_gc = badge.get("grounding_credit", 0)
+        badge_synergy = badge.get("synergy_boost", 0)
+        wr_score = badge.get("writing_review_score", 0)
+        wr_band = badge.get("writing_review_band", "").replace("_", " ").title()
 
         tier_styles = {
             "LOW": ("LOW", "#22c55e", "#f0fdf4"),
@@ -214,8 +216,12 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             f'- **Band**: <span style="background:{tier_bg};color:{tier_fg};'
             f'padding:2px 8px;border-radius:3px">{badge_band}</span>'
         )
-        if badge_gp > 0:
-            lines.append(f"- **Grounding protection**: `{badge_gp:.1f}%` (reduces raw concern from `{badge_raw:.2f}%`)")
+        if badge_gc > 0:
+            lines.append(f"- **Grounding credit**: `{badge_gc:.1f}%`")
+        if badge_synergy > 0:
+            lines.append(f"- **Synergy boost**: `{badge_synergy:.1f}%`")
+        if wr_score > 0:
+            lines.append(f"- **Writing review**: `{wr_score:.1f}%` ({wr_band})")
         lines.append("")
 
     # Build bar strings

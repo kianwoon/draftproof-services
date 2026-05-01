@@ -1146,6 +1146,9 @@ class ReportBuilder:
                 ai_lik = max(ai_lik, f.metadata.get("ai_likelihood", 0.0))
                 dg_idx = max(dg_idx, f.metadata.get("domain_grounding_index", 0.0))
 
+        n_high = sum(1 for f in self._findings if f.tier == Tier.HIGH)
+        n_critical = sum(1 for f in self._findings if f.tier == Tier.CRITICAL)
+
         ai_risk_badge = calibrate_ai_risk(
             ai_likelihood=ai_lik,
             predictability=sig.get("predictability", 0.0) or 0.0,
@@ -1153,6 +1156,9 @@ class ReportBuilder:
             genericity=sig.get("genericity", 0.0) or 0.0,
             source_grounding=sig.get("source_grounding", 0.0) or 0.0,
             domain_grounding_index=dg_idx,
+            confidence=concern["confidence_label"],
+            high_findings=n_high,
+            critical_findings=n_critical,
         )
 
         return DraftReport(
