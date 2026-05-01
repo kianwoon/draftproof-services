@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse
@@ -6,12 +7,15 @@ from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from authlib.integrations.starlette_client import OAuth
 from jose import jwt
+import boto3
+from botocore.config import Config as BotoConfig
 
 from app.config import (
     SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_HOURS,
     ALLOWED_EMAIL_DOMAINS, FRONTEND_URL,
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
     MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_TENANT,
+    R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME,
 )
 from app.models.db import get_db, User, UserIdentity, CreditAccount
 
@@ -64,7 +68,41 @@ def _create_jwt(user_id: str, email: str) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
-async def _upsert_user(db: AsyncSession, provider: str, user_info: dict) -> User:
+async def _fetch_microsoft_avatar(access_token: str, user_id: str) -> str | None:
+    """Fetch profile photo from Microsoft Graph, upload to R2, return URL."""
+    import httpx
+    log = logging.getLogger("auth.microsoft.avatar")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://graph.microsoft.com/v1.0/me/photo/$value",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if resp.status_code != 200:
+                log.info("No photo available (status %d)", resp.status_code)
+                return None
+            photo_bytes = resp.content
+            content_type = resp.headers.get("content-type", "image/jpeg")
+
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=R2_ENDPOINT_URL,
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+            config=BotoConfig(signature_version="s3v4"),
+        )
+        key = f"avatars/{user_id}.jpg"
+        s3.put_object(
+            Bucket=R2_BUCKET_NAME, Key=key, Body=photo_bytes, ContentType=content_type
+        )
+        url = s3.generate_presigned_url(
+            "get_object", Params={"Bucket": R2_BUCKET_NAME, "Key": key}, ExpiresIn=86400 * 30
+        )
+        log.info("Avatar uploaded for user %s", user_id)
+        return url
+    except Exception as e:
+        log.warning("Failed to fetch Microsoft avatar: %s", e)
+        return None(db: AsyncSession, provider: str, user_info: dict) -> User:
     email = user_info["email"].lower().strip()
     email_normalized = email
     provider_user_id = str(user_info.get("sub", user_info.get("id", "")))
@@ -211,6 +249,14 @@ async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(g
 
         user_info["email"] = email
         _validate_email_domain(email)
+
+        # Microsoft doesn't include photo in userinfo — fetch from Graph API
+        ms_access_token = token.get("access_token")
+        if ms_access_token and not user_info.get("picture"):
+            avatar_url = await _fetch_microsoft_avatar(ms_access_token, user_info.get("sub", ""))
+            if avatar_url:
+                user_info["picture"] = avatar_url
+
         user = await _upsert_user(db, "microsoft", user_info)
         jwt_token = _create_jwt(user.id, user.email)
 
