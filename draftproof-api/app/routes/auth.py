@@ -43,6 +43,13 @@ def _build_callback_url(request: Request, callback_name: str) -> str:
     url = str(request.url_for(callback_name))
     if url.startswith("http://"):
         url = "https://" + url[7:]
+    # If the resolved host doesn't look like our public domain,
+    # rebuild using FRONTEND_URL's host (handles proxy/internal hosts).
+    from urllib.parse import urlparse
+    primary_origin = urlparse(FRONTEND_URL.split(",")[0].strip())
+    parsed = urlparse(url)
+    if primary_origin.hostname and parsed.hostname != primary_origin.hostname:
+        url = url.replace(f"://{parsed.hostname}", f"://{primary_origin.hostname}", 1)
     return url
 
 
