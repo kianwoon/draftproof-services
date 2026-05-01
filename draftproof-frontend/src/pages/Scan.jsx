@@ -133,7 +133,7 @@ export default function Scan() {
         title="Not enough tokens"
         message="You don't have enough tokens to scan this document. Purchase more tokens to continue."
         confirmLabel="Buy tokens"
-        onConfirm={() => navigate('/buy-tokens')}
+        onConfirm={() => navigate('/buy')}
         onCancel={() => setInsufficientTokens(false)}
       />
     </div>
