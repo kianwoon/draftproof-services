@@ -44,7 +44,7 @@ def score(
         label = "low"
 
     return CriterionScore(
-        name="polished_but_ungrounded",
+        name="citation_grounding_gap",
         value=round(value, 4),
         label=label,
         details={

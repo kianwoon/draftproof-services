@@ -179,16 +179,18 @@ class PredictabilityDetector(BaseDetector):
                 subtype = self._classify_predictability_subtype(s.sentence)
                 if s.risk_label == "review":
                     finding_type = "review_predictability"
-                    recommendation = "Review-level signal: normal prose predictability. No action needed unless paired with another risk signal."
+                    rec_snippet = s.sentence[:60] + ("..." if len(s.sentence) > 60 else "")
+                    recommendation = f"Normal prose rhythm for this sentence. Flagged for cluster context only."
                     action_type = "review_only"
                     evidence_strength = "weak"
                 else:
                     finding_type = f"{s.risk_label}_predictability"
                     if s.risk_label == "high":
-                        recommendation = "Sentence uses formulaic phrasing. Consider restructuring with specific evidence, cited claims, or original phrasing."
+                        recommendation = "Consider restructuring with specific evidence, cited claims, or original phrasing."
                         action_type = "add_specific_example"
                     else:
-                        recommendation = "Review only. Moderate predictability is normal in academic writing unless paired with other risk signals."
+                        rec_snippet = s.sentence[:60] + ("..." if len(s.sentence) > 60 else "")
+                        recommendation = f"Predictable phrasing detected. Consider whether a more specific or original wording would strengthen this point."
                         action_type = "review_manually"
                     evidence_strength = "strong" if s.predictability_risk > 0.7 else "moderate"
 
@@ -227,7 +229,7 @@ class PredictabilityDetector(BaseDetector):
                 evidence_strength="moderate",
                 detail=f"Generic phrase detected: '{phrase}'",
                 evidence=phrase,
-                recommendation="Replace with domain-specific or original phrasing.",
+                recommendation=f"Replace generic phrase '{phrase}' with domain-specific or original wording.",
                 suggested_action_type="review_manually",
                 location=self._locate_phrase(content, phrase),
                 signal_category="genericity",
@@ -240,7 +242,7 @@ class PredictabilityDetector(BaseDetector):
                 evidence_strength="weak",
                 detail=f"Predictability {shift['direction']} (Δ{shift['magnitude']:.1%})",
                 evidence=shift.get("to", "")[:100],
-                recommendation="Review for consistency in writing voice.",
+                recommendation=f"Writing predictability shifted {shift['direction']} here. Check if tone change was intentional or if this section needs smoothing.",
                 suggested_action_type="review_manually",
                 metadata=shift,
                 signal_category="predictability",

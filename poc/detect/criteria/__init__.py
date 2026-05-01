@@ -18,21 +18,35 @@ from .polish_vs_grounding import score as polish_vs_grounding_score
 from .paragraph_uniformity import score as paragraph_uniformity_score
 from .style_shift import score as style_shift_score
 from .source_grounding import score as source_grounding_score
+from .draft_evolution import score as draft_evolution_score
+from .structural_reuse import score as structural_reuse_score
 
 
 # Ordered list used by the composite classifier to iterate criteria.
+#
+# Weight philosophy (aligned with evidence-strength table):
+#   Major signals (Strong):   polished_ungrounded, draft_evolution, structural_reuse
+#   Moderate signals:         low_specificity, paragraph_uniformity
+#   Supporting only (Weak):   surprisal, topk, burstiness, generic_phrases,
+#                             repetitive_structure, style_shift
+#   Diagnostic only:          source_grounding (used by authorship concern scoring)
 ALL_CRITERIA = [
-    ("low_surprisal", surprisal_score, 0.20),
-    ("topk_predictability", topk_ratio_score, 0.15),
-    ("low_burstiness", burstiness_score, 0.15),
-    ("generic_phrase_density", generic_phrases_score, 0.15),
+    # ── Supporting only (Weak–Moderate) ──
+    ("low_surprisal", surprisal_score, 0.10),
+    ("topk_predictability", topk_ratio_score, 0.10),
+    ("low_burstiness", burstiness_score, 0.08),
+    ("repetitive_structure", repetitive_structure_score, 0.08),
+    ("generic_phrase_density", generic_phrases_score, 0.12),
+    # ── Moderate (Review trigger) ──
     ("low_specificity", specificity_score, 0.15),
-    ("repetitive_structure", repetitive_structure_score, 0.10),
+    ("paragraph_uniformity", paragraph_uniformity_score, 0.07),
+    # ── Needs context ──
     ("style_shift", style_shift_score, 0.05),
-    ("citation_grounding_gap", polish_vs_grounding_score, 0.05),
-    # paragraph_uniformity is diagnostic only (weight 0) until StructuralDetector
-    ("paragraph_uniformity", paragraph_uniformity_score, 0.00),
-    # Source grounding: claim-citation alignment (used primarily by authorship concern scoring)
+    # ── Major signals (Strong) ──
+    ("citation_grounding_gap", polish_vs_grounding_score, 0.20),
+    ("draft_evolution", draft_evolution_score, 0.15),
+    ("structural_reuse", structural_reuse_score, 0.10),
+    # ── Diagnostic only ──
     ("source_grounding", source_grounding_score, 0.00),
 ]
 
@@ -49,4 +63,6 @@ __all__ = [
     "paragraph_uniformity_score",
     "style_shift_score",
     "source_grounding_score",
+    "draft_evolution_score",
+    "structural_reuse_score",
 ]

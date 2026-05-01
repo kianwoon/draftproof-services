@@ -42,6 +42,7 @@ th {
     padding: 4pt 6pt;
     border: 1px solid #ddd;
     overflow-wrap: break-word;
+    word-break: break-word;
 }
 td {
     padding: 3pt 6pt;
@@ -49,6 +50,9 @@ td {
     vertical-align: top;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    word-break: break-word;
+    -webkit-hyphens: auto;
+    hyphens: auto;
 }
 
 code {
@@ -106,7 +110,7 @@ def render_pdf(markdown_text: str, output_path: str) -> str:
     html_body = md_lib.markdown(markdown_text, extensions=extensions)
 
     # Inject colgroup into wide tables (6-column: findings & false-positives)
-    colgroup_6 = '<colgroup><col style="width:4%"/><col style="width:5%"/><col style="width:5%"/><col style="width:38%"/><col style="width:24%"/><col style="width:24%"/></colgroup>'
+    colgroup_6 = '<colgroup><col style="width:3%"/><col style="width:4%"/><col style="width:4%"/><col style="width:36%"/><col style="width:26%"/><col style="width:27%"/></colgroup>'
     # Only tables whose header row starts with # (findings/false-positives pattern)
     html_body = re.sub(
         r'(<table>\s*<thead>\s*<tr>\s*<th[^>]*>\s*#\s*</th>)',

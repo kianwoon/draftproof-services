@@ -16,7 +16,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
-from detect.scoring import extract_signals, calculate_authorship_concern, calibrate_ai_risk, estimate_burstiness_risk, estimate_lived_detail_risk, estimate_citation_risk
+from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
+from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -1137,7 +1138,7 @@ class ReportBuilder:
             has_draft_history=False,
         )
 
-        # ── AI Risk Badge ──
+        # ── AI Risk Badge (Layer 3 Scoring) ──
         sig = concern["signals"] or {}
         ai_lik = 0.0
         dg_idx = 0.0
@@ -1149,14 +1150,7 @@ class ReportBuilder:
         n_high = sum(1 for f in self._findings if f.tier == Tier.HIGH)
         n_critical = sum(1 for f in self._findings if f.tier == Tier.CRITICAL)
 
-        # v5: compute burstiness and lived-detail from original text
-        burst_risk = 0.50
-        lived_risk = 0.50
-        if self._original_text:
-            burst_risk = estimate_burstiness_risk(self._original_text)
-            lived_risk = estimate_lived_detail_risk(self._original_text)
-
-        # v5: citation risk from cite summary
+        # Citation risk from cite summary
         cite_risk = 0.50
         if self._cite_summary:
             uncited = sum(1 for f in self._cite_summary.findings if "uncited" in f.get("type", "").lower())
@@ -1168,20 +1162,48 @@ class ReportBuilder:
                 total_claims=total_claims,
             ) if self._cite_summary.bib_entry_count > 0 else 0.50
 
-        ai_risk_badge = calibrate_ai_risk(
-            ai_likelihood=ai_lik,
+        # Build Layer3Input from scanner outputs + text-derived signals
+        layer3_input = build_layer3_input_from_text(
+            self._original_text or "",
             predictability=sig.get("predictability", 0.0) or 0.0,
-            specificity_raw=sig.get("specificity", 0.0) or 0.0,
-            genericity=sig.get("genericity", 0.0) or 0.0,
-            source_grounding=sig.get("source_grounding", 0.0) or 0.0,
-            domain_grounding_index=dg_idx,
-            confidence=concern["confidence_label"],
-            high_findings=n_high,
-            critical_findings=n_critical,
-            burstiness_risk=burst_risk,
-            lived_detail_risk=lived_risk,
-            citation_risk=cite_risk,
+            topk_pattern=sig.get("topk_pattern_risk", 0.0) or 0.0,
+            generic_phrase_density=sig.get("genericity", 0.0) or 0.0,
+            # broad_claim_risk & unsupported_claim_risk: auto-computed from text
+            citation_weakness_risk=cite_risk,
+            # source_grounding: cap at 0.30 when no actual sources/bibliography exist
+            source_grounding_strength=min(
+                sig.get("source_grounding", 0.0) or 0.0,
+                0.30 if not (self._cite_summary and self._cite_summary.bib_entry_count > 0) else 1.0,
+            ),
+            domain_grounding_strength=min(dg_idx, 0.30),
+            human_provenance_positive=False,
+            verified_ai_provenance=False,
         )
+
+        layer3 = Layer3Scorer().score(layer3_input)
+
+        ai_risk_badge = {
+            "tier": layer3.tier.value,
+            "calibrated_ai_score": round(layer3.calibrated_score * 100, 2),
+            "blended_score": round(layer3.blended_score * 100, 2),
+            "pre_calibration": {
+                "cluster_blended": round(layer3.blended_score * 100, 2),
+                "text_pattern": round(layer3.text_pattern.score * 100, 2),
+                "grounding_quality_risk": round(layer3.grounding_quality.score * 100, 2),
+                "structure_process": round(layer3.structure_process.score * 100, 2),
+            },
+            "ai_style_score": round(layer3.text_pattern.score * 100, 2),
+            "grounding_quality_risk": round(layer3.grounding_quality.score * 100, 2),
+            "structure_process_score": round(layer3.structure_process.score * 100, 2),
+            "text_pattern_components": {k: round(v * 100, 2) for k, v in layer3.text_pattern.components.items()},
+            "grounding_components": {k: round(v * 100, 2) for k, v in layer3.grounding_quality.components.items()},
+            "process_components": {k: round(v * 100, 2) for k, v in layer3.structure_process.components.items()},
+            "confidence": layer3.confidence.value,
+            "reasons": layer3.reasons,
+            "guardrails": layer3.guardrails,
+            "pattern_reasons": layer3.reasons,
+            "red_flags": n_high + n_critical,
+        }
 
         return DraftReport(
             overall_tier=adjusted_tier,
@@ -1519,7 +1541,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 1 for v in (report.authorship_concern_signals or {}).values()
                 if v is not None
             ),
-            "total_signal_count": 7,
+            "total_signal_count": len(report.authorship_concern_signals or {}),
         },
         "ai_risk_badge": report.ai_risk_badge,
         "document_context": {

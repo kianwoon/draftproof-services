@@ -30,6 +30,7 @@ _SIGNAL_CODES = {
     "style_shift": "SS",
     "low_burstiness": "LB",
     "repetitive_sentence_structure": "RS",
+    "uniform_paragraph_structure": "UP",
     # Genericity
     "generic_phrase": "GP",
     "generic_policy_claim": "GC",
@@ -201,10 +202,13 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         badge = report.ai_risk_badge
         badge_tier = badge.get("tier", "")
         badge_score = badge.get("calibrated_ai_score", 0)
-        badge_band = badge.get("turnitin_like_band", "").replace("_", " ").title()
-        badge_gc = badge.get("grounding_credit", 0)
+        badge_band = badge.get("turnitin_like_band", "")
+        if not badge_band:
+            badge_band = badge_tier
+        badge_band = badge_band.replace("_", " ").title()
+        badge_gc = badge.get("grounding_credit", 0) or badge.get("grounding_components", {}).get("grounding_credit", 0)
         badge_red_flags = badge.get("red_flags", 0)
-        badge_reasons = badge.get("pattern_reasons", [])
+        badge_reasons = badge.get("pattern_reasons", []) or badge.get("reasons", [])
 
         shield_colors = {
             "GREEN": "green",
@@ -217,10 +221,19 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append("### AI Risk Badge")
         lines.append("")
         lines.append(f"![{badge_tier}](https://img.shields.io/badge/Turnitin_Tier-{badge_tier}-{shield_color})")
+        lines.append("")
         lines.append(f"- **Score**: `{badge_score:.2f}%`")
         lines.append(f"- **Band**: {badge_band}")
         if badge_gc > 0:
             lines.append(f"- **Grounding credit**: `{badge_gc:.1f}%`")
+        # Cluster breakdown
+        ai_style = badge.get("ai_style_score", 0)
+        gq_score = badge.get("grounding_quality_risk", 0)
+        proc_score = badge.get("structure_process_score", 0)
+        if ai_style > 0 or gq_score > 0 or proc_score > 0:
+            lines.append(f"- **Text pattern cluster**: `{ai_style:.1f}%`")
+            lines.append(f"- **Grounding quality risk**: `{gq_score:.1f}%`")
+            lines.append(f"- **Structure/process cluster**: `{proc_score:.1f}%`")
         wr_score = badge.get("writing_review_score", 0)
         wr_band = badge.get("writing_review_band", "")
         if wr_score > 0:
@@ -251,10 +264,19 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         score_str = _scanner_score(report, scanner)
         scanner_rows.append((code, count, hc, score_str))
 
-    # Metrics table
+    # Metrics table — use badge tier if available, otherwise finding-based tier
+    display_tier = tier.value.upper()
+    display_emoji = emoji
+    if report.ai_risk_badge:
+        badge_tier_val = report.ai_risk_badge.get("tier", "")
+        if badge_tier_val:
+            display_tier = badge_tier_val
+            badge_emoji_map = {"GREEN": "[ok]", "AMBER": "[!]", "ORANGE": "[!!]", "RED": "[!!!]"}
+            display_emoji = badge_emoji_map.get(badge_tier_val, emoji)
+
     lines.append("| Metric | Value |")
     lines.append("|--------|-------|")
-    lines.append(f"| **Overall Tier** | {emoji} **{tier.value.upper()}** |")
+    lines.append(f"| **Integrity Tier** | {display_emoji} **{display_tier}** |")
     lines.append(f"| **Total Findings** | **{total}** |")
     lines.append(f"| Scan Time | `{report.scan_time_seconds:.1f}s` |")
     if report.generated_at:
@@ -278,87 +300,57 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append(f"| {code} | {count} | {hc} | {score_str} |")
         lines.append("")
 
-    # Risk gauges — separate signals, not conflated
-    signal_lines = []
-    if report.predictability:
-        p = report.predictability
-        signal_lines.append(f"- **Predictability**: {_risk_gauge(p.overall_risk)}")
-        if p.generic_phrases_found:
-            phrases = ", ".join(f"`{ph}`" for ph in p.generic_phrases_found[:5])
-            signal_lines.append(f"- **Generic Phrases**: {phrases}")
-        dist_parts = [f"{k}: {v}" for k, v in p.risk_distribution.items()]
-        signal_lines.append(f"- **Distribution**: {' | '.join(dist_parts)}")
+    # Risk gauges — suppressed when Layer 3 badge is present (cluster analysis replaces it)
+    if not report.ai_risk_badge:
+        signal_lines = []
+        if report.predictability:
+            p = report.predictability
+            signal_lines.append(f"- **Predictability**: {_risk_gauge(p.overall_risk)}")
+            if p.generic_phrases_found:
+                phrases = ", ".join(f"`{ph}`" for ph in p.generic_phrases_found[:5])
+                signal_lines.append(f"- **Generic Phrases**: {phrases}")
+            dist_parts = [f"{k}: {v}" for k, v in p.risk_distribution.items()]
+            signal_lines.append(f"- **Distribution**: {' | '.join(dist_parts)}")
 
-    # Check for specificity and AI signals in findings
-    for fl in fb.values():
-        for f in fl:
-            if f.title == "low_specificity" and f.metadata:
-                adjusted_risk = f.metadata.get("adjusted_specificity_concern",
-                                               f.metadata.get("adjusted_specificity_risk"))
-                raw_risk = f.metadata.get("raw_specificity_concern",
-                                          f.metadata.get("raw_specificity_risk",
-                                          f.metadata.get("specificity_risk", 0)))
-                spec_score = f.metadata.get("raw_specificity_score",
-                                            f.metadata.get("specificity_score", 0))
-                dg_level = f.metadata.get("domain_grounding_level", "")
-                dg_idx = f.metadata.get("domain_grounding_index", "")
+        # Check for specificity and AI signals in findings
+        for fl in fb.values():
+            for f in fl:
+                if f.title == "low_specificity" and f.metadata:
+                    adjusted_risk = f.metadata.get("adjusted_specificity_concern",
+                                                   f.metadata.get("adjusted_specificity_risk"))
+                    raw_risk = f.metadata.get("raw_specificity_concern",
+                                              f.metadata.get("raw_specificity_risk",
+                                              f.metadata.get("specificity_risk", 0)))
+                    spec_score = f.metadata.get("raw_specificity_score",
+                                                f.metadata.get("specificity_score", 0))
+                    dg_level = f.metadata.get("domain_grounding_level", "")
+                    dg_idx = f.metadata.get("domain_grounding_index", "")
 
-                if adjusted_risk is not None and abs(adjusted_risk - raw_risk) > 0.05:
-                    signal_lines.append(
-                        f"- **Specificity**: `{adjusted_risk:.0%}` adjusted "
-                        f"(raw concern: `{raw_risk:.0%}`)"
-                    )
-                    adj = f.metadata.get("adjustment", {})
-                    if adj.get("reason"):
-                        signal_lines.append(f"  - _Reason: {adj['reason']}_")
-                else:
-                    signal_lines.append(f"- **Specificity Risk**: `{spec_score:.0%}`")
+                    if adjusted_risk is not None and abs(adjusted_risk - raw_risk) > 0.05:
+                        signal_lines.append(
+                            f"- **Specificity**: `{adjusted_risk:.0%}` adjusted "
+                            f"(raw concern: `{raw_risk:.0%}`)"
+                        )
+                        adj = f.metadata.get("adjustment", {})
+                        if adj.get("reason"):
+                            signal_lines.append(f"  - _Reason: {adj['reason']}_")
+                    else:
+                        signal_lines.append(f"- **Specificity Risk**: `{spec_score:.0%}`")
 
-                if dg_idx:
-                    signal_lines.append(
-                        f"- **Domain Grounding**: index `{dg_idx:.2f}`, level `{dg_level}`"
-                    )
-            if "ai_generation_likelihood" in f.title and f.metadata:
-                ai_lik = f.metadata.get("ai_likelihood", 0)
-                if ai_lik:
-                    signal_lines.append(f"- **AI Likelihood**: `{ai_lik:.1%}`")
+                    if dg_idx:
+                        signal_lines.append(
+                            f"- **Domain Grounding**: index `{dg_idx:.2f}`, level `{dg_level}`"
+                        )
+                if "ai_generation_likelihood" in f.title and f.metadata:
+                    ai_lik = f.metadata.get("ai_likelihood", 0)
+                    if ai_lik:
+                        signal_lines.append(f"- **AI Likelihood**: `{ai_lik:.1%}`")
 
-    if signal_lines:
-        lines.append("### Risk Gauges")
-        lines.append("")
-        for sl in signal_lines:
-            lines.append(sl)
-        lines.append("")
-
-    # ── Authorship Concern ──────────────────────────────────────────
-    if report.authorship_concern_score > 0 or report.authorship_concern_signals:
-        lines.append("### Authorship Concern")
-        lines.append("")
-        score = report.authorship_concern_score
-        conf = report.authorship_concern_confidence
-        signals = report.authorship_concern_signals or {}
-        available = sum(1 for v in signals.values() if v is not None)
-        lines.append(
-            f"**Score:** `{score:.0%}` | "
-            f"**Confidence:** {conf} | "
-            f"**Signals:** {available}/7 available"
-        )
-        lines.append("")
-        # Signal detail
-        active = [(k, v) for k, v in signals.items() if v is not None]
-        if active:
-            for name, val in active:
-                lines.append(f"- {name}: `{val:.0%}`")
+        if signal_lines:
+            lines.append("### Risk Gauges")
             lines.append("")
-        # Weak-signal note
-        strong = {"source_grounding", "citation_integrity", "draft_evolution", "structural_reuse"}
-        has_strong = any(signals.get(k) is not None and signals.get(k, 0) >= 0.25 for k in strong)
-        if not has_strong and available > 0:
-            lines.append(
-                "> Only weak signals available (predictability/genericity/specificity). "
-                "Score capped at 0.30. Provide bibliography, source documents, or draft "
-                "history for higher-confidence assessment."
-            )
+            for sl in signal_lines:
+                lines.append(sl)
             lines.append("")
 
     if report.similarity:
@@ -374,8 +366,19 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"- **In-text**: {c.in_text_count} | **Bibliography**: {c.bib_entry_count}")
         lines.append("")
 
-    # Verdict
-    verdict = _verdict(tier, total)
+    # Verdict — use badge tier when available
+    if report.ai_risk_badge:
+        badge_tier_val = report.ai_risk_badge.get("tier", "")
+        badge_score = report.ai_risk_badge.get("calibrated_ai_score", 0)
+        verdict_map = {
+            "GREEN": f"Low risk across all clusters (score: {badge_score:.1f}%). Text appears ready for submission.",
+            "AMBER": f"Moderate grounding concerns (score: {badge_score:.1f}%). Review cluster details before submission.",
+            "ORANGE": f"Elevated integrity risk (score: {badge_score:.1f}%). Aligned evidence across clusters suggests writing process review.",
+            "RED": f"High integrity risk (score: {badge_score:.1f}%). Aligned evidence across independent clusters indicates writing process concerns. Review recommended before submission.",
+        }
+        verdict = verdict_map.get(badge_tier_val, _verdict(tier, total))
+    else:
+        verdict = _verdict(tier, total)
     lines.append(f"> **Verdict:** {verdict}")
     lines.append("")
 
@@ -414,47 +417,70 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append(f"> **Review:** {', '.join(titles)} — no immediate fix needed")
         lines.append("")
 
-    # Tier derivation audit
-    if report.overall_tier_reason:
+    # Tier derivation audit — use badge tier reason
+    if report.ai_risk_badge:
+        badge_tier = report.ai_risk_badge.get("tier", "")
+        badge_score = report.ai_risk_badge.get("calibrated_ai_score", 0)
+        badge_reasons = report.ai_risk_badge.get("reasons", [])
+        badge_guardrails = report.ai_risk_badge.get("guardrails", [])
+
+        tier_explanation = {
+            "GREEN": "Low risk across all clusters. No significant concerns detected.",
+            "AMBER": "Moderate concern in grounding quality. Review recommended.",
+            "ORANGE": "Elevated risk — two clusters aligned or blended score above threshold.",
+            "RED": "High risk — aligned evidence across independent clusters indicates writing process concerns.",
+        }
+        explanation = tier_explanation.get(badge_tier, "")
+        lines.append(f"> **Tier Reason:** Tier {badge_tier} at {badge_score:.1f}% — {explanation}")
+        if badge_reasons:
+            readable = [r.replace("_", " ") for r in badge_reasons]
+            lines.append(f"> **Triggers:** {', '.join(readable)}")
+        if badge_guardrails:
+            readable = [g.replace("_", " ") for g in badge_guardrails]
+            lines.append(f"> **Guardrails applied:** {', '.join(readable)}")
+        lines.append("")
+    elif report.overall_tier_reason:
         lines.append(f"> **Tier Reason:** {report.overall_tier_reason}")
         lines.append("")
     if report.raw_overall_tier != report.adjusted_overall_tier:
-        lines.append(f"> **Tier Adjustment:** Raw `{report.raw_overall_tier.upper()}` → Adjusted `{report.adjusted_overall_tier.upper()}`")
+        lines.append(f"> **Tier Adjustment:** Raw `{report.raw_overall_tier.upper()}` -> Adjusted `{report.adjusted_overall_tier.upper()}`")
         lines.append("")
 
-    # Axis scores
-    axis_scores = data.get("axis_scores")
-    if axis_scores:
-        axis_labels = {
-            "predictability": "Predictability",
-            "similarity": "Similarity",
-            "citation": "Citation",
-            "specificity": "Specificity",
-            "domain_grounding": "Domain Grounding",
-        }
-        axis_icons = {"clear": "[OK]", "review": "[~]", "attention": "[!]", "strong": "[*]", "moderate": "[+]", "weak": "[-]"}
-        parts = []
-        for key, label in axis_labels.items():
-            val = axis_scores.get(key, "clear")
-            icon = axis_icons.get(val, "[?]")
-            parts.append(f"{label}: {icon} {val}")
-        lines.append(f"> **Signal Axes:** {'  |  '.join(parts)}")
-        lines.append("")
+    # Axis scores — suppressed when badge is present (badge cluster view replaces this)
+    if not report.ai_risk_badge:
+        axis_scores = data.get("axis_scores")
+        if axis_scores:
+            axis_labels = {
+                "predictability": "Predictability",
+                "similarity": "Similarity",
+                "citation": "Citation",
+                "specificity": "Specificity",
+                "domain_grounding": "Domain Grounding",
+            }
+            axis_icons = {"clear": "[OK]", "review": "[~]", "attention": "[!]", "strong": "[*]", "moderate": "[+]", "weak": "[-]"}
+            parts = []
+            for key, label in axis_labels.items():
+                val = axis_scores.get(key, "clear")
+                icon = axis_icons.get(val, "[?]")
+                parts.append(f"{label}: {icon} {val}")
+            lines.append(f"> **Signal Axes:** {'  |  '.join(parts)}")
+            lines.append("")
 
-    # Reason codes
-    reason_codes = data.get("reason_codes")
-    if reason_codes:
-        code_labels = {
-            "no_high_or_critical_findings": "No high/critical findings",
-            "low_ai_pattern_score": "Low AI pattern score",
-            "strong_domain_grounding": "Strong domain grounding",
-            "mostly_review_only_findings": "Mostly review-only findings",
-            "predictability_unconfirmed": "Predictability unconfirmed",
-            "no_rewrite_triggered": "No rewrite triggered",
-        }
-        readable = [code_labels.get(c, c) for c in reason_codes]
-        lines.append(f"> **Tier Rationale:** {'; '.join(readable)}")
-        lines.append("")
+    # Reason codes — suppressed when badge is present
+    if not report.ai_risk_badge:
+        reason_codes = data.get("reason_codes")
+        if reason_codes:
+            code_labels = {
+                "no_high_or_critical_findings": "No high/critical findings",
+                "low_ai_pattern_score": "Low AI pattern score",
+                "strong_domain_grounding": "Strong domain grounding",
+                "mostly_review_only_findings": "Mostly review-only findings",
+                "predictability_unconfirmed": "Predictability unconfirmed",
+                "no_rewrite_triggered": "No rewrite triggered",
+            }
+            readable = [code_labels.get(c, c) for c in reason_codes]
+            lines.append(f"> **Tier Rationale:** {'; '.join(readable)}")
+            lines.append("")
 
     # Short-text confidence warning
     doc_ctx = data.get("document_context", {})
