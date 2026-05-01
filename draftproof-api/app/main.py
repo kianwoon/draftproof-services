@@ -76,7 +76,13 @@ frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 # Support multiple origins (e.g. draftproof.app + www.draftproof.app)
 allowed_origins = [o.strip() for o in frontend_url.split(",") if o.strip()]
 
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    session_cookie="session",
+    same_site="none",
+    https_only=True,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
