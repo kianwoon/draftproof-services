@@ -815,13 +815,23 @@ class Layer3Scorer:
         draft_jump = clamp(data.draft_evolution_jump_risk)
         reuse = clamp(data.structural_reuse_risk)
 
-        structural_subscore = weighted_average({
-            "progression": (progression, 0.25),
-            "uniformity": (uniformity, 0.15),
-            "starter": (starter, 0.15),
-            "conclusion": (conclusion, 0.15),
-            "signpost": (signpost, 0.30),
-        })
+        # Build structural subscore — signpost only included when it fires (> 0)
+        # to avoid penalising texts that simply don't use short bridge paragraphs.
+        struct_components = {
+            "progression": (progression, 0.30),
+            "uniformity": (uniformity, 0.20),
+            "starter": (starter, 0.25),
+            "conclusion": (conclusion, 0.25),
+        }
+        if signpost > 0:
+            struct_components["signpost"] = (signpost, 0.35)
+            # Redistribute: reduce other weights proportionally
+            remaining = 0.65
+            for key in ("progression", "uniformity", "starter", "conclusion"):
+                old_w = struct_components[key][1]
+                struct_components[key] = (struct_components[key][0], old_w / 1.0 * remaining)
+
+        structural_subscore = weighted_average(struct_components)
 
         has_draft_process = (
             data.draft_evolution_jump_risk is not None
