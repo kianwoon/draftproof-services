@@ -30,7 +30,8 @@ export default function AuthCallback() {
   }, [navigate, setUser, searchParams]);
 
   return (
-    <div className="container" style={{ paddingTop: 'calc(var(--header-h) + 4rem)' }}>
+    <div className="page-loading">
+      <div className="reports-spinner" />
       <p>Signing you in...</p>
     </div>
   );

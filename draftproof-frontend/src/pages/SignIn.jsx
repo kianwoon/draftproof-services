@@ -7,7 +7,12 @@ export default function SignIn() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  if (loading) return <div className="container"><p>Loading...</p></div>;
+  if (loading) return (
+    <div className="page-loading">
+      <div className="reports-spinner" />
+      <p>Loading...</p>
+    </div>
+  );
   if (user) return <Navigate to="/" replace />;
 
   const errorMsg = searchParams.get('error');
