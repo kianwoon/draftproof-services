@@ -14,9 +14,10 @@ from .celery_app import app
 from .config import settings
 from .storage import upload_report_files
 from .db import get_scan_job, update_job_status, capture_credits
+from celery.exceptions import SoftTimeLimitExceeded
 
 
-@app.task(bind=True, max_retries=2, default_retry_delay=30)
+@app.task(bind=True, max_retries=2, default_retry_delay=30, soft_time_limit=300, time_limit=330)
 def scan_document(self, job_id: str, text: str) -> dict:
     """Run the full detect pipeline on text and store results."""
     try:
@@ -61,6 +62,9 @@ def scan_document(self, job_id: str, text: str) -> dict:
 
             return {"status": "completed", "tier": tier, "findings": finding_count}
 
+    except SoftTimeLimitExceeded:
+        update_job_status(job_id, "failed", error="Scan timed out (5 min limit)")
+        return {"status": "failed", "error": "timeout"}
     except Exception as e:
         if self.request.retries < self.max_retries:
             update_job_status(job_id, "retrying", error=str(e))

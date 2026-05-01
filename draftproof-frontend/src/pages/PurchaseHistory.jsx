@@ -32,15 +32,20 @@ export default function PurchaseHistory() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    const ac = new AbortController();
     setLoading(true);
-    getPurchaseHistory(page, PAGE_SIZE)
+    getPurchaseHistory(page, PAGE_SIZE, { signal: ac.signal })
       .then(({ data }) => {
         setPayments(data.items);
         setTotalPages(data.pages);
         setTotal(data.total);
       })
-      .catch((err) => setError(err.response?.data?.detail || 'Failed to load history'))
+      .catch((err) => {
+        if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+        setError(err.response?.data?.detail || 'Failed to load history');
+      })
       .finally(() => setLoading(false));
+    return () => ac.abort();
   }, [page]);
 
   if (loading) {

@@ -6,7 +6,7 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.config import UPLOAD_DIR
 from app.models.db import async_session, ScanJob, CreditAccount, CreditReservation
@@ -54,7 +54,7 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
         if user_id:
             uid = uuid.UUID(user_id)
             result = await session.execute(
-                select(CreditAccount).where(CreditAccount.user_id == uid)
+                select(CreditAccount).where(CreditAccount.user_id == uid).with_for_update()
             )
             acct = result.scalar_one_or_none()
             if not acct:
@@ -70,7 +70,7 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
                 job_id=job_id,
                 tokens_reserved=cost,
                 status="active",
-                expires_at=datetime.utcnow() + timedelta(minutes=30),
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
             )
             session.add(reservation)
 
@@ -89,6 +89,7 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
 
 async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
     """List scan_jobs for a user with pagination, newest first."""
+    await _mark_stale_jobs_failed(uuid.UUID(user_id))
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
     offset = (page - 1) * per_page
@@ -132,8 +133,30 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
         }
 
 
+_STALE_THRESHOLD = timedelta(minutes=10)
+
+
+async def _mark_stale_jobs_failed(user_id: uuid.UUID | None = None) -> None:
+    """Bulk-mark processing/pending jobs older than threshold as failed."""
+    cutoff = datetime.now(timezone.utc) - _STALE_THRESHOLD
+    async with async_session() as session:
+        q = (
+            update(ScanJob)
+            .where(ScanJob.status.in_(["processing", "pending"]))
+            .where(ScanJob.created_at < cutoff)
+            .values(status="failed")
+        )
+        if user_id:
+            q = q.where(ScanJob.user_id == user_id)
+        await session.execute(q)
+        await session.commit()
+
+
 async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
-    """Look up scan_job by ID, optionally scoped to a user."""
+    """Look up scan_job by ID, optionally scoped to a user.
+
+    Auto-marks jobs stuck in 'processing' or 'pending' for >10 min as 'failed'.
+    """
     async with async_session() as session:
         q = select(ScanJob).where(ScanJob.id == uuid.UUID(scan_id))
         if user_id:
@@ -142,6 +165,15 @@ async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
         job = result.scalar_one_or_none()
         if not job:
             return None
+
+        # Auto-recover stale processing/pending jobs
+        if job.status in ("processing", "pending") and job.created_at:
+            age = datetime.now(timezone.utc) - job.created_at
+            if age > _STALE_THRESHOLD:
+                job.status = "failed"
+                await session.commit()
+                await session.refresh(job)
+
         return {
             "id": str(job.id),
             "document_id": "",

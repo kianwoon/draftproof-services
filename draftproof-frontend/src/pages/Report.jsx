@@ -30,10 +30,15 @@ export default function Report() {
   const [expandedIssue, setExpandedIssue] = useState(null);
 
   useEffect(() => {
-    getReport(id)
+    const ac = new AbortController();
+    getReport(id, { signal: ac.signal })
       .then(({ data }) => setReport(data))
-      .catch((err) => setError(err.response?.data?.detail || 'Failed to load report'))
+      .catch((err) => {
+        if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+        setError(err.response?.data?.detail || 'Failed to load report');
+      })
       .finally(() => setLoading(false));
+    return () => ac.abort();
   }, [id]);
 
   if (loading) return (

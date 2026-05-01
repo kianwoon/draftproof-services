@@ -6,17 +6,16 @@ import ErrorReload from '../components/ErrorReload';
 
 export default function BuyTokens() {
   const [packs, setPacks] = useState([]);
-  const [localBalance, setLocalBalance] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
   const [serverError, setServerError] = useState(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { refreshBalance } = useAuth();
+  const { balance, refreshBalance } = useAuth();
 
   useEffect(() => {
-    api.get('/payments/packs').then(r => setPacks(r.data)).catch(() => {});
-    api.get('/payments/balance').then(r => setLocalBalance(r.data)).catch(() => {});
+    const ac = new AbortController();
+    api.get('/payments/packs', { signal: ac.signal }).then(r => setPacks(r.data)).catch(() => {});
 
     if (searchParams.get('success')) {
       setMessage({ type: 'success', text: 'Payment successful! Your tokens have been added.' });
@@ -24,6 +23,8 @@ export default function BuyTokens() {
     } else if (searchParams.get('canceled')) {
       setMessage({ type: 'info', text: 'Payment was canceled.' });
     }
+
+    return () => ac.abort();
   }, [searchParams]);
 
   const handleBuy = async (packId) => {
@@ -45,8 +46,8 @@ export default function BuyTokens() {
       <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
         <h2 style={{ marginBottom: '0.5rem' }}>Buy Tokens</h2>
         <p style={{ color: 'var(--text-2)' }}>SGD $2.90 per token — each scan costs 1 token per document.</p>
-        {localBalance !== null && (
-          <p className="balance-display">Current balance: <strong>{localBalance.balance} tokens</strong></p>
+        {balance !== null && (
+          <p className="balance-display">Current balance: <strong>{balance} tokens</strong></p>
         )}
       </div>
 

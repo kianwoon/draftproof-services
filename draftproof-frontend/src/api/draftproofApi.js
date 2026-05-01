@@ -21,15 +21,15 @@ export const getDocument = (id) => api.get(`/documents/${id}`);
 export const startScan = (documentId) => api.post('/scans/', { document_id: documentId });
 export const startScanWithText = (text) => api.post('/scans/', { document_id: 'paste', text });
 export const getScanStatus = (scanId, opts = {}) => api.get(`/scans/${scanId}`, opts);
-export const listScans = (page = 1, perPage = 10) =>
-  api.get('/scans/', { params: { page, per_page: perPage } });
+export const listScans = (page = 1, perPage = 10, opts = {}) =>
+  api.get('/scans/', { params: { page, per_page: perPage }, signal: opts.signal });
 
 // Reports
-export const getReport = (reportId) => api.get(`/reports/${reportId}`);
+export const getReport = (reportId, opts = {}) => api.get(`/reports/${reportId}`, opts);
 
 // Payments
-export const getPurchaseHistory = (page = 1, perPage = 5) =>
-  api.get('/payments/history', { params: { page, per_page: perPage } });
+export const getPurchaseHistory = (page = 1, perPage = 5, opts = {}) =>
+  api.get('/payments/history', { params: { page, per_page: perPage }, signal: opts.signal });
 
 // Rewrites
 export const getSuggestion = (issueId) => api.get(`/rewrites/${issueId}`);

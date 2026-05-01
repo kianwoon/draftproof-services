@@ -10,8 +10,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse
 from app.routes import documents, scans, reports, rewrites, auth, payments
-from app.models.db import init_db
+from app.models.db import init_db, async_session
 from app.config import SECRET_KEY, FRONTEND_URL
+from sqlalchemy import text as sa_text
 
 logger = logging.getLogger("draftproof")
 
@@ -80,8 +81,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
@@ -93,8 +94,17 @@ app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
 
 
 @app.get("/api/health")
-def health():
-    return {"status": "ok"}
+async def health():
+    db_ok = False
+    try:
+        async with async_session() as session:
+            await session.execute(sa_text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        pass
+    if not db_ok:
+        return JSONResponse(status_code=503, content={"status": "unhealthy", "db": "down"})
+    return {"status": "ok", "db": "up"}
 
 
 # Serve frontend static files (production only)

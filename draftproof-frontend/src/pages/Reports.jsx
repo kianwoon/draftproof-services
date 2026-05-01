@@ -33,15 +33,20 @@ export default function Reports() {
   const [total, setTotal] = useState(0);
 
   useEffect(() => {
+    const ac = new AbortController();
     setLoading(true);
-    listScans(page, PAGE_SIZE)
+    listScans(page, PAGE_SIZE, { signal: ac.signal })
       .then(({ data }) => {
         setScans(data.items);
         setTotalPages(data.pages);
         setTotal(data.total);
       })
-      .catch((err) => setError(err.response?.data?.detail || 'Failed to load reports'))
+      .catch((err) => {
+        if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+        setError(err.response?.data?.detail || 'Failed to load reports');
+      })
       .finally(() => setLoading(false));
+    return () => ac.abort();
   }, [page]);
 
   if (loading) {

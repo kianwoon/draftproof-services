@@ -19,7 +19,12 @@ _r2 = boto3.client(
     endpoint_url=R2_ENDPOINT_URL,
     aws_access_key_id=R2_ACCESS_KEY_ID,
     aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-    config=BotoConfig(signature_version="s3v4"),
+    config=BotoConfig(
+        signature_version="s3v4",
+        connect_timeout=5,
+        read_timeout=15,
+        retries={"max_attempts": 2},
+    ),
 ) if R2_ENDPOINT_URL else None
 
 
@@ -31,9 +36,15 @@ def _presign_sync(key: str, expires: int = 3600) -> str:
     )
 
 
+_MAX_REPORT_BYTES = 20 * 1024 * 1024  # 20 MB safety cap
+
+
 def _fetch_report_json_sync(r2_key: str) -> dict | None:
     obj = _r2.get_object(Bucket=R2_BUCKET_NAME, Key=r2_key)
-    return json.loads(obj["Body"].read())
+    content_length = obj.get("ContentLength", 0)
+    if content_length > _MAX_REPORT_BYTES:
+        raise ValueError(f"Report too large ({content_length} bytes), max {_MAX_REPORT_BYTES}")
+    return json.loads(obj["Body"].read(_MAX_REPORT_BYTES))
 
 
 def _flatten_findings(results_json: dict) -> list[dict]:

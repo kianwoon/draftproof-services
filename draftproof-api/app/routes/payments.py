@@ -2,6 +2,7 @@ import asyncio
 
 import stripe
 from fastapi import APIRouter, Request, HTTPException, Depends
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -14,6 +15,12 @@ from jose import jwt, JWTError
 
 router = APIRouter()
 stripe.api_key = STRIPE_SECRET_KEY
+stripe.api_version = "2024-12-18.acacia"
+stripe.max_network_retries = 2
+
+
+class CheckoutRequest(BaseModel):
+    pack_id: str
 
 
 def _get_user_id(request: Request) -> str:
@@ -41,10 +48,9 @@ async def get_packs():
 
 
 @router.post("/checkout")
-async def create_checkout(request: Request, db: AsyncSession = Depends(get_db)):
+async def create_checkout(body: CheckoutRequest, request: Request, db: AsyncSession = Depends(get_db)):
     user_id = _get_user_id(request)
-    body = await request.json()
-    pack_id = body.get("pack_id")
+    pack_id = body.pack_id
 
     if pack_id not in TOKEN_PACKS:
         raise HTTPException(status_code=400, detail="Invalid pack")
@@ -55,6 +61,7 @@ async def create_checkout(request: Request, db: AsyncSession = Depends(get_db)):
 
     session = await asyncio.to_thread(
         stripe.checkout.Session.create,
+        timeout=30,
         mode="payment",
         payment_method_types=["card"],
         line_items=[{
