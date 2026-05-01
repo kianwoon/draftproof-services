@@ -64,6 +64,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
     except Exception as e:
         if self.request.retries < self.max_retries:
             update_job_status(job_id, "retrying", error=str(e))
+            raise self.retry(exc=e)
         else:
             update_job_status(job_id, "failed", error=str(e))
-        raise self.retry(exc=e)
+            raise  # Re-raise original — Celery marks as FAILURE, not RETRY

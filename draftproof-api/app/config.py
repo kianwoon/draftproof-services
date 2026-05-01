@@ -4,7 +4,9 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://koyeb-adm:npg_a0Xkjwc4nYtA@ep-autumn-pond-anvor8lu.c-6.us-east-1.pg.koyeb.app:5432/koyebdb?ssl=require")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is required")
 
 # Auth
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")

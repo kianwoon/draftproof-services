@@ -1,9 +1,10 @@
 """Scan service — creates scan jobs and dispatches to Celery worker."""
 
+import asyncio
 import hashlib
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -16,8 +17,8 @@ def _scan_cost(word_count: int) -> int:
     return max(1, -(-word_count // 1000))
 
 
-def _read_document_text(document_id: str) -> str:
-    """Read uploaded document text from disk."""
+def _read_document_text_sync(document_id: str) -> str:
+    """Read uploaded document text from disk (sync — call via to_thread)."""
     for ext in (".txt", ".pdf", ".docx"):
         path = os.path.join(UPLOAD_DIR, f"{document_id}{ext}")
         if os.path.isfile(path):
@@ -29,7 +30,7 @@ def _read_document_text(document_id: str) -> str:
 async def create_scan(document_id: str, user_id: str | None = None, text: str | None = None) -> dict:
     """Create a scan_job row, enqueue Celery task, return scan info."""
     if not text:
-        text = _read_document_text(document_id)
+        text = await asyncio.to_thread(_read_document_text_sync, document_id)
     if not text:
         raise ValueError("Document text not found or empty")
 
@@ -86,29 +87,49 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
     }
 
 
-async def list_scans(user_id: str) -> list[dict]:
-    """List all scan_jobs for a user, newest first."""
+async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
+    """List scan_jobs for a user with pagination, newest first."""
+    page = max(1, page)
+    per_page = max(1, min(per_page, 100))
+    offset = (page - 1) * per_page
+
     async with async_session() as session:
+        # Count total
+        from sqlalchemy import func
+        count_result = await session.execute(
+            select(func.count()).select_from(ScanJob)
+            .where(ScanJob.user_id == uuid.UUID(user_id))
+        )
+        total = count_result.scalar() or 0
+
         result = await session.execute(
             select(ScanJob)
             .where(ScanJob.user_id == uuid.UUID(user_id))
             .order_by(ScanJob.created_at.desc())
+            .offset(offset)
+            .limit(per_page)
         )
         jobs = result.scalars().all()
-        return [
-            {
-                "id": str(j.id),
-                "document_id": "",
-                "status": j.status,
-                "report_id": str(j.id) if j.status == "completed" else None,
-                "tier": j.tier,
-                "finding_count": j.finding_count,
-                "word_count": j.word_count,
-                "created_at": j.created_at.isoformat() if j.created_at else None,
-                "completed_at": j.completed_at.isoformat() if j.completed_at else None,
-            }
-            for j in jobs
-        ]
+        return {
+            "items": [
+                {
+                    "id": str(j.id),
+                    "document_id": "",
+                    "status": j.status,
+                    "report_id": str(j.id) if j.status == "completed" else None,
+                    "tier": j.tier,
+                    "finding_count": j.finding_count,
+                    "word_count": j.word_count,
+                    "created_at": j.created_at.isoformat() if j.created_at else None,
+                    "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+                }
+                for j in jobs
+            ],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": (total + per_page - 1) // per_page,
+        }
 
 
 async def get_scan(scan_id: str) -> dict | None:

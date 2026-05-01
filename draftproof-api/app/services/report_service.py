@@ -1,5 +1,6 @@
 """Report service — fetches completed scan results."""
 
+import asyncio
 import json
 import logging
 import uuid
@@ -13,24 +14,26 @@ from app.models.db import async_session, ScanJob
 
 logger = logging.getLogger("report_service")
 
-
-def _r2_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=R2_ENDPOINT_URL,
-        aws_access_key_id=R2_ACCESS_KEY_ID,
-        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-        config=BotoConfig(signature_version="s3v4"),
-    )
+_r2 = boto3.client(
+    "s3",
+    endpoint_url=R2_ENDPOINT_URL,
+    aws_access_key_id=R2_ACCESS_KEY_ID,
+    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+    config=BotoConfig(signature_version="s3v4"),
+) if R2_ENDPOINT_URL else None
 
 
-def _presign(key: str, expires: int = 3600) -> str:
-    s3 = _r2_client()
-    return s3.generate_presigned_url(
+def _presign_sync(key: str, expires: int = 3600) -> str:
+    return _r2.generate_presigned_url(
         "get_object",
         Params={"Bucket": R2_BUCKET_NAME, "Key": key},
         ExpiresIn=expires,
     )
+
+
+def _fetch_report_json_sync(r2_key: str) -> dict | None:
+    obj = _r2.get_object(Bucket=R2_BUCKET_NAME, Key=r2_key)
+    return json.loads(obj["Body"].read())
 
 
 def _flatten_findings(results_json: dict) -> list[dict]:
@@ -108,22 +111,22 @@ async def get_report(report_id: str) -> dict | None:
 
         # Fetch JSON directly from R2 (avoids stale presigned URLs)
         r2_key = f"reports/{report_id}/report.json"
-        try:
-            s3 = _r2_client()
-            obj = s3.get_object(Bucket=R2_BUCKET_NAME, Key=r2_key)
-            results_json = json.loads(obj["Body"].read())
-            issues = _flatten_findings(results_json)
-        except Exception as e:
-            logger.warning("Failed to fetch report JSON from R2 for %s: %s", report_id, e)
+        if _r2:
+            try:
+                results_json = await asyncio.to_thread(_fetch_report_json_sync, r2_key)
+                issues = _flatten_findings(results_json)
+            except Exception as e:
+                logger.warning("Failed to fetch report JSON from R2 for %s: %s", report_id, e)
 
         # Generate fresh presigned URLs for downloads
         report_md_url = None
         report_pdf_url = None
-        try:
-            report_md_url = _presign(f"reports/{report_id}/report.md")
-            report_pdf_url = _presign(f"reports/{report_id}/report.pdf")
-        except Exception:
-            pass
+        if _r2:
+            try:
+                report_md_url = await asyncio.to_thread(_presign_sync, f"reports/{report_id}/report.md")
+                report_pdf_url = await asyncio.to_thread(_presign_sync, f"reports/{report_id}/report.pdf")
+            except Exception:
+                pass
 
         return {
             "id": str(job.id),

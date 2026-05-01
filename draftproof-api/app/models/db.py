@@ -12,8 +12,9 @@ engine = create_async_engine(
     echo=False,
     pool_pre_ping=True,
     pool_recycle=300,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=20,
+    max_overflow=40,
+    pool_timeout=30,
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -84,12 +85,12 @@ class CreditReservation(Base):
     __tablename__ = "credit_reservations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     credit_account_id = Column(UUID(as_uuid=True), ForeignKey("credit_accounts.id", ondelete="CASCADE"), nullable=False)
     job_type = Column(Text, nullable=False)
     job_id = Column(UUID(as_uuid=True), nullable=False)
     tokens_reserved = Column(Integer, nullable=False)
-    status = Column(Text, nullable=False, default="active")
+    status = Column(Text, nullable=False, default="active", index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -118,14 +119,14 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     provider = Column(Text, nullable=False)
     provider_payment_id = Column(Text)
     provider_customer_id = Column(Text)
     amount_cents = Column(Integer, nullable=False, default=0)
     currency = Column(Text, nullable=False, default="USD")
     tokens_purchased = Column(Integer, nullable=False, default=0)
-    status = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, index=True)
     idempotency_key = Column(Text, unique=True)
     payment_metadata = Column("metadata", JSONB, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -151,11 +152,11 @@ class ScanJob(Base):
     __tablename__ = "scan_jobs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
     input_text_hash = Column(Text, nullable=False)
     word_count = Column(Integer, nullable=False, default=0)
     scan_type = Column(Text, nullable=False, default="scan")
-    status = Column(Text, nullable=False, default="pending")
+    status = Column(Text, nullable=False, default="pending", index=True)
     tier = Column(Text)
     finding_count = Column(Integer)
     report_urls = Column(JSONB, default=dict)

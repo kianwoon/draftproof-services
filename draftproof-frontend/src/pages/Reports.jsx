@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listScans } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
@@ -29,22 +29,20 @@ export default function Reports() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
-
-  const totalPages = Math.ceil(scans.length / PAGE_SIZE);
-  const pageScans = useMemo(
-    () => scans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [scans, page],
-  );
-
-  // Reset to page 1 if scans shrink below current page
-  useEffect(() => { if (page > totalPages && totalPages > 0) setPage(1); }, [page, totalPages]);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
-    listScans()
-      .then(({ data }) => setScans(data))
+    setLoading(true);
+    listScans(page, PAGE_SIZE)
+      .then(({ data }) => {
+        setScans(data.items);
+        setTotalPages(data.pages);
+        setTotal(data.total);
+      })
       .catch((err) => setError(err.response?.data?.detail || 'Failed to load reports'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [page]);
 
   if (loading) {
     return (
@@ -76,7 +74,7 @@ export default function Reports() {
           <div>
             <h1>Your Reports</h1>
             <p className="reports-subtitle">
-              {scans.length} scan{scans.length !== 1 ? 's' : ''} total
+              {total} scan{total !== 1 ? 's' : ''} total
               {totalPages > 1 && ` — Page ${page} of ${totalPages}`}
             </p>
           </div>
@@ -113,7 +111,7 @@ export default function Reports() {
                 </tr>
               </thead>
               <tbody>
-                {pageScans.map((scan) => {
+                {scans.map((scan) => {
                   const st = STATUS_MAP[scan.status] || STATUS_MAP.pending;
                   const tierColor = TIER_COLORS[scan.tier];
                   return (

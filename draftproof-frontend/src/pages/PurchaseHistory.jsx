@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getPurchaseHistory } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
@@ -27,22 +27,21 @@ export default function PurchaseHistory() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const navigate = useNavigate();
 
-  const totalPages = Math.ceil(payments.length / PAGE_SIZE);
-  const pagePayments = useMemo(
-    () => payments.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [payments, page],
-  );
-
-  useEffect(() => { if (page > totalPages && totalPages > 0) setPage(1); }, [page, totalPages]);
-
   useEffect(() => {
-    getPurchaseHistory()
-      .then(({ data }) => setPayments(data))
+    setLoading(true);
+    getPurchaseHistory(page, PAGE_SIZE)
+      .then(({ data }) => {
+        setPayments(data.items);
+        setTotalPages(data.pages);
+        setTotal(data.total);
+      })
       .catch((err) => setError(err.response?.data?.detail || 'Failed to load history'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [page]);
 
   if (loading) {
     return (
@@ -67,9 +66,6 @@ export default function PurchaseHistory() {
     );
   }
 
-  const totalTokens = payments.reduce((sum, p) => sum + (p.tokens || 0), 0);
-  const totalSpent = payments.reduce((sum, p) => sum + (p.amount_cents || 0), 0);
-
   return (
     <main className="dash-shell">
       <div className="container">
@@ -77,7 +73,7 @@ export default function PurchaseHistory() {
           <div>
             <h1>Purchase History</h1>
             <p className="reports-subtitle">
-              {payments.length} transaction{payments.length !== 1 ? 's' : ''} — {totalTokens} tokens purchased, {formatAmount(totalSpent, 'SGD')} total
+              {total} transaction{total !== 1 ? 's' : ''}
             </p>
           </div>
           <button onClick={() => navigate('/buy')} className="btn btn-primary">
@@ -104,7 +100,7 @@ export default function PurchaseHistory() {
                 </tr>
               </thead>
               <tbody>
-                {pagePayments.map((p) => {
+                {payments.map((p) => {
                   const st = STATUS_MAP[p.status] || { label: p.status, color: '#64748b', bg: '#f8fafc' };
                   return (
                     <tr key={p.id}>

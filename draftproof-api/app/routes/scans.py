@@ -7,8 +7,12 @@ router = APIRouter()
 
 
 @router.get("/")
-async def list_scans_route(user: dict = Depends(get_current_user)):
-    return await list_scans(user["id"])
+async def list_scans_route(
+    user: dict = Depends(get_current_user),
+    page: int = 1,
+    per_page: int = 10,
+):
+    return await list_scans(user["id"], page=page, per_page=per_page)
 
 
 @router.post("/", response_model=ScanOut)

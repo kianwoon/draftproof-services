@@ -230,8 +230,9 @@ async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(g
                 user_info = await oauth.microsoft.userinfo(token=token)
             logger.info("Userinfo keys: %s", list(user_info.keys()) if user_info else "None")
 
-        email = user_info.get("email") or user_info.get("preferred_username") or user_info.get("upn")
+        email = user_info.get("email") or user_info.get("preferred_username") or user_info.get("upn") or user_info.get("mail")
         if not email:
+            logger.error("No email found in Microsoft userinfo. Keys: %s", list(user_info.keys()) if user_info else "None")
             raise HTTPException(status_code=400, detail="Could not retrieve email from Microsoft account")
 
         user_info["email"] = email

@@ -1,3 +1,5 @@
+import asyncio
+
 import stripe
 from fastapi import APIRouter, Request, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,7 +53,8 @@ async def create_checkout(request: Request, db: AsyncSession = Depends(get_db)):
     price_sgd = round(pack["tokens"] * TOKEN_PRICE_SGD, 2)
     price_cents = int(price_sgd * 100)
 
-    session = stripe.checkout.Session.create(
+    session = await asyncio.to_thread(
+        stripe.checkout.Session.create,
         mode="payment",
         payment_method_types=["card"],
         line_items=[{
@@ -83,25 +86,49 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/history")
-async def get_history(request: Request, db: AsyncSession = Depends(get_db)):
+async def get_history(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    page: int = 1,
+    per_page: int = 10,
+):
     user_id = _get_user_id(request)
+    page = max(1, page)
+    per_page = max(1, min(per_page, 100))
+    offset = (page - 1) * per_page
+
+    from sqlalchemy import func
+    count_result = await db.execute(
+        select(func.count()).select_from(Payment)
+        .where(Payment.user_id == user_id)
+    )
+    total = count_result.scalar() or 0
+
     result = await db.execute(
         select(Payment)
         .where(Payment.user_id == user_id)
         .order_by(Payment.created_at.desc())
+        .offset(offset)
+        .limit(per_page)
     )
     payments = result.scalars().all()
-    return [
-        {
-            "id": str(p.id),
-            "tokens": p.tokens_purchased,
-            "amount_cents": p.amount_cents,
-            "currency": p.currency,
-            "status": p.status,
-            "created_at": p.created_at.isoformat() if p.created_at else None,
-        }
-        for p in payments
-    ]
+    return {
+        "items": [
+            {
+                "id": str(p.id),
+                "tokens": p.tokens_purchased,
+                "amount_cents": p.amount_cents,
+                "currency": p.currency,
+                "status": p.status,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in payments
+        ],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page,
+    }
 
 
 @router.post("/webhook")
@@ -110,7 +137,9 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     sig_header = request.headers.get("stripe-signature")
 
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+        event = await asyncio.to_thread(
+            stripe.Webhook.construct_event, payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
     except stripe.error.SignatureVerificationError:
         raise HTTPException(status_code=400, detail="Invalid signature")
 

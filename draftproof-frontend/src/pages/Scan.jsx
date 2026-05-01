@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { startScanWithText, getScanStatus } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
@@ -15,42 +15,25 @@ export default function Scan() {
   const [serverError, setServerError] = useState(null);
   const navigate = useNavigate();
   const { refreshBalance } = useAuth();
+  const abortRef = useRef(null);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const tokensRequired = wordCount > 0 ? Math.max(1, Math.ceil(wordCount / 1000)) : 0;
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    setServerError(null);
-    setStatus('Submitting...');
-
-    try {
-      let scan;
-      if (!text.trim()) { setError('Please enter some text'); setBusy(false); return; }
-      setStatus('Queuing scan...');
-      ({ data: scan } = await startScanWithText(text));
-
-      setStatus('Scanning...');
-      const completed = await pollUntilDone(scan.id);
-      if (completed) {
-        refreshBalance();
-        navigate(`/report/${scan.id}`);
+  // Cancel in-flight polling on unmount
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) {
+        abortRef.current.abort();
       }
-    } catch (err) {
-      const msg = err.response?.data?.detail || 'Scan failed';
-      const status = err.response?.status;
-      if (status >= 400) { setServerError(msg); } else { setError(msg); }
-    } finally {
-      setBusy(false);
-      setStatus(null);
-    }
-  };
+    };
+  }, []);
 
-  const pollUntilDone = async (scanId) => {
+  const pollUntilDone = useCallback(async (scanId, signal) => {
     for (let i = 0; i < MAX_POLLS; i++) {
+      if (signal.aborted) return false;
       await sleep(POLL_INTERVAL);
-      const { data } = await getScanStatus(scanId);
+      if (signal.aborted) return false;
+      const { data } = await getScanStatus(scanId, { signal });
       setStatus(`Scanning... (${data.status})`);
       if (data.status === 'completed') return true;
       if (data.status === 'failed') {
@@ -63,14 +46,46 @@ export default function Scan() {
     }
     setServerError('Scan timed out');
     return false;
+  }, []);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setServerError(null);
+    setStatus('Submitting...');
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      let scan;
+      if (!text.trim()) { setError('Please enter some text'); setBusy(false); return; }
+      setStatus('Queuing scan...');
+      ({ data: scan } = await startScanWithText(text));
+
+      setStatus('Scanning...');
+      const completed = await pollUntilDone(scan.id, controller.signal);
+      if (completed) {
+        refreshBalance();
+        navigate(`/report/${scan.id}`);
+      }
+    } catch (err) {
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+      const msg = err.response?.data?.detail || 'Scan failed';
+      const status = err.response?.status;
+      if (status >= 400) { setServerError(msg); } else { setError(msg); }
+    } finally {
+      setBusy(false);
+      setStatus(null);
+      abortRef.current = null;
+    }
   };
 
   return (
     <main className="dash-shell">
     <div className="container scan-page">
       <h1>Scan Document</h1>
-
-      {/* TODO: restore Upload File tab when file parsing is ready */}
 
       <form onSubmit={handleSubmit} className="scan-form">
         <>
