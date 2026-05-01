@@ -48,7 +48,7 @@ export default function Reports() {
   const [deletingId, setDeletingId] = useState(null);
 
   const handleDelete = async (scanId) => {
-    if (!window.confirm('Delete this report permanently?')) return;
+    if (!window.confirm('This report will be permanently deleted and cannot be recovered.\n\nMake sure you have downloaded or saved the report if you need it.\n\nDelete anyway?')) return;
     setDeletingId(scanId);
     try {
       await deleteScan(scanId);
