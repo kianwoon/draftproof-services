@@ -284,7 +284,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
     lines.append("| Metric | Value |")
     lines.append("|--------|-------|")
-    lines.append(f"| **Integrity Tier** | {display_emoji} **{display_tier}** |")
+    lines.append(f"| **Integrity Tier** | **{display_tier}** |")
     lines.append(f"| **Total Findings** | **{total}** |")
     lines.append(f"| Scan Time | `{report.scan_time_seconds:.1f}s` |")
     if report.generated_at:
@@ -292,10 +292,10 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
     # Severity counts inline
     sev_parts = []
-    if n_critical: sev_parts.append(f"[!!!] {n_critical} Critical")
-    if n_high: sev_parts.append(f"[!!] {n_high} High")
-    if n_medium: sev_parts.append(f"[!] {n_medium} Medium")
-    if n_low: sev_parts.append(f"[ok] {n_low} Low")
+    if n_critical: sev_parts.append(f"{n_critical} Critical")
+    if n_high: sev_parts.append(f"{n_high} High")
+    if n_medium: sev_parts.append(f"{n_medium} Medium")
+    if n_low: sev_parts.append(f"{n_low} Low")
     if sev_parts:
         lines.append(f"| **Breakdown** | {' / '.join(sev_parts)} |")
     lines.append("")
@@ -531,7 +531,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             continue
         has_any = True
 
-        label = _SEVERITY_LABEL.get(tier_level, tier_level.value)
+        label = tier_level.value.capitalize()
         lines.append(f"### {label} ({len(findings)})")
         lines.append("")
 
