@@ -29,4 +29,4 @@ COPY worker/ /app/worker/
 
 WORKDIR /app/worker
 
-CMD ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=1"]
+CMD ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "scan,default"]

@@ -17,6 +17,9 @@ celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
+    task_routes={
+        "app.tasks.scan_document": {"queue": "scan"},
+    },
 )
 
 # The actual task lives in worker/app/tasks.py — same broker, same serializer

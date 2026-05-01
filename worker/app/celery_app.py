@@ -27,4 +27,8 @@ app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    task_routes={
+        "app.tasks.scan_document": {"queue": "scan"},
+    },
+    task_default_queue="default",
 )
