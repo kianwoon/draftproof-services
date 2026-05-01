@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { startScanWithText, getScanStatus } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
-import ErrorReload from '../components/ErrorReload';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 100;
@@ -13,8 +13,9 @@ export default function Scan() {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
   const [serverError, setServerError] = useState(null);
+  const [insufficientTokens, setInsufficientTokens] = useState(false);
   const navigate = useNavigate();
-  const { refreshBalance } = useAuth();
+  const { refreshBalance, balance } = useAuth();
   const abortRef = useRef(null);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const tokensRequired = wordCount > 0 ? Math.max(1, Math.ceil(wordCount / 1000)) : 0;
@@ -50,6 +51,10 @@ export default function Scan() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (balance !== null && balance < tokensRequired) {
+      setInsufficientTokens(true);
+      return;
+    }
     setBusy(true);
     setError(null);
     setServerError(null);
@@ -73,8 +78,14 @@ export default function Scan() {
     } catch (err) {
       if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
       const msg = err.response?.data?.detail || 'Scan failed';
-      const status = err.response?.status;
-      if (status >= 400) { setServerError(msg); } else { setError(msg); }
+      const httpStatus = err.response?.status;
+      if (httpStatus === 400 && msg.toLowerCase().includes('insufficient')) {
+        setInsufficientTokens(true);
+      } else if (httpStatus >= 400) {
+        setServerError(msg);
+      } else {
+        setError(msg);
+      }
     } finally {
       setBusy(false);
       setStatus(null);
@@ -115,7 +126,16 @@ export default function Scan() {
       </form>
 
       {error && <p className="error">{error}</p>}
-      {serverError && <ErrorReload message={serverError} />}
+      {serverError && <p className="error">{serverError}</p>}
+
+      <ConfirmDialog
+        open={insufficientTokens}
+        title="Not enough tokens"
+        message="You don't have enough tokens to scan this document. Purchase more tokens to continue."
+        confirmLabel="Buy tokens"
+        onConfirm={() => navigate('/buy-tokens')}
+        onCancel={() => setInsufficientTokens(false)}
+      />
     </div>
     </main>
   );

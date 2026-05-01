@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 const MAX_RETRIES = 3;
 const RETRY_KEY = 'error_reload_retries';
