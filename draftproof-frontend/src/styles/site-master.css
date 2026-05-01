@@ -931,7 +931,7 @@ th {
   .nav-links { display: none; }
   .header-user { display: none; }
   .site-header .btn-primary.btn-small { display: none; }
-  .hamburger { display: flex; }
+  .hamburger { display: flex !important; }
   .site-header { grid-template-columns: auto auto; justify-content: space-between; }
   .hero-grid, .split-heading, .compare-band, .report-layout { grid-template-columns: 1fr; }
   .feature-grid { grid-template-columns: repeat(3, 1fr); }
