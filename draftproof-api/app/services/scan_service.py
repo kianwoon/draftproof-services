@@ -119,6 +119,7 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
                     "status": j.status,
                     "report_id": str(j.id) if j.status == "completed" else None,
                     "tier": j.tier,
+                    "ai_score": float(j.ai_score) if j.ai_score is not None else None,
                     "finding_count": j.finding_count,
                     "word_count": j.word_count,
                     "created_at": j.created_at.isoformat() if j.created_at else None,

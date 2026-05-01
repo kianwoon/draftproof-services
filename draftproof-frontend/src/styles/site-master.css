@@ -1687,6 +1687,11 @@ th {
   border: 1.5px solid;
   text-transform: capitalize;
 }
+.tier-score {
+  font-weight: 400;
+  opacity: .75;
+  margin-left: 2px;
+}
 
 .td-findings, .td-words { color: var(--muted); }
 .muted-link { color: var(--muted); font-size: .84rem; }

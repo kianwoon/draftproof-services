@@ -33,6 +33,14 @@ def scan_document(self, job_id: str, text: str) -> dict:
             tier = result["tier"]
             finding_count = result["findings"]
 
+            # Extract AI score from results JSON
+            ai_score = None
+            with open(result["json_path"]) as f:
+                results_json = json.load(f)
+            badge = results_json.get("ai_risk_badge")
+            if badge:
+                ai_score = badge.get("calibrated_ai_score")
+
             with open(result["md_path"]) as f:
                 md_text = f.read()
             with open(result["pdf_path"], "rb") as f:
@@ -56,6 +64,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 job_id,
                 "completed",
                 tier=tier,
+                ai_score=ai_score,
                 finding_count=finding_count,
                 report_urls=report_urls,
             )

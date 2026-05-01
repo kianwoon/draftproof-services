@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey, CheckConstraint, UniqueConstraint
+from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey, CheckConstraint, UniqueConstraint, Numeric
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime, timezone
 import uuid
@@ -158,6 +158,7 @@ class ScanJob(Base):
     scan_type = Column(Text, nullable=False, default="scan")
     status = Column(Text, nullable=False, default="pending", index=True)
     tier = Column(Text)
+    ai_score = Column(Numeric(6, 2))
     finding_count = Column(Integer)
     report_urls = Column(JSONB, default=dict)
     error = Column(Text)
