@@ -162,7 +162,10 @@ def derive_concern_tier(score: float, signals: SignalScores, confidence_label: s
     return "clear"
 
 
-# ── AI Risk Badge (v4) ─────────────────────────────────────────────────
+# ── AI Risk Badge (v5) ─────────────────────────────────────────────────
+
+import re as _re
+import statistics as _statistics
 
 Tier = Literal["GREEN", "AMBER", "ORANGE", "RED"]
 TurnitinBand = Literal[
@@ -203,6 +206,81 @@ def _classify_score(score: float) -> tuple:
     return "RED", "high_ai_concern"
 
 
+def _split_sentences(text: str) -> list:
+    text = _re.sub(r"\s+", " ", text.strip())
+    if not text:
+        return []
+    return _re.split(r"(?<=[.!?])\s+", text)
+
+
+def estimate_burstiness_risk(text: str) -> float:
+    """Higher = more even rhythm, potentially AI-like. Weak signal only."""
+    sentences = _split_sentences(text)
+    if len(sentences) < 6:
+        return 0.50
+    lengths = [len(s.split()) for s in sentences if s.split()]
+    if len(lengths) < 6:
+        return 0.50
+    mean_l = _statistics.mean(lengths)
+    if mean_l == 0:
+        return 0.50
+    cv = _statistics.pstdev(lengths) / mean_l
+    if cv >= 0.75:
+        return 0.15
+    if cv >= 0.55:
+        return 0.30
+    if cv >= 0.40:
+        return 0.50
+    if cv >= 0.25:
+        return 0.70
+    return 0.85
+
+
+def estimate_lived_detail_risk(text: str) -> float:
+    """Higher = weaker concrete/observable detail."""
+    sentences = _split_sentences(text)
+    if not sentences:
+        return 0.70
+    patterns = [
+        r"\b\d+\b", r"\bfirst\b|\bsecond\b|\bthird\b",
+        r"\bduring\b", r"\bwhen\b", r"\bafter\b", r"\bbefore\b",
+        r"\bclassmate\b", r"\binterviewee\b", r"\bparticipant\b",
+        r"\buser\b", r"\bprototype\b", r"\bwe observed\b",
+        r"\bwe noticed\b", r"\bfeedback\b", r"\btesting\b",
+        r"\bcompartment\b", r"\blabel\b", r"\btransparent\b",
+        r"\balarm\b", r"\bmedication\b",
+    ]
+    hits = sum(
+        1 for s in sentences
+        if any(_re.search(p, s.lower()) for p in patterns)
+    )
+    ratio = hits / max(len(sentences), 1)
+    if ratio >= 0.45:
+        return 0.20
+    if ratio >= 0.30:
+        return 0.35
+    if ratio >= 0.20:
+        return 0.50
+    if ratio >= 0.10:
+        return 0.65
+    return 0.80
+
+
+def estimate_citation_risk(
+    in_text_citations: int,
+    bibliography_count: int,
+    uncited_claims: int,
+    total_claims: int,
+) -> float:
+    """Higher = weaker citation/source integrity."""
+    if bibliography_count <= 0 and total_claims <= 0:
+        return 0.50
+    cbr = in_text_citations / bibliography_count if bibliography_count > 0 else 0.0
+    csr = 1 - (uncited_claims / total_claims) if total_claims > 0 else 1.0
+    cbr, csr = clamp(cbr), clamp(csr)
+    return clamp(1 - (0.45 * cbr + 0.55 * csr))
+
+
 def calibrate_ai_risk(
     ai_likelihood: float,
     predictability: float,
@@ -213,93 +291,120 @@ def calibrate_ai_risk(
     confidence: str = "low",
     high_findings: int = 0,
     critical_findings: int = 0,
+    burstiness_risk: float = 0.50,
+    lived_detail_risk: float = 0.50,
+    citation_risk: float = 0.50,
+    process_risk: float = 0.0,
+    provenance_positive: bool = False,
 ) -> Dict[str, Any]:
-    """Calibrated AI-risk badge v4 — GREEN/AMBER/ORANGE/RED tiers.
-
-    All percentage inputs are decimals (0.085 = 8.5%).
-    """
+    """Calibrated AI-risk badge v5 — multi-signal with burstiness, lived detail, citation risk."""
     ai = clamp(ai_likelihood)
     pred = clamp(predictability)
     spec = clamp(specificity_raw)
     gen = clamp(genericity)
     src = clamp(source_grounding)
     dom = _domain_strength(domain_grounding_index)
+    burst = clamp(burstiness_risk)
+    lived = clamp(lived_detail_risk)
+    cite = clamp(citation_risk)
+    proc = clamp(process_risk)
 
-    # 1. Baseline excess
     pred_excess = max(pred - 0.35, 0.0)
     spec_excess = max(spec - 0.45, 0.0)
 
-    # 2. AI-style base score
-    ai_style_score = (
-        0.45 * ai
-        + 0.25 * pred_excess
+    # Text-style risk
+    text_style_score = (
+        0.35 * ai
+        + 0.20 * pred_excess
         + 0.25 * gen
         + 0.05 * spec_excess
+        + 0.15 * burst
     )
 
-    # 3. Small grounding credit (max 20%)
-    grounding_credit = min(0.20, 0.10 * src + 0.10 * dom)
-    score = ai_style_score * (1 - grounding_credit)
+    # Grounding quality risk
+    grounding_quality_risk = 0.60 * lived + 0.40 * cite
 
-    # 4. Confidence multiplier (only with real style signal)
+    # Small grounding credit (max 15%)
+    grounding_credit = min(0.15, 0.075 * src + 0.075 * dom)
+
+    score = (
+        0.60 * text_style_score
+        + 0.25 * grounding_quality_risk
+        + 0.10 * proc
+        + 0.05 * (1.0 if provenance_positive else 0.0)
+    )
+    score *= 1 - grounding_credit
+
     if ai >= 0.10 or gen >= 0.08 or pred >= 0.43:
         score *= _confidence_multiplier(confidence)
 
-    # 5. Pattern-based boosts
     pattern_reasons = []
 
-    # Gemini-like known-positive cluster
+    # Known AI cluster
     if (
         ai >= 0.12 and pred >= 0.45 and gen >= 0.10
         and spec >= 0.50 and confidence in ("medium", "high")
     ):
-        score += 0.080
-        pattern_reasons.append("gemini_like_cluster")
+        score += 0.10
+        pattern_reasons.append("known_ai_cluster")
 
-    # Borderline AI-style cluster
+    # Borderline AI cluster
     if (
         ai >= 0.10 and pred >= 0.43 and gen >= 0.08
         and confidence in ("medium", "high")
     ):
-        score += 0.040
-        pattern_reasons.append("borderline_ai_style_cluster")
+        score += 0.05
+        pattern_reasons.append("borderline_ai_cluster")
 
-    # High genericity + predictability
     if gen >= 0.15 and pred >= 0.45:
-        score += 0.035
+        score += 0.04
         pattern_reasons.append("generic_predictable_style")
 
-    # Serious findings
+    if lived >= 0.65 and (ai >= 0.10 or gen >= 0.08):
+        score += 0.04
+        pattern_reasons.append("weak_lived_detail_with_ai_style")
+
+    if proc >= 0.60:
+        score += 0.04
+        pattern_reasons.append("high_process_risk")
+
     if high_findings > 0:
-        score += min(0.050, 0.015 * high_findings)
+        score += min(0.06, 0.02 * high_findings)
         pattern_reasons.append("high_findings_present")
 
     if critical_findings > 0:
-        score += 0.100
+        score += 0.12
         pattern_reasons.append("critical_findings_present")
 
     score = clamp(score)
     tier, turnitin_band = _classify_score(score)
 
-    # 6. Clean human-like protection
+    # Provenance override
+    if provenance_positive:
+        tier, turnitin_band = "RED", "high_ai_concern"
+        pattern_reasons.append("verified_ai_provenance")
+
+    # Clean human-like protection
     if (
         ai < 0.10 and gen == 0 and pred < 0.40
         and src >= 0.90 and dom == 1.0
         and high_findings == 0 and critical_findings == 0
+        and not provenance_positive
     ):
         tier, turnitin_band = "GREEN", "likely_0"
         pattern_reasons.append("clean_low_ai_profile")
 
-    # 7. Low AI cap
+    # Low AI cap
     if (
         ai < 0.12 and gen < 0.05 and pred < 0.45
         and high_findings == 0 and critical_findings == 0
+        and not provenance_positive
     ):
         if tier in ("ORANGE", "RED"):
             tier, turnitin_band = "AMBER", "likely_0_or_star"
             pattern_reasons.append("low_ai_cap_applied")
 
-    # 8. Red-flag cluster floor
+    # Red-flag cluster floor
     red_flags = 0
     if ai >= 0.12:
         red_flags += 1
@@ -316,12 +421,27 @@ def calibrate_ai_risk(
         tier, turnitin_band = "RED", "high_ai_concern"
         pattern_reasons.append("red_flag_cluster_5_of_5")
 
+    # Writing review score
+    writing_review_score = clamp(
+        0.35 * pred + 0.30 * spec + 0.20 * gen + 0.15 * burst
+    )
+    if writing_review_score < 0.35:
+        writing_band = "clean"
+    elif writing_review_score < 0.50:
+        writing_band = "light_review"
+    elif writing_review_score < 0.65:
+        writing_band = "review"
+    else:
+        writing_band = "heavy_review"
+
     return {
         "tier": tier,
         "turnitin_like_band": turnitin_band,
         "calibrated_ai_score": round(score * 100, 2),
-        "ai_style_score": round(ai_style_score * 100, 2),
+        "ai_style_score": round(text_style_score * 100, 2),
         "grounding_credit": round(grounding_credit * 100, 2),
+        "writing_review_score": round(writing_review_score * 100, 2),
+        "writing_review_band": writing_band,
         "red_flags": red_flags,
         "pattern_reasons": pattern_reasons,
     }

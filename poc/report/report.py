@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
-from detect.scoring import extract_signals, calculate_authorship_concern, calibrate_ai_risk
+from detect.scoring import extract_signals, calculate_authorship_concern, calibrate_ai_risk, estimate_burstiness_risk, estimate_lived_detail_risk, estimate_citation_risk
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -1149,6 +1149,25 @@ class ReportBuilder:
         n_high = sum(1 for f in self._findings if f.tier == Tier.HIGH)
         n_critical = sum(1 for f in self._findings if f.tier == Tier.CRITICAL)
 
+        # v5: compute burstiness and lived-detail from original text
+        burst_risk = 0.50
+        lived_risk = 0.50
+        if self._original_text:
+            burst_risk = estimate_burstiness_risk(self._original_text)
+            lived_risk = estimate_lived_detail_risk(self._original_text)
+
+        # v5: citation risk from cite summary
+        cite_risk = 0.50
+        if self._cite_summary:
+            uncited = sum(1 for f in self._cite_summary.findings if "uncited" in f.get("type", "").lower())
+            total_claims = max(self._cite_summary.in_text_count + uncited, 1)
+            cite_risk = estimate_citation_risk(
+                in_text_citations=self._cite_summary.in_text_count,
+                bibliography_count=self._cite_summary.bib_entry_count,
+                uncited_claims=uncited,
+                total_claims=total_claims,
+            ) if self._cite_summary.bib_entry_count > 0 else 0.50
+
         ai_risk_badge = calibrate_ai_risk(
             ai_likelihood=ai_lik,
             predictability=sig.get("predictability", 0.0) or 0.0,
@@ -1159,6 +1178,9 @@ class ReportBuilder:
             confidence=concern["confidence_label"],
             high_findings=n_high,
             critical_findings=n_critical,
+            burstiness_risk=burst_risk,
+            lived_detail_risk=lived_risk,
+            citation_risk=cite_risk,
         )
 
         return DraftReport(

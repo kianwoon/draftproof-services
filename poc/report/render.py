@@ -211,6 +211,11 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"- **Band**: {badge_band}")
         if badge_gc > 0:
             lines.append(f"- **Grounding credit**: `{badge_gc:.1f}%`")
+        wr_score = badge.get("writing_review_score", 0)
+        wr_band = badge.get("writing_review_band", "")
+        if wr_score > 0:
+            wr_label = wr_band.replace("_", " ").title() if wr_band else ""
+            lines.append(f"- **Writing review**: `{wr_score:.1f}%` ({wr_label})")
         if badge_red_flags > 0:
             lines.append(f"- **Red flags**: {badge_red_flags}/5")
         if badge_reasons:
