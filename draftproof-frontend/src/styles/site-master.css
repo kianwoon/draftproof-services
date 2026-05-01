@@ -1084,6 +1084,12 @@ th {
   flex-shrink: 0;
 }
 
+.dash-avatar-img {
+  background: none;
+  object-fit: cover;
+  border: 2px solid var(--line);
+}
+
 .dash-welcome h1 {
   font-size: 1.5rem;
   margin: 0;

@@ -23,7 +23,11 @@ export default function Dashboard() {
       <div className="container">
         {/* Welcome */}
         <section className="dash-welcome">
-          <div className="dash-avatar">{initials}</div>
+          {user.avatar_url ? (
+            <img src={user.avatar_url} alt={user.email} className="dash-avatar dash-avatar-img" />
+          ) : (
+            <div className="dash-avatar">{initials}</div>
+          )}
           <div>
             <h1>Welcome back</h1>
             <p className="dash-email">{user.email}</p>
