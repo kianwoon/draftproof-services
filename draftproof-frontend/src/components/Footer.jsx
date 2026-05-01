@@ -19,8 +19,8 @@ export default function Footer() {
           <Link to="/#engine">How it works</Link>
           <Link to="/#report">Sample report</Link>
           <Link to="/pricing">Pricing</Link>
-          <a href="/#privacy">Privacy</a>
-          <a href="/#security">Security</a>
+          <Link to="/privacy">Privacy</Link>
+          <Link to="/security">Security</Link>
         </div>
 
         <p>

@@ -13,6 +13,8 @@ import Report from './pages/Report';
 import Reports from './pages/Reports';
 import Pricing from './pages/Pricing';
 import Why from './pages/Why';
+import Privacy from './pages/Privacy';
+import Security from './pages/Security';
 import BuyTokens from './pages/BuyTokens';
 import PurchaseHistory from './pages/PurchaseHistory';
 
@@ -56,6 +58,8 @@ export default function App() {
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/pricing" element={<Pricing />} />
             <Route path="/why" element={<Why />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/security" element={<Security />} />
             <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />
             <Route path="/history" element={<ProtectedRoute><PurchaseHistory /></ProtectedRoute>} />
             <Route path="/signin" element={<SignIn />} />

@@ -2276,3 +2276,138 @@ th {
     margin-bottom: 0.5rem;
   }
 }
+
+/* ── Legal pages (Privacy, Security) ────────────── */
+
+.legal-shell {
+  background: var(--surface-soft);
+}
+
+.legal-shell .container {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 4rem 1.5rem 6rem;
+}
+
+.legal-hero {
+  text-align: center;
+  margin-bottom: 4rem;
+}
+
+.legal-hero h1 {
+  font-size: 2rem;
+  max-width: none;
+  color: var(--ink);
+  margin: 0.5rem auto 1.6rem;
+}
+
+.legal-hero .lead {
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.7;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.legal-date {
+  margin-top: 1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.legal-section {
+  padding: 2.5rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.legal-section h2 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.25rem;
+  color: var(--ink);
+  margin-bottom: 1rem;
+}
+
+.legal-section h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 1.2rem 0 0.5rem;
+}
+
+.legal-section p {
+  color: var(--muted);
+  line-height: 1.75;
+  margin-bottom: 0.75rem;
+}
+
+.legal-section ul {
+  list-style: none;
+  padding: 0;
+}
+
+.legal-section li {
+  color: var(--muted);
+  line-height: 1.75;
+  margin-bottom: 0.6rem;
+  padding-left: 1.2rem;
+  position: relative;
+}
+
+.legal-section li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.7em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue-700);
+}
+
+.legal-section a {
+  color: var(--blue-700);
+  text-decoration: none;
+}
+
+.legal-section a:hover {
+  text-decoration: underline;
+}
+
+.legal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.legal-table th {
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  background: var(--blue-100);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.legal-table td {
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .legal-shell .container {
+    padding: 2.5rem 1rem 4rem;
+  }
+  .legal-hero h1 {
+    font-size: 1.5rem;
+  }
+  .legal-table th,
+  .legal-table td {
+    padding: 0.5rem;
+    font-size: 0.82rem;
+  }
+}
