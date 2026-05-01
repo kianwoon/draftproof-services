@@ -7,6 +7,10 @@ const TIER_CONFIG = {
   low:      { label: 'Low Risk',      color: '#22c55e', bg: '#f0fdf4', icon: 'M12 15.5l-3-3 1.4-1.4L12 12.6l4.6-4.6L18 9.5z' },
   moderate: { label: 'Moderate Risk',  color: '#f59e0b', bg: '#fffbeb', icon: 'M12 9v4M12 15h.01' },
   high:     { label: 'High Risk',      color: '#ef4444', bg: '#fef2f2', icon: 'M12 9v4M12 15h.01M4.93 4.93l14.14 14.14' },
+  green:    { label: 'Low Risk',       color: '#22c55e', bg: '#f0fdf4', icon: 'M12 15.5l-3-3 1.4-1.4L12 12.6l4.6-4.6L18 9.5z' },
+  amber:    { label: 'Moderate Risk',  color: '#f59e0b', bg: '#fffbeb', icon: 'M12 9v4M12 15h.01' },
+  orange:   { label: 'High Risk',      color: '#f97316', bg: '#fff7ed', icon: 'M12 9v4M12 15h.01M4.93 4.93l14.14 14.14' },
+  red:      { label: 'Critical Risk',  color: '#ef4444', bg: '#fef2f2', icon: 'M12 9v4M12 15h.01M4.93 4.93l14.14 14.14' },
 };
 
 const SEVERITY_CONFIG = {
@@ -91,7 +95,7 @@ export default function Report() {
               <path d={tier.icon} />
               <circle cx="12" cy="12" r="10" />
             </svg>
-            <span style={{ color: tier.color }}>{tier.label}</span>
+            <span style={{ color: tier.color }}>{report.ai_score != null ? `${tier.label} (${report.ai_score.toFixed(1)}%)` : tier.label}</span>
           </div>
         </div>
 

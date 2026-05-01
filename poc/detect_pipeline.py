@@ -71,11 +71,16 @@ def run_detect(text: str, output_dir: str, verbose: bool = False, model_name: st
     with open(json_path, "w") as f:
         json.dump(json_data, f, indent=2, default=str)
 
+    # Use ai_risk_badge tier (what PDF shows) over findings-based tier
+    display_tier = draft_report.overall_tier.value
+    if draft_report.ai_risk_badge:
+        display_tier = draft_report.ai_risk_badge.get("tier", display_tier).lower()
+
     return {
         "md_path": md_path,
         "json_path": json_path,
         "pdf_path": pdf_path,
-        "tier": draft_report.overall_tier.value,
+        "tier": display_tier,
         "findings": draft_report.finding_count,
         "scan_time": elapsed,
         "report": draft_report,

@@ -140,12 +140,25 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
             except Exception:
                 pass
 
+        # Extract AI risk badge from results_json for display alignment
+        ai_score = None
+        ai_badge_tier = None
+        if results_json:
+            badge = results_json.get("ai_risk_badge")
+            if badge:
+                ai_score = badge.get("calibrated_ai_score")
+                ai_badge_tier = badge.get("tier", "").lower()
+
+        # Prefer AI badge tier over findings-based tier (matches PDF)
+        display_tier = ai_badge_tier or job.tier
+
         return {
             "id": str(job.id),
             "document_name": f"scan_{str(job.id)[:8]}",
             "issues": issues,
             "created_at": job.completed_at or job.created_at,
-            "tier": job.tier,
+            "tier": display_tier,
+            "ai_score": ai_score,
             "report_md_url": report_md_url,
             "report_pdf_url": report_pdf_url,
             "results_json": results_json,

@@ -16,6 +16,20 @@ const TIER_COLORS = {
   low: '#22c55e',
   moderate: '#f59e0b',
   high: '#ef4444',
+  green: '#22c55e',
+  amber: '#f59e0b',
+  orange: '#f97316',
+  red: '#ef4444',
+};
+
+const TIER_LABELS = {
+  low: 'Low',
+  moderate: 'Moderate',
+  high: 'High',
+  green: 'Low',
+  amber: 'Moderate',
+  orange: 'High',
+  red: 'Critical',
 };
 
 function formatDate(iso) {
@@ -130,7 +144,7 @@ export default function Reports() {
                       <td>
                         {scan.tier ? (
                           <span className="tier-badge" style={{ color: tierColor, borderColor: tierColor }}>
-                            {scan.tier}
+                            {TIER_LABELS[scan.tier] || scan.tier}
                           </span>
                         ) : '—'}
                       </td>
