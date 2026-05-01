@@ -292,7 +292,7 @@ async def get_current_user(request: Request) -> dict:
 
 
 @router.get("/me")
-async def get_me(request: Request):
+async def get_me(request: Request, db: AsyncSession = Depends(get_db)):
     import logging
     log = logging.getLogger("auth.me")
     token = request.cookies.get("token")
@@ -301,8 +301,12 @@ async def get_me(request: Request):
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        log.info("/me — resolved user_id=%s email=%s", payload["sub"], payload["email"])
-        return {"id": payload["sub"], "email": payload["email"]}
+        user_id = payload["sub"]
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        avatar_url = user.avatar_url if user else None
+        log.info("/me — resolved user_id=%s email=%s avatar=%s", user_id, payload["email"], bool(avatar_url))
+        return {"id": user_id, "email": payload["email"], "avatar_url": avatar_url}
     except jwt.JWTError:
         log.warning("/me — JWT decode failed")
         raise HTTPException(status_code=401, detail="Invalid token")

@@ -88,7 +88,13 @@ export default function Header() {
           <Link to="/history" className="token-badge">
             {balance !== null ? `${balance} tokens` : '—'}
           </Link>
-          <span className="user-email">{user.email}</span>
+          {user.avatar_url ? (
+            <img src={user.avatar_url} alt={user.email} className="user-avatar" />
+          ) : (
+            <div className="user-avatar-placeholder">
+              {user.email.charAt(0).toUpperCase()}
+            </div>
+          )}
           <button onClick={handleLogout} className="btn btn-secondary btn-small">Sign out</button>
         </div>
       ) : (
