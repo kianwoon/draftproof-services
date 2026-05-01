@@ -372,9 +372,9 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         badge_score = report.ai_risk_badge.get("calibrated_ai_score", 0)
         verdict_map = {
             "GREEN": f"Low risk across all clusters (score: {badge_score:.1f}%). Text appears ready for submission.",
-            "AMBER": f"Moderate grounding concerns (score: {badge_score:.1f}%). Review cluster details before submission.",
-            "ORANGE": f"Elevated integrity risk (score: {badge_score:.1f}%). Aligned evidence across clusters suggests writing process review.",
-            "RED": f"High integrity risk (score: {badge_score:.1f}%). Aligned evidence across independent clusters indicates writing process concerns. Review recommended before submission.",
+            "AMBER": f"Moderate concerns detected (score: {badge_score:.1f}%). Review flagged areas before submission.",
+            "ORANGE": f"Elevated integrity risk (score: {badge_score:.1f}%). Multiple clusters show aligned patterns — review recommended.",
+            "RED": f"High integrity risk (score: {badge_score:.1f}%). Strong evidence across independent clusters — thorough review recommended before submission.",
         }
         verdict = verdict_map.get(badge_tier_val, _verdict(tier, total))
     else:
@@ -443,7 +443,10 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"> **Tier Reason:** {report.overall_tier_reason}")
         lines.append("")
     if report.raw_overall_tier != report.adjusted_overall_tier:
-        lines.append(f"> **Tier Adjustment:** Raw `{report.raw_overall_tier.upper()}` -> Adjusted `{report.adjusted_overall_tier.upper()}`")
+        if report.ai_risk_badge:
+            lines.append(f"> **Finding-based tier:** `{report.raw_overall_tier.upper()}` raw, adjusted to `{report.adjusted_overall_tier.upper()}` after false-positive filtering")
+        else:
+            lines.append(f"> **Tier Adjustment:** Raw `{report.raw_overall_tier.upper()}` -> Adjusted `{report.adjusted_overall_tier.upper()}`")
         lines.append("")
 
     # Axis scores — suppressed when badge is present (badge cluster view replaces this)

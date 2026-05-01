@@ -22,6 +22,7 @@ Design principles:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import Counter
 from enum import Enum
 from typing import Any, Optional
 import math
@@ -479,7 +480,6 @@ def estimate_intra_paragraph_parallelism_risk(text: str) -> float:
                 starters.append(' '.join(words))
 
         # Count repeated 2-word starters
-        from collections import Counter
         starter_counts = Counter(starters)
         max_repeat = max(starter_counts.values())
         if max_repeat >= 3:
@@ -796,7 +796,6 @@ def estimate_unsupported_claim_risk(
         return 0.70
     if ratio >= 0.20:
         return 0.55
-    return 0.35
     if ratio >= 0.10:
         return 0.65
     return 0.80
@@ -825,8 +824,11 @@ class Layer3Scorer:
         }
 
         # Core components — always included
-        tp_components = {
+        # All components with base weights — only include if they fire (> 0)
+        all_tp = {
             "predictability": (predictability_risk, 0.25),
+            "topk": (topk_risk, 0.10),
+            "generic": (generic, 0.08),
             "burstiness": (burstiness, 0.10),
             "repeated_structure": (repeated_structure, 0.15),
             "formulaic_progression": (formulaic_progression, 0.20),
@@ -834,20 +836,9 @@ class Layer3Scorer:
             "generic_assertion": (generic_assertion, 0.20),
         }
 
-        # Optional — only when they fire (> 0.10)
-        tp_optional = []
-        if topk_risk > 0.10:
-            tp_optional.append(("topk", topk_risk, 0.10))
-        if generic > 0.10:
-            tp_optional.append(("generic", generic, 0.08))
+        active_tp = {k: (v, w) for k, (v, w) in all_tp.items() if v > 0}
 
-        if tp_optional:
-            opt_w = sum(w for _, _, w in tp_optional)
-            tp_components = {k: (v, wt * (1 - opt_w)) for k, (v, wt) in tp_components.items()}
-            for name, val, w in tp_optional:
-                tp_components[name] = (val, w)
-
-        score = weighted_average(tp_components)
+        score = weighted_average(active_tp) if active_tp else 0.0
 
         score = min(score, 0.75)
 
@@ -969,35 +960,26 @@ class Layer3Scorer:
         draft_jump = clamp(data.draft_evolution_jump_risk)
         reuse = clamp(data.structural_reuse_risk)
 
-        # Core components — always included
-        struct_components = {
+        # All components with base weights — only include if they fire (> 0)
+        # 0% means "pattern not detected" not "low risk"
+        all_components = {
             "progression": (progression, 0.30),
-            "uniformity": (uniformity, 0.20),
-            "starter": (starter, 0.25),
-            "conclusion": (conclusion, 0.25),
+            "uniformity": (uniformity, 0.15),
+            "starter": (starter, 0.20),
+            "conclusion": (conclusion, 0.15),
+            "signpost": (signpost, 0.25),
+            "balanced_hedging": (balanced_hedging, 0.20),
+            "intra_parallel": (intra_parallel, 0.15),
+            "topic_uniformity": (topic_uniformity, 0.15),
         }
 
-        # Optional components — only included when they actually fire (> threshold)
-        # This prevents low-value "noise" from diluting strong core signals.
-        # Each optional takes weight from core proportionally.
-        active_optional = []
-        if signpost > 0.30:
-            active_optional.append(("signpost", signpost, 0.25))
-        if balanced_hedging > 0.30:
-            active_optional.append(("balanced_hedging", balanced_hedging, 0.20))
-        if intra_parallel > 0.30:
-            active_optional.append(("intra_parallel", intra_parallel, 0.15))
-        if topic_uniformity > 0.30:
-            active_optional.append(("topic_uniformity", topic_uniformity, 0.15))
+        # Filter: only include components that actually detected something
+        active = {k: (v, w) for k, (v, w) in all_components.items() if v > 0}
 
-        if active_optional:
-            opt_weight = sum(w for _, _, w in active_optional)
-            scale = 1.0 - opt_weight
-            struct_components = {k: (v, w * scale) for k, (v, w) in struct_components.items()}
-            for name, val, w in active_optional:
-                struct_components[name] = (val, w)
-
-        structural_subscore = weighted_average(struct_components)
+        if not active:
+            structural_subscore = 0.0
+        else:
+            structural_subscore = weighted_average(active)
 
         has_draft_process = (
             data.draft_evolution_jump_risk is not None
@@ -1104,9 +1086,9 @@ class Layer3Scorer:
     ) -> float:
         if has_draft_process:
             return clamp(
-                0.30 * text.score
-                + 0.40 * grounding.score
-                + 0.30 * process.score
+                0.25 * text.score
+                + 0.35 * grounding.score
+                + 0.40 * process.score
             )
 
         return clamp(
