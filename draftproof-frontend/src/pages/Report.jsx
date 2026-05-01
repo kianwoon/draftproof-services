@@ -115,7 +115,9 @@ export default function Report() {
             );
           })}
           <div className="report-stat">
-            <span className="report-stat-value">{report.tier || '—'}</span>
+            <span className="report-stat-value">
+              <span className="tier-badge" style={{ background: tier.bg, color: tier.color }}>{tier.label}</span>
+            </span>
             <span className="report-stat-label">Risk Tier</span>
           </div>
         </div>
