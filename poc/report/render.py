@@ -165,7 +165,17 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
     lines.append(f"# DraftProof — Integrity Report")
     lines.append("")
-    lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
+
+    # Header badge: prefer calibrated AI Risk badge, else fallback to finding tier
+    _shield_colors = {"GREEN": "green", "AMBER": "yellow", "ORANGE": "orange", "RED": "red"}
+    if report.ai_risk_badge:
+        _ab = report.ai_risk_badge
+        _abt = _ab.get("tier", "")
+        _abs = _ab.get("calibrated_ai_score", 0)
+        _sc = _shield_colors.get(_abt, "lightgrey")
+        lines.append(f"![{_abt}](https://img.shields.io/badge/Tier-{_abt}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
+    else:
+        lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
     lines.append("")
 
     # ── SUBMITTED TEXT ────────────────────────────────────────────
