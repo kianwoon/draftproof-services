@@ -7,15 +7,12 @@ from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from authlib.integrations.starlette_client import OAuth
 from jose import jwt
-import boto3
-from botocore.config import Config as BotoConfig
 
 from app.config import (
     SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_HOURS,
     ALLOWED_EMAIL_DOMAINS, FRONTEND_URL,
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
     MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_TENANT,
-    R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME,
 )
 from app.models.db import get_db, User, UserIdentity, CreditAccount
 
@@ -69,8 +66,9 @@ def _create_jwt(user_id: str, email: str) -> str:
 
 
 async def _fetch_microsoft_avatar(access_token: str, user_id: str) -> str | None:
-    """Fetch profile photo from Microsoft Graph, upload to R2, return URL."""
+    """Fetch profile photo from Microsoft Graph, return as base64 data URL."""
     import httpx
+    import base64
     log = logging.getLogger("auth.microsoft.avatar")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -81,25 +79,11 @@ async def _fetch_microsoft_avatar(access_token: str, user_id: str) -> str | None
             if resp.status_code != 200:
                 log.info("No photo available (status %d)", resp.status_code)
                 return None
-            photo_bytes = resp.content
             content_type = resp.headers.get("content-type", "image/jpeg")
-
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=R2_ENDPOINT_URL,
-            aws_access_key_id=R2_ACCESS_KEY_ID,
-            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-            config=BotoConfig(signature_version="s3v4"),
-        )
-        key = f"avatars/{user_id}.jpg"
-        s3.put_object(
-            Bucket=R2_BUCKET_NAME, Key=key, Body=photo_bytes, ContentType=content_type
-        )
-        url = s3.generate_presigned_url(
-            "get_object", Params={"Bucket": R2_BUCKET_NAME, "Key": key}, ExpiresIn=86400 * 30
-        )
-        log.info("Avatar uploaded for user %s", user_id)
-        return url
+            b64 = base64.b64encode(resp.content).decode()
+            data_url = f"data:{content_type};base64,{b64}"
+            log.info("Avatar fetched for user %s (%d bytes)", user_id, len(resp.content))
+            return data_url
     except Exception as e:
         log.warning("Failed to fetch Microsoft avatar: %s", e)
         return None
