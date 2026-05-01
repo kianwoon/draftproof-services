@@ -83,11 +83,11 @@ _FILTER_CODES = {
 # ── Tier display config ──────────────────────────────────────────────
 
 _TIER_BADGE = {
-    Tier.CRITICAL: "![CRITICAL](https://img.shields.io/badge/Tier-CRITICAL-red)",
-    Tier.HIGH:     "![HIGH](https://img.shields.io/badge/Tier-HIGH-orange)",
-    Tier.MEDIUM:   "![MEDIUM](https://img.shields.io/badge/Tier-MEDIUM-yellow)",
-    Tier.LOW:      "![LOW](https://img.shields.io/badge/Tier-LOW-blue)",
-    Tier.CLEAN:    "![CLEAN](https://img.shields.io/badge/Tier-CLEAN-green)",
+    Tier.CRITICAL: "![CRITICAL](https://img.shields.io/badge/Turnitin_Tier-CRITICAL-red)",
+    Tier.HIGH:     "![HIGH](https://img.shields.io/badge/Turnitin_Tier-HIGH-orange)",
+    Tier.MEDIUM:   "![MEDIUM](https://img.shields.io/badge/Turnitin_Tier-MEDIUM-yellow)",
+    Tier.LOW:      "![LOW](https://img.shields.io/badge/Turnitin_Tier-LOW-blue)",
+    Tier.CLEAN:    "![CLEAN](https://img.shields.io/badge/Turnitin_Tier-CLEAN-green)",
 }
 
 _TIER_EMOJI = {
@@ -173,7 +173,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _abt = _ab.get("tier", "")
         _abs = _ab.get("calibrated_ai_score", 0)
         _sc = _shield_colors.get(_abt, "lightgrey")
-        lines.append(f"![{_abt}](https://img.shields.io/badge/Tier-{_abt}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
+        lines.append(f"![{_abt}](https://img.shields.io/badge/Turnitin_Tier-{_abt}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
     else:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
     lines.append("")
@@ -216,7 +216,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
         lines.append("### AI Risk Badge")
         lines.append("")
-        lines.append(f"![{badge_tier}](https://img.shields.io/badge/Tier-{badge_tier}-{shield_color})")
+        lines.append(f"![{badge_tier}](https://img.shields.io/badge/Turnitin_Tier-{badge_tier}-{shield_color})")
         lines.append(f"- **Score**: `{badge_score:.2f}%`")
         lines.append(f"- **Band**: {badge_band}")
         if badge_gc > 0:
