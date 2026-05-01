@@ -83,6 +83,13 @@ _FILTER_CODES = {
 
 # ── Tier display config ──────────────────────────────────────────────
 
+_BADGE_TIER_LABELS = {
+    "GREEN": "Low Risk",
+    "AMBER": "Moderate Risk",
+    "ORANGE": "High Risk",
+    "RED": "Very High Risk",
+}
+
 _TIER_BADGE = {
     Tier.CRITICAL: "![CRITICAL](https://img.shields.io/badge/Turnitin_Tier-CRITICAL-red)",
     Tier.HIGH:     "![HIGH](https://img.shields.io/badge/Turnitin_Tier-HIGH-orange)",
@@ -174,7 +181,8 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _abt = _ab.get("tier", "")
         _abs = _ab.get("calibrated_ai_score", 0)
         _sc = _shield_colors.get(_abt, "lightgrey")
-        lines.append(f"![{_abt}](https://img.shields.io/badge/Turnitin_Tier-{_abt}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
+        _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
+        lines.append(f"![{_abt_label}](https://img.shields.io/badge/Turnitin_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
     else:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
     lines.append("")
@@ -220,7 +228,8 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
         lines.append("### AI Risk Badge")
         lines.append("")
-        lines.append(f"![{badge_tier}](https://img.shields.io/badge/Turnitin_Tier-{badge_tier}-{shield_color})")
+        badge_tier_label = _BADGE_TIER_LABELS.get(badge_tier, badge_tier)
+        lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/Turnitin_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
         lines.append("")
         lines.append(f"- **Score**: `{badge_score:.2f}%`")
         lines.append(f"- **Band**: {badge_band}")
@@ -270,7 +279,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     if report.ai_risk_badge:
         badge_tier_val = report.ai_risk_badge.get("tier", "")
         if badge_tier_val:
-            display_tier = badge_tier_val
+            display_tier = _BADGE_TIER_LABELS.get(badge_tier_val, badge_tier_val)
             badge_emoji_map = {"GREEN": "[ok]", "AMBER": "[!]", "ORANGE": "[!!]", "RED": "[!!!]"}
             display_emoji = badge_emoji_map.get(badge_tier_val, emoji)
 
@@ -431,7 +440,8 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             "RED": "High risk — aligned evidence across independent clusters indicates writing process concerns.",
         }
         explanation = tier_explanation.get(badge_tier, "")
-        lines.append(f"> **Tier Reason:** Tier {badge_tier} at {badge_score:.1f}% — {explanation}")
+        badge_tier_display = _BADGE_TIER_LABELS.get(badge_tier, badge_tier)
+        lines.append(f"> **Tier Reason:** Tier {badge_tier_display} at {badge_score:.1f}% — {explanation}")
         if badge_reasons:
             readable = [r.replace("_", " ") for r in badge_reasons]
             lines.append(f"> **Triggers:** {', '.join(readable)}")
