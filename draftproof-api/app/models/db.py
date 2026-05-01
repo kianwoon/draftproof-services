@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey, CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from app.config import DATABASE_URL
@@ -32,8 +32,8 @@ class User(Base):
     display_name = Column(Text)
     avatar_url = Column(Text)
     status = Column(Text, nullable=False, default="active")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class UserIdentity(Base):
@@ -45,7 +45,7 @@ class UserIdentity(Base):
     provider_user_id = Column(Text, nullable=False)
     provider_email = Column(Text)
     provider_email_verified = Column(Boolean)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_login_at = Column(DateTime(timezone=True))
 
     __table_args__ = (UniqueConstraint("provider", "provider_user_id"),)
@@ -59,8 +59,8 @@ class CreditAccount(Base):
     balance_tokens = Column(Integer, nullable=False, default=0)
     reserved_tokens = Column(Integer, nullable=False, default=0)
     currency = Column(Text, nullable=False, default="USD")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (CheckConstraint("balance_tokens >= 0"), CheckConstraint("reserved_tokens >= 0"))
 
@@ -78,7 +78,7 @@ class CreditLedger(Base):
     reference_id = Column(UUID(as_uuid=True))
     idempotency_key = Column(Text, unique=True)
     note = Column(Text)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class CreditReservation(Base):
@@ -92,8 +92,8 @@ class CreditReservation(Base):
     tokens_reserved = Column(Integer, nullable=False)
     status = Column(Text, nullable=False, default="active", index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (UniqueConstraint("job_type", "job_id"),)
 
@@ -112,7 +112,7 @@ class UsageEvent(Base):
     file_type = Column(Text)
     status = Column(Text, nullable=False, default="completed")
     event_metadata = Column("metadata", JSONB, nullable=False, default=dict)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class Payment(Base):
@@ -129,8 +129,8 @@ class Payment(Base):
     status = Column(Text, nullable=False, index=True)
     idempotency_key = Column(Text, unique=True)
     payment_metadata = Column("metadata", JSONB, nullable=False, default=dict)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (UniqueConstraint("provider", "provider_payment_id"),)
 
@@ -145,7 +145,7 @@ class PricingPlan(Base):
     tokens_required = Column(Integer, nullable=False)
     max_words = Column(Integer, nullable=False, default=1000)
     active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class ScanJob(Base):
@@ -161,7 +161,7 @@ class ScanJob(Base):
     finding_count = Column(Integer)
     report_urls = Column(JSONB, default=dict)
     error = Column(Text)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     started_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
 

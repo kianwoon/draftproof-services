@@ -22,7 +22,9 @@ else:
     DATABASE_URL = f"postgresql+asyncpg://{_db_user}:{_db_pass}@{_raw_db_url}:{_db_port}/{_db_name}"
 
 # Auth
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is required")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 

@@ -157,9 +157,9 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         if result.scalar_one_or_none():
             return {"ok": True, "skipped": True}
 
-        # Credit tokens
+        # Credit tokens with row-level lock to prevent race on concurrent webhooks
         result = await db.execute(
-            select(CreditAccount).where(CreditAccount.user_id == user_id)
+            select(CreditAccount).where(CreditAccount.user_id == user_id).with_for_update()
         )
         account = result.scalar_one_or_none()
         if not account:

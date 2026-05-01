@@ -96,12 +96,13 @@ def _flatten_findings(results_json: dict) -> list[dict]:
     return issues
 
 
-async def get_report(report_id: str) -> dict | None:
-    """Fetch a completed scan report by scan job ID."""
+async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
+    """Fetch a completed scan report by scan job ID, optionally scoped to a user."""
     async with async_session() as session:
-        result = await session.execute(
-            select(ScanJob).where(ScanJob.id == uuid.UUID(report_id))
-        )
+        q = select(ScanJob).where(ScanJob.id == uuid.UUID(report_id))
+        if user_id:
+            q = q.where(ScanJob.user_id == uuid.UUID(user_id))
+        result = await session.execute(q)
         job = result.scalar_one_or_none()
         if not job or job.status != "completed":
             return None

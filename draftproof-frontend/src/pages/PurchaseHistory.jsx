@@ -130,15 +130,36 @@ export default function PurchaseHistory() {
               Previous
             </button>
             <span className="pagination-info">
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                <button
-                  key={p}
-                  className={`pagination-btn${p === page ? ' active' : ''}`}
-                  onClick={() => setPage(p)}
-                >
-                  {p}
-                </button>
-              ))}
+              {(() => {
+                const pages = [];
+                const maxVisible = 7;
+                if (totalPages <= maxVisible) {
+                  for (let i = 1; i <= totalPages; i++) pages.push(i);
+                } else {
+                  pages.push(1);
+                  let start = Math.max(2, page - 2);
+                  let end = Math.min(totalPages - 1, page + 2);
+                  if (page <= 3) end = Math.min(5, totalPages - 1);
+                  if (page >= totalPages - 2) start = Math.max(totalPages - 4, 2);
+                  if (start > 2) pages.push('...');
+                  for (let i = start; i <= end; i++) pages.push(i);
+                  if (end < totalPages - 1) pages.push('...');
+                  pages.push(totalPages);
+                }
+                return pages.map((p, i) =>
+                  p === '...' ? (
+                    <span key={`ell${i}`} className="pagination-ellipsis">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      className={`pagination-btn${p === page ? ' active' : ''}`}
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </button>
+                  )
+                );
+              })()}
             </span>
             <button
               className="btn btn-secondary btn-small"

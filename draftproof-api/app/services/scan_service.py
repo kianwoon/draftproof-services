@@ -132,12 +132,13 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
         }
 
 
-async def get_scan(scan_id: str) -> dict | None:
-    """Look up scan_job by ID."""
+async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
+    """Look up scan_job by ID, optionally scoped to a user."""
     async with async_session() as session:
-        result = await session.execute(
-            select(ScanJob).where(ScanJob.id == uuid.UUID(scan_id))
-        )
+        q = select(ScanJob).where(ScanJob.id == uuid.UUID(scan_id))
+        if user_id:
+            q = q.where(ScanJob.user_id == uuid.UUID(user_id))
+        result = await session.execute(q)
         job = result.scalar_one_or_none()
         if not job:
             return None

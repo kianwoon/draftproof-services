@@ -11,6 +11,15 @@ export default function SignIn() {
   if (user) return <Navigate to="/" replace />;
 
   const errorMsg = searchParams.get('error');
+  const knownErrors = {
+    'Session expired. Please sign in again.': true,
+    'Access denied. Your email domain is not supported.': true,
+    'Something went wrong during sign-in': true,
+    'Something went wrong. Please try again.': true,
+    'Invalid request. Please try again.': true,
+    'Too many requests. Please wait a moment.': true,
+  };
+  const safeErrorMsg = errorMsg && knownErrors[errorMsg] ? errorMsg : null;
   const next = searchParams.get('next');
   if (next && !sessionStorage.getItem('auth_next')) {
     sessionStorage.setItem('auth_next', next);
@@ -24,9 +33,9 @@ export default function SignIn() {
           Use your Google or Microsoft account to continue.
         </p>
 
-        {errorMsg && (
+        {safeErrorMsg && (
           <div className="alert alert-error" style={{ marginBottom: '1.5rem' }}>
-            {errorMsg}
+            {safeErrorMsg}
             <button
               onClick={() => navigate('/signin', { replace: true })}
               style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1 }}

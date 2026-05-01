@@ -3,7 +3,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from fastapi import UploadFile
-from app.config import UPLOAD_DIR, ALLOWED_EXTENSIONS
+from app.config import UPLOAD_DIR, ALLOWED_EXTENSIONS, MAX_FILE_SIZE
 from app.models import DocumentOut
 
 
@@ -18,7 +18,9 @@ def _write_text_sync(dest: str, text: str):
 
 
 async def save_upload(file: UploadFile) -> DocumentOut:
-    ext = os.path.splitext(file.filename)[1].lower()
+    # Sanitize filename — strip any path components
+    safe_filename = os.path.basename(file.filename or "upload.txt")
+    ext = os.path.splitext(safe_filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(f"File type {ext} not allowed")
 
@@ -27,9 +29,11 @@ async def save_upload(file: UploadFile) -> DocumentOut:
     dest = os.path.join(UPLOAD_DIR, f"{doc_id}{ext}")
 
     content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise ValueError(f"File exceeds {MAX_FILE_SIZE // (1024*1024)}MB limit")
     await asyncio.to_thread(_write_file_sync, dest, content)
 
-    return DocumentOut(id=doc_id, filename=file.filename, created_at=datetime.now(timezone.utc))
+    return DocumentOut(id=doc_id, filename=safe_filename, created_at=datetime.now(timezone.utc))
 
 
 async def save_text(text: str) -> DocumentOut:

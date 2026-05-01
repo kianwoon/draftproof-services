@@ -4,6 +4,7 @@ import { useState } from 'react';
 export default function ReportPreview({ issues }) {
   const [expandedId, setExpandedId] = useState(null);
   const [suggestion, setSuggestion] = useState(null);
+  const [error, setError] = useState(null);
 
   const handleExpand = async (issueId) => {
     if (expandedId === issueId) {
@@ -11,18 +12,28 @@ export default function ReportPreview({ issues }) {
       return;
     }
     setExpandedId(issueId);
-    const { data } = await getSuggestion(issueId);
-    setSuggestion(data);
+    setError(null);
+    try {
+      const { data } = await getSuggestion(issueId);
+      setSuggestion(data);
+    } catch {
+      setError('Failed to load suggestion.');
+    }
   };
 
   const handleApply = async (issueId, suggestionId) => {
-    await applySuggestion(issueId, suggestionId);
-    setExpandedId(null);
+    try {
+      await applySuggestion(issueId, suggestionId);
+      setExpandedId(null);
+    } catch {
+      setError('Failed to apply suggestion.');
+    }
   };
 
   return (
     <div className="report-preview">
       <h2>Scan Results</h2>
+      {error && <div className="alert alert-error">{error}</div>}
       {issues.length === 0 && <p>No issues found.</p>}
       {issues.map((issue) => (
         <div key={issue.id} className="issue-card">

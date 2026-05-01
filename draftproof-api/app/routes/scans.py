@@ -28,7 +28,7 @@ async def create_scan_route(req: ScanRequest, user: dict = Depends(get_current_u
 
 @router.get("/{scan_id}", response_model=ScanOut)
 async def get_scan_route(scan_id: str, user: dict = Depends(get_current_user)):
-    result = await get_scan(scan_id)
+    result = await get_scan(scan_id, user_id=user["id"])
     if not result:
         raise HTTPException(status_code=404, detail="Scan not found")
     return ScanOut(**result)

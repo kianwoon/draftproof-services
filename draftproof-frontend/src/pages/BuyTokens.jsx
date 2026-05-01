@@ -35,6 +35,7 @@ export default function BuyTokens() {
       const msg = err.response?.data?.detail || 'Failed to start checkout';
       const status = err.response?.status;
       if (status >= 400) { setServerError(msg); } else { setMessage({ type: 'error', text: msg }); }
+    } finally {
       setLoading(false);
     }
   };
