@@ -73,6 +73,9 @@ class Layer3Input:
     repeated_starter_risk: Optional[float] = None
     formulaic_conclusion_risk: Optional[float] = None
     signpost_paragraph_risk: Optional[float] = None
+    balanced_hedging_risk: Optional[float] = None
+    intra_paragraph_parallelism_risk: Optional[float] = None
+    paragraph_topic_uniformity_risk: Optional[float] = None
     draft_evolution_jump_risk: Optional[float] = None
     structural_reuse_risk: Optional[float] = None
     style_shift_risk: Optional[float] = None
@@ -404,6 +407,140 @@ def estimate_signpost_paragraph_risk(text: str) -> float:
         return 0.55
     if ratio >= 0.10:
         return 0.30
+    return 0.0
+
+
+BALANCED_HEDGING_PATTERNS = [
+    r'\bnot only\b.+?\bbut\s+also\b',
+    r'\bwhile\b.{5,40}?\b(?:important|necessary|essential|crucial|vital)\b.{5,30}?\balso\b',
+    r'\balthough\b.{5,40}?\b(?:important|necessary|essential|crucial|vital)\b',
+    r'\bon\s+the\s+one\s+hand\b.+?\bon\s+the\s+other\b',
+    r'\bit\s+is\s+(?:important|essential|crucial)\s+to\s+note\b',
+    r'\bplays?\s+a\s+(?:vital|crucial|key|important|central)\s+role\b',
+    r'\bthere\s+is\s+no\s+(?:doubt|question|denying)\b',
+    r'\bcannot\s+be\s+(?:overstated|ignored|overlooked|underestimated)\b',
+    r'\bit\s+is\s+worth\s+noting\b',
+    r'\bhas\s+its\s+(?:merits|benefits|strengths)\b.{5,30}?\bbut\b',
+    r'\bdespite\s+(?:these?\s+)?(?:challenges?|concerns?|risks?|issues?)\b',
+    r'\bthe\s+(?:key|main|primary)\s+(?:challenge|issue|concern)\s+is\b',
+    r'\bboth\s+(?:sides?|perspectives?|approaches?|viewpoints?)\b',
+]
+
+
+def estimate_balanced_hedging_risk(text: str) -> float:
+    """Higher = text uses many AI-typical balanced/hedging constructions.
+
+    AI essays over-use balanced constructions: "While X is important, Y should
+    also be considered", "not only A but also B", "plays a crucial role".
+    These create a distinctive even-handed, tempered tone that's uncommon
+    in human first-draft writing.
+    """
+    lower = text.lower()
+    hits = sum(1 for p in BALANCED_HEDGING_PATTERNS if re.search(p, lower))
+
+    if hits >= 5:
+        return 0.90
+    if hits >= 4:
+        return 0.75
+    if hits == 3:
+        return 0.55
+    if hits == 2:
+        return 0.35
+    if hits == 1:
+        return 0.15
+    return 0.0
+
+
+def estimate_intra_paragraph_parallelism_risk(text: str) -> float:
+    """Higher = paragraphs have repeated sentence-start patterns internally.
+
+    AI tends to produce paragraphs where multiple sentences follow the same
+    grammatical template: "X is important because... Y is important because..."
+    or "This means... This shows... This suggests..."
+    """
+    paragraphs = split_paragraphs(text)
+    if len(paragraphs) < 2:
+        return 0.0
+
+    parallel_count = 0
+    total_paragraphs = 0
+
+    for p in paragraphs:
+        sentences = [s.strip() for s in re.split(r'[.!?]+', p) if len(s.strip()) > 10]
+        if len(sentences) < 3:
+            continue
+        total_paragraphs += 1
+
+        # Extract first 2 words of each sentence as starter pattern
+        starters = []
+        for s in sentences:
+            words = s.lower().split()[:2]
+            if words:
+                starters.append(' '.join(words))
+
+        # Count repeated 2-word starters
+        from collections import Counter
+        starter_counts = Counter(starters)
+        max_repeat = max(starter_counts.values())
+        if max_repeat >= 3:
+            parallel_count += 1
+        elif max_repeat >= 2 and len(starters) >= 4:
+            # 2+ same starters in 4+ sentence paragraph
+            repeated_starter_types = sum(1 for c in starter_counts.values() if c >= 2)
+            if repeated_starter_types >= 1:
+                parallel_count += 0.5
+
+    if total_paragraphs == 0:
+        return 0.0
+
+    ratio = parallel_count / total_paragraphs
+    if ratio >= 0.50:
+        return 0.85
+    if ratio >= 0.35:
+        return 0.65
+    if ratio >= 0.20:
+        return 0.45
+    if ratio >= 0.10:
+        return 0.25
+    return 0.0
+
+
+def estimate_paragraph_topic_uniformity_risk(text: str) -> float:
+    """Higher = every paragraph has a very similar internal structure.
+
+    AI essays produce paragraphs with nearly identical sentence counts and
+    topic scope: each paragraph introduces one idea, elaborates, and concludes.
+    Human writing has more varied paragraph architecture.
+    """
+    paragraphs = split_paragraphs(text)
+    if len(paragraphs) < 4:
+        return 0.0
+
+    # Measure sentence count per paragraph
+    sent_counts = []
+    for p in paragraphs:
+        sents = [s for s in re.split(r'[.!?]+', p) if len(s.strip()) > 5]
+        if sents:
+            sent_counts.append(len(sents))
+
+    if len(sent_counts) < 4:
+        return 0.0
+
+    mean_sents = statistics.mean(sent_counts)
+    if mean_sents <= 0:
+        return 0.0
+
+    cv = statistics.pstdev(sent_counts) / mean_sents
+
+    # Very uniform sentence count across paragraphs = suspicious
+    if cv <= 0.10:
+        return 0.85
+    if cv <= 0.18:
+        return 0.65
+    if cv <= 0.25:
+        return 0.45
+    if cv <= 0.35:
+        return 0.25
     return 0.0
 
 
@@ -812,24 +949,39 @@ class Layer3Scorer:
         starter = clamp(data.repeated_starter_risk)
         conclusion = clamp(data.formulaic_conclusion_risk)
         signpost = clamp(data.signpost_paragraph_risk)
+        balanced_hedging = clamp(data.balanced_hedging_risk)
+        intra_parallel = clamp(data.intra_paragraph_parallelism_risk)
+        topic_uniformity = clamp(data.paragraph_topic_uniformity_risk)
         draft_jump = clamp(data.draft_evolution_jump_risk)
         reuse = clamp(data.structural_reuse_risk)
 
-        # Build structural subscore — signpost only included when it fires (> 0)
-        # to avoid penalising texts that simply don't use short bridge paragraphs.
+        # Core components — always included
         struct_components = {
             "progression": (progression, 0.30),
             "uniformity": (uniformity, 0.20),
             "starter": (starter, 0.25),
             "conclusion": (conclusion, 0.25),
         }
-        if signpost > 0:
-            struct_components["signpost"] = (signpost, 0.35)
-            # Redistribute: reduce other weights proportionally
-            remaining = 0.65
-            for key in ("progression", "uniformity", "starter", "conclusion"):
-                old_w = struct_components[key][1]
-                struct_components[key] = (struct_components[key][0], old_w / 1.0 * remaining)
+
+        # Optional components — only included when they actually fire (> threshold)
+        # This prevents low-value "noise" from diluting strong core signals.
+        # Each optional takes weight from core proportionally.
+        active_optional = []
+        if signpost > 0.30:
+            active_optional.append(("signpost", signpost, 0.25))
+        if balanced_hedging > 0.30:
+            active_optional.append(("balanced_hedging", balanced_hedging, 0.20))
+        if intra_parallel > 0.30:
+            active_optional.append(("intra_parallel", intra_parallel, 0.15))
+        if topic_uniformity > 0.30:
+            active_optional.append(("topic_uniformity", topic_uniformity, 0.15))
+
+        if active_optional:
+            opt_weight = sum(w for _, _, w in active_optional)
+            scale = 1.0 - opt_weight
+            struct_components = {k: (v, w * scale) for k, (v, w) in struct_components.items()}
+            for name, val, w in active_optional:
+                struct_components[name] = (val, w)
 
         structural_subscore = weighted_average(struct_components)
 
@@ -857,6 +1009,9 @@ class Layer3Scorer:
             "repeated_starter_risk": starter,
             "formulaic_conclusion_risk": conclusion,
             "signpost_paragraph_risk": signpost,
+            "balanced_hedging_risk": balanced_hedging,
+            "intra_paragraph_parallelism_risk": intra_parallel,
+            "paragraph_topic_uniformity_risk": topic_uniformity,
             "draft_evolution_jump_risk": draft_jump,
             "structural_reuse_risk": reuse,
             "structural_subscore": structural_subscore,
@@ -868,11 +1023,14 @@ class Layer3Scorer:
             data.repeated_starter_risk,
             data.formulaic_conclusion_risk,
             data.signpost_paragraph_risk,
+            data.balanced_hedging_risk,
+            data.intra_paragraph_parallelism_risk,
+            data.paragraph_topic_uniformity_risk,
             data.draft_evolution_jump_risk,
             data.structural_reuse_risk,
         ] if v is not None)
 
-        expected_count = 7
+        expected_count = 10
 
         confidence = confidence_from_coverage(
             word_count=data.word_count,
@@ -899,6 +1057,15 @@ class Layer3Scorer:
 
         if signpost >= 0.55:
             reasons.append("signpost_paragraphs")
+
+        if balanced_hedging >= 0.55:
+            reasons.append("balanced_hedging")
+
+        if intra_parallel >= 0.45:
+            reasons.append("intra_paragraph_parallelism")
+
+        if topic_uniformity >= 0.45:
+            reasons.append("paragraph_topic_uniformity")
 
         if draft_jump >= 0.65:
             reasons.append("draft_evolution_jump")
@@ -1120,6 +1287,9 @@ def build_layer3_input_from_text(
         repeated_starter_risk=estimate_repeated_starter_risk(text),
         formulaic_conclusion_risk=estimate_formulaic_conclusion_risk(text),
         signpost_paragraph_risk=estimate_signpost_paragraph_risk(text),
+        balanced_hedging_risk=estimate_balanced_hedging_risk(text),
+        intra_paragraph_parallelism_risk=estimate_intra_paragraph_parallelism_risk(text),
+        paragraph_topic_uniformity_risk=estimate_paragraph_topic_uniformity_risk(text),
 
         # In a production codebase, rename this field to balanced_framing_risk.
         style_shift_risk=balanced_framing,
