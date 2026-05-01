@@ -102,7 +102,10 @@ async def _fetch_microsoft_avatar(access_token: str, user_id: str) -> str | None
         return url
     except Exception as e:
         log.warning("Failed to fetch Microsoft avatar: %s", e)
-        return None(db: AsyncSession, provider: str, user_info: dict) -> User:
+        return None
+
+
+async def _upsert_user(db: AsyncSession, provider: str, user_info: dict) -> User:
     email = user_info["email"].lower().strip()
     email_normalized = email
     provider_user_id = str(user_info.get("sub", user_info.get("id", "")))
