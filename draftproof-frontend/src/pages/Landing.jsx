@@ -224,8 +224,8 @@ export default function Landing() {
             <a href="#engine">How it works</a>
             <a href="#report">Sample report</a>
             <a href="#pricing">Pricing</a>
-            <a href="#privacy">Privacy</a>
-            <a href="#security">Security</a>
+            <Link to="/privacy">Privacy</Link>
+            <Link to="/security">Security</Link>
           </div>
 
           <p>
