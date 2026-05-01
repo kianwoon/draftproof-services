@@ -84,11 +84,6 @@ export default function Privacy() {
                 <td>Card details (handled entirely by Stripe)</td>
               </tr>
               <tr>
-                <td>OpenAI</td>
-                <td>Document analysis &amp; reporting</td>
-                <td>Document text for scanning</td>
-              </tr>
-              <tr>
                 <td>Cloudflare R2</td>
                 <td>File storage</td>
                 <td>Uploaded documents &amp; reports</td>
