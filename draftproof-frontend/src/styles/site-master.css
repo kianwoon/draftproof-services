@@ -929,11 +929,82 @@ th {
 /* Responsive */
 @media (max-width: 1050px) {
   .nav-links { display: none; }
+  .header-user { display: none; }
+  .site-header .btn-primary.btn-small { display: none; }
+  .hamburger { display: flex; }
   .site-header { grid-template-columns: auto auto; justify-content: space-between; }
   .hero-grid, .split-heading, .compare-band, .report-layout { grid-template-columns: 1fr; }
   .feature-grid { grid-template-columns: repeat(3, 1fr); }
   .summary-card { max-width: 720px; }
 }
+
+/* Hamburger */
+.hamburger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.hamburger span {
+  display: block;
+  width: 100%;
+  height: 2.5px;
+  background: var(--navy-950);
+  border-radius: 2px;
+  transition: transform .25s var(--ease), opacity .2s;
+}
+.hamburger.is-open span:nth-child(1) { transform: translateY(7.5px) rotate(45deg); }
+.hamburger.is-open span:nth-child(2) { opacity: 0; }
+.hamburger.is-open span:nth-child(3) { transform: translateY(-7.5px) rotate(-45deg); }
+
+/* Mobile menu */
+.mobile-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  background: rgba(0, 0, 0, .35);
+  animation: fadeIn .2s var(--ease);
+}
+.mobile-menu-inner {
+  position: absolute;
+  top: var(--header-h);
+  right: 0;
+  width: min(320px, 85vw);
+  height: calc(100dvh - var(--header-h));
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  padding: 1.5rem;
+  overflow-y: auto;
+  animation: slideInRight .25s var(--ease);
+}
+.mobile-link {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .85rem 0;
+  color: var(--ink);
+  font-weight: 620;
+  font-size: .95rem;
+  border-bottom: 1px solid var(--line);
+  opacity: .88;
+  transition: opacity .15s;
+}
+.mobile-link:hover { opacity: 1; }
+.mobile-menu-actions {
+  margin-top: 1.2rem;
+}
+.mobile-menu-actions .btn {
+  width: 100%;
+  justify-content: center;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
 @media (max-width: 760px) {
   :root { --header-h: 68px; }
@@ -941,7 +1012,6 @@ th {
   .snap-section { min-height: auto; padding-top: calc(var(--header-h) + 2rem); }
   .site-header { gap: 1rem; }
   .brand { font-size: 1.35rem; }
-  .site-header .btn { display: none; }
   .hero-grid, .belief-grid, .process-line, .feature-grid, .audience-grid { grid-template-columns: 1fr; }
   .metric-grid, .mini-stats, .report-metrics { grid-template-columns: 1fr; }
   .action-grid { grid-template-columns: 1fr; }

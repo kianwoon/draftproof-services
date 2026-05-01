@@ -7,9 +7,10 @@ export default function Header() {
   const navigate = useNavigate();
   const location = useLocation();
   const [scanOpen, setScanOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
 
-  useEffect(() => { setScanOpen(false); }, [location.pathname]);
+  useEffect(() => { setScanOpen(false); setMenuOpen(false); }, [location.pathname]);
 
   useEffect(() => {
     if (!scanOpen) return;
@@ -94,6 +95,37 @@ export default function Header() {
         <Link to="/signin" className="btn btn-primary btn-small">
           Sign in
         </Link>
+      )}
+
+      <button
+        className={`hamburger${menuOpen ? ' is-open' : ''}`}
+        onClick={() => setMenuOpen(!menuOpen)}
+        aria-label="Toggle menu"
+        aria-expanded={menuOpen}
+      >
+        <span /><span /><span />
+      </button>
+
+      {menuOpen && (
+        <div className="mobile-menu" onClick={() => setMenuOpen(false)}>
+          <div className="mobile-menu-inner" onClick={(e) => e.stopPropagation()}>
+            {user ? <Link to="/dashboard" className="mobile-link">Dashboard</Link> : <Link to="/" className="mobile-link">Home</Link>}
+            {user && <Link to="/scan" className="mobile-link">Scan</Link>}
+            {user && <Link to="/reports" className="mobile-link">Reports</Link>}
+            {user && <Link to="/buy" className="mobile-link">Buy Tokens</Link>}
+            {user && <Link to="/history" className="mobile-link">History</Link>}
+            <Link to="/why" className="mobile-link">Why</Link>
+            <Link to="/pricing" className="mobile-link">Pricing</Link>
+            <Link to="/#engine" className="mobile-link">How it works</Link>
+            <div className="mobile-menu-actions">
+              {user ? (
+                <button onClick={() => { handleLogout(); setMenuOpen(false); }} className="btn btn-secondary">Sign out</button>
+              ) : (
+                <Link to="/signin" className="btn btn-primary">Sign in</Link>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </header>
   );
