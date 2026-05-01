@@ -72,6 +72,7 @@ class Layer3Input:
     paragraph_uniformity_risk: Optional[float] = None
     repeated_starter_risk: Optional[float] = None
     formulaic_conclusion_risk: Optional[float] = None
+    signpost_paragraph_risk: Optional[float] = None
     draft_evolution_jump_risk: Optional[float] = None
     structural_reuse_risk: Optional[float] = None
     style_shift_risk: Optional[float] = None
@@ -331,6 +332,78 @@ def estimate_paragraph_uniformity_risk(text: str) -> float:
         return 0.45
     if cv <= 0.50:
         return 0.25
+    return 0.0
+
+
+# Signpost/bridge paragraphs: very short (1-2 sentence) paragraphs that
+# merely announce or transition to the next topic. AI essays over-use these.
+SIGNPOST_ANNOUNCE_PATTERNS = [
+    r"^(?:this|another|one|the|a)\s+(?:key|main|major|important|critical|significant|biggest)",
+    r"^(?:there are|there is|this (?:brings|raises|highlights|shows|demonstrates))",
+    r"^(?:let(?:'s|\s+us)\s+(?:now|consider|examine|look|turn|explore))",
+    r"^(?:moving (?:on|forward|beyond)|having (?:established|discussed|explored))",
+    r"^(?:it is (?:also|important|clear|worth|essential)|it (?:should|must|also))",
+    r"^(?:beyond|above|alongside|in addition to)\s",
+    r"^(?:we (?:can|must|should|now|also|first|then))",
+    r"^(?:the (?:next|following|second|third|final|last))",
+    r"^(?:what (?:this|these|it))",
+    r"^(?:to (?:understand|address|tackle|solve|appreciate|fully))",
+]
+
+
+def estimate_signpost_paragraph_risk(text: str) -> float:
+    """Higher = text has many short signpost/bridge paragraphs.
+
+    AI essays produce a distinctive pattern: long body paragraphs separated by
+    1-2 sentence "signpost" paragraphs that merely announce the next topic.
+    Human writers tend to integrate transitions within paragraphs instead.
+    """
+    paragraphs = split_paragraphs(text)
+    if len(paragraphs) < 4:
+        return 0.0
+
+    # Calculate median paragraph word count as reference
+    lengths = [len(p.split()) for p in paragraphs if p.strip()]
+    if len(lengths) < 4:
+        return 0.0
+
+    median_len = statistics.median(lengths)
+    if median_len <= 0:
+        return 0.0
+
+    signpost_count = 0
+    for p in paragraphs:
+        p = p.strip()
+        if not p:
+            continue
+        word_count = len(p.split())
+        sent_count = len([s for s in re.split(r'[.!?]+', p) if s.strip()])
+
+        # Signpost = short paragraph (≤ 2 sentences, ≤ 40% of median length)
+        if sent_count <= 2 and word_count < median_len * 0.45:
+            # Check if it reads like an announcement/transition
+            first_sentence = re.split(r'[.!?]+', p)[0].strip().lower()
+            is_announce = any(
+                re.search(pattern, first_sentence)
+                for pattern in SIGNPOST_ANNOUNCE_PATTERNS
+            )
+            if is_announce:
+                signpost_count += 1
+                continue
+            # Even without explicit announcement pattern, a cluster of
+            # very short paragraphs between long ones is suspicious
+            if word_count < median_len * 0.25:
+                signpost_count += 1
+
+    ratio = signpost_count / len(paragraphs)
+    if ratio >= 0.40:
+        return 0.90
+    if ratio >= 0.30:
+        return 0.75
+    if ratio >= 0.20:
+        return 0.55
+    if ratio >= 0.10:
+        return 0.30
     return 0.0
 
 
@@ -738,14 +811,16 @@ class Layer3Scorer:
         uniformity = clamp(data.paragraph_uniformity_risk)
         starter = clamp(data.repeated_starter_risk)
         conclusion = clamp(data.formulaic_conclusion_risk)
+        signpost = clamp(data.signpost_paragraph_risk)
         draft_jump = clamp(data.draft_evolution_jump_risk)
         reuse = clamp(data.structural_reuse_risk)
 
         structural_subscore = weighted_average({
-            "progression": (progression, 0.35),
-            "uniformity": (uniformity, 0.25),
-            "starter": (starter, 0.20),
-            "conclusion": (conclusion, 0.20),
+            "progression": (progression, 0.25),
+            "uniformity": (uniformity, 0.15),
+            "starter": (starter, 0.15),
+            "conclusion": (conclusion, 0.15),
+            "signpost": (signpost, 0.30),
         })
 
         has_draft_process = (
@@ -771,6 +846,7 @@ class Layer3Scorer:
             "paragraph_uniformity_risk": uniformity,
             "repeated_starter_risk": starter,
             "formulaic_conclusion_risk": conclusion,
+            "signpost_paragraph_risk": signpost,
             "draft_evolution_jump_risk": draft_jump,
             "structural_reuse_risk": reuse,
             "structural_subscore": structural_subscore,
@@ -781,15 +857,18 @@ class Layer3Scorer:
             data.paragraph_uniformity_risk,
             data.repeated_starter_risk,
             data.formulaic_conclusion_risk,
+            data.signpost_paragraph_risk,
             data.draft_evolution_jump_risk,
             data.structural_reuse_risk,
         ] if v is not None)
+
+        expected_count = 7
 
         confidence = confidence_from_coverage(
             word_count=data.word_count,
             sentence_count=data.sentence_count,
             available_count=available,
-            expected_count=6,
+            expected_count=expected_count,
             important_missing=0 if has_draft_process else 1,
         )
 
@@ -807,6 +886,9 @@ class Layer3Scorer:
 
         if conclusion >= 0.65:
             reasons.append("formulaic_conclusion")
+
+        if signpost >= 0.55:
+            reasons.append("signpost_paragraphs")
 
         if draft_jump >= 0.65:
             reasons.append("draft_evolution_jump")
@@ -1027,6 +1109,7 @@ def build_layer3_input_from_text(
         paragraph_uniformity_risk=estimate_paragraph_uniformity_risk(text),
         repeated_starter_risk=estimate_repeated_starter_risk(text),
         formulaic_conclusion_risk=estimate_formulaic_conclusion_risk(text),
+        signpost_paragraph_risk=estimate_signpost_paragraph_risk(text),
 
         # In a production codebase, rename this field to balanced_framing_risk.
         style_shift_risk=balanced_framing,
