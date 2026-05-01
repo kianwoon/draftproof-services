@@ -196,18 +196,24 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         badge_gp = badge.get("grounding_protection", 0)
 
         tier_styles = {
-            "LOW": ("LOW", "#22c55e"),
-            "LOW_REVIEW": ("LOW-REVIEW", "#84cc16"),
-            "MEDIUM": ("MEDIUM", "#f59e0b"),
-            "HIGH": ("HIGH", "#ef4444"),
+            "LOW": ("LOW", "#22c55e", "#f0fdf4"),
+            "LOW_REVIEW": ("LOW-REVIEW", "#84cc16", "#f7fee7"),
+            "MEDIUM": ("MEDIUM", "#f59e0b", "#fffbeb"),
+            "HIGH": ("HIGH", "#ef4444", "#fef2f2"),
         }
-        tier_label, _ = tier_styles.get(badge_tier, (badge_tier, "#999"))
+        tier_label, tier_fg, tier_bg = tier_styles.get(badge_tier, (badge_tier, "#999", "#f5f5f5"))
 
         lines.append("### AI Risk Badge")
         lines.append("")
-        lines.append(f"- **Tier**: {tier_label}")
+        lines.append(
+            f'- **Tier**: <span style="background:{tier_bg};color:{tier_fg};'
+            f'padding:2px 8px;border-radius:3px;font-weight:600">{tier_label}</span>'
+        )
         lines.append(f"- **Score**: `{badge_score:.2f}%`")
-        lines.append(f"- **Band**: {badge_band}")
+        lines.append(
+            f'- **Band**: <span style="background:{tier_bg};color:{tier_fg};'
+            f'padding:2px 8px;border-radius:3px">{badge_band}</span>'
+        )
         if badge_gp > 0:
             lines.append(f"- **Grounding protection**: `{badge_gp:.1f}%` (reduces raw concern from `{badge_raw:.2f}%`)")
         lines.append("")
