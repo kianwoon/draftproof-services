@@ -232,7 +232,6 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/Turnitin_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
         lines.append("")
         lines.append(f"- **Score**: `{badge_score:.2f}%`")
-        lines.append(f"- **Band**: {badge_band}")
         if badge_gc > 0:
             lines.append(f"- **Grounding credit**: `{badge_gc:.1f}%`")
         # Cluster breakdown
