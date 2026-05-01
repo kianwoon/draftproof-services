@@ -193,15 +193,14 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         badge_score = badge.get("calibrated_ai_score", 0)
         badge_band = badge.get("turnitin_like_band", "").replace("_", " ").title()
         badge_gc = badge.get("grounding_credit", 0)
-        badge_synergy = badge.get("synergy_boost", 0)
-        wr_score = badge.get("writing_review_score", 0)
-        wr_band = badge.get("writing_review_band", "").replace("_", " ").title()
+        badge_red_flags = badge.get("red_flags", 0)
+        badge_reasons = badge.get("pattern_reasons", [])
 
         tier_styles = {
-            "LOW": ("LOW", "#22c55e", "#f0fdf4"),
-            "LOW_REVIEW": ("LOW-REVIEW", "#84cc16", "#f7fee7"),
-            "MEDIUM": ("MEDIUM", "#f59e0b", "#fffbeb"),
-            "HIGH": ("HIGH", "#ef4444", "#fef2f2"),
+            "GREEN": ("GREEN", "#22c55e", "#f0fdf4"),
+            "AMBER": ("AMBER", "#f59e0b", "#fffbeb"),
+            "ORANGE": ("ORANGE", "#f97316", "#fff7ed"),
+            "RED": ("RED", "#ef4444", "#fef2f2"),
         }
         tier_label, tier_fg, tier_bg = tier_styles.get(badge_tier, (badge_tier, "#999", "#f5f5f5"))
 
@@ -218,10 +217,10 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         )
         if badge_gc > 0:
             lines.append(f"- **Grounding credit**: `{badge_gc:.1f}%`")
-        if badge_synergy > 0:
-            lines.append(f"- **Synergy boost**: `{badge_synergy:.1f}%`")
-        if wr_score > 0:
-            lines.append(f"- **Writing review**: `{wr_score:.1f}%` ({wr_band})")
+        if badge_red_flags > 0:
+            lines.append(f"- **Red flags**: {badge_red_flags}/5")
+        if badge_reasons:
+            lines.append(f"- **Patterns**: {', '.join(badge_reasons)}")
         lines.append("")
 
     # Build bar strings

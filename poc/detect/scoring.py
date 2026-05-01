@@ -162,55 +162,45 @@ def derive_concern_tier(score: float, signals: SignalScores, confidence_label: s
     return "clear"
 
 
-# ── AI Risk Badge (v3) ─────────────────────────────────────────────────
+# ── AI Risk Badge (v4) ─────────────────────────────────────────────────
 
-Tier = Literal["LOW", "LOW_REVIEW", "MEDIUM", "HIGH"]
+Tier = Literal["GREEN", "AMBER", "ORANGE", "RED"]
 TurnitinBand = Literal[
     "likely_0",
     "likely_0_or_star",
     "likely_star",
-    "review_zone",
-    "elevated_concern",
+    "visible_ai_possible",
+    "high_ai_concern",
 ]
 
-_TIER_ORDER = {"LOW": 0, "LOW_REVIEW": 1, "MEDIUM": 2, "HIGH": 3}
-_TIER_BY_VAL = {v: k for k, v in _TIER_ORDER.items()}
 
-
-def _max_tier(current: Tier, minimum: Tier) -> Tier:
-    return _TIER_BY_VAL[max(_TIER_ORDER[current], _TIER_ORDER[minimum])]
-
-
-def _min_tier(current: Tier, maximum: Tier) -> Tier:
-    return _TIER_BY_VAL[min(_TIER_ORDER[current], _TIER_ORDER[maximum])]
-
-
-def _confidence_weight(confidence: str) -> float:
-    if confidence == "high":
-        return 1.00
-    if confidence == "medium":
-        return 0.65
-    return 0.35
-
-
-def _domain_strength_from_index(domain_grounding_index: float) -> float:
-    if domain_grounding_index >= 2.5:
+def _domain_strength(index: float) -> float:
+    """Topic relevance only. Not human proof."""
+    if index >= 2.5:
         return 1.0
-    if domain_grounding_index >= 1.5:
+    if index >= 1.5:
         return 0.6
     return 0.2
 
 
-def _band_from_score(score: float) -> tuple:
-    if score < 0.025:
-        return "likely_0", "LOW"
-    if score < 0.055:
-        return "likely_0_or_star", "LOW_REVIEW"
-    if score < 0.090:
-        return "likely_star", "LOW_REVIEW"
-    if score < 0.140:
-        return "review_zone", "MEDIUM"
-    return "elevated_concern", "HIGH"
+def _confidence_multiplier(confidence: str) -> float:
+    if confidence == "high":
+        return 1.20
+    if confidence == "medium":
+        return 1.10
+    return 1.00
+
+
+def _classify_score(score: float) -> tuple:
+    if score < 0.030:
+        return "GREEN", "likely_0"
+    if score < 0.060:
+        return "AMBER", "likely_0_or_star"
+    if score < 0.100:
+        return "AMBER", "likely_star"
+    if score < 0.150:
+        return "ORANGE", "visible_ai_possible"
+    return "RED", "high_ai_concern"
 
 
 def calibrate_ai_risk(
@@ -224,7 +214,7 @@ def calibrate_ai_risk(
     high_findings: int = 0,
     critical_findings: int = 0,
 ) -> Dict[str, Any]:
-    """Calibrated AI-risk badge v3.
+    """Calibrated AI-risk badge v4 — GREEN/AMBER/ORANGE/RED tiers.
 
     All percentage inputs are decimals (0.085 = 8.5%).
     """
@@ -233,94 +223,107 @@ def calibrate_ai_risk(
     spec = clamp(specificity_raw)
     gen = clamp(genericity)
     src = clamp(source_grounding)
+    dom = _domain_strength(domain_grounding_index)
 
-    domain_strength = _domain_strength_from_index(domain_grounding_index)
-    conf_w = _confidence_weight(confidence)
-
-    # 1. Excess signals above normal academic baseline
+    # 1. Baseline excess
     pred_excess = max(pred - 0.35, 0.0)
     spec_excess = max(spec - 0.45, 0.0)
 
-    # 2. Base style risk
-    base_style_risk = (
-        0.50 * ai
+    # 2. AI-style base score
+    ai_style_score = (
+        0.45 * ai
         + 0.25 * pred_excess
-        + 0.20 * gen
+        + 0.25 * gen
         + 0.05 * spec_excess
     )
 
-    # 3. Grounding credit, capped LOW (max 30%)
-    grounding_credit = min(0.30, 0.15 * src + 0.15 * domain_strength)
-    score_after_grounding = base_style_risk * (1 - grounding_credit)
+    # 3. Small grounding credit (max 20%)
+    grounding_credit = min(0.20, 0.10 * src + 0.10 * dom)
+    score = ai_style_score * (1 - grounding_credit)
 
-    # 4. Synergy boosts
-    synergy = 0.0
+    # 4. Confidence multiplier (only with real style signal)
+    if ai >= 0.10 or gen >= 0.08 or pred >= 0.43:
+        score *= _confidence_multiplier(confidence)
 
-    if ai >= 0.12 and pred >= 0.45 and gen >= 0.10:
-        synergy += 0.050
+    # 5. Pattern-based boosts
+    pattern_reasons = []
 
-    if ai >= 0.10 and pred >= 0.43 and gen >= 0.08:
-        synergy += 0.025
-
-    if gen >= 0.10 and confidence in ("medium", "high"):
-        synergy += 0.020 * conf_w
-
-    if high_findings > 0:
-        synergy += min(0.040, 0.015 * high_findings)
-
-    if critical_findings > 0:
-        synergy += min(0.080, 0.040 * critical_findings)
-
-    calibrated_score = clamp(score_after_grounding + synergy)
-    band, tier = _band_from_score(calibrated_score)
-
-    # 5. Safety caps and floor rules
-    if (
-        ai < 0.10 and gen == 0 and pred < 0.40
-        and src >= 0.90 and domain_strength == 1.0
-        and high_findings == 0 and critical_findings == 0
-    ):
-        tier, band = "LOW", "likely_0"
-
-    if (
-        ai < 0.12 and src >= 0.80 and domain_strength == 1.0
-        and high_findings == 0 and critical_findings == 0
-    ):
-        tier = _min_tier(tier, "LOW_REVIEW")
-        if band in ("review_zone", "elevated_concern"):
-            band = "likely_0_or_star"
-
+    # Gemini-like known-positive cluster
     if (
         ai >= 0.12 and pred >= 0.45 and gen >= 0.10
+        and spec >= 0.50 and confidence in ("medium", "high")
+    ):
+        score += 0.080
+        pattern_reasons.append("gemini_like_cluster")
+
+    # Borderline AI-style cluster
+    if (
+        ai >= 0.10 and pred >= 0.43 and gen >= 0.08
         and confidence in ("medium", "high")
     ):
-        tier = _max_tier(tier, "MEDIUM")
-        if band in ("likely_0", "likely_0_or_star"):
-            band = "likely_star"
+        score += 0.040
+        pattern_reasons.append("borderline_ai_style_cluster")
+
+    # High genericity + predictability
+    if gen >= 0.15 and pred >= 0.45:
+        score += 0.035
+        pattern_reasons.append("generic_predictable_style")
+
+    # Serious findings
+    if high_findings > 0:
+        score += min(0.050, 0.015 * high_findings)
+        pattern_reasons.append("high_findings_present")
 
     if critical_findings > 0:
-        tier, band = "HIGH", "elevated_concern"
+        score += 0.100
+        pattern_reasons.append("critical_findings_present")
 
-    # 6. Separate writing review score
-    writing_review_score = clamp(0.40 * pred + 0.35 * spec + 0.25 * gen)
-    if writing_review_score < 0.35:
-        writing_band = "clean"
-    elif writing_review_score < 0.50:
-        writing_band = "light_review"
-    elif writing_review_score < 0.65:
-        writing_band = "review"
-    else:
-        writing_band = "heavy_review"
+    score = clamp(score)
+    tier, turnitin_band = _classify_score(score)
+
+    # 6. Clean human-like protection
+    if (
+        ai < 0.10 and gen == 0 and pred < 0.40
+        and src >= 0.90 and dom == 1.0
+        and high_findings == 0 and critical_findings == 0
+    ):
+        tier, turnitin_band = "GREEN", "likely_0"
+        pattern_reasons.append("clean_low_ai_profile")
+
+    # 7. Low AI cap
+    if (
+        ai < 0.12 and gen < 0.05 and pred < 0.45
+        and high_findings == 0 and critical_findings == 0
+    ):
+        if tier in ("ORANGE", "RED"):
+            tier, turnitin_band = "AMBER", "likely_0_or_star"
+            pattern_reasons.append("low_ai_cap_applied")
+
+    # 8. Red-flag cluster floor
+    red_flags = 0
+    if ai >= 0.12:
+        red_flags += 1
+    if pred >= 0.45:
+        red_flags += 1
+    if gen >= 0.10:
+        red_flags += 1
+    if spec >= 0.50:
+        red_flags += 1
+    if confidence in ("medium", "high"):
+        red_flags += 1
+
+    if red_flags >= 5:
+        tier, turnitin_band = "RED", "high_ai_concern"
+        pattern_reasons.append("red_flag_cluster_5_of_5")
 
     return {
         "tier": tier,
-        "turnitin_like_band": band,
-        "calibrated_ai_score": round(calibrated_score * 100, 2),
-        "base_style_risk": round(base_style_risk * 100, 2),
+        "turnitin_like_band": turnitin_band,
+        "calibrated_ai_score": round(score * 100, 2),
+        "ai_style_score": round(ai_style_score * 100, 2),
         "grounding_credit": round(grounding_credit * 100, 2),
-        "synergy_boost": round(synergy * 100, 2),
-        "writing_review_score": round(writing_review_score * 100, 2),
-        "writing_review_band": writing_band,
+        "red_flags": red_flags,
+        "pattern_reasons": pattern_reasons,
     }
 
 
