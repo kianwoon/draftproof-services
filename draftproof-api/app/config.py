@@ -4,9 +4,22 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
+_raw_db_url = os.getenv("DATABASE_URL", "").strip()
+if not _raw_db_url:
     raise RuntimeError("DATABASE_URL environment variable is required")
+
+# Koyeb may provide a bare hostname instead of a full connection string.
+# Build a proper asyncpg URL from individual parts if needed.
+if "://" in _raw_db_url:
+    # Already a full URL — convert postgresql:// to postgresql+asyncpg://
+    DATABASE_URL = _raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+else:
+    # Bare hostname — build from Koyeb env vars
+    _db_user = os.getenv("DATABASE_USER", "koyeb-adm")
+    _db_pass = os.getenv("DATABASE_PASSWORD", "")
+    _db_name = os.getenv("DATABASE_NAME", "koyeb-db")
+    _db_port = os.getenv("DATABASE_PORT", "5432")
+    DATABASE_URL = f"postgresql+asyncpg://{_db_user}:{_db_pass}@{_raw_db_url}:{_db_port}/{_db_name}"
 
 # Auth
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
