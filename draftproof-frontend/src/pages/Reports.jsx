@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listScans, deleteScan } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 const PAGE_SIZE = 10;
 
@@ -46,10 +47,11 @@ export default function Reports() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [deletingId, setDeletingId] = useState(null);
+  const [confirmTarget, setConfirmTarget] = useState(null);
 
   const handleDelete = async (scanId) => {
-    if (!window.confirm('This report will be permanently deleted and cannot be recovered.\n\nMake sure you have downloaded or saved the report if you need it.\n\nDelete anyway?')) return;
     setDeletingId(scanId);
+    setConfirmTarget(null);
     try {
       await deleteScan(scanId);
       setScans((prev) => prev.filter((s) => s.id !== scanId));
@@ -177,7 +179,7 @@ export default function Reports() {
                             <button
                               className="btn btn-small btn-delete"
                               disabled={deletingId === scan.id}
-                              onClick={() => handleDelete(scan.id)}
+                              onClick={() => setConfirmTarget(scan.id)}
                               title="Delete report"
                             >
                               {deletingId === scan.id ? '…' : 'Delete'}
@@ -244,6 +246,15 @@ export default function Reports() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmTarget !== null}
+        title="Delete this report?"
+        message="This report will be permanently deleted and cannot be recovered. Make sure you have downloaded or saved it first."
+        confirmLabel="Delete permanently"
+        onConfirm={() => handleDelete(confirmTarget)}
+        onCancel={() => setConfirmTarget(null)}
+      />
     </main>
   );
 }

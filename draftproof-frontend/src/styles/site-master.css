@@ -1700,6 +1700,31 @@ th {
 .btn-delete:hover:not(:disabled) { background: #fef2f2; }
 .btn-delete:disabled { opacity: .5; cursor: not-allowed; }
 
+/* ── Confirm Dialog ────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+  animation: fadeIn .15s ease;
+}
+.modal-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px 32px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0,0,0,.15);
+  animation: slideUp .2s ease;
+}
+.modal-title { font-size: 1.1rem; font-weight: 700; margin: 0 0 12px; }
+.modal-message { font-size: .9rem; color: var(--muted); line-height: 1.6; margin: 0 0 24px; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.btn-danger { background: #dc2626; color: #fff; border: none; }
+.btn-danger:hover { background: #b91c1c; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
 /* ── Enhanced Report Page ───────────────────── */
 
 .report-page-enhanced h1 {
