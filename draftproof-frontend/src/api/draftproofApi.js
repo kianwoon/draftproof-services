@@ -23,6 +23,7 @@ export const startScanWithText = (text) => api.post('/scans/', { document_id: 'p
 export const getScanStatus = (scanId, opts = {}) => api.get(`/scans/${scanId}`, opts);
 export const listScans = (page = 1, perPage = 10, opts = {}) =>
   api.get('/scans/', { params: { page, per_page: perPage }, signal: opts.signal });
+export const deleteScan = (scanId) => api.delete(`/scans/${scanId}`);
 
 // Reports
 export const getReport = (reportId, opts = {}) => api.get(`/reports/${reportId}`, opts);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { listScans } from '../api/draftproofApi';
+import { listScans, deleteScan } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 
 const PAGE_SIZE = 10;
@@ -45,6 +45,21 @@ export default function Reports() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [deletingId, setDeletingId] = useState(null);
+
+  const handleDelete = async (scanId) => {
+    if (!window.confirm('Delete this report permanently?')) return;
+    setDeletingId(scanId);
+    try {
+      await deleteScan(scanId);
+      setScans((prev) => prev.filter((s) => s.id !== scanId));
+      setTotal((prev) => prev - 1);
+    } catch {
+      alert('Failed to delete. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   useEffect(() => {
     const ac = new AbortController();
@@ -152,13 +167,23 @@ export default function Reports() {
                       <td className="td-findings">{scan.finding_count ?? '—'}</td>
                       <td className="td-words">{scan.word_count?.toLocaleString() ?? '—'}</td>
                       <td>
-                        {scan.status === 'completed' ? (
-                          <Link to={`/report/${scan.id}`} className="btn btn-secondary btn-small">
-                            View
-                          </Link>
-                        ) : (
-                          <span className="muted-link">—</span>
-                        )}
+                        <div className="td-actions">
+                          {scan.status === 'completed' && (
+                            <Link to={`/report/${scan.id}`} className="btn btn-secondary btn-small">
+                              View
+                            </Link>
+                          )}
+                          {scan.status !== 'processing' && (
+                            <button
+                              className="btn btn-small btn-delete"
+                              disabled={deletingId === scan.id}
+                              onClick={() => handleDelete(scan.id)}
+                              title="Delete report"
+                            >
+                              {deletingId === scan.id ? '…' : 'Delete'}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

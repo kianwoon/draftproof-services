@@ -183,3 +183,43 @@ async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
             "tier": job.tier,
             "finding_count": job.finding_count,
         }
+
+
+async def delete_scan(scan_id: str, user_id: str) -> bool:
+    """Delete a scan job and its R2 report files. Returns True if found."""
+    import logging
+    log = logging.getLogger("scan_service.delete")
+    async with async_session() as session:
+        q = select(ScanJob).where(
+            ScanJob.id == uuid.UUID(scan_id),
+            ScanJob.user_id == uuid.UUID(user_id),
+        )
+        result = await session.execute(q)
+        job = result.scalar_one_or_none()
+        if not job:
+            return False
+
+        # Clean up R2 report files
+        report_urls = job.report_urls or {}
+        keys = [f"reports/{scan_id}/{name}" for name in ("report.json", "report.md", "report.pdf")]
+        await asyncio.to_thread(_delete_r2_objects, keys, log)
+
+        await session.delete(job)
+        await session.commit()
+        log.info("Deleted scan %s for user %s", scan_id, user_id)
+        return True
+
+
+def _delete_r2_objects(keys: list[str], log) -> None:
+    try:
+        from app.services.report_service import _r2
+        from app.config import R2_BUCKET_NAME
+        if not _r2:
+            return
+        for key in keys:
+            try:
+                _r2.delete_object(Bucket=R2_BUCKET_NAME, Key=key)
+            except Exception:
+                pass  # R2 key may not exist for all file types
+    except Exception as e:
+        log.warning("R2 cleanup skipped: %s", e)

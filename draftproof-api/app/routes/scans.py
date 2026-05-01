@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.models import ScanRequest, ScanOut
-from app.services.scan_service import create_scan, get_scan, list_scans
+from app.services.scan_service import create_scan, get_scan, list_scans, delete_scan
 from app.routes.auth import get_current_user
 
 router = APIRouter()
@@ -32,3 +32,11 @@ async def get_scan_route(scan_id: str, user: dict = Depends(get_current_user)):
     if not result:
         raise HTTPException(status_code=404, detail="Scan not found")
     return ScanOut(**result)
+
+
+@router.delete("/{scan_id}")
+async def delete_scan_route(scan_id: str, user: dict = Depends(get_current_user)):
+    deleted = await delete_scan(scan_id, user_id=user["id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return {"detail": "Deleted"}

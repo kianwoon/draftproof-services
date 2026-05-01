@@ -1695,6 +1695,10 @@ th {
 
 .td-findings, .td-words { color: var(--muted); }
 .muted-link { color: var(--muted); font-size: .84rem; }
+.td-actions { display: flex; gap: 6px; align-items: center; }
+.btn-delete { color: #dc2626; border: 1px solid #fecaca; background: #fff5f5; }
+.btn-delete:hover:not(:disabled) { background: #fef2f2; }
+.btn-delete:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── Enhanced Report Page ───────────────────── */
 
