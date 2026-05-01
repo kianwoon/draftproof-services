@@ -443,11 +443,9 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"> **Tier Reason:** {report.overall_tier_reason}")
         lines.append("")
     if report.raw_overall_tier != report.adjusted_overall_tier:
-        if report.ai_risk_badge:
-            lines.append(f"> **Finding-based tier:** `{report.raw_overall_tier.upper()}` raw, adjusted to `{report.adjusted_overall_tier.upper()}` after false-positive filtering")
-        else:
+        if not report.ai_risk_badge:
             lines.append(f"> **Tier Adjustment:** Raw `{report.raw_overall_tier.upper()}` -> Adjusted `{report.adjusted_overall_tier.upper()}`")
-        lines.append("")
+            lines.append("")
 
     # Axis scores — suppressed when badge is present (badge cluster view replaces this)
     if not report.ai_risk_badge:
