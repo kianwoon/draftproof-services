@@ -196,25 +196,19 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         badge_red_flags = badge.get("red_flags", 0)
         badge_reasons = badge.get("pattern_reasons", [])
 
-        tier_styles = {
-            "GREEN": ("GREEN", "#22c55e", "#f0fdf4"),
-            "AMBER": ("AMBER", "#f59e0b", "#fffbeb"),
-            "ORANGE": ("ORANGE", "#f97316", "#fff7ed"),
-            "RED": ("RED", "#ef4444", "#fef2f2"),
+        shield_colors = {
+            "GREEN": "green",
+            "AMBER": "yellow",
+            "ORANGE": "orange",
+            "RED": "red",
         }
-        tier_label, tier_fg, tier_bg = tier_styles.get(badge_tier, (badge_tier, "#999", "#f5f5f5"))
+        shield_color = shield_colors.get(badge_tier, "lightgrey")
 
         lines.append("### AI Risk Badge")
         lines.append("")
-        lines.append(
-            f'- **Tier**: <span style="background:{tier_bg};color:{tier_fg};'
-            f'padding:2px 8px;border-radius:3px;font-weight:600">{tier_label}</span>'
-        )
+        lines.append(f"![{badge_tier}](https://img.shields.io/badge/Tier-{badge_tier}-{shield_color})")
         lines.append(f"- **Score**: `{badge_score:.2f}%`")
-        lines.append(
-            f'- **Band**: <span style="background:{tier_bg};color:{tier_fg};'
-            f'padding:2px 8px;border-radius:3px">{badge_band}</span>'
-        )
+        lines.append(f"- **Band**: {badge_band}")
         if badge_gc > 0:
             lines.append(f"- **Grounding credit**: `{badge_gc:.1f}%`")
         if badge_red_flags > 0:
