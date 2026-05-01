@@ -824,16 +824,30 @@ class Layer3Scorer:
             "generic_assertion_risk": generic_assertion,
         }
 
-        score = weighted_average({
-            "predictability": (predictability_risk, 0.20),
-            "topk": (topk_risk, 0.05),
-            "generic": (generic, 0.05),
+        # Core components — always included
+        tp_components = {
+            "predictability": (predictability_risk, 0.25),
             "burstiness": (burstiness, 0.10),
-            "repeated_structure": (repeated_structure, 0.10),
+            "repeated_structure": (repeated_structure, 0.15),
             "formulaic_progression": (formulaic_progression, 0.20),
             "balanced_framing": (balanced_framing, 0.10),
             "generic_assertion": (generic_assertion, 0.20),
-        })
+        }
+
+        # Optional — only when they fire (> 0.10)
+        tp_optional = []
+        if topk_risk > 0.10:
+            tp_optional.append(("topk", topk_risk, 0.10))
+        if generic > 0.10:
+            tp_optional.append(("generic", generic, 0.08))
+
+        if tp_optional:
+            opt_w = sum(w for _, _, w in tp_optional)
+            tp_components = {k: (v, wt * (1 - opt_w)) for k, (v, wt) in tp_components.items()}
+            for name, val, w in tp_optional:
+                tp_components[name] = (val, w)
+
+        score = weighted_average(tp_components)
 
         score = min(score, 0.75)
 
@@ -1096,9 +1110,9 @@ class Layer3Scorer:
             )
 
         return clamp(
-            0.32 * text.score
-            + 0.43 * grounding.score
-            + 0.25 * process.score
+            0.30 * text.score
+            + 0.40 * grounding.score
+            + 0.30 * process.score
         )
 
     def derive_tier(
