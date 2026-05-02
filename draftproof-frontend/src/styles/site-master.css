@@ -1661,7 +1661,7 @@ th {
 
 .reports-table th {
   text-align: left;
-  padding: 14px 18px;
+  padding: 12px 12px;
   font-size: .78rem;
   font-weight: 620;
   color: var(--muted);
@@ -1672,7 +1672,7 @@ th {
 }
 
 .reports-table td {
-  padding: 14px 18px;
+  padding: 12px 12px;
   border-bottom: 1px solid rgba(219, 228, 239, .5);
   vertical-align: middle;
 }
@@ -2103,7 +2103,7 @@ th {
 
 @media (max-width: 768px) {
   .reports-table-wrap { overflow-x: auto; }
-  .reports-table { min-width: 600px; }
+  .reports-table { min-width: 780px; }
   .report-hero { flex-direction: column; }
   .report-summary-bar { gap: 1.2rem; }
 }
