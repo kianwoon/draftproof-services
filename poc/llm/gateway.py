@@ -122,8 +122,8 @@ class LLMGateway:
         self.api_key = cfg.api_key or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY")
         raw_base = cfg.base_url or os.environ.get("LLM_BASE_URL") or "https://openrouter.ai/api/v1"
         self.base_url = raw_base.rstrip("/")
-        logger.info(f"LLM Gateway initialized: base_url={self.base_url}, model={self.model}")
         self.model = cfg.model or os.environ.get("LLM_MODEL") or "google/gemma-3-12b-it"
+        logger.info(f"LLM Gateway initialized: base_url={self.base_url}, model={self.model}")
         self.max_tokens = cfg.max_tokens
         self.temperature = cfg.temperature
         self.max_retries = cfg.max_retries
