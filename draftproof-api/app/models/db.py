@@ -168,6 +168,18 @@ class ScanJob(Base):
     completed_at = Column(DateTime(timezone=True))
 
 
+class RewriteJob(Base):
+    __tablename__ = "rewrite_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scan_id = Column(UUID(as_uuid=True), ForeignKey("scan_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(Text, nullable=False, default="pending", index=True)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime(timezone=True))
+
+
 async def init_db():
     pass  # Tables managed by migrations — no auto-create needed
 

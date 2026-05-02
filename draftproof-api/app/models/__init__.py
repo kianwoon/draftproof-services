@@ -61,3 +61,22 @@ class SuggestionOut(BaseModel):
 
 class ApplySuggestionRequest(BaseModel):
     suggestion_id: str
+
+
+class RewriteCreateRequest(BaseModel):
+    scan_id: str
+
+
+class RewriteOut(BaseModel):
+    id: str
+    scan_id: str
+    status: str
+    error: Optional[str] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class RewriteReportOut(BaseModel):
+    summary: Optional[Any] = None
+    sentence_comparison: Optional[list] = None
+    ai_findings: Optional[list] = None

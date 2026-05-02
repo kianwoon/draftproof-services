@@ -106,3 +106,56 @@ def capture_credits(user_id: str, job_id: str, word_count: int):
                VALUES (%s, %s, 'scan', %s, %s, %s)""",
             (user_id, acct_id, tokens_reserved, job_id, word_count),
         )
+
+
+def get_rewrite_job(job_id: str) -> Optional[dict]:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM rewrite_jobs WHERE id = %s", (job_id,))
+        return cur.fetchone()
+
+
+def update_rewrite_status(job_id: str, status: str, error: str = None):
+    sets = ["status = %s"]
+    vals = [status]
+    if status == "completed":
+        sets.append("completed_at = now()")
+    if error:
+        sets.append("error = %s")
+        vals.append(error)
+    with get_conn() as conn:
+        conn.cursor().execute(
+            f"UPDATE rewrite_jobs SET {', '.join(sets)} WHERE id = %s",
+            vals + [job_id],
+        )
+
+
+def capture_rewrite_credits(user_id: str, job_id: str):
+    """Capture credit reservation for a rewrite job."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, credit_account_id, tokens_reserved
+               FROM credit_reservations
+               WHERE job_id = %s AND status = 'active'
+               LIMIT 1""",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+        res_id = row["id"]
+        acct_id = row["credit_account_id"]
+        tokens = row["tokens_reserved"]
+
+        cur.execute("UPDATE credit_reservations SET status = 'captured' WHERE id = %s", (res_id,))
+        cur.execute(
+            "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s, reserved_tokens = reserved_tokens - %s WHERE id = %s",
+            (tokens, tokens, acct_id),
+        )
+        cur.execute(
+            """INSERT INTO usage_events
+               (user_id, credit_account_id, event_type, tokens_charged, job_id)
+               VALUES (%s, %s, 'rewrite', %s, %s)""",
+            (user_id, acct_id, tokens, job_id),
+        )

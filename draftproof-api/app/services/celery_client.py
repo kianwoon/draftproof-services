@@ -19,9 +19,11 @@ celery_app.conf.update(
     accept_content=["json"],
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
+        "app.tasks.run_rewrite": {"queue": "scan"},
     },
 )
 
 # The actual task lives in worker/app/tasks.py — same broker, same serializer
 # Task name follows Celery convention: <module>.<function>
 scan_document = celery_app.signature("app.tasks.scan_document")
+run_rewrite = celery_app.signature("app.tasks.run_rewrite")

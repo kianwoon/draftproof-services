@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { getReport } from '../api/draftproofApi';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { getReport, createRewrite } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 
 const TIER_CONFIG = {
@@ -28,10 +28,12 @@ function formatDate(iso) {
 
 export default function Report() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedIssue, setExpandedIssue] = useState(null);
+  const [rewriteLoading, setRewriteLoading] = useState(false);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -72,6 +74,21 @@ export default function Report() {
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
 
+  const hasAIFindings = report.issues.some(i => i.category === 'ai_generation' || i.scanner === 'ai_generation');
+
+  const handleRewrite = async () => {
+    setRewriteLoading(true);
+    try {
+      const { data } = await createRewrite(id);
+      navigate(`/report/${id}/rewrite?rid=${data.id}`);
+    } catch (err) {
+      const msg = err.response?.data?.detail || 'Failed to start rewrite';
+      alert(msg);
+    } finally {
+      setRewriteLoading(false);
+    }
+  };
+
   return (
     <main className="dash-shell">
       <div className="container">
@@ -101,6 +118,21 @@ export default function Report() {
               {report.writing_score != null && <span className="tier-score" style={{ color: '#6366f1' }}> Writing: {report.writing_score.toFixed(1)}%</span>}
             </span>
           </div>
+          {hasAIFindings && (
+            <button
+              className="rewrite-btn"
+              onClick={handleRewrite}
+              disabled={rewriteLoading}
+              style={{
+                marginLeft: '12px', padding: '8px 18px', borderRadius: '8px',
+                background: rewriteLoading ? '#94a3b8' : '#6366f1', color: '#fff',
+                border: 'none', cursor: rewriteLoading ? 'wait' : 'pointer',
+                fontSize: '14px', fontWeight: 600, whiteSpace: 'nowrap',
+              }}
+            >
+              {rewriteLoading ? 'Starting...' : 'Rewrite AI Sections'}
+            </button>
+          )}
         </div>
 
         {/* Summary bar */}

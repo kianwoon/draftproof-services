@@ -33,8 +33,9 @@ export const getPurchaseHistory = (page = 1, perPage = 5, opts = {}) =>
   api.get('/payments/history', { params: { page, per_page: perPage }, signal: opts.signal });
 
 // Rewrites
-export const getSuggestion = (issueId) => api.get(`/rewrites/${issueId}`);
-export const applySuggestion = (issueId, suggestionId) =>
-  api.post(`/rewrites/${issueId}/apply`, { suggestion_id: suggestionId });
+export const createRewrite = (scanId) => api.post('/rewrites/', { scan_id: scanId });
+export const getRewriteStatus = (rewriteId) => api.get(`/rewrites/${rewriteId}`);
+export const getRewriteReport = (rewriteId) => api.get(`/rewrites/${rewriteId}/report`);
+export const getRewriteDownload = (rewriteId, format) => api.get(`/rewrites/${rewriteId}/download/${format}`);
 
 export default api;

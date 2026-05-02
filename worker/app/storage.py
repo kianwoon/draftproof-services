@@ -51,3 +51,24 @@ def _presign(s3, bucket: str, key: str, expires: int = 3600) -> str:
         Params={"Bucket": bucket, "Key": key},
         ExpiresIn=expires,
     )
+
+
+def upload_rewrite_files(scan_id: str, md_text: str, pdf_bytes: bytes, json_data: dict, rewritten_text: str) -> Dict[str, str]:
+    """Upload rewrite results to R2 under reports/{scan_id}/rewrite/."""
+    s3 = _client()
+    bucket = settings.R2_BUCKET_NAME
+    prefix = f"reports/{scan_id}/rewrite"
+    urls = {}
+
+    uploads = [
+        ("rewrite.json", json.dumps(json_data, indent=2, ensure_ascii=False).encode(), "application/json"),
+        ("rewrite.md", md_text.encode(), "text/markdown"),
+        ("rewrite.pdf", pdf_bytes, "application/pdf"),
+        ("rewritten.txt", rewritten_text.encode("utf-8"), "text/plain"),
+    ]
+    for filename, data, content_type in uploads:
+        key = f"{prefix}/{filename}"
+        s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
+        urls[filename] = _presign(s3, bucket, key)
+
+    return urls
