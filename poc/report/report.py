@@ -442,14 +442,10 @@ class ReportBuilder:
         Feeds all scanner results through add_detection(), and stores
         confidence, caveats, and summary metadata.
         """
-        try:
-            from poc.detect.base import DetectionReport as DR
-        except ImportError:
-            from detect.base import DetectionReport as DR
-
-        if not isinstance(detection_report, DR):
+        if not (hasattr(detection_report, "scanner_results")
+                and hasattr(detection_report, "confidence")):
             raise TypeError(
-                f"Expected DetectionReport, got {type(detection_report).__name__}"
+                f"Expected DetectionReport-like object, got {type(detection_report).__name__}"
             )
 
         for dr in detection_report.scanner_results:
