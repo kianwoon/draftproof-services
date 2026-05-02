@@ -128,9 +128,33 @@ export default function Rewrite() {
   );
 
   const summary = report?.summary || report?.rewrite_summary || {};
+  const converged = summary.converged ?? false;
+
+  // Detect scan comparison (full pipeline scores)
+  const origScan = summary.detect_scan_original || {};
+  const newScan = summary.detect_scan_rewritten || {};
+
+  const origBadge = origScan.ai_risk_badge || {};
+  const newBadge = newScan.ai_risk_badge || {};
+
+  const origAI = (origBadge.ai_likelihood_score ?? summary.detect_ai_likelihood ?? 0);
+  const newAI = newBadge.ai_likelihood_score ?? 0;
+  const origWQ = (origBadge.writing_quality_score ?? summary.detect_writing_quality ?? 0);
+  const newWQ = newBadge.writing_quality_score ?? 0;
+  const origTier = (origBadge.tier || origScan.overall_tier || '?').toUpperCase();
+  const newTier = (newBadge.tier || newScan.overall_tier || '?').toUpperCase();
+
+  const origFindings = origScan.findings || {};
+  const newFindings = newScan.findings || {};
+  const tiers = ['critical', 'high', 'medium', 'low'];
+  const countF = (fdict) => tiers.reduce((sum, t) => sum + (fdict[t]?.length || 0), 0);
+  const origTotal = countF(origFindings);
+  const newTotal = countF(newFindings);
+
+  // Fallback to internal metrics if detect scan not available
+  const hasScanComparison = origBadge.ai_likelihood_score != null || newBadge.ai_likelihood_score != null;
   const origRisk = summary.original_risk ?? 0;
   const finalRisk = summary.final_risk ?? 0;
-  const converged = summary.converged ?? false;
 
   return (
     <main className="dash-shell">
@@ -157,18 +181,95 @@ export default function Rewrite() {
         </div>
 
         {/* Before/After */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', margin: '24px 0' }}>
-          <div style={{ padding: '20px', borderRadius: '12px', background: '#fef2f2' }}>
-            <h4 style={{ margin: '0 0 8px', color: '#ef4444' }}>Before</h4>
-            <div style={{ fontSize: '28px', fontWeight: 700 }}>{(origRisk * 100).toFixed(1)}%</div>
-            <div style={{ color: '#64748b', fontSize: '13px' }}>Risk Score</div>
+        {hasScanComparison ? (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', margin: '24px 0' }}>
+              <div style={{ padding: '20px', borderRadius: '12px', background: '#fef2f2' }}>
+                <h4 style={{ margin: '0 0 8px', color: '#ef4444' }}>Before</h4>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{origAI.toFixed(1)}%</div>
+                <div style={{ color: '#64748b', fontSize: '13px' }}>AI Likelihood</div>
+                <div style={{ marginTop: '8px', fontSize: '13px', color: '#64748b' }}>
+                  Tier: <strong>{origTier}</strong> &middot; Findings: <strong>{origTotal}</strong>
+                </div>
+              </div>
+              <div style={{ padding: '20px', borderRadius: '12px', background: '#f0fdf4' }}>
+                <h4 style={{ margin: '0 0 8px', color: '#22c55e' }}>After</h4>
+                <div style={{ fontSize: '28px', fontWeight: 700 }}>{newAI.toFixed(1)}%</div>
+                <div style={{ color: '#64748b', fontSize: '13px' }}>AI Likelihood</div>
+                <div style={{ marginTop: '8px', fontSize: '13px', color: '#64748b' }}>
+                  Tier: <strong>{newTier}</strong> &middot; Findings: <strong>{newTotal}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Detailed comparison table */}
+            <div style={{ margin: '16px 0' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>Metric</th>
+                    <th style={{ padding: '8px', textAlign: 'center' }}>Original</th>
+                    <th style={{ padding: '8px', textAlign: 'center' }}>Rewritten</th>
+                    <th style={{ padding: '8px', textAlign: 'center' }}>Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '8px', fontWeight: 600 }}>AI Likelihood</td>
+                    <td style={{ padding: '8px', textAlign: 'center' }}>{origAI.toFixed(1)}%</td>
+                    <td style={{ padding: '8px', textAlign: 'center' }}>{newAI.toFixed(1)}%</td>
+                    <td style={{ padding: '8px', textAlign: 'center', color: newAI < origAI ? '#22c55e' : '#ef4444' }}>
+                      {(newAI - origAI).toFixed(1)}%
+                    </td>
+                  </tr>
+                  <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '8px', fontWeight: 600 }}>Writing Quality</td>
+                    <td style={{ padding: '8px', textAlign: 'center' }}>{origWQ.toFixed(1)}%</td>
+                    <td style={{ padding: '8px', textAlign: 'center' }}>{newWQ.toFixed(1)}%</td>
+                    <td style={{ padding: '8px', textAlign: 'center', color: newWQ < origWQ ? '#22c55e' : '#ef4444' }}>
+                      {(newWQ - origWQ).toFixed(1)}%
+                    </td>
+                  </tr>
+                  {tiers.map(t => {
+                    const oc = origFindings[t]?.length || 0;
+                    const nc = newFindings[t]?.length || 0;
+                    return (
+                      <tr key={t} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '8px', fontWeight: 600 }}>{t.charAt(0).toUpperCase() + t.slice(1)}</td>
+                        <td style={{ padding: '8px', textAlign: 'center' }}>{oc}</td>
+                        <td style={{ padding: '8px', textAlign: 'center' }}>{nc}</td>
+                        <td style={{ padding: '8px', textAlign: 'center', color: nc < oc ? '#22c55e' : nc > oc ? '#ef4444' : '#64748b' }}>
+                          {nc - oc === 0 ? '—' : `${nc - oc}`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr style={{ borderBottom: '2px solid #e2e8f0', fontWeight: 700 }}>
+                    <td style={{ padding: '8px' }}>Total Findings</td>
+                    <td style={{ padding: '8px', textAlign: 'center' }}>{origTotal}</td>
+                    <td style={{ padding: '8px', textAlign: 'center' }}>{newTotal}</td>
+                    <td style={{ padding: '8px', textAlign: 'center', color: newTotal < origTotal ? '#22c55e' : '#ef4444' }}>
+                      {newTotal - origTotal}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', margin: '24px 0' }}>
+            <div style={{ padding: '20px', borderRadius: '12px', background: '#fef2f2' }}>
+              <h4 style={{ margin: '0 0 8px', color: '#ef4444' }}>Before</h4>
+              <div style={{ fontSize: '28px', fontWeight: 700 }}>{(origRisk * 100).toFixed(1)}%</div>
+              <div style={{ color: '#64748b', fontSize: '13px' }}>Risk Score</div>
+            </div>
+            <div style={{ padding: '20px', borderRadius: '12px', background: '#f0fdf4' }}>
+              <h4 style={{ margin: '0 0 8px', color: '#22c55e' }}>After</h4>
+              <div style={{ fontSize: '28px', fontWeight: 700 }}>{(finalRisk * 100).toFixed(1)}%</div>
+              <div style={{ color: '#64748b', fontSize: '13px' }}>Risk Score</div>
+            </div>
           </div>
-          <div style={{ padding: '20px', borderRadius: '12px', background: '#f0fdf4' }}>
-            <h4 style={{ margin: '0 0 8px', color: '#22c55e' }}>After</h4>
-            <div style={{ fontSize: '28px', fontWeight: 700 }}>{(finalRisk * 100).toFixed(1)}%</div>
-            <div style={{ color: '#64748b', fontSize: '13px' }}>Risk Score</div>
-          </div>
-        </div>
+        )}
 
         {/* Rewritten text */}
         {report?.final_text && (

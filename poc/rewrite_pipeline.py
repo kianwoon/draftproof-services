@@ -212,9 +212,20 @@ def run_rewrite_pipeline(
     rewritten_draft_report = rewritten_builder.build()
     rewritten_report_dict = report_to_dict(rewritten_draft_report)
 
-    # Store both scan reports for side-by-side comparison
-    result.summary["detect_scan_original"] = ctx.raw_json
-    result.summary["detect_scan_rewritten"] = rewritten_report_dict
+    # Extract only the fields needed for comparison (not full report dicts)
+    def _extract_scan_summary(report_dict):
+        badge = report_dict.get("ai_risk_badge") or {}
+        findings = report_dict.get("findings", {})
+        return {
+            "ai_risk_badge": badge,
+            "overall_tier": report_dict.get("overall_tier", "?"),
+            "findings": {t: [{"finding_id": f.get("finding_id"), "title": f.get("title"),
+                              "category": f.get("category")} for f in findings.get(t, [])]
+                         for t in ("critical", "high", "medium", "low")},
+        }
+
+    result.summary["detect_scan_original"] = _extract_scan_summary(ctx.raw_json)
+    result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
 
     # Generate dedicated rewrite report
     rewrite_md = render_rewrite_report(
