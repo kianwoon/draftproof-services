@@ -112,8 +112,8 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
 
         # 2. Filter findings: only rephrase-fixable ones
         # findings is a dict: {critical: [...], high: [...], medium: [...], low: [...]}
-        # Only auto_rewrite_candidate findings can be mitigated by rephrasing
-        # (high/medium risk + suggested_action is add_specific_example or add_user_interpretation)
+        # report.json uses "auto_fixable" (from report.py determine_actionability)
+        # Only these findings can be mitigated by rephrasing
         findings_by_tier = report_json.get("findings", {})
         all_findings = []
         for tier_findings in findings_by_tier.values():
@@ -121,7 +121,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 all_findings.extend(tier_findings)
         rephrasable_findings = [
             f for f in all_findings
-            if isinstance(f, dict) and f.get("actionability") == "auto_rewrite_candidate"
+            if isinstance(f, dict) and f.get("actionability") == "auto_fixable"
         ]
         if not rephrasable_findings:
             update_rewrite_status(rewrite_id, "failed", error="No rephrasable findings to rewrite")
