@@ -122,8 +122,9 @@ Hard rules:
 - Do NOT change numbers, dates, names, citations, or quoted text
 - Every proper noun, number, and quoted phrase in the original MUST appear in your output unchanged
 - Do NOT add new facts, names, numbers, or claims not in the original
-- Keep the output roughly the SAME LENGTH as the input (within 10%)
+- Your output MUST be the SAME number of sentences as the input — no more, no fewer
 - Do NOT add new sentences or expand descriptions — rephrase only
+- Do NOT write more than the character limit stated in the prompt
 - Follow any REWRITE CONSTRAINTS provided in the context
 - Output ONLY the rewritten text, no commentary"""
 
@@ -131,10 +132,13 @@ Hard rules:
 def _make_chipin_rewrite_fn(detect_context: str) -> callable:
     """Create a rewrite function that calls the local `claude` CLI."""
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
+        max_chars = int(len(text) * 1.10)
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
-            f'Current text:\n"""{text}"""\n\n'
-            "Rewrite this text addressing the issues above. "
+            f'Current text ({len(text)} chars):\n"""{text}"""\n\n'
+            f"Rewrite this text addressing the issues above. "
+            f"CRITICAL: Your output MUST NOT exceed {max_chars} characters. "
+            f"Rephrase in-place — do NOT expand, add sentences, or elaborate. "
             "Output ONLY the rewritten text, no commentary."
         )
         try:
@@ -296,10 +300,13 @@ def _rewrite_fn_with_detect_context(
     gateway = LLMGateway(config)
 
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
+        max_chars = int(len(text) * 1.10)
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
-            f'Current text:\n"""{text}"""\n\n'
-            "Rewrite this text addressing the issues above. "
+            f'Current text ({len(text)} chars):\n"""{text}"""\n\n'
+            f"Rewrite this text addressing the issues above. "
+            f"CRITICAL: Your output MUST NOT exceed {max_chars} characters. "
+            f"Rephrase in-place — do NOT expand, add sentences, or elaborate. "
             "Output ONLY the rewritten text, no commentary."
         )
         try:
@@ -722,11 +729,25 @@ def run_rewrite(
         rewritten_region = None
         drift = None
         protected_lost = []
+        max_region_chars = int(len(region_text) * 1.15)
         for attempt in range(3):  # up to 3 attempts
             if loop_rewrite_fn:
                 rewritten_region = loop_rewrite_fn(region_text, span_info)
 
             if rewritten_region is None:
+                break
+
+            # Hard safety: reject if LLM produced grossly oversized output
+            raw_len = len(rewritten_region)
+            if raw_len > max_region_chars * 2:
+                # LLM completely ignored length constraints — reject outright
+                loop_history.append({
+                    "loop": loops_used,
+                    "paragraph": para_idx,
+                    "attempt": attempt + 1,
+                    "note": f"rejected: output {raw_len} chars > 2x limit {max_region_chars}",
+                })
+                rewritten_region = None
                 break
 
             # Guard: semantic drift check
