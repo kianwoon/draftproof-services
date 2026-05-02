@@ -167,6 +167,138 @@ def _pct(value) -> str:
         return str(value)
 
 
+# ── Layman translation for finding detail/recommendation ────────────────
+import re as _re
+
+def _translate_detail(detail: str) -> str:
+    """Convert technical finding detail into plain language for reports."""
+    if not detail:
+        return detail
+
+    # Predictability: "Sentence scored 50.4% predictability (common ratio: 66.7%, category: statistical predictability)"
+    m = _re.match(
+        r"Sentence scored ([\d.]+)% predictability \(common ratio: ([\d.]+)%, category: (.+)\)",
+        detail,
+    )
+    if m:
+        score, ratio, cat = m.group(1), m.group(2), m.group(3).replace("_", " ")
+        return f"Common word patterns detected ({score}% predictability, {ratio}% common words)"
+
+    # Generic phrase: "Generic phrase detected: 'in summary'"
+    m = _re.match(r"Generic phrase detected: '(.+)'", detail)
+    if m:
+        return f"Generic phrase found: \"{m.group(1)}\""
+
+    # Style shift: "Predictability less_predictable (Δ24.7%)"
+    m = _re.match(r"Predictability (\w+) \(Δ([\d.]+)%\)", detail)
+    if m:
+        direction = "more" if "less" in m.group(1) else "less"
+        return f"Writing style shifted {direction} predictable here (Δ{m.group(2)}%)"
+
+    # Specificity concern: "Specificity concern: adjusted to 89% review-level..."
+    if detail.startswith("Specificity concern:"):
+        m2 = _re.match(r"Specificity concern: adjusted to (\d+)%", detail)
+        if m2:
+            return f"Specificity scored {m2.group(1)}% after adjustment — may affect reliability"
+        return "Specificity level adjusted after review"
+
+    # AI-generation likelihood: "AI-generation likelihood: low_ai_generation_likelihood (score 29%)..."
+    m = _re.match(r"AI-generation likelihood: (\w+) \(score (\d+)%\)\.?(.*)", detail)
+    if m:
+        label, score, rest = m.group(1), m.group(2), m.group(3)
+        friendly_label = label.replace("_", " ")
+        return f"AI likelihood assessed as {friendly_label} ({score}%)"
+
+    # AI criterion: "criterion_name: Details: key: value, ..."
+    if ": Details:" in detail:
+        crit, rest = detail.split(": Details:", 1)
+        crit_name = crit.strip().replace("_", " ").title()
+        return f"{crit_name} flagged"
+
+    # Similarity: "Exact Match: exact=92%, fuzzy=85%, semantic=78%"
+    m = _re.match(r"(.+?): exact=(\d+)%, fuzzy=(\d+)%, semantic=(\d+)%", detail)
+    if m:
+        kind = m.group(1)
+        return f"{kind} — high text overlap detected"
+
+    # Similarity paragraph: "Paragraph 3 has 85% semantic overlap with source paragraph 2"
+    m = _re.match(r"Paragraph (\d+) has (\d+)% semantic overlap", detail)
+    if m:
+        return f"Paragraph {m.group(1)} closely matches an external source ({m.group(2)}% overlap)"
+
+    # AI criterion with score: "criterion_name score: 94% (medium). Details: ..."
+    m = _re.match(r"(\w+) score: (\d+)% \(\w+\)\. Details:", detail)
+    if m:
+        name = m.group(1).replace("_", " ").title()
+        return f"{name} scored {m.group(2)}%"
+
+    # Fallback: strip raw "Details: key: value" noise
+    if ". Details:" in detail:
+        return detail.split(". Details:")[0]
+
+    # Citation detail: pass through as-is (already human-readable)
+    return detail
+
+
+def _translate_recommendation(rec: str) -> str:
+    """Convert technical recommendation into plain suggestion for reports."""
+    if not rec:
+        return rec
+
+    # Predictability patterns
+    if rec == "Predictable phrasing detected. Consider whether a more specific or original wording would strengthen this point.":
+        return "Try rephrasing with more specific or original wording"
+    if rec == "Normal prose rhythm for this sentence. Flagged for cluster context only.":
+        return "Flagged as part of a cluster of similar patterns nearby"
+    if "Consider restructuring with specific evidence, cited claims, or original phrasing." in rec:
+        return "Restructure with specific evidence, cited claims, or original phrasing"
+
+    # Generic phrase
+    m = _re.match(r"Replace generic phrase '(.+)' with domain-specific or original wording\.", rec)
+    if m:
+        return f"Replace \"{m.group(1)}\" with more specific wording"
+
+    # Style shift
+    if rec.startswith("Writing predictability shifted"):
+        return "Check if this tone change was intentional or needs smoothing"
+
+    # AI generation
+    if "Review text for AI-generated content." in rec:
+        return "Review for AI-generated content — check for concrete details, personal voice, and sources"
+    if "Some AI-like patterns detected." in rec:
+        return "Some AI-like patterns found — add specific examples or personal observations"
+    if rec == "Few AI-like patterns. Minor review recommended.":
+        return "Few AI-like patterns — minor review suggested"
+    if rec == "Minimal AI-like patterns. Standard review recommended.":
+        return "Minimal AI-like patterns — standard review"
+
+    # AI criterion recommendations
+    crit_recs = {
+        "Rephrase with less common word choices or more specific terminology.": "Rephrase with less common or more specific word choices",
+        "Replace predictable phrasing with unexpected or domain-specific terms.": "Replace predictable phrasing with domain-specific terms",
+        "Vary sentence structure — mix short and long sentences.": "Vary sentence length — mix short and long sentences",
+        "Replace generic transitions with content-specific connectors.": "Replace generic transitions with content-specific ones",
+        "Vary sentence openings and syntactic patterns.": "Vary sentence openings and structure",
+        "Review section for consistency with surrounding text voice.": "Check this section's tone is consistent with the rest",
+    }
+    if rec in crit_recs:
+        return crit_recs[rec]
+
+    # Specificity
+    if "Review domain-term detection results." in rec:
+        return "Domain-term detection may be understated — review auto-detected terms"
+
+    # Similarity
+    if "Verify the source is properly cited and the wording is original." in rec:
+        return "Verify this passage is properly cited and the wording is original"
+    if "Review this paragraph for proper attribution and originality." in rec:
+        return "Review this paragraph for proper attribution and originality"
+    if rec.startswith("Closely paraphrased"):
+        return "Closely paraphrased from an external source — rephrase or cite properly"
+
+    return rec
+
+
 def _count_by_scanner(findings_by_tier: dict, scanner: str) -> int:
     return sum(
         1 for fl in findings_by_tier.values() for f in fl if f.scanner == scanner
@@ -620,12 +752,12 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"### {label} ({len(findings)})")
         lines.append("")
 
-        lines.append("| # | Src | Sig | Detail | Evidence | Action |")
-        lines.append("|--:|:---:|:---:|--------|----------|--------|")
+        lines.append("| # | Src | Sig | Finding | Sentence | Suggestion |")
+        lines.append("|--:|:---:|:---:|---------|----------|------------|")
 
         def _cell(text):
             if not text:
-                return "-"
+                return "—"
             return text.replace("|", "·").replace("\n", " ")
 
         for f in findings:
@@ -634,9 +766,9 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             used_signals.add(f.title)
             scanner = _SCANNER_CODES.get(f.scanner, f.scanner)
             signal = _SIGNAL_CODES.get(f.title, f.title)
-            detail = _cell(f.detail)
+            detail = _cell(_translate_detail(f.detail))
             evidence = _cell(f.evidence)
-            action = _cell(f.recommendation)
+            action = _cell(_translate_recommendation(f.recommendation))
             lines.append(f"| {finding_num} | {scanner} | {signal} | {detail} | {evidence} | {action} |")
         lines.append("")
 
