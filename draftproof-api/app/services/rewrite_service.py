@@ -40,17 +40,6 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         if existing.scalar_one_or_none():
             raise ValueError("Rewrite already in progress for this scan")
 
-        done = await session.execute(
-            select(RewriteJob).where(
-                RewriteJob.scan_id == scan_uuid,
-                RewriteJob.user_id == uid,
-                RewriteJob.status == "completed",
-            )
-        )
-        existing_rewrite = done.scalar_one_or_none()
-        if existing_rewrite:
-            return _rewrite_to_dict(existing_rewrite)
-
         acct_result = await session.execute(
             select(CreditAccount).where(CreditAccount.user_id == uid).with_for_update()
         )
