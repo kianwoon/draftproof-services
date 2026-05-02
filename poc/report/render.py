@@ -211,7 +211,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _abs = _ab.get("ai_likelihood_score", 0)
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
-        lines.append(f"![{_abt_label}](https://img.shields.io/badge/AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
+        lines.append(f"![{_abt_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
 
         # Writing Quality badge beside AI badge
         wq_tier_header = _ab.get("writing_quality_tier", "")
@@ -262,7 +262,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
         lines.append("### AI Generation Likelihood")
         lines.append("")
-        lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/AI_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
+        lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
         lines.append("")
         lines.append(f"- **Score**: `{ai_score:.2f}%`")
 
