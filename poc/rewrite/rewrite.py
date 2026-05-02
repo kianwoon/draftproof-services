@@ -135,11 +135,11 @@ def _make_chipin_rewrite_fn(detect_context: str) -> callable:
         max_chars = int(len(text) * 1.10)
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
-            f'Current text ({len(text)} chars):\n"""{text}"""\n\n'
+            f"Current text ({len(text)} chars):\n{text}\n\n"
             f"Rewrite this text addressing the issues above. "
             f"CRITICAL: Your output MUST NOT exceed {max_chars} characters. "
             f"Rephrase in-place — do NOT expand, add sentences, or elaborate. "
-            "Output ONLY the rewritten text, no commentary."
+            "Output ONLY the rewritten text. No quotes, no commentary."
         )
         try:
             result = subprocess.run(
@@ -150,7 +150,13 @@ def _make_chipin_rewrite_fn(detect_context: str) -> callable:
                 capture_output=True, text=True, timeout=120,
             )
             if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+                output = result.stdout.strip()
+                # Strip triple quotes the LLM sometimes wraps output in
+                if output.startswith('"""') and output.endswith('"""'):
+                    output = output[3:-3].strip()
+                elif output.startswith("```") and output.endswith("```"):
+                    output = output[3:-3].strip()
+                return output
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
         return None
@@ -303,17 +309,23 @@ def _rewrite_fn_with_detect_context(
         max_chars = int(len(text) * 1.10)
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
-            f'Current text ({len(text)} chars):\n"""{text}"""\n\n'
+            f"Current text ({len(text)} chars):\n{text}\n\n"
             f"Rewrite this text addressing the issues above. "
             f"CRITICAL: Your output MUST NOT exceed {max_chars} characters. "
             f"Rephrase in-place — do NOT expand, add sentences, or elaborate. "
-            "Output ONLY the rewritten text, no commentary."
+            "Output ONLY the rewritten text. No quotes, no commentary."
         )
         try:
             resp = gateway.chat(user_msg, system=REWRITE_CHIPIN_PROMPT)
             if resp.is_empty:
                 return None
-            return resp.content.strip()
+            output = resp.content.strip()
+            # Strip triple quotes/code blocks the LLM may wrap output in
+            if output.startswith('"""') and output.endswith('"""'):
+                output = output[3:-3].strip()
+            elif output.startswith("```") and output.endswith("```"):
+                output = output[3:-3].strip()
+            return output
         except Exception:
             return None
 
@@ -756,7 +768,7 @@ def run_rewrite(
                 break
 
             # Guard: semantic drift (per-sentence, threshold 0.3 — allows meaningful rephrase)
-            drift = check_semantic_drift(original_sentence, rewritten_sentence, threshold=0.3)
+            drift = check_semantic_drift(original_sentence, rewritten_sentence, threshold=0.2)
             if not drift.accepted:
                 if attempt < 2:
                     lost_items = "; ".join(drift.reasons[:3])
