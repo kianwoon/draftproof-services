@@ -90,8 +90,8 @@ class PredictabilityScanner:
         self.weights = weights or self.DEFAULT_WEIGHTS
         self.generic_phrases = custom_phrases or GENERIC_PHRASES
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(model_name)
         self.model.to(self.device)
         self.model.eval()
 
