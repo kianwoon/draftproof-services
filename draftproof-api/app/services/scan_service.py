@@ -89,23 +89,40 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
 
 async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
     """List scan_jobs for a user with pagination, newest first."""
-    await _mark_stale_jobs_failed(uuid.UUID(user_id))
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
     offset = (page - 1) * per_page
+    uid = uuid.UUID(user_id)
 
     async with async_session() as session:
-        # Count total
         from sqlalchemy import func
+
+        # Only run stale recovery if user has active jobs
+        active_count = await session.scalar(
+            select(func.count()).select_from(ScanJob)
+            .where(ScanJob.user_id == uid)
+            .where(ScanJob.status.in_(["processing", "pending"]))
+        )
+        if active_count and active_count > 0:
+            cutoff = datetime.now(timezone.utc) - _STALE_THRESHOLD
+            await session.execute(
+                update(ScanJob)
+                .where(ScanJob.user_id == uid)
+                .where(ScanJob.status.in_(["processing", "pending"]))
+                .where(ScanJob.created_at < cutoff)
+                .values(status="failed")
+            )
+            await session.commit()
+
         count_result = await session.execute(
             select(func.count()).select_from(ScanJob)
-            .where(ScanJob.user_id == uuid.UUID(user_id))
+            .where(ScanJob.user_id == uid)
         )
         total = count_result.scalar() or 0
 
         result = await session.execute(
             select(ScanJob)
-            .where(ScanJob.user_id == uuid.UUID(user_id))
+            .where(ScanJob.user_id == uid)
             .order_by(ScanJob.created_at.desc())
             .offset(offset)
             .limit(per_page)
