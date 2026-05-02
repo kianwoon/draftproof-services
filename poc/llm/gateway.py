@@ -173,10 +173,12 @@ class LLMGateway:
         }
 
         headers = self._build_headers()
+        logger.info(f"LLM request: url={url}, model={self.model}, messages={len(messages)}, max_tokens={payload['max_tokens']}")
 
         for attempt in range(1, self.max_retries + 1):
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+                logger.info(f"LLM response: status={resp.status_code}, latency={resp.elapsed.total_seconds():.1f}s")
                 resp.raise_for_status()
                 data = resp.json()
 
