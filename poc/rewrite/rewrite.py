@@ -624,303 +624,244 @@ def run_rewrite(
     }]
     loops_used = 0
 
-    # ── Batch by paragraph: one Claude call per paragraph ───────────
-    # Group all auto-fixable actions by paragraph, then rewrite each
-    # paragraph once with ALL its findings listed in the prompt.
-    # This reduces N Claude calls to ~N_paragraphs calls.
+    # ── Per-sentence rewrite: one LLM call per flagged sentence ─────────
+    # Process each auto-fixable action individually. The LLM sees only the
+    # target sentence + context. Much smaller surface area = less hallucination.
     sentences, para_map = _build_sentence_index(current_text)
-    para_groups = _group_actions_by_paragraph(plan.auto_fixable, sentences, para_map)
-    paragraphs = _split_paragraphs(current_text)
 
-    for para_idx in range(len(paragraphs)):
-        if para_idx not in para_groups:
-            continue
-        para_actions = para_groups[para_idx]
+    for action in plan.auto_fixable:
         loops_used += 1
+        f = action.finding
 
-        # Get current paragraph text directly
-        current_paragraphs = _split_paragraphs(current_text)
-        if para_idx >= len(current_paragraphs):
-            for action in para_actions:
-                findings_skipped += 1
-                floor_reasons.append(FloorReason(
-                    finding_id=str(id(action.finding)),
-                    reason_type="paragraph_vanished",
-                    explanation="Paragraph removed by prior edits",
-                ))
-            continue
-
-        region_text = current_paragraphs[para_idx]
-        if not region_text:
-            for action in para_actions:
-                findings_skipped += 1
-                floor_reasons.append(FloorReason(
-                    finding_id=str(id(action.finding)),
-                    reason_type="paragraph_vanished",
-                    explanation="Paragraph indices out of range after prior edits",
-                ))
-            continue
-
-        # Check all evidence still present
-        missing = [a for a in para_actions if current_text.find(a.finding.evidence) == -1]
-        for action in missing:
+        # Locate the sentence in current text
+        current_sentences, _ = _build_sentence_index(current_text)
+        loc = f.location or {}
+        sent_idx = loc.get("sentence_index", -1)
+        if sent_idx < 0 or sent_idx >= len(current_sentences):
+            sent_idx = _find_sentence_index(current_sentences, f.evidence)
+        if sent_idx < 0:
             findings_skipped += 1
             floor_reasons.append(FloorReason(
-                finding_id=str(id(action.finding)),
-                reason_type="evidence_not_found",
-                explanation=f"Evidence gone: \'{action.finding.evidence[:50]}...\'",
+                finding_id=getattr(f, "id", str(id(f))),
+                reason_type="sentence_not_found",
+                explanation=f"Cannot locate: '{f.evidence[:50]}...'",
             ))
             loop_history.append({
                 "loop": loops_used,
-                "finding_type": action.finding.finding_type,
+                "finding_type": f.finding_type,
                 "reverted": True,
-                "note": "skipped: evidence not found",
+                "note": "skipped: sentence not found",
             })
-        remaining = [a for a in para_actions if a not in missing]
-        if not remaining:
             continue
 
-        # Protected spans within the region
+        original_sentence = current_sentences[sent_idx]
+
+        # Check evidence still present in this sentence
+        if f.evidence[:30] not in original_sentence:
+            findings_skipped += 1
+            floor_reasons.append(FloorReason(
+                finding_id=getattr(f, "id", str(id(f))),
+                reason_type="evidence_not_found",
+                explanation="Evidence gone from sentence",
+            ))
+            loop_history.append({
+                "loop": loops_used,
+                "finding_type": f.finding_type,
+                "reverted": True,
+                "note": "skipped: evidence not found in sentence",
+            })
+            continue
+
+        # Build context: target sentence +/- 1 sentence
+        ctx_before = current_sentences[sent_idx - 1] if sent_idx > 0 else ""
+        ctx_after = current_sentences[sent_idx + 1] if sent_idx < len(current_sentences) - 1 else ""
+
+        # Protected spans within this sentence
         all_protected = detect_protected_spans(current_text)
-        region_start = current_text.find(region_text)
-        region_protected = [
+        sent_start = current_text.find(original_sentence)
+        sent_protected = [
             ps for ps in all_protected
-            if region_start >= 0
-            and ps.start_char >= region_start
-            and ps.end_char <= region_start + len(region_text)
-        ]
+            if sent_start >= 0
+            and ps.start_char >= sent_start
+            and ps.end_char <= sent_start + len(original_sentence)
+        ] if sent_start >= 0 else []
 
-        # Build batch prompt with ALL findings for this paragraph
-        findings_lines = []
-        for action in remaining:
-            f = action.finding
-            findings_lines.append(
-                f"- [{f.finding_type}/{f.risk_level}] \"{f.evidence}\"\n"
-                f"  Detail: {f.detail}\n"
-                f"  Fix: {f.suggested_action_type}"
-            )
+        # Build focused per-sentence prompt
+        finding_lines = [f"[{f.finding_type}/{f.risk_level}] {f.detail}"]
         span_info = (
-            f"Paragraph has {len(remaining)} findings to fix:\n"
-            + "\n".join(findings_lines)
-            + f"\n\nRewrite the entire paragraph to address ALL {len(remaining)} issues."
+            "Finding: " + "|".join(finding_lines) + "\n"
+            f"Fix strategy: {f.suggested_action_type}\n"
+            "Flagged text: '" + f.evidence + "'"
         )
+        if sent_protected:
+            protected_items = ", ".join(f"'{ps.text}'" for ps in sent_protected)
+            span_info += f"\nPreserve exactly: {protected_items}"
 
-        # Explicit preservation list from entity extraction
-        from rewrite.guards import (
-            _extract_named_entities, _extract_numbers, _extract_quotes,
-        )
-        entities = sorted(_extract_named_entities(region_text))
-        numbers = sorted(_extract_numbers(region_text))
-        quotes = sorted(_extract_quotes(region_text))
-        preserve_parts = []
-        if entities:
-            preserve_parts.append(f"Names/places: {', '.join(entities)}")
-        if numbers:
-            preserve_parts.append(f"Numbers: {', '.join(numbers)}")
-        if quotes:
-            preserve_parts.append(f"Quoted text: {'; '.join(quotes)}")
-        if region_protected:
-            protected_items = ", ".join(f"'{ps.text}'" for ps in region_protected)
-            preserve_parts.append(f"Protected spans: {protected_items}")
-        if preserve_parts:
-            span_info += "\n\nMANDATORY: These MUST appear unchanged in your output:\n" + "\n".join(f"- {p}" for p in preserve_parts)
-
-        # Single Claude call for the whole paragraph (with retry on guard failure)
-        rewritten_region = None
+        # Rewrite with retry loop
+        rewritten_sentence = None
         drift = None
-        protected_lost = []
-        max_region_chars = int(len(region_text) * 1.15)
-        for attempt in range(3):  # up to 3 attempts
+        max_sent_chars = int(len(original_sentence) * 1.20)  # 20% tolerance per sentence
+        for attempt in range(3):
             if loop_rewrite_fn:
-                rewritten_region = loop_rewrite_fn(region_text, span_info)
+                context_block = ""
+                if ctx_before:
+                    context_block += "Before: '" + ctx_before + "'\n"
+                context_block += "Target (" + str(len(original_sentence)) + " chars): '" + original_sentence + "'\n"
+                if ctx_after:
+                    context_block += "After: '" + ctx_after + "'\n"
+                prompt = (
+                    f"{span_info}\n\n{context_block}\n"
+                    f"Rewrite ONLY the target sentence to address the finding. "
+                    f"MUST NOT exceed {max_sent_chars} characters. "
+                    f"Output ONLY the rewritten sentence."
+                )
+                rewritten_sentence = loop_rewrite_fn(original_sentence, prompt)
 
-            if rewritten_region is None:
+            if rewritten_sentence is None:
                 break
 
-            # Hard safety: reject if LLM produced grossly oversized output
-            raw_len = len(rewritten_region)
-            if raw_len > max_region_chars * 2:
-                # LLM completely ignored length constraints — reject outright
+            # Hard safety: reject grossly oversized output
+            if len(rewritten_sentence) > max_sent_chars * 2:
                 loop_history.append({
                     "loop": loops_used,
-                    "paragraph": para_idx,
+                    "sentence": sent_idx,
                     "attempt": attempt + 1,
-                    "note": f"rejected: output {raw_len} chars > 2x limit {max_region_chars}",
+                    "note": f"rejected: {len(rewritten_sentence)} chars > 2x {max_sent_chars}",
                 })
-                rewritten_region = None
+                rewritten_sentence = None
                 break
 
-            # Guard: semantic drift check
-            drift = check_semantic_drift(region_text, rewritten_region, threshold=0.1)
+            # Guard: semantic drift (per-sentence, threshold 0.3 — allows meaningful rephrase)
+            drift = check_semantic_drift(original_sentence, rewritten_sentence, threshold=0.3)
             if not drift.accepted:
                 if attempt < 2:
-                    lost_items = "\n".join(f"- {r}" for r in drift.reasons[:5])
+                    lost_items = "; ".join(drift.reasons[:3])
                     span_info += (
-                        f"\n\nYOUR PREVIOUS ATTEMPT FAILED these checks:\n{lost_items}"
-                        "\n\nTry again. Keep the same meaning but fix ALL the issues above."
-                        " Copy every name, number, and quote VERBATIM from the original."
+                        f"\nRETRY ({attempt+1}): Failed: {lost_items}"
+                        ". Keep same meaning, copy names/numbers/quotes verbatim."
                     )
                     loop_history.append({
                         "loop": loops_used,
-                        "paragraph": para_idx,
+                        "sentence": sent_idx,
                         "attempt": attempt + 1,
                         "drift_similarity": round(drift.similarity, 3),
                         "note": f"retry: drift {drift.similarity:.3f}",
                     })
                     continue
-                break  # final attempt failed
+                break
+
+            # Guard: length bloat
+            if len(rewritten_sentence) > max_sent_chars:
+                if attempt < 2:
+                    span_info += (
+                        f"\nRETRY ({attempt+1}): Too long ({len(rewritten_sentence)} chars)."
+                        f" Max {max_sent_chars}. Shorten."
+                    )
+                    loop_history.append({
+                        "loop": loops_used,
+                        "sentence": sent_idx,
+                        "attempt": attempt + 1,
+                        "note": f"retry: length {len(original_sentence)}->{len(rewritten_sentence)}",
+                    })
+                    continue
+                break
 
             # Guard: protected spans
-            protected_lost = [ps for ps in region_protected
-                              if ps.text not in rewritten_region] if region_protected else []
+            protected_lost = [ps for ps in sent_protected
+                              if ps.text not in rewritten_sentence] if sent_protected else []
             if protected_lost:
                 if attempt < 2:
                     lost = ", ".join(f"'{ps.text}'" for ps in protected_lost)
-                    span_info += (
-                        f"\n\nYOUR PREVIOUS ATTEMPT LOST these required items: {lost}"
-                        "\n\nTry again. You MUST include these exact strings in your output."
-                    )
+                    span_info += f"\nRETRY ({attempt+1}): Lost: {lost}. Include verbatim."
                     loop_history.append({
                         "loop": loops_used,
-                        "paragraph": para_idx,
+                        "sentence": sent_idx,
                         "attempt": attempt + 1,
-                        "note": f"retry: protected_span_lost {lost[:60]}",
+                        "note": "retry: protected_span_lost",
                     })
                     continue
-                break  # final attempt failed
-
-            # Guard: length bloat
-            orig_len = len(region_text)
-            new_len = len(rewritten_region)
-            if new_len > orig_len * 1.15:
-                if attempt < 2:
-                    span_info += (
-                        f"\n\nYOUR PREVIOUS ATTEMPT was too long: {new_len} chars vs original {orig_len}."
-                        "\n\nTry again. Keep it MUCH shorter — same ideas, fewer words."
-                    )
-                    loop_history.append({
-                        "loop": loops_used,
-                        "paragraph": para_idx,
-                        "attempt": attempt + 1,
-                        "note": f"retry: length_bloat {orig_len}→{new_len}",
-                    })
-                    continue
-                break  # final attempt failed
+                break
 
             break  # all guards passed
 
-        # Check if rewrite succeeded
-        if rewritten_region is None:
-            for action in remaining:
-                findings_skipped += 1
-                floor_reasons.append(FloorReason(
-                    finding_id=str(id(action.finding)),
-                    reason_type="rewrite_failed",
-                    explanation="Batch rewrite returned None",
-                ))
+        # Check result
+        if rewritten_sentence is None or (drift and not drift.accepted):
+            findings_skipped += 1
+            reason = "rewrite_failed" if rewritten_sentence is None else "semantic_drift"
+            sim_note = f" ({drift.similarity:.3f})" if drift else ""
+            floor_reasons.append(FloorReason(
+                finding_id=getattr(f, "id", str(id(f))),
+                reason_type=reason,
+                explanation=f"Sentence {reason}{sim_note} after retries",
+            ))
             loop_history.append({
                 "loop": loops_used,
-                "paragraph": para_idx,
-                "findings_count": len(remaining),
+                "sentence": sent_idx,
+                "finding_type": f.finding_type,
                 "reverted": True,
-                "note": "batch rewrite failed",
+                "note": f"floor: {reason}{sim_note}",
             })
             continue
 
-        if drift and not drift.accepted:
-            for action in remaining:
-                findings_skipped += 1
-                regression_memory.record(
-                    action.finding.evidence[:80], "semantic_drift",
-                    rewritten_region[:100], drift.similarity,
-                )
-                floor_reasons.append(FloorReason(
-                    finding_id=str(id(action.finding)),
-                    reason_type="semantic_drift",
-                    explanation=f"Batch drift after retries: {drift.similarity:.3f}",
-                ))
+        if len(rewritten_sentence) > max_sent_chars:
+            findings_skipped += 1
+            floor_reasons.append(FloorReason(
+                finding_id=getattr(f, "id", str(id(f))),
+                reason_type="length_bloat",
+                explanation=f"Sentence {len(original_sentence)}->{len(rewritten_sentence)}",
+            ))
             loop_history.append({
                 "loop": loops_used,
-                "paragraph": para_idx,
-                "findings_count": len(remaining),
-                "drift_similarity": round(drift.similarity, 3),
+                "sentence": sent_idx,
+                "finding_type": f.finding_type,
                 "reverted": True,
-                "note": f"floor: semantic_drift {drift.similarity:.3f} (batch)",
+                "note": f"floor: length_bloat {len(original_sentence)}->{len(rewritten_sentence)}",
             })
             continue
 
-        if protected_lost:
-            for action in remaining:
-                findings_skipped += 1
-                floor_reasons.append(FloorReason(
-                    finding_id=str(id(action.finding)),
-                    reason_type="protected_span_lost",
-                    explanation=f"Lost after retries: {', '.join(ps.text for ps in protected_lost)}",
-                ))
-            loop_history.append({
-                "loop": loops_used,
-                "paragraph": para_idx,
-                "findings_count": len(remaining),
-                "reverted": True,
-                "note": "floor: protected_span_lost (batch, all retries)",
-            })
+        # Splice rewritten sentence back into text
+        if original_sentence in current_text:
+            candidate_text = current_text.replace(original_sentence, rewritten_sentence, 1)
+        else:
+            findings_skipped += 1
+            floor_reasons.append(FloorReason(
+                finding_id=getattr(f, "id", str(id(f))),
+                reason_type="splice_failed",
+                explanation="Original sentence no longer in text",
+            ))
             continue
 
-        orig_len = len(region_text)
-        new_len = len(rewritten_region)
-        if new_len > orig_len * 1.15:
-            for action in remaining:
-                findings_skipped += 1
-                floor_reasons.append(FloorReason(
-                    finding_id=str(id(action.finding)),
-                    reason_type="length_bloat",
-                    explanation=f"Rewrite expanded {orig_len}→{new_len} after retries",
-                ))
-            loop_history.append({
-                "loop": loops_used,
-                "paragraph": para_idx,
-                "findings_count": len(remaining),
-                "reverted": True,
-                "note": f"floor: length_bloat {orig_len}→{new_len}",
-            })
-            continue
-
-        # Splice rewritten paragraph back into text
-        current_paragraphs = _split_paragraphs(current_text)
-        current_paragraphs[para_idx] = rewritten_region
-        candidate_text = "\n\n".join(current_paragraphs)
-
-        # Guard 3: Voice erosion (full text)
+        # Voice erosion check (full text)
         voice_check = voice_guard.check(current_text, candidate_text)
         if not voice_check.accepted:
-            for action in remaining:
-                findings_skipped += 1
-                floor_reasons.append(FloorReason(
-                    finding_id=str(id(action.finding)),
-                    reason_type="voice_eroded",
-                    explanation=f"Voice erosion: {voice_check.reject_reason}",
-                ))
+            findings_skipped += 1
+            floor_reasons.append(FloorReason(
+                finding_id=getattr(f, "id", str(id(f))),
+                reason_type="voice_eroded",
+                explanation=f"Voice erosion: {voice_check.reject_reason}",
+            ))
             loop_history.append({
                 "loop": loops_used,
-                "paragraph": para_idx,
-                "findings_count": len(remaining),
+                "sentence": sent_idx,
+                "finding_type": f.finding_type,
                 "reverted": True,
-                "note": "floor: voice_eroded (batch)",
+                "note": "floor: voice_eroded",
             })
             continue
 
-        # All guards passed — accept batch
-        n_fixed = len(remaining)
-        findings_fixed += n_fixed
+        # All guards passed - accept
+        findings_fixed += 1
         current_text = candidate_text
-
         loop_history.append({
             "loop": loops_used,
-            "paragraph": para_idx,
-            "findings_count": n_fixed,
-            "drift_similarity": round(drift.similarity, 3),
-            "note": f"batch fixed {n_fixed} findings",
-            "finding_types": [a.finding.finding_type for a in remaining],
+            "sentence": sent_idx,
+            "finding_type": f.finding_type,
+            "findings_fixed": 1,
+            "orig_length": len(original_sentence),
+            "new_length": len(rewritten_sentence),
+            "orig_text": original_sentence[:80],
+            "new_text": rewritten_sentence[:80],
+            "note": "applied",
         })
 
     # ── Outer detect-rewrite loop ───────────────────────────────────
