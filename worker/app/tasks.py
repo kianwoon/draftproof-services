@@ -140,7 +140,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 detect_json=report_json,
                 output_dir=tmpdir,
                 max_passes=3,
-                ai_only=True,
+                ai_only=False,
                 verbose=False,
                 api_key=settings.LLM_API_KEY or None,
                 model=settings.LLM_MODEL or None,

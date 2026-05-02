@@ -366,13 +366,20 @@ class DetectionRunner:
             if r.scanner == "ai_generation":
                 ai_likelihood = r.likelihood_score
 
+        # Finding types that can be mitigated by rephrasing
+        rephrasable_types = {
+            "generic_phrase", "high_predictability", "low_surprisal",
+            "close_paraphrase", "topk_predictability", "low_specificity",
+        }
+
         for f in top_findings:
             if f.finding_type in citation_types:
                 f.actionability = "citation_repair"
             elif f.finding_type in structural_types:
                 f.actionability = "optional_structure_review"
-            elif f.risk_level in ("high", "medium") and f.suggested_action_type in (
-                "add_specific_example", "add_user_interpretation"
+            elif f.risk_level in ("high", "medium") and (
+                f.suggested_action_type in ("add_specific_example", "add_user_interpretation")
+                or f.finding_type in rephrasable_types
             ):
                 f.actionability = "auto_rewrite_candidate"
             elif f.risk_level == "low" or "minimal" in f.finding_type:
