@@ -87,8 +87,13 @@ export default function Report() {
       const { data } = await createRewrite(id);
       navigate(`/report/${id}/rewrite?rid=${data.id}`);
     } catch (err) {
-      const msg = err.response?.data?.detail || 'Failed to start rewrite';
-      alert(msg);
+      if (err.response?.status === 409) {
+        // Rewrite already in progress — go to the rewrite page to poll
+        navigate(`/report/${id}/rewrite`);
+      } else {
+        const msg = err.response?.data?.detail || 'Failed to start rewrite';
+        alert(msg);
+      }
     } finally {
       setRewriteLoading(false);
     }

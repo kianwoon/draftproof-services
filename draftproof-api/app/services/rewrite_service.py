@@ -52,8 +52,17 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
                 RewriteJob.status.in_(["pending", "processing"]),
             )
         )
-        if existing.scalar_one_or_none():
-            raise ValueError("Rewrite already in progress for this scan")
+        existing_job = existing.scalar_one_or_none()
+        if existing_job:
+            # Return existing rewrite instead of erroring — allows frontend to resume polling
+            return {
+                "id": str(existing_job.id),
+                "scan_id": str(existing_job.scan_id),
+                "status": existing_job.status,
+                "error": existing_job.error,
+                "created_at": existing_job.created_at.isoformat() if existing_job.created_at else None,
+                "completed_at": existing_job.completed_at.isoformat() if existing_job.completed_at else None,
+            }
 
         acct_result = await session.execute(
             select(CreditAccount).where(CreditAccount.user_id == uid).with_for_update()

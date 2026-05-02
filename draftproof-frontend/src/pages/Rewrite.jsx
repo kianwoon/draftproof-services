@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { getRewriteStatus, getRewriteReport, getRewriteDownload, createRewrite } from '../api/draftproofApi';
+import { getRewriteStatus, getRewriteReport, getRewriteDownload, createRewrite, getScanStatus } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 
 export default function Rewrite() {
@@ -35,9 +35,25 @@ export default function Rewrite() {
     const start = async () => {
       try {
         if (!rid) {
-          const { data } = await createRewrite(scanId);
-          rid = data.id;
-          setRewrite(data);
+          try {
+            const { data } = await createRewrite(scanId);
+            rid = data.id;
+            setRewrite(data);
+          } catch (err) {
+            if (err.response?.status === 409) {
+              // Rewrite already exists — find it and poll instead
+              const { data: scanData } = await getScanStatus(scanId).catch(() => ({ data: null }));
+              const existingId = scanData?.rewrite?.id;
+              if (existingId) {
+                rid = existingId;
+                setRewrite(scanData.rewrite);
+              } else {
+                throw err;
+              }
+            } else {
+              throw err;
+            }
+          }
         }
         await pollStatus(rid);
       } catch (err) {
