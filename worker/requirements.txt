@@ -9,3 +9,4 @@ markdown>=3.5
 transformers>=4.30
 torch>=2.0
 anthropic>=0.30
+requests>=2.31
