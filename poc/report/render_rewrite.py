@@ -199,23 +199,22 @@ def render_rewrite_report(
             lines.append(f"| {i} | {tier_change} | {risk_str} | {orig_text} | {new_text} |")
         lines.append("")
 
-        # Detailed view if verbose or always show as expandable
-        if verbose or len(changed) <= 20:
-            lines.append("### Detailed Changes")
-            lines.append("")
-            lines.append("| # | Tier Change | Common Ratio | Original | Rewritten |")
-            lines.append("|--:|:-----------:|:------------:|----------|-----------|")
-            for i, sc in enumerate(changed, 1):
-                orig_tier = sc.get("orig_tier", "?")
-                new_tier = sc.get("new_tier", "?")
-                tier_change = f"{orig_tier} → {new_tier}" if orig_tier != new_tier else orig_tier
-                orig_text = sc.get("orig_sentence", "").replace("\n", " ").replace("|", "·")
-                new_text = sc.get("new_sentence", "").replace("\n", " ").replace("|", "·")
-                orig_top10_s = sc.get("orig_top10", 0)
-                new_top10_s = sc.get("new_top10", 0)
-                ratio_change = f"{orig_top10_s:.0%} → {new_top10_s:.0%}"
-                lines.append(f"| {i} | {tier_change} | {ratio_change} | {orig_text} | {new_text} |")
-            lines.append("")
+        # Detailed view — always show
+        lines.append("### Detailed Changes")
+        lines.append("")
+        lines.append("| # | Tier Change | Common Ratio | Original | Rewritten |")
+        lines.append("|--:|:-----------:|:------------:|----------|-----------|")
+        for i, sc in enumerate(changed, 1):
+            orig_tier = sc.get("orig_tier", "?")
+            new_tier = sc.get("new_tier", "?")
+            tier_change = f"{orig_tier} → {new_tier}" if orig_tier != new_tier else orig_tier
+            orig_text = sc.get("orig_sentence", "").replace("\n", " ").replace("|", "·")
+            new_text = sc.get("new_sentence", "").replace("\n", " ").replace("|", "·")
+            orig_top10_s = sc.get("orig_top10", 0)
+            new_top10_s = sc.get("new_top10", 0)
+            ratio_change = f"{orig_top10_s:.0%} → {new_top10_s:.0%}"
+            lines.append(f"| {i} | {tier_change} | {ratio_change} | {orig_text} | {new_text} |")
+        lines.append("")
 
     # ── Legend ───────────────────────────────────────────────────────
     lines.append("---")
