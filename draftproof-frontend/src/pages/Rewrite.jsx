@@ -61,8 +61,14 @@ export default function Rewrite() {
     if (!rewrite) return;
     try {
       const { data } = await getRewriteDownload(rewrite.id, fmt);
-      if (data.url) window.open(data.url, '_blank');
-    } catch { /* ignore */ }
+      if (data.url) {
+        window.open(data.url, '_blank');
+      } else {
+        setError('Download not available yet. Please try again in a moment.');
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Download failed. Please try again.');
+    }
   };
 
   if (loading && (!rewrite || rewrite.status === 'pending' || rewrite.status === 'processing')) return (
@@ -180,9 +186,6 @@ export default function Rewrite() {
           <div style={{ margin: '24px 0', display: 'flex', gap: '12px' }}>
             <button onClick={() => handleDownload('pdf')} style={dlBtnStyle}>
               Download PDF
-            </button>
-            <button onClick={() => handleDownload('md')} style={dlBtnStyle}>
-              Download Markdown
             </button>
             <button onClick={() => handleDownload('txt')} style={dlBtnStyle}>
               Download Rewritten Text

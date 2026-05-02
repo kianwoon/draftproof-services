@@ -151,6 +151,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             md_path = result.get("md_path")
             pdf_path = result.get("pdf_path")
 
+            import logging as _log
+            _l = _log.getLogger("rewrite_task")
+            _l.info("Pipeline result keys: %s", list(result.keys()))
+            _l.info("md_path=%s exists=%s", md_path, md_path and os.path.exists(md_path))
+            _l.info("pdf_path=%s exists=%s", pdf_path, pdf_path and os.path.exists(pdf_path))
+
             md_text = ""
             pdf_bytes = b""
             if md_path and os.path.exists(md_path):
@@ -159,6 +165,8 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             if pdf_path and os.path.exists(pdf_path):
                 with open(pdf_path, "rb") as f:
                     pdf_bytes = f.read()
+
+            _l.info("md_text len=%d, pdf_bytes len=%d", len(md_text), len(pdf_bytes))
 
             rewritten_text = ""
             if rw and hasattr(rw, "mp_result") and rw.mp_result:

@@ -1,6 +1,7 @@
 """R2 storage — upload report files, return presigned URLs."""
 
 import json
+import logging
 import tempfile
 from typing import Dict
 
@@ -8,6 +9,8 @@ import boto3
 from botocore.config import Config as BotoConfig
 
 from .config import settings
+
+logger = logging.getLogger("storage")
 
 
 def _client():
@@ -67,7 +70,11 @@ def upload_rewrite_files(scan_id: str, md_text: str, pdf_bytes: bytes, json_data
         ("rewritten.txt", rewritten_text.encode("utf-8"), "text/plain"),
     ]
     for filename, data, content_type in uploads:
+        if not data:
+            logger.warning("Skipping upload of %s — empty data", filename)
+            continue
         key = f"{prefix}/{filename}"
+        logger.info("Uploading %s (%d bytes)", filename, len(data))
         s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
         urls[filename] = _presign(s3, bucket, key)
 
