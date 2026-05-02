@@ -81,6 +81,35 @@ _FILTER_CODES = {
     "StructuralFilter": "SF",
 }
 
+# ── Layman labels for AI Likelihood components ──────────────────────────
+_AI_COMPONENT_LABELS = {
+    "predictability": ("Predictability", "How predictable the word choices are — higher means the text reads like statistically common patterns"),
+    "topk_pattern": ("Common Word Patterns", "How many words are among the most statistically likely choices — AI models heavily favour these"),
+    "generic_phrase_density": ("Generic Phrases", "Density of overused filler phrases commonly found in templated or AI-generated writing"),
+    "burstiness_risk": ("Uniform Sentence Length", "How similar sentence lengths are across the text — human writing naturally varies more"),
+    "repeated_sentence_structure_risk": ("Repeated Sentence Openings", "How often sentences start with the same or similar phrases"),
+    "generic_assertion_risk": ("Generic Claims", "How many claims are broad and unspecific, lacking concrete evidence or examples"),
+    "balanced_hedging_risk": ("Balanced Hedging", "Use of formulaic balancing phrases like 'on one hand... on the other hand' or 'while... it also'"),
+    "style_shift_risk": ("Style Consistency", "Sudden shifts in writing style across sections — may indicate stitching from multiple sources"),
+}
+
+# ── Layman labels for Writing Quality components ────────────────────────
+_WQ_COMPONENT_LABELS = {
+    "broad_claim_risk": ("Broad Claims", "Claims that are too general and lack specific evidence or examples"),
+    "lived_detail_risk": ("Weak Personal Detail", "Lack of specific, concrete experiences that show genuine first-hand engagement"),
+    "citation_weakness_risk": ("Citation Weakness", "Missing, broken, or insufficient citation support for claims"),
+    "unsupported_claim_risk": ("Unsupported Claims", "Statements presented as fact without any source or evidence"),
+    "source_grounding_risk": ("Source Grounding", "How well the writing is grounded in verifiable sources rather than speculation"),
+    "paragraph_progression_risk": ("Formulaic Structure", "Paragraphs following a predictable, template-like progression"),
+    "signpost_paragraph_risk": ("Signpost Paragraphs", "Paragraphs that mainly signal what comes next rather than adding substance"),
+    "paragraph_uniformity_risk": ("Paragraph Uniformity", "All paragraphs being similar in structure and length"),
+    "repeated_starter_risk": ("Repeated Openings", "Multiple paragraphs starting with the same word or phrase"),
+    "formulaic_conclusion_risk": ("Formulaic Conclusion", "Conclusion follows a predictable template pattern"),
+    "source_grounding_strength": ("Source Strength", "Presence and quality of cited sources that back up the writing"),
+    "domain_grounding_strength": ("Domain Knowledge", "Use of domain-specific terminology and concepts that show subject familiarity"),
+    "grounding_credit": ("Grounding Credit", "Bonus credit applied when strong sources or domain knowledge are present"),
+}
+
 # ── Tier display config ──────────────────────────────────────────────
 
 _BADGE_TIER_LABELS = {
@@ -234,8 +263,12 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
         ai_components = badge.get("ai_components", {})
         if ai_components:
+            lines.append("")
+            lines.append("| Signal | Score | What It Means |")
+            lines.append("|--------|------:|---------------|")
             for comp_name, comp_val in ai_components.items():
-                lines.append(f"- **{comp_name}**: `{comp_val:.1f}%`")
+                label, desc = _AI_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
+                lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
 
         # ── Writing Quality Risk ──
         wq_tier = badge.get("writing_quality_tier", "LOW")
@@ -264,8 +297,12 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
         wq_components = badge.get("writing_components", {})
         if wq_components:
+            lines.append("")
+            lines.append("| Signal | Score | What It Means |")
+            lines.append("|--------|------:|---------------|")
             for comp_name, comp_val in wq_components.items():
-                lines.append(f"- **{comp_name}**: `{comp_val:.1f}%`")
+                label, desc = _WQ_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
+                lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
 
         # ── Combined Recommendation ──
         review_priority = badge.get("review_priority", "")
