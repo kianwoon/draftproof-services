@@ -162,7 +162,9 @@ export default function Reports() {
                         {scan.tier ? (
                           <span className="tier-badge" style={{ color: tierColor, borderColor: tierColor }}>
                             {TIER_LABELS[scan.tier] || scan.tier}
-                            {scan.ai_score != null && <span className="tier-score"> {scan.ai_score.toFixed(1)}%</span>}
+                            <span className="tier-score">
+                              {scan.ai_score != null ? ` ${scan.ai_score.toFixed(1)}%` : scan.finding_count != null ? ` (${scan.finding_count})` : ''}
+                            </span>
                           </span>
                         ) : '—'}
                       </td>
