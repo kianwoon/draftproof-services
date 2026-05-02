@@ -182,26 +182,6 @@ def render_rewrite_report(
     else:
         lines.append(f"**{len(changed)} sentence(s) rewritten.**")
         lines.append("")
-
-        # Summary table
-        lines.append("| # | Tier Change | Risk Δ | Original | Rewritten |")
-        lines.append("|--:|:-----------:|-------:|----------|-----------|")
-        for i, sc in enumerate(changed, 1):
-            orig_tier = sc.get("orig_tier", "?")
-            new_tier = sc.get("new_tier", "?")
-            tier_change = f"{orig_tier}→{new_tier}" if orig_tier != new_tier else orig_tier
-            orig_r = sc.get("orig_risk", 0)
-            new_r = sc.get("new_risk", 0)
-            risk_delta = new_r - orig_r
-            risk_str = f"{risk_delta:+.0%}" if risk_delta else "—"
-            orig_text = sc.get("orig_sentence", "").replace("\n", " ").replace("|", "·")
-            new_text = sc.get("new_sentence", "").replace("\n", " ").replace("|", "·")
-            lines.append(f"| {i} | {tier_change} | {risk_str} | {orig_text} | {new_text} |")
-        lines.append("")
-
-        # Detailed view — always show
-        lines.append("### Detailed Changes")
-        lines.append("")
         lines.append("| # | Tier Change | Common Ratio | Original | Rewritten |")
         lines.append("|--:|:-----------:|:------------:|----------|-----------|")
         for i, sc in enumerate(changed, 1):
