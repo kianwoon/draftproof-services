@@ -357,13 +357,10 @@ class ReportBuilder:
         """Accept a DetectResult from the detect module.
 
         Works for any detector — predictability, similarity, or citation.
+        Uses duck-typing to handle dual-import path conflicts.
         """
-        try:
-            from poc.detect.base import DetectResult
-        except ImportError:
-            from detect.base import DetectResult
-
-        if not isinstance(result, DetectResult):
+        # Duck-type: accept any object with the expected DetectResult attributes
+        if not hasattr(result, "scanner") or not hasattr(result, "findings"):
             raise TypeError(f"Expected DetectResult, got {type(result).__name__}")
 
         scanner = result.scanner
@@ -586,11 +583,11 @@ class ReportBuilder:
                 "orig_tier": o.get("label", "?"),
                 "orig_risk": o.get("risk", 0),
                 "orig_top10": o.get("top10_ratio", 0),
-                "orig_sentence": o.get("sentence", "")[:80],
+                "orig_sentence": o.get("sentence", ""),
                 "new_tier": f.get("label", "?"),
                 "new_risk": f.get("risk", 0),
                 "new_top10": f.get("top10_ratio", 0),
-                "new_sentence": f.get("sentence", "")[:80],
+                "new_sentence": f.get("sentence", ""),
             })
 
         # Compute tiers and distributions from sentence details

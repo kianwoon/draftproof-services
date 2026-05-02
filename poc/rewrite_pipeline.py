@@ -8,6 +8,7 @@ Usage:
 
 Output:
   test_output/draftproof_rewrite_<timestamp>.md
+  test_output/draftproof_rewrite_<timestamp>.pdf
   test_output/draftproof_rewrite_<timestamp>.json
 """
 
@@ -18,9 +19,12 @@ import time
 import argparse
 
 sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_from_json
 from rewrite import run_rewrite, RewriteModuleResult
+from report.pdf import render_pdf
+from report.render_rewrite import render_rewrite_report
 
 
 def run_rewrite_pipeline(
@@ -29,11 +33,12 @@ def run_rewrite_pipeline(
     detect_json: dict = None,
     output_dir: str = None,
     max_passes: int = 3,
-    max_detect_loops: int = 1,
+    max_detect_loops: int = 0,
     target_top10: float = 0.50,
     model: str = None,
     api_key: str = None,
     verbose: bool = False,
+    ai_only: bool = True,
 ) -> dict:
     """Run the full rewrite pipeline from detect JSON or raw text.
 
@@ -48,6 +53,7 @@ def run_rewrite_pipeline(
         model: LLM model for rewriting (None → from env).
         api_key: API key for LLM (None → from env).
         verbose: Include scanner details in report.
+        ai_only: Only rewrite AI-generation findings (default True).
 
     Returns dict with paths and summary.
     """
@@ -113,6 +119,17 @@ def run_rewrite_pipeline(
     if ctx.rewrite_decision:
         print(f"  Decision: mode={ctx.rewrite_decision.get('mode', 'targeted')}")
 
+    total_findings = sum(len(dr.findings) for dr in ctx.detect_results)
+    if ai_only:
+        ai_count = sum(
+            len(dr.findings if dr.scanner == "ai_generation"
+                else [f for f in dr.findings
+                      if (f.metadata or {}).get("scanner") == "ai_generation"
+                      or (f.metadata or {}).get("category") == "ai_generation"])
+            for dr in ctx.detect_results
+        )
+        print(f"  AI-only mode: {ai_count} AI findings out of {total_findings} total")
+
     t0 = time.time()
     result: RewriteModuleResult = run_rewrite(
         content=text,
@@ -124,6 +141,7 @@ def run_rewrite_pipeline(
         max_detect_loops=max_detect_loops,
         output_dir=output_dir,
         rewrite_context=ctx,
+        ai_only=ai_only,
     )
     elapsed = time.time() - t0
 
@@ -138,8 +156,50 @@ def run_rewrite_pipeline(
     md_path = os.path.join(output_dir, f"draftproof_rewrite_{ts}.md")
     json_path_out = os.path.join(output_dir, f"draftproof_rewrite_{ts}.json")
 
+    # Extract AI-only findings from detect JSON
+    ai_findings = []
+    raw_findings = ctx.raw_json.get("findings", {})
+    for tier in ("critical", "high", "medium", "low"):
+        for f in raw_findings.get(tier, []):
+            cat = (f.get("category") or f.get("scanner") or "").lower()
+            if cat == "ai_generation":
+                ai_findings.append(f)
+
+    # Get sentence comparison from the MultiPassResult metrics
+    sentence_comparison = []
+    mp = result.mp_result
+    if mp and mp.original_metrics and mp.final_metrics:
+        orig_details = mp.original_metrics.sentence_details or []
+        final_details = mp.final_metrics.sentence_details or []
+        max_idx = max(len(orig_details), len(final_details))
+        for i in range(max_idx):
+            o = orig_details[i] if i < len(orig_details) else {}
+            f = final_details[i] if i < len(final_details) else {}
+            sentence_comparison.append({
+                "index": i + 1,
+                "orig_tier": o.get("label", "?"),
+                "orig_risk": o.get("risk", 0),
+                "orig_top10": o.get("top10_ratio", 0),
+                "orig_sentence": o.get("sentence", ""),
+                "new_tier": f.get("label", "?"),
+                "new_risk": f.get("risk", 0),
+                "new_top10": f.get("top10_ratio", 0),
+                "new_sentence": f.get("sentence", ""),
+            })
+
+    # Generate dedicated rewrite report
+    rewrite_md = render_rewrite_report(
+        summary=result.summary,
+        sentence_comparison=sentence_comparison,
+        ai_findings=ai_findings,
+        verbose=verbose,
+    )
+
     with open(md_path, "w") as f:
-        f.write(result.markdown_report)
+        f.write(rewrite_md)
+
+    pdf_path = os.path.join(output_dir, f"draftproof_rewrite_{ts}.pdf")
+    render_pdf(rewrite_md, pdf_path)
 
     summary = result.summary
     summary["rewrite_time"] = elapsed
@@ -152,6 +212,7 @@ def run_rewrite_pipeline(
     return {
         "status": "rewritten",
         "md_path": md_path,
+        "pdf_path": pdf_path,
         "json_path": json_path_out,
         "result": result,
         "elapsed": elapsed,
@@ -169,6 +230,7 @@ def main():
     parser.add_argument("--model", default=None, help="LLM model (default: from LLM_MODEL env var)")
     parser.add_argument("--api-key", default=None, help="API key (or set OPENROUTER_API_KEY)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    parser.add_argument("--no-ai-only", action="store_true", help="Rewrite ALL findings (default: AI-only)")
     args = parser.parse_args()
 
     output_dir = args.output or os.path.abspath(os.path.join(
@@ -209,6 +271,7 @@ def main():
         model=args.model,
         api_key=api_key,
         verbose=args.verbose,
+        ai_only=not args.no_ai_only,
     )
 
     if result["status"] == "clean":
@@ -223,6 +286,7 @@ def main():
         print(f"  Passes: {len(rw.passes)}")
         print(f"  Converged: {'Yes' if rw.converged else 'No'}")
         print(f"  MD:   {result['md_path']}")
+        print(f"  PDF:  {result['pdf_path']}")
         print(f"  JSON: {result['json_path']}")
 
 

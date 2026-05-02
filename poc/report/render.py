@@ -824,12 +824,14 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         if rw.original_findings or rw.rewritten_findings:
             lines.append(f"| **Findings** | {rw.original_findings} | {rw.rewritten_findings} | `{rw.original_findings - rw.rewritten_findings:+d}` |")
         lines.append("")
-        lines.append(f"- **Passes**: {rw.passes_completed}")
-        lines.append(f"- **Converged**: {'Yes' if rw.converged else 'No'} ({rw.convergence_reason})")
+        lines.append("| Detail | Value |")
+        lines.append("|--------|-------|")
+        lines.append(f"| Passes | {rw.passes_completed} |")
+        lines.append(f"| Converged | {'Yes' if rw.converged else 'No'} ({rw.convergence_reason}) |")
         if rw.detect_loops_used:
-            lines.append(f"- **Detect-rewrite loops**: {rw.detect_loops_used}")
+            lines.append(f"| Detect-Rewrite Loops | {rw.detect_loops_used} |")
         if rw.reverted:
-            lines.append(f"- **Reverted**: Yes — {rw.revert_reason}")
+            lines.append(f"| Reverted | Yes — {rw.revert_reason} |")
         lines.append("")
 
         if rw.pass_progression:
@@ -847,19 +849,24 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append("")
 
         if rw.sentence_comparison:
-            lines.append("<details>")
-            lines.append("<summary>Sentence Comparison</summary>")
-            lines.append("")
-            for i, sc in enumerate(rw.sentence_comparison, 1):
-                orig = sc.get("original", "").replace("\n", " ")
-                rew = sc.get("rewritten", "").replace("\n", " ")
-                lines.append(f"**#{i}**")
-                lines.append(f"- Original: {orig}")
-                lines.append(f"- Rewritten: {rew}")
+            # Filter to only show sentences that actually changed
+            changed = [
+                (i, sc) for i, sc in enumerate(rw.sentence_comparison, 1)
+                if sc.get("orig_sentence", "") != sc.get("new_sentence", "")
+            ]
+            if changed:
+                lines.append(f"### Detailed Changes ({len(changed)} sentence(s))")
                 lines.append("")
-            lines.append("")
-            lines.append("</details>")
-            lines.append("")
+                lines.append("| # | Tier Change | Original | Rewritten |")
+                lines.append("|---|-------------|----------|-----------|")
+                for i, sc in changed:
+                    orig_tier = sc.get("orig_tier", "?")
+                    new_tier = sc.get("new_tier", "?")
+                    orig_text = sc.get("orig_sentence", "").replace("\n", " ").replace("|", "·")
+                    new_text = sc.get("new_sentence", "").replace("\n", " ").replace("|", "·")
+                    tier_change = f"{orig_tier} → {new_tier}" if orig_tier != new_tier else orig_tier
+                    lines.append(f"| {i} | {tier_change} | {orig_text} | {new_text} |")
+                lines.append("")
 
     # ── LEGEND ─────────────────────────────────────────────────────
     if used_scanners or used_signals or fp:

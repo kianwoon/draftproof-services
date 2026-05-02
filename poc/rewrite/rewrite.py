@@ -64,20 +64,67 @@ from rewrite.voice import VoiceGuard, VoiceProfile, analyze_voice
 from llm.gateway import LLMGateway, LLMConfig
 
 
+# ── AI-only finding filter ───────────────────────────────────────────
+
+def _is_ai_finding(f: Finding) -> bool:
+    """Check if a Finding came from the ai_generation scanner."""
+    meta = f.metadata or {}
+    return (
+        meta.get("scanner") == "ai_generation"
+        or meta.get("category") == "ai_generation"
+    )
+
+
+def _filter_ai_findings(detect_results: List[DetectResult]) -> List[DetectResult]:
+    """Keep only findings from the ai_generation scanner.
+
+    Returns new DetectResult list with only AI findings. Non-AI scanners
+    (predictability, similarity, citation) are dropped entirely.
+    """
+    filtered = []
+    for dr in detect_results:
+        # Check DetectResult.scanner (set by parse_detect grouping) AND metadata
+        if dr.scanner == "ai_generation":
+            ai_findings = dr.findings
+        else:
+            ai_findings = [f for f in dr.findings if _is_ai_finding(f)]
+        if not ai_findings:
+            continue
+        filtered.append(DetectResult(
+            scanner="ai_generation",
+            overall_risk=dr.overall_risk,
+            confidence=dr.confidence,
+            confidence_reason=dr.confidence_reason,
+            risk_distribution=dr.risk_distribution,
+            findings=ai_findings,
+            policy_message=dr.policy_message,
+            raw=dr.raw,
+            feature_summary=dr.feature_summary or {},
+        ))
+    return filtered
+
+
 # ── Chip-in: use local `claude` CLI when no API key ──────────────────
 
-REWRITE_CHIPIN_PROMPT = """You are a writing improvement assistant. Rewrite the flagged text to reduce AI-detectable patterns.
+REWRITE_CHIPIN_PROMPT = """You are a writing improvement assistant. Rewrite the flagged text to reduce AI-detectable patterns while preserving the author's original meaning.
 
-Rules:
+Signal-specific guidance:
+- TOP-K PREDICTABILITY: Replace common word choices with unexpected or domain-specific alternatives. The text uses too many statistically common words.
+- LOW SURPRISAL: The word sequences are too predictable. Use less common phrasing and varied sentence openings.
+- LOW SPECIFICITY: The text lacks concrete details. Add specific domain terminology and concrete examples already implied by the context.
+- LOW BURSTINESS: Sentence lengths are too uniform. Vary rhythm — mix short punchy sentences with longer ones.
+- GENERIC PHRASES: Replace formulaic transitions with content-specific connectors.
+- REPETITIVE STRUCTURE: Vary sentence openings and syntactic patterns.
+
+Hard rules:
 - Preserve factual meaning EXACTLY
 - Keep the same register (formal/informal)
-- Replace generic, formulaic phrases with specific, vivid alternatives
-- Vary sentence structure and rhythm
 - Do NOT change numbers, dates, names, citations, or quoted text
 - Every proper noun, number, and quoted phrase in the original MUST appear in your output unchanged
 - Do NOT add new facts, names, numbers, or claims not in the original
 - Keep the output roughly the SAME LENGTH as the input (within 10%)
 - Do NOT add new sentences or expand descriptions — rephrase only
+- Follow any REWRITE CONSTRAINTS provided in the context
 - Output ONLY the rewritten text, no commentary"""
 
 
@@ -139,6 +186,7 @@ def _extract_rewrite_guidance(detect_results: List[DetectResult]) -> dict:
         "predictability_findings": [],
         "similarity_findings": [],
         "citation_findings": [],
+        "ai_generation_findings": [],
     }
     for dr in detect_results:
         for f in dr.findings:
@@ -150,8 +198,11 @@ def _extract_rewrite_guidance(detect_results: List[DetectResult]) -> dict:
                 "recommendation": f.recommendation,
                 "action_type": f.suggested_action_type or "",
                 "metadata": f.metadata or {},
+                "signal_category": getattr(f, "signal_category", "") or (f.metadata or {}).get("signal_category", ""),
             }
-            if dr.scanner == "predictability":
+            if dr.scanner == "ai_generation":
+                guidance["ai_generation_findings"].append(entry)
+            elif dr.scanner == "predictability":
                 guidance["predictability_findings"].append(entry)
             elif dr.scanner == "similarity":
                 guidance["similarity_findings"].append(entry)
@@ -163,9 +214,24 @@ def _extract_rewrite_guidance(detect_results: List[DetectResult]) -> dict:
 def _build_detect_context(
     guidance: dict,
     domain_terms: Optional[List[str]] = None,
+    rewrite_constraints: Optional[dict] = None,
 ) -> str:
     """Build a context string from detect findings to inject into rewrite prompts."""
     sections = []
+
+    # AI generation findings — primary rewrite targets
+    ai = guidance.get("ai_generation_findings", [])
+    if ai:
+        high_risk = [f for f in ai if f["risk_level"] in ("high", "medium", "critical")]
+        if high_risk:
+            lines = ["AI PATTERN ISSUES (reduce AI-detectable patterns):"]
+            for f in high_risk:
+                sig = f.get("signal_category", "")
+                label = f"  - [{sig}] " if sig else "  - "
+                lines.append(f"{label}\"{f['evidence']}\"")
+                if f["recommendation"]:
+                    lines.append(f"    Fix: {f['recommendation']}")
+            sections.append("\n".join(lines))
 
     pred = guidance["predictability_findings"]
     if pred:
@@ -189,19 +255,32 @@ def _build_detect_context(
                     lines.append(f"    Fix: {f['recommendation']}")
             sections.append("\n".join(lines))
 
-    cite = guidance["citation_findings"]
-    if cite:
-        lines = ["CITATION ISSUES (requires manual review, not auto-rewrite):"]
-        for f in cite:
-            lines.append(f"  - {f['evidence']}")
-            if f["recommendation"]:
-                lines.append(f"    Fix: {f['recommendation']}")
-        sections.append("\n".join(lines))
-
     if domain_terms:
         lines = ["DOMAIN TERMS (preserve these in any rewrite):"]
         lines.append("  " + ", ".join(domain_terms[:20]))
         sections.append("\n".join(lines))
+
+    # Rewrite constraints from detect pipeline
+    if rewrite_constraints:
+        constraint_lines = []
+        preserve = rewrite_constraints.get("preserve_terms", [])
+        if preserve:
+            constraint_lines.append(f"MUST PRESERVE: {', '.join(preserve)}")
+        do_not_add = rewrite_constraints.get("do_not_add", [])
+        if do_not_add:
+            constraint_lines.append("DO NOT ADD:")
+            for item in do_not_add:
+                constraint_lines.append(f"  - {item}")
+        allowed = rewrite_constraints.get("allowed_additions", [])
+        if allowed:
+            constraint_lines.append("ALLOWED additions:")
+            for item in allowed:
+                constraint_lines.append(f"  + {item}")
+        rule = rewrite_constraints.get("rewrite_rule", "")
+        if rule:
+            constraint_lines.append(f"RULE: {rule}")
+        if constraint_lines:
+            sections.append("REWRITE CONSTRAINTS:\n" + "\n".join(constraint_lines))
 
     return "\n\n".join(sections) if sections else ""
 
@@ -352,6 +431,7 @@ def run_rewrite(
     min_detect_improvement: int = 1,
     config: Optional[RewriteConfig] = None,
     rewrite_context: Optional[Any] = None,
+    ai_only: bool = True,
 ) -> RewriteModuleResult:
     """Run rewrite in a detect→plan→rewrite→score→verify loop.
 
@@ -363,7 +443,12 @@ def run_rewrite(
       5. Loop: adaptive decision based on improvement, drift, budget
 
     Citation and integrity findings are NEVER auto-rewritten.
+    When ai_only=True, only ai_generation scanner findings are targeted.
     """
+    # AI-only filter: strip non-AI findings before planning
+    if ai_only:
+        detect_results = _filter_ai_findings(detect_results)
+
     # Merge config
     if config is None:
         config = RewriteConfig(
@@ -481,10 +566,16 @@ def run_rewrite(
     guidance = _extract_rewrite_guidance(detect_results)
 
     domain_terms = None
+    rewrite_constraints = None
     if rewrite_context and hasattr(rewrite_context, "domain_profile") and rewrite_context.domain_profile:
         domain_terms = rewrite_context.domain_profile.get("matched_domain_terms")
+    if rewrite_context and hasattr(rewrite_context, "raw_json"):
+        rewrite_constraints = rewrite_context.raw_json.get("rewrite_constraints")
 
-    detect_context = _build_detect_context(guidance, domain_terms=domain_terms)
+    detect_context = _build_detect_context(
+        guidance, domain_terms=domain_terms,
+        rewrite_constraints=rewrite_constraints,
+    )
     scanner = PredictabilityScanner()
 
     regression_memory = RegressionMemory()
