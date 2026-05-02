@@ -11,7 +11,7 @@ from app.models.db import async_session, RewriteJob, ScanJob, CreditAccount, Cre
 
 logger = logging.getLogger("rewrite_service")
 
-_STALE_THRESHOLD = timedelta(minutes=15)
+_STALE_THRESHOLD = timedelta(minutes=5)
 
 
 async def create_rewrite(scan_id: str, user_id: str) -> dict:
