@@ -15,14 +15,13 @@ COPY worker/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
-# Pre-download GPT2-medium (~1.5GB) — used by detect pipeline for surprisal scoring
-# Pin cache dir so it's consistent between build and runtime
-ENV HF_HOME=/app/.cache/huggingface
-RUN rm -rf ${HF_HOME} 2>/dev/null; \
-    python3 -c "from transformers import GPT2LMHeadModel, GPT2Tokenizer; \
-    GPT2LMHeadModel.from_pretrained('gpt2-medium'); \
-    GPT2Tokenizer.from_pretrained('gpt2-medium'); \
-    print('GPT2-medium cached')"
+# Pre-download GPT2-medium (~1.5GB) into a fixed path baked into the image
+ENV HF_HOME=/app/hf_cache
+RUN python3 -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
+    AutoTokenizer.from_pretrained('gpt2-medium'); \
+    AutoModelForCausalLM.from_pretrained('gpt2-medium'); \
+    print('GPT2-medium cached')" && \
+    echo "Cache contents:" && ls -la ${HF_HOME}/hub/
 
 # Copy both worker/ and poc/ so worker can import poc modules
 COPY poc/ /app/poc/
