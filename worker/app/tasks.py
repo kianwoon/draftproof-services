@@ -129,6 +129,11 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
 
         # 3. Run rewrite pipeline
         from poc.rewrite_pipeline import run_rewrite_pipeline
+        from app.config import settings
+
+        if not settings.LLM_API_KEY:
+            update_rewrite_status(rewrite_id, "failed", error="LLM_API_KEY not configured — rewrite requires an LLM API key")
+            return {"status": "failed", "error": "missing LLM API key"}
 
         with tempfile.TemporaryDirectory() as tmpdir:
             result = run_rewrite_pipeline(
@@ -137,6 +142,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 max_passes=3,
                 ai_only=True,
                 verbose=False,
+                api_key=settings.LLM_API_KEY or None,
             )
 
             if result["status"] in ("skipped", "clean"):
