@@ -143,6 +143,8 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 ai_only=True,
                 verbose=False,
                 api_key=settings.LLM_API_KEY or None,
+                model=settings.LLM_MODEL or None,
+                base_url=settings.LLM_BASE_URL or None,
             )
 
             if result["status"] in ("skipped", "clean"):

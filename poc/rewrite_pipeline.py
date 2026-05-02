@@ -37,6 +37,7 @@ def run_rewrite_pipeline(
     target_top10: float = 0.50,
     model: str = None,
     api_key: str = None,
+    base_url: str = None,
     verbose: bool = False,
     ai_only: bool = True,
 ) -> dict:
@@ -52,6 +53,7 @@ def run_rewrite_pipeline(
         target_top10: Target top-10 ratio for convergence.
         model: LLM model for rewriting (None → from env).
         api_key: API key for LLM (None → from env).
+        base_url: LLM API base URL (None → from env or OpenRouter default).
         verbose: Include scanner details in report.
         ai_only: Only rewrite AI-generation findings (default True).
 
@@ -136,6 +138,7 @@ def run_rewrite_pipeline(
         detect_results=ctx.detect_results,
         api_key=api_key,
         model=model,
+        base_url=base_url,
         max_passes=max_passes,
         target_top10=target_top10,
         max_detect_loops=max_detect_loops,

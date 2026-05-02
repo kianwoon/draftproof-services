@@ -289,9 +289,10 @@ def _rewrite_fn_with_detect_context(
     detect_context: str,
     api_key: Optional[str],
     model: str,
+    base_url: Optional[str] = None,
 ) -> callable:
     """Create a rewrite function that uses LLMGateway with detect context."""
-    config = LLMConfig(api_key=api_key, model=model)
+    config = LLMConfig(api_key=api_key, model=model, base_url=base_url or "https://openrouter.ai/api/v1")
     gateway = LLMGateway(config)
 
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
@@ -423,6 +424,7 @@ def run_rewrite(
     detect_results: List[DetectResult],
     api_key: Optional[str] = None,
     model: Optional[str] = None,
+    base_url: Optional[str] = None,
     max_passes: int = 3,
     target_top10: float = 0.50,
     rewrite_fn: Optional[callable] = None,
@@ -457,6 +459,7 @@ def run_rewrite(
             target_top10=target_top10,
             model=model,
             api_key=api_key,
+            base_url=base_url,
         )
 
     # ── Step 1: Plan ──────────────────────────────────────────────
@@ -592,6 +595,7 @@ def run_rewrite(
             effective_model = config.model or os.environ.get("LLM_MODEL")
             loop_rewrite_fn = _rewrite_fn_with_detect_context(
                 detect_context, effective_key, effective_model,
+                base_url=config.base_url,
             )
         elif detect_context:
             loop_rewrite_fn = _make_chipin_rewrite_fn(detect_context)

@@ -69,6 +69,7 @@ class RewriteConfig:
     budget: RewriteBudget = field(default_factory=RewriteBudget)
     model: Optional[str] = None  # None → resolved by LLMGateway from LLM_MODEL env var
     api_key: Optional[str] = None
+    base_url: Optional[str] = None  # None → resolved by LLMGateway (OpenRouter default)
 
 
 # ── Loop control ─────────────────────────────────────────────────────
