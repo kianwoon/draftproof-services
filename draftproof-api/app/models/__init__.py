@@ -52,6 +52,7 @@ class ReportOut(BaseModel):
     report_md_url: Optional[str] = None
     report_pdf_url: Optional[str] = None
     results_json: Optional[Any] = None
+    rewrite: Optional[Any] = None
 
 
 class SuggestionOut(BaseModel):

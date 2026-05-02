@@ -10,7 +10,7 @@ from botocore.config import Config as BotoConfig
 from sqlalchemy import select
 
 from app.config import R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME
-from app.models.db import async_session, ScanJob
+from app.models.db import async_session, ScanJob, RewriteJob
 
 logger = logging.getLogger("report_service")
 
@@ -154,6 +154,22 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
         # Prefer AI badge tier over findings-based tier (matches PDF)
         display_tier = ai_badge_tier or job.tier
 
+        # Check for completed rewrite
+        rewrite_info = None
+        rw_result = await session.execute(
+            select(RewriteJob).where(
+                RewriteJob.scan_id == job.id,
+                RewriteJob.status == "completed",
+            ).order_by(RewriteJob.completed_at.desc()).limit(1)
+        )
+        rw_job = rw_result.scalar_one_or_none()
+        if rw_job:
+            rewrite_info = {
+                "id": str(rw_job.id),
+                "status": rw_job.status,
+                "completed_at": rw_job.completed_at.isoformat() if rw_job.completed_at else None,
+            }
+
         return {
             "id": str(job.id),
             "document_name": f"scan_{str(job.id)[:8]}",
@@ -165,4 +181,5 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
             "report_md_url": report_md_url,
             "report_pdf_url": report_pdf_url,
             "results_json": results_json,
+            "rewrite": rewrite_info,
         }
