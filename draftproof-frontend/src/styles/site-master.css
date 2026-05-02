@@ -142,7 +142,7 @@ svg { display: block; }
   justify-self: center;
   display: flex;
   align-items: center;
-  gap: clamp(1.3rem, 3vw, 3rem);
+  gap: clamp(.8rem, 2vw, 3rem);
   color: #314260;
   font-size: .93rem;
   font-weight: 650;
@@ -150,6 +150,7 @@ svg { display: block; }
 
 .nav-links a {
   opacity: .86;
+  white-space: nowrap;
   transition: opacity .2s var(--ease);
 }
 
