@@ -29,6 +29,7 @@ app.conf.update(
     worker_prefetch_multiplier=1,
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
+        "app.tasks.run_rewrite": {"queue": "scan"},
     },
     task_default_queue="default",
     # Re-deliver unacked tasks after 2 minutes if worker crashed
