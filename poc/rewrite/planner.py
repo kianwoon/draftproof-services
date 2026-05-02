@@ -177,6 +177,22 @@ def route_finding(finding: Finding) -> FixabilityDecision:
     - Otherwise → fall through to FINDING_ROUTING table
     """
     # If detect already classified fixability, honour it
+    # But allow review_only findings with a recommendation to be rewritten
+    # (they were classified before the expanded rephrasable_types fix)
+    if finding.actionability in ("review_only",):
+        has_route = finding.finding_type in FINDING_ROUTING
+        has_rec = bool(getattr(finding, "recommendation", ""))
+        if has_route and has_rec:
+            route = FINDING_ROUTING[finding.finding_type]
+            return FixabilityDecision(
+                finding_id=getattr(finding, "id", str(id(finding))),
+                finding_type=finding.finding_type,
+                fixability=route["fixability"],
+                action=route["action"],
+                scope=route["scope"],
+                reason=f"Review-only finding with recommendation — attempting rewrite.",
+                required_inputs=route.get("required_inputs", []),
+            )
     if finding.actionability in ("review_only", "manual_required", "no_action"):
         return FixabilityDecision(
             finding_id=getattr(finding, "id", str(id(finding))),
