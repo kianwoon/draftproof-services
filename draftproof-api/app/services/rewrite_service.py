@@ -31,6 +31,21 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         if not scan:
             raise ValueError("Completed scan not found")
 
+        # Mark stale pending/processing rewrites as failed (older than threshold)
+        stale_cutoff = datetime.now(timezone.utc) - _STALE_THRESHOLD
+        stale = await session.execute(
+            select(RewriteJob).where(
+                RewriteJob.scan_id == scan_uuid,
+                RewriteJob.status.in_(["pending", "processing"]),
+                RewriteJob.created_at < stale_cutoff,
+            )
+        )
+        for stale_job in stale.scalars().all():
+            stale_job.status = "failed"
+            stale_job.error = "Stale rewrite — timed out"
+            stale_job.completed_at = datetime.now(timezone.utc)
+
+        # Check for actively running rewrites (recent, not stale)
         existing = await session.execute(
             select(RewriteJob).where(
                 RewriteJob.scan_id == scan_uuid,
