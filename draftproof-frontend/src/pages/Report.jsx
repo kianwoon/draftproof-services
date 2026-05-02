@@ -137,19 +137,18 @@ export default function Report() {
             >
               {rewriteLoading ? 'Starting...' : 'Rewrite AI Sections'}
             </button>
-            {report.rewrite && report.rewrite.status === 'completed' && (
-              <Link
-                to={`/report/${id}/rewrite?rid=${report.rewrite.id}`}
-                style={{
-                  display: 'inline-block', padding: '10px 20px', borderRadius: '8px',
-                  background: '#059669', color: '#fff', textDecoration: 'none',
-                  fontSize: '14px', fontWeight: 600,
-                }}
-              >
-                View Rewrite Results
-              </Link>
-            )}
-            </button>
+          )}
+          {report.rewrite && report.rewrite.status === 'completed' && (
+            <Link
+              to={`/report/${id}/rewrite?rid=${report.rewrite.id}`}
+              style={{
+                display: 'inline-block', padding: '10px 20px', borderRadius: '8px',
+                background: '#059669', color: '#fff', textDecoration: 'none',
+                fontSize: '14px', fontWeight: 600, marginLeft: '12px',
+              }}
+            >
+              View Rewrite Results
+            </Link>
           )}
         </div>
 
