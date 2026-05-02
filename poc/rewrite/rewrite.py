@@ -292,7 +292,7 @@ def _rewrite_fn_with_detect_context(
     base_url: Optional[str] = None,
 ) -> callable:
     """Create a rewrite function that uses LLMGateway with detect context."""
-    config = LLMConfig(api_key=api_key, model=model, base_url=base_url or "https://openrouter.ai/api/v1")
+    config = LLMConfig(api_key=api_key, model=model, base_url=base_url)
     gateway = LLMGateway(config)
 
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:

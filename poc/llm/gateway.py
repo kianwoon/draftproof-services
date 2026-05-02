@@ -30,7 +30,7 @@ class _RetryAction(Enum):
 @dataclass
 class LLMConfig:
     api_key: Optional[str] = None
-    base_url: str = "https://openrouter.ai/api/v1"
+    base_url: Optional[str] = None       # None → resolved from LLM_BASE_URL env var (fallback: OpenRouter)
     model: Optional[str] = None          # None → resolved from LLM_MODEL env var at runtime
     max_tokens: int = 4096
     temperature: float = 0.3
@@ -120,7 +120,9 @@ class LLMGateway:
 
         # Resolve from env if not explicitly set
         self.api_key = cfg.api_key or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY")
-        self.base_url = cfg.base_url.rstrip("/")
+        raw_base = cfg.base_url or os.environ.get("LLM_BASE_URL") or "https://openrouter.ai/api/v1"
+        self.base_url = raw_base.rstrip("/")
+        logger.info(f"LLM Gateway initialized: base_url={self.base_url}, model={self.model}")
         self.model = cfg.model or os.environ.get("LLM_MODEL") or "google/gemma-3-12b-it"
         self.max_tokens = cfg.max_tokens
         self.temperature = cfg.temperature
