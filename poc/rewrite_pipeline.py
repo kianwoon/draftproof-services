@@ -33,7 +33,7 @@ def run_rewrite_pipeline(
     detect_json: dict = None,
     output_dir: str = None,
     max_passes: int = 3,
-    max_detect_loops: int = 0,
+    max_detect_loops: int = 2,
     target_top10: float = 0.50,
     model: str = None,
     api_key: str = None,
