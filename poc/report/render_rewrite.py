@@ -36,44 +36,78 @@ def render_rewrite_report(
     converged = summary.get("converged", False)
     conv_reason = summary.get("convergence_reason", "")
 
-    # Detect scan before/after — the real comparison
+    # Detect scan before/after — run full detect pipeline on both texts
     orig_scan = summary.get("detect_scan_original", {})
     new_scan = summary.get("detect_scan_rewritten", {})
 
     if orig_scan and new_scan:
+        # Both are full report_to_dict() outputs with:
+        #   overall_tier, ai_risk_badge, finding_count, findings{}, axis_scores
+        orig_badge = orig_scan.get("ai_risk_badge") or {}
+        new_badge = new_scan.get("ai_risk_badge") or {}
+
+        orig_ai = orig_badge.get("ai_likelihood_score", 0)
+        new_ai = new_badge.get("ai_likelihood_score", 0)
+        ai_delta = new_ai - orig_ai
+
+        orig_wq = orig_badge.get("writing_quality_score", 0)
+        new_wq = new_badge.get("writing_quality_score", 0)
+        wq_delta = new_wq - orig_wq
+
+        orig_tier = (orig_badge.get("tier") or orig_scan.get("overall_tier", "?")).upper()
+        new_tier = (new_badge.get("tier") or new_scan.get("overall_tier", "?")).upper()
+
+        # Count findings by tier
+        orig_findings = orig_scan.get("findings", {})
+        new_findings = new_scan.get("findings", {})
+        _tier_order = ["critical", "high", "medium", "low"]
+
+        def _count_findings(fdict):
+            return sum(len(fdict.get(t, [])) for t in _tier_order)
+
+        o_total = _count_findings(orig_findings)
+        n_total = _count_findings(new_findings)
+
+        # Axis scores
+        orig_axis = orig_scan.get("axis_scores", {})
+        new_axis = new_scan.get("axis_scores", {})
+
         lines.append("### Detect Scan Comparison")
         lines.append("")
-        lines.append("| Scanner | Original | Rewritten | Change |")
-        lines.append("|---------|----------|-----------|--------|")
+        lines.append("| Metric | Original | Rewritten | Change |")
+        lines.append("|--------|----------|-----------|--------|")
+        lines.append(f"| **Overall Tier** | {orig_tier} | {new_tier} | |")
+        lines.append(f"| **AI Likelihood** | `{orig_ai:.1f}%` | `{new_ai:.1f}%` | `{ai_delta:+.1f}%` |")
+        lines.append(f"| **Writing Quality Risk** | `{orig_wq:.1f}%` | `{new_wq:.1f}%` | `{wq_delta:+.1f}%` |")
 
-        all_scanners = sorted(set(list(orig_scan.keys()) + list(new_scan.keys())))
-        friendly = {
-            "predictability": "Predictability Risk",
-            "ai_generation": "AI Generation",
-            "similarity": "Similarity",
-            "citation": "Citation",
-        }
+        # Axis-level scores
+        for axis in sorted(set(list(orig_axis.keys()) + list(new_axis.keys()))):
+            o_val = orig_axis.get(axis, 0)
+            n_val = new_axis.get(axis, 0)
+            if isinstance(o_val, (int, float)) and isinstance(n_val, (int, float)):
+                label = axis.replace("_", " ").title()
+                delta = n_val - o_val
+                lines.append(f"| {label} | `{o_val:.1%}` | `{n_val:.1%}` | `{delta:+.1%}` |")
 
-        for sc in all_scanners:
-            o = orig_scan.get(sc, {})
-            n = new_scan.get(sc, {})
-            o_risk = o.get("overall_risk", 0)
-            n_risk = n.get("overall_risk", 0)
-            delta = n_risk - o_risk
-            label = friendly.get(sc, sc.replace("_", " ").title())
-            lines.append(f"| **{label}** | `{o_risk:.1%}` | `{n_risk:.1%}` | `{delta:+.1%}` |")
-
-        # Total findings comparison
-        o_total = sum(v.get("findings_count", 0) for v in orig_scan.values())
-        n_total = sum(v.get("findings_count", 0) for v in new_scan.values())
         lines.append(f"| **Total Findings** | {o_total} | {n_total} | `{n_total - o_total:+d}` |")
+        lines.append("")
+
+        # Findings breakdown by tier
+        lines.append("**Findings by Severity:**")
+        lines.append("")
+        lines.append("| Severity | Original | Rewritten | Change |")
+        lines.append("|----------|----------|-----------|--------|")
+        for t in _tier_order:
+            o_c = len(orig_findings.get(t, []))
+            n_c = len(new_findings.get(t, []))
+            lines.append(f"| {t.title()} | {o_c} | {n_c} | `{n_c - o_c:+d}` |")
         lines.append("")
 
         # Overall outcome
         if converged:
             lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
-        elif n_total < o_total:
-            lines.append("**Outcome: Improved** — Detect scan confirms fewer findings after rewrite.")
+        elif n_total < o_total or new_ai < orig_ai:
+            lines.append("**Outcome: Improved** — Detect scan confirms reduced AI signals after rewrite.")
         else:
             lines.append("**Outcome: Partial** — Some signals reduced, further review recommended.")
     else:

@@ -25,6 +25,8 @@ from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_f
 from rewrite import run_rewrite, RewriteModuleResult
 from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
+from detect.run import DetectionRunner
+from report.report import ReportBuilder, report_to_dict
 
 
 def run_rewrite_pipeline(
@@ -196,6 +198,23 @@ def run_rewrite_pipeline(
     if badge:
         result.summary["detect_ai_likelihood"] = badge.get("ai_likelihood_score", 0)
         result.summary["detect_writing_quality"] = badge.get("writing_quality_score", 0)
+
+    # ── Run FULL detect scan on rewritten text (same pipeline as original scan) ──
+    rewritten_text = result.mp_result.final_text if result.mp_result else text
+    rewritten_detect_runner = DetectionRunner()
+    rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
+
+    rewritten_builder = ReportBuilder()
+    rewritten_builder.add_detection_report(rewritten_detect_report)
+    if rewritten_detect_report.postprocess_results:
+        rewritten_builder.add_postprocess_results(rewritten_detect_report.postprocess_results)
+    rewritten_builder.set_meta(scan_time=0, original_text=rewritten_text)
+    rewritten_draft_report = rewritten_builder.build()
+    rewritten_report_dict = report_to_dict(rewritten_draft_report)
+
+    # Store both scan reports for side-by-side comparison
+    result.summary["detect_scan_original"] = ctx.raw_json
+    result.summary["detect_scan_rewritten"] = rewritten_report_dict
 
     # Generate dedicated rewrite report
     rewrite_md = render_rewrite_report(
