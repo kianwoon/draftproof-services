@@ -110,25 +110,22 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             update_rewrite_status(rewrite_id, "failed", error="Original report not found in R2")
             return {"status": "failed", "error": "report not found"}
 
-        # 2. Check for AI findings
+        # 2. Filter findings: only rephrase-fixable ones
         # findings is a dict: {critical: [...], high: [...], medium: [...], low: [...]}
+        # Only auto_rewrite_candidate findings can be mitigated by rephrasing
+        # (high/medium risk + suggested_action is add_specific_example or add_user_interpretation)
         findings_by_tier = report_json.get("findings", {})
         all_findings = []
         for tier_findings in findings_by_tier.values():
             if isinstance(tier_findings, list):
                 all_findings.extend(tier_findings)
-        ai_findings = [
+        rephrasable_findings = [
             f for f in all_findings
-            if isinstance(f, dict) and (
-                f.get("category") == "ai_generation" or
-                f.get("scanner") == "ai_generation" or
-                f.get("signal_category") == "authorship_risk" or
-                f.get("actionability") == "auto_rewrite_candidate"
-            )
+            if isinstance(f, dict) and f.get("actionability") == "auto_rewrite_candidate"
         ]
-        if not ai_findings:
-            update_rewrite_status(rewrite_id, "failed", error="No AI findings to rewrite")
-            return {"status": "failed", "error": "no AI findings"}
+        if not rephrasable_findings:
+            update_rewrite_status(rewrite_id, "failed", error="No rephrasable findings to rewrite")
+            return {"status": "failed", "error": "no rephrasable findings"}
 
         # 3. Run rewrite pipeline
         from poc.rewrite_pipeline import run_rewrite_pipeline
