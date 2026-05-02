@@ -142,41 +142,41 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 verbose=False,
             )
 
-        if result["status"] in ("skipped", "clean"):
-            update_rewrite_status(rewrite_id, "failed", error=result.get("message", "Rewrite not needed"))
-            return {"status": "skipped"}
+            if result["status"] in ("skipped", "clean"):
+                update_rewrite_status(rewrite_id, "failed", error=result.get("message", "Rewrite not needed"))
+                return {"status": "skipped"}
 
-        # 4. Upload results to R2
-        rw = result.get("result")
-        md_path = result.get("md_path")
-        pdf_path = result.get("pdf_path")
+            # Read files WHILE tmpdir still exists (before with block exits)
+            rw = result.get("result")
+            md_path = result.get("md_path")
+            pdf_path = result.get("pdf_path")
 
-        md_text = ""
-        pdf_bytes = b""
-        if md_path and os.path.exists(md_path):
-            with open(md_path) as f:
-                md_text = f.read()
-        if pdf_path and os.path.exists(pdf_path):
-            with open(pdf_path, "rb") as f:
-                pdf_bytes = f.read()
+            md_text = ""
+            pdf_bytes = b""
+            if md_path and os.path.exists(md_path):
+                with open(md_path) as f:
+                    md_text = f.read()
+            if pdf_path and os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
 
-        rewritten_text = ""
-        if rw and hasattr(rw, "mp_result") and rw.mp_result:
-            rewritten_text = rw.mp_result.final_text or ""
+            rewritten_text = ""
+            if rw and hasattr(rw, "mp_result") and rw.mp_result:
+                rewritten_text = rw.mp_result.final_text or ""
 
-        rewrite_json = {
-            "status": result.get("status"),
-            "elapsed": result.get("elapsed"),
-            "original_text": rewritten_text and getattr(rw.mp_result, "original_text", "") if rw and hasattr(rw, "mp_result") and rw.mp_result else "",
-            "final_text": rewritten_text,
-            "converged": rw.mp_result.converged if rw and hasattr(rw, "mp_result") and rw.mp_result else False,
-            "convergence_reason": rw.mp_result.convergence_reason if rw and hasattr(rw, "mp_result") and rw.mp_result else "",
-            "passes": len(rw.mp_result.passes) if rw and hasattr(rw, "mp_result") and rw.mp_result else 0,
-            "summary": rw.summary if rw and hasattr(rw, "summary") else {},
-            "sentence_comparison": rw.sentence_comparison if rw and hasattr(rw, "sentence_comparison") else [],
-        }
+            rewrite_json = {
+                "status": result.get("status"),
+                "elapsed": result.get("elapsed"),
+                "original_text": rewritten_text and getattr(rw.mp_result, "original_text", "") if rw and hasattr(rw, "mp_result") and rw.mp_result else "",
+                "final_text": rewritten_text,
+                "converged": rw.mp_result.converged if rw and hasattr(rw, "mp_result") and rw.mp_result else False,
+                "convergence_reason": rw.mp_result.convergence_reason if rw and hasattr(rw, "mp_result") and rw.mp_result else "",
+                "passes": len(rw.mp_result.passes) if rw and hasattr(rw, "mp_result") and rw.mp_result else 0,
+                "summary": rw.summary if rw and hasattr(rw, "summary") else {},
+                "sentence_comparison": rw.sentence_comparison if rw and hasattr(rw, "sentence_comparison") else [],
+            }
 
-        upload_rewrite_files(scan_id, md_text, pdf_bytes, rewrite_json, rewritten_text)
+            upload_rewrite_files(scan_id, md_text, pdf_bytes, rewrite_json, rewritten_text)
 
         # 5. Capture credits
         user_id = scan_job.get("user_id", "") if scan_job else ""
