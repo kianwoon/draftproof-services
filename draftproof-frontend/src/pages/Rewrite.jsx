@@ -73,6 +73,20 @@ export default function Rewrite() {
     return () => clearInterval(pollRef.current);
   }, [rewrite?.status, rewrite?.id, pollStatus]);
 
+  const handleRewriteAgain = async () => {
+    setLoading(true);
+    setError(null);
+    setReport(null);
+    try {
+      const { data } = await createRewrite(scanId);
+      setRewrite(data);
+      await pollStatus(data.id);
+    } catch (err) {
+      setLoading(false);
+      setError(err.response?.data?.detail || 'Failed to start rewrite');
+    }
+  };
+
   const handleDownload = async (fmt) => {
     if (!rewrite) return;
     try {
@@ -205,6 +219,9 @@ export default function Rewrite() {
             </button>
             <button onClick={() => handleDownload('txt')} style={dlBtnStyle}>
               Download Rewritten Text
+            </button>
+            <button onClick={handleRewriteAgain} style={{ ...dlBtnStyle, background: '#6366f1' }}>
+              Rewrite Again
             </button>
           </div>
         )}
