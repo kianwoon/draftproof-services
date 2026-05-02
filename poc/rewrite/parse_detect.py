@@ -15,10 +15,19 @@ from detect.base import DetectResult, Finding
 
 
 def _extract_location(fr: dict) -> dict:
-    """Build location dict from finding JSON."""
+    """Build location dict from finding JSON.
+
+    Extracts sentence_id AND derives sentence_index (integer) from it
+    so the rewrite planner can locate findings in the text.
+    """
     loc = {}
     if fr.get("sentence_id"):
         loc["sentence_id"] = fr["sentence_id"]
+        # Derive integer index from sentence_id like "s3" → 3
+        import re
+        m = re.match(r"s(\d+)", fr["sentence_id"])
+        if m:
+            loc["sentence_index"] = int(m.group(1))
     if isinstance(fr.get("evidence"), dict) and fr["evidence"].get("affected_span"):
         loc["affected_span"] = fr["evidence"]["affected_span"]
     return loc
