@@ -74,7 +74,12 @@ export default function Report() {
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
 
-  const hasAIFindings = report.issues.some(i => i.category === 'ai_generation' || i.scanner === 'ai_generation');
+  const hasAIFindings = report.issues.some(i =>
+    i.category === 'ai_generation' ||
+    i.scanner === 'ai_generation' ||
+    i.signal_category === 'authorship_risk' ||
+    i.actionability === 'auto_rewrite_candidate'
+  );
 
   const handleRewrite = async () => {
     setRewriteLoading(true);
