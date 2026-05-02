@@ -111,10 +111,20 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             return {"status": "failed", "error": "report not found"}
 
         # 2. Check for AI findings
-        findings = report_json.get("findings", [])
+        # findings is a dict: {critical: [...], high: [...], medium: [...], low: [...]}
+        findings_by_tier = report_json.get("findings", {})
+        all_findings = []
+        for tier_findings in findings_by_tier.values():
+            if isinstance(tier_findings, list):
+                all_findings.extend(tier_findings)
         ai_findings = [
-            f for f in findings
-            if f.get("category") == "ai_generation" or f.get("scanner") == "ai_generation"
+            f for f in all_findings
+            if isinstance(f, dict) and (
+                f.get("category") == "ai_generation" or
+                f.get("scanner") == "ai_generation" or
+                f.get("signal_category") == "authorship_risk" or
+                f.get("actionability") == "auto_rewrite_candidate"
+            )
         ]
         if not ai_findings:
             update_rewrite_status(rewrite_id, "failed", error="No AI findings to rewrite")
