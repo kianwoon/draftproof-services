@@ -1091,6 +1091,8 @@ def run_rewrite(
         manual_only=False,
         detect_loop_history=detect_loop_history,
         detect_loops_used=detect_loops_used,
+        original_detect=detect_results,
+        final_detect=final_detect_results,
     )
 
     if output_dir:
@@ -1148,6 +1150,8 @@ def get_rewrite_summary_v2(
     manual_only: bool = False,
     detect_loop_history: Optional[List[dict]] = None,
     detect_loops_used: int = 0,
+    original_detect: Optional[List[DetectResult]] = None,
+    final_detect: Optional[List[DetectResult]] = None,
 ) -> dict:
     """Build summary dict with new multi-signal fields."""
     summary = {
@@ -1231,6 +1235,21 @@ def get_rewrite_summary_v2(
     if detect_loop_history:
         summary["detect_loop_history"] = detect_loop_history
         summary["detect_loops_used"] = detect_loops_used
+
+    # Detect scan before/after comparison
+    if original_detect and final_detect:
+        def _scanner_scores(results):
+            scores = {}
+            for dr in results:
+                scores[dr.scanner] = {
+                    "overall_risk": round(dr.overall_risk, 4),
+                    "findings_count": len(dr.findings),
+                    "likelihood_score": round(getattr(dr, "likelihood_score", 0), 4),
+                }
+            return scores
+
+        summary["detect_scan_original"] = _scanner_scores(original_detect)
+        summary["detect_scan_rewritten"] = _scanner_scores(final_detect)
 
     return summary
 

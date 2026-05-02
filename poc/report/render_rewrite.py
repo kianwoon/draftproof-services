@@ -32,51 +32,67 @@ def render_rewrite_report(
     lines.append("## Executive Summary")
     lines.append("")
 
-    orig_risk = summary.get("original_risk", 0)
-    final_risk = summary.get("final_risk", 0)
-    orig_top10 = summary.get("original_top10", 0)
-    final_top10 = summary.get("final_top10", 0)
-    imp_risk = summary.get("improvement_risk", 0)
-    imp_top10 = summary.get("improvement_top10", 0)
     passes = summary.get("passes_completed", 0)
     converged = summary.get("converged", False)
     conv_reason = summary.get("convergence_reason", "")
 
-    # Overall outcome badge
-    if converged:
-        lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
-    elif imp_risk > 0 or imp_top10 > 0:
-        lines.append("**Outcome: Partially Improved** — Some signals reduced, further review recommended.")
-    else:
-        lines.append("**Outcome: Floor Reached** — Remaining signals are structural, manual review needed.")
-    lines.append("")
+    # Detect scan before/after — the real comparison
+    orig_scan = summary.get("detect_scan_original", {})
+    new_scan = summary.get("detect_scan_rewritten", {})
 
-    # Detect scan baseline (same scores from detect scan report)
-    detect_ai = summary.get("detect_ai_likelihood", 0)
-    detect_wq = summary.get("detect_writing_quality", 0)
-    if detect_ai or detect_wq:
-        lines.append("> **Detect Scan Baseline** (from original scan report):")
-        lines.append(">")
-        if detect_ai:
-            lines.append(f"> AI Generation Likelihood: **{detect_ai:.1f}%**")
-        if detect_wq:
-            lines.append(f"> Writing Quality Risk: **{detect_wq:.1f}%**")
-        lines.append(">")
-        lines.append("> Rewrite reduces predictability patterns — re-scan to see updated scores.")
+    if orig_scan and new_scan:
+        lines.append("### Detect Scan Comparison")
+        lines.append("")
+        lines.append("| Scanner | Original | Rewritten | Change |")
+        lines.append("|---------|----------|-----------|--------|")
+
+        all_scanners = sorted(set(list(orig_scan.keys()) + list(new_scan.keys())))
+        friendly = {
+            "predictability": "Predictability Risk",
+            "ai_generation": "AI Generation",
+            "similarity": "Similarity",
+            "citation": "Citation",
+        }
+
+        for sc in all_scanners:
+            o = orig_scan.get(sc, {})
+            n = new_scan.get(sc, {})
+            o_risk = o.get("overall_risk", 0)
+            n_risk = n.get("overall_risk", 0)
+            delta = n_risk - o_risk
+            label = friendly.get(sc, sc.replace("_", " ").title())
+            lines.append(f"| **{label}** | `{o_risk:.1%}` | `{n_risk:.1%}` | `{delta:+.1%}` |")
+
+        # Total findings comparison
+        o_total = sum(v.get("findings_count", 0) for v in orig_scan.values())
+        n_total = sum(v.get("findings_count", 0) for v in new_scan.values())
+        lines.append(f"| **Total Findings** | {o_total} | {n_total} | `{n_total - o_total:+d}` |")
         lines.append("")
 
-    # Before/After summary table
-    lines.append("| Metric | Before | After | Change |")
-    lines.append("|--------|--------|-------|--------|")
-    lines.append(f"| **Predictability Risk** | `{orig_risk:.1%}` | `{final_risk:.1%}` | `{imp_risk:+.1%}` |")
-    lines.append(f"| **Common Ratio** | `{orig_top10:.1%}` | `{final_top10:.1%}` | `{imp_top10:+.1%}` |")
-    lines.append(f"| **Passes** | — | {passes} | — |")
-    lines.append(f"| **Converged** | — | {'Yes' if converged else 'No'} | — |")
+        # Overall outcome
+        if converged:
+            lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
+        elif n_total < o_total:
+            lines.append("**Outcome: Improved** — Detect scan confirms fewer findings after rewrite.")
+        else:
+            lines.append("**Outcome: Partial** — Some signals reduced, further review recommended.")
+    else:
+        # Fallback to internal metrics if detect scan data not available
+        orig_risk = summary.get("original_risk", 0)
+        final_risk = summary.get("final_risk", 0)
+        imp_risk = summary.get("improvement_risk", 0)
+        if converged:
+            lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
+        elif imp_risk > 0:
+            lines.append("**Outcome: Partially Improved** — Some signals reduced, further review recommended.")
+        else:
+            lines.append("**Outcome: Floor Reached** — Remaining signals are structural, manual review needed.")
     lines.append("")
 
+    lines.append(f"**Passes:** {passes} | **Converged:** {'Yes' if converged else 'No'}")
     if conv_reason:
         lines.append(f"> {conv_reason}")
-        lines.append("")
+    lines.append("")
 
     # Rewrite decision context
     decision = summary.get("rewrite_decision") or {}
