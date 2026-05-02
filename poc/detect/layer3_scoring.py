@@ -3,20 +3,17 @@ DraftProof Layer 3 Scoring Engine
 =================================
 
 Purpose:
-    Convert lower-level scanner outputs into reliable Layer 3 cluster scores:
-    - Text Pattern Cluster
-    - Grounding Quality Risk Cluster
-    - Structure / Process Cluster
-    - Cluster Blended Score
-    - Review Tier
+    Two-phase scoring engine:
+    - Phase 1: AI Generation Likelihood (mechanical signals, zero grounding credit)
+    - Phase 2: Writing Quality Risk (evidence + structure signals)
+    - Combined review priority and tier badge
 
 Design principles:
-    1. Predictability alone cannot create RED.
-    2. RED requires aligned evidence across independent clusters, unless provenance is verified.
-    3. Missing evidence lowers confidence, not guilt.
-    4. Generic phrase detection is conservative to avoid academic false positives.
-    5. Formulaic macro-structure is explicitly measured, because AI essays often look generic at the document level.
-    6. All scores are normalized 0.0 - 1.0.
+    1. AI Likelihood is driven purely by mechanical signals — grounding cannot lower it.
+    2. Cluster rules catch "humanised AI" where no single metric is extreme.
+    3. Writing Quality is evidence-heavy, with grounding credit capped at 15%.
+    4. Missing evidence lowers confidence, not guilt.
+    5. All scores are normalized 0.0 - 1.0.
 """
 
 from __future__ import annotations
@@ -35,6 +32,13 @@ class Tier(str, Enum):
     AMBER = "AMBER"
     ORANGE = "ORANGE"
     RED = "RED"
+
+
+class QualityTier(str, Enum):
+    LOW = "LOW"
+    LIGHT_REVIEW = "LIGHT_REVIEW"
+    REVIEW = "REVIEW"
+    HIGH_REVIEW = "HIGH_REVIEW"
 
 
 class Confidence(str, Enum):
@@ -103,14 +107,17 @@ class ClusterScore:
 @dataclass
 class Layer3Result:
     tier: Tier
-    blended_score: float
-    calibrated_score: float
+    ai_likelihood_score: float
+    ai_cluster_boost: float
+    ai_cluster_name: Optional[str]
+    ai_phase: ClusterScore
+    writing_quality_score: float
+    writing_quality_tier: QualityTier
+    writing_phase: ClusterScore
     confidence: Confidence
-    text_pattern: ClusterScore
-    grounding_quality: ClusterScore
-    structure_process: ClusterScore
     reasons: list[str]
     guardrails: list[str]
+    review_priority: str
     debug: dict[str, Any]
 
 
@@ -802,122 +809,170 @@ def estimate_unsupported_claim_risk(
 
 
 class Layer3Scorer:
-    def calculate_text_pattern_cluster(self, data: Layer3Input) -> ClusterScore:
-        predictability_risk = threshold_risk(data.predictability, normal=0.35, high=0.55)
-        topk_risk = threshold_risk(data.topk_pattern, normal=0.45, high=0.70)
-        generic = clamp(data.generic_phrase_density)
+    def calculate_ai_likelihood(self, data: Layer3Input) -> tuple[ClusterScore, float, Optional[str]]:
+        """Phase 1: AI Generation Likelihood — pure mechanical signals, zero grounding credit."""
+        predictability = clamp(data.predictability)
+        topk = clamp(data.topk_pattern)
+        genericity = clamp(data.generic_phrase_density)
         burstiness = clamp(data.burstiness_risk)
-        repeated_structure = clamp(data.repeated_sentence_structure_risk)
-        formulaic_progression = clamp(data.paragraph_progression_risk)
-        balanced_framing = clamp(data.style_shift_risk)
+        repeated_struct = clamp(data.repeated_sentence_structure_risk)
         generic_assertion = clamp(data.generic_assertion_risk)
+        balanced_hedging = clamp(data.balanced_hedging_risk)
+
+        AI_WEIGHTS = {
+            "predictability": 0.22,
+            "topk_pattern": 0.18,
+            "generic_phrase_density": 0.17,
+            "burstiness_risk": 0.13,
+            "repeated_sentence_structure_risk": 0.12,
+            "generic_assertion_risk": 0.08,
+            "balanced_hedging_risk": 0.10,
+        }
 
         components = {
-            "predictability_risk": predictability_risk,
-            "topk_pattern_risk": topk_risk,
-            "generic_phrase_density": generic,
+            "predictability": predictability,
+            "topk_pattern": topk,
+            "generic_phrase_density": genericity,
             "burstiness_risk": burstiness,
-            "repeated_sentence_structure_risk": repeated_structure,
-            "formulaic_progression_risk": formulaic_progression,
-            "balanced_generic_framing_risk": balanced_framing,
+            "repeated_sentence_structure_risk": repeated_struct,
             "generic_assertion_risk": generic_assertion,
+            "balanced_hedging_risk": balanced_hedging,
         }
 
-        # Core components — always included
-        # All components with base weights — only include if they fire (> 0)
-        all_tp = {
-            "predictability": (predictability_risk, 0.25),
-            "topk": (topk_risk, 0.10),
-            "generic": (generic, 0.08),
-            "burstiness": (burstiness, 0.10),
-            "repeated_structure": (repeated_structure, 0.15),
-            "formulaic_progression": (formulaic_progression, 0.20),
-            "balanced_framing": (balanced_framing, 0.10),
-            "generic_assertion": (generic_assertion, 0.20),
-        }
+        score = weighted_average({
+            k: (v, AI_WEIGHTS[k])
+            for k, v in components.items()
+            if v > 0
+        })
 
-        active_tp = {k: (v, w) for k, (v, w) in all_tp.items() if v > 0}
+        cluster_boost = 0.0
+        cluster_name = None
 
-        score = weighted_average(active_tp) if active_tp else 0.0
+        known_ai_style = (
+            predictability >= 0.42
+            and genericity >= 0.08
+            and repeated_struct >= 0.45
+            and balanced_hedging >= 0.35
+        )
 
-        score = min(score, 0.75)
+        humanised_ai = (
+            predictability >= 0.40
+            and burstiness >= 0.55
+            and generic_assertion >= 0.55
+            and balanced_hedging >= 0.30
+        )
+
+        if known_ai_style:
+            cluster_boost = 0.10
+            cluster_name = "known_ai_style"
+        elif humanised_ai:
+            cluster_boost = 0.08
+            cluster_name = "humanised_ai"
+
+        score = clamp(score + cluster_boost)
+
+        if data.human_provenance_positive:
+            score *= 0.80
+
+        score = clamp(score)
 
         available = sum(1 for v in [
-            data.predictability,
-            data.topk_pattern,
-            data.generic_phrase_density,
-            data.burstiness_risk,
-            data.repeated_sentence_structure_risk,
-            data.paragraph_progression_risk,
-            data.style_shift_risk,
-            data.generic_assertion_risk,
+            data.predictability, data.topk_pattern, data.generic_phrase_density,
+            data.burstiness_risk, data.repeated_sentence_structure_risk,
+            data.generic_assertion_risk, data.balanced_hedging_risk,
         ] if v is not None)
 
         confidence = confidence_from_coverage(
             word_count=data.word_count,
             sentence_count=data.sentence_count,
             available_count=available,
-            expected_count=8,
+            expected_count=7,
         )
 
         reasons = []
         if score >= 0.60:
-            reasons.append("high_text_pattern_cluster")
+            reasons.append("high_ai_likelihood")
         elif score >= 0.40:
-            reasons.append("moderate_text_pattern_cluster")
-
-        if formulaic_progression >= 0.65:
-            reasons.append("formulaic_progression_detected")
-
-        if balanced_framing >= 0.65:
-            reasons.append("balanced_generic_framing_detected")
+            reasons.append("moderate_ai_likelihood")
+        if cluster_name:
+            reasons.append(f"{cluster_name}_cluster")
+        if data.human_provenance_positive:
+            reasons.append("human_provenance_positive")
 
         return ClusterScore(
-            name="text_pattern",
+            name="ai_likelihood",
             score=round(score, 4),
             confidence=confidence,
             components={k: round(v, 4) for k, v in components.items()},
             reasons=reasons,
-        )
+        ), cluster_boost, cluster_name
 
-    def calculate_grounding_quality_cluster(self, data: Layer3Input) -> ClusterScore:
+    def calculate_writing_quality(self, data: Layer3Input) -> tuple[ClusterScore, QualityTier]:
+        """Phase 2: Writing Quality Risk — evidence + structure signals, grounding credit applies."""
         broad_claim = clamp(data.broad_claim_risk)
         lived_detail = clamp(data.lived_detail_risk)
         citation = clamp(data.citation_weakness_risk)
         unsupported = clamp(data.unsupported_claim_risk)
-        source_strength = clamp(data.source_grounding_strength)
-        domain_strength = clamp(data.domain_grounding_strength)
+        source_risk = 1.0 - clamp(data.source_grounding_strength)
+        progression = clamp(data.paragraph_progression_risk)
+        signpost = clamp(data.signpost_paragraph_risk)
+        uniformity = clamp(data.paragraph_uniformity_risk)
+        starter = clamp(data.repeated_starter_risk)
+        conclusion = clamp(data.formulaic_conclusion_risk)
 
-        raw_score = weighted_average({
-            "broad_claim": (broad_claim, 0.30),
-            "lived_detail": (lived_detail, 0.25),
-            "citation": (citation, 0.25),
-            "unsupported": (unsupported, 0.20),
-        })
-
-        grounding_credit = min(
-            0.15,
-            0.08 * source_strength + 0.07 * domain_strength,
-        )
-
-        score = clamp(raw_score * (1.0 - grounding_credit))
+        QUALITY_WEIGHTS = {
+            "broad_claim_risk": 0.15,
+            "lived_detail_risk": 0.18,
+            "citation_weakness_risk": 0.15,
+            "unsupported_claim_risk": 0.12,
+            "source_grounding_risk": 0.12,
+            "paragraph_progression_risk": 0.08,
+            "signpost_paragraph_risk": 0.08,
+            "paragraph_uniformity_risk": 0.04,
+            "repeated_starter_risk": 0.04,
+            "formulaic_conclusion_risk": 0.04,
+        }
 
         components = {
             "broad_claim_risk": broad_claim,
             "lived_detail_risk": lived_detail,
             "citation_weakness_risk": citation,
             "unsupported_claim_risk": unsupported,
-            "source_grounding_strength": source_strength,
-            "domain_grounding_strength": domain_strength,
-            "grounding_credit": grounding_credit,
-            "raw_grounding_quality_risk": raw_score,
+            "source_grounding_risk": source_risk,
+            "paragraph_progression_risk": progression,
+            "signpost_paragraph_risk": signpost,
+            "paragraph_uniformity_risk": uniformity,
+            "repeated_starter_risk": starter,
+            "formulaic_conclusion_risk": conclusion,
         }
 
+        score = weighted_average({
+            k: (v, QUALITY_WEIGHTS[k])
+            for k, v in components.items()
+            if v > 0
+        })
+
+        source_strength = clamp(data.source_grounding_strength)
+        domain_strength = clamp(data.domain_grounding_strength)
+        grounding_credit = min(0.15, 0.08 * source_strength + 0.07 * domain_strength)
+        score = clamp(score * (1.0 - grounding_credit))
+
+        components["source_grounding_strength"] = source_strength
+        components["domain_grounding_strength"] = domain_strength
+        components["grounding_credit"] = grounding_credit
+
+        if score >= 0.65:
+            quality_tier = QualityTier.HIGH_REVIEW
+        elif score >= 0.45:
+            quality_tier = QualityTier.REVIEW
+        elif score >= 0.30:
+            quality_tier = QualityTier.LIGHT_REVIEW
+        else:
+            quality_tier = QualityTier.LOW
+
         available = sum(1 for v in [
-            data.broad_claim_risk,
-            data.lived_detail_risk,
-            data.citation_weakness_risk,
-            data.unsupported_claim_risk,
+            data.broad_claim_risk, data.lived_detail_risk,
+            data.citation_weakness_risk, data.unsupported_claim_risk,
         ] if v is not None)
 
         confidence = confidence_from_coverage(
@@ -925,308 +980,96 @@ class Layer3Scorer:
             sentence_count=data.sentence_count,
             available_count=available,
             expected_count=4,
-            important_missing=1 if data.citation_weakness_risk is None else 0,
         )
 
         reasons = []
         if score >= 0.65:
-            reasons.append("high_grounding_quality_risk")
+            reasons.append("high_quality_risk")
         elif score >= 0.45:
-            reasons.append("moderate_grounding_quality_risk")
-
+            reasons.append("moderate_quality_risk")
         if lived_detail >= 0.65:
             reasons.append("weak_lived_detail")
-
         if citation >= 0.65:
             reasons.append("citation_weakness")
 
         return ClusterScore(
-            name="grounding_quality",
+            name="writing_quality",
             score=round(score, 4),
             confidence=confidence,
             components={k: round(v, 4) for k, v in components.items()},
             reasons=reasons,
-        )
+        ), quality_tier
 
-    def calculate_structure_process_cluster(self, data: Layer3Input) -> ClusterScore:
-        progression = clamp(data.paragraph_progression_risk)
-        uniformity = clamp(data.paragraph_uniformity_risk)
-        starter = clamp(data.repeated_starter_risk)
-        conclusion = clamp(data.formulaic_conclusion_risk)
-        signpost = clamp(data.signpost_paragraph_risk)
-        balanced_hedging = clamp(data.balanced_hedging_risk)
-        intra_parallel = clamp(data.intra_paragraph_parallelism_risk)
-        topic_uniformity = clamp(data.paragraph_topic_uniformity_risk)
-        draft_jump = clamp(data.draft_evolution_jump_risk)
-        reuse = clamp(data.structural_reuse_risk)
-
-        # All components with base weights — only include if they fire (> 0)
-        # 0% means "pattern not detected" not "low risk"
-        all_components = {
-            "progression": (progression, 0.30),
-            "uniformity": (uniformity, 0.15),
-            "starter": (starter, 0.20),
-            "conclusion": (conclusion, 0.15),
-            "signpost": (signpost, 0.25),
-            "balanced_hedging": (balanced_hedging, 0.20),
-            "intra_parallel": (intra_parallel, 0.15),
-            "topic_uniformity": (topic_uniformity, 0.15),
-        }
-
-        # Filter: only include components that actually detected something
-        active = {k: (v, w) for k, (v, w) in all_components.items() if v > 0}
-
-        if not active:
-            structural_subscore = 0.0
+    def _derive_ai_tier(self, ai_score: float) -> Tier:
+        if ai_score >= 0.65:
+            return Tier.RED
+        elif ai_score >= 0.48:
+            return Tier.ORANGE
+        elif ai_score >= 0.32:
+            return Tier.AMBER
         else:
-            structural_subscore = weighted_average(active)
+            return Tier.GREEN
 
-        has_draft_process = (
-            data.draft_evolution_jump_risk is not None
-            or data.structural_reuse_risk is not None
-        )
-
-        if has_draft_process:
-            draft_process_subscore = weighted_average({
-                "draft_jump": (draft_jump, 0.55),
-                "structural_reuse": (reuse, 0.45),
-            })
-
-            score = weighted_average({
-                "structural": (structural_subscore, 0.45),
-                "draft_process": (draft_process_subscore, 0.55),
-            })
-        else:
-            score = structural_subscore
-
-        components = {
-            "paragraph_progression_risk": progression,
-            "paragraph_uniformity_risk": uniformity,
-            "repeated_starter_risk": starter,
-            "formulaic_conclusion_risk": conclusion,
-            "signpost_paragraph_risk": signpost,
-            "balanced_hedging_risk": balanced_hedging,
-            "intra_paragraph_parallelism_risk": intra_parallel,
-            "paragraph_topic_uniformity_risk": topic_uniformity,
-            "draft_evolution_jump_risk": draft_jump,
-            "structural_reuse_risk": reuse,
-            "structural_subscore": structural_subscore,
-        }
-
-        available = sum(1 for v in [
-            data.paragraph_progression_risk,
-            data.paragraph_uniformity_risk,
-            data.repeated_starter_risk,
-            data.formulaic_conclusion_risk,
-            data.signpost_paragraph_risk,
-            data.balanced_hedging_risk,
-            data.intra_paragraph_parallelism_risk,
-            data.paragraph_topic_uniformity_risk,
-            data.draft_evolution_jump_risk,
-            data.structural_reuse_risk,
-        ] if v is not None)
-
-        expected_count = 10
-
-        confidence = confidence_from_coverage(
-            word_count=data.word_count,
-            sentence_count=data.sentence_count,
-            available_count=available,
-            expected_count=expected_count,
-            important_missing=0 if has_draft_process else 1,
-        )
-
-        if not has_draft_process and confidence == Confidence.HIGH:
-            confidence = Confidence.MEDIUM
-
-        reasons = []
-        if score >= 0.60:
-            reasons.append("high_structure_process_cluster")
-        elif score >= 0.40:
-            reasons.append("moderate_structure_process_cluster")
-
-        if progression >= 0.65:
-            reasons.append("formulaic_paragraph_progression")
-
-        if conclusion >= 0.65:
-            reasons.append("formulaic_conclusion")
-
-        if signpost >= 0.55:
-            reasons.append("signpost_paragraphs")
-
-        if balanced_hedging >= 0.55:
-            reasons.append("balanced_hedging")
-
-        if intra_parallel >= 0.45:
-            reasons.append("intra_paragraph_parallelism")
-
-        if topic_uniformity >= 0.45:
-            reasons.append("paragraph_topic_uniformity")
-
-        if draft_jump >= 0.65:
-            reasons.append("draft_evolution_jump")
-
-        if reuse >= 0.65:
-            reasons.append("structural_reuse")
-
-        return ClusterScore(
-            name="structure_process",
-            score=round(score, 4),
-            confidence=confidence,
-            components={k: round(v, 4) for k, v in components.items()},
-            reasons=reasons,
-        )
-
-    def blend_clusters(
+    def _derive_review_priority(
         self,
-        text: ClusterScore,
-        grounding: ClusterScore,
-        process: ClusterScore,
-        has_draft_process: bool,
-    ) -> float:
-        if has_draft_process:
-            return clamp(
-                0.25 * text.score
-                + 0.35 * grounding.score
-                + 0.40 * process.score
-            )
-
-        return clamp(
-            0.30 * text.score
-            + 0.40 * grounding.score
-            + 0.30 * process.score
-        )
-
-    def derive_tier(
-        self,
-        score: float,
-        text: ClusterScore,
-        grounding: ClusterScore,
-        process: ClusterScore,
-        data: Layer3Input,
-        confidence: Confidence,
-    ) -> tuple[Tier, list[str], list[str]]:
-        reasons: list[str] = []
-        guardrails: list[str] = []
-
-        if data.verified_ai_provenance:
-            return Tier.RED, ["verified_ai_provenance"], guardrails
-
-        if data.human_provenance_positive:
-            guardrails.append("human_provenance_positive_considered")
-
-        red_aligned = (
-            text.score >= 0.60
-            and grounding.score >= 0.60
-            and process.score >= 0.55
-            and score >= 0.60
-            and confidence in (Confidence.MEDIUM, Confidence.HIGH)
-        )
-
-        if red_aligned:
-            reasons.append("aligned_high_clusters")
-            return Tier.RED, reasons, guardrails
-
-        orange_aligned = (
-            (
-                text.score >= 0.55
-                and grounding.score >= 0.55
-                and score >= 0.50
-            )
-            or (
-                grounding.score >= 0.65
-                and process.score >= 0.50
-                and score >= 0.50
-            )
-            or (
-                text.score >= 0.55
-                and process.score >= 0.55
-                and score >= 0.50
-            )
-        )
-
-        if orange_aligned:
-            reasons.append("two_cluster_alignment")
-            return Tier.ORANGE, reasons, guardrails
-
-        if grounding.score >= 0.65:
-            reasons.append("grounding_review_priority")
-            return Tier.AMBER, reasons, guardrails
-
-        if score >= 0.50:
-            reasons.append("score_orange_threshold")
-            return Tier.ORANGE, reasons, guardrails
-
-        if score >= 0.30:
-            reasons.append("score_amber_threshold")
-            return Tier.AMBER, reasons, guardrails
-
-        reasons.append("low_cluster_score")
-        return Tier.GREEN, reasons, guardrails
+        ai_tier: Tier,
+        quality_tier: QualityTier,
+        quality_score: float,
+    ) -> str:
+        if ai_tier == Tier.RED:
+            return "high_ai_concern"
+        if ai_tier == Tier.ORANGE and quality_tier in (QualityTier.REVIEW, QualityTier.HIGH_REVIEW):
+            return "serious_review"
+        if ai_tier == Tier.ORANGE:
+            return "ai_review"
+        if ai_tier == Tier.AMBER and quality_score >= 0.65:
+            return "possible_humanised_ai"
+        if ai_tier == Tier.AMBER and quality_tier in (QualityTier.LIGHT_REVIEW, QualityTier.REVIEW, QualityTier.HIGH_REVIEW):
+            return "strong_review"
+        if ai_tier == Tier.AMBER:
+            return "mild_review"
+        if quality_tier in (QualityTier.REVIEW, QualityTier.HIGH_REVIEW):
+            return "writing_review"
+        if quality_tier == QualityTier.LIGHT_REVIEW:
+            return "note"
+        return "clean"
 
     def score(self, data: Layer3Input) -> Layer3Result:
-        text = self.calculate_text_pattern_cluster(data)
-        grounding = self.calculate_grounding_quality_cluster(data)
-        process = self.calculate_structure_process_cluster(data)
+        """Run two-phase scoring: AI Likelihood + Writing Quality."""
+        ai_phase, cluster_boost, cluster_name = self.calculate_ai_likelihood(data)
+        writing_phase, quality_tier = self.calculate_writing_quality(data)
 
-        has_draft_process = (
-            data.draft_evolution_jump_risk is not None
-            or data.structural_reuse_risk is not None
-        )
+        if data.verified_ai_provenance:
+            ai_tier = Tier.RED
+        else:
+            ai_tier = self._derive_ai_tier(ai_phase.score)
 
-        blended = self.blend_clusters(
-            text=text,
-            grounding=grounding,
-            process=process,
-            has_draft_process=has_draft_process,
-        )
+        review_priority = self._derive_review_priority(ai_tier, quality_tier, writing_phase.score)
+        confidence = merge_confidence(ai_phase.confidence, writing_phase.confidence)
+        reasons = list(ai_phase.reasons) + list(writing_phase.reasons)
 
-        calibrated = blended
-
+        guardrails = []
         if data.human_provenance_positive:
-            calibrated *= 0.80
-
-        calibrated = clamp(calibrated)
-
-        confidence = merge_confidence(
-            text.confidence,
-            grounding.confidence,
-            process.confidence,
-        )
-
-        tier, reasons, guardrails = self.derive_tier(
-            score=calibrated,
-            text=text,
-            grounding=grounding,
-            process=process,
-            data=data,
-            confidence=confidence,
-        )
-
-        if (
-            tier == Tier.RED
-            and grounding.score < 0.45
-            and process.score < 0.45
-            and not data.verified_ai_provenance
-        ):
-            tier = Tier.ORANGE
-            guardrails.append("red_downgraded_text_only_evidence")
+            guardrails.append("human_provenance_positive_considered")
+        if data.verified_ai_provenance:
+            guardrails.append("verified_ai_provenance_override")
 
         return Layer3Result(
-            tier=tier,
-            blended_score=round(blended, 4),
-            calibrated_score=round(calibrated, 4),
+            tier=ai_tier,
+            ai_likelihood_score=ai_phase.score,
+            ai_cluster_boost=cluster_boost,
+            ai_cluster_name=cluster_name,
+            ai_phase=ai_phase,
+            writing_quality_score=writing_phase.score,
+            writing_quality_tier=quality_tier,
+            writing_phase=writing_phase,
             confidence=confidence,
-            text_pattern=text,
-            grounding_quality=grounding,
-            structure_process=process,
             reasons=reasons,
             guardrails=guardrails,
+            review_priority=review_priority,
             debug={
-                "has_draft_process": has_draft_process,
-                "word_count": data.word_count,
-                "sentence_count": data.sentence_count,
-                "paragraph_count": data.paragraph_count,
+                "ai_likelihood_raw": ai_phase.score,
+                "writing_quality_raw": writing_phase.score,
             },
         )
 

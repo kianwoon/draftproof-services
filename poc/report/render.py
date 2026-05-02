@@ -174,15 +174,15 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     lines.append(f"# DraftProof — Integrity Report")
     lines.append("")
 
-    # Header badge: prefer calibrated AI Risk badge, else fallback to finding tier
+    # Header badge: prefer AI Risk badge, else fallback to finding tier
     _shield_colors = {"GREEN": "green", "AMBER": "yellow", "ORANGE": "orange", "RED": "red"}
     if report.ai_risk_badge:
         _ab = report.ai_risk_badge
         _abt = _ab.get("tier", "")
-        _abs = _ab.get("calibrated_ai_score", 0)
+        _abs = _ab.get("ai_likelihood_score", 0)
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
-        lines.append(f"![{_abt_label}](https://img.shields.io/badge/Turnitin_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
+        lines.append(f"![{_abt_label}](https://img.shields.io/badge/AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
     else:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
     lines.append("")
@@ -209,15 +209,9 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     if report.ai_risk_badge:
         badge = report.ai_risk_badge
         badge_tier = badge.get("tier", "")
-        badge_score = badge.get("calibrated_ai_score", 0)
-        badge_band = badge.get("turnitin_like_band", "")
-        if not badge_band:
-            badge_band = badge_tier
-        badge_band = badge_band.replace("_", " ").title()
-        badge_gc = badge.get("grounding_credit", 0) or badge.get("grounding_components", {}).get("grounding_credit", 0)
-        badge_red_flags = badge.get("red_flags", 0)
-        badge_reasons = badge.get("pattern_reasons", []) or badge.get("reasons", [])
 
+        # ── AI Generation Likelihood ──
+        ai_score = badge.get("ai_likelihood_score", 0)
         shield_colors = {
             "GREEN": "green",
             "AMBER": "yellow",
@@ -225,32 +219,72 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             "RED": "red",
         }
         shield_color = shield_colors.get(badge_tier, "lightgrey")
-
-        lines.append("### AI Risk Badge")
-        lines.append("")
         badge_tier_label = _BADGE_TIER_LABELS.get(badge_tier, badge_tier)
-        lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/Turnitin_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
+
+        lines.append("### AI Generation Likelihood")
         lines.append("")
-        lines.append(f"- **Score**: `{badge_score:.2f}%`")
-        if badge_gc > 0:
-            lines.append(f"- **Grounding credit**: `{badge_gc:.1f}%`")
-        # Cluster breakdown
-        ai_style = badge.get("ai_style_score", 0)
-        gq_score = badge.get("grounding_quality_risk", 0)
-        proc_score = badge.get("structure_process_score", 0)
-        if ai_style > 0 or gq_score > 0 or proc_score > 0:
-            lines.append(f"- **Text pattern cluster**: `{ai_style:.1f}%`")
-            lines.append(f"- **Grounding quality risk**: `{gq_score:.1f}%`")
-            lines.append(f"- **Structure/process cluster**: `{proc_score:.1f}%`")
-        wr_score = badge.get("writing_review_score", 0)
-        wr_band = badge.get("writing_review_band", "")
-        if wr_score > 0:
-            wr_label = wr_band.replace("_", " ").title() if wr_band else ""
-            lines.append(f"- **Writing review**: `{wr_score:.1f}%` ({wr_label})")
-        if badge_red_flags > 0:
-            lines.append(f"- **Red flags**: {badge_red_flags}/5")
-        if badge_reasons:
-            lines.append(f"- **Patterns**: {', '.join(badge_reasons)}")
+        lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/AI_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
+        lines.append("")
+        lines.append(f"- **Score**: `{ai_score:.2f}%`")
+
+        cluster_boost = badge.get("ai_cluster_boost", 0)
+        cluster_name = badge.get("ai_cluster_name")
+        if cluster_name:
+            lines.append(f"- **Cluster**: {cluster_name} (+`{cluster_boost:.1f}%`)")
+
+        ai_components = badge.get("ai_components", {})
+        if ai_components:
+            for comp_name, comp_val in ai_components.items():
+                lines.append(f"- **{comp_name}**: `{comp_val:.1f}%`")
+
+        # ── Writing Quality Risk ──
+        wq_tier = badge.get("writing_quality_tier", "LOW")
+        wq_score = badge.get("writing_quality_score", 0)
+        wq_labels = {
+            "LOW": "Clean",
+            "LIGHT_REVIEW": "Light Review",
+            "REVIEW": "Review",
+            "HIGH_REVIEW": "Heavy Review",
+        }
+        wq_colors = {
+            "LOW": "green",
+            "LIGHT_REVIEW": "yellow",
+            "REVIEW": "orange",
+            "HIGH_REVIEW": "red",
+        }
+        wq_label = wq_labels.get(wq_tier, wq_tier)
+        wq_color = wq_colors.get(wq_tier, "lightgrey")
+
+        lines.append("")
+        lines.append("### Writing Quality Risk")
+        lines.append("")
+        lines.append(f"![{wq_label}](https://img.shields.io/badge/Quality-{wq_label.replace(' ', '_')}-{wq_color})")
+        lines.append("")
+        lines.append(f"- **Score**: `{wq_score:.2f}%`")
+
+        wq_components = badge.get("writing_components", {})
+        if wq_components:
+            for comp_name, comp_val in wq_components.items():
+                lines.append(f"- **{comp_name}**: `{comp_val:.1f}%`")
+
+        # ── Combined Recommendation ──
+        review_priority = badge.get("review_priority", "")
+        if review_priority and review_priority != "clean":
+            priority_labels = {
+                "high_ai_concern": "High AI-generation concern",
+                "serious_review": "Serious review needed",
+                "ai_review": "AI-style patterns detected",
+                "possible_humanised_ai": "Possible humanised AI or weak grounding",
+                "strong_review": "Review strongly recommended",
+                "mild_review": "Some patterns worth reviewing",
+                "writing_review": "Not AI-like, but writing quality needs improvement",
+                "note": "Minor quality concerns",
+            }
+            lines.append("")
+            lines.append("### Recommendation")
+            lines.append("")
+            lines.append(priority_labels.get(review_priority, review_priority))
+
         lines.append("")
 
     # Build bar strings
@@ -377,7 +411,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     # Verdict — use badge tier when available
     if report.ai_risk_badge:
         badge_tier_val = report.ai_risk_badge.get("tier", "")
-        badge_score = report.ai_risk_badge.get("calibrated_ai_score", 0)
+        badge_score = report.ai_risk_badge.get("ai_likelihood_score", 0)
         verdict_map = {
             "GREEN": f"Low risk across all clusters (score: {badge_score:.1f}%). Text appears ready for submission.",
             "AMBER": f"Moderate concerns detected (score: {badge_score:.1f}%). Review flagged areas before submission.",
@@ -428,7 +462,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     # Tier derivation audit — use badge tier reason
     if report.ai_risk_badge:
         badge_tier = report.ai_risk_badge.get("tier", "")
-        badge_score = report.ai_risk_badge.get("calibrated_ai_score", 0)
+        badge_score = report.ai_risk_badge.get("ai_likelihood_score", 0)
         badge_reasons = report.ai_risk_badge.get("reasons", [])
         badge_guardrails = report.ai_risk_badge.get("guardrails", [])
 

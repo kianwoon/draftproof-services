@@ -1183,25 +1183,23 @@ class ReportBuilder:
         layer3 = Layer3Scorer().score(layer3_input)
 
         ai_risk_badge = {
+            # AI Generation (Phase 1)
             "tier": layer3.tier.value,
-            "calibrated_ai_score": round(layer3.calibrated_score * 100, 2),
-            "blended_score": round(layer3.blended_score * 100, 2),
-            "pre_calibration": {
-                "cluster_blended": round(layer3.blended_score * 100, 2),
-                "text_pattern": round(layer3.text_pattern.score * 100, 2),
-                "grounding_quality_risk": round(layer3.grounding_quality.score * 100, 2),
-                "structure_process": round(layer3.structure_process.score * 100, 2),
-            },
-            "ai_style_score": round(layer3.text_pattern.score * 100, 2),
-            "grounding_quality_risk": round(layer3.grounding_quality.score * 100, 2),
-            "structure_process_score": round(layer3.structure_process.score * 100, 2),
-            "text_pattern_components": {k: round(v * 100, 2) for k, v in layer3.text_pattern.components.items()},
-            "grounding_components": {k: round(v * 100, 2) for k, v in layer3.grounding_quality.components.items()},
-            "process_components": {k: round(v * 100, 2) for k, v in layer3.structure_process.components.items()},
+            "ai_likelihood_score": round(layer3.ai_likelihood_score * 100, 2),
+            "ai_cluster_boost": round(layer3.ai_cluster_boost * 100, 2) if layer3.ai_cluster_boost else 0,
+            "ai_cluster_name": layer3.ai_cluster_name,
+            "ai_components": {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()},
+
+            # Writing Quality (Phase 2)
+            "writing_quality_tier": layer3.writing_quality_tier.value,
+            "writing_quality_score": round(layer3.writing_quality_score * 100, 2),
+            "writing_components": {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()},
+
+            # Combined
+            "review_priority": layer3.review_priority,
             "confidence": layer3.confidence.value,
             "reasons": layer3.reasons,
             "guardrails": layer3.guardrails,
-            "pattern_reasons": layer3.reasons,
             "red_flags": n_high + n_critical,
         }
 
