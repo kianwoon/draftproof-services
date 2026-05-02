@@ -143,6 +143,9 @@ class RewriteSummary:
     voice_preserved: bool = True
     voice_warnings: List[str] = None
     rewrite_surface_ratio: float = 1.0
+    # Detect scan scores (same as shown in scan report)
+    detect_ai_likelihood: float = 0.0      # AI Generation Likelihood from detect scan
+    detect_writing_quality: float = 0.0    # Writing Quality Risk from detect scan
 
 
 # ── Main report ─────────────────────────────────────────────────────
@@ -1247,6 +1250,12 @@ class ReportBuilder:
             ai_risk_badge=ai_risk_badge,
         )
 
+        # Inject detect scan scores into rewrite summary so rewrite report
+        # shows the same risk scores the user sees in the scan report.
+        if self._rewrite_summary:
+            self._rewrite_summary.detect_ai_likelihood = ai_risk_badge.get("ai_likelihood_score", 0.0)
+            self._rewrite_summary.detect_writing_quality = ai_risk_badge.get("writing_quality_score", 0.0)
+
 
 # ── Report to dict ──────────────────────────────────────────────────
 
@@ -1736,6 +1745,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "converged": report.rewrite.converged,
             "convergence_reason": report.rewrite.convergence_reason,
             "progression": report.rewrite.pass_progression,
+            "detect_ai_likelihood": report.rewrite.detect_ai_likelihood,
+            "detect_writing_quality": report.rewrite.detect_writing_quality,
         }
 
     result["scan_time_seconds"] = report.scan_time_seconds

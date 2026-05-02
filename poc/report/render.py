@@ -815,9 +815,20 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append("")
         lines.append("## Rewrite Summary")
         lines.append("")
+        # Show detect scan scores as baseline reference
+        if rw.detect_ai_likelihood > 0 or rw.detect_writing_quality > 0:
+            lines.append("> **Detect Scan Baseline** (from scan report):")
+            lines.append(">")
+            if rw.detect_ai_likelihood > 0:
+                lines.append(f"> AI Generation Likelihood: **{rw.detect_ai_likelihood:.1f}%**")
+            if rw.detect_writing_quality > 0:
+                lines.append(f"> Writing Quality Risk: **{rw.detect_writing_quality:.1f}%**")
+            lines.append(">")
+            lines.append("> Rewrite reduces predictability patterns — re-scan to see updated scores.")
+            lines.append("")
         lines.append("| Metric | Before | After | Change |")
         lines.append("|--------|--------|-------|--------|")
-        lines.append(f"| **Risk Score** | `{rw.original_risk:.1%}` | `{rw.final_risk:.1%}` | `{rw.improvement_risk:+.1%}` |")
+        lines.append(f"| **Predictability Risk** | `{rw.original_risk:.1%}` | `{rw.final_risk:.1%}` | `{rw.improvement_risk:+.1%}` |")
         lines.append(f"| **Common Ratio** | `{rw.original_top10:.1%}` | `{rw.final_top10:.1%}` | `{rw.improvement_top10:+.1%}` |")
         if rw.original_tier:
             lines.append(f"| **Tier** | {rw.original_tier.upper()} | {rw.rewritten_tier.upper()} | |")
