@@ -212,6 +212,16 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
         lines.append(f"![{_abt_label}](https://img.shields.io/badge/AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
+
+        # Writing Quality badge beside AI badge
+        wq_tier_header = _ab.get("writing_quality_tier", "")
+        wq_score_header = _ab.get("writing_quality_score", 0)
+        _wq_labels = {"LOW": "Clean", "LIGHT_REVIEW": "Light+Review", "REVIEW": "Review", "HIGH_REVIEW": "Heavy+Review"}
+        _wq_colors = {"LOW": "green", "LIGHT_REVIEW": "yellow", "REVIEW": "orange", "HIGH_REVIEW": "red"}
+        if wq_tier_header:
+            wq_lbl = _wq_labels.get(wq_tier_header, wq_tier_header)
+            wq_clr = _wq_colors.get(wq_tier_header, "lightgrey")
+            lines.append(f"![{wq_lbl}](https://img.shields.io/badge/Quality-{wq_lbl}-{wq_clr}) &nbsp; Score `{wq_score_header:.2f}%`")
     else:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
     lines.append("")
@@ -263,12 +273,14 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
         ai_components = badge.get("ai_components", {})
         if ai_components:
-            lines.append("")
-            lines.append("| Signal | Score | What It Means |")
-            lines.append("|--------|------:|---------------|")
-            for comp_name, comp_val in ai_components.items():
-                label, desc = _AI_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
-                lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
+            non_zero = {k: v for k, v in ai_components.items() if v > 0}
+            if non_zero:
+                lines.append("")
+                lines.append("| Signal | Score | What It Means |")
+                lines.append("|--------|------:|---------------|")
+                for comp_name, comp_val in non_zero.items():
+                    label, desc = _AI_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
+                    lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
 
         # ── Writing Quality Risk ──
         wq_tier = badge.get("writing_quality_tier", "LOW")
@@ -297,12 +309,14 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
         wq_components = badge.get("writing_components", {})
         if wq_components:
-            lines.append("")
-            lines.append("| Signal | Score | What It Means |")
-            lines.append("|--------|------:|---------------|")
-            for comp_name, comp_val in wq_components.items():
-                label, desc = _WQ_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
-                lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
+            non_zero = {k: v for k, v in wq_components.items() if v > 0}
+            if non_zero:
+                lines.append("")
+                lines.append("| Signal | Score | What It Means |")
+                lines.append("|--------|------:|---------------|")
+                for comp_name, comp_val in non_zero.items():
+                    label, desc = _WQ_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
+                    lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
 
         # ── Combined Recommendation ──
         review_priority = badge.get("review_priority", "")
