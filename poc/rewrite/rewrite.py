@@ -637,8 +637,28 @@ def run_rewrite(
         current_sentences, _ = _build_sentence_index(current_text)
         loc = f.location or {}
         sent_idx = loc.get("sentence_index", -1)
-        if sent_idx < 0 or sent_idx >= len(current_sentences):
+
+        # Try sentence_index first, then fuzzy match
+        if sent_idx >= 0 and sent_idx < len(current_sentences):
+            # Verify the indexed sentence actually contains the evidence
+            if f.evidence[:30] not in current_sentences[sent_idx]:
+                sent_idx = _find_sentence_index(current_sentences, f.evidence)
+        else:
             sent_idx = _find_sentence_index(current_sentences, f.evidence)
+
+        # Last resort: find evidence anywhere in text and pick closest sentence
+        if sent_idx < 0:
+            pos = current_text.find(f.evidence[:30])
+            if pos >= 0:
+                # Find which sentence contains this position
+                char_offset = 0
+                for i, s in enumerate(current_sentences):
+                    sent_pos = current_text.find(s, char_offset)
+                    if sent_pos <= pos < sent_pos + len(s) + 10:
+                        sent_idx = i
+                        break
+                    char_offset = max(char_offset, sent_pos + 1)
+
         if sent_idx < 0:
             findings_skipped += 1
             floor_reasons.append(FloorReason(
@@ -656,8 +676,9 @@ def run_rewrite(
 
         original_sentence = current_sentences[sent_idx]
 
-        # Check evidence still present in this sentence
-        if f.evidence[:30] not in original_sentence:
+        # Check evidence still present in text (not just this sentence —
+        # evidence may span a boundary our splitter creates)
+        if f.evidence[:30] not in current_text:
             findings_skipped += 1
             floor_reasons.append(FloorReason(
                 finding_id=getattr(f, "id", str(id(f))),
@@ -687,15 +708,21 @@ def run_rewrite(
         ] if sent_start >= 0 else []
 
         # Build focused per-sentence prompt
-        finding_lines = [f"[{f.finding_type}/{f.risk_level}] {f.detail}"]
-        span_info = (
-            "Finding: " + "|".join(finding_lines) + "\n"
-            f"Fix strategy: {f.suggested_action_type}\n"
-            "Flagged text: '" + f.evidence + "'"
-        )
+        # NOTE: The rewrite_fn already wraps text in """ quotes and adds char limits.
+        # We only send finding details + context here — NOT the text itself.
+        span_info_parts = [
+            "Finding: [" + f.finding_type + "/" + f.risk_level + "] " + f.detail,
+            "Fix strategy: " + f.suggested_action_type,
+            "Flagged phrase: '" + f.evidence + "'",
+        ]
+        if ctx_before:
+            span_info_parts.append("Previous sentence context: '" + ctx_before + "'")
+        if ctx_after:
+            span_info_parts.append("Next sentence context: '" + ctx_after + "'")
         if sent_protected:
-            protected_items = ", ".join(f"'{ps.text}'" for ps in sent_protected)
-            span_info += f"\nPreserve exactly: {protected_items}"
+            protected_items = ", ".join(ps.text for ps in sent_protected)
+            span_info_parts.append("Must preserve exactly: " + protected_items)
+        span_info = "\n".join(span_info_parts)
 
         # Rewrite with retry loop
         rewritten_sentence = None
@@ -703,17 +730,14 @@ def run_rewrite(
         max_sent_chars = int(len(original_sentence) * 1.20)  # 20% tolerance per sentence
         for attempt in range(3):
             if loop_rewrite_fn:
-                context_block = ""
-                if ctx_before:
-                    context_block += "Before: '" + ctx_before + "'\n"
-                context_block += "Target (" + str(len(original_sentence)) + " chars): '" + original_sentence + "'\n"
-                if ctx_after:
-                    context_block += "After: '" + ctx_after + "'\n"
+                # span_info already has finding + context.
+                # rewrite_fn will wrap original_sentence in triple quotes.
+                # Just add the char limit instruction.
                 prompt = (
-                    f"{span_info}\n\n{context_block}\n"
-                    f"Rewrite ONLY the target sentence to address the finding. "
-                    f"MUST NOT exceed {max_sent_chars} characters. "
-                    f"Output ONLY the rewritten sentence."
+                    span_info + "\n\n"
+                    "Rewrite the text to address the finding above. "
+                    "MUST NOT exceed " + str(max_sent_chars) + " characters. "
+                    "Output ONLY the rewritten text."
                 )
                 rewritten_sentence = loop_rewrite_fn(original_sentence, prompt)
 
