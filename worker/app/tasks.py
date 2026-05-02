@@ -121,7 +121,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 all_findings.extend(tier_findings)
         rephrasable_findings = [
             f for f in all_findings
-            if isinstance(f, dict) and f.get("actionability") == "auto_fixable"
+            if isinstance(f, dict) and f.get("actionability") in ("auto_fixable", "auto_rewrite_candidate")
         ]
         if not rephrasable_findings:
             update_rewrite_status(rewrite_id, "failed", error="No rephrasable findings to rewrite")
