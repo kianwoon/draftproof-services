@@ -51,10 +51,24 @@ def render_rewrite_report(
         lines.append("**Outcome: Floor Reached** — Remaining signals are structural, manual review needed.")
     lines.append("")
 
+    # Detect scan baseline (same scores from detect scan report)
+    detect_ai = summary.get("detect_ai_likelihood", 0)
+    detect_wq = summary.get("detect_writing_quality", 0)
+    if detect_ai or detect_wq:
+        lines.append("> **Detect Scan Baseline** (from original scan report):")
+        lines.append(">")
+        if detect_ai:
+            lines.append(f"> AI Generation Likelihood: **{detect_ai:.1f}%**")
+        if detect_wq:
+            lines.append(f"> Writing Quality Risk: **{detect_wq:.1f}%**")
+        lines.append(">")
+        lines.append("> Rewrite reduces predictability patterns — re-scan to see updated scores.")
+        lines.append("")
+
     # Before/After summary table
     lines.append("| Metric | Before | After | Change |")
     lines.append("|--------|--------|-------|--------|")
-    lines.append(f"| **Risk Score** | `{orig_risk:.1%}` | `{final_risk:.1%}` | `{imp_risk:+.1%}` |")
+    lines.append(f"| **Predictability Risk** | `{orig_risk:.1%}` | `{final_risk:.1%}` | `{imp_risk:+.1%}` |")
     lines.append(f"| **Common Ratio** | `{orig_top10:.1%}` | `{final_top10:.1%}` | `{imp_top10:+.1%}` |")
     lines.append(f"| **Passes** | — | {passes} | — |")
     lines.append(f"| **Converged** | — | {'Yes' if converged else 'No'} | — |")

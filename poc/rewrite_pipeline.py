@@ -190,6 +190,13 @@ def run_rewrite_pipeline(
                 "new_sentence": f.get("sentence", ""),
             })
 
+    # Inject detect scan scores into summary so rewrite report shows
+    # the same risk scores the user saw in the detect scan report.
+    badge = ctx.raw_json.get("ai_risk_badge", {})
+    if badge:
+        result.summary["detect_ai_likelihood"] = badge.get("ai_likelihood_score", 0)
+        result.summary["detect_writing_quality"] = badge.get("writing_quality_score", 0)
+
     # Generate dedicated rewrite report
     rewrite_md = render_rewrite_report(
         summary=result.summary,
