@@ -261,13 +261,6 @@ export default function Report() {
           </div>
         )}
 
-        {/* Results JSON (collapsible) */}
-        {report.results_json && (
-          <details className="report-raw-details">
-            <summary>Raw Analysis Data</summary>
-            <pre className="report-raw-json">{JSON.stringify(report.results_json, null, 2)}</pre>
-          </details>
-        )}
       </div>
     </main>
   );
