@@ -184,11 +184,16 @@ def route_finding(finding: Finding) -> FixabilityDecision:
         has_rec = bool(getattr(finding, "recommendation", ""))
         if has_route and has_rec:
             route = FINDING_ROUTING[finding.finding_type]
+            # Override fixability: if the table says manual, upgrade to partial
+            # so the rewrite engine will actually attempt rephrasing
+            fix = route["fixability"]
+            if fix == FIXABILITY_MANUAL:
+                fix = FIXABILITY_PARTIAL
             return FixabilityDecision(
                 finding_id=getattr(finding, "id", str(id(finding))),
                 finding_type=finding.finding_type,
-                fixability=route["fixability"],
-                action=route["action"],
+                fixability=fix,
+                action="suggest_rewrite" if fix != FIXABILITY_MANUAL else route["action"],
                 scope=route["scope"],
                 reason=f"Review-only finding with recommendation — attempting rewrite.",
                 required_inputs=route.get("required_inputs", []),
