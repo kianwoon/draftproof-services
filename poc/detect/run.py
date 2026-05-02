@@ -84,7 +84,32 @@ class DetectionRunner:
             kwargs["custom_phrases"] = get_phrases_for_packs(profile.phrase_packs)
         scanner_results: List[DetectResult] = []
         for d in detectors:
-            scanner_results.append(d.detect(content, **kwargs))
+            result = d.detect(content, **kwargs)
+            scanner_results.append(result)
+            # Forward predictability sentence metrics to ai_generation scanner
+            if d.__class__.__name__ == "PredictabilityDetector":
+                pred_raw = result.raw if hasattr(result, "raw") and result.raw else {}
+                sentences = pred_raw.get("sentences", [])
+                if sentences and "sentence_metrics" not in kwargs:
+                    # Convert SentenceResult objects to dicts for criteria
+                    sentence_dicts = []
+                    for s in sentences:
+                        if isinstance(s, dict):
+                            sentence_dicts.append(s)
+                        else:
+                            sentence_dicts.append({
+                                "sentence": getattr(s, "sentence", ""),
+                                "avg_surprisal": getattr(s, "avg_surprisal", 5.0),
+                                "top_10_ratio": getattr(s, "top_10_ratio", 0.0),
+                                "top_50_ratio": getattr(s, "top_50_ratio", 0.0),
+                                "predictability_risk": getattr(s, "predictability_risk", 0.0),
+                                "risk_label": getattr(s, "risk_label", ""),
+                            })
+                    kwargs = dict(kwargs)
+                    kwargs["sentence_metrics"] = sentence_dicts
+                if "predictability_value" not in kwargs:
+                    kwargs = dict(kwargs)
+                    kwargs["predictability_value"] = result.overall_risk
 
         # Apply post-processing filters to each scanner result
         pp_results = []
