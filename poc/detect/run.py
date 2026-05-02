@@ -370,6 +370,9 @@ class DetectionRunner:
         rephrasable_types = {
             "generic_phrase", "high_predictability", "low_surprisal",
             "close_paraphrase", "topk_predictability", "low_specificity",
+            "review_predictability", "medium_predictability",
+            "style_shift", "draft_evolution_jump", "structural_reuse",
+            "template_skeleton", "surface_rewrite", "paragraph_level_overlap",
         }
 
         for f in top_findings:
@@ -380,6 +383,7 @@ class DetectionRunner:
             elif f.risk_level in ("high", "medium") and (
                 f.suggested_action_type in ("add_specific_example", "add_user_interpretation")
                 or f.finding_type in rephrasable_types
+                or f.recommendation  # any finding with a suggestion is rewrite-eligible
             ):
                 f.actionability = "auto_rewrite_candidate"
             elif f.risk_level == "low" or "minimal" in f.finding_type:
@@ -387,10 +391,6 @@ class DetectionRunner:
             elif f.risk_level in ("high", "medium"):
                 f.actionability = "review_only"
             else:
-                f.actionability = "review_only"
-
-            # Downgrade auto_rewrite_candidate if AI likelihood is low
-            if f.actionability == "auto_rewrite_candidate" and ai_likelihood < 0.25:
                 f.actionability = "review_only"
 
     @staticmethod

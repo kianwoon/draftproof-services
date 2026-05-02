@@ -123,6 +123,13 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             f for f in all_findings
             if isinstance(f, dict) and f.get("actionability") in ("auto_fixable", "auto_rewrite_candidate")
         ]
+        # Fallback: include review_only findings that have a suggestion
+        if not rephrasable_findings:
+            rephrasable_findings = [
+                f for f in all_findings
+                if isinstance(f, dict) and f.get("actionability") in ("review_only",)
+                and (f.get("suggestion") or f.get("recommendation"))
+            ]
         if not rephrasable_findings:
             update_rewrite_status(rewrite_id, "failed", error="No rephrasable findings to rewrite")
             return {"status": "failed", "error": "no rephrasable findings"}
