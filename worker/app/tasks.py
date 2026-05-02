@@ -40,7 +40,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 results_json = json.load(f)
             badge = results_json.get("ai_risk_badge")
             if badge:
-                ai_score = badge.get("calibrated_ai_score")
+                ai_score = badge.get("ai_likelihood_score")
                 writing_score = badge.get("writing_quality_score")
 
             with open(result["md_path"]) as f:

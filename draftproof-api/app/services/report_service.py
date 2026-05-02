@@ -147,7 +147,7 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
         if results_json:
             badge = results_json.get("ai_risk_badge")
             if badge:
-                ai_score = badge.get("calibrated_ai_score")
+                ai_score = badge.get("ai_likelihood_score")
                 writing_score = badge.get("writing_quality_score")
                 ai_badge_tier = badge.get("tier", "").lower()
 
