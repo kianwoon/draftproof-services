@@ -141,6 +141,8 @@ export default function Reports() {
                   <th>Date</th>
                   <th>Status</th>
                   <th>Risk Level</th>
+                  <th>AI Score</th>
+                  <th>Writing</th>
                   <th>Findings</th>
                   <th>Words</th>
                   <th></th>
@@ -162,10 +164,17 @@ export default function Reports() {
                         {scan.tier ? (
                           <span className="tier-badge" style={{ color: tierColor, borderColor: tierColor }}>
                             {TIER_LABELS[scan.tier] || scan.tier}
-                            <span className="tier-score">
-                              {scan.ai_score != null ? ` ${scan.ai_score.toFixed(1)}%` : scan.finding_count != null ? ` (${scan.finding_count})` : ''}
-                            </span>
                           </span>
+                        ) : '—'}
+                      </td>
+                      <td className="td-score">
+                        {scan.ai_score != null ? (
+                          <span style={{ color: tierColor, fontWeight: 600 }}>{scan.ai_score.toFixed(1)}%</span>
+                        ) : '—'}
+                      </td>
+                      <td className="td-score">
+                        {scan.writing_score != null ? (
+                          <span style={{ color: '#6366f1', fontWeight: 600 }}>{scan.writing_score.toFixed(1)}%</span>
                         ) : '—'}
                       </td>
                       <td className="td-findings">{scan.finding_count ?? '—'}</td>

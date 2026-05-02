@@ -159,6 +159,7 @@ class ScanJob(Base):
     status = Column(Text, nullable=False, default="pending", index=True)
     tier = Column(Text)
     ai_score = Column(Numeric(6, 2))
+    writing_score = Column(Numeric(6, 2))
     finding_count = Column(Integer)
     report_urls = Column(JSONB, default=dict)
     error = Column(Text)

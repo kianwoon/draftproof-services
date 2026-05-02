@@ -137,6 +137,7 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
                     "report_id": str(j.id) if j.status == "completed" else None,
                     "tier": j.tier,
                     "ai_score": float(j.ai_score) if j.ai_score is not None else None,
+                    "writing_score": float(j.writing_score) if j.writing_score is not None else None,
                     "finding_count": j.finding_count,
                     "word_count": j.word_count,
                     "created_at": j.created_at.isoformat() if j.created_at else None,
@@ -198,6 +199,8 @@ async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
             "status": job.status,
             "report_id": str(job.id) if job.status == "completed" else None,
             "tier": job.tier,
+            "ai_score": float(job.ai_score) if job.ai_score is not None else None,
+            "writing_score": float(job.writing_score) if job.writing_score is not None else None,
             "finding_count": job.finding_count,
         }
 

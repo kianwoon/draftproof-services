@@ -95,7 +95,11 @@ export default function Report() {
               <path d={tier.icon} />
               <circle cx="12" cy="12" r="10" />
             </svg>
-            <span style={{ color: tier.color }}>{report.ai_score != null ? `${tier.label} (${report.ai_score.toFixed(1)}%)` : tier.label}</span>
+            <span style={{ color: tier.color }}>
+              {tier.label}
+              {report.ai_score != null && <span className="tier-score"> AI: {report.ai_score.toFixed(1)}%</span>}
+              {report.writing_score != null && <span className="tier-score" style={{ color: '#6366f1' }}> Writing: {report.writing_score.toFixed(1)}%</span>}
+            </span>
           </div>
         </div>
 
@@ -120,6 +124,18 @@ export default function Report() {
             </span>
             <span className="report-stat-label">Risk Tier</span>
           </div>
+          {report.ai_score != null && (
+            <div className="report-stat">
+              <span className="report-stat-value" style={{ color: tier.color }}>{report.ai_score.toFixed(1)}%</span>
+              <span className="report-stat-label">AI Score</span>
+            </div>
+          )}
+          {report.writing_score != null && (
+            <div className="report-stat">
+              <span className="report-stat-value" style={{ color: '#6366f1' }}>{report.writing_score.toFixed(1)}%</span>
+              <span className="report-stat-label">Writing Score</span>
+            </div>
+          )}
         </div>
 
         {/* Download links */}

@@ -142,11 +142,13 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
 
         # Extract AI risk badge from results_json for display alignment
         ai_score = None
+        writing_score = None
         ai_badge_tier = None
         if results_json:
             badge = results_json.get("ai_risk_badge")
             if badge:
                 ai_score = badge.get("calibrated_ai_score")
+                writing_score = badge.get("writing_quality_score")
                 ai_badge_tier = badge.get("tier", "").lower()
 
         # Prefer AI badge tier over findings-based tier (matches PDF)
@@ -159,6 +161,7 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
             "created_at": job.completed_at or job.created_at,
             "tier": display_tier,
             "ai_score": ai_score,
+            "writing_score": writing_score,
             "report_md_url": report_md_url,
             "report_pdf_url": report_pdf_url,
             "results_json": results_json,
