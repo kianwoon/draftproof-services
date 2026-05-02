@@ -229,11 +229,18 @@ async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(g
         logger.info("Microsoft token keys: %s", list(token.keys()))
         user_info = token.get("userinfo")
         if not user_info:
-            # Microsoft returns user info in the ID token claims, not as a top-level key
+            # Microsoft returns user info in the ID token claims.
+            # Authlib may parse it as a dict (if it decoded the JWT) or leave it as a string.
             id_token = token.get("id_token")
-            if id_token and isinstance(id_token, dict):
+            if isinstance(id_token, dict):
                 user_info = id_token
-            else:
+            elif isinstance(id_token, str):
+                # Decode JWT without full verification (Authlib already validated it)
+                try:
+                    user_info = jwt.decode(id_token, key="", options={"verify_signature": False, "verify_aud": False})
+                except Exception as decode_err:
+                    logger.warning("Failed to decode Microsoft id_token JWT: %s", decode_err)
+            if not user_info:
                 user_info = await oauth.microsoft.userinfo(token=token)
             logger.info("Userinfo keys: %s", list(user_info.keys()) if user_info else "None")
 
