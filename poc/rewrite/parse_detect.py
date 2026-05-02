@@ -19,15 +19,21 @@ def _extract_location(fr: dict) -> dict:
 
     Extracts sentence_id AND derives sentence_index (integer) from it
     so the rewrite planner can locate findings in the text.
+
+    sentence_id is 1-based (s001 = first sentence), but we store
+    sentence_index as 0-based for Python indexing.
     """
     loc = {}
     if fr.get("sentence_id"):
         loc["sentence_id"] = fr["sentence_id"]
-        # Derive integer index from sentence_id like "s3" → 3
+        # Derive 0-based index from sentence_id like "s003" → 2
         import re
-        m = re.match(r"s(\d+)", fr["sentence_id"])
+        m = re.match(r"s0*(\d+)", fr["sentence_id"])
         if m:
-            loc["sentence_index"] = int(m.group(1))
+            loc["sentence_index"] = int(m.group(1)) - 1  # convert to 0-based
+    # Also check for explicit sentence_index (0-based) in the JSON
+    if fr.get("sentence_index") is not None:
+        loc["sentence_index"] = fr["sentence_index"]
     if isinstance(fr.get("evidence"), dict) and fr["evidence"].get("affected_span"):
         loc["affected_span"] = fr["evidence"]["affected_span"]
     return loc

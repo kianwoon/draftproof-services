@@ -379,11 +379,30 @@ class ReportBuilder:
             # Upgrade certain finding types
             if f.finding_type == "exact_copy":
                 tier = Tier.CRITICAL
-            # Match sentence_id from predictability sentences
+            # Match sentence_id for ALL findings, not just predictability
             sent_id = ""
-            if scanner == "predictability" and self._sentence_id_map:
+            loc = getattr(f, 'location', None) or {}
+
+            # Strategy 1: direct snippet match (works for predictability)
+            if self._sentence_id_map:
                 snippet = (f.evidence or "")[:60]
                 sent_id = self._sentence_id_map.get(snippet, "")
+
+            # Strategy 2: use start_char from location to find containing sentence
+            if not sent_id and loc.get("start_char") is not None and self._pred_summary:
+                char_pos = loc["start_char"]
+                for sent in self._pred_summary.sentences:
+                    s_start = sent.get("start_char", 0)
+                    s_end = sent.get("end_char", 0)
+                    if s_start <= char_pos < s_end:
+                        sent_id = sent.get("sentence_id", "")
+                        break
+
+            # Strategy 3: sentence_index from location (detect pipeline sets this)
+            if not sent_id and loc.get("sentence_index") is not None and self._pred_summary:
+                idx = loc["sentence_index"]
+                if 0 <= idx < len(self._pred_summary.sentences):
+                    sent_id = self._pred_summary.sentences[idx].get("sentence_id", "")
             # Inject scanner-level metadata into finding metadata
             meta = dict(f.metadata) if f.metadata else {}
             if scanner == "ai_generation" and result.likelihood_score:
@@ -1335,6 +1354,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "adjusted_risk": f.adjusted_risk,
                 "actionability": _determine_actionability(f, all_findings),
                 "sentence_id": f.sentence_id or None,
+                "sentence_index": int(f.sentence_id[1:]) if f.sentence_id and f.sentence_id.startswith("s") and f.sentence_id[1:].isdigit() else None,
                 "evidence": _structured_evidence(f),
                 "recommendation": f.recommendation,
                 "adjustment": f.metadata.get("adjustment") if f.metadata else None,
