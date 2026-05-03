@@ -472,10 +472,18 @@ def run_rewrite_pipeline(
         and rewritten_wq is not None
         and rewritten_wq > original_wq + 0.05
     )
+    total_findings_regressed = rewritten_total > original_total
     review_burden_regressed = rewritten_review_burden > original_review_burden
     severity_regressed = rewritten_severity > original_severity
+    critical_high_regressed = (
+        len(rewritten_report_dict.get("findings", {}).get("critical", []))
+        + len(rewritten_report_dict.get("findings", {}).get("high", []))
+        >
+        len(original_report_dict.get("findings", {}).get("critical", []))
+        + len(original_report_dict.get("findings", {}).get("high", []))
+    )
     total_regressed_without_review_gain = (
-        rewritten_total > original_total
+        total_findings_regressed
         and rewritten_review_burden >= original_review_burden
     )
     regression_reasons = []
@@ -487,11 +495,23 @@ def run_rewrite_pipeline(
         regression_reasons.append(
             f"review_burden {original_review_burden}->{rewritten_review_burden}"
         )
+    if critical_high_regressed:
+        original_ch = (
+            len(original_report_dict.get("findings", {}).get("critical", []))
+            + len(original_report_dict.get("findings", {}).get("high", []))
+        )
+        rewritten_ch = (
+            len(rewritten_report_dict.get("findings", {}).get("critical", []))
+            + len(rewritten_report_dict.get("findings", {}).get("high", []))
+        )
+        regression_reasons.append(f"critical_high_findings {original_ch}->{rewritten_ch}")
     if severity_regressed:
         regression_reasons.append(
             f"weighted_severity {original_severity}->{rewritten_severity}"
         )
-    if total_regressed_without_review_gain and not (review_burden_regressed or severity_regressed):
+    if total_findings_regressed:
+        regression_reasons.append(f"findings {original_total}->{rewritten_total}")
+    elif total_regressed_without_review_gain and not (review_burden_regressed or severity_regressed):
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
     product_regressed = (
         rewritten_text != text
@@ -543,11 +563,21 @@ def run_rewrite_pipeline(
                 or (original_ai is not None and cp_ai is not None and cp_ai < original_ai - 0.05)
                 or (original_wq is not None and cp_wq is not None and cp_wq < original_wq - 0.05)
             )
+            cp_critical_high = (
+                len(checkpoint_report.get("findings", {}).get("critical", []))
+                + len(checkpoint_report.get("findings", {}).get("high", []))
+            )
+            original_critical_high = (
+                len(original_report_dict.get("findings", {}).get("critical", []))
+                + len(original_report_dict.get("findings", {}).get("high", []))
+            )
             if (
                 cp_ai_regressed
                 or cp_wq_regressed
+                or cp_total > original_total
                 or cp_review_burden > original_review_burden
                 or cp_severity > original_severity
+                or cp_critical_high > original_critical_high
                 or not cp_improved
             ):
                 continue
@@ -635,8 +665,9 @@ def run_rewrite_pipeline(
                          for t in ("critical", "high", "medium", "low")},
         }
 
-    result.summary["detect_scan_original"] = _extract_scan_summary(ctx.raw_json)
-    if product_regressed:
+    result.summary["detect_scan_original_saved"] = _extract_scan_summary(ctx.raw_json)
+    result.summary["detect_scan_original"] = _extract_scan_summary(original_report_dict)
+    if result.summary.get("rollback_applied"):
         result.summary["detect_scan_attempted"] = _extract_scan_summary(attempted_report_dict)
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings
