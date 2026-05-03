@@ -529,6 +529,9 @@ def run_rewrite(
     Citation and integrity findings are NEVER auto-rewritten.
     When ai_only=True, only ai_generation scanner findings are targeted.
     """
+    # Save unfiltered results for original metrics extraction (avoids re-running predictability)
+    all_detect_results = detect_results
+
     # Filter findings before planning
     if ai_only:
         detect_results = _filter_ai_findings(detect_results)
@@ -1148,7 +1151,15 @@ def run_rewrite(
     # Reuse predictability results from final_detect_report instead of
     # running compute_metrics again (saves ~28s per call).
     final_metrics = _metrics_from_detect(final_detect_report, current_text)
-    original_metrics = _metrics_from_detect(final_detect_report, content)
+    # Original metrics: use unfiltered detect results (includes predictability scanner)
+    # to avoid re-running predictability on the original text (saves ~29s).
+    from detect.base import DetectionReport
+    orig_report = DetectionReport(
+        scanner_results=all_detect_results,
+        overall_risk=max((dr.overall_risk for dr in all_detect_results), default=0),
+        elapsed=0,
+    )
+    original_metrics = _metrics_from_detect(orig_report, content)
 
     result = MultiPassResult(
         original_text=content,
