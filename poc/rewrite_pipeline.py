@@ -110,7 +110,14 @@ def run_rewrite_pipeline(
             # Preserve raw data from report JSON for scanners that have it
             scanner_raw = None
             if scanner == "predictability":
-                scanner_raw = detect_json.get("predictability")
+                pred = detect_json.get("predictability", {})
+                # Use all_sentences (full text + scores) if available,
+                # otherwise fall back to the predictability block
+                all_sents = pred.get("all_sentences")
+                if all_sents:
+                    scanner_raw = {"sentences": all_sents}
+                else:
+                    scanner_raw = pred if pred else None
             detect_results.append(DetectResult(
                 scanner=scanner,
                 overall_risk=0.5,

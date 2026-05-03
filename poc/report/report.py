@@ -1674,6 +1674,17 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                  "score": s["risk"], "top10": s["top10_ratio"]}
                 for s in report.predictability.sentences
             ],
+            "all_sentences": [
+                {"sentence": s["sentence"],
+                 "sentence_id": s.get("sentence_id", ""),
+                 "predictability_risk": s["risk"],
+                 "risk_label": s["risk_label"],
+                 "top10_ratio": s["top10_ratio"],
+                 "top50_ratio": s["top50_ratio"],
+                 "avg_probability": s["avg_probability"],
+                 "avg_surprisal": s["avg_surprisal"]}
+                for s in report.predictability.sentences
+            ],
             "score_derivation": {
                 "step1_formula": "score = 0.45×top10_ratio + 0.25×top50_ratio + 0.20×(1/(1+surprisal)) + 0.10×generic_score",
                 "step2_formula": "document_score = mean(sentence_score) for body sentences >= 8 words",
