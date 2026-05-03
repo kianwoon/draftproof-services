@@ -165,9 +165,6 @@ export default function Rewrite() {
   const newAI = newBadge.ai_likelihood_score ?? 0;
   const origWQ = (origBadge.writing_quality_score ?? summary.detect_writing_quality ?? 0);
   const newWQ = newBadge.writing_quality_score ?? 0;
-  const origTier = (origBadge.tier || origScan.overall_tier || '?').toUpperCase();
-  const newTier = (newBadge.tier || newScan.overall_tier || '?').toUpperCase();
-
   const origFindings = origScan.findings || {};
   const newFindings = newScan.findings || {};
   const tiers = ['critical', 'high', 'medium', 'low'];
@@ -191,13 +188,40 @@ export default function Rewrite() {
     outcome === 'partially_improved' ||
     (hasScanComparison && newAI < origAI && newTotal <= origTotal)
   );
-  const outcomeLabel = noTextChange ? 'No Automatic Rewrite' : regressed ? 'No Improvement' : improved ? 'Improved' : converged ? 'Converged' : 'Review Needed';
-  const outcomeColor = noTextChange ? '#f59e0b' : regressed ? '#ef4444' : improved || converged ? '#22c55e' : '#f59e0b';
-  const outcomeBg = noTextChange ? '#fffbeb' : regressed ? '#fef2f2' : improved || converged ? '#f0fdf4' : '#fffbeb';
+  const outcomeLabel = noTextChange
+    ? 'Author Input Needed'
+    : regressed
+      ? 'Original Preserved'
+      : improved
+        ? 'Revision Improved'
+        : converged
+          ? 'Revision Complete'
+          : 'Review Needed';
+  const outcomeTone = improved || converged ? 'positive' : noTextChange || regressed ? 'guided' : 'neutral';
+  const outcomeColor = outcomeTone === 'positive' ? '#15803d' : outcomeTone === 'guided' ? '#92400e' : '#475569';
+  const outcomeBg = outcomeTone === 'positive' ? '#ecfdf5' : outcomeTone === 'guided' ? '#fffbeb' : '#f8fafc';
+  const resultMessage = noTextChange
+    ? 'DraftProof found revision opportunities, but the main issues need evidence, examples, or source context from the author.'
+    : regressed
+      ? 'The attempted rewrite was not kept because the final scan did not improve.'
+      : improved
+        ? 'The final output reduced at least one measured risk signal.'
+        : 'Review the revision plan below before making another pass.';
   const mitigation = summary.mitigation_plan || {};
   const mitigationCounts = mitigation.counts || {};
   const mitigationMode = (mitigation.primary_mode || '').replaceAll('_', ' ');
   const badgeDrivers = mitigation.component_drivers || [];
+  const revisionCards = [
+    ['Sentence Patches', 'auto_rewrite', 'Detector-gated sentence edits that can be attempted automatically.'],
+    ['Needs Evidence', 'needs_source_or_example', 'Claims that need author examples, citations, or more concrete context.'],
+    ['Structure Work', 'structure_guidance', 'Paragraph or section changes that should be revised manually.'],
+    ['Review Only', 'review_only', 'Signals worth checking, but not suitable for automatic rewrite.'],
+    ['Protected', 'protected', 'Quoted or sensitive text that should remain unchanged.'],
+  ];
+  const formatDriver = (name) => (name || '')
+    .replaceAll('_risk', '')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
 
   return (
     <main className="dash-shell">
@@ -226,21 +250,34 @@ export default function Rewrite() {
         {/* Before/After */}
         {hasScanComparison ? (
           <>
+            <div style={{
+              margin: '0 0 18px',
+              padding: '14px 16px',
+              borderRadius: '10px',
+              border: '1px solid #fde68a',
+              background: '#fffbeb',
+              color: '#78350f',
+              fontSize: '14px',
+              lineHeight: 1.55,
+            }}>
+              {resultMessage}
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', margin: '24px 0' }}>
-              <div style={{ padding: '20px', borderRadius: '12px', background: '#fef2f2' }}>
-                <h4 style={{ margin: '0 0 8px', color: '#ef4444' }}>Before</h4>
+              <div style={{ padding: '20px', borderRadius: '10px', background: '#fff', border: '1px solid #e2e8f0' }}>
+                <h4 style={{ margin: '0 0 8px', color: '#475569' }}>Original Scan</h4>
                 <div style={{ fontSize: '28px', fontWeight: 700 }}>{origAI.toFixed(1)}%</div>
                 <div style={{ color: '#64748b', fontSize: '13px' }}>AI Likelihood</div>
                 <div style={{ marginTop: '8px', fontSize: '13px', color: '#64748b' }}>
-                  Tier: <strong>{origTier}</strong> &middot; Findings: <strong>{origTotal}</strong>
+                  Findings: <strong>{origTotal}</strong>
                 </div>
               </div>
-              <div style={{ padding: '20px', borderRadius: '12px', background: outcomeBg }}>
-                <h4 style={{ margin: '0 0 8px', color: outcomeColor }}>After</h4>
+              <div style={{ padding: '20px', borderRadius: '10px', background: '#fff', border: `1px solid ${outcomeTone === 'positive' ? '#bbf7d0' : '#fde68a'}` }}>
+                <h4 style={{ margin: '0 0 8px', color: outcomeColor }}>Final Output</h4>
                 <div style={{ fontSize: '28px', fontWeight: 700 }}>{newAI.toFixed(1)}%</div>
                 <div style={{ color: '#64748b', fontSize: '13px' }}>AI Likelihood</div>
                 <div style={{ marginTop: '8px', fontSize: '13px', color: '#64748b' }}>
-                  Tier: <strong>{newTier}</strong> &middot; Findings: <strong>{newTotal}</strong>
+                  Findings: <strong>{newTotal}</strong>
                 </div>
               </div>
             </div>
@@ -252,7 +289,7 @@ export default function Rewrite() {
                   <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
                     <th style={{ padding: '8px', textAlign: 'left' }}>Metric</th>
                     <th style={{ padding: '8px', textAlign: 'center' }}>Original</th>
-                    <th style={{ padding: '8px', textAlign: 'center' }}>Rewritten</th>
+                    <th style={{ padding: '8px', textAlign: 'center' }}>Final Output</th>
                     <th style={{ padding: '8px', textAlign: 'center' }}>Change</th>
                   </tr>
                 </thead>
@@ -316,20 +353,14 @@ export default function Rewrite() {
 
         {mitigation.primary_mode && (
           <div style={{ margin: '24px 0' }}>
-            <h3>Mitigation Plan</h3>
+            <h3>Revision Plan</h3>
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
               gap: '12px',
               marginTop: '12px',
             }}>
-              {[
-                ['Auto Rewrite', 'auto_rewrite'],
-                ['Needs Evidence', 'needs_source_or_example'],
-                ['Structure', 'structure_guidance'],
-                ['Review Only', 'review_only'],
-                ['Protected', 'protected'],
-              ].map(([label, key]) => (
+              {revisionCards.map(([label, key, help]) => (
                 <div key={key} style={{
                   border: '1px solid #e2e8f0',
                   borderRadius: '8px',
@@ -338,25 +369,26 @@ export default function Rewrite() {
                 }}>
                   <div style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
                   <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '4px' }}>{mitigationCounts[key] || 0}</div>
+                  <div style={{ marginTop: '6px', fontSize: '12px', color: '#64748b', lineHeight: 1.45 }}>{help}</div>
                 </div>
               ))}
             </div>
             <div style={{ marginTop: '12px', color: '#475569', fontSize: '14px' }}>
-              Primary mode: <strong style={{ textTransform: 'capitalize' }}>{mitigationMode}</strong>
+              Recommended path: <strong style={{ textTransform: 'capitalize' }}>{mitigationMode || 'guided revision'}</strong>
             </div>
             {badgeDrivers.length > 0 && (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', marginTop: '12px' }}>
                 <thead>
                   <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                    <th style={{ padding: '8px', textAlign: 'left' }}>Badge Driver</th>
-                    <th style={{ padding: '8px', textAlign: 'center' }}>Score</th>
-                    <th style={{ padding: '8px', textAlign: 'left' }}>Mitigation</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>Revision Focus</th>
+                    <th style={{ padding: '8px', textAlign: 'center' }}>Signal Strength</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>Suggested Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {badgeDrivers.slice(0, 6).map((driver, i) => (
                     <tr key={`${driver.component}-${i}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '8px' }}>{(driver.component || '').replaceAll('_', ' ')}</td>
+                      <td style={{ padding: '8px' }}>{formatDriver(driver.component)}</td>
                       <td style={{ padding: '8px', textAlign: 'center' }}>{Number(driver.score || 0).toFixed(1)}%</td>
                       <td style={{ padding: '8px' }}>{driver.mitigation}</td>
                     </tr>
