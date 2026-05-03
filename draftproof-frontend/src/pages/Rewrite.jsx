@@ -177,33 +177,54 @@ export default function Rewrite() {
   const origRisk = summary.original_risk ?? 0;
   const finalRisk = summary.final_risk ?? 0;
 
+  const aiImproved = hasScanComparison && newAI < origAI - 0.05;
+  const aiWorse = hasScanComparison && newAI > origAI + 0.05;
+  const qualityImproved = hasScanComparison && newWQ < origWQ - 0.05;
+  const findingsImproved = hasScanComparison && newTotal < origTotal;
+  const findingsWorse = hasScanComparison && newTotal > origTotal;
+  const rollbackApplied = Boolean(summary.rollback_applied) || outcome === 'rejected_for_drift';
+  const finalLooksOriginal = hasScanComparison
+    ? Math.abs(newAI - origAI) <= 0.05 && Math.abs(newWQ - origWQ) <= 0.05 && newTotal === origTotal
+    : false;
+  const originalPreserved = noTextChange || (rollbackApplied && finalLooksOriginal);
+
   // Derive outcome label from the final full detect scan, not local rewrite attempts.
-  const regressed = !noTextChange && (
-    outcome === 'rejected_for_drift' ||
+  const improvedWithReview = !originalPreserved && (aiImproved || qualityImproved) && findingsWorse;
+  const mixedResult = !originalPreserved && !improvedWithReview && (aiImproved || qualityImproved || findingsImproved) && findingsWorse;
+  const regressed = !originalPreserved && !mixedResult && (
+    aiWorse ||
     outcome === 'floor_reached' ||
-    (hasScanComparison && (newAI > origAI + 0.05 || newTotal > origTotal))
+    (findingsWorse && !aiImproved && !qualityImproved)
   );
-  const improved = !regressed && (
+  const improved = !originalPreserved && !regressed && !mixedResult && (
     outcome === 'improved' ||
     outcome === 'partially_improved' ||
-    (hasScanComparison && newAI < origAI && newTotal <= origTotal)
+    ((aiImproved || qualityImproved || findingsImproved) && !findingsWorse)
   );
   const outcomeLabel = noTextChange
     ? 'Author Input Needed'
-    : regressed
+    : originalPreserved
       ? 'Original Preserved'
-      : improved
+      : improvedWithReview
+        ? 'Improved With Review'
+      : mixedResult
+        ? 'Mixed Result'
+    : improved
         ? 'Revision Improved'
         : converged
           ? 'Revision Complete'
           : 'Review Needed';
-  const outcomeTone = improved || converged ? 'positive' : noTextChange || regressed ? 'guided' : 'neutral';
+  const outcomeTone = improved || improvedWithReview || converged ? 'positive' : noTextChange || originalPreserved || mixedResult || regressed ? 'guided' : 'neutral';
   const outcomeColor = outcomeTone === 'positive' ? '#15803d' : outcomeTone === 'guided' ? '#92400e' : '#475569';
   const outcomeBg = outcomeTone === 'positive' ? '#ecfdf5' : outcomeTone === 'guided' ? '#fffbeb' : '#f8fafc';
   const resultMessage = noTextChange
     ? 'DraftProof found revision opportunities, but the main issues need evidence, examples, or source context from the author.'
-    : regressed
+    : originalPreserved
       ? 'The attempted rewrite was not kept because the final scan did not improve.'
+      : improvedWithReview
+        ? 'AI likelihood and writing-quality risk improved. Review the new findings before keeping the final output.'
+      : mixedResult
+        ? 'AI likelihood improved, but total findings increased. Review the revision plan before keeping the final output.'
       : improved
         ? 'The final output reduced at least one measured risk signal.'
         : 'Review the revision plan below before making another pass.';
@@ -212,7 +233,7 @@ export default function Rewrite() {
   const mitigationMode = (mitigation.primary_mode || '').replaceAll('_', ' ');
   const badgeDrivers = mitigation.component_drivers || [];
   const referencePatterns = mitigation.reference_patterns || [];
-  const finalPreserved = noTextChange || regressed;
+  const finalPreserved = originalPreserved;
   const revisionCards = [
     [
       'Sentence Targets',

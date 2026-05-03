@@ -152,15 +152,23 @@ def _mode_label(mode: str) -> str:
 def _result_label(
     *,
     no_text_change: bool,
-    rollback: bool,
-    scan_regressed: bool,
+    original_preserved: bool,
+    improved_with_review: bool,
+    mixed_result: bool,
+    regressed: bool,
     improved: bool,
     converged: bool,
 ) -> str:
     if no_text_change:
         return "Author Input Needed"
-    if rollback or scan_regressed:
+    if original_preserved:
         return "Original Preserved"
+    if improved_with_review:
+        return "Improved With Review"
+    if mixed_result:
+        return "Mixed Result"
+    if regressed:
+        return "Review Needed"
     if improved:
         return "Revision Improved"
     if converged:
@@ -208,6 +216,7 @@ def render_rewrite_report(
     attempted_scan = summary.get("detect_scan_attempted", {})
     rollback = summary.get("rollback_applied", False)
     mitigation = summary.get("mitigation_plan") or {}
+    final_output_preserved = no_text_change
 
     if orig_scan and new_scan:
         orig_badge = _badge(orig_scan)
@@ -227,12 +236,48 @@ def render_rewrite_report(
         n_total = _count_findings(new_findings)
         orig_axis = orig_scan.get("axis_scores", {})
         new_axis = new_scan.get("axis_scores", {})
-        scan_regressed = new_ai > orig_ai + 0.05 or n_total > o_total
-        improved = n_total < o_total or new_ai < orig_ai
+        ai_improved = new_ai < orig_ai - 0.05
+        ai_worse = new_ai > orig_ai + 0.05
+        quality_improved = new_wq < orig_wq - 0.05
+        findings_improved = n_total < o_total
+        findings_worse = n_total > o_total
+        final_looks_original = (
+            abs(new_ai - orig_ai) <= 0.05
+            and abs(new_wq - orig_wq) <= 0.05
+            and n_total == o_total
+        )
+        original_preserved = no_text_change or (rollback and final_looks_original)
+        final_output_preserved = original_preserved
+        improved_with_review = (
+            not original_preserved
+            and (ai_improved or quality_improved or findings_improved)
+            and findings_worse
+            and (ai_improved or quality_improved)
+        )
+        mixed_result = (
+            not original_preserved
+            and not improved_with_review
+            and (ai_improved or quality_improved or findings_improved)
+            and findings_worse
+        )
+        scan_regressed = (
+            not original_preserved
+            and not improved_with_review
+            and not mixed_result
+            and (ai_worse or (findings_worse and not ai_improved and not quality_improved))
+        )
+        improved = (
+            not original_preserved
+            and not mixed_result
+            and not scan_regressed
+            and ((ai_improved or quality_improved or findings_improved) and not findings_worse)
+        )
         result_label = _result_label(
             no_text_change=no_text_change,
-            rollback=rollback,
-            scan_regressed=scan_regressed,
+            original_preserved=original_preserved,
+            improved_with_review=improved_with_review,
+            mixed_result=mixed_result,
+            regressed=scan_regressed,
             improved=improved,
             converged=converged,
         )
@@ -241,10 +286,14 @@ def render_rewrite_report(
         lines.append("")
         lines.append(f"**{result_label}**")
         lines.append("")
-        if rollback and attempted_scan:
+        if original_preserved and rollback and attempted_scan:
             lines.append("The attempted rewrite was not kept because the final scan did not improve.")
         elif no_text_change:
             lines.append("DraftProof found revision opportunities, but the main issues need evidence, examples, or source context from the author.")
+        elif improved_with_review:
+            lines.append("AI likelihood and writing-quality risk improved. Review the new findings before keeping the final output.")
+        elif mixed_result:
+            lines.append("AI likelihood improved, but total findings increased. Review the revision plan before keeping the final output.")
         elif improved:
             lines.append("The final output reduced at least one measured risk signal.")
         else:
@@ -283,10 +332,13 @@ def render_rewrite_report(
         # Fallback to internal metrics if detect scan data not available
         imp_risk = summary.get("improvement_risk", 0)
         rollback = summary.get("rollback_applied", False)
+        final_output_preserved = no_text_change or rollback
         result_label = _result_label(
             no_text_change=no_text_change,
-            rollback=rollback,
-            scan_regressed=False,
+            original_preserved=no_text_change or rollback,
+            improved_with_review=False,
+            mixed_result=False,
+            regressed=False,
             improved=imp_risk > 0,
             converged=converged,
         )
@@ -334,10 +386,9 @@ def render_rewrite_report(
             )
         lines.append("")
 
-        final_preserved = no_text_change or rollback
         sentence_scope_text = (
             f"{auto_count} sentence-level target(s) identified; no sentence edits kept in the final output"
-            if final_preserved
+            if final_output_preserved
             else f"{auto_count} sentence-level target(s) identified for detector-gated editing"
         )
         scope_parts = [
@@ -395,11 +446,10 @@ def render_rewrite_report(
         lines.append("")
         lines.append("| Bucket | Count | Meaning |")
         lines.append("|--------|------:|---------|")
-        final_preserved = no_text_change or rollback
         bucket_labels = {
             "auto_rewrite": (
                 "Sentence-level targets identified; no sentence edits kept in the final output"
-                if final_preserved
+                if final_output_preserved
                 else "Sentence-level targets identified for detector-gated editing"
             ),
             "needs_source_or_example": "Needs author source, citation, example, or concrete detail",
