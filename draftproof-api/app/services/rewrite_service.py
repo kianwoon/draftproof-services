@@ -155,7 +155,12 @@ async def get_rewrite_download_url(rewrite_id: str, fmt: str, user_id: str) -> s
         return None
 
     scan_id = job_info["scan_id"]
-    fmt_map = {"pdf": "rewrite.pdf", "md": "rewrite.md", "txt": "rewritten.txt"}
+    fmt_map = {
+        "pdf": "rewrite.pdf",
+        "md": "rewrite.md",
+        "txt": "rewritten.txt",
+        "log": "rewrite.log",
+    }
     filename = fmt_map.get(fmt)
     if not filename:
         return None

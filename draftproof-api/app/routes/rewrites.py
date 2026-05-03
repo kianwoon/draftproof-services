@@ -40,8 +40,8 @@ async def get_rewrite_report(rewrite_id: str, user: dict = Depends(get_current_u
 
 @router.get("/{rewrite_id}/download/{fmt}")
 async def download_rewrite(rewrite_id: str, fmt: str, user: dict = Depends(get_current_user)):
-    if fmt not in ("pdf", "md", "txt"):
-        raise HTTPException(status_code=400, detail="Format must be pdf, md, or txt")
+    if fmt not in ("pdf", "md", "txt", "log"):
+        raise HTTPException(status_code=400, detail="Format must be pdf, md, txt, or log")
     url = await rewrite_service.get_rewrite_download_url(rewrite_id, fmt, user["id"])
     if not url:
         raise HTTPException(status_code=404, detail="Download not available")

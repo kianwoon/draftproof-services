@@ -61,7 +61,14 @@ def _presign(s3, bucket: str, key: str, expires: int = 3600) -> str:
     )
 
 
-def upload_rewrite_files(scan_id: str, md_text: str, pdf_bytes: bytes, json_data: dict, rewritten_text: str) -> Dict[str, str]:
+def upload_rewrite_files(
+    scan_id: str,
+    md_text: str,
+    pdf_bytes: bytes,
+    json_data: dict,
+    rewritten_text: str,
+    debug_log: str = "",
+) -> Dict[str, str]:
     """Upload rewrite results to R2 under reports/{scan_id}/rewrite/."""
     s3 = _client()
     bucket = settings.R2_BUCKET_NAME
@@ -73,6 +80,7 @@ def upload_rewrite_files(scan_id: str, md_text: str, pdf_bytes: bytes, json_data
         ("rewrite.md", md_text.encode(), "text/markdown"),
         ("rewrite.pdf", pdf_bytes, "application/pdf"),
         ("rewritten.txt", rewritten_text.encode("utf-8"), "text/plain"),
+        ("rewrite.log", debug_log.encode("utf-8"), "text/plain"),
     ]
     for filename, data, content_type in uploads:
         if not data:

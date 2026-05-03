@@ -17,6 +17,83 @@ from .db import get_scan_job, update_job_status, capture_credits, get_rewrite_jo
 from celery.exceptions import SoftTimeLimitExceeded
 
 
+def _build_rewrite_debug_log(
+    rewrite_id: str,
+    scan_id: str,
+    report_json: dict,
+    pipeline_result: dict,
+    rewrite_json: dict,
+) -> str:
+    """Create a downloadable internal rewrite log without secrets."""
+    summary = rewrite_json.get("summary") or {}
+    mitigation = summary.get("mitigation_plan") or {}
+    rewrite_plan = report_json.get("rewrite_plan") or {}
+    rewrite_decision = report_json.get("rewrite_decision") or {}
+    badge = report_json.get("ai_risk_badge") or {}
+    original_scan = summary.get("detect_scan_original") or {}
+    final_scan = summary.get("detect_scan_rewritten") or {}
+
+    def _badge_scores(scan: dict) -> dict:
+        scan_badge = scan.get("ai_risk_badge") or {}
+        return {
+            "ai_likelihood_score": scan_badge.get("ai_likelihood_score"),
+            "writing_quality_score": scan_badge.get("writing_quality_score"),
+            "tier": scan_badge.get("tier"),
+        }
+
+    log_data = {
+        "rewrite_id": rewrite_id,
+        "scan_id": scan_id,
+        "status": rewrite_json.get("status"),
+        "elapsed": rewrite_json.get("elapsed"),
+        "pipeline_status": pipeline_result.get("status"),
+        "pipeline_elapsed": pipeline_result.get("elapsed"),
+        "input_scan": {
+            "finding_count": report_json.get("finding_count"),
+            "actionability_distribution": report_json.get("actionability_distribution"),
+            "rewrite_decision": rewrite_decision,
+            "rewrite_plan": {
+                "mode": rewrite_plan.get("mode"),
+                "overall_action": rewrite_plan.get("overall_action"),
+                "auto_fixable": rewrite_plan.get("auto_fixable"),
+                "manual_required": rewrite_plan.get("manual_required"),
+                "review_only": rewrite_plan.get("review_only"),
+                "no_action": rewrite_plan.get("no_action"),
+                "citation_repairs": rewrite_plan.get("citation_repairs"),
+            },
+            "ai_risk_badge": {
+                "tier": badge.get("tier"),
+                "ai_likelihood_score": badge.get("ai_likelihood_score"),
+                "writing_quality_score": badge.get("writing_quality_score"),
+                "ai_components": badge.get("ai_components"),
+                "writing_components": badge.get("writing_components"),
+                "reasons": badge.get("reasons"),
+            },
+        },
+        "rewrite_summary": {
+            "outcome": summary.get("outcome"),
+            "no_text_change": summary.get("no_text_change"),
+            "rollback_applied": summary.get("rollback_applied"),
+            "rollback_reason": summary.get("rollback_reason"),
+            "passes_completed": summary.get("passes_completed"),
+            "failed_targets": summary.get("failed_targets"),
+            "consecutive_failed_targets": summary.get("consecutive_failed_targets"),
+            "findings_fixed": summary.get("findings_fixed"),
+            "findings_skipped": summary.get("findings_skipped"),
+            "circuit_breaker_reason": summary.get("circuit_breaker_reason"),
+            "stage_timings": summary.get("stage_timings"),
+            "original_scores": _badge_scores(original_scan),
+            "final_scores": _badge_scores(final_scan),
+            "mitigation_counts": mitigation.get("counts"),
+            "mitigation_primary_mode": mitigation.get("primary_mode"),
+            "component_drivers": mitigation.get("component_drivers"),
+        },
+        "loop_history": summary.get("detect_loop_history") or summary.get("loop_history"),
+        "sentence_comparison_count": len(rewrite_json.get("sentence_comparison") or []),
+    }
+    return json.dumps(log_data, indent=2, ensure_ascii=False, default=str)
+
+
 @app.task(bind=True, max_retries=2, default_retry_delay=30, soft_time_limit=300, time_limit=330)
 def scan_document(self, job_id: str, text: str) -> dict:
     """Run the full detect pipeline on text and store results."""
@@ -206,7 +283,14 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 "sentence_comparison": rw.sentence_comparison if rw and hasattr(rw, "sentence_comparison") else [],
             }
 
-            upload_rewrite_files(scan_id, md_text, pdf_bytes, rewrite_json, rewritten_text)
+            debug_log = _build_rewrite_debug_log(
+                rewrite_id=rewrite_id,
+                scan_id=scan_id,
+                report_json=report_json,
+                pipeline_result=result,
+                rewrite_json=rewrite_json,
+            )
+            upload_rewrite_files(scan_id, md_text, pdf_bytes, rewrite_json, rewritten_text, debug_log)
 
         # 5. Capture credits
         user_id = scan_job.get("user_id", "") if scan_job else ""

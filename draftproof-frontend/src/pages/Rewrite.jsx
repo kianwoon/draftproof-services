@@ -556,6 +556,9 @@ export default function Rewrite() {
             <button onClick={handleDownloadDetectJson} style={dlBtnStyle}>
               Download Detect Scan JSON
             </button>
+            <button onClick={() => handleDownload('log')} style={secondaryDlBtnStyle}>
+              Download Rewrite Debug Log
+            </button>
           </div>
         )}
       </div>
@@ -566,4 +569,9 @@ export default function Rewrite() {
 const dlBtnStyle = {
   padding: '10px 20px', borderRadius: '8px', background: '#1e293b', color: '#fff',
   border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
+};
+
+const secondaryDlBtnStyle = {
+  ...dlBtnStyle,
+  background: '#475569',
 };
