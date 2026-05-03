@@ -260,9 +260,12 @@ def run_rewrite_pipeline(
         )
         rewritten_report_dict = ctx.raw_json
     elif result.final_detect_report is not None:
-        # Reuse the targeted rescan from run_rewrite() — avoids a redundant
-        # full predictability scan (saves ~50s on a 100-sentence document).
-        rewritten_detect_report = result.final_detect_report
+        # Run a fresh full scan on the rewritten text for accurate scores.
+        # The targeted rescan reuses old scores for unchanged sentences, which
+        # produces misleading "After" numbers vs what a real rescan would show.
+        rewritten_detect_runner = DetectionRunner()
+        rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
+
         rewritten_builder = ReportBuilder()
         rewritten_builder.add_detection_report(rewritten_detect_report)
         if getattr(rewritten_detect_report, "postprocess_results", None):
