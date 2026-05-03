@@ -21,6 +21,7 @@ import os
 import json
 import time
 import subprocess
+import logging
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
@@ -64,6 +65,8 @@ from rewrite.scorer import (
 )
 from rewrite.voice import VoiceGuard, VoiceProfile, analyze_voice
 from llm.gateway import LLMGateway, LLMConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _metrics_from_detect(detect_report, text: str):
