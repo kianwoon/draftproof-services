@@ -18,6 +18,7 @@ import json
 import time
 import re
 import argparse
+from difflib import SequenceMatcher
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -28,6 +29,96 @@ from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
 from detect.run import DetectionRunner
 from report.report import ReportBuilder, report_to_dict
+
+
+def _detail_value(detail: dict, *keys, default=0):
+    """Read the first present metric key from a sentence detail dict."""
+    for key in keys:
+        value = detail.get(key)
+        if value is not None:
+            return value
+    return default
+
+
+def _sentence_detail_lookup(details: list) -> dict:
+    """Map sentence text to metric details, preserving the first occurrence."""
+    lookup = {}
+    for d in details or []:
+        sentence = (d.get("sentence") or "").strip()
+        if sentence and sentence not in lookup:
+            lookup[sentence] = d
+    return lookup
+
+
+def _build_aligned_sentence_comparison(mp) -> list:
+    """Build before/after sentence rows using text alignment, not index pairing.
+
+    Rewritten documents can shift sentence positions after a local edit. Pairing
+    sentence metrics by index makes every later sentence look rewritten and can
+    produce blank rewritten cells when metric lists have different lengths.
+    """
+    if not mp:
+        return []
+
+    original_sentences = [
+        s.strip() for s in re.split(r"(?<=[.!?])\s+", mp.original_text or "")
+        if s.strip()
+    ]
+    final_sentences = [
+        s.strip() for s in re.split(r"(?<=[.!?])\s+", mp.final_text or "")
+        if s.strip()
+    ]
+    if not original_sentences and not final_sentences:
+        return []
+
+    orig_details = (mp.original_metrics.sentence_details if mp.original_metrics else []) or []
+    final_details = (mp.final_metrics.sentence_details if mp.final_metrics else []) or []
+    orig_lookup = _sentence_detail_lookup(orig_details)
+    final_lookup = _sentence_detail_lookup(final_details)
+
+    rows = []
+    matcher = SequenceMatcher(a=original_sentences, b=final_sentences, autojunk=False)
+    row_index = 1
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for o_sent, n_sent in zip(original_sentences[i1:i2], final_sentences[j1:j2]):
+                o = orig_lookup.get(o_sent, {})
+                n = final_lookup.get(n_sent, {})
+                rows.append({
+                    "index": row_index,
+                    "orig_tier": _detail_value(o, "label", "risk_label", default="?"),
+                    "orig_risk": _detail_value(o, "risk", "predictability_risk"),
+                    "orig_top10": _detail_value(o, "top10_ratio", "top_10_ratio"),
+                    "orig_sentence": o_sent,
+                    "new_tier": _detail_value(n, "label", "risk_label", default="?"),
+                    "new_risk": _detail_value(n, "risk", "predictability_risk"),
+                    "new_top10": _detail_value(n, "top10_ratio", "top_10_ratio"),
+                    "new_sentence": n_sent,
+                })
+                row_index += 1
+            continue
+
+        old_block = original_sentences[i1:i2]
+        new_block = final_sentences[j1:j2]
+        block_len = max(len(old_block), len(new_block))
+        for offset in range(block_len):
+            o_sent = old_block[offset] if offset < len(old_block) else ""
+            n_sent = new_block[offset] if offset < len(new_block) else ""
+            o = orig_lookup.get(o_sent, {})
+            n = final_lookup.get(n_sent, {})
+            rows.append({
+                "index": row_index,
+                "orig_tier": _detail_value(o, "label", "risk_label", default="?"),
+                "orig_risk": _detail_value(o, "risk", "predictability_risk"),
+                "orig_top10": _detail_value(o, "top10_ratio", "top_10_ratio"),
+                "orig_sentence": o_sent,
+                "new_tier": _detail_value(n, "label", "risk_label", default="?"),
+                "new_risk": _detail_value(n, "risk", "predictability_risk"),
+                "new_top10": _detail_value(n, "top10_ratio", "top_10_ratio"),
+                "new_sentence": n_sent,
+            })
+            row_index += 1
+    return rows
 
 
 def sanitize_text(text: str) -> str:
@@ -213,27 +304,8 @@ def run_rewrite_pipeline(
             if cat == "ai_generation":
                 ai_findings.append(f)
 
-    # Get sentence comparison from the MultiPassResult metrics
-    sentence_comparison = []
-    mp = result.mp_result
-    if mp and mp.original_metrics and mp.final_metrics:
-        orig_details = mp.original_metrics.sentence_details or []
-        final_details = mp.final_metrics.sentence_details or []
-        max_idx = max(len(orig_details), len(final_details))
-        for i in range(max_idx):
-            o = orig_details[i] if i < len(orig_details) else {}
-            f = final_details[i] if i < len(final_details) else {}
-            sentence_comparison.append({
-                "index": i + 1,
-                "orig_tier": o.get("label") or o.get("risk_label", "?"),
-                "orig_risk": o.get("risk") or o.get("predictability_risk", 0),
-                "orig_top10": o.get("top10_ratio") or o.get("top_10_ratio", 0),
-                "orig_sentence": o.get("sentence", ""),
-                "new_tier": f.get("label") or f.get("risk_label", "?"),
-                "new_risk": f.get("risk") or f.get("predictability_risk", 0),
-                "new_top10": f.get("top10_ratio") or f.get("top_10_ratio", 0),
-                "new_sentence": f.get("sentence", ""),
-            })
+    # Get sentence comparison from the MultiPassResult, aligned by text diff.
+    sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
 
     # Inject detect scan scores into summary so rewrite report shows
     # the same risk scores the user saw in the detect scan report.

@@ -329,7 +329,7 @@ For predictability / common_words / topk_predictability / low_surprisal findings
 - NEVER use these predictable words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally, demonstrates, highlights, underscores, plays, key role.
 
 For formulaic_sentence / generic_phrase findings:
-- Restructure the sentence to break its formulaic pattern. Move the subject to a different position. Merge or split clauses. Start the sentence differently than it currently starts.
+- Restructure the sentence to break its formulaic pattern. Move the subject to a different position. Change clause order. Start the sentence differently than it currently starts.
 
 For style_shift / repetitive_structure findings:
 - Change the sentence opening to differ from the previous sentence's opening. If the previous sentence starts with "The X...", start this one with a participle, adverb, or dependent clause instead.
@@ -343,7 +343,7 @@ For ai_generation findings:
 CRITICAL CONSTRAINTS:
 - Keep the SAME factual meaning. Zero new information.
 - All proper nouns, numbers, dates, citations, quoted text — copy verbatim.
-- Same number of sentences in, same number out.
+- For sentence-level rewrites, output one sentence unless the task explicitly provides a larger region.
 - Do NOT exceed the character limit.
 - Output ONLY the rewritten text. No quotes, no commentary."""
 
@@ -351,13 +351,13 @@ CRITICAL CONSTRAINTS:
 def _make_chipin_rewrite_fn(detect_context: str) -> callable:
     """Create a rewrite function that calls the local `claude` CLI."""
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
-        max_chars = int(len(text) * 1.10)
+        max_chars = int(len(text) * 1.40)
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
             f"Current text ({len(text)} chars):\n{text}\n\n"
             f"Rewrite this text addressing the issues above. "
-            f"CRITICAL: Your output MUST NOT exceed {max_chars} characters. "
-            f"Rephrase in-place — do NOT expand, add sentences, or elaborate. "
+            f"CRITICAL: Respect any stricter character limit in the task; otherwise do not exceed {max_chars} characters. "
+            f"Preserve facts and do not add unsupported details. "
             "Output ONLY the rewritten text. No quotes, no commentary."
         )
         try:
@@ -701,10 +701,10 @@ def _extract_flagged_tokens(sent_data: dict) -> Optional[str]:
 
 _FINDING_STRATEGIES = {
     "high_predictability": "Replace predictable words with natural alternatives implied by context. Prefer concrete nouns/verbs over generic ones.",
-    "medium_predictability": "Soften the most predictable words. Don't over-correct — keep natural flow.",
-    "high_topk_predictability": "Replace commonly predicted token sequences with less expected alternatives.",
+    "medium_predictability": "Use the GPT-2 token signal to change clause order or context around predictable words. Avoid synonym-only edits.",
+    "high_topk_predictability": "Break the commonly predicted token sequence by changing sentence structure, clause order, or the surrounding context of flagged words.",
     "low_surprisal": "Introduce less expected word choices while keeping meaning identical.",
-    "formulaic_sentence": "Break the formulaic structure. Move subject position. Merge or split clauses. Change sentence opening.",
+    "formulaic_sentence": "Break the formulaic structure. Move subject position, change clause order, and change sentence opening.",
     "generic_phrase": "Replace generic phrase with specific wording from surrounding context.",
     "style_shift": "Adjust this sentence's opening and structure to differ from the previous sentence.",
     "repetitive_structure": "Vary the sentence pattern — change opening, clause order, or rhythm.",
@@ -727,6 +727,46 @@ def _derive_strategy(finding: Finding, enriched_text: str) -> str:
     return _FINDING_STRATEGIES.get(
         finding.finding_type,
         finding.suggested_action_type or "Rephrase to reduce flagged pattern",
+    )
+
+
+STRUCTURAL_REWRITE_FINDINGS = {
+    "high_predictability",
+    "medium_predictability",
+    "high_topk_predictability",
+    "low_surprisal",
+    "low_surprisal_pattern",
+    "formulaic_sentence",
+    "generic_formulaic_language",
+    "repetitive_sentence_structure",
+}
+
+
+def _needs_structural_rewrite(finding: Finding) -> bool:
+    return finding.finding_type in STRUCTURAL_REWRITE_FINDINGS
+
+
+def _max_candidate_chars(original_sentence: str, finding: Finding) -> int:
+    """Allow more room when GPT-2 says structure, not a word, is the problem."""
+    ratio = 1.35 if _needs_structural_rewrite(finding) else 1.20
+    return int(len(original_sentence) * ratio)
+
+
+def _rewrite_task_instruction(finding: Finding, max_chars: int) -> str:
+    """Finding-specific instruction for the LLM rewrite call."""
+    if _needs_structural_rewrite(finding):
+        return (
+            "Use the GPT-2 signal to produce ONE structurally different sentence. "
+            "Do not solve this with synonym swaps alone. Change clause order, sentence opening, "
+            "or the context around the flagged predictable tokens while preserving the same facts. "
+            f"MUST NOT exceed {max_chars} characters. "
+            "Output ONLY the rewritten sentence."
+        )
+    return (
+        "Apply a narrow in-place edit to fix the finding above. "
+        "Change only what is needed. "
+        f"MUST NOT exceed {max_chars} characters. "
+        "Output ONLY the rewritten text."
     )
 
 
@@ -897,13 +937,13 @@ def _rewrite_fn_with_detect_context(
     gateway = LLMGateway(config)
 
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
-        max_chars = int(len(text) * 1.10)
+        max_chars = int(len(text) * 1.40)
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
             f"Current text ({len(text)} chars):\n{text}\n\n"
             f"Rewrite this text addressing the issues above. "
-            f"CRITICAL: Your output MUST NOT exceed {max_chars} characters. "
-            f"Rephrase in-place — do NOT expand, add sentences, or elaborate. "
+            f"CRITICAL: Respect any stricter character limit in the task; otherwise do not exceed {max_chars} characters. "
+            f"Preserve facts and do not add unsupported details. "
             "Output ONLY the rewritten text. No quotes, no commentary."
         )
         try:
@@ -1411,20 +1451,14 @@ def run_rewrite(
         # Rewrite with retry loop
         rewritten_sentence = None
         drift = None
-        max_sent_chars = int(len(original_sentence) * 1.20)  # 20% tolerance per sentence
+        max_sent_chars = _max_candidate_chars(original_sentence, f)
 
         for attempt in range(3):
             if loop_rewrite_fn:
                 # span_info already has finding + context.
                 # rewrite_fn will wrap original_sentence in triple quotes.
                 # Just add the char limit instruction.
-                prompt = (
-                    span_info + "\n\n"
-                    "Apply ONE transformation from the system prompt rules to fix the finding above. "
-                    "Change as few words as possible. "
-                    "MUST NOT exceed " + str(max_sent_chars) + " characters. "
-                    "Output ONLY the rewritten text."
-                )
+                prompt = span_info + "\n\n" + _rewrite_task_instruction(f, max_sent_chars)
                 rewritten_sentence = loop_rewrite_fn(original_sentence, prompt)
 
             if rewritten_sentence is None:

@@ -286,6 +286,18 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
         )
         if has_downgrade:
             return "optional_structure_review"
+    # Document-level AI summary/structure signals are not safe automatic
+    # sentence rewrites. They require source context, concrete examples, or
+    # structural revision guidance.
+    if title in {
+        "moderate_ai_generation_likelihood",
+        "elevated_ai_generation_likelihood",
+        "uniform_paragraph_structure",
+        "low_burstiness",
+        "source_grounding",
+        "polished_but_ungrounded",
+    }:
+        return "manual_required"
     # Other high/medium AI-generation signals: auto-fixable
     if adj in ("high", "medium") and f.scanner == "ai_generation":
         return "auto_fixable"
