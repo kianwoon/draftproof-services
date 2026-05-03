@@ -212,8 +212,15 @@ export default function Rewrite() {
   const mitigationMode = (mitigation.primary_mode || '').replaceAll('_', ' ');
   const badgeDrivers = mitigation.component_drivers || [];
   const referencePatterns = mitigation.reference_patterns || [];
+  const finalPreserved = noTextChange || regressed;
   const revisionCards = [
-    ['Sentence Patches', 'auto_rewrite', 'Detector-gated sentence edits that can be attempted automatically.'],
+    [
+      'Sentence Targets',
+      'auto_rewrite',
+      finalPreserved
+        ? 'Sentence-level targets were identified, but no sentence edits were kept in the final output.'
+        : 'Sentence-level targets identified for detector-gated editing.',
+    ],
     ['Needs Evidence', 'needs_source_or_example', 'Claims that need author examples, citations, or more concrete context.'],
     ['Structure Work', 'structure_guidance', 'Paragraph or section changes that should be revised manually.'],
     ['Review Only', 'review_only', 'Signals worth checking, but not suitable for automatic rewrite.'],
