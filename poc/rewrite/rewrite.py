@@ -313,12 +313,20 @@ def _original_ai_likelihood(detect_results: List[DetectResult], rewrite_context:
 
 REWRITE_CHIPIN_PROMPT = """You are a text editor. Your ONLY job is to make the flagged sentence sound LESS like AI-generated text.
 
-You do this by applying ONE specific mechanical transformation. Do NOT try to "improve" the writing generally.
+HOW PREDICTABILITY DETECTION WORKS:
+A GPT-2 language model scores each word by how likely it was to appear next, given the preceding words. When many words rank among GPT-2's top-10 predictions, the sentence reads like AI output — predictable, generic, formulaic.
+
+To reduce predictability, you must BREAK expected word sequences:
+- Don't just swap one word for a synonym — the replacement may be equally predictable.
+- Instead, RESTRUCTURE the sentence so the flagged words appear in a different context, or replace them with context-specific wording that GPT-2 wouldn't predict.
+- Varying sentence length and clause structure also helps (short, long, medium — not uniform).
 
 TRANSFORMATION RULES (apply the one matching the finding type):
 
 For predictability / common_words / topk_predictability / low_surprisal findings:
-- Replace generic scaffolding with natural, concrete wording already implied by the sentence or neighboring context. Prefer sharper nouns/verbs over thesaurus words. Do not make the sentence sound ornate. NEVER use the words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally.
+- If GPT-2 analysis is provided, use it: the flagged tokens are the most predictable words. Replace them OR restructure the sentence so they become less predictable in context.
+- Prefer concrete, specific wording from the surrounding context over generic academic terms.
+- NEVER use these predictable words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally, demonstrates, highlights, underscores, plays, key role.
 
 For formulaic_sentence / generic_phrase findings:
 - Restructure the sentence to break its formulaic pattern. Move the subject to a different position. Merge or split clauses. Start the sentence differently than it currently starts.
@@ -1371,6 +1379,33 @@ def run_rewrite(
             sentence_metrics = _sentence_signal_context(rewrite_context, f, sent_idx)
             if sentence_metrics:
                 span_info_parts.append(sentence_metrics)
+
+        # GPT-2 token analysis for predictability findings.
+        # Don't bypass the LLM — instead, inject precise signal data into
+        # the prompt so the LLM knows exactly which tokens are predictable
+        # and can do structural rewriting informed by real metrics.
+        is_predictability = f.finding_type in (
+            "high_predictability", "medium_predictability",
+            "high_topk_predictability", "low_surprisal",
+        )
+        if is_predictability and gpt2_rewriter:
+            gpt2_analysis = gpt2_rewriter.analyze_sentence(original_sentence)
+            if gpt2_analysis:
+                analysis_lines = ["GPT-2 predictability analysis:"]
+                for t in gpt2_analysis:
+                    alts = ", ".join(t["alternatives"][:5]) if t.get("alternatives") else "(none)"
+                    analysis_lines.append(
+                        f'  Token "{t["token"]}": GPT-2 rank {t["rank"]}, '
+                        f"predictability {t['probability']:.1%}. "
+                        f"Less predictable alternatives: {alts}"
+                    )
+                analysis_lines.append(
+                    "Use this data to restructure the sentence. You may replace "
+                    "flagged words with alternatives above, or rephrase the surrounding "
+                    "context to make the flagged words less predictable in their new context."
+                )
+                span_info_parts.append("\n".join(analysis_lines))
+
         span_info = "\n".join(span_info_parts)
 
         # Rewrite with retry loop
@@ -1378,31 +1413,7 @@ def run_rewrite(
         drift = None
         max_sent_chars = int(len(original_sentence) * 1.20)  # 20% tolerance per sentence
 
-        # For predictability findings, try GPT-2 sample-and-rank first.
-        # It uses the same model that detects predictability, so it directly
-        # optimizes the metric. Falls back to LLM if GPT-2 can't improve.
-        is_predictability = f.finding_type in (
-            "high_predictability", "medium_predictability",
-            "high_topk_predictability", "low_surprisal",
-        )
-        if is_predictability and gpt2_rewriter:
-            prev_sent = sentences[sent_idx - 1] if sent_idx > 0 else ""
-            gpt2_candidate = gpt2_rewriter.rewrite_sentence(
-                original_sentence, context_before=prev_sent,
-            )
-            if gpt2_candidate:
-                rewritten_sentence = gpt2_candidate
-                loop_history.append({
-                    "loop": loops_used,
-                    "sentence": sent_idx,
-                    "attempt": 0,
-                    "note": f"gpt2_rewrite: {len(original_sentence)}→{len(gpt2_candidate)} chars",
-                })
-
-        # Fall back to LLM rewrite if GPT-2 didn't produce a candidate
         for attempt in range(3):
-            if rewritten_sentence is not None:
-                break  # already have GPT-2 candidate
             if loop_rewrite_fn:
                 # span_info already has finding + context.
                 # rewrite_fn will wrap original_sentence in triple quotes.
