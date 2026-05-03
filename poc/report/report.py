@@ -262,26 +262,12 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
         if has_adjustment:
             return "review_only"
         return "auto_fixable"
-    # Medium predictability: review_only unless paired with a sentence-level signal
-    # AT THE SAME LOCATION. Document-level signals (uncited_claim, low_specificity)
-    # apply to the whole text — they do NOT justify rewriting every medium sentence.
-    # Only co-located signals (same sentence_id) justify auto-fixing.
+    # Medium predictability: auto_fixable — the rewrite engine's regression guards
+    # (semantic drift, voice erosion) prevent over-rewriting, so the detect report
+    # doesn't need to gate on co-located signals. The FINDING_ROUTING table already
+    # maps this to suggest_rewrite with FIXABILITY_PARTIAL.
     if "medium_predictability" in title:
-        if all_findings and f.sentence_id:
-            _COLOCATED_SIGNALS = {
-                "generic_phrase", "similarity_overlap",
-                "style_shift", "weak_source_grounding",
-            }
-            paired = any(
-                other.title in _COLOCATED_SIGNALS
-                for other in all_findings
-                if other.finding_id != f.finding_id
-                and other.sentence_id == f.sentence_id
-                and other.adjusted_risk.lower() not in ("low", "review", "clean")
-            )
-            if paired:
-                return "auto_fixable"
-        return "review_only"
+        return "auto_fixable"
     # uniform_paragraph_structure with downgrade adjustment: optional review, not rewrite
     if title == "uniform_paragraph_structure":
         has_downgrade = (
