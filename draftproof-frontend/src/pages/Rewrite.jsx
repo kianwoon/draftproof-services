@@ -129,6 +129,7 @@ export default function Rewrite() {
 
   const summary = report?.summary || report?.rewrite_summary || {};
   const converged = summary.converged ?? false;
+  const outcome = summary.outcome || '';
 
   // Detect scan comparison (full pipeline scores)
   const origScan = summary.detect_scan_original || {};
@@ -156,6 +157,9 @@ export default function Rewrite() {
   const origRisk = summary.original_risk ?? 0;
   const finalRisk = summary.final_risk ?? 0;
 
+  // Derive outcome label
+  const improved = outcome === 'improved' || (hasScanComparison && (newAI < origAI || newTotal < origTotal));
+
   return (
     <main className="dash-shell">
       <div className="container">
@@ -172,10 +176,10 @@ export default function Rewrite() {
             <h1>AI Section Rewrite</h1>
           </div>
           <div className="report-hero-tier" style={{
-            background: converged ? '#f0fdf4' : '#fffbeb',
+            background: converged ? '#f0fdf4' : improved ? '#f0fdf4' : '#fffbeb',
           }}>
-            <span style={{ color: converged ? '#22c55e' : '#f59e0b', fontWeight: 600 }}>
-              {converged ? 'Converged' : 'Partially Improved'}
+            <span style={{ color: converged ? '#22c55e' : improved ? '#22c55e' : '#f59e0b', fontWeight: 600 }}>
+              {converged ? 'Converged' : improved ? 'Improved' : 'Partially Improved'}
             </span>
           </div>
         </div>
