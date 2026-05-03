@@ -131,8 +131,8 @@ def _component_items(raw_json: Dict[str, Any]) -> List[Dict[str, Any]]:
         "citation_weakness_risk": ("needs_source_or_example", "Repair citation/source linkage manually."),
         "paragraph_uniformity_risk": ("structure_guidance", "Vary paragraph structure and length at section level."),
         "signpost_paragraph_risk": ("structure_guidance", "Reduce formulaic signposting and revise paragraph openings."),
-        "topk_pattern": ("auto_rewrite", "Use GPT-2-guided structural sentence patches."),
-        "predictability": ("auto_rewrite", "Use GPT-2-guided structural sentence patches."),
+        "topk_pattern": ("auto_rewrite", "Use detector-guided structural sentence patches."),
+        "predictability": ("auto_rewrite", "Use detector-guided structural sentence patches."),
         "generic_phrase_density": ("auto_rewrite", "Replace generic phrases with document-specific wording."),
         "burstiness_risk": ("structure_guidance", "Adjust rhythm by splitting, shortening, or merging sentences."),
     }

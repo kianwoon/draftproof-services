@@ -370,6 +370,7 @@ def run_rewrite_pipeline(
     rewritten_ai = _badge_ai(rewritten_report_dict)
     original_total = _finding_total(ctx.raw_json)
     rewritten_total = _finding_total(rewritten_report_dict)
+    attempted_report_dict = rewritten_report_dict
 
     result.summary["detect_scores"] = {
         "original_ai": original_ai,
@@ -424,6 +425,8 @@ def run_rewrite_pipeline(
         }
 
     result.summary["detect_scan_original"] = _extract_scan_summary(ctx.raw_json)
+    if product_regressed:
+        result.summary["detect_scan_attempted"] = _extract_scan_summary(attempted_report_dict)
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
 
     # Generate dedicated rewrite report
