@@ -218,7 +218,10 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
             "auto_fixable": "auto_fixable",
         }
         if detected_actionability in aliases:
-            return aliases[detected_actionability]
+            mapped = aliases[detected_actionability]
+            if mapped == "auto_fixable" and f.adjusted_risk.lower() != "medium":
+                return "review_only"
+            return mapped
 
     adj = f.adjusted_risk.lower()
     title = f.title
@@ -233,43 +236,15 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
         if f.category == "citation":
             return "citation_repair"
         return "manual_required"
-    # High predictability: auto-fixable only if score is clearly high AND top10 is high
+    # High predictability is review guidance, not an automatic rewrite target.
+    # The rewrite pipeline is intentionally limited to medium findings.
     if "high_predictability" in title or "high_topk_predictability" in title:
-        # Gate: require both high score AND high top10 ratio for auto-fix
-        score = f.metadata.get("score", 0) if f.metadata else 0
-        top10 = f.metadata.get("top10_ratio", 0) if f.metadata else 0
-        if score >= 0.60 and top10 >= 0.70:
-            return "auto_fixable"
-        # High but not extreme: auto-fix only if a document-level signal confirms
-        # (low_specificity, uncited_claim) OR a co-located sentence-level signal exists
-        if all_findings:
-            _DOC_SIGNALS = {"low_specificity", "uncited_claim"}
-            doc_paired = any(
-                other.title in _DOC_SIGNALS
-                for other in all_findings
-                if other.finding_id != f.finding_id
-                and other.adjusted_risk.lower() not in ("low", "review", "clean")
-            )
-            if doc_paired:
-                return "auto_fixable"
-            _COLOCATED_SIGNALS = {
-                "generic_phrase", "similarity_overlap",
-                "style_shift", "weak_source_grounding",
-            }
-            if f.sentence_id:
-                colocated = any(
-                    other.title in _COLOCATED_SIGNALS
-                    for other in all_findings
-                    if other.finding_id != f.finding_id
-                    and other.sentence_id == f.sentence_id
-                    and other.adjusted_risk.lower() not in ("low", "review", "clean")
-                )
-                if colocated:
-                    return "auto_fixable"
         return "review_only"
     # Document-level low_specificity: auto-fixable only if NOT already downgraded
     # If AI likelihood is low and domain grounding is strong, specificity is review-level
     if title == "low_specificity":
+        if adj != "medium":
+            return "manual_required"
         has_adjustment = (
             f.metadata
             and isinstance(f.metadata, dict)
@@ -315,7 +290,7 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
     }:
         return "manual_required"
     # Other high/medium AI-generation signals: auto-fixable
-    if adj in ("high", "medium") and f.scanner == "ai_generation":
+    if adj == "medium" and f.scanner == "ai_generation":
         return "auto_fixable"
     return "review_only"
 
@@ -1650,8 +1625,14 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             serialized_rewrite_decision["targets"] = [
                 f["finding_id"] for f in auto_fixable
             ]
+            serialized_rewrite_decision["run_rewrite"] = bool(auto_fixable)
+            if not auto_fixable:
+                serialized_rewrite_decision["mode"] = "none"
+                serialized_rewrite_decision["allowed_actions"] = []
             serialized_rewrite_decision["reason"] = (
                 f"{len(auto_fixable)} auto-fixable finding(s) detected."
+                if auto_fixable
+                else "No medium auto-fixable findings. Signals are review-only."
             )
 
     result: Dict[str, Any] = {

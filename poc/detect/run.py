@@ -402,7 +402,7 @@ class DetectionRunner:
                 f.actionability = "manual_required"
             elif f.finding_type in review_only_types:
                 f.actionability = "review_only"
-            elif f.risk_level in ("high", "medium") and (
+            elif f.risk_level == "medium" and (
                 f.suggested_action_type in ("add_specific_example", "add_user_interpretation")
                 or f.finding_type in rephrasable_types
             ):

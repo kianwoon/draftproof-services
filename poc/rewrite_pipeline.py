@@ -260,10 +260,10 @@ def run_rewrite_pipeline(
         print(f"  AI-only mode: {ai_count} AI findings out of {total_findings} total")
     else:
         medium_count = sum(
-            len([f for f in dr.findings if f.risk_level in ("critical", "high", "medium")])
+            len([f for f in dr.findings if f.risk_level == "medium"])
             for dr in ctx.detect_results
         )
-        print(f"  MEDIUM+ mode: {medium_count} findings out of {total_findings} total")
+        print(f"  Medium-only mode: {medium_count} findings out of {total_findings} total")
 
     # Sanitize input text before rewrite (fix mojibake from PDF/docx extraction)
     text = sanitize_text(text)

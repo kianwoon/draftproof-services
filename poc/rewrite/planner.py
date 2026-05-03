@@ -248,9 +248,31 @@ def route_finding(finding: Finding) -> FixabilityDecision:
 
     Honours detect-pipeline actionability when available:
     - review_only / manual_required → force manual (no exceptions)
-    - auto_fixable / auto_rewrite_candidate → force auto
+    - auto_fixable / auto_rewrite_candidate → force auto only for medium findings
     - Otherwise → fall through to FINDING_ROUTING table
     """
+    route = FINDING_ROUTING.get(finding.finding_type)
+    if route and route["fixability"] == FIXABILITY_PROTECTED:
+        return FixabilityDecision(
+            finding_id=getattr(finding, "id", str(id(finding))),
+            finding_type=finding.finding_type,
+            fixability=FIXABILITY_PROTECTED,
+            action=route["action"],
+            scope=route["scope"],
+            reason=route["reason"],
+            required_inputs=route.get("required_inputs", []),
+        )
+
+    if finding.risk_level != "medium":
+        return FixabilityDecision(
+            finding_id=getattr(finding, "id", str(id(finding))),
+            finding_type=finding.finding_type,
+            fixability=FIXABILITY_MANUAL,
+            action="review_manually",
+            scope="sentence",
+            reason="Automatic rewrite is limited to medium findings.",
+        )
+
     # If detect already classified fixability, honour it STRICTLY.
     # review_only means do not auto-rewrite — even if the finding has a
     # recommendation or appears in FINDING_ROUTING. Overriding review_only
@@ -386,6 +408,7 @@ class RewritePlanner:
                 # the rewrite gate; planner only fills gaps for legacy inputs.
                 if (
                     f.finding_type == "medium_predictability"
+                    and f.risk_level == "medium"
                     and has_companion
                     and f.actionability not in ("review_only", "manual_required", "no_action")
                 ):
