@@ -134,23 +134,6 @@ def _driver_guidance(driver: dict) -> Dict[str, str]:
     }
 
 
-def _plain_signal_action(finding: dict) -> str:
-    title = finding.get("title") or finding.get("finding_type") or ""
-    title = str(title)
-    if title in {"medium_predictability", "high_predictability", "high_topk_predictability"}:
-        return "Rewrite the sentence structure and word path; synonym swaps are usually too weak."
-    if title == "low_specificity":
-        return "Add a concrete example, source detail, number, or author observation."
-    if title in {"source_grounding", "polished_but_ungrounded"}:
-        return "Attach the claim to evidence or soften it."
-    if title in {"uniform_paragraph_structure", "low_burstiness"}:
-        return "Revise paragraph rhythm or structure manually."
-    if title in {"low_ai_generation_likelihood", "moderate_ai_generation_likelihood", "elevated_ai_generation_likelihood"}:
-        return "This is a summary signal; revise the underlying sentence, evidence, and structure drivers."
-    recommendation = finding.get("recommendation", "")
-    return recommendation or "Review this signal manually."
-
-
 def render_rewrite_report(
     summary: dict,
     sentence_comparison: List[Dict[str, Any]],
@@ -358,28 +341,6 @@ def render_rewrite_report(
             f"{structure_count} structure item(s)",
         ]
         lines.append("**Rewrite scope:** " + ", ".join(scope_parts) + ".")
-        lines.append("")
-
-    # ── AI Findings That Triggered Rewrite ──────────────────────────
-    if ai_findings:
-        if no_text_change:
-            lines.append("## Signals Reviewed")
-            lines.append("")
-            auto_count = ((mitigation.get("counts") or {}) if mitigation else {}).get("auto_rewrite", 0)
-            if auto_count:
-                lines.append("These AI-related findings were reviewed. Automatic targets may exist, but no final rewrite was applied.")
-            else:
-                lines.append("These AI-related findings were reviewed, but they were not safe automatic rewrite targets.")
-        else:
-            lines.append("## Signals Considered")
-        lines.append("")
-        lines.append("| # | Risk | Signal | Action |")
-        lines.append("|--:|:----:|--------|--------|")
-        for i, f in enumerate(ai_findings, 1):
-            title = f.get("title", f.get("finding_type", "unknown")).replace("|", "·")
-            risk = (f.get("adjusted_risk") or f.get("risk_level") or "?").upper()
-            recommendation = _plain_signal_action(f).replace("|", "·")
-            lines.append(f"| {i} | {risk} | {title} | {recommendation} |")
         lines.append("")
 
     # ── Rewrite Summary ─────────────────────────────────────────────
