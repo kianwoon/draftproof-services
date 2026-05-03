@@ -1333,7 +1333,7 @@ def run_rewrite(
         re_detect_report = _targeted_rescan(
             original_text=text_before_outer_loop,
             rewritten_text=current_text,
-            all_detect_results=detect_results,
+            all_detect_results=all_detect_results,
         )
         re_detect_results = re_detect_report.scanner_results
         new_findings_count = _count_findings(re_detect_results)
