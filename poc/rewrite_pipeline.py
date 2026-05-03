@@ -450,6 +450,17 @@ def run_rewrite_pipeline(
     rewritten_severity = _weighted_severity(rewritten_report_dict)
     attempted_report_dict = rewritten_report_dict
 
+    saved_ai = _badge_ai(ctx.raw_json)
+    saved_total = _finding_total(ctx.raw_json)
+    saved_critical_high = (
+        len(ctx.raw_json.get("findings", {}).get("critical", []))
+        + len(ctx.raw_json.get("findings", {}).get("high", []))
+    )
+    rewritten_critical_high = (
+        len(rewritten_report_dict.get("findings", {}).get("critical", []))
+        + len(rewritten_report_dict.get("findings", {}).get("high", []))
+    )
+
     result.summary["detect_scores"] = {
         "original_ai": original_ai,
         "rewritten_ai": rewritten_ai,
@@ -513,6 +524,17 @@ def run_rewrite_pipeline(
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
     elif total_regressed_without_review_gain and not (review_burden_regressed or severity_regressed):
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
+    # The saved scan is the user-visible contract. Fresh-vs-fresh comparison
+    # protects detector drift, but the final rewrite must not look worse than
+    # the scan result the user just reviewed.
+    if saved_ai is not None and rewritten_ai is not None and rewritten_ai > saved_ai + 0.05:
+        regression_reasons.append(f"user_visible_ai {saved_ai}->{rewritten_ai}")
+    if rewritten_total > saved_total:
+        regression_reasons.append(f"user_visible_findings {saved_total}->{rewritten_total}")
+    if rewritten_critical_high > saved_critical_high:
+        regression_reasons.append(
+            f"user_visible_critical_high_findings {saved_critical_high}->{rewritten_critical_high}"
+        )
     product_regressed = (
         rewritten_text != text
         and bool(regression_reasons)
@@ -571,6 +593,11 @@ def run_rewrite_pipeline(
                 len(original_report_dict.get("findings", {}).get("critical", []))
                 + len(original_report_dict.get("findings", {}).get("high", []))
             )
+            cp_violates_saved_contract = (
+                (saved_ai is not None and cp_ai is not None and cp_ai > saved_ai + 0.05)
+                or cp_total > saved_total
+                or cp_critical_high > saved_critical_high
+            )
             if (
                 cp_ai_regressed
                 or cp_wq_regressed
@@ -578,6 +605,7 @@ def run_rewrite_pipeline(
                 or cp_review_burden > original_review_burden
                 or cp_severity > original_severity
                 or cp_critical_high > original_critical_high
+                or cp_violates_saved_contract
                 or not cp_improved
             ):
                 continue
