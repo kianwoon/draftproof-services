@@ -35,6 +35,12 @@ def _build_rewrite_debug_log(
     attempted_scan = summary.get("detect_scan_attempted") or {}
     effective_plan = rewrite_json.get("effective_rewrite_plan") or {}
 
+    saved_scores = {
+        "ai_likelihood_score": badge.get("ai_likelihood_score"),
+        "writing_quality_score": badge.get("writing_quality_score"),
+        "tier": badge.get("tier"),
+    }
+
     def _badge_scores(scan: dict) -> dict:
         scan_badge = scan.get("ai_risk_badge") or {}
         return {
@@ -84,6 +90,9 @@ def _build_rewrite_debug_log(
             "findings_skipped": summary.get("findings_skipped"),
             "circuit_breaker_reason": summary.get("circuit_breaker_reason"),
             "stage_timings": summary.get("stage_timings"),
+            "comparison_baseline": summary.get("comparison_baseline"),
+            "baseline_rescan_delta": summary.get("baseline_rescan_delta"),
+            "saved_user_visible_scores": saved_scores,
             "original_scores": _badge_scores(original_scan),
             "attempted_scores": _badge_scores(attempted_scan),
             "final_scores": _badge_scores(final_scan),
