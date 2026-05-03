@@ -64,6 +64,27 @@ from rewrite.voice import VoiceGuard, VoiceProfile, analyze_voice
 from llm.gateway import LLMGateway, LLMConfig
 
 
+def _metrics_from_detect(detect_report, text: str):
+    """Extract predictability metrics from an already-run DetectionReport.
+
+    Avoids running compute_metrics() which would trigger another
+    full predictability scan (~28s). Falls back to compute_metrics
+    only if the predictability scanner didn't produce results.
+    """
+    for sr in detect_report.scanner_results:
+        if sr.scanner == "predictability" and sr.raw:
+            raw = sr.raw
+            if hasattr(raw, "sentence_details"):
+                from rewriter import MetricsResult
+                return MetricsResult(
+                    risk=raw.overall_risk if hasattr(raw, "overall_risk") else 0.5,
+                    top10_ratio=raw.top10_ratio if hasattr(raw, "top10_ratio") else 0.0,
+                    sentence_details=raw.sentence_details,
+                )
+    # Fallback: run compute_metrics only if detect didn't include predictability
+    return compute_metrics(text, PredictabilityScanner())
+
+
 # ── AI-only finding filter ───────────────────────────────────────────
 
 def _is_ai_finding(f: Finding) -> bool:
@@ -191,6 +212,7 @@ class RewriteModuleResult:
     voice_profile: Optional[VoiceProfile] = None
     rewrite_surface: Optional[RewriteSurface] = None
     voice_guard_warnings: List[str] = field(default_factory=list)
+    final_detect_report: Any = None  # reuse in pipeline to avoid redundant scan
 
 
 # ── Extract rewrite guidance from detect results ──────────────────────
@@ -1055,8 +1077,10 @@ def run_rewrite(
     original_finding_count = _count_findings(detect_results)
     net_findings_fixed = original_finding_count - final_finding_count
 
-    final_metrics = compute_metrics(current_text, scanner)
-    original_metrics = compute_metrics(content, scanner)
+    # Reuse predictability results from final_detect_report instead of
+    # running compute_metrics again (saves ~28s per call).
+    final_metrics = _metrics_from_detect(final_detect_report, current_text)
+    original_metrics = _metrics_from_detect(final_detect_report, content)
 
     result = MultiPassResult(
         original_text=content,
@@ -1139,6 +1163,7 @@ def run_rewrite(
         voice_profile=voice_profile,
         rewrite_surface=rewrite_surface,
         voice_guard_warnings=[],
+        final_detect_report=final_detect_report,
     )
 
 

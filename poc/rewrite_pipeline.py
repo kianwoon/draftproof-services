@@ -201,8 +201,11 @@ def run_rewrite_pipeline(
 
     # ── Run FULL detect scan on rewritten text (same pipeline as original scan) ──
     rewritten_text = result.mp_result.final_text if result.mp_result else text
-    rewritten_detect_runner = DetectionRunner()
-    rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
+    # Reuse detect report from run_rewrite() to avoid redundant predictability scan
+    rewritten_detect_report = result.final_detect_report
+    if not rewritten_detect_report:
+        rewritten_detect_runner = DetectionRunner()
+        rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
 
     rewritten_builder = ReportBuilder()
     rewritten_builder.add_detection_report(rewritten_detect_report)
