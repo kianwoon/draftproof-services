@@ -247,38 +247,15 @@ def route_finding(finding: Finding) -> FixabilityDecision:
     """Route a finding to its fixability bucket.
 
     Honours detect-pipeline actionability when available:
-    - review_only / manual_required → force manual
+    - review_only / manual_required → force manual (no exceptions)
     - auto_fixable / auto_rewrite_candidate → force auto
     - Otherwise → fall through to FINDING_ROUTING table
     """
-    # If detect already classified fixability, honour it
-    # But allow review_only findings with a recommendation to be rewritten
-    # (they were classified before the expanded rephrasable_types fix)
-    if finding.actionability in ("review_only",):
-        has_route = finding.finding_type in FINDING_ROUTING
-        has_rec = bool(getattr(finding, "recommendation", ""))
-        if has_route and has_rec:
-            route = FINDING_ROUTING[finding.finding_type]
-            fix = route["fixability"]
-            if fix not in {FIXABILITY_AUTO, FIXABILITY_PARTIAL}:
-                return FixabilityDecision(
-                    finding_id=getattr(finding, "id", str(id(finding))),
-                    finding_type=finding.finding_type,
-                    fixability=fix,
-                    action=route["action"],
-                    scope=route["scope"],
-                    reason=route["reason"],
-                    required_inputs=route.get("required_inputs", []),
-                )
-            return FixabilityDecision(
-                finding_id=getattr(finding, "id", str(id(finding))),
-                finding_type=finding.finding_type,
-                fixability=fix,
-                action="suggest_rewrite",
-                scope=route["scope"],
-                reason=f"Review-only finding with recommendation — attempting rewrite.",
-                required_inputs=route.get("required_inputs", []),
-            )
+    # If detect already classified fixability, honour it STRICTLY.
+    # review_only means do not auto-rewrite — even if the finding has a
+    # recommendation or appears in FINDING_ROUTING. Overriding review_only
+    # caused regressions on human-written text (medium_predictability findings
+    # got rewritten, introducing 13+ new findings).
     if finding.actionability in ("review_only", "manual_required", "no_action"):
         return FixabilityDecision(
             finding_id=getattr(finding, "id", str(id(finding))),
