@@ -132,6 +132,75 @@ def _filter_ai_findings(detect_results: List[DetectResult], min_severity: str = 
     return filtered
 
 
+def _filter_ai_guided_findings(
+    detect_results: List[DetectResult],
+    rewrite_context: Optional[Any] = None,
+    min_severity: str = "medium",
+) -> List[DetectResult]:
+    """AI rewrite target set, expanded with contributing sentence signals.
+
+    The AI-generation scanner often reports document-level summary findings
+    while the concrete editable evidence lives in the predictability scanner.
+    When the badge says predictability/top-k is a meaningful AI driver, include
+    medium+ predictability sentences as rewrite targets.
+    """
+    filtered = _filter_ai_findings(detect_results, min_severity=min_severity)
+
+    raw_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
+    ai_components = ((raw_json or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
+    use_predictability = (
+        ai_components.get("predictability", 0) >= 40
+        or ai_components.get("topk_pattern", 0) >= 50
+    )
+    if not use_predictability:
+        return filtered
+
+    seen = {
+        ((f.metadata or {}).get("finding_id"), f.finding_type, f.evidence)
+        for dr in filtered for f in dr.findings
+    }
+    _severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "review": 0, "info": 0}
+    min_rank = _severity_rank.get(min_severity, 2)
+    supporting_types = {
+        "high_predictability",
+        "medium_predictability",
+        "high_topk_predictability",
+        "low_surprisal_pattern",
+        "generic_formulaic_language",
+        "formulaic_sentence",
+        "generic_phrase",
+    }
+    for dr in detect_results:
+        if dr.scanner not in {"predictability", "ai_generation"}:
+            continue
+        support = []
+        for f in dr.findings:
+            key = ((f.metadata or {}).get("finding_id"), f.finding_type, f.evidence)
+            if key in seen:
+                continue
+            if (
+                f.finding_type in supporting_types
+                and _severity_rank.get(f.risk_level, 0) >= min_rank
+                and f.evidence
+            ):
+                support.append(f)
+                seen.add(key)
+        if not support:
+            continue
+        filtered.append(DetectResult(
+            scanner=dr.scanner,
+            overall_risk=dr.overall_risk,
+            confidence=dr.confidence,
+            confidence_reason=dr.confidence_reason,
+            risk_distribution=dr.risk_distribution,
+            findings=support,
+            policy_message=dr.policy_message,
+            raw=dr.raw,
+            feature_summary=dr.feature_summary or {},
+        ))
+    return filtered
+
+
 def _filter_by_severity(detect_results: List[DetectResult], min_severity: str = "medium") -> List[DetectResult]:
     """Keep MEDIUM+ findings from ALL scanners. Drops LOW/info findings.
 
@@ -160,9 +229,16 @@ def _filter_by_severity(detect_results: List[DetectResult], min_severity: str = 
     return filtered
 
 
-def _target_findings_for_mode(detect_results: List[DetectResult], ai_only: bool) -> List[Finding]:
+def _target_findings_for_mode(
+    detect_results: List[DetectResult],
+    ai_only: bool,
+    rewrite_context: Optional[Any] = None,
+) -> List[Finding]:
     """Return findings in the same scope the rewrite is allowed to target."""
-    target_results = _filter_ai_findings(detect_results) if ai_only else _filter_by_severity(detect_results)
+    target_results = (
+        _filter_ai_guided_findings(detect_results, rewrite_context)
+        if ai_only else _filter_by_severity(detect_results)
+    )
     return [f for dr in target_results for f in dr.findings]
 
 
@@ -707,7 +783,7 @@ def run_rewrite(
 
     # Filter findings before planning
     if ai_only:
-        detect_results = _filter_ai_findings(detect_results)
+        detect_results = _filter_ai_guided_findings(detect_results, rewrite_context)
     else:
         # All scanners, but only MEDIUM+ severity
         detect_results = _filter_by_severity(detect_results)
@@ -1342,7 +1418,7 @@ def run_rewrite(
     # for rewrite. A local sentence rewrite can pass guards while increasing
     # document-level AI likelihood or producing more medium+ target findings.
     original_target_findings = [f for dr in detect_results for f in dr.findings]
-    final_target_findings = _target_findings_for_mode(final_detect_results, ai_only)
+    final_target_findings = _target_findings_for_mode(final_detect_results, ai_only, rewrite_context)
     original_target_weight = weighted_finding_score(original_target_findings)
     final_target_weight = weighted_finding_score(final_target_findings)
     final_ai_likelihood = _ai_likelihood_from_results(final_detect_results)
