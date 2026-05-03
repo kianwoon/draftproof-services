@@ -405,6 +405,13 @@ def _build_detect_context(
                 sig = f.get("signal_category", "")
                 label = f"  - [{sig}] " if sig else "  - "
                 lines.append(f"{label}\"{f['evidence']}\"")
+                meta = f.get("metadata", {})
+                badge_comp = meta.get("badge_components", {})
+                if badge_comp:
+                    top_signals = sorted(badge_comp.items(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0, reverse=True)[:3]
+                    signal_str = ", ".join(f"{k}={v:.0%}" for k, v in top_signals if isinstance(v, (int, float)))
+                    if signal_str:
+                        lines.append(f"    Top signals: {signal_str}")
                 if f["recommendation"]:
                     lines.append(f"    Fix: {f['recommendation']}")
             sections.append("\n".join(lines))
@@ -416,6 +423,13 @@ def _build_detect_context(
             lines = ["PREDICTABILITY ISSUES (rewrite these spans):"]
             for f in high_risk:
                 lines.append(f"  - {f['evidence']}")
+                meta = f.get("metadata", {})
+                if "score" in meta and isinstance(meta["score"], (int, float)):
+                    lines.append(f"    Predictability score: {meta['score']:.3f}")
+                if "top10_ratio" in meta and isinstance(meta["top10_ratio"], (int, float)):
+                    lines.append(f"    Top-10 ratio: {meta['top10_ratio']:.1%}")
+                if "avg_surprisal" in meta and isinstance(meta["avg_surprisal"], (int, float)):
+                    lines.append(f"    Avg surprisal: {meta['avg_surprisal']:.2f}")
                 if f["recommendation"]:
                     lines.append(f"    Fix: {f['recommendation']}")
             sections.append("\n".join(lines))
@@ -607,6 +621,182 @@ def _sentence_signal_context(rewrite_context: Optional[Any], finding: Finding, s
     if not parts:
         return ""
     return "Sentence scan metrics: " + ", ".join(parts)
+
+
+# ── Signal-enriched prompt construction ──────────────────────────────
+
+def _matches_sentence(sent_data: dict, finding: Finding, sent_idx: int) -> bool:
+    """Check if a sentence data dict corresponds to this finding's location."""
+    sid = sent_data.get("sentence_id", "")
+    loc = finding.location or {}
+    if loc.get("sentence_id") and sid == loc["sentence_id"]:
+        return True
+    if sent_idx >= 0 and sid == f"s{sent_idx + 1:03d}":
+        return True
+    return False
+
+
+def _extract_flagged_tokens(sent_data: dict) -> Optional[str]:
+    """Get the most predictable tokens from sentence-level data."""
+    tokens = sent_data.get("top_predicted_tokens", [])
+    if tokens:
+        return ", ".join(f'"{t}"' for t in tokens[:3])
+    return None
+
+
+_FINDING_STRATEGIES = {
+    "high_predictability": "Replace predictable words with natural alternatives implied by context. Prefer concrete nouns/verbs over generic ones.",
+    "medium_predictability": "Soften the most predictable words. Don't over-correct — keep natural flow.",
+    "high_topk_predictability": "Replace commonly predicted token sequences with less expected alternatives.",
+    "low_surprisal": "Introduce less expected word choices while keeping meaning identical.",
+    "formulaic_sentence": "Break the formulaic structure. Move subject position. Merge or split clauses. Change sentence opening.",
+    "generic_phrase": "Replace generic phrase with specific wording from surrounding context.",
+    "style_shift": "Adjust this sentence's opening and structure to differ from the previous sentence.",
+    "repetitive_structure": "Vary the sentence pattern — change opening, clause order, or rhythm.",
+    "burstiness": "Shorten this sentence by cutting filler, or merge with neighboring context for rhythm variety.",
+    "ai_generation": "Address the specific signal flagged above. Do NOT rewrite broadly.",
+    "generic_formulaic_language": "Replace generic academic phrasing with natural wording from the document's context.",
+    "mechanical_transition": "Replace formulaic transition with natural connective logic from context.",
+    "generic_enumeration": "Break the numbered-list pattern — restructure as flowing prose.",
+    "vague_claim": "Make the claim more specific using details already present in surrounding text.",
+}
+
+
+def _derive_strategy(finding: Finding, enriched_text: str) -> str:
+    """Derive a concrete, finding-specific rewrite strategy."""
+    if "Strategy:" in enriched_text:
+        for line in enriched_text.split("\n"):
+            line = line.strip()
+            if line.startswith("Strategy:"):
+                return line.replace("Strategy: ", "", 1)
+    return _FINDING_STRATEGIES.get(
+        finding.finding_type,
+        finding.suggested_action_type or "Rephrase to reduce flagged pattern",
+    )
+
+
+def _enrich_span_info(finding: Finding, rewrite_context: Optional[Any], sent_idx: int) -> str:
+    """Build signal-specific targeting instructions from finding + detect data.
+
+    This replaces the generic "Fix strategy: suggest_rewrite" with concrete
+    trigger metrics so the LLM knows exactly what's wrong and what to change.
+    """
+    if not rewrite_context or not hasattr(rewrite_context, "raw_json"):
+        return ""
+    raw = rewrite_context.raw_json or {}
+    parts = []
+
+    # ── Predictability signal enrichment ──
+    if finding.finding_type in ("high_predictability", "medium_predictability"):
+        pred_data = raw.get("predictability", {})
+        for sent in pred_data.get("sentences", []):
+            if _matches_sentence(sent, finding, sent_idx):
+                top10 = sent.get("top10_ratio") or sent.get("top_10_ratio") or sent.get("top10")
+                score = sent.get("score")
+                avg_surp = sent.get("avg_surprisal")
+                threshold = sent.get("threshold")
+                if top10 is not None:
+                    top10_pct = top10 if top10 > 1 else top10 * 100
+                    parts.append(f"  Trigger: top-10 predictability = {top10_pct:.1f}%")
+                    if threshold is not None:
+                        thr_pct = threshold if threshold > 1 else threshold * 100
+                        parts.append(f"  (threshold: {thr_pct:.1f}%)")
+                if score is not None and isinstance(score, (int, float)):
+                    parts.append(f"  Predictability score: {score:.3f}")
+                if avg_surp is not None and isinstance(avg_surp, (int, float)):
+                    parts.append(f"  Avg surprisal: {avg_surp:.2f} (lower = more predictable)")
+                flagged_tokens = _extract_flagged_tokens(sent)
+                if flagged_tokens:
+                    parts.append(f"  Problem tokens: {flagged_tokens}")
+                break
+
+    # ── TopK pattern enrichment ──
+    elif finding.finding_type in ("high_topk_predictability", "low_surprisal", "low_surprisal_pattern"):
+        pred_data = raw.get("predictability", {})
+        for sent in pred_data.get("sentences", []):
+            if _matches_sentence(sent, finding, sent_idx):
+                top10 = sent.get("top10_ratio") or sent.get("top_10_ratio") or sent.get("top10")
+                top50 = sent.get("top50_ratio") or sent.get("top_50_ratio") or sent.get("top50")
+                avg_surp = sent.get("avg_surprisal")
+                if top10 is not None:
+                    top10_pct = top10 if top10 > 1 else top10 * 100
+                    parts.append(f"  Top-10 ratio: {top10_pct:.1f}%")
+                if top50 is not None:
+                    top50_pct = top50 if top50 > 1 else top50 * 100
+                    parts.append(f"  Top-50 ratio: {top50_pct:.1f}%")
+                if avg_surp is not None and isinstance(avg_surp, (int, float)):
+                    parts.append(f"  Avg surprisal: {avg_surp:.2f}")
+                flagged_tokens = _extract_flagged_tokens(sent)
+                if flagged_tokens:
+                    parts.append(f"  Most predictable tokens: {flagged_tokens}")
+                break
+
+    # ── Formulaic sentence enrichment ──
+    elif finding.finding_type in ("formulaic_sentence", "generic_phrase", "generic_formulaic_language"):
+        meta = finding.metadata or {}
+        matched_patterns = meta.get("matched_patterns", [])
+        if matched_patterns:
+            parts.append(f"  Matched AI patterns: {', '.join(str(p) for p in matched_patterns[:5])}")
+        formula_score = meta.get("formula_score")
+        if formula_score is not None and isinstance(formula_score, (int, float)):
+            parts.append(f"  Formulaicity score: {formula_score:.3f}")
+        parts.append("  Strategy: Break the formula by restructuring sentence opening and clause order")
+
+    # ── Style shift enrichment ──
+    elif finding.finding_type in ("style_shift", "repetitive_structure"):
+        meta = finding.metadata or {}
+        shift_type = meta.get("shift_type", "")
+        if shift_type:
+            parts.append(f"  Shift type: {shift_type}")
+        parts.append("  Strategy: Vary sentence opening from previous sentence's pattern")
+
+    # ── Burstiness enrichment ──
+    elif finding.finding_type == "burstiness":
+        meta = finding.metadata or {}
+        neighbor_avg = meta.get("neighbor_avg_length")
+        this_len = meta.get("sentence_length")
+        if this_len and neighbor_avg:
+            parts.append(f"  This sentence: {this_len} chars, neighbors avg: {neighbor_avg} chars")
+        parts.append("  Strategy: Make noticeably shorter or merge with context for rhythm variety")
+
+    # ── AI generation enrichment ──
+    elif finding.finding_type == "ai_generation":
+        detail = finding.detail or ""
+        if detail:
+            parts.append(f"  Root signal: {detail}")
+        meta = finding.metadata or {}
+        components = meta.get("badge_components", {})
+        if components:
+            top_signals = sorted(components.items(), key=lambda x: x[1], reverse=True)[:3]
+            signal_str = ", ".join(f"{k}={v:.0%}" for k, v in top_signals if isinstance(v, (int, float)))
+            if signal_str:
+                parts.append(f"  Top AI signals: {signal_str}")
+
+    # ── Transition / enumeration enrichment ──
+    elif finding.finding_type in ("mechanical_transition", "generic_enumeration"):
+        meta = finding.metadata or {}
+        transition_word = meta.get("transition_word") or meta.get("enumerator")
+        if transition_word:
+            parts.append(f"  Flagged marker: '{transition_word}'")
+        parts.append("  Strategy: Replace with natural connective from context, or remove if redundant")
+
+    # ── Vague claim enrichment ──
+    elif finding.finding_type == "vague_claim":
+        meta = finding.metadata or {}
+        specificity_score = meta.get("specificity_score")
+        if specificity_score is not None:
+            parts.append(f"  Specificity score: {specificity_score:.3f} (low = vague)")
+        parts.append("  Strategy: Make the claim more specific using details from surrounding text")
+
+    # ── Similarity enrichment ──
+    elif finding.finding_type in ("similarity_overlap", "close_paraphrase", "patchwriting", "semantic_overlap"):
+        meta = finding.metadata or {}
+        sim_score = meta.get("similarity_score") or meta.get("overlap_ratio")
+        if sim_score is not None and isinstance(sim_score, (int, float)):
+            parts.append(f"  Overlap score: {sim_score:.3f}")
+        parts.append("  Strategy: Rephrase to express the same idea in your own structure and wording")
+
+    return "\n".join(parts)
 
 
 def _component_regression_check(original: str, candidate: str) -> tuple[bool, str]:
@@ -1088,14 +1278,17 @@ def run_rewrite(
             and ps.end_char <= sent_start + len(original_sentence)
         ] if sent_start >= 0 else []
 
-        # Build focused per-sentence prompt
-        # NOTE: The rewrite_fn already wraps text in """ quotes and adds char limits.
-        # We only send finding details + context here — NOT the text itself.
+        # Build focused per-sentence prompt with signal enrichment
         span_info_parts = [
             "Finding: [" + f.finding_type + "/" + f.risk_level + "] " + f.detail,
-            "Fix strategy: " + f.suggested_action_type,
-            "Flagged phrase: '" + f.evidence + "'",
         ]
+        # Inject specific signal metrics (trigger, problem tokens, etc.)
+        enriched = _enrich_span_info(f, rewrite_context, sent_idx)
+        if enriched:
+            span_info_parts.append(enriched)
+        # Concrete finding-specific strategy
+        span_info_parts.append("Strategy: " + _derive_strategy(f, enriched))
+        span_info_parts.append("Flagged phrase: '" + f.evidence + "'")
         if ctx_before:
             span_info_parts.append("Previous sentence context: '" + ctx_before + "'")
         if ctx_after:
@@ -1103,9 +1296,11 @@ def run_rewrite(
         if sent_protected:
             protected_items = ", ".join(ps.text for ps in sent_protected)
             span_info_parts.append("Must preserve exactly: " + protected_items)
-        sentence_metrics = _sentence_signal_context(rewrite_context, f, sent_idx)
-        if sentence_metrics:
-            span_info_parts.append(sentence_metrics)
+        # Fallback: keep legacy sentence metrics if enrichment was empty
+        if not enriched:
+            sentence_metrics = _sentence_signal_context(rewrite_context, f, sent_idx)
+            if sentence_metrics:
+                span_info_parts.append(sentence_metrics)
         span_info = "\n".join(span_info_parts)
 
         # Rewrite with retry loop
@@ -1393,11 +1588,13 @@ def run_rewrite(
             findings_lines = []
             for action in remaining:
                 f = action.finding
-                findings_lines.append(
-                    f"- [{f.finding_type}/{f.risk_level}] \"{f.evidence}\"\n"
-                    f"  Detail: {f.detail}\n"
-                    f"  Fix: {f.suggested_action_type}"
-                )
+                enriched = _enrich_span_info(f, rewrite_context, -1)
+                entry = f"- [{f.finding_type}/{f.risk_level}] \"{f.evidence}\"\n"
+                entry += f"  Detail: {f.detail}\n"
+                if enriched:
+                    entry += f"  Signal: {enriched.strip()}\n"
+                entry += f"  Fix: {_derive_strategy(f, enriched)}"
+                findings_lines.append(entry)
             span_info = (
                 f"Paragraph has {len(remaining)} findings to fix:\n"
                 + "\n".join(findings_lines)
