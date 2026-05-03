@@ -1,7 +1,10 @@
 import asyncio
+import logging
 
 import stripe
 from fastapi import APIRouter, Request, HTTPException, Depends
+
+log = logging.getLogger(__name__)
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -58,24 +61,29 @@ async def create_checkout(body: CheckoutRequest, request: Request, db: AsyncSess
     pack = TOKEN_PACKS[pack_id]
     price_usd = round(pack["tokens"] * TOKEN_PRICE_USD, 2)
     price_cents = int(price_usd * 100)
+    log.info("Checkout: pack=%s, price=%d cents, currency=usd", pack_id, price_cents)
 
-    session = await asyncio.to_thread(
-        stripe.checkout.Session.create,
-        timeout=30,
-        mode="payment",
-        payment_method_types=["card"],
-        line_items=[{
-            "price_data": {
-                "currency": "usd",
-                "product_data": {"name": f"DraftProof — {pack['name']} ({pack['tokens']} tokens)"},
-                "unit_amount": price_cents,
-            },
-            "quantity": 1,
-        }],
-        metadata={"user_id": user_id, "pack_id": pack_id, "tokens": str(pack["tokens"])},
-        success_url=f"{FRONTEND_URL}/buy?success=1",
-        cancel_url=f"{FRONTEND_URL}/buy?canceled=1",
-    )
+    try:
+        session = await asyncio.to_thread(
+            stripe.checkout.Session.create,
+            timeout=30,
+            mode="payment",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": f"DraftProof — {pack['name']} ({pack['tokens']} tokens)"},
+                    "unit_amount": price_cents,
+                },
+                "quantity": 1,
+            }],
+            metadata={"user_id": user_id, "pack_id": pack_id, "tokens": str(pack["tokens"])},
+            success_url=f"{FRONTEND_URL}/buy?success=1",
+            cancel_url=f"{FRONTEND_URL}/buy?canceled=1",
+        )
+    except stripe.error.StripeError as e:
+        log.error("Stripe checkout failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Stripe error: {e.user_message or str(e)}")
 
     return {"url": session.url}
 
