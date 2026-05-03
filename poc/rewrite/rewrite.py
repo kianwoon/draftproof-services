@@ -50,6 +50,7 @@ from rewrite.planner import (
     route_finding, FINDING_ROUTING, EDIT_RADIUS,
     FIXABILITY_AUTO, FIXABILITY_PARTIAL, FIXABILITY_MANUAL, FIXABILITY_PROTECTED,
 )
+from rewrite.deterministic import run_deterministic
 from rewrite.guards import (
     detect_protected_spans, check_semantic_drift, DriftCheck,
     RegressionMemory, mask_protected_spans,
@@ -677,8 +678,35 @@ def run_rewrite(
         elif detect_context:
             loop_rewrite_fn = _make_chipin_rewrite_fn(detect_context)
 
-    # ── Step 3: Per-finding rewrite loop (no mid-loop re-detect) ────
-    current_text = content
+    # ── Step 2b: Deterministic rewrite (no LLM) ─────────────────────
+    # Fix known patterns via lookup table before any LLM calls.
+    all_findings_flat = [f for dr in detect_results for f in dr.findings]
+    det_result = run_deterministic(content, all_findings_flat)
+    if det_result.fixes:
+        current_text = det_result.text
+        # Remove deterministically-fixed findings from the LLM queue
+        fixed_types = set(det_result.findings_addressed)
+        plan.auto_fixable = [
+            a for a in plan.auto_fixable
+            if a.finding.evidence in current_text  # evidence still present → not fixed
+        ]
+        # Update detect results: remove fixed findings
+        for dr in detect_results:
+            dr.findings = [
+                f for f in dr.findings
+                if f.evidence in current_text  # evidence still present → not fixed
+            ]
+        loop_history.append({
+            "loop": 0,
+            "phase": "deterministic",
+            "fixes_applied": len(det_result.fixes),
+            "fixes": [{"from": fix.original, "to": fix.replacement, "type": fix.finding_type} for fix in det_result.fixes],
+            "findings_remaining": _count_findings(detect_results),
+        })
+    else:
+        current_text = content
+
+    # ── Step 3: Per-finding rewrite loop (LLM, only remaining) ─────
     current_weighted_risk = weighted_finding_score(
         [f for dr in detect_results for f in dr.findings]
     )
