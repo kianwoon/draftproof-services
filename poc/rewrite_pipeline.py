@@ -358,44 +358,185 @@ def run_rewrite_pipeline(
         rewritten_draft_report = rewritten_builder.build()
         rewritten_report_dict = report_to_dict(rewritten_draft_report)
 
+    def _full_scan_report_dict(scan_text: str) -> dict:
+        detect_runner = DetectionRunner()
+        detect_report = detect_runner.run_all(scan_text)
+        builder = ReportBuilder()
+        builder.add_detection_report(detect_report)
+        if detect_report.postprocess_results:
+            builder.add_postprocess_results(detect_report.postprocess_results)
+        builder.set_meta(scan_time=0, original_text=scan_text)
+        return report_to_dict(builder.build())
+
     def _finding_total(report_dict):
         findings = report_dict.get("findings", {})
         return sum(len(findings.get(t, [])) for t in ("critical", "high", "medium", "low"))
+
+    def _review_burden(report_dict):
+        findings = report_dict.get("findings", {})
+        return sum(len(findings.get(t, [])) for t in ("critical", "high", "medium"))
+
+    def _weighted_severity(report_dict):
+        findings = report_dict.get("findings", {})
+        weights = {"critical": 8, "high": 5, "medium": 2, "low": 1}
+        return sum(len(findings.get(t, [])) * weights[t] for t in weights)
 
     def _badge_ai(report_dict):
         score = (report_dict.get("ai_risk_badge") or {}).get("ai_likelihood_score")
         return float(score) if isinstance(score, (int, float)) else None
 
+    def _badge_wq(report_dict):
+        score = (report_dict.get("ai_risk_badge") or {}).get("writing_quality_score")
+        return float(score) if isinstance(score, (int, float)) else None
+
     original_ai = _badge_ai(ctx.raw_json)
     rewritten_ai = _badge_ai(rewritten_report_dict)
+    original_wq = _badge_wq(ctx.raw_json)
+    rewritten_wq = _badge_wq(rewritten_report_dict)
     original_total = _finding_total(ctx.raw_json)
     rewritten_total = _finding_total(rewritten_report_dict)
+    original_review_burden = _review_burden(ctx.raw_json)
+    rewritten_review_burden = _review_burden(rewritten_report_dict)
+    original_severity = _weighted_severity(ctx.raw_json)
+    rewritten_severity = _weighted_severity(rewritten_report_dict)
     attempted_report_dict = rewritten_report_dict
 
     result.summary["detect_scores"] = {
         "original_ai": original_ai,
         "rewritten_ai": rewritten_ai,
+        "original_writing_quality": original_wq,
+        "rewritten_writing_quality": rewritten_wq,
         "original_findings": original_total,
         "rewritten_findings": rewritten_total,
+        "original_review_burden": original_review_burden,
+        "rewritten_review_burden": rewritten_review_burden,
+        "original_weighted_severity": original_severity,
+        "rewritten_weighted_severity": rewritten_severity,
     }
     ai_score_regressed = (
         original_ai is not None
         and rewritten_ai is not None
         and rewritten_ai > original_ai + 0.05
     )
-    ai_score_not_improved = (
-        original_ai is None
-        or rewritten_ai is None
-        or rewritten_ai >= original_ai
+    wq_score_regressed = (
+        original_wq is not None
+        and rewritten_wq is not None
+        and rewritten_wq > original_wq + 0.05
     )
+    review_burden_regressed = rewritten_review_burden > original_review_burden
+    severity_regressed = rewritten_severity > original_severity
+    total_regressed_without_review_gain = (
+        rewritten_total > original_total
+        and rewritten_review_burden >= original_review_burden
+    )
+    regression_reasons = []
+    if ai_score_regressed:
+        regression_reasons.append(f"AI {original_ai}->{rewritten_ai}")
+    if wq_score_regressed:
+        regression_reasons.append(f"writing_quality {original_wq}->{rewritten_wq}")
+    if review_burden_regressed:
+        regression_reasons.append(
+            f"review_burden {original_review_burden}->{rewritten_review_burden}"
+        )
+    if severity_regressed:
+        regression_reasons.append(
+            f"weighted_severity {original_severity}->{rewritten_severity}"
+        )
+    if total_regressed_without_review_gain and not (review_burden_regressed or severity_regressed):
+        regression_reasons.append(f"findings {original_total}->{rewritten_total}")
     product_regressed = (
         rewritten_text != text
-        and (ai_score_regressed or (ai_score_not_improved and rewritten_total > original_total))
+        and bool(regression_reasons)
     )
+    if product_regressed:
+        best_checkpoint = None
+        best_checkpoint_report = None
+        best_checkpoint_rank = None
+        for checkpoint in getattr(result, "rewrite_checkpoints", []) or []:
+            checkpoint_text = checkpoint.get("text", "")
+            if not checkpoint_text or checkpoint_text in {text, rewritten_text}:
+                continue
+            checkpoint_report = _full_scan_report_dict(checkpoint_text)
+            cp_ai = _badge_ai(checkpoint_report)
+            cp_wq = _badge_wq(checkpoint_report)
+            cp_total = _finding_total(checkpoint_report)
+            cp_review_burden = _review_burden(checkpoint_report)
+            cp_severity = _weighted_severity(checkpoint_report)
+
+            cp_ai_regressed = (
+                original_ai is not None
+                and cp_ai is not None
+                and cp_ai > original_ai + 0.05
+            )
+            cp_wq_regressed = (
+                original_wq is not None
+                and cp_wq is not None
+                and cp_wq > original_wq + 0.05
+            )
+            cp_improved = (
+                cp_review_burden < original_review_burden
+                or cp_severity < original_severity
+                or cp_total < original_total
+                or (original_ai is not None and cp_ai is not None and cp_ai < original_ai - 0.05)
+                or (original_wq is not None and cp_wq is not None and cp_wq < original_wq - 0.05)
+            )
+            if (
+                cp_ai_regressed
+                or cp_wq_regressed
+                or cp_review_burden > original_review_burden
+                or cp_severity > original_severity
+                or not cp_improved
+            ):
+                continue
+
+            rank = (
+                cp_review_burden,
+                cp_severity,
+                cp_total,
+                cp_ai if cp_ai is not None else 999.0,
+                -(checkpoint.get("edits", 0) or 0),
+            )
+            if best_checkpoint_rank is None or rank < best_checkpoint_rank:
+                best_checkpoint = checkpoint
+                best_checkpoint_report = checkpoint_report
+                best_checkpoint_rank = rank
+
+        if best_checkpoint and best_checkpoint_report:
+            rewritten_text = best_checkpoint["text"]
+            rewritten_report_dict = best_checkpoint_report
+            result.summary["checkpoint_selected"] = {
+                "edits": best_checkpoint.get("edits", 0),
+                "local_score_total": best_checkpoint.get("local_score_total", 0.0),
+                "reason": "final rewrite regressed; kept best non-regressing checkpoint",
+                "final_regression_reasons": regression_reasons,
+            }
+            result.summary["detect_scores"].update({
+                "rewritten_ai": _badge_ai(rewritten_report_dict),
+                "rewritten_writing_quality": _badge_wq(rewritten_report_dict),
+                "rewritten_findings": _finding_total(rewritten_report_dict),
+                "rewritten_review_burden": _review_burden(rewritten_report_dict),
+                "rewritten_weighted_severity": _weighted_severity(rewritten_report_dict),
+                "attempted_ai": rewritten_ai,
+                "attempted_writing_quality": rewritten_wq,
+                "attempted_findings": rewritten_total,
+                "attempted_review_burden": rewritten_review_burden,
+                "attempted_weighted_severity": rewritten_severity,
+            })
+            result.summary["rollback_applied"] = False
+            result.summary["outcome"] = "partially_improved"
+            if result.mp_result:
+                result.mp_result.final_text = rewritten_text
+                result.mp_result.converged = True
+                result.mp_result.convergence_reason = (
+                    "Selected best non-regressing checkpoint after final scan regression"
+                )
+            sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+            product_regressed = False
+
     if product_regressed:
         reason = (
             f"final full detect scan regressed "
-            f"(AI {original_ai}->{rewritten_ai}, findings {original_total}->{rewritten_total})"
+            f"({'; '.join(regression_reasons)})"
         )
         rewritten_text = text
         if result.mp_result:

@@ -381,8 +381,14 @@ class RewritePlanner:
             for f in dr.findings:
                 decision = route_finding(f)
 
-                # Compound-signal override: medium_predictability with companion → auto
-                if (f.finding_type == "medium_predictability" and has_companion):
+                # Compound-signal override: medium_predictability with companion → auto.
+                # Do not override explicit detect decisions. The scan pipeline owns
+                # the rewrite gate; planner only fills gaps for legacy inputs.
+                if (
+                    f.finding_type == "medium_predictability"
+                    and has_companion
+                    and f.actionability not in ("review_only", "manual_required", "no_action")
+                ):
                     decision = FixabilityDecision(
                         finding_id=decision.finding_id,
                         finding_type=decision.finding_type,

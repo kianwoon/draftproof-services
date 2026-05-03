@@ -14,6 +14,22 @@ def _count_findings(report_or_findings: dict) -> int:
     return sum(len(findings.get(t, [])) for t in _TIER_ORDER)
 
 
+def _severity_score(findings: dict) -> int:
+    """Weighted finding severity for rewrite outcome comparison."""
+    weights = {"critical": 8, "high": 5, "medium": 2, "low": 1}
+    return sum(len((findings or {}).get(t, [])) * weights[t] for t in weights)
+
+
+def _review_burden(findings: dict) -> int:
+    """Count findings that normally require user attention."""
+    findings = findings or {}
+    return (
+        len(findings.get("critical", []))
+        + len(findings.get("high", []))
+        + len(findings.get("medium", []))
+    )
+
+
 def _badge(report: dict) -> dict:
     return (report or {}).get("ai_risk_badge") or {}
 
@@ -234,6 +250,10 @@ def render_rewrite_report(
         new_findings = new_scan.get("findings", {})
         o_total = _count_findings(orig_findings)
         n_total = _count_findings(new_findings)
+        o_severity = _severity_score(orig_findings)
+        n_severity = _severity_score(new_findings)
+        o_review_burden = _review_burden(orig_findings)
+        n_review_burden = _review_burden(new_findings)
         orig_axis = orig_scan.get("axis_scores", {})
         new_axis = new_scan.get("axis_scores", {})
         ai_improved = new_ai < orig_ai - 0.05
@@ -241,6 +261,7 @@ def render_rewrite_report(
         quality_improved = new_wq < orig_wq - 0.05
         findings_improved = n_total < o_total
         findings_worse = n_total > o_total
+        severity_worse = n_severity > o_severity or n_review_burden > o_review_burden
         final_looks_original = (
             abs(new_ai - orig_ai) <= 0.05
             and abs(new_wq - orig_wq) <= 0.05
@@ -251,26 +272,34 @@ def render_rewrite_report(
         improved_with_review = (
             not original_preserved
             and (ai_improved or quality_improved or findings_improved)
-            and findings_worse
+            and not findings_worse
+            and not severity_worse
             and (ai_improved or quality_improved)
         )
         mixed_result = (
             not original_preserved
             and not improved_with_review
             and (ai_improved or quality_improved or findings_improved)
-            and findings_worse
+            and (findings_worse or severity_worse)
         )
         scan_regressed = (
             not original_preserved
             and not improved_with_review
             and not mixed_result
-            and (ai_worse or (findings_worse and not ai_improved and not quality_improved))
+            and (
+                ai_worse
+                or ((findings_worse or severity_worse) and not ai_improved and not quality_improved)
+            )
         )
         improved = (
             not original_preserved
             and not mixed_result
             and not scan_regressed
-            and ((ai_improved or quality_improved or findings_improved) and not findings_worse)
+            and (
+                (ai_improved or quality_improved or findings_improved)
+                and not findings_worse
+                and not severity_worse
+            )
         )
         result_label = _result_label(
             no_text_change=no_text_change,
@@ -293,7 +322,7 @@ def render_rewrite_report(
         elif improved_with_review:
             lines.append("AI likelihood and writing-quality risk improved. Review the new findings before keeping the final output.")
         elif mixed_result:
-            lines.append("AI likelihood improved, but total findings increased. Review the revision plan before keeping the final output.")
+            lines.append("Some risk scores improved, but the final scan added findings or increased review burden. Review the revision plan before keeping the final output.")
         elif improved:
             lines.append("The final output reduced at least one measured risk signal.")
         else:

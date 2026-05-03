@@ -22,6 +22,7 @@ import json
 import time
 import subprocess
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
@@ -353,13 +354,19 @@ def _make_chipin_rewrite_fn(detect_context: str) -> callable:
     """Create a rewrite function that calls the local `claude` CLI."""
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
         max_chars = int(len(text) * 1.40)
+        wants_candidates = "Return exactly 3 candidates" in span_info
+        output_instruction = (
+            "Return exactly 3 numbered replacement candidates and no commentary."
+            if wants_candidates else
+            "Output ONLY the rewritten text. No quotes, no commentary."
+        )
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
             f"Current text ({len(text)} chars):\n{text}\n\n"
             f"Rewrite this text addressing the issues above. "
             f"CRITICAL: Respect any stricter character limit in the task; otherwise do not exceed {max_chars} characters. "
             f"Preserve facts and do not add unsupported details. "
-            "Output ONLY the rewritten text. No quotes, no commentary."
+            f"{output_instruction}"
         )
         try:
             result = subprocess.run(
@@ -407,6 +414,7 @@ class RewriteModuleResult:
     rewrite_surface: Optional[RewriteSurface] = None
     voice_guard_warnings: List[str] = field(default_factory=list)
     final_detect_report: Any = None  # reuse in pipeline to avoid redundant scan
+    rewrite_checkpoints: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ── Extract rewrite guidance from detect results ──────────────────────
@@ -771,6 +779,127 @@ def _rewrite_task_instruction(finding: Finding, max_chars: int) -> str:
     )
 
 
+def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
+    """Ask the LLM for several paragraph-aware sentence candidates."""
+    base = _rewrite_task_instruction(finding, max_chars)
+    return (
+        f"{base}\n"
+        "Return exactly 3 candidates as numbered lines:\n"
+        "1. <minimal edit>\n"
+        "2. <structural edit>\n"
+        "3. <plain natural edit>\n"
+        "Each candidate must be ONE sentence and must replace only the target sentence. "
+        "Do not include explanations."
+    )
+
+
+def _parse_rewrite_candidates(output: Optional[str], original_sentence: str = "") -> List[str]:
+    """Parse numbered/bulleted LLM output into distinct sentence candidates."""
+    if not output:
+        return []
+    text = output.strip()
+    if text.startswith("```") and text.endswith("```"):
+        text = text.strip("`").strip()
+    candidates: List[str] = []
+    current: List[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(r"^(?:candidate\s*)?[\(\[]?([1-3])[\)\].:-]\s*(.+)$", line, re.I)
+        bullet = re.match(r"^[-*]\s+(.+)$", line)
+        if match:
+            if current:
+                candidates.append(" ".join(current).strip())
+            current = [match.group(2).strip()]
+        elif bullet:
+            if current:
+                candidates.append(" ".join(current).strip())
+            current = [bullet.group(1).strip()]
+        elif current:
+            current.append(line)
+        else:
+            current = [line]
+    if current:
+        candidates.append(" ".join(current).strip())
+
+    cleaned: List[str] = []
+    seen = set()
+    for cand in candidates:
+        cand = cand.strip().strip('"').strip("'").strip()
+        cand = re.sub(r"^(?:minimal|structural|plain|natural)\s*(?:edit)?\s*:\s*", "", cand, flags=re.I)
+        cand = " ".join(cand.split())
+        if not cand or cand == original_sentence:
+            continue
+        key = cand.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(cand)
+        if len(cleaned) >= 3:
+            break
+    return cleaned
+
+
+def _paragraph_context(
+    sentences: List[str],
+    para_map: Dict[int, int],
+    sent_idx: int,
+) -> str:
+    """Return the full paragraph containing the target sentence."""
+    target_para = para_map.get(sent_idx)
+    if target_para is None:
+        start = max(0, sent_idx - 1)
+        end = min(len(sentences), sent_idx + 2)
+        return " ".join(sentences[start:end])
+    return " ".join(
+        s for i, s in enumerate(sentences)
+        if para_map.get(i) == target_para
+    )
+
+
+def _marked_paragraph(paragraph: str, sentence: str) -> str:
+    if sentence in paragraph:
+        return paragraph.replace(sentence, f"<TARGET>{sentence}</TARGET>", 1)
+    return f"<TARGET>{sentence}</TARGET>"
+
+
+def _generic_polish_count(text: str) -> int:
+    patterns = [
+        r"\bcrucial\b", r"\bvital\b", r"\bessential\b", r"\bsignificant\b",
+        r"\bnotable\b", r"\bundeniably\b", r"\bincreasingly\b",
+        r"\bmodern world\b", r"\bplays? a key role\b",
+        r"\bdemonstrates?\b", r"\bhighlights?\b", r"\bunderscores?\b",
+        r"\bto address modern\b", r"\bto thrive amidst\b",
+    ]
+    lower = text.lower()
+    return sum(len(re.findall(p, lower)) for p in patterns)
+
+
+def _candidate_quality_score(
+    original_sentence: str,
+    candidate_sentence: str,
+    original_paragraph: str,
+    candidate_paragraph: str,
+    predictability_delta: float,
+    drift_similarity: float,
+) -> float:
+    """Higher is better. Rewards local signal improvement without polished generic drift."""
+    orig_generic = _generic_polish_count(original_paragraph)
+    cand_generic = _generic_polish_count(candidate_paragraph)
+    generic_penalty = max(0, cand_generic - orig_generic) * 0.25
+    length_ratio = len(candidate_sentence) / max(len(original_sentence), 1)
+    length_penalty = max(0.0, abs(length_ratio - 1.0) - 0.20) * 0.5
+    improvement = max(0.0, predictability_delta)
+    return round(
+        (0.55 * improvement)
+        + (0.25 * drift_similarity)
+        - generic_penalty
+        - length_penalty,
+        4,
+    )
+
+
 def _enrich_span_info(finding: Finding, rewrite_context: Optional[Any], sent_idx: int) -> str:
     """Build signal-specific targeting instructions from finding + detect data.
 
@@ -939,13 +1068,19 @@ def _rewrite_fn_with_detect_context(
 
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
         max_chars = int(len(text) * 1.40)
+        wants_candidates = "Return exactly 3 candidates" in span_info
+        output_instruction = (
+            "Return exactly 3 numbered replacement candidates and no commentary."
+            if wants_candidates else
+            "Output ONLY the rewritten text. No quotes, no commentary."
+        )
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
             f"Current text ({len(text)} chars):\n{text}\n\n"
             f"Rewrite this text addressing the issues above. "
             f"CRITICAL: Respect any stricter character limit in the task; otherwise do not exceed {max_chars} characters. "
             f"Preserve facts and do not add unsupported details. "
-            "Output ONLY the rewritten text. No quotes, no commentary."
+            f"{output_instruction}"
         )
         try:
             resp = gateway.chat(user_msg, system=REWRITE_CHIPIN_PROMPT)
@@ -1323,6 +1458,13 @@ def run_rewrite(
     findings_skipped = 0
     loops_used = 0
     current_text = content
+    rewrite_checkpoints: List[Dict[str, Any]] = [{
+        "text": content,
+        "edits": 0,
+        "local_score_total": 0.0,
+        "note": "original",
+    }]
+    local_score_total = 0.0
 
     # ── Step 3: Per-finding rewrite loop (LLM, all findings) ────────
     current_weighted_risk = weighted_finding_score(
@@ -1398,9 +1540,11 @@ def run_rewrite(
             })
             continue
 
-        # Build context: target sentence +/- 1 sentence
+        current_sentences, current_para_map = _build_sentence_index(current_text)
+        # Build context: target sentence +/- 1 sentence and full paragraph.
         ctx_before = current_sentences[sent_idx - 1] if sent_idx > 0 else ""
         ctx_after = current_sentences[sent_idx + 1] if sent_idx < len(current_sentences) - 1 else ""
+        original_paragraph = _paragraph_context(current_sentences, current_para_map, sent_idx)
 
         # Protected spans within this sentence
         all_protected = detect_protected_spans(current_text)
@@ -1427,6 +1571,10 @@ def run_rewrite(
             span_info_parts.append("Previous sentence context: '" + ctx_before + "'")
         if ctx_after:
             span_info_parts.append("Next sentence context: '" + ctx_after + "'")
+        span_info_parts.append(
+            "Paragraph context with target marked:\n"
+            + _marked_paragraph(original_paragraph, original_sentence)
+        )
         if sent_protected:
             protected_items = ", ".join(ps.text for ps in sent_protected)
             span_info_parts.append("Must preserve exactly: " + protected_items)
@@ -1464,85 +1612,147 @@ def run_rewrite(
 
         span_info = "\n".join(span_info_parts)
 
-        # Rewrite with retry loop
+        # Generate candidate rewrites and choose the safest accepted candidate.
         rewritten_sentence = None
         drift = None
+        best_candidate_info: Optional[Dict[str, Any]] = None
+        rejected_candidates: List[Dict[str, Any]] = []
         max_sent_chars = _max_candidate_chars(original_sentence, f)
 
-        for attempt in range(3):
+        for attempt in range(2):
+            candidates: List[str] = []
             if loop_rewrite_fn:
-                # span_info already has finding + context.
-                # rewrite_fn will wrap original_sentence in triple quotes.
-                # Just add the char limit instruction.
-                prompt = span_info + "\n\n" + _rewrite_task_instruction(f, max_sent_chars)
-                rewritten_sentence = loop_rewrite_fn(original_sentence, prompt)
+                prompt = span_info + "\n\n" + _candidate_task_instruction(f, max_sent_chars)
+                raw_output = loop_rewrite_fn(original_sentence, prompt)
+                candidates = _parse_rewrite_candidates(raw_output, original_sentence)
+                if not candidates and raw_output:
+                    candidates = _parse_rewrite_candidates("1. " + raw_output, original_sentence)
 
-            if rewritten_sentence is None:
+            if not candidates:
                 break
 
-            # Hard safety: reject grossly oversized output
-            if len(rewritten_sentence) > max_sent_chars * 2:
-                loop_history.append({
-                    "loop": loops_used,
-                    "sentence": sent_idx,
-                    "attempt": attempt + 1,
-                    "note": f"rejected: {len(rewritten_sentence)} chars > 2x {max_sent_chars}",
-                })
-                rewritten_sentence = None
-                break
-
-            # Guard: semantic drift (per-sentence, threshold 0.3 — allows meaningful rephrase)
-            drift = check_semantic_drift(original_sentence, rewritten_sentence, threshold=0.2)
-            if not drift.accepted:
-                if attempt < 2:
-                    lost_items = "; ".join(drift.reasons[:3])
-                    span_info += (
-                        f"\nRETRY ({attempt+1}): Failed: {lost_items}"
-                        ". Keep same meaning, copy names/numbers/quotes verbatim."
-                    )
-                    loop_history.append({
-                        "loop": loops_used,
-                        "sentence": sent_idx,
-                        "attempt": attempt + 1,
-                        "drift_similarity": round(drift.similarity, 3),
-                        "note": f"retry: drift {drift.similarity:.3f}",
+            for cand_idx, candidate_sentence in enumerate(candidates, 1):
+                candidate_rejects = []
+                if len(candidate_sentence) > max_sent_chars * 2:
+                    candidate_rejects.append(f"gross_length {len(candidate_sentence)}>{max_sent_chars * 2}")
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
                     })
                     continue
-                break
 
-            # Guard: length bloat
-            if len(rewritten_sentence) > max_sent_chars:
-                if attempt < 2:
-                    span_info += (
-                        f"\nRETRY ({attempt+1}): Too long ({len(rewritten_sentence)} chars)."
-                        f" Max {max_sent_chars}. Shorten."
-                    )
-                    loop_history.append({
-                        "loop": loops_used,
-                        "sentence": sent_idx,
-                        "attempt": attempt + 1,
-                        "note": f"retry: length {len(original_sentence)}->{len(rewritten_sentence)}",
+                candidate_drift = check_semantic_drift(original_sentence, candidate_sentence, threshold=0.2)
+                if not candidate_drift.accepted:
+                    candidate_rejects.append("; ".join(candidate_drift.reasons[:3]))
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "drift_similarity": round(candidate_drift.similarity, 3),
+                        "text": candidate_sentence[:100],
                     })
                     continue
-                break
 
-            # Guard: protected spans
-            protected_lost = [ps for ps in sent_protected
-                              if ps.text not in rewritten_sentence] if sent_protected else []
-            if protected_lost:
-                if attempt < 2:
+                if len(candidate_sentence) > max_sent_chars:
+                    candidate_rejects.append(f"length {len(candidate_sentence)}>{max_sent_chars}")
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
+                    })
+                    continue
+
+                protected_lost = [ps for ps in sent_protected
+                                  if ps.text not in candidate_sentence] if sent_protected else []
+                if protected_lost:
                     lost = ", ".join(f"'{ps.text}'" for ps in protected_lost)
-                    span_info += f"\nRETRY ({attempt+1}): Lost: {lost}. Include verbatim."
-                    loop_history.append({
-                        "loop": loops_used,
-                        "sentence": sent_idx,
-                        "attempt": attempt + 1,
-                        "note": "retry: protected_span_lost",
+                    candidate_rejects.append(f"protected_span_lost {lost}")
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
                     })
                     continue
+
+                if original_sentence in current_text:
+                    candidate_text = current_text.replace(original_sentence, candidate_sentence, 1)
+                else:
+                    candidate_rejects.append("splice_failed")
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
+                    })
+                    continue
+
+                voice_check = voice_guard.check(current_text, candidate_text)
+                if not voice_check.accepted:
+                    candidate_rejects.append(f"voice_eroded {voice_check.reject_reason}")
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
+                    })
+                    continue
+
+                reg_check = predictability_guard.check(current_text, candidate_text, original_sentence)
+                if not reg_check.accepted:
+                    candidate_rejects.append(
+                        f"predictability_regression {reg_check.orig_risk:.3f}->{reg_check.new_risk:.3f}"
+                    )
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
+                    })
+                    continue
+
+                component_ok, component_reason = _component_regression_check(current_text, candidate_text)
+                if not component_ok:
+                    candidate_rejects.append(f"badge_component_regression {component_reason}")
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
+                    })
+                    continue
+
+                candidate_paragraph = original_paragraph.replace(original_sentence, candidate_sentence, 1)
+                score = _candidate_quality_score(
+                    original_sentence=original_sentence,
+                    candidate_sentence=candidate_sentence,
+                    original_paragraph=original_paragraph,
+                    candidate_paragraph=candidate_paragraph,
+                    predictability_delta=max(0.0, reg_check.orig_risk - reg_check.new_risk),
+                    drift_similarity=candidate_drift.similarity,
+                )
+                info = {
+                    "candidate": cand_idx,
+                    "attempt": attempt + 1,
+                    "score": score,
+                    "text": candidate_sentence,
+                    "candidate_text": candidate_text,
+                    "drift": candidate_drift,
+                    "orig_risk": reg_check.orig_risk,
+                    "new_risk": reg_check.new_risk,
+                }
+                if best_candidate_info is None or score > best_candidate_info["score"]:
+                    best_candidate_info = info
+
+            if best_candidate_info:
                 break
 
-            break  # all guards passed
+            rejection_summary = "; ".join(r["reason"] for r in rejected_candidates[-3:])
+            span_info += (
+                f"\nRETRY ({attempt+1}): All candidates failed local gates. "
+                f"Avoid these failures: {rejection_summary}. "
+                "Keep the paragraph less generic and output 3 new one-sentence candidates."
+            )
+
+        if best_candidate_info:
+            rewritten_sentence = best_candidate_info["text"]
+            candidate_text = best_candidate_info["candidate_text"]
+            drift = best_candidate_info["drift"]
 
         # Check result
         if rewritten_sentence is None or (drift and not drift.accepted):
@@ -1563,94 +1773,18 @@ def run_rewrite(
             })
             continue
 
-        if len(rewritten_sentence) > max_sent_chars:
-            findings_skipped += 1
-            floor_reasons.append(FloorReason(
-                finding_id=getattr(f, "id", str(id(f))),
-                reason_type="length_bloat",
-                explanation=f"Sentence {len(original_sentence)}->{len(rewritten_sentence)}",
-            ))
-            loop_history.append({
-                "loop": loops_used,
-                "sentence": sent_idx,
-                "finding_type": f.finding_type,
-                "reverted": True,
-                "note": f"floor: length_bloat {len(original_sentence)}->{len(rewritten_sentence)}",
-            })
-            continue
-
-        # Splice rewritten sentence back into text
-        if original_sentence in current_text:
-            candidate_text = current_text.replace(original_sentence, rewritten_sentence, 1)
-        else:
-            findings_skipped += 1
-            floor_reasons.append(FloorReason(
-                finding_id=getattr(f, "id", str(id(f))),
-                reason_type="splice_failed",
-                explanation="Original sentence no longer in text",
-            ))
-            continue
-
-        # Voice erosion check (full text)
-        voice_check = voice_guard.check(current_text, candidate_text)
-        if not voice_check.accepted:
-            findings_skipped += 1
-            floor_reasons.append(FloorReason(
-                finding_id=getattr(f, "id", str(id(f))),
-                reason_type="voice_eroded",
-                explanation=f"Voice erosion: {voice_check.reject_reason}",
-            ))
-            loop_history.append({
-                "loop": loops_used,
-                "sentence": sent_idx,
-                "finding_type": f.finding_type,
-                "reverted": True,
-                "note": "floor: voice_eroded",
-            })
-            continue
-
-        # Predictability regression guard (revert if score got worse)
-        reg_check = predictability_guard.check(current_text, candidate_text, original_sentence)
-        if not reg_check.accepted:
-            findings_skipped += 1
-            floor_reasons.append(FloorReason(
-                finding_id=getattr(f, "id", str(id(f))),
-                reason_type="predictability_regression",
-                explanation=f"Predictability {reg_check.orig_risk:.3f} -> {reg_check.new_risk:.3f} (+{reg_check.delta:.3f})",
-            ))
-            loop_history.append({
-                "loop": loops_used,
-                "sentence": sent_idx,
-                "finding_type": f.finding_type,
-                "reverted": True,
-                "orig_risk": reg_check.orig_risk,
-                "new_risk": reg_check.new_risk,
-                "delta": reg_check.delta,
-                "note": f"floor: predictability_regression +{reg_check.delta:.3f}",
-            })
-            continue
-
-        # Badge component guard: reject smoother-but-broader rewrites.
-        component_ok, component_reason = _component_regression_check(current_text, candidate_text)
-        if not component_ok:
-            findings_skipped += 1
-            floor_reasons.append(FloorReason(
-                finding_id=getattr(f, "id", str(id(f))),
-                reason_type="badge_component_regression",
-                explanation=component_reason,
-            ))
-            loop_history.append({
-                "loop": loops_used,
-                "sentence": sent_idx,
-                "finding_type": f.finding_type,
-                "reverted": True,
-                "note": f"floor: badge_component_regression {component_reason}",
-            })
-            continue
-
         # All guards passed - accept
         findings_fixed += 1
         current_text = candidate_text
+        local_score_total += float(best_candidate_info.get("score", 0.0)) if best_candidate_info else 0.0
+        rewrite_checkpoints.append({
+            "text": current_text,
+            "edits": findings_fixed,
+            "local_score_total": round(local_score_total, 4),
+            "sentence": sent_idx,
+            "finding_type": f.finding_type,
+            "candidate_score": best_candidate_info.get("score") if best_candidate_info else None,
+        })
         loop_history.append({
             "loop": loops_used,
             "sentence": sent_idx,
@@ -1660,7 +1794,12 @@ def run_rewrite(
             "new_length": len(rewritten_sentence),
             "orig_text": original_sentence[:80],
             "new_text": rewritten_sentence[:80],
-            "note": "applied",
+            "candidate_score": best_candidate_info.get("score") if best_candidate_info else None,
+            "candidate_attempt": best_candidate_info.get("attempt") if best_candidate_info else None,
+            "candidate_count": len(rejected_candidates) + (1 if best_candidate_info else 0),
+            "orig_risk": best_candidate_info.get("orig_risk") if best_candidate_info else None,
+            "new_risk": best_candidate_info.get("new_risk") if best_candidate_info else None,
+            "note": "applied candidate",
         })
 
     # ── Outer detect-rewrite loop ───────────────────────────────────
@@ -1984,6 +2123,7 @@ def run_rewrite(
         rewrite_surface=rewrite_surface,
         voice_guard_warnings=[],
         final_detect_report=final_detect_report,
+        rewrite_checkpoints=rewrite_checkpoints,
     )
 
 
