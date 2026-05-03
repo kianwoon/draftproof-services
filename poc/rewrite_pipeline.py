@@ -133,6 +133,12 @@ def run_rewrite_pipeline(
             for dr in ctx.detect_results
         )
         print(f"  AI-only mode: {ai_count} AI findings out of {total_findings} total")
+    else:
+        medium_count = sum(
+            len([f for f in dr.findings if f.risk_level in ("critical", "high", "medium")])
+            for dr in ctx.detect_results
+        )
+        print(f"  MEDIUM+ mode: {medium_count} findings out of {total_findings} total")
 
     t0 = time.time()
     result: RewriteModuleResult = run_rewrite(

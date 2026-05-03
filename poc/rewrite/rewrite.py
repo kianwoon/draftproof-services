@@ -130,6 +130,34 @@ def _filter_ai_findings(detect_results: List[DetectResult], min_severity: str = 
     return filtered
 
 
+def _filter_by_severity(detect_results: List[DetectResult], min_severity: str = "medium") -> List[DetectResult]:
+    """Keep MEDIUM+ findings from ALL scanners. Drops LOW/info findings.
+
+    Used when ai_only=False — rewrites predictability, AI, citation, etc.
+    but only for findings significant enough to warrant an LLM call.
+    """
+    _severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "review": 0, "info": 0}
+    min_rank = _severity_rank.get(min_severity, 2)
+
+    filtered = []
+    for dr in detect_results:
+        keep = [f for f in dr.findings if _severity_rank.get(f.risk_level, 0) >= min_rank]
+        if not keep:
+            continue
+        filtered.append(DetectResult(
+            scanner=dr.scanner,
+            overall_risk=dr.overall_risk,
+            confidence=dr.confidence,
+            confidence_reason=dr.confidence_reason,
+            risk_distribution=dr.risk_distribution,
+            findings=keep,
+            policy_message=dr.policy_message,
+            raw=dr.raw,
+            feature_summary=dr.feature_summary or {},
+        ))
+    return filtered
+
+
 # ── Chip-in: use local `claude` CLI when no API key ──────────────────
 
 REWRITE_CHIPIN_PROMPT = """You are a writing improvement assistant. Rewrite the flagged text to reduce AI-detectable patterns while preserving the author's original meaning.
@@ -493,9 +521,12 @@ def run_rewrite(
     Citation and integrity findings are NEVER auto-rewritten.
     When ai_only=True, only ai_generation scanner findings are targeted.
     """
-    # AI-only filter: strip non-AI findings before planning
+    # Filter findings before planning
     if ai_only:
         detect_results = _filter_ai_findings(detect_results)
+    else:
+        # All scanners, but only MEDIUM+ severity
+        detect_results = _filter_by_severity(detect_results)
 
     # Merge config
     if config is None:
