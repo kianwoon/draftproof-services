@@ -95,6 +95,81 @@ FINDING_ROUTING: Dict[str, dict] = {
         "scope": "sentence",
         "reason": "Inconsistent style can be smoothed.",
     },
+    "high_topk_predictability": {
+        "fixability": FIXABILITY_AUTO,
+        "action": "suggest_rewrite",
+        "scope": "sentence",
+        "reason": "Predictable word-choice patterns can be revised at sentence scope.",
+    },
+    "low_surprisal_pattern": {
+        "fixability": FIXABILITY_AUTO,
+        "action": "suggest_rewrite",
+        "scope": "sentence",
+        "reason": "Overly safe word-choice patterns can be revised at sentence scope.",
+    },
+    "generic_formulaic_language": {
+        "fixability": FIXABILITY_AUTO,
+        "action": "suggest_rewrite",
+        "scope": "sentence",
+        "reason": "Formulaic language can be rephrased locally.",
+    },
+    "repetitive_sentence_structure": {
+        "fixability": FIXABILITY_AUTO,
+        "action": "suggest_rewrite",
+        "scope": "sentence_pair",
+        "reason": "Repeated sentence structure can be varied locally.",
+    },
+    "low_burstiness": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "review_only",
+        "scope": "sentence_pair",
+        "reason": "Burstiness is a document-level rhythm signal; local automatic edits often regress other metrics.",
+    },
+    "uniform_paragraph_structure": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "review_only",
+        "scope": "paragraph",
+        "reason": "Paragraph uniformity requires structural editing, not sentence rephrasing.",
+    },
+    "low_specificity": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "manual_context_required",
+        "scope": "full",
+        "reason": "Specificity requires real examples, named entities, numbers, or source context; automatic rephrasing cannot safely create those.",
+        "required_inputs": ["concrete_examples", "source_context"],
+    },
+    "polished_but_ungrounded": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "manual_citation_required",
+        "scope": "paragraph",
+        "reason": "Grounding gaps require source-backed examples or citations, not rephrasing alone.",
+        "required_inputs": ["source", "citation"],
+    },
+    "source_grounding": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "manual_citation_required",
+        "scope": "paragraph",
+        "reason": "Source grounding requires evidence supplied by the author.",
+        "required_inputs": ["source", "citation"],
+    },
+    "moderate_ai_generation_likelihood": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "review_underlying_signals",
+        "scope": "full",
+        "reason": "Overall AI-likelihood is a summary signal; rewrite only the specific underlying sentence-level findings.",
+    },
+    "elevated_ai_generation_likelihood": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "review_underlying_signals",
+        "scope": "full",
+        "reason": "Overall AI-likelihood is a summary signal; rewrite only the specific underlying sentence-level findings.",
+    },
+    "low_ai_generation_likelihood": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "review_only",
+        "scope": "full",
+        "reason": "Low AI-likelihood does not justify automatic rewriting.",
+    },
     "close_paraphrase": {
         "fixability": FIXABILITY_PARTIAL,
         "action": "rewrite_from_source_card",
@@ -184,16 +259,22 @@ def route_finding(finding: Finding) -> FixabilityDecision:
         has_rec = bool(getattr(finding, "recommendation", ""))
         if has_route and has_rec:
             route = FINDING_ROUTING[finding.finding_type]
-            # Override fixability: if the table says manual, upgrade to partial
-            # so the rewrite engine will actually attempt rephrasing
             fix = route["fixability"]
-            if fix == FIXABILITY_MANUAL:
-                fix = FIXABILITY_PARTIAL
+            if fix not in {FIXABILITY_AUTO, FIXABILITY_PARTIAL}:
+                return FixabilityDecision(
+                    finding_id=getattr(finding, "id", str(id(finding))),
+                    finding_type=finding.finding_type,
+                    fixability=fix,
+                    action=route["action"],
+                    scope=route["scope"],
+                    reason=route["reason"],
+                    required_inputs=route.get("required_inputs", []),
+                )
             return FixabilityDecision(
                 finding_id=getattr(finding, "id", str(id(finding))),
                 finding_type=finding.finding_type,
                 fixability=fix,
-                action="suggest_rewrite" if fix != FIXABILITY_MANUAL else route["action"],
+                action="suggest_rewrite",
                 scope=route["scope"],
                 reason=f"Review-only finding with recommendation — attempting rewrite.",
                 required_inputs=route.get("required_inputs", []),
@@ -208,14 +289,29 @@ def route_finding(finding: Finding) -> FixabilityDecision:
             reason=f"Detect classified as {finding.actionability}.",
         )
     if finding.actionability in ("auto_fixable", "auto_rewrite_candidate"):
-        route = FINDING_ROUTING.get(finding.finding_type, DEFAULT_ROUTING)
+        route = FINDING_ROUTING.get(finding.finding_type)
+        if route is None:
+            return FixabilityDecision(
+                finding_id=getattr(finding, "id", str(id(finding))),
+                finding_type=finding.finding_type,
+                fixability=FIXABILITY_MANUAL,
+                action=DEFAULT_ROUTING["action"],
+                scope=DEFAULT_ROUTING["scope"],
+                reason="Detect marked this auto-fixable, but rewrite has no safe route for this finding type.",
+                required_inputs=[],
+            )
+        fix = route["fixability"]
         return FixabilityDecision(
             finding_id=getattr(finding, "id", str(id(finding))),
             finding_type=finding.finding_type,
-            fixability="auto",
+            fixability=fix,
             action=route["action"],
             scope=route["scope"],
-            reason=f"Detect classified as auto_fixable.",
+            reason=(
+                "Detect classified as auto_fixable; rewrite route allows automatic edit."
+                if fix in {FIXABILITY_AUTO, FIXABILITY_PARTIAL}
+                else route["reason"]
+            ),
             required_inputs=route.get("required_inputs", []),
         )
 

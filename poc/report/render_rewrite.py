@@ -104,18 +104,24 @@ def render_rewrite_report(
         lines.append("")
 
         # Overall outcome
-        if converged:
+        rollback = summary.get("rollback_applied", False)
+        if rollback:
+            lines.append("**Outcome: No Improvement** — DraftProof kept the original text because the final detect scan regressed.")
+        elif converged:
             lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
         elif n_total < o_total or new_ai < orig_ai:
             lines.append("**Outcome: Improved** — Detect scan confirms reduced AI signals after rewrite.")
         else:
-            lines.append("**Outcome: Partial** — Some signals reduced, further review recommended.")
+            lines.append("**Outcome: No Improvement** — Final detect scan did not confirm a reduction in AI signals.")
     else:
         # Fallback to internal metrics if detect scan data not available
         orig_risk = summary.get("original_risk", 0)
         final_risk = summary.get("final_risk", 0)
         imp_risk = summary.get("improvement_risk", 0)
-        if converged:
+        rollback = summary.get("rollback_applied", False)
+        if rollback:
+            lines.append("**Outcome: No Improvement** — DraftProof kept the original text because the final detect scan regressed.")
+        elif converged:
             lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
         elif imp_risk > 0:
             lines.append("**Outcome: Partially Improved** — Some signals reduced, further review recommended.")

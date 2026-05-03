@@ -47,6 +47,12 @@ def _extract_metadata(fr: dict) -> dict:
                 "category", "scanner"):
         if key in fr and fr[key] is not None:
             meta[key] = fr[key]
+    evidence = fr.get("evidence")
+    if isinstance(evidence, dict):
+        meta["structured_evidence"] = evidence
+        metrics = evidence.get("metrics")
+        if isinstance(metrics, dict):
+            meta["evidence_metrics"] = metrics
     return meta
 
 

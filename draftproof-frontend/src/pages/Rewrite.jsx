@@ -157,8 +157,17 @@ export default function Rewrite() {
   const origRisk = summary.original_risk ?? 0;
   const finalRisk = summary.final_risk ?? 0;
 
-  // Derive outcome label
-  const improved = outcome === 'improved' || (hasScanComparison && (newAI < origAI || newTotal < origTotal));
+  // Derive outcome label from the final full detect scan, not local rewrite attempts.
+  const regressed = outcome === 'rejected_for_drift' || outcome === 'floor_reached' ||
+    (hasScanComparison && (newAI > origAI + 0.05 || newTotal > origTotal));
+  const improved = !regressed && (
+    outcome === 'improved' ||
+    outcome === 'partially_improved' ||
+    (hasScanComparison && newAI < origAI && newTotal <= origTotal)
+  );
+  const outcomeLabel = converged ? 'Converged' : improved ? 'Improved' : regressed ? 'No Improvement' : 'Review Needed';
+  const outcomeColor = converged || improved ? '#22c55e' : regressed ? '#ef4444' : '#f59e0b';
+  const outcomeBg = converged || improved ? '#f0fdf4' : regressed ? '#fef2f2' : '#fffbeb';
 
   return (
     <main className="dash-shell">
@@ -176,10 +185,10 @@ export default function Rewrite() {
             <h1>AI Section Rewrite</h1>
           </div>
           <div className="report-hero-tier" style={{
-            background: converged ? '#f0fdf4' : improved ? '#f0fdf4' : '#fffbeb',
+            background: outcomeBg,
           }}>
-            <span style={{ color: converged ? '#22c55e' : improved ? '#22c55e' : '#f59e0b', fontWeight: 600 }}>
-              {converged ? 'Converged' : improved ? 'Improved' : 'Partially Improved'}
+            <span style={{ color: outcomeColor, fontWeight: 600 }}>
+              {outcomeLabel}
             </span>
           </div>
         </div>
@@ -196,8 +205,8 @@ export default function Rewrite() {
                   Tier: <strong>{origTier}</strong> &middot; Findings: <strong>{origTotal}</strong>
                 </div>
               </div>
-              <div style={{ padding: '20px', borderRadius: '12px', background: '#f0fdf4' }}>
-                <h4 style={{ margin: '0 0 8px', color: '#22c55e' }}>After</h4>
+              <div style={{ padding: '20px', borderRadius: '12px', background: outcomeBg }}>
+                <h4 style={{ margin: '0 0 8px', color: outcomeColor }}>After</h4>
                 <div style={{ fontSize: '28px', fontWeight: 700 }}>{newAI.toFixed(1)}%</div>
                 <div style={{ color: '#64748b', fontSize: '13px' }}>AI Likelihood</div>
                 <div style={{ marginTop: '8px', fontSize: '13px', color: '#64748b' }}>

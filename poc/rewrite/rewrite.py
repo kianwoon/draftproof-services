@@ -160,6 +160,30 @@ def _filter_by_severity(detect_results: List[DetectResult], min_severity: str = 
     return filtered
 
 
+def _target_findings_for_mode(detect_results: List[DetectResult], ai_only: bool) -> List[Finding]:
+    """Return findings in the same scope the rewrite is allowed to target."""
+    target_results = _filter_ai_findings(detect_results) if ai_only else _filter_by_severity(detect_results)
+    return [f for dr in target_results for f in dr.findings]
+
+
+def _ai_likelihood_from_results(detect_results: List[DetectResult]) -> float:
+    """Extract the AI-generation likelihood score from scanner results."""
+    for dr in detect_results:
+        if dr.scanner == "ai_generation":
+            return dr.likelihood_score or dr.overall_risk or 0.0
+    return 0.0
+
+
+def _original_ai_likelihood(detect_results: List[DetectResult], rewrite_context: Optional[Any]) -> float:
+    """Prefer the original report badge when available, else scanner score."""
+    if rewrite_context and hasattr(rewrite_context, "raw_json"):
+        badge = (rewrite_context.raw_json or {}).get("ai_risk_badge") or {}
+        score = badge.get("ai_likelihood_score")
+        if isinstance(score, (int, float)):
+            return float(score) / 100.0
+    return _ai_likelihood_from_results(detect_results)
+
+
 # ── Chip-in: use local `claude` CLI when no API key ──────────────────
 
 REWRITE_CHIPIN_PROMPT = """You are a text editor. Your ONLY job is to make the flagged sentence sound LESS like AI-generated text.
@@ -168,8 +192,8 @@ You do this by applying ONE specific mechanical transformation. Do NOT try to "i
 
 TRANSFORMATION RULES (apply the one matching the finding type):
 
-For predictability / common_words findings:
-- Find the 2-3 most generic words in the sentence and replace them with more specific, unusual synonyms that keep the same meaning. Examples: "important" → "pivotal", "shows" → "reveals", "helps" → "enables", "different" → "divergent". NEVER use the words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally.
+For predictability / common_words / topk_predictability / low_surprisal findings:
+- Replace generic scaffolding with natural, concrete wording already implied by the sentence or neighboring context. Prefer sharper nouns/verbs over thesaurus words. Do not make the sentence sound ornate. NEVER use the words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally.
 
 For formulaic_sentence / generic_phrase findings:
 - Restructure the sentence to break its formulaic pattern. Move the subject to a different position. Merge or split clauses. Start the sentence differently than it currently starts.
@@ -181,7 +205,7 @@ For burstiness findings:
 - If this sentence is similar in length to neighbors, make it noticeably shorter (cut filler words) or merge it with context.
 
 For ai_generation findings:
-- Replace the flagged AI-typical phrase with a natural rephrasing. A human would say it differently.
+- Fix only the specific sentence-level signal. Do not try to solve document-level specificity, grounding, or overall AI-likelihood by inventing details.
 
 CRITICAL CONSTRAINTS:
 - Keep the SAME factual meaning. Zero new information.
@@ -358,6 +382,154 @@ def _build_detect_context(
     return "\n\n".join(sections) if sections else ""
 
 
+def _pct(value: Any) -> str:
+    """Format scanner percentages that may arrive as 0-1 or 0-100."""
+    if not isinstance(value, (int, float)):
+        return ""
+    return f"{value:.1f}%" if value > 1 else f"{value * 100:.1f}%"
+
+
+def _build_scan_signal_brief(raw_json: Optional[dict]) -> str:
+    """Build an actionable rewrite brief from the full scan report.
+
+    This is intentionally separate from target selection. Document-level
+    signals should guide how a target sentence is corrected, but they should
+    not cause the rewriter to invent unsupported facts.
+    """
+    if not raw_json:
+        return ""
+
+    lines = ["SCAN SIGNAL BRIEF (use these signals to choose corrections):"]
+
+    badge = raw_json.get("ai_risk_badge") or {}
+    ai_components = badge.get("ai_components") or {}
+    writing_components = badge.get("writing_components") or {}
+    axis_scores = raw_json.get("axis_scores") or {}
+
+    if badge:
+        score = badge.get("ai_likelihood_score")
+        quality = badge.get("writing_quality_score")
+        tier = badge.get("tier")
+        parts = []
+        if isinstance(score, (int, float)):
+            parts.append(f"AI likelihood {_pct(score)}")
+        if tier:
+            parts.append(f"tier {tier}")
+        if isinstance(quality, (int, float)):
+            parts.append(f"writing-quality risk {_pct(quality)}")
+        if parts:
+            lines.append("- Overall: " + ", ".join(parts))
+
+    high_components = []
+    for name, value in {**ai_components, **writing_components}.items():
+        if isinstance(value, (int, float)) and value >= 50:
+            high_components.append((name, value))
+    if high_components:
+        high_components.sort(key=lambda item: item[1], reverse=True)
+        rendered = ", ".join(f"{name}={_pct(value)}" for name, value in high_components[:8])
+        lines.append(f"- Strongest scanner drivers: {rendered}")
+
+    if axis_scores:
+        rendered = ", ".join(f"{k}={v}" for k, v in axis_scores.items())
+        lines.append(f"- Axis assessment: {rendered}")
+
+    constraints = raw_json.get("rewrite_constraints") or {}
+    allowed = constraints.get("allowed_additions") or []
+    do_not_add = constraints.get("do_not_add") or []
+    if allowed:
+        lines.append("- Safe correction material from scan:")
+        for item in allowed[:5]:
+            lines.append(f"  + {item}")
+    if do_not_add:
+        lines.append("- Hard limits:")
+        for item in do_not_add[:5]:
+            lines.append(f"  - Do not add {item}.")
+
+    # Pull document-level specificity metrics without making it an edit target.
+    low_spec_metrics = None
+    findings = raw_json.get("findings") or {}
+    for tier in ("critical", "high", "medium", "low"):
+        for finding in findings.get(tier, []):
+            if finding.get("title") != "low_specificity":
+                continue
+            evidence = finding.get("evidence")
+            if isinstance(evidence, dict):
+                low_spec_metrics = evidence.get("metrics") or {}
+                break
+        if low_spec_metrics:
+            break
+    if low_spec_metrics:
+        lines.append(
+            "- Specificity signal: "
+            f"{int(low_spec_metrics.get('named_entities', 0))} named entities, "
+            f"{int(low_spec_metrics.get('numbers', 0))} numbers, "
+            f"{int(low_spec_metrics.get('dates', 0))} dates, "
+            f"domain grounding={low_spec_metrics.get('domain_grounding_level', 'unknown')}."
+        )
+        domain_terms = low_spec_metrics.get("domain_terms") or []
+        if domain_terms:
+            lines.append("- Preserve/use existing domain terms where natural: " + ", ".join(domain_terms[:10]))
+
+    correction_rules = []
+    if ai_components.get("topk_pattern", 0) >= 50 or ai_components.get("predictability", 0) >= 45:
+        correction_rules.append(
+            "For predictable sentences, replace generic scaffolding with concrete nouns/verbs already implied by context."
+        )
+    if ai_components.get("generic_assertion_risk", 0) >= 50 or writing_components.get("broad_claim_risk", 0) >= 50:
+        correction_rules.append(
+            "For broad claims, narrow the claim or attach it to the sentence's existing classroom/process context."
+        )
+    if writing_components.get("lived_detail_risk", 0) >= 50:
+        correction_rules.append(
+            "Add lived/process detail only when it can be inferred from existing wording; otherwise keep the claim narrower."
+        )
+    if writing_components.get("source_grounding_risk", 0) >= 50:
+        correction_rules.append(
+            "Do not fabricate sources; prefer source-neutral phrasing or mark the need for source support."
+        )
+    if ai_components.get("burstiness_risk", 0) >= 45:
+        correction_rules.append(
+            "Vary rhythm by making the target sentence clearly shorter or more direct when meaning is preserved."
+        )
+    if correction_rules:
+        lines.append("- Correction rules:")
+        for rule in correction_rules:
+            lines.append(f"  * {rule}")
+
+    return "\n".join(lines)
+
+
+def _sentence_signal_context(rewrite_context: Optional[Any], finding: Finding, sent_idx: int) -> str:
+    """Return sentence-specific scan metrics for the rewrite prompt."""
+    if not rewrite_context or not hasattr(rewrite_context, "raw_json"):
+        return ""
+    raw = rewrite_context.raw_json or {}
+    sentence_id = (finding.location or {}).get("sentence_id")
+    if not sentence_id and sent_idx >= 0:
+        sentence_id = f"s{sent_idx + 1:03d}"
+
+    parts = []
+    sentence_map = raw.get("sentence_map") or {}
+    if sentence_id and isinstance(sentence_map, dict) and sentence_id in sentence_map:
+        info = sentence_map[sentence_id]
+        if info.get("paragraph_id"):
+            parts.append(f"paragraph={info['paragraph_id']}")
+
+    for sent in (raw.get("predictability") or {}).get("sentences", []):
+        if sent.get("sentence_id") == sentence_id:
+            if sent.get("risk"):
+                parts.append(f"predictability={sent['risk']}")
+            if isinstance(sent.get("score"), (int, float)):
+                parts.append(f"score={sent['score']:.3f}")
+            if isinstance(sent.get("top10"), (int, float)):
+                parts.append(f"top10={sent['top10']:.1%}")
+            break
+
+    if not parts:
+        return ""
+    return "Sentence scan metrics: " + ", ".join(parts)
+
+
 def _rewrite_fn_with_detect_context(
     detect_context: str,
     api_key: Optional[str],
@@ -529,8 +701,9 @@ def run_rewrite(
     Citation and integrity findings are NEVER auto-rewritten.
     When ai_only=True, only ai_generation scanner findings are targeted.
     """
-    # Save unfiltered results for original metrics extraction (avoids re-running predictability)
+    # Save unfiltered results for original metrics/scoring before narrowing targets.
     all_detect_results = detect_results
+    original_ai_likelihood = _original_ai_likelihood(all_detect_results, rewrite_context)
 
     # Filter findings before planning
     if ai_only:
@@ -668,6 +841,14 @@ def run_rewrite(
         guidance, domain_terms=domain_terms,
         rewrite_constraints=rewrite_constraints,
     )
+    scan_signal_brief = ""
+    if rewrite_context and hasattr(rewrite_context, "raw_json"):
+        scan_signal_brief = _build_scan_signal_brief(rewrite_context.raw_json)
+    if scan_signal_brief:
+        detect_context = (
+            f"{detect_context}\n\n{scan_signal_brief}"
+            if detect_context else scan_signal_brief
+        )
     scanner = PredictabilityScanner()
 
     regression_memory = RegressionMemory()
@@ -811,6 +992,9 @@ def run_rewrite(
         if sent_protected:
             protected_items = ", ".join(ps.text for ps in sent_protected)
             span_info_parts.append("Must preserve exactly: " + protected_items)
+        sentence_metrics = _sentence_signal_context(rewrite_context, f, sent_idx)
+        if sentence_metrics:
+            span_info_parts.append(sentence_metrics)
         span_info = "\n".join(span_info_parts)
 
         # Rewrite with retry loop
@@ -1143,14 +1327,6 @@ def run_rewrite(
     final_detect_report = final_detect_runner.run_all(current_text)
     final_detect_results = final_detect_report.scanner_results
 
-    # True fix count = original findings minus remaining findings
-    final_finding_count = _count_findings(final_detect_results)
-    original_finding_count = _count_findings(detect_results)
-    net_findings_fixed = original_finding_count - final_finding_count
-
-    # Reuse predictability results from final_detect_report instead of
-    # running compute_metrics again (saves ~28s per call).
-    final_metrics = _metrics_from_detect(final_detect_report, current_text)
     # Original metrics: use unfiltered detect results (includes predictability scanner)
     # to avoid re-running predictability on the original text (saves ~29s).
     from detect.base import DetectionReport
@@ -1162,13 +1338,82 @@ def run_rewrite(
     )
     original_metrics = _metrics_from_detect(orig_report, content)
 
+    # Compare the final scan against the same target scope that was eligible
+    # for rewrite. A local sentence rewrite can pass guards while increasing
+    # document-level AI likelihood or producing more medium+ target findings.
+    original_target_findings = [f for dr in detect_results for f in dr.findings]
+    final_target_findings = _target_findings_for_mode(final_detect_results, ai_only)
+    original_target_weight = weighted_finding_score(original_target_findings)
+    final_target_weight = weighted_finding_score(final_target_findings)
+    final_ai_likelihood = _ai_likelihood_from_results(final_detect_results)
+    ai_regressed = final_ai_likelihood > original_ai_likelihood + 0.005
+    target_regressed = final_target_weight > original_target_weight
+    no_target_gain = (
+        final_target_weight >= original_target_weight
+        and final_ai_likelihood >= original_ai_likelihood
+    )
+    rolled_back_for_regression = (
+        current_text != content
+        and (ai_regressed or target_regressed or no_target_gain)
+    )
+
+    if rolled_back_for_regression:
+        reason_bits = []
+        if ai_regressed:
+            reason_bits.append(
+                f"ai_likelihood {original_ai_likelihood:.3f}->{final_ai_likelihood:.3f}"
+            )
+        if target_regressed:
+            reason_bits.append(
+                f"target_weight {original_target_weight:.1f}->{final_target_weight:.1f}"
+            )
+        if no_target_gain and not reason_bits:
+            reason_bits.append("no target-scope improvement")
+        reason = "; ".join(reason_bits)
+        loop_history.append({
+            "loop": loops_used + 1,
+            "reverted": True,
+            "note": f"final rollback: {reason}",
+            "original_ai_likelihood": round(original_ai_likelihood, 4),
+            "final_ai_likelihood": round(final_ai_likelihood, 4),
+            "original_target_weight": round(original_target_weight, 4),
+            "final_target_weight": round(final_target_weight, 4),
+        })
+        floor_reasons.append(FloorReason(
+            finding_id="final_scan",
+            reason_type="final_scan_regression",
+            explanation=reason,
+        ))
+        current_text = content
+        final_detect_report = None
+        final_detect_results = all_detect_results
+        final_target_findings = original_target_findings
+        final_target_weight = original_target_weight
+        final_ai_likelihood = original_ai_likelihood
+        findings_fixed = 0
+
+    # True fix count = original target findings minus remaining target findings.
+    # This intentionally uses target-scope findings, not all findings, so AI-only
+    # rewrites are not judged against unrelated low-severity scanner noise.
+    final_finding_count = len(final_target_findings)
+    original_finding_count = len(original_target_findings)
+    net_findings_fixed = original_finding_count - final_finding_count
+
+    # Reuse predictability results from final_detect_report instead of
+    # running compute_metrics again (saves ~28s per call).
+    final_metrics = (
+        original_metrics
+        if rolled_back_for_regression
+        else _metrics_from_detect(final_detect_report, current_text)
+    )
+
     result = MultiPassResult(
         original_text=content,
         original_metrics=original_metrics,
         passes=[final_metrics],
         final_text=current_text,
         final_metrics=final_metrics,
-        converged=(net_findings_fixed > 0 and findings_skipped == 0),
+        converged=(net_findings_fixed > 0 and findings_skipped == 0 and not rolled_back_for_regression),
         convergence_reason=f"Batch rewrite: {net_findings_fixed} net fixed (of {original_finding_count}), {findings_skipped} hit floor, {detect_loops_used} outer loops",
         style_profile=style_profile if 'style_profile' in dir() else None,
         style_suggestions=[],
@@ -1201,6 +1446,13 @@ def run_rewrite(
         detect_loop_history=detect_loop_history,
         detect_loops_used=detect_loops_used,
     )
+    summary["rollback_applied"] = rolled_back_for_regression
+    if rolled_back_for_regression:
+        summary["rollback_reason"] = floor_reasons[-1].explanation if floor_reasons else "final scan regression"
+        summary["original_ai_likelihood_internal"] = round(original_ai_likelihood, 4)
+        summary["final_ai_likelihood_internal"] = round(final_ai_likelihood, 4)
+        summary["original_target_weight"] = round(original_target_weight, 4)
+        summary["final_target_weight"] = round(final_target_weight, 4)
 
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -1213,7 +1465,9 @@ def run_rewrite(
             json.dump(summary, f, indent=2)
 
     # ── Classify outcome ────────────────────────────────────────────
-    if findings_fixed > 0 and findings_skipped == 0:
+    if rolled_back_for_regression:
+        outcome = RewriteOutcome.REJECTED_FOR_DRIFT
+    elif findings_fixed > 0 and findings_skipped == 0:
         outcome = RewriteOutcome.IMPROVED
     elif findings_fixed > 0 and findings_skipped > 0:
         outcome = RewriteOutcome.PARTIALLY_IMPROVED
@@ -1223,6 +1477,10 @@ def run_rewrite(
         outcome = RewriteOutcome.MANUAL_REQUIRED
     else:
         outcome = RewriteOutcome.FLOOR_REACHED
+    summary["outcome"] = outcome.value
+    if json_path:
+        with open(json_path, "w") as f:
+            json.dump(summary, f, indent=2)
 
     print(f"  Predictability guard: {predictability_guard.stats}")
 

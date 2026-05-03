@@ -247,6 +247,50 @@ def run_rewrite_pipeline(
     rewritten_draft_report = rewritten_builder.build()
     rewritten_report_dict = report_to_dict(rewritten_draft_report)
 
+    def _finding_total(report_dict):
+        findings = report_dict.get("findings", {})
+        return sum(len(findings.get(t, [])) for t in ("critical", "high", "medium", "low"))
+
+    def _badge_ai(report_dict):
+        score = (report_dict.get("ai_risk_badge") or {}).get("ai_likelihood_score")
+        return float(score) if isinstance(score, (int, float)) else None
+
+    original_ai = _badge_ai(ctx.raw_json)
+    rewritten_ai = _badge_ai(rewritten_report_dict)
+    original_total = _finding_total(ctx.raw_json)
+    rewritten_total = _finding_total(rewritten_report_dict)
+    ai_score_regressed = (
+        original_ai is not None
+        and rewritten_ai is not None
+        and rewritten_ai > original_ai + 0.05
+    )
+    ai_score_not_improved = (
+        original_ai is None
+        or rewritten_ai is None
+        or rewritten_ai >= original_ai
+    )
+    product_regressed = (
+        rewritten_text != text
+        and (ai_score_regressed or (ai_score_not_improved and rewritten_total > original_total))
+    )
+    if product_regressed:
+        reason = (
+            f"final detect scan regressed "
+            f"(AI {original_ai}->{rewritten_ai}, findings {original_total}->{rewritten_total})"
+        )
+        rewritten_text = text
+        if result.mp_result:
+            result.mp_result.final_text = text
+            result.mp_result.final_metrics = result.mp_result.original_metrics
+            result.mp_result.converged = False
+            result.mp_result.convergence_reason = reason
+        result.summary["final_text"] = text
+        result.summary["rollback_applied"] = True
+        result.summary["rollback_reason"] = reason
+        result.summary["outcome"] = "rejected_for_drift"
+        sentence_comparison = []
+        rewritten_report_dict = ctx.raw_json
+
     # Extract only the fields needed for comparison (not full report dicts)
     def _extract_scan_summary(report_dict):
         badge = report_dict.get("ai_risk_badge") or {}
