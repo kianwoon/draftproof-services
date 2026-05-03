@@ -472,6 +472,27 @@ class ReportBuilder:
 
         return self
 
+    @staticmethod
+    def _dict_risk_to_float(s: dict) -> float:
+        """Extract numeric risk from a predictability sentence dict.
+
+        Report JSON uses 'risk' for the label ('review', 'medium') and 'score'
+        for the numeric value. Scanner objects use 'predictability_risk' (float).
+        """
+        # Prefer numeric predictability_risk
+        pr = s.get("predictability_risk")
+        if isinstance(pr, (int, float)):
+            return float(pr)
+        # Fall back to score (numeric)
+        sc = s.get("score")
+        if isinstance(sc, (int, float)):
+            return float(sc)
+        # risk might be numeric in some formats
+        r = s.get("risk")
+        if isinstance(r, (int, float)):
+            return float(r)
+        return 0.0
+
     def _build_predictability_summary(self, result: "DetectResult"):
         raw = result.raw
         if raw is None:
@@ -492,8 +513,8 @@ class ReportBuilder:
                 sentences.append({
                     "sentence_id": sent_id,
                     "sentence": s.get("sentence") or s.get("text", ""),
-                    "risk_label": s.get("risk_label", ""),
-                    "risk": s.get("predictability_risk") or s.get("risk", 0),
+                    "risk_label": s.get("risk_label", "") or (s.get("risk", "") if isinstance(s.get("risk"), str) else ""),
+                    "risk": _dict_risk_to_float(s),
                     "avg_probability": s.get("avg_probability", 0),
                     "avg_surprisal": s.get("avg_surprisal", 0),
                     "top10_ratio": s.get("top_10_ratio") or s.get("top10", 0),
