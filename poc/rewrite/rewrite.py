@@ -678,8 +678,10 @@ def run_rewrite(
         elif detect_context:
             loop_rewrite_fn = _make_chipin_rewrite_fn(detect_context)
 
-    # ── Step 2b: Deterministic rewrite (no LLM) ─────────────────────
-    # Fix known patterns via lookup table before any LLM calls.
+    # ── Step 2b: Deterministic rewrite (DISABLED) ───────────────────
+    # Deterministic replacements consistently INCREASE predictability
+    # because removing distinctive words leaves only common ones.
+    # Disabled until a regression guard is in place (Task #50).
     loop_history = [{
         "loop": 0,
         "weighted_risk": weighted_finding_score(
@@ -693,33 +695,9 @@ def run_rewrite(
     findings_fixed = 0
     findings_skipped = 0
     loops_used = 0
+    current_text = content
 
-    all_findings_flat = [f for dr in detect_results for f in dr.findings]
-    det_result = run_deterministic(content, all_findings_flat)
-    if det_result.fixes:
-        current_text = det_result.text
-        # Remove deterministically-fixed findings from the LLM queue
-        plan.auto_fixable = [
-            a for a in plan.auto_fixable
-            if a.finding.evidence in current_text  # evidence still present → not fixed
-        ]
-        # Update detect results: remove fixed findings
-        for dr in detect_results:
-            dr.findings = [
-                f for f in dr.findings
-                if f.evidence in current_text  # evidence still present → not fixed
-            ]
-        loop_history.append({
-            "loop": 0,
-            "phase": "deterministic",
-            "fixes_applied": len(det_result.fixes),
-            "fixes": [{"from": fix.original, "to": fix.replacement, "type": fix.finding_type} for fix in det_result.fixes],
-            "findings_remaining": _count_findings(detect_results),
-        })
-    else:
-        current_text = content
-
-    # ── Step 3: Per-finding rewrite loop (LLM, only remaining) ─────
+    # ── Step 3: Per-finding rewrite loop (LLM, all findings) ────────
     current_weighted_risk = weighted_finding_score(
         [f for dr in detect_results for f in dr.findings]
     )
