@@ -1,6 +1,8 @@
 """Dedicated rewrite report renderer — produces markdown for rewrite PDFs."""
 
 import time
+import re
+import html
 from typing import List, Dict, Any, Optional
 
 
@@ -32,6 +34,15 @@ def _tier(report: dict) -> str:
 
 def _signal_label(name: str) -> str:
     return str(name or "").replace("_", " ").title()
+
+
+def _highlight_placeholders(text: str) -> str:
+    safe = html.escape(str(text or ""))
+    return re.sub(
+        r"(\[[^\[\]]+\])",
+        r'<mark class="placeholder">\1</mark>',
+        safe,
+    )
 
 
 def _manual_reason(item: dict) -> str:
@@ -342,6 +353,42 @@ def render_rewrite_report(
         ]
         lines.append("**Rewrite scope:** " + ", ".join(scope_parts) + ".")
         lines.append("")
+
+        patterns = mitigation.get("reference_patterns") or []
+        if patterns:
+            lines.append("## Reference Revision Examples")
+            lines.append("")
+            lines.append(
+                "For learning and revision guidance only. Do not submit these patterns as-is; replace the placeholders with the author's own evidence, source, and context."
+            )
+            lines.append("")
+            for i, pattern in enumerate(patterns, 1):
+                focus = str(pattern.get("focus", "Revision pattern")).replace("|", "·")
+                excerpt = str(pattern.get("flagged_excerpt", "")).replace("|", "·")
+                instead = _highlight_placeholders(
+                    str(pattern.get("instead_of", "")).replace("|", "·")
+                )
+                try_pattern = _highlight_placeholders(
+                    str(pattern.get("try_pattern", "")).replace("|", "·")
+                )
+                why = str(pattern.get("why", "")).replace("|", "·")
+                note = str(pattern.get("application_note", "")).replace("|", "·")
+                lines.append(f"### Pattern {i}: {focus}")
+                lines.append("")
+                if excerpt:
+                    lines.append(f"**Flagged excerpt:** “{html.escape(excerpt)}”")
+                    lines.append("")
+                if instead:
+                    lines.append(f"**Instead of:** {instead}")
+                    lines.append("")
+                lines.append(f"**Try this pattern:** {try_pattern}")
+                lines.append("")
+                if why:
+                    lines.append(f"**Why this helps:** {why}")
+                    lines.append("")
+                if note:
+                    lines.append(f"**How to apply:** {note}")
+                    lines.append("")
 
     # ── Rewrite Summary ─────────────────────────────────────────────
     lines.append("## Rewrite Summary")

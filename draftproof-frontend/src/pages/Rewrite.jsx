@@ -211,6 +211,7 @@ export default function Rewrite() {
   const mitigationCounts = mitigation.counts || {};
   const mitigationMode = (mitigation.primary_mode || '').replaceAll('_', ' ');
   const badgeDrivers = mitigation.component_drivers || [];
+  const referencePatterns = mitigation.reference_patterns || [];
   const revisionCards = [
     ['Sentence Patches', 'auto_rewrite', 'Detector-gated sentence edits that can be attempted automatically.'],
     ['Needs Evidence', 'needs_source_or_example', 'Claims that need author examples, citations, or more concrete context.'],
@@ -222,6 +223,24 @@ export default function Rewrite() {
     .replaceAll('_risk', '')
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (ch) => ch.toUpperCase());
+  const renderReferenceText = (text) => String(text || '')
+    .split(/(\[[^\[\]]+\])/g)
+    .map((part, i) => (
+      part.startsWith('[') && part.endsWith(']')
+        ? (
+          <mark key={i} style={{
+            background: '#fef08a',
+            color: '#1f2937',
+            padding: '0 3px',
+            borderRadius: '3px',
+            boxDecorationBreak: 'clone',
+            WebkitBoxDecorationBreak: 'clone',
+          }}>
+            {part}
+          </mark>
+        )
+        : part
+    ));
 
   return (
     <main className="dash-shell">
@@ -395,6 +414,77 @@ export default function Rewrite() {
                   ))}
                 </tbody>
               </table>
+            )}
+            {referencePatterns.length > 0 && (
+              <div style={{ marginTop: '22px' }}>
+                <h4 style={{ margin: '0 0 8px', fontSize: '16px' }}>Reference Revision Examples</h4>
+                <div style={{
+                  padding: '12px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #dbeafe',
+                  background: '#eff6ff',
+                  color: '#1e3a8a',
+                  fontSize: '13px',
+                  lineHeight: 1.5,
+                  marginBottom: '12px',
+                }}>
+                  For learning and revision guidance only. Do not submit these patterns as-is; replace placeholders with the author's own evidence, source, and context.
+                </div>
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  {referencePatterns.slice(0, 4).map((pattern, i) => (
+                    <div key={`${pattern.component || pattern.focus}-${i}`} style={{
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      background: '#fff',
+                      padding: '14px',
+                    }}>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>
+                        {pattern.focus || 'Revision pattern'}
+                      </div>
+                      {pattern.flagged_excerpt && (
+                        <blockquote style={{
+                          margin: '0 0 10px',
+                          padding: '10px 12px',
+                          borderLeft: '3px solid #facc15',
+                          background: '#fefce8',
+                          color: '#3f3f46',
+                          fontSize: '13px',
+                          lineHeight: 1.55,
+                        }}>
+                          “{pattern.flagged_excerpt}”
+                        </blockquote>
+                      )}
+                      {pattern.instead_of && (
+                        <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px', lineHeight: 1.55 }}>
+                          <strong style={{ color: '#475569' }}>Instead of:</strong> {renderReferenceText(pattern.instead_of)}
+                        </div>
+                      )}
+                      <div style={{
+                        fontSize: '13px',
+                        color: '#0f172a',
+                        lineHeight: 1.6,
+                        padding: '10px 12px',
+                        borderRadius: '6px',
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        marginBottom: '8px',
+                      }}>
+                        <strong>Try this pattern:</strong> {renderReferenceText(pattern.try_pattern)}
+                      </div>
+                      {pattern.why && (
+                        <div style={{ fontSize: '12px', color: '#64748b', lineHeight: 1.5 }}>
+                          {pattern.why}
+                        </div>
+                      )}
+                      {pattern.application_note && (
+                        <div style={{ marginTop: '8px', fontSize: '12px', color: '#475569', lineHeight: 1.5 }}>
+                          <strong>How to apply:</strong> {pattern.application_note}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         )}

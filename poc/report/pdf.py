@@ -63,6 +63,15 @@ code {
     font-family: "SF Mono", "Menlo", "Monaco", monospace;
 }
 
+mark.placeholder {
+    background: #fef08a;
+    color: #1f2937;
+    padding: 0 2pt;
+    border-radius: 2pt;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+}
+
 pre {
     background: #f4f4f4;
     border: 1px solid #ddd;

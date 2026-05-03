@@ -68,9 +68,28 @@ def _sentence_id(action: RewriteAction) -> str:
 
 def _safe_evidence(action: RewriteAction, limit: int = 140) -> str:
     evidence = action.finding.evidence
-    if not isinstance(evidence, str):
+    if isinstance(evidence, dict):
+        evidence = evidence.get("summary") or evidence.get("affected_span") or ""
+    elif not isinstance(evidence, str):
         evidence = str(evidence)
     return evidence[:limit]
+
+
+def _quote_evidence(action: RewriteAction, limit: int = 220) -> str:
+    evidence = action.finding.evidence
+    if not isinstance(evidence, str):
+        return ""
+    cleaned = " ".join(evidence.split())
+    if not cleaned or len(cleaned.split()) < 5:
+        return ""
+    metric_only = (
+        cleaned.endswith("domain terms")
+        or cleaned in {"low_specificity"}
+        or " words, " in cleaned
+    )
+    if metric_only:
+        return ""
+    return cleaned[:limit]
 
 
 def _action_summary(action: RewriteAction) -> str:
@@ -152,6 +171,178 @@ def _component_items(raw_json: Dict[str, Any]) -> List[Dict[str, Any]]:
     return sorted(items, key=lambda item: item["score"], reverse=True)
 
 
+def _reference_pattern(component: str) -> Dict[str, str] | None:
+    patterns = {
+        "generic_assertion_risk": {
+            "focus": "Narrow a broad claim",
+            "instead_of": "[Broad claim] is important because it helps learners improve.",
+            "try_pattern": (
+                "In [specific class/activity/context], [your source or observation] "
+                "shows that [narrow claim]. For example, [author-supplied evidence] "
+                "suggests [limited conclusion]."
+            ),
+            "why": "This turns a general statement into a context-bound claim with room for evidence.",
+        },
+        "broad_claim_risk": {
+            "focus": "Limit the claim scope",
+            "instead_of": "[Topic] improves student outcomes.",
+            "try_pattern": (
+                "For [specific learner group/context], [specific method] may support "
+                "[specific outcome] when [condition or evidence] is present."
+            ),
+            "why": "This avoids overclaiming and makes the statement easier to support.",
+        },
+        "unsupported_claim_risk": {
+            "focus": "Support or soften a claim",
+            "instead_of": "[Confident claim] clearly proves [conclusion].",
+            "try_pattern": (
+                "[Your source/example] indicates that [supported claim]. If evidence is limited, "
+                "phrase it as: This may suggest [careful conclusion], rather than [strong conclusion]."
+            ),
+            "why": "This gives the user a choice: add evidence or reduce certainty.",
+        },
+        "source_grounding_risk": {
+            "focus": "Connect source to claim",
+            "instead_of": "[Claim] without showing where it came from.",
+            "try_pattern": (
+                "According to [source/author], [source idea]. This supports [your claim] "
+                "because [explain the link in your own words]."
+            ),
+            "why": "This makes the source relationship visible instead of leaving the claim floating.",
+        },
+        "citation_weakness_risk": {
+            "focus": "Repair citation linkage",
+            "instead_of": "[Claim] with no clear in-text source.",
+            "try_pattern": (
+                "[Author/source] reports [specific evidence], which is relevant here because "
+                "[connect evidence to your paragraph point]."
+            ),
+            "why": "This ties the citation to the paragraph argument instead of dropping it in loosely.",
+        },
+        "lived_detail_risk": {
+            "focus": "Add author/process detail",
+            "instead_of": "The activity helped learners understand the concept.",
+            "try_pattern": (
+                "During [specific activity/session], I observed [specific learner action or result]. "
+                "That detail matters because [explain what it shows]."
+            ),
+            "why": "Real process detail makes the writing less generic without inventing facts.",
+        },
+        "topk_pattern": {
+            "focus": "Vary sentence path",
+            "instead_of": "This demonstrates the importance of [topic] in [field].",
+            "try_pattern": (
+                "Start from the concrete context first: [specific situation]. Then state the point: "
+                "[narrow claim]."
+            ),
+            "why": "Changing the sentence route is usually stronger than swapping individual words.",
+        },
+        "predictability": {
+            "focus": "Vary sentence path",
+            "instead_of": "This demonstrates the importance of [topic] in [field].",
+            "try_pattern": (
+                "Start from the concrete context first: [specific situation]. Then state the point: "
+                "[narrow claim]."
+            ),
+            "why": "Changing the sentence route is usually stronger than swapping individual words.",
+        },
+        "signpost_paragraph_risk": {
+            "focus": "Replace formulaic paragraph opening",
+            "instead_of": "This paragraph will discuss [topic].",
+            "try_pattern": (
+                "Open with the evidence or situation: [specific observation/source detail]. "
+                "Then explain how it connects to [paragraph point]."
+            ),
+            "why": "This avoids template-like signposting and moves the paragraph into the argument faster.",
+        },
+        "paragraph_uniformity_risk": {
+            "focus": "Vary paragraph structure",
+            "instead_of": "Every paragraph follows claim, explanation, summary.",
+            "try_pattern": (
+                "Mix paragraph roles: one paragraph can start with evidence, another with a problem, "
+                "and another with a short author reflection tied to the source."
+            ),
+            "why": "Varied paragraph roles reduce a uniform, template-like structure.",
+        },
+        "burstiness_risk": {
+            "focus": "Vary rhythm",
+            "instead_of": "Several sentences of similar length and shape.",
+            "try_pattern": (
+                "Use one short sentence for the key point. Follow it with a longer sentence that "
+                "adds [specific evidence or context]."
+            ),
+            "why": "Changing rhythm helps the prose feel edited by a person, not generated from one pattern.",
+        },
+    }
+    pattern = patterns.get(component)
+    if not pattern:
+        return None
+    return {"component": component, **pattern}
+
+
+def _pattern_bucket(component: str) -> str:
+    pattern = _reference_pattern(component)
+    if not pattern:
+        return ""
+    if component in {
+        "generic_assertion_risk",
+        "broad_claim_risk",
+        "unsupported_claim_risk",
+        "source_grounding_risk",
+        "citation_weakness_risk",
+        "lived_detail_risk",
+    }:
+        return "needs_source_or_example"
+    if component in {"paragraph_uniformity_risk", "signpost_paragraph_risk", "burstiness_risk"}:
+        return "structure_guidance"
+    return "auto_rewrite"
+
+
+def _find_flagged_excerpt(bucket_items: List[Dict[str, Any]]) -> str:
+    for item in bucket_items:
+        evidence = item.get("flagged_excerpt") or item.get("evidence", "")
+        if not isinstance(evidence, str):
+            continue
+        cleaned = " ".join(evidence.split())
+        if len(cleaned.split()) >= 5 and " words, " not in cleaned and cleaned != "low_specificity":
+            return cleaned
+    return ""
+
+
+def _reference_patterns(
+    component_drivers: List[Dict[str, Any]],
+    buckets: Dict[str, List[Dict[str, Any]]],
+    limit: int = 4,
+) -> List[Dict[str, str]]:
+    selected = []
+    seen = set()
+    for driver in component_drivers:
+        component = driver.get("component", "")
+        pattern = _reference_pattern(component)
+        if not pattern or pattern["focus"] in seen:
+            continue
+        bucket = _pattern_bucket(component)
+        excerpt = _find_flagged_excerpt(buckets.get(bucket, []))
+        if not excerpt and bucket != "needs_source_or_example":
+            excerpt = _find_flagged_excerpt(buckets.get("auto_rewrite", []))
+        selected.append({
+            **pattern,
+            "flagged_excerpt": excerpt,
+            "application_note": (
+                "Use this pattern on the quoted finding above."
+                if excerpt
+                else "This is a document-level signal. Apply the pattern to broad claims or weakly supported points in the draft."
+            ),
+        })
+        seen.add(pattern["focus"])
+        if len(selected) >= limit:
+            break
+    return sorted(
+        selected,
+        key=lambda item: 0 if item.get("flagged_excerpt") else 1,
+    )
+
+
 def build_mitigation_plan(
     plan: RewritePlan | None,
     raw_json: Dict[str, Any] | None = None,
@@ -167,7 +358,11 @@ def build_mitigation_plan(
     if plan:
         for action in plan.actions:
             bucket = _bucket_for_action(action)
-            buckets.setdefault(bucket, []).append(_item(action))
+            item = _item(action)
+            quote = _quote_evidence(action)
+            if quote:
+                item["flagged_excerpt"] = quote
+            buckets.setdefault(bucket, []).append(item)
 
     component_drivers = _component_items(raw_json or {})
     counts = Counter({key: len(value) for key, value in buckets.items()})
@@ -185,4 +380,5 @@ def build_mitigation_plan(
         "counts": dict(counts),
         "buckets": buckets,
         "component_drivers": component_drivers,
+        "reference_patterns": _reference_patterns(component_drivers, buckets),
     }
