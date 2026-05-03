@@ -101,6 +101,9 @@ export default function Report() {
   );
 
   const tier = TIER_CONFIG[report.tier] || TIER_CONFIG.moderate;
+  const badge = report.ai_risk_badge || {};
+  const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
+  const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
 
@@ -154,8 +157,8 @@ export default function Report() {
             </svg>
             <span style={{ color: tier.color }}>
               {tier.label}
-              {report.ai_score != null && <span className="tier-score"> AI: {report.ai_score.toFixed(1)}%</span>}
-              {report.writing_score != null && <span className="tier-score" style={{ color: '#6366f1' }}> Writing: {report.writing_score.toFixed(1)}%</span>}
+              {aiScore != null && <span className="tier-score"> AI: {Number(aiScore).toFixed(2)}%</span>}
+              {writingScore != null && <span className="tier-score" style={{ color: '#6366f1' }}> Writing: {Number(writingScore).toFixed(2)}%</span>}
             </span>
           </div>
           {hasAIFindings && (
@@ -208,15 +211,15 @@ export default function Report() {
             </span>
             <span className="report-stat-label">Risk Tier</span>
           </div>
-          {report.ai_score != null && (
+          {aiScore != null && (
             <div className="report-stat">
-              <span className="report-stat-value" style={{ color: tier.color }}>{report.ai_score.toFixed(1)}%</span>
+              <span className="report-stat-value" style={{ color: tier.color }}>{Number(aiScore).toFixed(2)}%</span>
               <span className="report-stat-label">AI Score</span>
             </div>
           )}
-          {report.writing_score != null && (
+          {writingScore != null && (
             <div className="report-stat">
-              <span className="report-stat-value" style={{ color: '#6366f1' }}>{report.writing_score.toFixed(1)}%</span>
+              <span className="report-stat-value" style={{ color: '#6366f1' }}>{Number(writingScore).toFixed(2)}%</span>
               <span className="report-stat-label">Writing Score</span>
             </div>
           )}
