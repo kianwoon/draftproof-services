@@ -2,10 +2,12 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson, createRewrite, getScanStatus } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
+import { useAuth } from '../context/AuthContext';
 
 export default function Rewrite() {
   const { id: scanId } = useParams();
   const [params] = useSearchParams();
+  const { refreshBalance } = useAuth();
   const [rewrite, setRewrite] = useState(null);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -20,6 +22,7 @@ export default function Rewrite() {
         setLoading(false);
         const { data: rpt } = await getRewriteReport(rewriteId).catch(() => ({ data: null }));
         setReport(rpt);
+        refreshBalance();
       } else if (data.status === 'failed') {
         setLoading(false);
         setError(data.error || 'Rewrite failed');
