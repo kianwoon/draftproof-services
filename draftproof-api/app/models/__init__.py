@@ -49,6 +49,9 @@ class ReportOut(BaseModel):
     issues: list[IssueOut]
     created_at: datetime
     tier: Optional[str] = None
+    ai_score: Optional[float] = None
+    writing_score: Optional[float] = None
+    ai_risk_badge: Optional[Any] = None
     report_md_url: Optional[str] = None
     report_pdf_url: Optional[str] = None
     results_json: Optional[Any] = None

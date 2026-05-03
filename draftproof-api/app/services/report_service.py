@@ -178,6 +178,7 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
             "tier": display_tier,
             "ai_score": ai_score,
             "writing_score": writing_score,
+            "ai_risk_badge": results_json.get("ai_risk_badge") if results_json else None,
             "report_md_url": report_md_url,
             "report_pdf_url": report_pdf_url,
             "results_json": results_json,
