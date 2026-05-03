@@ -86,7 +86,8 @@ def _metrics_from_detect(detect_report, text: str):
             raw = sr.raw
             # Handle dict raw (from targeted rescan / report JSON / live scanner scan_text())
             if isinstance(raw, dict):
-                sents = raw.get("sentences", [])
+                # Prefer all_sentences (full data with sentence text) over short-form sentences
+                sents = raw.get("all_sentences") or raw.get("sentences", [])
                 if sents:
                     overall_risk = raw.get("overall_risk", 0.5)
                     # Normalize all items to canonical dict format used by compute_metrics:
@@ -102,7 +103,7 @@ def _metrics_from_detect(detect_report, text: str):
                                 "risk": s.get("risk") or s.get("predictability_risk", 0),
                                 "top10_ratio": s.get("top10_ratio") or s.get("top_10_ratio") or s.get("top10", 0),
                                 "surprisal": s.get("surprisal") or s.get("avg_surprisal", 0),
-                                "sentence": s.get("sentence", ""),
+                                "sentence": s.get("sentence") or s.get("text", ""),
                             }
                         else:
                             # SentenceResult object
