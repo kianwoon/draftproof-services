@@ -86,7 +86,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
             raise  # Re-raise original — Celery marks as FAILURE, not RETRY
 
 
-@app.task(bind=True, max_retries=2, default_retry_delay=30, soft_time_limit=600, time_limit=660)
+@app.task(bind=True, max_retries=1, default_retry_delay=30, soft_time_limit=300, time_limit=330)
 def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
     """Run the rewrite pipeline on a completed scan's results."""
     from .storage import upload_rewrite_files, _client as _r2_client
@@ -142,7 +142,8 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         from poc.rewrite_pipeline import run_rewrite_pipeline
         from app.config import settings
 
-        if not settings.LLM_API_KEY:
+        llm_api_key = settings.LLM_API_KEY or settings.OPENROUTER_API_KEY
+        if not llm_api_key:
             update_rewrite_status(rewrite_id, "failed", error="LLM_API_KEY not configured — rewrite requires an LLM API key")
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "missing LLM API key"}
@@ -155,7 +156,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 max_detect_loops=0,
                 ai_only=True,
                 verbose=False,
-                api_key=settings.LLM_API_KEY or None,
+                api_key=llm_api_key or None,
                 model=settings.LLM_MODEL or None,
                 base_url=settings.LLM_BASE_URL or None,
             )
@@ -173,6 +174,8 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             import logging as _log
             _l = _log.getLogger("rewrite_task")
             _l.info("Pipeline result keys: %s", list(result.keys()))
+            if rw and hasattr(rw, "summary"):
+                _l.info("Pipeline stage timings: %s", rw.summary.get("stage_timings"))
             _l.info("md_path=%s exists=%s", md_path, md_path and os.path.exists(md_path))
             _l.info("pdf_path=%s exists=%s", pdf_path, pdf_path and os.path.exists(pdf_path))
 
@@ -214,7 +217,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         return {"status": "completed"}
 
     except SoftTimeLimitExceeded:
-        update_rewrite_status(rewrite_id, "failed", error="Rewrite timed out (10 min limit)")
+        update_rewrite_status(rewrite_id, "failed", error="Rewrite timed out (5 min limit)")
         release_rewrite_credits(rewrite_id)
         return {"status": "failed", "error": "timeout"}
     except Exception as e:

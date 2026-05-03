@@ -283,6 +283,7 @@ def run_rewrite_pipeline(
         ai_only=ai_only,
     )
     elapsed = time.time() - t0
+    stage_timings = [{"stage": "rewrite_engine", "seconds": round(elapsed, 3)}]
 
     # ── Write output ────────────────────────────────────────────────
     if output_dir is None:
@@ -335,8 +336,13 @@ def run_rewrite_pipeline(
         # Run a fresh full scan on the rewritten text for accurate scores.
         # The targeted rescan reuses old scores for unchanged sentences, which
         # produces misleading "After" numbers vs what a real rescan would show.
+        scan_t0 = time.time()
         rewritten_detect_runner = DetectionRunner()
         rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
+        stage_timings.append({
+            "stage": "fresh_rewritten_scan",
+            "seconds": round(time.time() - scan_t0, 3),
+        })
 
         rewritten_builder = ReportBuilder()
         rewritten_builder.add_detection_report(rewritten_detect_report)
@@ -347,8 +353,13 @@ def run_rewrite_pipeline(
         rewritten_report_dict = report_to_dict(rewritten_draft_report)
     else:
         # Fallback: no cached detect report — run full scan
+        scan_t0 = time.time()
         rewritten_detect_runner = DetectionRunner()
         rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
+        stage_timings.append({
+            "stage": "fresh_rewritten_scan",
+            "seconds": round(time.time() - scan_t0, 3),
+        })
 
         rewritten_builder = ReportBuilder()
         rewritten_builder.add_detection_report(rewritten_detect_report)
@@ -395,7 +406,12 @@ def run_rewrite_pipeline(
     # driven by detector-version drift.
     original_report_dict = ctx.raw_json
     if rewritten_text != text:
+        scan_t0 = time.time()
         original_report_dict = _full_scan_report_dict(text)
+        stage_timings.append({
+            "stage": "fresh_original_scan",
+            "seconds": round(time.time() - scan_t0, 3),
+        })
         result.summary["comparison_baseline"] = "fresh_original_scan"
         saved_original_ai = _badge_ai(ctx.raw_json)
         fresh_original_ai = _badge_ai(original_report_dict)
@@ -485,11 +501,25 @@ def run_rewrite_pipeline(
         best_checkpoint = None
         best_checkpoint_report = None
         best_checkpoint_rank = None
+        checkpoint_candidates = []
         for checkpoint in getattr(result, "rewrite_checkpoints", []) or []:
             checkpoint_text = checkpoint.get("text", "")
             if not checkpoint_text or checkpoint_text in {text, rewritten_text}:
                 continue
+            checkpoint_candidates.append(checkpoint)
+        max_checkpoint_scans = 3
+        if len(checkpoint_candidates) > max_checkpoint_scans:
+            result.summary["checkpoint_scan_skipped"] = (
+                len(checkpoint_candidates) - max_checkpoint_scans
+            )
+            checkpoint_candidates = checkpoint_candidates[-max_checkpoint_scans:]
+
+        checkpoint_scan_t0 = time.time()
+        checkpoint_scan_count = 0
+        for checkpoint in checkpoint_candidates:
+            checkpoint_text = checkpoint.get("text", "")
             checkpoint_report = _full_scan_report_dict(checkpoint_text)
+            checkpoint_scan_count += 1
             cp_ai = _badge_ai(checkpoint_report)
             cp_wq = _badge_wq(checkpoint_report)
             cp_total = _finding_total(checkpoint_report)
@@ -533,6 +563,13 @@ def run_rewrite_pipeline(
                 best_checkpoint = checkpoint
                 best_checkpoint_report = checkpoint_report
                 best_checkpoint_rank = rank
+
+        if checkpoint_scan_count:
+            stage_timings.append({
+                "stage": "checkpoint_scans",
+                "count": checkpoint_scan_count,
+                "seconds": round(time.time() - checkpoint_scan_t0, 3),
+            })
 
         if best_checkpoint and best_checkpoint_report:
             rewritten_text = best_checkpoint["text"]
@@ -602,6 +639,7 @@ def run_rewrite_pipeline(
     if product_regressed:
         result.summary["detect_scan_attempted"] = _extract_scan_summary(attempted_report_dict)
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
+    result.summary["stage_timings"] = stage_timings
 
     # Generate dedicated rewrite report
     rewrite_md = render_rewrite_report(

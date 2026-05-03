@@ -70,6 +70,9 @@ class RewriteConfig:
     model: Optional[str] = None  # None → resolved by LLMGateway from LLM_MODEL env var
     api_key: Optional[str] = None
     base_url: Optional[str] = None  # None → resolved by LLMGateway (OpenRouter default)
+    llm_timeout_seconds: int = 20
+    llm_max_retries: int = 1
+    max_rewrite_seconds: int = 180
 
 
 # ── Loop control ─────────────────────────────────────────────────────

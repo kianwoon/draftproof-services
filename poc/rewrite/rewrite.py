@@ -374,7 +374,7 @@ def _make_chipin_rewrite_fn(detect_context: str) -> callable:
                  "--system-prompt", REWRITE_CHIPIN_PROMPT,
                  "--model", "sonnet",
                  user_msg],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=15,
             )
             if result.returncode == 0 and result.stdout.strip():
                 output = result.stdout.strip()
@@ -1061,9 +1061,17 @@ def _rewrite_fn_with_detect_context(
     api_key: Optional[str],
     model: str,
     base_url: Optional[str] = None,
+    timeout: int = 20,
+    max_retries: int = 1,
 ) -> callable:
     """Create a rewrite function that uses LLMGateway with detect context."""
-    config = LLMConfig(api_key=api_key, model=model, base_url=base_url)
+    config = LLMConfig(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
     gateway = LLMGateway(config)
 
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
@@ -1413,8 +1421,10 @@ def run_rewrite(
             loop_rewrite_fn = _rewrite_fn_with_detect_context(
                 detect_context, effective_key, effective_model,
                 base_url=config.base_url,
+                timeout=config.llm_timeout_seconds,
+                max_retries=config.llm_max_retries,
             )
-        elif detect_context:
+        elif detect_context and os.environ.get("DRAFTPROOF_ENABLE_CLAUDE_FALLBACK") == "1":
             loop_rewrite_fn = _make_chipin_rewrite_fn(detect_context)
 
     # Build GPT-2 hybrid rewriter for predictability findings.
@@ -1435,6 +1445,8 @@ def run_rewrite(
                 api_key=effective_key,
                 model=effective_model,
                 base_url=config.base_url,
+                timeout=config.llm_timeout_seconds,
+                max_retries=config.llm_max_retries,
             ))
         gpt2_rewriter = GPT2Rewriter(scanner=scanner, gateway=gpt2_gateway)
     except Exception as exc:
@@ -1475,6 +1487,7 @@ def run_rewrite(
     # Process each auto-fixable action individually. The LLM sees only the
     # target sentence + context. Much smaller surface area = less hallucination.
     sentences, para_map = _build_sentence_index(current_text)
+    rewrite_start_time = time.monotonic()
 
     def _action_group_key(action):
         finding = action.finding
@@ -1498,6 +1511,17 @@ def run_rewrite(
 
     risk_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
     for actions_for_sentence in grouped_actions:
+        if time.monotonic() - rewrite_start_time > config.max_rewrite_seconds:
+            remaining = sum(len(group) for group in grouped_actions[loops_used:])
+            findings_skipped += remaining
+            loop_history.append({
+                "loop": loops_used + 1,
+                "reverted": True,
+                "note": f"stopped: rewrite time budget exceeded ({config.max_rewrite_seconds}s)",
+                "remaining_findings": remaining,
+            })
+            break
+
         actions_for_sentence.sort(
             key=lambda a: (
                 risk_rank.get(a.finding.risk_level, 0),
@@ -1894,7 +1918,11 @@ def run_rewrite(
         re_detect_context = _build_detect_context(re_guidance)
         # Preserve the configured gateway — do NOT replace with local claude CLI.
         # Only fall back to chipin if no rewrite_fn was ever created.
-        if loop_rewrite_fn is None and detect_context:
+        if (
+            loop_rewrite_fn is None
+            and detect_context
+            and os.environ.get("DRAFTPROOF_ENABLE_CLAUDE_FALLBACK") == "1"
+        ):
             loop_rewrite_fn = _make_chipin_rewrite_fn(re_detect_context)
 
         re_sentences, re_para_map = _build_sentence_index(current_text)

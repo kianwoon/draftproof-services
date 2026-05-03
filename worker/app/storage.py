@@ -19,7 +19,12 @@ def _client():
         endpoint_url=settings.R2_ENDPOINT_URL,
         aws_access_key_id=settings.R2_ACCESS_KEY_ID,
         aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
-        config=BotoConfig(signature_version="s3v4"),
+        config=BotoConfig(
+            signature_version="s3v4",
+            connect_timeout=10,
+            read_timeout=30,
+            retries={"max_attempts": 2, "mode": "standard"},
+        ),
     )
 
 

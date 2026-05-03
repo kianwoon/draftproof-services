@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     R2_PUBLIC_URL: str = ""
     PREDICTABILITY_MODEL: str = "gpt2-medium"
     LLM_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
     LLM_MODEL: str = ""
     LLM_BASE_URL: str = ""
 
