@@ -22,7 +22,7 @@ class Finding:
     location: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
     signal_category: str = ""    # "writing_quality" | "genericity" | "predictability" | "authorship_risk"
-    actionability: str = ""      # "auto_rewrite_candidate" | "citation_repair" | "optional_structure_review" | "review_only" | "no_action" | "manual_required"
+    actionability: str = ""      # "auto_fixable" | "citation_repair" | "optional_structure_review" | "review_only" | "no_action" | "manual_required"
 
 
 @dataclass

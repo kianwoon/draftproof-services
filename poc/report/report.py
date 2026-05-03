@@ -204,6 +204,22 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
     Module-level function so both ReportBuilder.build() and report_to_dict()
     can call it without duplication.
     """
+    detected_actionability = ""
+    if f.metadata and isinstance(f.metadata, dict):
+        detected_actionability = f.metadata.get("actionability", "")
+    if detected_actionability:
+        aliases = {
+            "auto_rewrite_candidate": "auto_fixable",
+            "optional_structure_review": "optional_structure_review",
+            "citation_repair": "citation_repair",
+            "review_only": "review_only",
+            "no_action": "no_action",
+            "manual_required": "manual_required",
+            "auto_fixable": "auto_fixable",
+        }
+        if detected_actionability in aliases:
+            return aliases[detected_actionability]
+
     adj = f.adjusted_risk.lower()
     title = f.title
     # No-action: low-risk signals
@@ -415,6 +431,14 @@ class ReportBuilder:
                     sent_id = self._pred_summary.sentences[idx].get("sentence_id", "")
             # Inject scanner-level metadata into finding metadata
             meta = dict(f.metadata) if f.metadata else {}
+            actionability = getattr(f, "actionability", "")
+            if actionability == "auto_rewrite_candidate":
+                actionability = "auto_fixable"
+            if actionability:
+                meta["actionability"] = actionability
+            evidence_strength = getattr(f, "evidence_strength", "")
+            if evidence_strength:
+                meta["evidence_strength"] = evidence_strength
             if scanner == "ai_generation" and result.likelihood_score:
                 meta["ai_likelihood"] = result.likelihood_score
             # NOTE: document-level predictability_risk is NOT injected into
@@ -1171,21 +1195,6 @@ class ReportBuilder:
                 dg_level = f.metadata.get("domain_grounding_level", "weak")
         axis_scores["domain_grounding"] = dg_level
 
-        # ── Reason codes: structured tier explanation ──
-        reason_codes = []
-        if not has_high_critical:
-            reason_codes.append("no_high_or_critical_findings")
-        if ai_val < 0.25:
-            reason_codes.append("low_ai_pattern_score")
-        if axis_scores.get("domain_grounding") == "strong":
-            reason_codes.append("strong_domain_grounding")
-        if len(review_only) > len(auto_fixable) + len(manual_required):
-            reason_codes.append("mostly_review_only_findings")
-        if pred_meta_risk < 0.40:
-            reason_codes.append("predictability_unconfirmed")
-        if not self._rewrite_summary or self._rewrite_summary.outcome != "improved":
-            reason_codes.append("no_rewrite_triggered")
-
         # ── Authorship concern score ──
         concern_signals = extract_signals(
             predictability_summary=self._pred_summary,
@@ -1266,6 +1275,30 @@ class ReportBuilder:
             "guardrails": layer3.guardrails,
             "red_flags": n_high + n_critical,
         }
+
+        badge_ai_score = ai_risk_badge.get("ai_likelihood_score", 0.0) / 100
+        if ai_val > 0 and badge_ai_score > 0:
+            overall_tier_reason = overall_tier_reason.replace(
+                f"AI likelihood is {ai_val:.1%}",
+                f"AI likelihood is {badge_ai_score:.1%}",
+            )
+
+        # ── Reason codes: structured tier explanation ──
+        reason_codes = []
+        rewrite_decision = self._summaries.get("rewrite_decision") or {}
+        rewrite_is_recommended = bool(rewrite_decision.get("run_rewrite"))
+        if not has_high_critical:
+            reason_codes.append("no_high_or_critical_findings")
+        if badge_ai_score < 0.25:
+            reason_codes.append("low_ai_pattern_score")
+        if axis_scores.get("domain_grounding") == "strong":
+            reason_codes.append("strong_domain_grounding")
+        if len(review_only) > len(auto_fixable) + len(manual_required):
+            reason_codes.append("mostly_review_only_findings")
+        if pred_meta_risk < 0.40:
+            reason_codes.append("predictability_unconfirmed")
+        if not rewrite_is_recommended:
+            reason_codes.append("rewrite_not_recommended")
 
         return DraftReport(
             overall_tier=adjusted_tier,
@@ -1360,15 +1393,21 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 display_concern = "high"
             dg_idx = metrics.get("domain_grounding_index", "")
             dg_level = metrics.get("domain_grounding_level", "")
+            domain_terms = metrics.get("domain_terms", [])
+            matched_domain_term_count = len(domain_terms) if isinstance(domain_terms, list) else 0
+            weighted_domain_term_count = int(metrics.get("domain_term_count", 0))
             result_evidence = {
                 "type": "document_level",
                 "summary": (f"{int(metrics.get('word_count', 0))} words, "
                             f"{int(metrics.get('named_entities', 0))} named entities, "
                             f"{int(metrics.get('numbers', 0))} numbers, "
                             f"{int(metrics.get('dates', 0))} dates, "
-                            f"{int(metrics.get('domain_term_count', 0))} domain terms"),
+                            f"{matched_domain_term_count} matched domain terms "
+                            f"({weighted_domain_term_count} weighted)"),
                 "affected_span": "full_document",
                 "metrics": metrics,
+                "matched_domain_term_count": matched_domain_term_count,
+                "weighted_domain_term_count": weighted_domain_term_count,
                 "raw_specificity_concern": round(raw_risk, 4),
                 "adjusted_specificity_concern": round(adj_risk, 4),
                 "display_specificity_concern": display_concern,
@@ -1496,6 +1535,14 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         overall_action = "review_only"
         rewrite_mode = "none"
 
+    detect_rewrite_decision = report.rewrite_decision or {}
+    if detect_rewrite_decision:
+        decision_mode = detect_rewrite_decision.get("mode")
+        if decision_mode in ("targeted", "full", "none"):
+            rewrite_mode = decision_mode
+        if not detect_rewrite_decision.get("run_rewrite", False):
+            rewrite_mode = "none"
+
     # Build primary goals from auto_fixable and citation_repair findings
     primary_goals = []
     primary_action = None
@@ -1581,11 +1628,31 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     for f in all_findings:
         if f.title == "low_specificity" and f.metadata:
             domain_profile = {
-                "domain_term_count": f.metadata.get("domain_term_count", 0),
+                "domain_term_count": len(f.metadata.get("domain_terms", []) or []),
+                "weighted_domain_term_count": f.metadata.get("domain_term_count", 0),
                 "matched_domain_terms": f.metadata.get("domain_terms", []),
                 "auto_detected": True,
             }
             break
+
+    local_actionability_distribution = {}
+    for f in all_findings:
+        bucket = _determine_actionability(f, all_findings)
+        local_actionability_distribution[bucket] = local_actionability_distribution.get(bucket, 0) + 1
+
+    serialized_rewrite_decision = dict(report.rewrite_decision or {})
+    if serialized_rewrite_decision:
+        serialized_rewrite_decision["allowed_actions"] = [
+            "auto_fixable" if a == "auto_rewrite_candidate" else a
+            for a in serialized_rewrite_decision.get("allowed_actions", [])
+        ]
+        if serialized_rewrite_decision.get("run_rewrite"):
+            serialized_rewrite_decision["targets"] = [
+                f["finding_id"] for f in auto_fixable
+            ]
+            serialized_rewrite_decision["reason"] = (
+                f"{len(auto_fixable)} auto-fixable finding(s) detected."
+            )
 
     result: Dict[str, Any] = {
         "raw_overall_tier": report.raw_overall_tier,
@@ -1596,8 +1663,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         "domain_profile": domain_profile,
         "rewrite_priority_tier": report.rewrite_priority_tier,
         "rewrite_priority_reason": report.rewrite_priority_reason,
-        "rewrite_decision": report.rewrite_decision,
-        "actionability_distribution": report.actionability_distribution,
+        "rewrite_decision": serialized_rewrite_decision or None,
+        "actionability_distribution": report.actionability_distribution or local_actionability_distribution,
         "axis_scores": report.axis_scores,
         "reason_codes": report.reason_codes,
         "authorship_concern": {
@@ -1709,7 +1776,10 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         "allowed_additions": specificity_guidance,
         "rewrite_rule": "If specificity is missing, add concrete domain action from implied context, never fabricated facts.",
         "max_change_scope": rewrite_mode,
-        "full_rewrite_allowed": rewrite_mode == "comprehensive" and len(auto_fixable) >= 4,
+        "full_rewrite_allowed": (
+            bool(detect_rewrite_decision.get("full_rewrite_allowed"))
+            if detect_rewrite_decision else rewrite_mode == "full"
+        ),
     }
 
     if report.predictability:

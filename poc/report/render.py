@@ -703,7 +703,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
                 "strong_domain_grounding": "Strong domain grounding",
                 "mostly_review_only_findings": "Mostly review-only findings",
                 "predictability_unconfirmed": "Predictability unconfirmed",
-                "no_rewrite_triggered": "No rewrite triggered",
+                "rewrite_not_recommended": "Rewrite not recommended",
             }
             readable = [code_labels.get(c, c) for c in reason_codes]
             lines.append(f"> **Tier Rationale:** {'; '.join(readable)}")

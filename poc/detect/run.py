@@ -130,7 +130,7 @@ class DetectionRunner:
                 processed_results.append(pp.result)
             scanner_results = processed_results
 
-        top_findings = self._select_top_findings(scanner_results)
+        all_findings = self._collect_findings(scanner_results)
         overall_risk = self._aggregate_risk(scanner_results)
         overall_priority = self._compute_priority(scanner_results)
         overall_confidence = self._aggregate_confidence(scanner_results)
@@ -139,14 +139,15 @@ class DetectionRunner:
         summary = self._generate_summary(scanner_results, overall_risk, overall_priority)
 
         # Classify actionability for each finding
-        self._classify_actionability(top_findings, scanner_results)
+        self._classify_actionability(all_findings, scanner_results)
+        top_findings = self._select_top_findings(scanner_results)
 
         # Compute actionability distribution
-        actionability_dist = self._compute_actionability_distribution(top_findings)
+        actionability_dist = self._compute_actionability_distribution(all_findings)
 
         # Compute rewrite decision
         rewrite_decision = self._compute_rewrite_decision(
-            top_findings, actionability_dist, overall_risk
+            all_findings, actionability_dist, overall_risk
         )
 
         # Collect criterion scores from AIGenerationSignalDetector
@@ -308,12 +309,17 @@ class DetectionRunner:
 
     @staticmethod
     def _select_top_findings(results: List[DetectResult], limit: int = 10) -> List[Finding]:
-        all_findings = []
-        for r in results:
-            all_findings.extend(r.findings)
+        all_findings = DetectionRunner._collect_findings(results)
         all_findings.sort(key=lambda f: {"high": 3, "medium": 2, "low": 1}.get(f.risk_level, 0),
                           reverse=True)
         return all_findings[:limit]
+
+    @staticmethod
+    def _collect_findings(results: List[DetectResult]) -> List[Finding]:
+        all_findings = []
+        for r in results:
+            all_findings.extend(r.findings)
+        return all_findings
 
     @staticmethod
     def _collect_caveats(results: List[DetectResult]) -> List[str]:
@@ -363,7 +369,14 @@ class DetectionRunner:
         """Set actionability on each finding in-place."""
         citation_types = {"uncited_claim", "missing_reference", "unused_reference", "verify_reference"}
         structural_types = {"uniform_paragraph_structure", "repetitive_sentence_structure", "low_burstiness"}
-        ai_gen_scanners = {"predictability", "ai_generation"}
+        manual_required_types = {
+            "moderate_ai_generation_likelihood",
+            "elevated_ai_generation_likelihood",
+            "high_ai_generation_likelihood",
+            "polished_but_ungrounded",
+            "source_grounding",
+        }
+        review_only_types = {"generic_phrase", "review_predictability"}
 
         # Get AI likelihood for context
         ai_likelihood = 0.0
@@ -373,9 +386,9 @@ class DetectionRunner:
 
         # Finding types that can be mitigated by rephrasing
         rephrasable_types = {
-            "generic_phrase", "high_predictability", "low_surprisal",
-            "close_paraphrase", "topk_predictability", "low_specificity",
-            "review_predictability", "medium_predictability",
+            "high_predictability", "medium_predictability", "low_surprisal",
+            "close_paraphrase", "topk_predictability", "high_topk_predictability",
+            "low_specificity",
             "style_shift", "draft_evolution_jump", "structural_reuse",
             "template_skeleton", "surface_rewrite", "paragraph_level_overlap",
         }
@@ -385,12 +398,15 @@ class DetectionRunner:
                 f.actionability = "citation_repair"
             elif f.finding_type in structural_types:
                 f.actionability = "optional_structure_review"
+            elif f.finding_type in manual_required_types:
+                f.actionability = "manual_required"
+            elif f.finding_type in review_only_types:
+                f.actionability = "review_only"
             elif f.risk_level in ("high", "medium") and (
                 f.suggested_action_type in ("add_specific_example", "add_user_interpretation")
                 or f.finding_type in rephrasable_types
-                or f.recommendation  # any finding with a suggestion is rewrite-eligible
             ):
-                f.actionability = "auto_rewrite_candidate"
+                f.actionability = "auto_fixable"
             elif f.risk_level == "low" or "minimal" in f.finding_type:
                 f.actionability = "no_action"
             elif f.risk_level in ("high", "medium"):
@@ -413,7 +429,7 @@ class DetectionRunner:
         overall_risk: float,
     ) -> RewriteDecision:
         """Detection owns the rewrite gate — the rewrite engine never guesses."""
-        auto_count = actionability_dist.get("auto_rewrite_candidate", 0)
+        auto_count = actionability_dist.get("auto_fixable", 0)
         citation_count = actionability_dist.get("citation_repair", 0)
         structural_count = actionability_dist.get("optional_structure_review", 0)
 
@@ -442,12 +458,10 @@ class DetectionRunner:
             )
 
         # Targeted rewrite for auto-fixable findings
-        targets = [f"i" for i, f in enumerate(findings)
-                    if f.actionability == "auto_rewrite_candidate"]
-        # Use stable IDs from finding metadata if available
+        # Use stable IDs from finding metadata if available.
         target_ids = []
         for f in findings:
-            if f.actionability == "auto_rewrite_candidate":
+            if f.actionability == "auto_fixable":
                 fid = f.metadata.get("finding_id", f"idx_{id(f)}")
                 target_ids.append(fid)
 
@@ -457,5 +471,5 @@ class DetectionRunner:
             mode="targeted",
             targets=target_ids,
             full_rewrite_allowed=overall_risk >= 0.8,
-            allowed_actions=["auto_rewrite_candidate"],
+            allowed_actions=["auto_fixable"],
         )
