@@ -680,12 +680,25 @@ def run_rewrite(
 
     # ── Step 2b: Deterministic rewrite (no LLM) ─────────────────────
     # Fix known patterns via lookup table before any LLM calls.
+    loop_history = [{
+        "loop": 0,
+        "weighted_risk": weighted_finding_score(
+            [f for dr in detect_results for f in dr.findings]
+        ),
+        "raw_findings": _count_findings(detect_results),
+        "text": content[:100],
+        "note": "original",
+    }]
+    floor_reasons = []
+    findings_fixed = 0
+    findings_skipped = 0
+    loops_used = 0
+
     all_findings_flat = [f for dr in detect_results for f in dr.findings]
     det_result = run_deterministic(content, all_findings_flat)
     if det_result.fixes:
         current_text = det_result.text
         # Remove deterministically-fixed findings from the LLM queue
-        fixed_types = set(det_result.findings_addressed)
         plan.auto_fixable = [
             a for a in plan.auto_fixable
             if a.finding.evidence in current_text  # evidence still present → not fixed
@@ -710,17 +723,6 @@ def run_rewrite(
     current_weighted_risk = weighted_finding_score(
         [f for dr in detect_results for f in dr.findings]
     )
-    floor_reasons = []
-    findings_fixed = 0
-    findings_skipped = 0
-    loop_history = [{
-        "loop": 0,
-        "weighted_risk": current_weighted_risk,
-        "raw_findings": _count_findings(detect_results),
-        "text": content[:100],
-        "note": "original",
-    }]
-    loops_used = 0
 
     # ── Per-sentence rewrite: one LLM call per flagged sentence ─────────
     # Process each auto-fixable action individually. The LLM sees only the
