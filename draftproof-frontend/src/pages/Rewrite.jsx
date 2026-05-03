@@ -191,9 +191,9 @@ export default function Rewrite() {
     outcome === 'partially_improved' ||
     (hasScanComparison && newAI < origAI && newTotal <= origTotal)
   );
-  const outcomeLabel = noTextChange ? 'No Automatic Rewrite' : converged ? 'Converged' : improved ? 'Improved' : regressed ? 'No Improvement' : 'Review Needed';
-  const outcomeColor = noTextChange ? '#f59e0b' : converged || improved ? '#22c55e' : regressed ? '#ef4444' : '#f59e0b';
-  const outcomeBg = noTextChange ? '#fffbeb' : converged || improved ? '#f0fdf4' : regressed ? '#fef2f2' : '#fffbeb';
+  const outcomeLabel = noTextChange ? 'No Automatic Rewrite' : regressed ? 'No Improvement' : improved ? 'Improved' : converged ? 'Converged' : 'Review Needed';
+  const outcomeColor = noTextChange ? '#f59e0b' : regressed ? '#ef4444' : improved || converged ? '#22c55e' : '#f59e0b';
+  const outcomeBg = noTextChange ? '#fffbeb' : regressed ? '#fef2f2' : improved || converged ? '#f0fdf4' : '#fffbeb';
 
   return (
     <main className="dash-shell">

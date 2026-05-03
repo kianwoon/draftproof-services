@@ -107,14 +107,17 @@ def render_rewrite_report(
 
         # Overall outcome
         rollback = summary.get("rollback_applied", False)
+        scan_regressed = new_ai > orig_ai + 0.05 or n_total > o_total
         if no_text_change:
             lines.append("**Outcome: No Automatic Rewrite Applied** — DraftProof kept the original text because the remaining signals require manual review or source-backed context.")
         elif rollback:
             lines.append("**Outcome: No Improvement** — DraftProof kept the original text because the final detect scan regressed.")
-        elif converged:
-            lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
+        elif scan_regressed:
+            lines.append("**Outcome: No Improvement** — Final detect scan regressed despite local rewrite-target progress.")
         elif n_total < o_total or new_ai < orig_ai:
             lines.append("**Outcome: Improved** — Detect scan confirms reduced AI signals after rewrite.")
+        elif converged:
+            lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
         else:
             lines.append("**Outcome: No Improvement** — Final detect scan did not confirm a reduction in AI signals.")
     else:
