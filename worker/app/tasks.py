@@ -113,23 +113,26 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
 
         # 2. Filter findings: only rephrase-fixable ones
         # findings is a dict: {critical: [...], high: [...], medium: [...], low: [...]}
-        # report.json uses "auto_fixable" (from report.py determine_actionability)
-        # Only these findings can be mitigated by rephrasing
+        # Include: auto_fixable/auto_rewrite_candidate + review_only findings whose
+        # title maps to a rephrasable type in the planner's FINDING_ROUTING table.
         findings_by_tier = report_json.get("findings", {})
         all_findings = []
         for tier_findings in findings_by_tier.values():
             if isinstance(tier_findings, list):
                 all_findings.extend(tier_findings)
+
+        REPHRASABLE_TYPES = {
+            "high_predictability", "medium_predictability", "review_predictability",
+            "high_topk_predictability", "low_predictability", "formulaic_sentence",
+            "generic_phrase", "style_shift", "low_specificity",
+        }
         rephrasable_findings = [
             f for f in all_findings
-            if isinstance(f, dict) and f.get("actionability") in ("auto_fixable", "auto_rewrite_candidate")
+            if isinstance(f, dict) and (
+                f.get("actionability") in ("auto_fixable", "auto_rewrite_candidate")
+                or (f.get("title") in REPHRASABLE_TYPES and f.get("recommendation"))
+            )
         ]
-        # Fallback: include review_only findings that have a suggestion
-        if not rephrasable_findings:
-            rephrasable_findings = [
-                f for f in all_findings
-                if isinstance(f, dict) and f.get("actionability") in ("review_only",)
-                and (f.get("suggestion") or f.get("recommendation"))
             ]
         if not rephrasable_findings:
             update_rewrite_status(rewrite_id, "failed", error="No rephrasable findings to rewrite")
