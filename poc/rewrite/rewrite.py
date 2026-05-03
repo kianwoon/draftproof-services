@@ -162,27 +162,33 @@ def _filter_by_severity(detect_results: List[DetectResult], min_severity: str = 
 
 # ── Chip-in: use local `claude` CLI when no API key ──────────────────
 
-REWRITE_CHIPIN_PROMPT = """You are a writing improvement assistant. Rewrite the flagged text to reduce AI-detectable patterns while preserving the author's original meaning.
+REWRITE_CHIPIN_PROMPT = """You are a text editor. Your ONLY job is to make the flagged sentence sound LESS like AI-generated text.
 
-Signal-specific guidance:
-- TOP-K PREDICTABILITY: Replace common word choices with unexpected or domain-specific alternatives. The text uses too many statistically common words.
-- LOW SURPRISAL: The word sequences are too predictable. Use less common phrasing and varied sentence openings.
-- LOW SPECIFICITY: The text lacks concrete details. Add specific domain terminology and concrete examples already implied by the context.
-- LOW BURSTINESS: Sentence lengths are too uniform. Vary rhythm — mix short punchy sentences with longer ones.
-- GENERIC PHRASES: Replace formulaic transitions with content-specific connectors.
-- REPETITIVE STRUCTURE: Vary sentence openings and syntactic patterns.
+You do this by applying ONE specific mechanical transformation. Do NOT try to "improve" the writing generally.
 
-Hard rules:
-- Preserve factual meaning EXACTLY
-- Keep the same register (formal/informal)
-- Do NOT change numbers, dates, names, citations, or quoted text
-- Every proper noun, number, and quoted phrase in the original MUST appear in your output unchanged
-- Do NOT add new facts, names, numbers, or claims not in the original
-- Your output MUST be the SAME number of sentences as the input — no more, no fewer
-- Do NOT add new sentences or expand descriptions — rephrase only
-- Do NOT write more than the character limit stated in the prompt
-- Follow any REWRITE CONSTRAINTS provided in the context
-- Output ONLY the rewritten text, no commentary"""
+TRANSFORMATION RULES (apply the one matching the finding type):
+
+For predictability / common_words findings:
+- Find the 2-3 most generic words in the sentence and replace them with more specific, unusual synonyms that keep the same meaning. Examples: "important" → "pivotal", "shows" → "reveals", "helps" → "enables", "different" → "divergent". NEVER use the words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally.
+
+For formulaic_sentence / generic_phrase findings:
+- Restructure the sentence to break its formulaic pattern. Move the subject to a different position. Merge or split clauses. Start the sentence differently than it currently starts.
+
+For style_shift / repetitive_structure findings:
+- Change the sentence opening to differ from the previous sentence's opening. If the previous sentence starts with "The X...", start this one with a participle, adverb, or dependent clause instead.
+
+For burstiness findings:
+- If this sentence is similar in length to neighbors, make it noticeably shorter (cut filler words) or merge it with context.
+
+For ai_generation findings:
+- Replace the flagged AI-typical phrase with a natural rephrasing. A human would say it differently.
+
+CRITICAL CONSTRAINTS:
+- Keep the SAME factual meaning. Zero new information.
+- All proper nouns, numbers, dates, citations, quoted text — copy verbatim.
+- Same number of sentences in, same number out.
+- Do NOT exceed the character limit.
+- Output ONLY the rewritten text. No quotes, no commentary."""
 
 
 def _make_chipin_rewrite_fn(detect_context: str) -> callable:
@@ -815,7 +821,8 @@ def run_rewrite(
                 # Just add the char limit instruction.
                 prompt = (
                     span_info + "\n\n"
-                    "Rewrite the text to address the finding above. "
+                    "Apply ONE transformation from the system prompt rules to fix the finding above. "
+                    "Change as few words as possible. "
                     "MUST NOT exceed " + str(max_sent_chars) + " characters. "
                     "Output ONLY the rewritten text."
                 )
