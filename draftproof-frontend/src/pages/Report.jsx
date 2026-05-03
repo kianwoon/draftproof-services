@@ -203,12 +203,6 @@ export default function Report() {
               </div>
             );
           })}
-          <div className="report-stat">
-            <span className="report-stat-value">
-              <span className="tier-badge" style={{ background: tier.bg, color: tier.color }}>{tier.label}</span>
-            </span>
-            <span className="report-stat-label">Risk Tier</span>
-          </div>
           {aiScore != null && (
             <div className="report-stat">
               <span className="report-stat-value" style={{ color: tier.color }}>{Number(aiScore).toFixed(2)}%</span>
