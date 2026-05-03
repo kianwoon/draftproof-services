@@ -104,6 +104,11 @@ def findings_from_json(data: dict) -> List[DetectResult]:
         for f in findings:
             dist[f.risk_level] = dist.get(f.risk_level, 0) + 1
 
+        # Pass scanner-level raw data so targeted rescan can diff sentences
+        scanner_raw = None
+        if scanner == "predictability" and "predictability" in data:
+            scanner_raw = data["predictability"]
+
         results.append(DetectResult(
             scanner=scanner,
             overall_risk=overall_risk,
@@ -112,7 +117,7 @@ def findings_from_json(data: dict) -> List[DetectResult]:
             risk_distribution=dist,
             findings=findings,
             policy_message="",
-            raw=None,
+            raw=scanner_raw,
             detector_version="",
             model_name="",
             config_hash="",
