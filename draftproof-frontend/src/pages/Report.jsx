@@ -157,8 +157,6 @@ export default function Report() {
             </svg>
             <span style={{ color: tier.color }}>
               {tier.label}
-              {aiScore != null && <span className="tier-score"> AI: {Number(aiScore).toFixed(2)}%</span>}
-              {writingScore != null && <span className="tier-score" style={{ color: '#6366f1' }}> Writing: {Number(writingScore).toFixed(2)}%</span>}
             </span>
           </div>
           {hasAIFindings && (
