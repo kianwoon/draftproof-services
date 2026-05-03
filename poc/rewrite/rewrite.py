@@ -89,7 +89,7 @@ def _metrics_from_detect(detect_report, text: str):
                 sents = raw.get("sentences", [])
                 if sents:
                     overall_risk = raw.get("overall_risk", 0.5)
-                    t10s = [s.get("top10_ratio") or s.get("top10", 0) for s in sents
+                    t10s = [s.get("top10_ratio") or s.get("top_10_ratio") or s.get("top10", 0) for s in sents
                             if isinstance(s, dict)]
                     top10 = sum(t10s) / max(len(t10s), 1) if t10s else 0.0
                     return _PM(
@@ -632,8 +632,9 @@ def _sentence_signal_context(rewrite_context: Optional[Any], finding: Finding, s
                 parts.append(f"predictability={sent['risk']}")
             if isinstance(sent.get("score"), (int, float)):
                 parts.append(f"score={sent['score']:.3f}")
-            if isinstance(sent.get("top10"), (int, float)):
-                parts.append(f"top10={sent['top10']:.1%}")
+            if isinstance(sent.get("top10") or sent.get("top10_ratio") or sent.get("top_10_ratio"), (int, float)):
+                t10 = sent.get("top10") or sent.get("top10_ratio") or sent.get("top_10_ratio")
+                parts.append(f"top10={t10:.1%}")
             break
 
     if not parts:

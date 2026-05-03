@@ -225,13 +225,13 @@ def run_rewrite_pipeline(
             f = final_details[i] if i < len(final_details) else {}
             sentence_comparison.append({
                 "index": i + 1,
-                "orig_tier": o.get("label", "?"),
-                "orig_risk": o.get("risk", 0),
-                "orig_top10": o.get("top10_ratio", 0),
+                "orig_tier": o.get("label") or o.get("risk_label", "?"),
+                "orig_risk": o.get("risk") or o.get("predictability_risk", 0),
+                "orig_top10": o.get("top10_ratio") or o.get("top_10_ratio", 0),
                 "orig_sentence": o.get("sentence", ""),
-                "new_tier": f.get("label", "?"),
-                "new_risk": f.get("risk", 0),
-                "new_top10": f.get("top10_ratio", 0),
+                "new_tier": f.get("label") or f.get("risk_label", "?"),
+                "new_risk": f.get("risk") or f.get("predictability_risk", 0),
+                "new_top10": f.get("top10_ratio") or f.get("top_10_ratio", 0),
                 "new_sentence": f.get("sentence", ""),
             })
 
