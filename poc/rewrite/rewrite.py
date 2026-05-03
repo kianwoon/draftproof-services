@@ -76,15 +76,33 @@ def _metrics_from_detect(detect_report, text: str):
     full predictability scan (~28s). Falls back to compute_metrics
     only if the predictability scanner didn't produce results.
     """
+    # Resolve PassMetrics type via MultiPassResult's field annotations.
+    # This avoids fragile direct imports from rewriter.rewriter which
+    # may not resolve correctly in all import contexts.
+    _PM = MultiPassResult.__dataclass_fields__["original_metrics"].type
+
     for sr in detect_report.scanner_results:
         if sr.scanner == "predictability" and sr.raw:
             raw = sr.raw
-            if hasattr(raw, "sentence_details"):
-                from rewriter import MetricsResult
-                return MetricsResult(
+            # Handle dict raw (from targeted rescan / report JSON)
+            if isinstance(raw, dict):
+                sents = raw.get("sentences", [])
+                if sents:
+                    overall_risk = raw.get("overall_risk", 0.5)
+                    t10s = [s.get("top10_ratio") or s.get("top10", 0) for s in sents
+                            if isinstance(s, dict)]
+                    top10 = sum(t10s) / max(len(t10s), 1) if t10s else 0.0
+                    return _PM(
+                        pass_number=0, text=text, risk=overall_risk,
+                        top10_ratio=top10, surprisal=0.0, sentence_details=sents,
+                    )
+            # Handle object raw (from live scanner)
+            elif hasattr(raw, "sentence_details"):
+                return _PM(
+                    pass_number=0, text=text,
                     risk=raw.overall_risk if hasattr(raw, "overall_risk") else 0.5,
                     top10_ratio=raw.top10_ratio if hasattr(raw, "top10_ratio") else 0.0,
-                    sentence_details=raw.sentence_details,
+                    surprisal=0.0, sentence_details=raw.sentence_details,
                 )
     # Fallback: run compute_metrics only if detect didn't include predictability
     return compute_metrics(text, PredictabilityScanner())
