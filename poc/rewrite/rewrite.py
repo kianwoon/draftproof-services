@@ -2007,7 +2007,14 @@ def _targeted_rescan(
         risks = []
         for r in valid:
             if isinstance(r, dict):
-                risks.append(r.get("predictability_risk", 0))
+                # Dict from report JSON uses "score" (numeric), not "predictability_risk"
+                risk_val = (r.get("predictability_risk")
+                            or r.get("score")
+                            or r.get("risk", 0))
+                # "risk" might be a string label like "review" — convert to 0
+                if isinstance(risk_val, str):
+                    risk_val = 0
+                risks.append(risk_val)
             else:
                 risks.append(getattr(r, "predictability_risk", 0))
         overall_risk = sum(risks) / len(risks) if risks else 0.0
@@ -2069,8 +2076,10 @@ def _predictability_findings_from_raw(merged_results: list) -> list:
     findings = []
     for r in merged_results:
         if isinstance(r, dict):
-            risk = r.get("predictability_risk", 0)
-            label = r.get("risk_label", "low")
+            risk = (r.get("predictability_risk")
+                    or r.get("score")
+                    or (0 if isinstance(r.get("risk"), str) else r.get("risk", 0)))
+            label = r.get("risk_label") or r.get("risk", "low")
             sentence = r.get("sentence", "")
         else:
             risk = getattr(r, "predictability_risk", 0)
