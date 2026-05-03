@@ -1894,6 +1894,15 @@ def _targeted_rescan(
         return runner.run_all(rewritten_text)
 
     # Build lookup of original sentence text -> score data
+    # Use normalized keys so Unicode/whitespace differences don't cause false mismatches
+    def _norm(text: str) -> str:
+        import unicodedata
+        text = unicodedata.normalize("NFKC", text).strip()
+        text = text.replace("’", "'").replace("‘", "'")  # curly single quotes
+        text = text.replace("“", '"').replace("”", '"')  # curly double quotes
+        text = text.replace("–", "-").replace("—", "-")  # en/em dashes
+        return " ".join(text.split())  # collapse whitespace
+
     orig_sent_lookup = {}
     for s in orig_sentences:
         if isinstance(s, dict):
@@ -1901,7 +1910,7 @@ def _targeted_rescan(
         else:
             text_val = getattr(s, "sentence", "").strip()
         if text_val:
-            orig_sent_lookup[text_val] = s
+            orig_sent_lookup[_norm(text_val)] = s
 
     # Split rewritten text into sentences and identify which changed
     scanner = PredictabilityScanner()
@@ -1909,7 +1918,7 @@ def _targeted_rescan(
     changed_indices = []
     unchanged_indices = []
     for i, s in enumerate(new_split):
-        s_text = str(s).strip()
+        s_text = _norm(str(s))
         if s_text in orig_sent_lookup:
             unchanged_indices.append(i)
         else:
@@ -1938,7 +1947,7 @@ def _targeted_rescan(
     merged_results = []
     changed_idx = 0
     for i, s in enumerate(new_split):
-        s_text = str(s).strip()
+        s_text = _norm(str(s))
         if i in unchanged_indices and s_text in orig_sent_lookup:
             merged_results.append(orig_sent_lookup[s_text])
         else:
@@ -2032,10 +2041,12 @@ def _predictability_findings_from_raw(merged_results: list) -> list:
             findings.append(Finding(
                 finding_type="predictability",
                 risk_level="high" if risk >= 0.65 else "medium" if risk >= 0.50 else "review",
-                evidence=sentence[:200],
+                evidence_strength="moderate",
                 detail=f"Predictability risk {risk:.2f} ({label})",
-                location={"sentence_id": f"s{len(findings)+1:03d}"},
+                evidence=sentence[:200],
                 recommendation="Rephrase to reduce predictability",
+                suggested_action_type="suggest_rewrite",
+                location={"sentence_id": f"s{len(findings)+1:03d}"},
                 metadata={"scanner": "predictability"},
             ))
     return findings
