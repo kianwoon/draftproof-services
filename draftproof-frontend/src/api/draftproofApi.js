@@ -4,6 +4,7 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
+  timeout: 300000, // 5 min — rewrite pipeline can take 3+ min
 });
 
 // Documents

@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 
 const POLL_INTERVAL = 3000;
-const MAX_POLLS = 100;
+const MAX_POLLS = 200; // 200 × 3s = 10 min max
 
 export default function Scan() {
   const [text, setText] = useState('');

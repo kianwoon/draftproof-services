@@ -72,7 +72,7 @@ export default function Rewrite() {
       if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
-    pollRef.current = setInterval(() => pollStatus(rewrite.id), 3000);
+    pollRef.current = setInterval(() => pollStatus(rewrite.id), 5000);
     return () => clearInterval(pollRef.current);
   }, [rewrite?.status, rewrite?.id, pollStatus]);
 
