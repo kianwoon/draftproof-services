@@ -10,6 +10,7 @@ import os
 import time
 import json
 import logging
+import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -203,10 +204,19 @@ class LLMGateway:
         raise RuntimeError(f"LLM call failed after {self.max_retries} attempts")
 
     @staticmethod
+    def _normalize_quotes(text: str) -> str:
+        """Replace Unicode curly quotes/apostrophes with ASCII equivalents."""
+        return text.replace('‘', "'").replace('’', "'") \
+                   .replace('“', '"').replace('”', '"') \
+                   .replace('‛', "'").replace('‚', "'") \
+                   .replace('„', '"').replace('‟', '"')
+
+    @staticmethod
     def _extract_content(data: dict) -> str:
         """Extract text content from OpenAI-compatible response JSON."""
         try:
-            return data["choices"][0]["message"]["content"]
+            raw = data["choices"][0]["message"]["content"]
+            return LLMGateway._normalize_quotes(raw)
         except (KeyError, IndexError, TypeError):
             logger.warning("Unexpected response structure: %s", json.dumps(data)[:500])
             return ""
