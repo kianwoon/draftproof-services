@@ -37,5 +37,6 @@ export const createRewrite = (scanId) => api.post('/rewrites/', { scan_id: scanI
 export const getRewriteStatus = (rewriteId) => api.get(`/rewrites/${rewriteId}`);
 export const getRewriteReport = (rewriteId) => api.get(`/rewrites/${rewriteId}/report`);
 export const getRewriteDownload = (rewriteId, format) => api.get(`/rewrites/${rewriteId}/download/${format}`);
+export const getDetectJson = (rewriteId) => api.get(`/rewrites/${rewriteId}/detect-json`);
 
 export default api;

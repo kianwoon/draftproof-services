@@ -173,6 +173,31 @@ async def get_rewrite_download_url(rewrite_id: str, fmt: str, user_id: str) -> s
         return None
 
 
+async def get_detect_json_url(rewrite_id: str, user_id: str) -> str | None:
+    """Generate presigned download URL for the original detect scan report.json."""
+    job_info = await get_rewrite(rewrite_id, user_id)
+    if not job_info:
+        return None
+
+    from app.services.report_service import _r2
+    from app.config import R2_BUCKET_NAME
+    if not _r2:
+        return None
+
+    scan_id = job_info["scan_id"]
+    key = f"reports/{scan_id}/report.json"
+    try:
+        url = await asyncio.to_thread(
+            _r2.generate_presigned_url,
+            "get_object",
+            {"Bucket": R2_BUCKET_NAME, "Key": key},
+            ExpiresIn=3600,
+        )
+        return url
+    except Exception:
+        return None
+
+
 def _rewrite_to_dict(job: RewriteJob) -> dict:
     return {
         "id": str(job.id),

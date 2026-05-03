@@ -46,3 +46,11 @@ async def download_rewrite(rewrite_id: str, fmt: str, user: dict = Depends(get_c
     if not url:
         raise HTTPException(status_code=404, detail="Download not available")
     return {"url": url}
+
+
+@router.get("/{rewrite_id}/detect-json")
+async def download_detect_json(rewrite_id: str, user: dict = Depends(get_current_user)):
+    url = await rewrite_service.get_detect_json_url(rewrite_id, user["id"])
+    if not url:
+        raise HTTPException(status_code=404, detail="Detect scan JSON not available")
+    return {"url": url}

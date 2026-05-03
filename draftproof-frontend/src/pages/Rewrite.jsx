@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { getRewriteStatus, getRewriteReport, getRewriteDownload, createRewrite, getScanStatus } from '../api/draftproofApi';
+import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson, createRewrite, getScanStatus } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 
 export default function Rewrite() {
@@ -98,6 +98,20 @@ export default function Rewrite() {
       }
     } catch (err) {
       setError(err.response?.data?.detail || 'Download failed. Please try again.');
+    }
+  };
+
+  const handleDownloadDetectJson = async () => {
+    if (!rewrite) return;
+    try {
+      const { data } = await getDetectJson(rewrite.id);
+      if (data.url) {
+        window.open(data.url, '_blank');
+      } else {
+        setError('Detect scan JSON not available.');
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to download detect scan JSON.');
     }
   };
 
@@ -333,6 +347,9 @@ export default function Rewrite() {
             </button>
             <button onClick={() => handleDownload('txt')} style={dlBtnStyle}>
               Download Rewritten Text
+            </button>
+            <button onClick={handleDownloadDetectJson} style={dlBtnStyle}>
+              Download Detect Scan JSON
             </button>
             <button onClick={handleRewriteAgain} style={{ ...dlBtnStyle, background: '#6366f1' }}>
               Rewrite Again
