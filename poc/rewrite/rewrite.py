@@ -1157,7 +1157,8 @@ def run_rewrite(
     orig_report = DetectionReport(
         scanner_results=all_detect_results,
         overall_risk=max((dr.overall_risk for dr in all_detect_results), default=0),
-        elapsed=0,
+        overall_review_priority="low",
+        confidence="medium",
     )
     original_metrics = _metrics_from_detect(orig_report, content)
 
