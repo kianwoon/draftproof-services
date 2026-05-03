@@ -10,7 +10,10 @@ Usage:
 """
 
 import hashlib
+import logging
 from typing import List, Optional, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 from .base import BaseDetector, DetectResult, Finding, DetectionReport, RewriteDecision
 from .predictability import PredictabilityDetector
@@ -84,7 +87,9 @@ class DetectionRunner:
             kwargs["custom_phrases"] = get_phrases_for_packs(profile.phrase_packs)
         scanner_results: List[DetectResult] = []
         for d in detectors:
+            logger.info("Running scanner: %s", d.name)
             result = d.detect(content, **kwargs)
+            logger.info("Scanner %s done — %d findings", d.name, len(result.findings))
             scanner_results.append(result)
             # Forward predictability sentence metrics to ai_generation scanner
             if d.__class__.__name__ == "PredictabilityDetector":

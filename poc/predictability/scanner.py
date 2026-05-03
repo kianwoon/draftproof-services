@@ -4,13 +4,17 @@ Core idea: for each token, ask "how likely was this next token given context?"
 High predictability across many tokens = formulaic / generic writing.
 """
 
+import logging
 import math
 import re
+import time
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+
+logger = logging.getLogger(__name__)
 
 # Use unified phrase source
 from poc.predictability.phrase_packs import get_generic_phrases
@@ -251,17 +255,24 @@ class PredictabilityScanner:
 
     def scan_text(self, text: str) -> Dict[str, Any]:
         sentences = self.split_sentences(text)
+        eligible = [s for s in sentences if len(str(s).split()) >= 8]
+        total = len(eligible)
+        logger.info("Predictability scan: %d eligible sentences (of %d total)", total, len(sentences))
         results = []
-        for s in sentences:
-            # Skip short fragments (< 8 words) — initials, author names, URLs, etc.
-            if len(str(s).split()) < 8:
-                continue
+        t0 = time.monotonic()
+        for i, s in enumerate(eligible):
             sr = self.scan_sentence(str(s))
-            # Propagate offset metadata from split
             sr.start_char = getattr(s, "start_char", 0)
             sr.end_char = getattr(s, "end_char", 0)
             sr.paragraph_id = getattr(s, "paragraph_id", "p001")
             results.append(sr)
+            if (i + 1) % 5 == 0 or (i + 1) == total:
+                elapsed = time.monotonic() - t0
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                logger.info(
+                    "Predictability progress: %d/%d sentences (%.1f/s, %.1fs elapsed)",
+                    i + 1, total, rate, elapsed,
+                )
         shifts = self.detect_style_shifts(results)
 
         valid = [r for r in results if r.error is None]
