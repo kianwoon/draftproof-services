@@ -1318,6 +1318,7 @@ def run_rewrite(
     detect_loop_history = []
     prev_findings_count = _count_findings(detect_results)
     outer_loop_start = time.time()
+    text_before_outer_loop = current_text  # snapshot for targeted rescan diff
 
     for detect_loop in range(config.max_detect_loops):
         # Time budget: stop outer loop if we've already spent >300s rewriting
@@ -1328,9 +1329,12 @@ def run_rewrite(
             })
             break
 
-        # Re-detect current text
-        re_detect_runner = DetectionRunner()
-        re_detect_report = re_detect_runner.run_all(current_text)
+        # Re-detect current text (targeted: only re-scan changed sentences)
+        re_detect_report = _targeted_rescan(
+            original_text=text_before_outer_loop,
+            rewritten_text=current_text,
+            all_detect_results=detect_results,
+        )
         re_detect_results = re_detect_report.scanner_results
         new_findings_count = _count_findings(re_detect_results)
 
