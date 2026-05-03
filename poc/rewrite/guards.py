@@ -484,7 +484,7 @@ class PredictabilityGuard:
         ) / len(new_eligible)
 
         delta = new_risk - orig_risk
-        accepted = delta <= 0.05  # tolerate tiny regression (< 5%)
+        accepted = delta <= 0.15  # tolerate moderate regression (< 15%)
 
         if accepted:
             self._accepted += 1

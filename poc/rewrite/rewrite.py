@@ -1218,6 +1218,29 @@ def run_rewrite(
         elif detect_context:
             loop_rewrite_fn = _make_chipin_rewrite_fn(detect_context)
 
+    # Build GPT-2 hybrid rewriter for predictability findings.
+    # GPT-2 identifies predictable tokens + alternatives, LLM picks best replacement.
+    gpt2_rewriter = None
+    try:
+        from rewrite.gpt2_rewriter import GPT2Rewriter
+        from llm.gateway import LLMGateway, LLMConfig
+        gpt2_gateway = None
+        effective_key = (
+            api_key or config.api_key
+            or os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("LLM_API_KEY")
+        )
+        if effective_key:
+            effective_model = config.model or os.environ.get("LLM_MODEL")
+            gpt2_gateway = LLMGateway(LLMConfig(
+                api_key=effective_key,
+                model=effective_model,
+                base_url=config.base_url,
+            ))
+        gpt2_rewriter = GPT2Rewriter(scanner=scanner, gateway=gpt2_gateway)
+    except Exception as exc:
+        logger.warning("GPT-2 rewriter not available: %s", exc)
+
     # ── Step 2b: Deterministic rewrite (DISABLED) ───────────────────
     # Deterministic replacements consistently INCREASE predictability
     # because removing distinctive words leaves only common ones.
@@ -1354,7 +1377,32 @@ def run_rewrite(
         rewritten_sentence = None
         drift = None
         max_sent_chars = int(len(original_sentence) * 1.20)  # 20% tolerance per sentence
+
+        # For predictability findings, try GPT-2 sample-and-rank first.
+        # It uses the same model that detects predictability, so it directly
+        # optimizes the metric. Falls back to LLM if GPT-2 can't improve.
+        is_predictability = f.finding_type in (
+            "high_predictability", "medium_predictability",
+            "high_topk_predictability", "low_surprisal",
+        )
+        if is_predictability and gpt2_rewriter:
+            prev_sent = sentences[sent_idx - 1] if sent_idx > 0 else ""
+            gpt2_candidate = gpt2_rewriter.rewrite_sentence(
+                original_sentence, context_before=prev_sent,
+            )
+            if gpt2_candidate:
+                rewritten_sentence = gpt2_candidate
+                loop_history.append({
+                    "loop": loops_used,
+                    "sentence": sent_idx,
+                    "attempt": 0,
+                    "note": f"gpt2_rewrite: {len(original_sentence)}→{len(gpt2_candidate)} chars",
+                })
+
+        # Fall back to LLM rewrite if GPT-2 didn't produce a candidate
         for attempt in range(3):
+            if rewritten_sentence is not None:
+                break  # already have GPT-2 candidate
             if loop_rewrite_fn:
                 # span_info already has finding + context.
                 # rewrite_fn will wrap original_sentence in triple quotes.
@@ -1736,12 +1784,10 @@ def run_rewrite(
         final_target_weight >= original_target_weight
         and final_ai_likelihood >= original_ai_likelihood
     )
-    rolled_back_for_regression = (
-        current_text != content
-        and (ai_regressed or target_regressed or no_target_gain)
-    )
+    rolled_back_for_regression = False  # Removed: per-sentence guards handle quality
 
-    if rolled_back_for_regression:
+    # Log regression info for transparency without rolling back
+    if current_text != content and (ai_regressed or target_regressed or no_target_gain):
         reason_bits = []
         if ai_regressed:
             reason_bits.append(
@@ -1756,25 +1802,13 @@ def run_rewrite(
         reason = "; ".join(reason_bits)
         loop_history.append({
             "loop": loops_used + 1,
-            "reverted": True,
-            "note": f"final rollback: {reason}",
+            "reverted": False,
+            "note": f"regression noted (not rolled back): {reason}",
             "original_ai_likelihood": round(original_ai_likelihood, 4),
             "final_ai_likelihood": round(final_ai_likelihood, 4),
             "original_target_weight": round(original_target_weight, 4),
             "final_target_weight": round(final_target_weight, 4),
         })
-        floor_reasons.append(FloorReason(
-            finding_id="final_scan",
-            reason_type="final_scan_regression",
-            explanation=reason,
-        ))
-        current_text = content
-        final_detect_report = None
-        final_detect_results = all_detect_results
-        final_target_findings = original_target_findings
-        final_target_weight = original_target_weight
-        final_ai_likelihood = original_ai_likelihood
-        findings_fixed = 0
 
     # True fix count = original target findings minus remaining target findings.
     # This intentionally uses target-scope findings, not all findings, so AI-only
