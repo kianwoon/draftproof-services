@@ -514,7 +514,7 @@ class ReportBuilder:
                     "sentence_id": sent_id,
                     "sentence": s.get("sentence") or s.get("text", ""),
                     "risk_label": s.get("risk_label", "") or (s.get("risk", "") if isinstance(s.get("risk"), str) else ""),
-                    "risk": _dict_risk_to_float(s),
+                    "risk": self._dict_risk_to_float(s),
                     "avg_probability": s.get("avg_probability", 0),
                     "avg_surprisal": s.get("avg_surprisal", 0),
                     "top10_ratio": s.get("top_10_ratio") or s.get("top10", 0),
