@@ -84,17 +84,44 @@ def _metrics_from_detect(detect_report, text: str):
     for sr in detect_report.scanner_results:
         if sr.scanner == "predictability" and sr.raw:
             raw = sr.raw
-            # Handle dict raw (from targeted rescan / report JSON)
+            # Handle dict raw (from targeted rescan / report JSON / live scanner scan_text())
             if isinstance(raw, dict):
                 sents = raw.get("sentences", [])
                 if sents:
                     overall_risk = raw.get("overall_risk", 0.5)
-                    t10s = [s.get("top10_ratio") or s.get("top_10_ratio") or s.get("top10", 0) for s in sents
-                            if isinstance(s, dict)]
+                    # Normalize all items to canonical dict format used by compute_metrics:
+                    # {label, risk, top10_ratio, surprisal, sentence}
+                    normalized = []
+                    t10s = []
+                    for i, s in enumerate(sents):
+                        if isinstance(s, dict):
+                            # Try all possible key names (report JSON vs asdict format)
+                            d = {
+                                "index": i,
+                                "label": s.get("label") or s.get("risk_label", "low"),
+                                "risk": s.get("risk") or s.get("predictability_risk", 0),
+                                "top10_ratio": s.get("top10_ratio") or s.get("top_10_ratio") or s.get("top10", 0),
+                                "surprisal": s.get("surprisal") or s.get("avg_surprisal", 0),
+                                "sentence": s.get("sentence", ""),
+                            }
+                        else:
+                            # SentenceResult object
+                            d = {
+                                "index": i,
+                                "label": getattr(s, "risk_label", "low"),
+                                "risk": getattr(s, "predictability_risk", 0),
+                                "top10_ratio": getattr(s, "top_10_ratio", 0),
+                                "surprisal": getattr(s, "avg_surprisal", 0),
+                                "sentence": getattr(s, "sentence", ""),
+                            }
+                        normalized.append(d)
+                        t10_val = d["top10_ratio"]
+                        if isinstance(t10_val, (int, float)):
+                            t10s.append(t10_val)
                     top10 = sum(t10s) / max(len(t10s), 1) if t10s else 0.0
                     return _PM(
                         pass_number=0, text=text, risk=overall_risk,
-                        top10_ratio=top10, surprisal=0.0, sentence_details=sents,
+                        top10_ratio=top10, surprisal=0.0, sentence_details=normalized,
                     )
             # Handle object raw (from live scanner)
             elif hasattr(raw, "sentence_details"):
