@@ -26,6 +26,36 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+function pct(value) {
+  if (value == null || Number.isNaN(Number(value))) return null;
+  return `${(Number(value) * 100).toFixed(0)}%`;
+}
+
+function findingDescription(issue) {
+  if (issue.title === 'low_specificity' && issue.evidence?.metrics) {
+    const m = issue.evidence.metrics;
+    const risk = pct(issue.evidence.adjusted_specificity_concern ?? m.specificity_risk);
+    const specificity = pct(m.specificity_score);
+    const parts = [
+      risk ? `Specificity concern: ${risk}` : null,
+      specificity ? `specificity score: ${specificity}` : null,
+      m.named_entities != null ? `named entities: ${m.named_entities}` : null,
+      m.numbers != null ? `numbers: ${m.numbers}` : null,
+      m.dates != null ? `dates: ${m.dates}` : null,
+      m.domain_term_count != null ? `domain terms: ${m.domain_term_count}` : null,
+    ].filter(Boolean);
+    return parts.join(', ');
+  }
+
+  return issue.description;
+}
+
+function findingEvidenceSummary(issue) {
+  if (issue.evidence?.summary) return issue.evidence.summary;
+  if (typeof issue.evidence === 'string') return issue.evidence;
+  return '';
+}
+
 export default function Report() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -235,7 +265,7 @@ export default function Report() {
                         <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                       </svg>
                     </div>
-                    <p className="finding-desc">{issue.description}</p>
+                    <p className="finding-desc">{findingDescription(issue)}</p>
                     {isExpanded && (
                       <div className="finding-detail" onClick={(e) => e.stopPropagation()}>
                         {issue.scanner && (
@@ -289,15 +319,13 @@ export default function Report() {
                         {issue.evidence && (
                           <div className="finding-evidence">
                             <span className="finding-meta-label">Evidence</span>
-                            {typeof issue.evidence === 'string' ? (
-                              <p>{issue.evidence}</p>
+                            {findingEvidenceSummary(issue) ? (
+                              <p>{findingEvidenceSummary(issue)}</p>
                             ) : (
-                              <>
-                                {issue.evidence.summary && <p>{issue.evidence.summary}</p>}
-                                {issue.evidence.sentence && (
-                                  <blockquote className="finding-quote">&ldquo;{issue.evidence.sentence}&rdquo;</blockquote>
-                                )}
-                              </>
+                              null
+                            )}
+                            {typeof issue.evidence === 'object' && issue.evidence.sentence && (
+                              <blockquote className="finding-quote">&ldquo;{issue.evidence.sentence}&rdquo;</blockquote>
                             )}
                           </div>
                         )}
