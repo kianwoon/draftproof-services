@@ -259,7 +259,19 @@ def run_rewrite_pipeline(
             else "No automatic rewrite was applied"
         )
         rewritten_report_dict = ctx.raw_json
+    elif result.final_detect_report is not None:
+        # Reuse the targeted rescan from run_rewrite() — avoids a redundant
+        # full predictability scan (saves ~50s on a 100-sentence document).
+        rewritten_detect_report = result.final_detect_report
+        rewritten_builder = ReportBuilder()
+        rewritten_builder.add_detection_report(rewritten_detect_report)
+        if getattr(rewritten_detect_report, "postprocess_results", None):
+            rewritten_builder.add_postprocess_results(rewritten_detect_report.postprocess_results)
+        rewritten_builder.set_meta(scan_time=0, original_text=rewritten_text)
+        rewritten_draft_report = rewritten_builder.build()
+        rewritten_report_dict = report_to_dict(rewritten_draft_report)
     else:
+        # Fallback: no cached detect report — run full scan
         rewritten_detect_runner = DetectionRunner()
         rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
 
