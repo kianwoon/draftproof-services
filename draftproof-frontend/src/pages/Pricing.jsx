@@ -21,7 +21,7 @@ export default function Pricing() {
             <h2>Scan</h2>
             <div className="pricing-amount">
               <span className="pricing-currency">$</span>
-              <span className="pricing-value">2.90</span>
+              <span className="pricing-value">1.90</span>
               <span className="pricing-unit">/ scan</span>
             </div>
           </div>
@@ -66,7 +66,7 @@ export default function Pricing() {
             <h2>Re-Write</h2>
             <div className="pricing-amount">
               <span className="pricing-currency">$</span>
-              <span className="pricing-value">5.80</span>
+              <span className="pricing-value">3.80</span>
               <span className="pricing-unit">/ rewrite</span>
             </div>
           </div>

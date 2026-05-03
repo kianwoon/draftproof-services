@@ -19,7 +19,7 @@ function formatDate(iso) {
 }
 
 function formatAmount(cents, currency) {
-  return `${(cents / 100).toFixed(2)} ${currency || 'SGD'}`;
+  return `${(cents / 100).toFixed(2)} ${currency || 'USD'}`;
 }
 
 export default function PurchaseHistory() {

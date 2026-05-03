@@ -45,7 +45,7 @@ export default function BuyTokens() {
     <div className="container" style={{ paddingTop: 'calc(var(--header-h) + 4rem)', paddingBottom: '4rem' }}>
       <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
         <h2 style={{ marginBottom: '0.5rem' }}>Buy Tokens</h2>
-        <p style={{ color: 'var(--text-2)' }}>SGD $2.90 per token — each scan costs 1 token per document.</p>
+        <p style={{ color: 'var(--text-2)' }}>USD $1.90 per token — each scan costs 1 token per document.</p>
         {balance !== null && (
           <p className="balance-display">Current balance: <strong>{balance} tokens</strong></p>
         )}
@@ -64,8 +64,8 @@ export default function BuyTokens() {
           <div key={pack.id} className="pack-card">
             <h3>{pack.name}</h3>
             <div className="pack-tokens">{pack.tokens} tokens</div>
-            <div className="pack-price">SGD ${pack.price_sgd.toFixed(2)}</div>
-            <div className="pack-unit">${(pack.price_sgd / pack.tokens).toFixed(2)} / token</div>
+            <div className="pack-price">USD ${pack.price_usd.toFixed(2)}</div>
+            <div className="pack-unit">${(pack.price_usd / pack.tokens).toFixed(2)} / token</div>
             <button
               className="btn btn-primary"
               onClick={() => handleBuy(pack.id)}
