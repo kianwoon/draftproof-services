@@ -483,21 +483,42 @@ class ReportBuilder:
         for s in raw.get("sentences", []):
             if getattr(s, "error", None):
                 continue
-            sent_idx += 1
-            sent_id = f"s{sent_idx:03d}"
-            sentences.append({
-                "sentence_id": sent_id,
-                "sentence": s.sentence,
-                "risk_label": s.risk_label,
-                "risk": s.predictability_risk,
-                "avg_probability": s.avg_probability,
-                "avg_surprisal": s.avg_surprisal,
-                "top10_ratio": s.top_10_ratio,
-                "top50_ratio": s.top_50_ratio,
-                "start_char": getattr(s, "start_char", 0),
-                "end_char": getattr(s, "end_char", 0),
-                "paragraph_id": getattr(s, "paragraph_id", ""),
-            })
+            if isinstance(s, dict):
+                # Carried forward from report JSON — use dict access
+                if s.get("error"):
+                    continue
+                sent_idx += 1
+                sent_id = s.get("sentence_id", f"s{sent_idx:03d}")
+                sentences.append({
+                    "sentence_id": sent_id,
+                    "sentence": s.get("sentence") or s.get("text", ""),
+                    "risk_label": s.get("risk_label", ""),
+                    "risk": s.get("predictability_risk") or s.get("risk", 0),
+                    "avg_probability": s.get("avg_probability", 0),
+                    "avg_surprisal": s.get("avg_surprisal", 0),
+                    "top10_ratio": s.get("top_10_ratio") or s.get("top10", 0),
+                    "top50_ratio": s.get("top_50_ratio") or s.get("top50", 0),
+                    "start_char": s.get("start_char", 0),
+                    "end_char": s.get("end_char", 0),
+                    "paragraph_id": s.get("paragraph_id", ""),
+                })
+            else:
+                # Scanner object — use attribute access
+                sent_idx += 1
+                sent_id = f"s{sent_idx:03d}"
+                sentences.append({
+                    "sentence_id": sent_id,
+                    "sentence": s.sentence,
+                    "risk_label": s.risk_label,
+                    "risk": s.predictability_risk,
+                    "avg_probability": s.avg_probability,
+                    "avg_surprisal": s.avg_surprisal,
+                    "top10_ratio": s.top_10_ratio,
+                    "top50_ratio": s.top_50_ratio,
+                    "start_char": getattr(s, "start_char", 0),
+                    "end_char": getattr(s, "end_char", 0),
+                    "paragraph_id": getattr(s, "paragraph_id", ""),
+                })
             for p in getattr(s, "matched_generic_phrases", []):
                 generic_phrases.append(p)
 

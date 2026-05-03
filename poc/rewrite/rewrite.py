@@ -1893,36 +1893,46 @@ def _targeted_rescan(
         runner = DetectionRunner()
         return runner.run_all(rewritten_text)
 
-    # Build lookup of original sentence text -> score data
-    # Use normalized keys so Unicode/whitespace differences don't cause false mismatches
+    # Normalize for comparison (handle curly quotes, dashes, whitespace)
     def _norm(text: str) -> str:
         import unicodedata
         text = unicodedata.normalize("NFKC", text).strip()
-        text = text.replace("’", "'").replace("‘", "'")  # curly single quotes
-        text = text.replace("“", '"').replace("”", '"')  # curly double quotes
-        text = text.replace("–", "-").replace("—", "-")  # en/em dashes
-        return " ".join(text.split())  # collapse whitespace
+        text = text.replace("’", "'").replace("‘", "'")
+        text = text.replace("“", '"').replace("”", '"')
+        text = text.replace("–", "-").replace("—", "-")
+        return " ".join(text.split())
 
+    # Build text-based lookup from original predictability sentences
+    # Report JSON may only contain flagged sentences, so this is a partial lookup
     orig_sent_lookup = {}
     for s in orig_sentences:
         if isinstance(s, dict):
-            text_val = s.get("sentence", "").strip()
+            text_val = (s.get("sentence") or s.get("text") or "").strip()
         else:
-            text_val = getattr(s, "sentence", "").strip()
+            text_val = (getattr(s, "sentence", None) or getattr(s, "text", "")).strip()
         if text_val:
             orig_sent_lookup[_norm(text_val)] = s
 
-    # Split rewritten text into sentences and identify which changed
+    # Split both texts into sentences for position-based diffing
     scanner = PredictabilityScanner()
+    orig_split = scanner.split_sentences(original_text)
     new_split = scanner.split_sentences(rewritten_text)
+
+    # Position-based diff: compare sentences at same index
+    # If sentence count changed, mark all from the divergence point as changed
     changed_indices = []
     unchanged_indices = []
-    for i, s in enumerate(new_split):
-        s_text = _norm(str(s))
-        if s_text in orig_sent_lookup:
+    min_len = min(len(orig_split), len(new_split))
+
+    for i in range(min_len):
+        if _norm(str(orig_split[i])) == _norm(str(new_split[i])):
             unchanged_indices.append(i)
         else:
             changed_indices.append(i)
+
+    # If lengths differ, extra sentences are all changed
+    for i in range(min_len, len(new_split)):
+        changed_indices.append(i)
 
     # Run predictability only on changed sentences
     eligible_changed = [new_split[i] for i in changed_indices if len(str(new_split[i]).split()) >= 8]
@@ -1947,9 +1957,20 @@ def _targeted_rescan(
     merged_results = []
     changed_idx = 0
     for i, s in enumerate(new_split):
-        s_text = _norm(str(s))
-        if i in unchanged_indices and s_text in orig_sent_lookup:
-            merged_results.append(orig_sent_lookup[s_text])
+        if i in unchanged_indices:
+            # Try text-based lookup first (has original scores)
+            s_text = _norm(str(s))
+            if s_text in orig_sent_lookup:
+                merged_results.append(orig_sent_lookup[s_text])
+            else:
+                # Sentence wasn't in the partial report JSON — scan it fresh
+                if changed_idx < len(changed_results):
+                    sr = changed_results[changed_idx]
+                    sr.start_char = getattr(s, "start_char", 0)
+                    sr.end_char = getattr(s, "end_char", 0)
+                    sr.paragraph_id = getattr(s, "paragraph_id", "p001")
+                    merged_results.append(sr)
+                    changed_idx += 1
         else:
             if changed_idx < len(changed_results):
                 sr = changed_results[changed_idx]
