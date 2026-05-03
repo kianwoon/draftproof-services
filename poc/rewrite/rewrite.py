@@ -1039,10 +1039,9 @@ def run_rewrite(
         # Re-group by paragraph and rewrite
         re_guidance = _extract_rewrite_guidance(re_detect_results)
         re_detect_context = _build_detect_context(re_guidance)
+        # Preserve the configured gateway — do NOT replace with local claude CLI.
+        # Only fall back to chipin if no rewrite_fn was ever created.
         if loop_rewrite_fn is None and detect_context:
-            loop_rewrite_fn = _make_chipin_rewrite_fn(re_detect_context)
-        else:
-            # Update detect context for chip-in
             loop_rewrite_fn = _make_chipin_rewrite_fn(re_detect_context)
 
         re_sentences, re_para_map = _build_sentence_index(current_text)
