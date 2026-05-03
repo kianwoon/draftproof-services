@@ -107,6 +107,10 @@ def run_rewrite_pipeline(
 
         detect_results = []
         for scanner, findings in by_scanner.items():
+            # Preserve raw data from report JSON for scanners that have it
+            scanner_raw = None
+            if scanner == "predictability":
+                scanner_raw = detect_json.get("predictability")
             detect_results.append(DetectResult(
                 scanner=scanner,
                 overall_risk=0.5,
@@ -115,7 +119,7 @@ def run_rewrite_pipeline(
                 risk_distribution={},
                 findings=findings,
                 policy_message="",
-                raw=None,
+                raw=scanner_raw,
             ))
         ctx = DetectJSONContext(
             detect_results=detect_results,
