@@ -55,6 +55,7 @@ from rewrite.guards import (
     detect_protected_spans, check_semantic_drift, DriftCheck,
     RegressionMemory, mask_protected_spans,
     protected_spans_preserved, affected_region, transactional_apply, TransactionResult,
+    PredictabilityGuard,
 )
 from rewrite.scorer import (
     weighted_finding_score, weighted_rewritable_risk,
@@ -547,6 +548,7 @@ def run_rewrite(
     # Analyze voice profile before any rewriting
     voice_profile = analyze_voice(content)
     voice_guard = VoiceGuard()
+    predictability_guard = PredictabilityGuard()
 
     # Compute rewrite surface (how much is actually rewritable)
     protected_spans = detect_protected_spans(content)
@@ -951,6 +953,27 @@ def run_rewrite(
             })
             continue
 
+        # Predictability regression guard (revert if score got worse)
+        reg_check = predictability_guard.check(current_text, candidate_text, original_sentence)
+        if not reg_check.accepted:
+            findings_skipped += 1
+            floor_reasons.append(FloorReason(
+                finding_id=getattr(f, "id", str(id(f))),
+                reason_type="predictability_regression",
+                explanation=f"Predictability {reg_check.orig_risk:.3f} -> {reg_check.new_risk:.3f} (+{reg_check.delta:.3f})",
+            ))
+            loop_history.append({
+                "loop": loops_used,
+                "sentence": sent_idx,
+                "finding_type": f.finding_type,
+                "reverted": True,
+                "orig_risk": reg_check.orig_risk,
+                "new_risk": reg_check.new_risk,
+                "delta": reg_check.delta,
+                "note": f"floor: predictability_regression +{reg_check.delta:.3f}",
+            })
+            continue
+
         # All guards passed - accept
         findings_fixed += 1
         current_text = candidate_text
@@ -1182,6 +1205,8 @@ def run_rewrite(
         outcome = RewriteOutcome.MANUAL_REQUIRED
     else:
         outcome = RewriteOutcome.FLOOR_REACHED
+
+    print(f"  Predictability guard: {predictability_guard.stats}")
 
     return RewriteModuleResult(
         mp_result=result,

@@ -391,3 +391,91 @@ def transactional_apply(
         drift_similarity=drift.similarity,
         voice_warnings=voice_warnings,
     )
+
+
+# ── Predictability regression guard ──────────────────────────────────
+
+@dataclass
+class RegressionCheck:
+    accepted: bool
+    orig_risk: float
+    new_risk: float
+    delta: float
+    reason: str = ""
+
+
+class PredictabilityGuard:
+    """Per-sentence regression guard using the GPT-2 predictability scanner.
+
+    After each rewrite, scores the affected paragraph before and after.
+    If predictability_risk goes UP, the change is reverted.
+
+    Uses paragraph-level context (not just the sentence) because
+    predictability is context-dependent — a sentence score changes
+    based on what precedes it.
+    """
+
+    def __init__(self, scanner=None):
+        self._scanner = scanner
+        self._reverted = 0
+        self._accepted = 0
+
+    def _get_scanner(self):
+        if self._scanner is None:
+            from predictability.scanner import PredictabilityScanner
+            self._scanner = PredictabilityScanner()
+        return self._scanner
+
+    @staticmethod
+    def _extract_paragraph(text: str, sentence: str, context_chars: int = 600) -> str:
+        pos = text.find(sentence)
+        if pos < 0:
+            return text
+        start = max(0, pos - context_chars)
+        end = min(len(text), pos + len(sentence) + context_chars)
+        chunk = text[start:end]
+        paragraph_breaks = [i for i, c in enumerate(chunk) if i > 0 and chunk[i-1:i+1] == '\n\n']
+        if paragraph_breaks:
+            # Keep the paragraph containing the sentence
+            rel_pos = pos - start
+            before = [b for b in paragraph_breaks if b < rel_pos]
+            after = [b for b in paragraph_breaks if b >= rel_pos]
+            para_start = before[-1] if before else 0
+            para_end = after[0] if after else len(chunk)
+            chunk = chunk[para_start:para_end]
+        return chunk.strip()
+
+    def check(self, orig_text: str, candidate_text: str, changed_sentence: str) -> RegressionCheck:
+        orig_para = self._extract_paragraph(orig_text, changed_sentence)
+        new_para = self._extract_paragraph(candidate_text, changed_sentence)
+
+        scanner = self._get_scanner()
+
+        orig_sents = [s for s in scanner.split_sentences(orig_para) if len(str(s).split()) >= 6]
+        new_sents = [s for s in scanner.split_sentences(new_para) if len(str(s).split()) >= 6]
+
+        if not orig_sents or not new_sents:
+            return RegressionCheck(True, 0, 0, 0, "skip: too few eligible sentences")
+
+        orig_risk = sum(scanner.scan_sentence(str(s)).predictability_risk for s in orig_sents) / len(orig_sents)
+        new_risk = sum(scanner.scan_sentence(str(s)).predictability_risk for s in new_sents) / len(new_sents)
+
+        delta = new_risk - orig_risk
+        accepted = delta <= 0.05  # tolerate tiny regression (< 5%)
+
+        if accepted:
+            self._accepted += 1
+        else:
+            self._reverted += 1
+
+        return RegressionCheck(
+            accepted=accepted,
+            orig_risk=round(orig_risk, 4),
+            new_risk=round(new_risk, 4),
+            delta=round(delta, 4),
+            reason="" if accepted else f"predictability regressed +{delta:.4f}",
+        )
+
+    @property
+    def stats(self) -> dict:
+        return {"accepted": self._accepted, "reverted": self._reverted}
