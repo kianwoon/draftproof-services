@@ -16,6 +16,7 @@ import sys
 import os
 import json
 import time
+import re
 import argparse
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -27,6 +28,28 @@ from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
 from detect.run import DetectionRunner
 from report.report import ReportBuilder, report_to_dict
+
+
+def sanitize_text(text: str) -> str:
+    """Fix mojibake and normalize Unicode in text before processing.
+
+    Handles UTF-8 bytes that were decoded as latin-1, which produces
+    artifacts like: â€™ â€" â€œ â€\x9d â€¦
+    """
+    # Fix common mojibake patterns
+    text = text.replace('â€™', "'").replace('â€˜', "'")
+    text = text.replace('â€œ', '"').replace('â€\x9d', '"')
+    text = text.replace('â€"', ' -- ').replace('â€"', '-')
+    text = text.replace('â€¦', '...')
+    # Normalize remaining Unicode to ASCII equivalents
+    text = text.replace('’', "'").replace('‘', "'")
+    text = text.replace('“', '"').replace('”', '"')
+    text = text.replace('—', ' -- ').replace('–', '-')
+    text = text.replace('…', '...')
+    text = text.replace(' ', ' ')
+    # Clean up double spaces from replacements
+    text = re.sub(r'  +', ' ', text)
+    return text
 
 
 def run_rewrite_pipeline(
@@ -139,6 +162,9 @@ def run_rewrite_pipeline(
             for dr in ctx.detect_results
         )
         print(f"  MEDIUM+ mode: {medium_count} findings out of {total_findings} total")
+
+    # Sanitize input text before rewrite (fix mojibake from PDF/docx extraction)
+    text = sanitize_text(text)
 
     t0 = time.time()
     result: RewriteModuleResult = run_rewrite(

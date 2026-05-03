@@ -209,14 +209,42 @@ class LLMGateway:
         return text.replace('‘', "'").replace('’', "'") \
                    .replace('“', '"').replace('”', '"') \
                    .replace('‛', "'").replace('‚', "'") \
-                   .replace('„', '"').replace('‟', '"')
+                   .replace('„', '"').replace('‟', '"') \
+                   .replace('—', ' -- ').replace('–', '-') \
+                   .replace('…', '...')
+
+    @staticmethod
+    def _fix_mojibake(text: str) -> str:
+        """Fix UTF-8 bytes that were decoded as latin-1 (mojibake).
+
+        Handles: â€™ -> ', â€" -> --, â€œ -> ", â€ -> ..., etc.
+        """
+        return text.replace('\xc3\xa2\xe2\x82\xac\xe2\x84\xa2', "'") \
+                   .replace('\xe2\x80\x99', "'") \
+                   .replace('\xe2\x80\x98', "'") \
+                   .replace('\xe2\x80\x9c', '"') \
+                   .replace('\xe2\x80\x9d', '"') \
+                   .replace('\xe2\x80\x93', '-') \
+                   .replace('\xe2\x80\x94', ' -- ') \
+                   .replace('\xe2\x80\xa6', '...') \
+                   .replace('\xc3\xa2\xe2\x82\xac\xe2\x80\x9c', '"') \
+                   .replace('\xc3\xa2\xe2\x82\xac\xe2\x80\x9d', '"') \
+                   .replace('\xc3\xa2\xe2\x82\xac\xe2\x80\x9d', '"') \
+                   .replace('â€"', ' -- ') \
+                   .replace('â€™', "'") \
+                   .replace('â€˜', "'") \
+                   .replace('â€œ', '"') \
+                   .replace('â€\x9d', '"') \
+                   .replace('â€\xa6', '...') \
+                   .replace('â€"', '-')
 
     @staticmethod
     def _extract_content(data: dict) -> str:
         """Extract text content from OpenAI-compatible response JSON."""
         try:
             raw = data["choices"][0]["message"]["content"]
-            return LLMGateway._normalize_quotes(raw)
+            normalized = LLMGateway._normalize_quotes(raw)
+            return LLMGateway._fix_mojibake(normalized)
         except (KeyError, IndexError, TypeError):
             logger.warning("Unexpected response structure: %s", json.dumps(data)[:500])
             return ""
