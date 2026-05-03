@@ -133,7 +133,6 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 or (f.get("title") in REPHRASABLE_TYPES and f.get("recommendation"))
             )
         ]
-            ]
         if not rephrasable_findings:
             update_rewrite_status(rewrite_id, "failed", error="No rephrasable findings to rewrite")
             release_rewrite_credits(rewrite_id)
