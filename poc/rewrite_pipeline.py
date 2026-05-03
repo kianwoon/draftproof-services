@@ -231,13 +231,14 @@ def run_rewrite_pipeline(
         result.summary["detect_ai_likelihood"] = badge.get("ai_likelihood_score", 0)
         result.summary["detect_writing_quality"] = badge.get("writing_quality_score", 0)
 
-    # ── Run FULL detect scan on rewritten text (same pipeline as original scan) ──
+    # ── Final full detect scan ──────────────────────────────────────
+    # The rewrite engine may use a targeted rescan internally for speed, but
+    # the user-facing report and rollback decision need the same full scan that
+    # detect reports use. Otherwise a local sentence-level estimate can mark a
+    # rewrite as acceptable while the product-level badge still regresses.
     rewritten_text = result.mp_result.final_text if result.mp_result else text
-    # Reuse detect report from run_rewrite() to avoid redundant predictability scan
-    rewritten_detect_report = result.final_detect_report
-    if not rewritten_detect_report:
-        rewritten_detect_runner = DetectionRunner()
-        rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
+    rewritten_detect_runner = DetectionRunner()
+    rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
 
     rewritten_builder = ReportBuilder()
     rewritten_builder.add_detection_report(rewritten_detect_report)

@@ -606,6 +606,38 @@ def _sentence_signal_context(rewrite_context: Optional[Any], finding: Finding, s
     return "Sentence scan metrics: " + ", ".join(parts)
 
 
+def _component_regression_check(original: str, candidate: str) -> tuple[bool, str]:
+    """Cheap guard for document-level AI badge drivers.
+
+    Full detection after every sentence is too expensive, but these Layer 3
+    component estimators are lightweight and catch the common failure mode:
+    a rewrite gets smoother while becoming broader or less grounded.
+    """
+    try:
+        from detect.layer3_scoring import (
+            estimate_broad_claim_risk,
+            estimate_generic_assertion_risk,
+            estimate_lived_detail_risk,
+        )
+    except Exception:
+        return True, ""
+
+    checks = [
+        ("broad_claim", estimate_broad_claim_risk),
+        ("generic_assertion", estimate_generic_assertion_risk),
+        ("lived_detail", estimate_lived_detail_risk),
+    ]
+    regressions = []
+    for name, fn in checks:
+        before = fn(original)
+        after = fn(candidate)
+        if after > before + 0.02:
+            regressions.append(f"{name} {before:.3f}->{after:.3f}")
+    if regressions:
+        return False, "; ".join(regressions)
+    return True, ""
+
+
 def _rewrite_fn_with_detect_context(
     detect_context: str,
     api_key: Optional[str],
@@ -1244,6 +1276,24 @@ def run_rewrite(
             })
             continue
 
+        # Badge component guard: reject smoother-but-broader rewrites.
+        component_ok, component_reason = _component_regression_check(current_text, candidate_text)
+        if not component_ok:
+            findings_skipped += 1
+            floor_reasons.append(FloorReason(
+                finding_id=getattr(f, "id", str(id(f))),
+                reason_type="badge_component_regression",
+                explanation=component_reason,
+            ))
+            loop_history.append({
+                "loop": loops_used,
+                "sentence": sent_idx,
+                "finding_type": f.finding_type,
+                "reverted": True,
+                "note": f"floor: badge_component_regression {component_reason}",
+            })
+            continue
+
         # All guards passed - accept
         findings_fixed += 1
         current_text = candidate_text
@@ -1399,8 +1449,15 @@ def run_rewrite(
         prev_findings_count = new_findings_count
 
     # Build final MultiPassResult
-    final_detect_runner = DetectionRunner()
-    final_detect_report = final_detect_runner.run_all(current_text)
+    # ── Targeted rescan: only re-scan changed sentences for predictability ──
+    # The predictability scanner is ~25s for 100 sentences. Most sentences
+    # are unchanged after rewrite, so we carry forward their original scores
+    # and only re-scan the ones that actually changed.
+    final_detect_report = _targeted_rescan(
+        original_text=content,
+        rewritten_text=current_text,
+        all_detect_results=all_detect_results,
+    )
     final_detect_results = final_detect_report.scanner_results
 
     # Original metrics: use unfiltered detect results (includes predictability scanner)
@@ -1581,6 +1638,203 @@ def run_rewrite(
         voice_guard_warnings=[],
         final_detect_report=final_detect_report,
     )
+
+
+def _targeted_rescan(
+    original_text: str,
+    rewritten_text: str,
+    all_detect_results: List[DetectResult],
+) -> "DetectionReport":
+    """Run a targeted rescan after rewrite — only re-score changed sentences.
+
+    Strategy:
+    - Fast scanners (ai_generation, citation, etc.): run normally on full text (~1s)
+    - Predictability scanner: only re-scan sentences that actually changed,
+      carry forward unchanged sentence scores from the original detect.
+
+    This cuts predictability rescan from ~25s (101 sentences) to ~2-3s (changed only).
+    Falls back to full scan if original predictability data is unavailable.
+    """
+    from detect.base import DetectionReport, DetectResult as DR
+
+    # If text didn't change, return original detect results wrapped as a report
+    if original_text == rewritten_text:
+        orig_report = DetectionReport(
+            scanner_results=all_detect_results,
+            overall_risk=max((dr.overall_risk for dr in all_detect_results), default=0),
+            overall_review_priority="low",
+            confidence="medium",
+        )
+        logger.info("Targeted rescan: text unchanged, reusing original detect results")
+        return orig_report
+
+    # Try to extract original predictability sentence details
+    orig_pred_raw = None
+    orig_pred_scanner_result = None
+    for sr in all_detect_results:
+        if sr.scanner == "predictability" and sr.raw:
+            orig_pred_raw = sr.raw
+            orig_pred_scanner_result = sr
+            break
+
+    # If no original predictability data, fall back to full scan
+    if not orig_pred_raw:
+        logger.info("Targeted rescan: no original predictability data, falling back to full scan")
+        runner = DetectionRunner()
+        return runner.run_all(rewritten_text)
+
+    orig_sentences = orig_pred_raw.get("sentences", [])
+    if not orig_sentences:
+        logger.info("Targeted rescan: no original sentence details, falling back to full scan")
+        runner = DetectionRunner()
+        return runner.run_all(rewritten_text)
+
+    # Build lookup of original sentence text -> score data
+    orig_sent_lookup = {}
+    for s in orig_sentences:
+        if isinstance(s, dict):
+            text_val = s.get("sentence", "").strip()
+        else:
+            text_val = getattr(s, "sentence", "").strip()
+        if text_val:
+            orig_sent_lookup[text_val] = s
+
+    # Split rewritten text into sentences and identify which changed
+    scanner = PredictabilityScanner()
+    new_split = scanner.split_sentences(rewritten_text)
+    changed_indices = []
+    unchanged_indices = []
+    for i, s in enumerate(new_split):
+        s_text = str(s).strip()
+        if s_text in orig_sent_lookup:
+            unchanged_indices.append(i)
+        else:
+            changed_indices.append(i)
+
+    # Run predictability only on changed sentences
+    eligible_changed = [new_split[i] for i in changed_indices if len(str(new_split[i]).split()) >= 8]
+
+    logger.info(
+        "Targeted rescan: %d changed (%d eligible) / %d unchanged — scanning only changed",
+        len(changed_indices), len(eligible_changed), len(unchanged_indices),
+    )
+
+    changed_results = []
+    if eligible_changed:
+        t0 = time.time()
+        for s in eligible_changed:
+            sr = scanner.scan_sentence(str(s))
+            changed_results.append(sr)
+        logger.info(
+            "Targeted rescan: predictability done in %.1fs (%d sentences)",
+            time.time() - t0, len(eligible_changed),
+        )
+
+    # Merge: carry forward unchanged scores + new changed scores
+    merged_results = []
+    changed_idx = 0
+    for i, s in enumerate(new_split):
+        s_text = str(s).strip()
+        if i in unchanged_indices and s_text in orig_sent_lookup:
+            merged_results.append(orig_sent_lookup[s_text])
+        else:
+            if changed_idx < len(changed_results):
+                sr = changed_results[changed_idx]
+                sr.start_char = getattr(s, "start_char", 0)
+                sr.end_char = getattr(s, "end_char", 0)
+                sr.paragraph_id = getattr(s, "paragraph_id", "p001")
+                merged_results.append(sr)
+                changed_idx += 1
+
+    # Build merged predictability raw dict
+    valid = [r for r in merged_results
+             if (isinstance(r, dict) and r.get("error") is None)
+             or (not isinstance(r, dict) and getattr(r, "error", None) is None)]
+    overall_risk = 0.0
+    if valid:
+        risks = []
+        for r in valid:
+            if isinstance(r, dict):
+                risks.append(r.get("predictability_risk", 0))
+            else:
+                risks.append(getattr(r, "predictability_risk", 0))
+        overall_risk = sum(risks) / len(risks) if risks else 0.0
+
+    merged_pred_raw = {
+        "overall_risk": round(overall_risk, 4),
+        "sentences": merged_results,
+    }
+
+    # Run fast scanners on full text (skip predictability — we handle it above)
+    from detect.ai_generation import AIGenerationSignalDetector
+    from detect.citation import CitationDetector
+    fast_detectors = [AIGenerationSignalDetector(), CitationDetector()]
+    fast_runner = DetectionRunner(detectors=fast_detectors)
+    fast_report = fast_runner.run_all(rewritten_text)
+
+    # Replace predictability scanner result with our merged version
+    pred_findings = _predictability_findings_from_raw(merged_results)
+    merged_scanner_results = []
+    pred_replaced = False
+    for sr in fast_report.scanner_results:
+        if sr.scanner == "predictability" and not pred_replaced:
+            merged_scanner_results.append(DR(
+                scanner="predictability",
+                overall_risk=overall_risk,
+                confidence=orig_pred_scanner_result.confidence if orig_pred_scanner_result else "medium",
+                confidence_reason="targeted rescan: changed sentences re-scored, unchanged carried forward",
+                risk_distribution=orig_pred_scanner_result.risk_distribution if orig_pred_scanner_result else {},
+                findings=pred_findings,
+                policy_message=orig_pred_scanner_result.policy_message if orig_pred_scanner_result else "",
+                raw=merged_pred_raw,
+            ))
+            pred_replaced = True
+        else:
+            merged_scanner_results.append(sr)
+
+    if not pred_replaced:
+        merged_scanner_results.append(DR(
+            scanner="predictability",
+            overall_risk=overall_risk,
+            confidence="medium",
+            confidence_reason="targeted rescan: changed sentences re-scored, unchanged carried forward",
+            risk_distribution={},
+            findings=pred_findings,
+            policy_message="",
+            raw=merged_pred_raw,
+        ))
+
+    return DetectionReport(
+        scanner_results=merged_scanner_results,
+        overall_risk=max((dr.overall_risk for dr in merged_scanner_results), default=0),
+        overall_review_priority="low",
+        confidence="medium",
+    )
+
+
+def _predictability_findings_from_raw(merged_results: list) -> list:
+    """Convert merged predictability sentence results to Finding objects."""
+    findings = []
+    for r in merged_results:
+        if isinstance(r, dict):
+            risk = r.get("predictability_risk", 0)
+            label = r.get("risk_label", "low")
+            sentence = r.get("sentence", "")
+        else:
+            risk = getattr(r, "predictability_risk", 0)
+            label = getattr(r, "risk_label", "low")
+            sentence = getattr(r, "sentence", "")
+        if risk >= 0.40 and sentence:
+            findings.append(Finding(
+                finding_type="predictability",
+                risk_level="high" if risk >= 0.65 else "medium" if risk >= 0.50 else "review",
+                evidence=sentence[:200],
+                detail=f"Predictability risk {risk:.2f} ({label})",
+                location={"sentence_id": f"s{len(findings)+1:03d}"},
+                recommendation="Rephrase to reduce predictability",
+                metadata={"scanner": "predictability"},
+            ))
+    return findings
 
 
 def _count_findings(detect_results: List[DetectResult]) -> int:
