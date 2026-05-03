@@ -1998,25 +1998,46 @@ def _targeted_rescan(
                 merged_results.append(sr)
                 changed_idx += 1
 
+    # Normalize SentenceResult objects to dicts so downstream .get() calls work
+    from dataclasses import asdict
+    normalized = []
+    for r in merged_results:
+        if isinstance(r, dict):
+            normalized.append(r)
+        else:
+            try:
+                normalized.append(asdict(r))
+            except TypeError:
+                normalized.append({
+                    "sentence": getattr(r, "sentence", ""),
+                    "risk_label": getattr(r, "risk_label", "low"),
+                    "predictability_risk": getattr(r, "predictability_risk", 0),
+                    "avg_probability": getattr(r, "avg_probability", 0),
+                    "avg_surprisal": getattr(r, "avg_surprisal", 0),
+                    "top_10_ratio": getattr(r, "top_10_ratio", 0),
+                    "top_50_ratio": getattr(r, "top_50_ratio", 0),
+                    "matched_generic_phrases": getattr(r, "matched_generic_phrases", []),
+                    "error": getattr(r, "error", None),
+                    "start_char": getattr(r, "start_char", 0),
+                    "end_char": getattr(r, "end_char", 0),
+                    "paragraph_id": getattr(r, "paragraph_id", ""),
+                })
+    merged_results = normalized
+
     # Build merged predictability raw dict
     valid = [r for r in merged_results
-             if (isinstance(r, dict) and r.get("error") is None)
-             or (not isinstance(r, dict) and getattr(r, "error", None) is None)]
+             if r.get("error") is None]
     overall_risk = 0.0
     if valid:
         risks = []
         for r in valid:
-            if isinstance(r, dict):
-                # Dict from report JSON uses "score" (numeric), not "predictability_risk"
-                risk_val = (r.get("predictability_risk")
-                            or r.get("score")
-                            or r.get("risk", 0))
-                # "risk" might be a string label like "review" — convert to 0
-                if isinstance(risk_val, str):
-                    risk_val = 0
-                risks.append(risk_val)
-            else:
-                risks.append(getattr(r, "predictability_risk", 0))
+            # All items are now dicts after normalization
+            risk_val = (r.get("predictability_risk")
+                        or r.get("score")
+                        or r.get("risk", 0))
+            if isinstance(risk_val, str):
+                risk_val = 0
+            risks.append(risk_val)
         overall_risk = sum(risks) / len(risks) if risks else 0.0
 
     merged_pred_raw = {
@@ -2075,16 +2096,11 @@ def _predictability_findings_from_raw(merged_results: list) -> list:
     """Convert merged predictability sentence results to Finding objects."""
     findings = []
     for r in merged_results:
-        if isinstance(r, dict):
-            risk = (r.get("predictability_risk")
-                    or r.get("score")
-                    or (0 if isinstance(r.get("risk"), str) else r.get("risk", 0)))
-            label = r.get("risk_label") or r.get("risk", "low")
-            sentence = r.get("sentence", "")
-        else:
-            risk = getattr(r, "predictability_risk", 0)
-            label = getattr(r, "risk_label", "low")
-            sentence = getattr(r, "sentence", "")
+        risk = (r.get("predictability_risk")
+                or r.get("score")
+                or (0 if isinstance(r.get("risk"), str) else r.get("risk", 0)))
+        label = r.get("risk_label") or r.get("risk", "low")
+        sentence = r.get("sentence", "")
         if risk >= 0.40 and sentence:
             findings.append(Finding(
                 finding_type="predictability",
