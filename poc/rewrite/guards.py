@@ -407,12 +407,10 @@ class RegressionCheck:
 class PredictabilityGuard:
     """Per-sentence regression guard using the GPT-2 predictability scanner.
 
-    After each rewrite, scores the affected paragraph before and after.
-    If predictability_risk goes UP, the change is reverted.
+    After each rewrite, scores ONLY the changed sentence + 1 neighbor
+    before and after. If predictability_risk goes UP, the change is reverted.
 
-    Uses paragraph-level context (not just the sentence) because
-    predictability is context-dependent — a sentence score changes
-    based on what precedes it.
+    Scans max 3 sentences per check (~0.75s) instead of the full document.
     """
 
     def __init__(self, scanner=None):
@@ -427,38 +425,63 @@ class PredictabilityGuard:
         return self._scanner
 
     @staticmethod
-    def _extract_paragraph(text: str, sentence: str, context_chars: int = 600) -> str:
-        pos = text.find(sentence)
-        if pos < 0:
-            return text
-        start = max(0, pos - context_chars)
-        end = min(len(text), pos + len(sentence) + context_chars)
-        chunk = text[start:end]
-        paragraph_breaks = [i for i, c in enumerate(chunk) if i > 0 and chunk[i-1:i+1] == '\n\n']
-        if paragraph_breaks:
-            # Keep the paragraph containing the sentence
-            rel_pos = pos - start
-            before = [b for b in paragraph_breaks if b < rel_pos]
-            after = [b for b in paragraph_breaks if b >= rel_pos]
-            para_start = before[-1] if before else 0
-            para_end = after[0] if after else len(chunk)
-            chunk = chunk[para_start:para_end]
-        return chunk.strip()
+    def _extract_window(text: str, sentence: str) -> Tuple[List[str], int]:
+        """Extract up to 3 sentences around the target sentence.
+
+        Returns (sentences, target_index) where target_index is the
+        position of the target sentence in the list.
+        """
+        # Split into sentences using simple regex
+        sents = re.split(r'(?<=[.!?])\s+', text)
+        sents = [s.strip() for s in sents if s.strip()]
+
+        target_idx = -1
+        for i, s in enumerate(sents):
+            # Match by first 40 chars to handle rewrites
+            if sentence[:40] in s or s[:40] in sentence:
+                target_idx = i
+                break
+
+        if target_idx < 0:
+            # Fallback: find by position in text
+            pos = text.find(sentence[:30])
+            if pos >= 0:
+                char_count = 0
+                for i, s in enumerate(sents):
+                    char_count += len(s) + 1
+                    if char_count > pos:
+                        target_idx = i
+                        break
+
+        if target_idx < 0:
+            return [sentence], 0
+
+        # Window: ±1 sentence, max 3
+        start = max(0, target_idx - 1)
+        end = min(len(sents), target_idx + 2)
+        window = sents[start:end]
+        rel_target = target_idx - start
+        return window, rel_target
 
     def check(self, orig_text: str, candidate_text: str, changed_sentence: str) -> RegressionCheck:
-        orig_para = self._extract_paragraph(orig_text, changed_sentence)
-        new_para = self._extract_paragraph(candidate_text, changed_sentence)
+        orig_window, _ = self._extract_window(orig_text, changed_sentence)
+        new_window, _ = self._extract_window(candidate_text, changed_sentence)
+
+        # Filter to eligible sentences (>= 6 words)
+        orig_eligible = [s for s in orig_window if len(s.split()) >= 6]
+        new_eligible = [s for s in new_window if len(s.split()) >= 6]
+
+        if not orig_eligible or not new_eligible:
+            return RegressionCheck(True, 0, 0, 0, "skip: too few eligible sentences")
 
         scanner = self._get_scanner()
 
-        orig_sents = [s for s in scanner.split_sentences(orig_para) if len(str(s).split()) >= 6]
-        new_sents = [s for s in scanner.split_sentences(new_para) if len(str(s).split()) >= 6]
-
-        if not orig_sents or not new_sents:
-            return RegressionCheck(True, 0, 0, 0, "skip: too few eligible sentences")
-
-        orig_risk = sum(scanner.scan_sentence(str(s)).predictability_risk for s in orig_sents) / len(orig_sents)
-        new_risk = sum(scanner.scan_sentence(str(s)).predictability_risk for s in new_sents) / len(new_sents)
+        orig_risk = sum(
+            scanner.scan_sentence(s).predictability_risk for s in orig_eligible
+        ) / len(orig_eligible)
+        new_risk = sum(
+            scanner.scan_sentence(s).predictability_risk for s in new_eligible
+        ) / len(new_eligible)
 
         delta = new_risk - orig_risk
         accepted = delta <= 0.05  # tolerate tiny regression (< 5%)
