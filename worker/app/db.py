@@ -130,6 +130,31 @@ def update_rewrite_status(job_id: str, status: str, error: str = None):
         )
 
 
+def release_rewrite_credits(job_id: str):
+    """Release reserved tokens back to available balance (on failure/cancellation)."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, credit_account_id, tokens_reserved
+               FROM credit_reservations
+               WHERE job_id = %s AND status = 'active'
+               LIMIT 1""",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+        res_id = row["id"]
+        acct_id = row["credit_account_id"]
+        tokens = row["tokens_reserved"]
+
+        cur.execute("UPDATE credit_reservations SET status = 'released' WHERE id = %s", (res_id,))
+        cur.execute(
+            "UPDATE credit_accounts SET reserved_tokens = reserved_tokens - %s WHERE id = %s",
+            (tokens, acct_id),
+        )
+
+
 def capture_rewrite_credits(user_id: str, job_id: str):
     """Capture credit reservation for a rewrite job."""
     with get_conn() as conn:

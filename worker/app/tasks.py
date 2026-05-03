@@ -13,7 +13,7 @@ if _repo_root not in sys.path:
 from .celery_app import app
 from .config import settings
 from .storage import upload_report_files
-from .db import get_scan_job, update_job_status, capture_credits, get_rewrite_job, update_rewrite_status, capture_rewrite_credits
+from .db import get_scan_job, update_job_status, capture_credits, get_rewrite_job, update_rewrite_status, capture_rewrite_credits, release_rewrite_credits
 from celery.exceptions import SoftTimeLimitExceeded
 
 
@@ -108,6 +108,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             report_json = json.loads(resp["Body"].read())
         except Exception:
             update_rewrite_status(rewrite_id, "failed", error="Original report not found in R2")
+            release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "report not found"}
 
         # 2. Filter findings: only rephrase-fixable ones
@@ -132,6 +133,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             ]
         if not rephrasable_findings:
             update_rewrite_status(rewrite_id, "failed", error="No rephrasable findings to rewrite")
+            release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "no rephrasable findings"}
 
         # 3. Run rewrite pipeline
@@ -140,6 +142,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
 
         if not settings.LLM_API_KEY:
             update_rewrite_status(rewrite_id, "failed", error="LLM_API_KEY not configured — rewrite requires an LLM API key")
+            release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "missing LLM API key"}
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -157,6 +160,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
 
             if result["status"] in ("skipped", "clean"):
                 update_rewrite_status(rewrite_id, "failed", error=result.get("message", "Rewrite not needed"))
+                release_rewrite_credits(rewrite_id)
                 return {"status": "skipped"}
 
             # Read files WHILE tmpdir still exists (before with block exits)
@@ -209,11 +213,15 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
 
     except SoftTimeLimitExceeded:
         update_rewrite_status(rewrite_id, "failed", error="Rewrite timed out (10 min limit)")
+        release_rewrite_credits(rewrite_id)
         return {"status": "failed", "error": "timeout"}
     except Exception as e:
         if self.request.retries < self.max_retries:
             update_rewrite_status(rewrite_id, "retrying", error=str(e))
             raise self.retry(exc=e)
         else:
+            update_rewrite_status(rewrite_id, "failed", error=str(e))
+            release_rewrite_credits(rewrite_id)
+            raise
             update_rewrite_status(rewrite_id, "failed", error=str(e))
             raise
