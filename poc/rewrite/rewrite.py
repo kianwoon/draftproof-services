@@ -75,19 +75,24 @@ def _is_ai_finding(f: Finding) -> bool:
     )
 
 
-def _filter_ai_findings(detect_results: List[DetectResult]) -> List[DetectResult]:
-    """Keep only findings from the ai_generation scanner.
+def _filter_ai_findings(detect_results: List[DetectResult], min_severity: str = "medium") -> List[DetectResult]:
+    """Keep only MEDIUM+ severity findings from the ai_generation scanner.
 
-    Returns new DetectResult list with only AI findings. Non-AI scanners
-    (predictability, similarity, citation) are dropped entirely.
+    Returns new DetectResult list with only AI findings at or above min_severity.
+    Non-AI scanners (predictability, similarity, citation) are dropped entirely.
+    LOW and info findings are skipped — not worth the LLM cost to rewrite.
     """
+    _severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "review": 0, "info": 0}
+    min_rank = _severity_rank.get(min_severity, 2)
+
     filtered = []
     for dr in detect_results:
-        # Check DetectResult.scanner (set by parse_detect grouping) AND metadata
         if dr.scanner == "ai_generation":
             ai_findings = dr.findings
         else:
             ai_findings = [f for f in dr.findings if _is_ai_finding(f)]
+        # Filter by severity
+        ai_findings = [f for f in ai_findings if _severity_rank.get(f.risk_level, 0) >= min_rank]
         if not ai_findings:
             continue
         filtered.append(DetectResult(
