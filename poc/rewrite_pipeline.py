@@ -243,21 +243,33 @@ def run_rewrite_pipeline(
         result.summary["detect_writing_quality"] = badge.get("writing_quality_score", 0)
 
     # ── Final full detect scan ──────────────────────────────────────
-    # The rewrite engine may use a targeted rescan internally for speed, but
-    # the user-facing report and rollback decision need the same full scan that
-    # detect reports use. Otherwise a local sentence-level estimate can mark a
-    # rewrite as acceptable while the product-level badge still regresses.
+    # If no text changed, do not re-scan. The detector has stochastic/heuristic
+    # variance, so rescanning identical text can falsely show a rewrite
+    # regression even when the rewrite engine made no edit.
+    #
+    # When text did change, run the same full scan used by detect reports. The
+    # rewrite engine may use a targeted rescan internally for speed, but the
+    # user-facing report and rollback decision need a product-level full scan.
     rewritten_text = result.mp_result.final_text if result.mp_result else text
-    rewritten_detect_runner = DetectionRunner()
-    rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
+    if rewritten_text == text:
+        result.summary["no_text_change"] = True
+        result.summary["no_text_change_reason"] = (
+            result.mp_result.convergence_reason
+            if result.mp_result and result.mp_result.convergence_reason
+            else "No automatic rewrite was applied"
+        )
+        rewritten_report_dict = ctx.raw_json
+    else:
+        rewritten_detect_runner = DetectionRunner()
+        rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
 
-    rewritten_builder = ReportBuilder()
-    rewritten_builder.add_detection_report(rewritten_detect_report)
-    if rewritten_detect_report.postprocess_results:
-        rewritten_builder.add_postprocess_results(rewritten_detect_report.postprocess_results)
-    rewritten_builder.set_meta(scan_time=0, original_text=rewritten_text)
-    rewritten_draft_report = rewritten_builder.build()
-    rewritten_report_dict = report_to_dict(rewritten_draft_report)
+        rewritten_builder = ReportBuilder()
+        rewritten_builder.add_detection_report(rewritten_detect_report)
+        if rewritten_detect_report.postprocess_results:
+            rewritten_builder.add_postprocess_results(rewritten_detect_report.postprocess_results)
+        rewritten_builder.set_meta(scan_time=0, original_text=rewritten_text)
+        rewritten_draft_report = rewritten_builder.build()
+        rewritten_report_dict = report_to_dict(rewritten_draft_report)
 
     def _finding_total(report_dict):
         findings = report_dict.get("findings", {})

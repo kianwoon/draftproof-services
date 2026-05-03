@@ -147,10 +147,16 @@ export default function Rewrite() {
   const summary = report?.summary || report?.rewrite_summary || {};
   const converged = summary.converged ?? false;
   const outcome = summary.outcome || '';
+  const hasChangedSentences = (report?.sentence_comparison || []).some(
+    (sc) => (sc.orig_sentence || '') !== (sc.new_sentence || '')
+  );
+  const noTextChange = Boolean(summary.no_text_change) ||
+    ((summary.passes_completed ?? 0) === 0 && !hasChangedSentences);
 
   // Detect scan comparison (full pipeline scores)
   const origScan = summary.detect_scan_original || {};
-  const newScan = summary.detect_scan_rewritten || {};
+  const reportedNewScan = summary.detect_scan_rewritten || {};
+  const newScan = noTextChange ? origScan : reportedNewScan;
 
   const origBadge = origScan.ai_risk_badge || {};
   const newBadge = newScan.ai_risk_badge || {};
@@ -175,16 +181,19 @@ export default function Rewrite() {
   const finalRisk = summary.final_risk ?? 0;
 
   // Derive outcome label from the final full detect scan, not local rewrite attempts.
-  const regressed = outcome === 'rejected_for_drift' || outcome === 'floor_reached' ||
-    (hasScanComparison && (newAI > origAI + 0.05 || newTotal > origTotal));
+  const regressed = !noTextChange && (
+    outcome === 'rejected_for_drift' ||
+    outcome === 'floor_reached' ||
+    (hasScanComparison && (newAI > origAI + 0.05 || newTotal > origTotal))
+  );
   const improved = !regressed && (
     outcome === 'improved' ||
     outcome === 'partially_improved' ||
     (hasScanComparison && newAI < origAI && newTotal <= origTotal)
   );
-  const outcomeLabel = converged ? 'Converged' : improved ? 'Improved' : regressed ? 'No Improvement' : 'Review Needed';
-  const outcomeColor = converged || improved ? '#22c55e' : regressed ? '#ef4444' : '#f59e0b';
-  const outcomeBg = converged || improved ? '#f0fdf4' : regressed ? '#fef2f2' : '#fffbeb';
+  const outcomeLabel = noTextChange ? 'No Automatic Rewrite' : converged ? 'Converged' : improved ? 'Improved' : regressed ? 'No Improvement' : 'Review Needed';
+  const outcomeColor = noTextChange ? '#f59e0b' : converged || improved ? '#22c55e' : regressed ? '#ef4444' : '#f59e0b';
+  const outcomeBg = noTextChange ? '#fffbeb' : converged || improved ? '#f0fdf4' : regressed ? '#fef2f2' : '#fffbeb';
 
   return (
     <main className="dash-shell">
@@ -248,7 +257,7 @@ export default function Rewrite() {
                     <td style={{ padding: '8px', fontWeight: 600 }}>AI Likelihood</td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>{origAI.toFixed(1)}%</td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>{newAI.toFixed(1)}%</td>
-                    <td style={{ padding: '8px', textAlign: 'center', color: newAI < origAI ? '#22c55e' : '#ef4444' }}>
+                    <td style={{ padding: '8px', textAlign: 'center', color: newAI < origAI ? '#22c55e' : newAI > origAI ? '#ef4444' : '#64748b' }}>
                       {(newAI - origAI).toFixed(1)}%
                     </td>
                   </tr>
@@ -256,7 +265,7 @@ export default function Rewrite() {
                     <td style={{ padding: '8px', fontWeight: 600 }}>Writing Quality</td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>{origWQ.toFixed(1)}%</td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>{newWQ.toFixed(1)}%</td>
-                    <td style={{ padding: '8px', textAlign: 'center', color: newWQ < origWQ ? '#22c55e' : '#ef4444' }}>
+                    <td style={{ padding: '8px', textAlign: 'center', color: newWQ < origWQ ? '#22c55e' : newWQ > origWQ ? '#ef4444' : '#64748b' }}>
                       {(newWQ - origWQ).toFixed(1)}%
                     </td>
                   </tr>
@@ -278,8 +287,8 @@ export default function Rewrite() {
                     <td style={{ padding: '8px' }}>Total Findings</td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>{origTotal}</td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>{newTotal}</td>
-                    <td style={{ padding: '8px', textAlign: 'center', color: newTotal < origTotal ? '#22c55e' : '#ef4444' }}>
-                      {newTotal - origTotal}
+                    <td style={{ padding: '8px', textAlign: 'center', color: newTotal < origTotal ? '#22c55e' : newTotal > origTotal ? '#ef4444' : '#64748b' }}>
+                      {newTotal - origTotal === 0 ? '—' : newTotal - origTotal}
                     </td>
                   </tr>
                 </tbody>

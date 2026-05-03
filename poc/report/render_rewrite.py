@@ -35,6 +35,8 @@ def render_rewrite_report(
     passes = summary.get("passes_completed", 0)
     converged = summary.get("converged", False)
     conv_reason = summary.get("convergence_reason", "")
+    no_text_change = summary.get("no_text_change", False)
+    no_text_change_reason = summary.get("no_text_change_reason", "")
 
     # Detect scan before/after — run full detect pipeline on both texts
     orig_scan = summary.get("detect_scan_original", {})
@@ -105,7 +107,9 @@ def render_rewrite_report(
 
         # Overall outcome
         rollback = summary.get("rollback_applied", False)
-        if rollback:
+        if no_text_change:
+            lines.append("**Outcome: No Automatic Rewrite Applied** — DraftProof kept the original text because the remaining signals require manual review or source-backed context.")
+        elif rollback:
             lines.append("**Outcome: No Improvement** — DraftProof kept the original text because the final detect scan regressed.")
         elif converged:
             lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
@@ -119,7 +123,9 @@ def render_rewrite_report(
         final_risk = summary.get("final_risk", 0)
         imp_risk = summary.get("improvement_risk", 0)
         rollback = summary.get("rollback_applied", False)
-        if rollback:
+        if no_text_change:
+            lines.append("**Outcome: No Automatic Rewrite Applied** — DraftProof kept the original text because the remaining signals require manual review or source-backed context.")
+        elif rollback:
             lines.append("**Outcome: No Improvement** — DraftProof kept the original text because the final detect scan regressed.")
         elif converged:
             lines.append("**Outcome: Converged** — Rewrite targets met within acceptable bounds.")
@@ -130,6 +136,8 @@ def render_rewrite_report(
     lines.append("")
 
     lines.append(f"**Passes:** {passes} | **Converged:** {'Yes' if converged else 'No'}")
+    if no_text_change_reason:
+        lines.append(f"> {no_text_change_reason}")
     if conv_reason:
         lines.append(f"> {conv_reason}")
     lines.append("")
@@ -149,7 +157,12 @@ def render_rewrite_report(
 
     # ── AI Findings That Triggered Rewrite ──────────────────────────
     if ai_findings:
-        lines.append("## AI Findings Targeted for Rewrite")
+        if no_text_change:
+            lines.append("## AI Findings Reviewed")
+            lines.append("")
+            lines.append("These AI-related findings were reviewed, but they were not safe automatic rewrite targets.")
+        else:
+            lines.append("## AI Findings Targeted for Rewrite")
         lines.append("")
         lines.append("| # | Risk | Signal | Detail | Location | Suggestion |")
         lines.append("|--:|:----:|:------:|--------|----------|------------|")
