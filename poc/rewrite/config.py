@@ -73,6 +73,9 @@ class RewriteConfig:
     llm_timeout_seconds: int = 20
     llm_max_retries: int = 1
     max_rewrite_seconds: int = 180
+    max_llm_calls: int = 8
+    max_failed_targets: int = 3
+    max_consecutive_failed_targets: int = 2
 
 
 # ── Loop control ─────────────────────────────────────────────────────

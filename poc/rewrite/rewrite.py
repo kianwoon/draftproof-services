@@ -1477,6 +1477,10 @@ def run_rewrite(
         "note": "original",
     }]
     local_score_total = 0.0
+    llm_calls_used = 0
+    failed_targets = 0
+    consecutive_failed_targets = 0
+    circuit_breaker_reason: Optional[str] = None
 
     # ── Step 3: Per-finding rewrite loop (LLM, all findings) ────────
     current_weighted_risk = weighted_finding_score(
@@ -1511,13 +1515,41 @@ def run_rewrite(
 
     risk_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
     for actions_for_sentence in grouped_actions:
-        if time.monotonic() - rewrite_start_time > config.max_rewrite_seconds:
+        if (
+            llm_calls_used >= config.max_llm_calls
+            or failed_targets >= config.max_failed_targets
+            or consecutive_failed_targets >= config.max_consecutive_failed_targets
+        ):
+            if llm_calls_used >= config.max_llm_calls:
+                circuit_breaker_reason = f"max_llm_calls reached ({config.max_llm_calls})"
+            elif failed_targets >= config.max_failed_targets:
+                circuit_breaker_reason = f"max_failed_targets reached ({config.max_failed_targets})"
+            else:
+                circuit_breaker_reason = (
+                    "max_consecutive_failed_targets reached "
+                    f"({config.max_consecutive_failed_targets})"
+                )
             remaining = sum(len(group) for group in grouped_actions[loops_used:])
             findings_skipped += remaining
             loop_history.append({
                 "loop": loops_used + 1,
                 "reverted": True,
-                "note": f"stopped: rewrite time budget exceeded ({config.max_rewrite_seconds}s)",
+                "note": f"stopped: {circuit_breaker_reason}",
+                "remaining_findings": remaining,
+                "llm_calls_used": llm_calls_used,
+            })
+            break
+
+        if time.monotonic() - rewrite_start_time > config.max_rewrite_seconds:
+            circuit_breaker_reason = (
+                f"rewrite time budget exceeded ({config.max_rewrite_seconds}s)"
+            )
+            remaining = sum(len(group) for group in grouped_actions[loops_used:])
+            findings_skipped += remaining
+            loop_history.append({
+                "loop": loops_used + 1,
+                "reverted": True,
+                "note": f"stopped: {circuit_breaker_reason}",
                 "remaining_findings": remaining,
             })
             break
@@ -1682,6 +1714,10 @@ def run_rewrite(
         for attempt in range(2):
             candidates: List[str] = []
             if loop_rewrite_fn:
+                if llm_calls_used >= config.max_llm_calls:
+                    circuit_breaker_reason = f"max_llm_calls reached ({config.max_llm_calls})"
+                    break
+                llm_calls_used += 1
                 prompt = span_info + "\n\n" + _candidate_task_instruction(f, max_sent_chars)
                 raw_output = loop_rewrite_fn(original_sentence, prompt)
                 candidates = _parse_rewrite_candidates(raw_output, original_sentence)
@@ -1822,6 +1858,8 @@ def run_rewrite(
         # Check result
         if rewritten_sentence is None or (drift and not drift.accepted):
             findings_skipped += len(actions_for_sentence)
+            failed_targets += len(actions_for_sentence)
+            consecutive_failed_targets += len(actions_for_sentence)
             reason = "rewrite_failed" if rewritten_sentence is None else "semantic_drift"
             sim_note = f" ({drift.similarity:.3f})" if drift else ""
             floor_reasons.append(FloorReason(
@@ -1840,6 +1878,7 @@ def run_rewrite(
 
         # All guards passed - accept
         findings_fixed += len(actions_for_sentence)
+        consecutive_failed_targets = 0
         current_text = candidate_text
         local_score_total += float(best_candidate_info.get("score", 0.0)) if best_candidate_info else 0.0
         rewrite_checkpoints.append({
@@ -2137,6 +2176,18 @@ def run_rewrite(
         raw_json=getattr(rewrite_context, "raw_json", None),
     )
     summary["rollback_applied"] = rolled_back_for_regression
+    summary["llm_calls_used"] = llm_calls_used
+    summary["failed_targets"] = failed_targets
+    summary["consecutive_failed_targets"] = consecutive_failed_targets
+    if circuit_breaker_reason:
+        summary["circuit_breaker"] = {
+            "triggered": True,
+            "reason": circuit_breaker_reason,
+            "max_llm_calls": config.max_llm_calls,
+            "max_failed_targets": config.max_failed_targets,
+            "max_consecutive_failed_targets": config.max_consecutive_failed_targets,
+            "max_rewrite_seconds": config.max_rewrite_seconds,
+        }
     if rolled_back_for_regression:
         summary["rollback_reason"] = floor_reasons[-1].explanation if floor_reasons else "final scan regression"
         summary["original_ai_likelihood_internal"] = round(original_ai_likelihood, 4)
