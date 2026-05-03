@@ -298,37 +298,18 @@ def run_rewrite_pipeline(
     rewritten_ai = _badge_ai(rewritten_report_dict)
     original_total = _finding_total(ctx.raw_json)
     rewritten_total = _finding_total(rewritten_report_dict)
-    ai_score_regressed = (
-        original_ai is not None
-        and rewritten_ai is not None
-        and rewritten_ai > original_ai + 0.05
-    )
-    ai_score_not_improved = (
-        original_ai is None
-        or rewritten_ai is None
-        or rewritten_ai >= original_ai
-    )
-    product_regressed = (
-        rewritten_text != text
-        and (ai_score_regressed or (ai_score_not_improved and rewritten_total > original_total))
-    )
-    if product_regressed:
-        reason = (
-            f"final detect scan regressed "
-            f"(AI {original_ai}->{rewritten_ai}, findings {original_total}->{rewritten_total})"
-        )
-        rewritten_text = text
-        if result.mp_result:
-            result.mp_result.final_text = text
-            result.mp_result.final_metrics = result.mp_result.original_metrics
-            result.mp_result.converged = False
-            result.mp_result.convergence_reason = reason
-        result.summary["final_text"] = text
-        result.summary["rollback_applied"] = True
-        result.summary["rollback_reason"] = reason
-        result.summary["outcome"] = "rejected_for_drift"
-        sentence_comparison = []
-        rewritten_report_dict = ctx.raw_json
+
+    # Log scores for transparency but do NOT rollback.
+    # Per-sentence guards (predictability, drift, voice erosion, component)
+    # already reject bad rewrites at the sentence level. The pipeline-level
+    # rollback was too aggressive — full-scan scores have stochastic variance
+    # that can falsely trigger rollback even when individual rewrites improved.
+    result.summary["detect_scores"] = {
+        "original_ai": original_ai,
+        "rewritten_ai": rewritten_ai,
+        "original_findings": original_total,
+        "rewritten_findings": rewritten_total,
+    }
 
     # Extract only the fields needed for comparison (not full report dicts)
     def _extract_scan_summary(report_dict):
