@@ -1476,9 +1476,39 @@ def run_rewrite(
     # target sentence + context. Much smaller surface area = less hallucination.
     sentences, para_map = _build_sentence_index(current_text)
 
+    def _action_group_key(action):
+        finding = action.finding
+        evidence = (finding.evidence or "").strip()
+        if evidence:
+            return re.sub(r"\s+", " ", evidence).lower()
+        loc = finding.location or {}
+        sent_idx = loc.get("sentence_index")
+        if sent_idx is not None:
+            return f"sentence:{sent_idx}"
+        return f"finding:{getattr(finding, 'id', id(finding))}"
+
+    grouped_actions: List[List[Any]] = []
+    grouped_by_key: Dict[str, List[Any]] = {}
     for action in plan.auto_fixable:
+        key = _action_group_key(action)
+        if key not in grouped_by_key:
+            grouped_by_key[key] = []
+            grouped_actions.append(grouped_by_key[key])
+        grouped_by_key[key].append(action)
+
+    risk_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    for actions_for_sentence in grouped_actions:
+        actions_for_sentence.sort(
+            key=lambda a: (
+                risk_rank.get(a.finding.risk_level, 0),
+                1 if a.finding.finding_type == "high_topk_predictability" else 0,
+            ),
+            reverse=True,
+        )
+        action = actions_for_sentence[0]
         loops_used += 1
         f = action.finding
+        companion_findings = [a.finding for a in actions_for_sentence[1:]]
 
         # Locate the sentence in current text
         current_sentences, _ = _build_sentence_index(current_text)
@@ -1507,7 +1537,7 @@ def run_rewrite(
                     char_offset = max(char_offset, sent_pos + 1)
 
         if sent_idx < 0:
-            findings_skipped += 1
+            findings_skipped += len(actions_for_sentence)
             floor_reasons.append(FloorReason(
                 finding_id=getattr(f, "id", str(id(f))),
                 reason_type="sentence_not_found",
@@ -1526,7 +1556,7 @@ def run_rewrite(
         # Check evidence still present in text (not just this sentence —
         # evidence may span a boundary our splitter creates)
         if f.evidence[:30] not in current_text:
-            findings_skipped += 1
+            findings_skipped += len(actions_for_sentence)
             floor_reasons.append(FloorReason(
                 finding_id=getattr(f, "id", str(id(f))),
                 reason_type="evidence_not_found",
@@ -1560,6 +1590,12 @@ def run_rewrite(
         span_info_parts = [
             "Finding: [" + f.finding_type + "/" + f.risk_level + "] " + f.detail,
         ]
+        for companion in companion_findings:
+            span_info_parts.append(
+                "Companion finding on the same sentence: ["
+                + companion.finding_type + "/" + companion.risk_level + "] "
+                + companion.detail
+            )
         # Inject specific signal metrics (trigger, problem tokens, etc.)
         enriched = _enrich_span_info(f, rewrite_context, sent_idx)
         if enriched:
@@ -1695,7 +1731,12 @@ def run_rewrite(
                     })
                     continue
 
-                reg_check = predictability_guard.check(current_text, candidate_text, original_sentence)
+                reg_check = predictability_guard.check(
+                    current_text,
+                    candidate_text,
+                    original_sentence,
+                    candidate_sentence,
+                )
                 if not reg_check.accepted:
                     candidate_rejects.append(
                         f"predictability_regression {reg_check.orig_risk:.3f}->{reg_check.new_risk:.3f}"
@@ -1756,7 +1797,7 @@ def run_rewrite(
 
         # Check result
         if rewritten_sentence is None or (drift and not drift.accepted):
-            findings_skipped += 1
+            findings_skipped += len(actions_for_sentence)
             reason = "rewrite_failed" if rewritten_sentence is None else "semantic_drift"
             sim_note = f" ({drift.similarity:.3f})" if drift else ""
             floor_reasons.append(FloorReason(
@@ -1774,7 +1815,7 @@ def run_rewrite(
             continue
 
         # All guards passed - accept
-        findings_fixed += 1
+        findings_fixed += len(actions_for_sentence)
         current_text = candidate_text
         local_score_total += float(best_candidate_info.get("score", 0.0)) if best_candidate_info else 0.0
         rewrite_checkpoints.append({
@@ -1783,13 +1824,15 @@ def run_rewrite(
             "local_score_total": round(local_score_total, 4),
             "sentence": sent_idx,
             "finding_type": f.finding_type,
+            "finding_types": [a.finding.finding_type for a in actions_for_sentence],
             "candidate_score": best_candidate_info.get("score") if best_candidate_info else None,
         })
         loop_history.append({
             "loop": loops_used,
             "sentence": sent_idx,
             "finding_type": f.finding_type,
-            "findings_fixed": 1,
+            "finding_types": [a.finding.finding_type for a in actions_for_sentence],
+            "findings_fixed": len(actions_for_sentence),
             "orig_length": len(original_sentence),
             "new_length": len(rewritten_sentence),
             "orig_text": original_sentence[:80],

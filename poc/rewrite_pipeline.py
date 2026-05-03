@@ -389,15 +389,48 @@ def run_rewrite_pipeline(
         score = (report_dict.get("ai_risk_badge") or {}).get("writing_quality_score")
         return float(score) if isinstance(score, (int, float)) else None
 
-    original_ai = _badge_ai(ctx.raw_json)
+    # Compare like-for-like. The scan JSON may have been produced by an older
+    # detector build, while rewritten text is scanned with the current build.
+    # For changed text, rescan the original too so rollback decisions are not
+    # driven by detector-version drift.
+    original_report_dict = ctx.raw_json
+    if rewritten_text != text:
+        original_report_dict = _full_scan_report_dict(text)
+        result.summary["comparison_baseline"] = "fresh_original_scan"
+        saved_original_ai = _badge_ai(ctx.raw_json)
+        fresh_original_ai = _badge_ai(original_report_dict)
+        saved_original_wq = _badge_wq(ctx.raw_json)
+        fresh_original_wq = _badge_wq(original_report_dict)
+        if (
+            saved_original_ai != fresh_original_ai
+            or saved_original_wq != fresh_original_wq
+            or _finding_total(ctx.raw_json) != _finding_total(original_report_dict)
+            or _review_burden(ctx.raw_json) != _review_burden(original_report_dict)
+        ):
+            result.summary["baseline_rescan_delta"] = {
+                "saved_ai": saved_original_ai,
+                "fresh_ai": fresh_original_ai,
+                "saved_writing_quality": saved_original_wq,
+                "fresh_writing_quality": fresh_original_wq,
+                "saved_findings": _finding_total(ctx.raw_json),
+                "fresh_findings": _finding_total(original_report_dict),
+                "saved_review_burden": _review_burden(ctx.raw_json),
+                "fresh_review_burden": _review_burden(original_report_dict),
+                "saved_weighted_severity": _weighted_severity(ctx.raw_json),
+                "fresh_weighted_severity": _weighted_severity(original_report_dict),
+            }
+    else:
+        result.summary["comparison_baseline"] = "saved_original_scan"
+
+    original_ai = _badge_ai(original_report_dict)
     rewritten_ai = _badge_ai(rewritten_report_dict)
-    original_wq = _badge_wq(ctx.raw_json)
+    original_wq = _badge_wq(original_report_dict)
     rewritten_wq = _badge_wq(rewritten_report_dict)
-    original_total = _finding_total(ctx.raw_json)
+    original_total = _finding_total(original_report_dict)
     rewritten_total = _finding_total(rewritten_report_dict)
-    original_review_burden = _review_burden(ctx.raw_json)
+    original_review_burden = _review_burden(original_report_dict)
     rewritten_review_burden = _review_burden(rewritten_report_dict)
-    original_severity = _weighted_severity(ctx.raw_json)
+    original_severity = _weighted_severity(original_report_dict)
     rewritten_severity = _weighted_severity(rewritten_report_dict)
     attempted_report_dict = rewritten_report_dict
 
@@ -551,7 +584,7 @@ def run_rewrite_pipeline(
         result.summary["outcome"] = "rejected_for_drift"
         result.summary["detect_scores"]["rollback_reason"] = reason
         sentence_comparison = []
-        rewritten_report_dict = ctx.raw_json
+        rewritten_report_dict = original_report_dict
 
     # Extract only the fields needed for comparison (not full report dicts)
     def _extract_scan_summary(report_dict):

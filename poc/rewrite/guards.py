@@ -463,9 +463,18 @@ class PredictabilityGuard:
         rel_target = target_idx - start
         return window, rel_target
 
-    def check(self, orig_text: str, candidate_text: str, changed_sentence: str) -> RegressionCheck:
+    def check(
+        self,
+        orig_text: str,
+        candidate_text: str,
+        changed_sentence: str,
+        candidate_sentence: str = "",
+    ) -> RegressionCheck:
         orig_window, _ = self._extract_window(orig_text, changed_sentence)
-        new_window, _ = self._extract_window(candidate_text, changed_sentence)
+        new_window, _ = self._extract_window(
+            candidate_text,
+            candidate_sentence or changed_sentence,
+        )
 
         # Filter to eligible sentences (>= 6 words)
         orig_eligible = [s for s in orig_window if len(s.split()) >= 6]
@@ -484,7 +493,7 @@ class PredictabilityGuard:
         ) / len(new_eligible)
 
         delta = new_risk - orig_risk
-        accepted = delta <= 0.15  # tolerate moderate regression (< 15%)
+        accepted = delta <= 0.02  # allow only scanner noise, not real regression
 
         if accepted:
             self._accepted += 1
