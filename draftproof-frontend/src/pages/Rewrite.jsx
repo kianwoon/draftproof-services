@@ -194,6 +194,10 @@ export default function Rewrite() {
   const outcomeLabel = noTextChange ? 'No Automatic Rewrite' : regressed ? 'No Improvement' : improved ? 'Improved' : converged ? 'Converged' : 'Review Needed';
   const outcomeColor = noTextChange ? '#f59e0b' : regressed ? '#ef4444' : improved || converged ? '#22c55e' : '#f59e0b';
   const outcomeBg = noTextChange ? '#fffbeb' : regressed ? '#fef2f2' : improved || converged ? '#f0fdf4' : '#fffbeb';
+  const mitigation = summary.mitigation_plan || {};
+  const mitigationCounts = mitigation.counts || {};
+  const mitigationMode = (mitigation.primary_mode || '').replaceAll('_', ' ');
+  const badgeDrivers = mitigation.component_drivers || [];
 
   return (
     <main className="dash-shell">
@@ -307,6 +311,59 @@ export default function Rewrite() {
               <div style={{ fontSize: '28px', fontWeight: 700 }}>{(finalRisk * 100).toFixed(1)}%</div>
               <div style={{ color: '#64748b', fontSize: '13px' }}>Risk Score</div>
             </div>
+          </div>
+        )}
+
+        {mitigation.primary_mode && (
+          <div style={{ margin: '24px 0' }}>
+            <h3>Mitigation Plan</h3>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+              gap: '12px',
+              marginTop: '12px',
+            }}>
+              {[
+                ['Auto Rewrite', 'auto_rewrite'],
+                ['Needs Evidence', 'needs_source_or_example'],
+                ['Structure', 'structure_guidance'],
+                ['Review Only', 'review_only'],
+                ['Protected', 'protected'],
+              ].map(([label, key]) => (
+                <div key={key} style={{
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  padding: '14px',
+                  background: '#fff',
+                }}>
+                  <div style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
+                  <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '4px' }}>{mitigationCounts[key] || 0}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: '12px', color: '#475569', fontSize: '14px' }}>
+              Primary mode: <strong style={{ textTransform: 'capitalize' }}>{mitigationMode}</strong>
+            </div>
+            {badgeDrivers.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', marginTop: '12px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>Badge Driver</th>
+                    <th style={{ padding: '8px', textAlign: 'center' }}>Score</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>Mitigation</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {badgeDrivers.slice(0, 6).map((driver, i) => (
+                    <tr key={`${driver.component}-${i}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '8px' }}>{(driver.component || '').replaceAll('_', ' ')}</td>
+                      <td style={{ padding: '8px', textAlign: 'center' }}>{Number(driver.score || 0).toFixed(1)}%</td>
+                      <td style={{ padding: '8px' }}>{driver.mitigation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         )}
 

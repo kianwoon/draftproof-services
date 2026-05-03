@@ -64,6 +64,7 @@ from rewrite.scorer import (
     FIXABILITY_WEIGHT,
 )
 from rewrite.voice import VoiceGuard, VoiceProfile, analyze_voice
+from rewrite.mitigation import build_mitigation_plan
 from llm.gateway import LLMGateway, LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -1158,7 +1159,14 @@ def run_rewrite(
             report=report,
             text_report=text_rpt,
             markdown_report=md_rpt,
-            summary={"manual_only": True, "reason": "mostly_protected"},
+            summary={
+                "manual_only": True,
+                "reason": "mostly_protected",
+                "mitigation_plan": build_mitigation_plan(
+                    plan,
+                    getattr(rewrite_context, "raw_json", None),
+                ),
+            },
             report_md_path=None,
             report_json_path=None,
             post_rewrite_detect=detect_results,
@@ -1189,7 +1197,11 @@ def run_rewrite(
             json_path = os.path.join(output_dir, f"draftproof_{ts}.json")
             with open(md_path, "w") as f:
                 f.write(md_rpt)
-            summary = get_rewrite_summary_v2(plan=plan, manual_only=True)
+            summary = get_rewrite_summary_v2(
+                plan=plan,
+                manual_only=True,
+                raw_json=getattr(rewrite_context, "raw_json", None),
+            )
             with open(json_path, "w") as f:
                 json.dump(summary, f, indent=2)
 
@@ -1210,7 +1222,11 @@ def run_rewrite(
             report=report,
             text_report=text_rpt,
             markdown_report=md_rpt,
-            summary=get_rewrite_summary_v2(plan=plan, manual_only=True),
+            summary=get_rewrite_summary_v2(
+                plan=plan,
+                manual_only=True,
+                raw_json=getattr(rewrite_context, "raw_json", None),
+            ),
             report_md_path=md_path,
             report_json_path=json_path,
             post_rewrite_detect=detect_results,
@@ -1908,6 +1924,7 @@ def run_rewrite(
         manual_only=False,
         detect_loop_history=detect_loop_history,
         detect_loops_used=detect_loops_used,
+        raw_json=getattr(rewrite_context, "raw_json", None),
     )
     summary["rollback_applied"] = rolled_back_for_regression
     if rolled_back_for_regression:
@@ -2235,6 +2252,7 @@ def get_rewrite_summary_v2(
     manual_only: bool = False,
     detect_loop_history: Optional[List[dict]] = None,
     detect_loops_used: int = 0,
+    raw_json: Optional[dict] = None,
 ) -> dict:
     """Build summary dict with new multi-signal fields."""
     summary = {
@@ -2282,6 +2300,7 @@ def get_rewrite_summary_v2(
             }
             for a in plan.review_only
         ]
+        summary["mitigation_plan"] = build_mitigation_plan(plan, raw_json)
 
     if mp_result:
         summary.update({

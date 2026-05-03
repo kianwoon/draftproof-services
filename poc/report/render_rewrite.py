@@ -182,6 +182,40 @@ def render_rewrite_report(
     lines.append("## Rewrite Summary")
     lines.append("")
 
+    mitigation = summary.get("mitigation_plan") or {}
+    if mitigation:
+        counts = mitigation.get("counts") or {}
+        mode = mitigation.get("primary_mode", "manual_review").replace("_", " ").title()
+        lines.append("### Mitigation Plan")
+        lines.append("")
+        lines.append(f"**Primary mode:** {mode}")
+        lines.append("")
+        lines.append("| Bucket | Count | Meaning |")
+        lines.append("|--------|------:|---------|")
+        bucket_labels = {
+            "auto_rewrite": "Detector-gated sentence patches",
+            "needs_source_or_example": "Needs author source, citation, example, or concrete detail",
+            "structure_guidance": "Needs paragraph/section structure revision",
+            "review_only": "Review signal; no automatic edit",
+            "protected": "Protected material; preserve verbatim",
+        }
+        for key, label in bucket_labels.items():
+            lines.append(f"| {key.replace('_', ' ').title()} | {counts.get(key, 0)} | {label} |")
+        lines.append("")
+
+        drivers = mitigation.get("component_drivers") or []
+        if drivers:
+            lines.append("**Main badge drivers:**")
+            lines.append("")
+            lines.append("| Signal | Score | Mitigation |")
+            lines.append("|--------|------:|------------|")
+            for item in drivers[:8]:
+                signal = str(item.get("component", "")).replace("_", " ")
+                score = item.get("score", 0)
+                fix = str(item.get("mitigation", "")).replace("|", "·")
+                lines.append(f"| {signal} | `{score:.1f}%` | {fix} |")
+            lines.append("")
+
     # Pass progression
     progression = summary.get("pass_progression", [])
     if len(progression) > 1:

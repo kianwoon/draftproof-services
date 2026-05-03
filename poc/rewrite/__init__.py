@@ -47,6 +47,7 @@ from .scorer import (
 )
 from .voice import VoiceGuard, VoiceProfile, analyze_voice
 from .parse_detect import DetectJSONContext, DetectJSONParser, findings_from_json
+from .mitigation import build_mitigation_plan
 
 __all__ = [
     "RewritableSpan",
@@ -76,4 +77,6 @@ __all__ = [
     "VoiceGuard", "VoiceProfile", "analyze_voice",
     # Parse Detect JSON
     "DetectJSONContext", "DetectJSONParser", "findings_from_json",
+    # Mitigation
+    "build_mitigation_plan",
 ]
