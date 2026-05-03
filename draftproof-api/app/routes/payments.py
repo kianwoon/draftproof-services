@@ -66,7 +66,6 @@ async def create_checkout(body: CheckoutRequest, request: Request, db: AsyncSess
     try:
         session = await asyncio.to_thread(
             stripe.checkout.Session.create,
-            timeout=30,
             mode="payment",
             payment_method_types=["card"],
             line_items=[{
