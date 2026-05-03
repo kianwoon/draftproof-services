@@ -61,9 +61,9 @@ FINDING_ROUTING: Dict[str, dict] = {
     },
     "medium_predictability": {
         "fixability": FIXABILITY_PARTIAL,
-        "action": "review_only",
+        "action": "suggest_rewrite",
         "scope": "sentence",
-        "reason": "Medium predictability alone is review-level. Auto-rewrite only if paired with a companion signal.",
+        "reason": "Medium predictability: rephrase to reduce common word patterns.",
     },
     "review_predictability": {
         "fixability": FIXABILITY_MANUAL,
