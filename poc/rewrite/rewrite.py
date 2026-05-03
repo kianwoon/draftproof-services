@@ -1820,6 +1820,17 @@ def run_rewrite(
                     predictability_delta=max(0.0, reg_check.orig_risk - reg_check.new_risk),
                     drift_similarity=candidate_drift.similarity,
                 )
+                if score < config.min_improvement:
+                    candidate_rejects.append(
+                        f"quality_score_below_min {score:.4f}<{config.min_improvement:.4f}"
+                    )
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "score": score,
+                        "text": candidate_sentence[:100],
+                    })
+                    continue
                 info = {
                     "candidate": cand_idx,
                     "attempt": attempt + 1,

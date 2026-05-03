@@ -32,6 +32,8 @@ def _build_rewrite_debug_log(
     badge = report_json.get("ai_risk_badge") or {}
     original_scan = summary.get("detect_scan_original") or {}
     final_scan = summary.get("detect_scan_rewritten") or {}
+    attempted_scan = summary.get("detect_scan_attempted") or {}
+    effective_plan = rewrite_json.get("effective_rewrite_plan") or {}
 
     def _badge_scores(scan: dict) -> dict:
         scan_badge = scan.get("ai_risk_badge") or {}
@@ -83,7 +85,10 @@ def _build_rewrite_debug_log(
             "circuit_breaker_reason": summary.get("circuit_breaker_reason"),
             "stage_timings": summary.get("stage_timings"),
             "original_scores": _badge_scores(original_scan),
+            "attempted_scores": _badge_scores(attempted_scan),
             "final_scores": _badge_scores(final_scan),
+            "detect_scores": summary.get("detect_scores"),
+            "effective_rewrite_plan": effective_plan,
             "mitigation_counts": mitigation.get("counts"),
             "mitigation_primary_mode": mitigation.get("primary_mode"),
             "component_drivers": mitigation.get("component_drivers"),
@@ -92,6 +97,33 @@ def _build_rewrite_debug_log(
         "sentence_comparison_count": len(rewrite_json.get("sentence_comparison") or []),
     }
     return json.dumps(log_data, indent=2, ensure_ascii=False, default=str)
+
+
+def _serialize_effective_rewrite_plan(plan) -> dict:
+    """Serialize the actual planner output used by the rewrite engine."""
+    if not plan:
+        return {}
+
+    def _action(action) -> dict:
+        finding = getattr(action, "finding", None)
+        metadata = getattr(finding, "metadata", {}) or {}
+        return {
+            "finding_id": metadata.get("finding_id") or getattr(finding, "id", ""),
+            "finding_type": getattr(finding, "finding_type", ""),
+            "risk_level": getattr(finding, "risk_level", ""),
+            "actionability": getattr(finding, "actionability", ""),
+            "action_type": getattr(action, "action_type", ""),
+            "scope": getattr(action, "scope", ""),
+            "fixability": getattr(action, "fixability", ""),
+            "reason": getattr(action, "reason", ""),
+        }
+
+    return {
+        "auto_fixable": [_action(action) for action in getattr(plan, "auto_fixable", [])],
+        "manual_required": [_action(action) for action in getattr(plan, "manual_required", [])],
+        "review_only": [_action(action) for action in getattr(plan, "review_only", [])],
+        "protected": [_action(action) for action in getattr(plan, "protected", [])],
+    }
 
 
 @app.task(bind=True, max_retries=2, default_retry_delay=30, soft_time_limit=300, time_limit=330)
@@ -281,6 +313,9 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 "passes": len(rw.mp_result.passes) if rw and hasattr(rw, "mp_result") and rw.mp_result else 0,
                 "summary": rw.summary if rw and hasattr(rw, "summary") else {},
                 "sentence_comparison": rw.sentence_comparison if rw and hasattr(rw, "sentence_comparison") else [],
+                "effective_rewrite_plan": _serialize_effective_rewrite_plan(
+                    rw.rewrite_plan if rw and hasattr(rw, "rewrite_plan") else None
+                ),
             }
 
             debug_log = _build_rewrite_debug_log(
