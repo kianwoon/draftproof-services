@@ -119,6 +119,51 @@ _BADGE_TIER_LABELS = {
     "RED": "Very High Risk",
 }
 
+
+def _authorship_rating_from_badge(badge: dict) -> dict:
+    rating = (badge or {}).get("authorship_rating") or {}
+    if rating:
+        return rating
+
+    label = (badge or {}).get("authorship_rating_label")
+    code = (badge or {}).get("authorship_rating_code")
+    if label:
+        return {"label": label, "code": code or ""}
+
+    score = (badge or {}).get("ai_likelihood_score")
+    if not isinstance(score, (int, float)):
+        return {}
+    ai_score = score * 100 if abs(score) <= 1 else score
+    writing_score = (badge or {}).get("writing_quality_score")
+    writing_score = (
+        writing_score * 100
+        if isinstance(writing_score, (int, float)) and abs(writing_score) <= 1
+        else writing_score
+    )
+    tier = str((badge or {}).get("tier") or "").upper()
+    high_quality = (
+        isinstance(writing_score, (int, float))
+        and writing_score >= 65
+        and str((badge or {}).get("writing_quality_tier") or "").upper() in {"HIGH_REVIEW", ""}
+    )
+
+    if ai_score >= 65 or tier == "RED" or (ai_score >= 60 and high_quality):
+        return {
+            "label": "AI-Generated Signals",
+            "short_label": "AI-Generated",
+            "summary": "High AI-style signal strength across the detect pipeline.",
+            "confidence": (badge or {}).get("confidence") or "",
+            "disclaimer": "This rating summarizes DraftProof detector signals. It is not proof of authorship.",
+        }
+    if ai_score >= 48 or tier == "ORANGE":
+        return {"label": "Likely AI", "short_label": "Likely AI"}
+    if ai_score >= 32 or tier == "AMBER":
+        return {"label": "Possible AI-Assisted", "short_label": "Possible AI"}
+    if ai_score >= 18:
+        return {"label": "Unlikely AI", "short_label": "Unlikely AI"}
+    return {"label": "Human-Likely", "short_label": "Human"}
+
+
 _TIER_BADGE = {
     Tier.CRITICAL: "![CRITICAL](https://img.shields.io/badge/Turnitin_Tier-CRITICAL-red)",
     Tier.HIGH:     "![HIGH](https://img.shields.io/badge/Turnitin_Tier-HIGH-orange)",
@@ -341,7 +386,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _ab = report.ai_risk_badge
         _abt = _ab.get("tier", "")
         _abs = _ab.get("ai_likelihood_score", 0)
-        _rating = _ab.get("authorship_rating") or {}
+        _rating = _authorship_rating_from_badge(_ab)
         _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
@@ -401,7 +446,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
         lines.append("")
         lines.append(f"- **Score**: `{ai_score:.2f}%`")
-        rating = badge.get("authorship_rating") or {}
+        rating = _authorship_rating_from_badge(badge)
         if rating:
             lines.append(f"- **Authorship Rating**: **{rating.get('label', '')}**")
             if rating.get("summary"):
@@ -670,7 +715,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         }
         explanation = tier_explanation.get(badge_tier, "")
         badge_tier_display = _BADGE_TIER_LABELS.get(badge_tier, badge_tier)
-        rating = report.ai_risk_badge.get("authorship_rating") or {}
+        rating = _authorship_rating_from_badge(report.ai_risk_badge)
         if rating.get("label"):
             lines.append(
                 f"> **Tier Reason:** {rating.get('label')} at {badge_score:.1f}% "

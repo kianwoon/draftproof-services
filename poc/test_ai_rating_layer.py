@@ -9,6 +9,7 @@ from detect.layer3_scoring import (
     Tier,
     derive_authorship_rating,
 )
+from report.render import _authorship_rating_from_badge
 
 
 def assert_equal(actual, expected, message):
@@ -73,6 +74,18 @@ assert_equal(humanised["code"], "ai_generated_signals", "near-red humanised AI p
 assert_true(
     any("Escalated" in note for note in humanised["caution_notes"]),
     "near-red humanised profile includes escalation note",
+)
+
+render_fallback = _authorship_rating_from_badge({
+    "tier": "ORANGE",
+    "ai_likelihood_score": 63.15,
+    "writing_quality_score": 67.61,
+    "writing_quality_tier": "HIGH_REVIEW",
+})
+assert_equal(
+    render_fallback["label"],
+    "AI-Generated Signals",
+    "detect PDF renderer derives missing authorship rating from score fields",
 )
 
 scored = Layer3Scorer().score(
