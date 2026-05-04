@@ -1200,8 +1200,14 @@ def _paragraph_coherence_reject_reason(
     unsupported_additions = [
         r"\bonline info\b",
         r"\bstands as\b",
+        r"\bsole place\b",
+        r"\bscaffolding\b",
+        r"\bbreaking down each step\b",
+        r"\bgrasp(?:s|ed|ing)?\b",
+        r"\baccurate cuts?\b",
         r"\bguided practice\b",
         r"\bsparks? (?:their |student )?interest\b",
+        r"\bpractic(?:e|ing) further\b",
         r"\bcontinuing to improve\b",
         r"\bdaily life\b",
     ]

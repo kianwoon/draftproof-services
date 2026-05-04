@@ -549,6 +549,17 @@ assert_test(
     "unsupported_new_phrase" in colloquial_reason,
     "paragraph coherence guard rejects unsupported colloquial rewrite phrasing",
 )
+latest_colloquial_reason = _paragraph_coherence_reject_reason(
+    "In the contemporary education environment, school is no longer the only place to acquire knowledge.",
+    "Since online info fills daily life, school no longer stands as the sole place to gain knowledge.",
+    "",
+    "Online information filled almost everyone’s life, and everyone can obtain all kinds of knowledge and information from the internet now.",
+    ["education", "school", "knowledge", "information"],
+)
+assert_test(
+    "unsupported_new_phrase" in latest_colloquial_reason,
+    "paragraph coherence guard rejects latest online-info candidate",
+)
 method_reason = _paragraph_coherence_reject_reason(
     "This enables the student to understand the precision required for each procedure and stimulates the desire to learn for them.",
     "Students learn the exact precision and steps for each procedure through guided practice, moving from simple attempts to careful execution, which encourages them and sparks their interest in continuing to improve.",
@@ -559,6 +570,17 @@ method_reason = _paragraph_coherence_reject_reason(
 assert_test(
     "unsupported_new_phrase" in method_reason,
     "paragraph coherence guard rejects unsupported method/motivation additions",
+)
+latest_method_reason = _paragraph_coherence_reject_reason(
+    "This enables the student to understand the precision required for each procedure as well as the specific techniques involved, and move the student from simplicity to precision, plus, which provides significant encouragement and stimulates the desire to learn for them.",
+    "By breaking down each step with scaffolding, students grasp the exact precision and techniques needed, shifting from basic attempts to more accurate cuts, which encourages them and sparks their interest in practicing further.",
+    "",
+    "",
+    ["student", "precision", "procedure", "techniques"],
+)
+assert_test(
+    "unsupported_new_phrase" in latest_method_reason,
+    "paragraph coherence guard rejects latest scaffolding candidate",
 )
 
 pred_raw = {
