@@ -1256,6 +1256,7 @@ def _generic_polish_count(text: str) -> int:
         r"\bdeconstructed\b", r"\bmimicry\b", r"\btransform(?:s|ing)?\b",
         r"\bboost(?:s|ing)? (?:their )?(?:confidence|motivation)\b",
         r"\bserves as a practical model\b",
+        r"\bserves as (?:a|an|the) (?:specific )?(?:case|model|example)\b",
         r"\bsteep operational\b", r"\boperational (?:trial|obstacles?)\b",
         r"\bencounter complex\b", r"\bmonopoly\b", r"\bdissolved\b",
         r"\bexclusive gateway\b", r"\brepository\b",
@@ -1265,6 +1266,9 @@ def _generic_polish_count(text: str) -> int:
         r"\bdilute the frequency\b", r"\bvisible learning framework\b",
         r"\bpreserves technical rigor\b", r"\bendless online tutorials\b",
         r"\bdigital landscape\b", r"\bsaturate(?:s|d)?\b",
+        r"\bprofessional precision\b", r"\bboost needed to perform\b",
+        r"\bmaster the exact\b", r"\bpresents? a constant hurdle\b",
+        r"\bresearch backing\b",
     ]
     lower = text.lower()
     return sum(len(re.findall(p, lower)) for p in patterns)

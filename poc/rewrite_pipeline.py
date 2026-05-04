@@ -620,7 +620,7 @@ def run_rewrite_pipeline(
             if not checkpoint_text or checkpoint_text in {text, rewritten_text}:
                 continue
             checkpoint_candidates.append(checkpoint)
-        max_checkpoint_scans = int(os.environ.get("DRAFTPROOF_MAX_CHECKPOINT_SCANS", "0"))
+        max_checkpoint_scans = int(os.environ.get("DRAFTPROOF_MAX_CHECKPOINT_SCANS", "6"))
         if max_checkpoint_scans <= 0:
             result.summary["checkpoint_scan_skipped"] = len(checkpoint_candidates)
             checkpoint_candidates = []

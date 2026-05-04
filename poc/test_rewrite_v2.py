@@ -452,6 +452,9 @@ for bad in (
     "The chart improves technical accuracy for each learner.",
     "Students face operational obstacles during practice.",
     "This visible learning framework preserves technical rigor in the digital landscape.",
+    "This breakdown helps students master the exact grip and tension, giving them the boost needed to perform.",
+    "The Graduated haircut serves as a specific case here.",
+    "Teaching it in a salon classroom presents a constant hurdle.",
 ):
     reason = _candidate_style_reject_reason("Students use the chart during practice.", bad)
     assert_test(bool(reason), f"anti-polish guard rejects: {bad}")
