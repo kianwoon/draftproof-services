@@ -75,4 +75,33 @@ scored = Layer3Scorer().score(
 assert_true(scored.authorship_rating["label"], "scorer result includes authorship rating")
 assert_equal(scored.authorship_rating["score"], round(scored.ai_likelihood_score * 100, 2), "rating score mirrors AI score")
 
+template_ai = Layer3Scorer().score(
+    Layer3Input(
+        predictability=0.4659,
+        topk_pattern=0.8697,
+        generic_phrase_density=0.0526,
+        burstiness_risk=0.25,
+        repeated_sentence_structure_risk=0.65,
+        generic_assertion_risk=0.90,
+        balanced_hedging_risk=0.15,
+        broad_claim_risk=0.85,
+        lived_detail_risk=0.80,
+        citation_weakness_risk=0.50,
+        unsupported_claim_risk=0.90,
+        source_grounding_strength=0.30,
+        domain_grounding_strength=0.30,
+        paragraph_progression_risk=0.85,
+        paragraph_uniformity_risk=0.65,
+        repeated_starter_risk=0.85,
+        formulaic_conclusion_risk=0.85,
+        word_count=520,
+        sentence_count=31,
+        paragraph_count=8,
+    )
+)
+assert_equal(template_ai.ai_cluster_name, "template_ai_style", "education AI sample triggers template AI cluster")
+assert_true(template_ai.ai_likelihood_score >= 0.58, "template AI cluster floors the AI score above possible-AI band")
+assert_equal(template_ai.tier, Tier.ORANGE, "template AI sample escalates to orange tier")
+assert_equal(template_ai.authorship_rating["code"], "likely_ai", "template AI sample rates as likely AI")
+
 print("AI rating layer tests passed")

@@ -963,7 +963,17 @@ class Layer3Scorer:
             and balanced_hedging >= 0.30
         )
 
-        if known_ai_style:
+        template_ai_style = (
+            predictability >= 0.42
+            and topk >= 0.75
+            and repeated_struct >= 0.55
+            and generic_assertion >= 0.75
+        )
+
+        if template_ai_style:
+            cluster_boost = 0.12
+            cluster_name = "template_ai_style"
+        elif known_ai_style:
             cluster_boost = 0.10
             cluster_name = "known_ai_style"
         elif humanised_ai:
@@ -971,6 +981,8 @@ class Layer3Scorer:
             cluster_name = "humanised_ai"
 
         score = clamp(score + cluster_boost)
+        if template_ai_style:
+            score = max(score, 0.58)
 
         if data.human_provenance_positive:
             score *= 0.80
