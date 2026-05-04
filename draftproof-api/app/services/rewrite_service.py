@@ -13,6 +13,60 @@ logger = logging.getLogger("rewrite_service")
 
 _STALE_THRESHOLD = timedelta(minutes=REWRITE_STALE_THRESHOLD_MINUTES)
 _ACTIVE_REWRITE_STATUSES = ("pending", "processing", "retrying")
+_REPHRASABLE_TYPES = {
+    "high_predictability",
+    "medium_predictability",
+    "review_predictability",
+    "high_topk_predictability",
+    "low_predictability",
+    "formulaic_sentence",
+    "generic_phrase",
+    "style_shift",
+    "low_specificity",
+}
+
+REVIEW_ONLY_REWRITE_MESSAGE = (
+    "No rewriteable AI sections were found. The findings on this report are review-only, "
+    "so DraftProof did not start a rewrite or reserve any tokens."
+)
+
+
+class NoRewriteableFindingsError(ValueError):
+    """Raised when a completed report has findings, but none can be rewritten automatically."""
+
+
+def _flatten_report_findings(report_json: dict) -> list[dict]:
+    findings = []
+    for tier_findings in (report_json.get("findings") or {}).values():
+        if isinstance(tier_findings, list):
+            findings.extend(f for f in tier_findings if isinstance(f, dict))
+    return findings
+
+
+def _has_rewriteable_findings(report_json: dict) -> bool:
+    rewrite_decision = report_json.get("rewrite_decision")
+    if isinstance(rewrite_decision, dict) and rewrite_decision.get("run_rewrite") is False:
+        return False
+
+    for finding in _flatten_report_findings(report_json):
+        if finding.get("actionability") in ("auto_fixable", "auto_rewrite_candidate"):
+            return True
+        if finding.get("title") in _REPHRASABLE_TYPES and finding.get("recommendation"):
+            return True
+    return False
+
+
+async def _fetch_scan_report_json(scan_id: str) -> dict | None:
+    from app.services.report_service import _r2, _fetch_report_json_sync
+
+    if not _r2:
+        return None
+
+    try:
+        return await asyncio.to_thread(_fetch_report_json_sync, f"reports/{scan_id}/report.json")
+    except Exception as exc:
+        logger.warning("Failed to preflight rewrite findings for scan %s: %s", scan_id, exc)
+        return None
 
 
 async def _release_active_reservation(session, job_id: uuid.UUID) -> None:
@@ -62,7 +116,8 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
                 RewriteJob.created_at < stale_cutoff,
             )
         )
-        for stale_job in stale.scalars().all():
+        stale_jobs = stale.scalars().all()
+        for stale_job in stale_jobs:
             stale_job.status = "failed"
             stale_job.error = "Stale rewrite timed out"
             stale_job.progress_message = "Rewrite timed out"
@@ -80,6 +135,12 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         if existing_job:
             await session.commit()
             return _rewrite_to_dict(existing_job)
+
+        report_json = await _fetch_scan_report_json(scan_id)
+        if report_json is not None and not _has_rewriteable_findings(report_json):
+            if stale_jobs:
+                await session.commit()
+            raise NoRewriteableFindingsError(REVIEW_ONLY_REWRITE_MESSAGE)
 
         acct_result = await session.execute(
             select(CreditAccount).where(CreditAccount.user_id == uid).with_for_update()

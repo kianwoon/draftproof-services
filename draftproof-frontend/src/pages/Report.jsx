@@ -69,6 +69,22 @@ function isRewriteActive(status) {
   return ['pending', 'processing', 'retrying'].includes(status);
 }
 
+const REVIEW_ONLY_REWRITE_TITLE = 'No rewriteable AI sections';
+const REVIEW_ONLY_REWRITE_MESSAGE = 'This report only has review-only signals. There is nothing DraftProof can rewrite automatically, so no tokens were deducted.';
+const REVIEW_ONLY_REWRITE_PATTERNS = [
+  'no rewriteable ai sections',
+  'no auto-fixable findings',
+  'no rephrasable findings',
+  'review-only',
+  'review only',
+];
+
+function isReviewOnlyRewriteMessage(message) {
+  if (!message) return false;
+  const normalized = String(message).toLowerCase();
+  return REVIEW_ONLY_REWRITE_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
 export default function Report() {
   const { id } = useParams();
   const [report, setReport] = useState(null);
@@ -80,8 +96,22 @@ export default function Report() {
   const [rewriteError, setRewriteError] = useState(null);
   const [rewriteStartedHere, setRewriteStartedHere] = useState(false);
   const [rewriteSseUnavailable, setRewriteSseUnavailable] = useState(false);
+  const [rewriteNotice, setRewriteNotice] = useState(null);
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
+
+  const showReviewOnlyRewriteNotice = useCallback((message) => {
+    setRewriteJob(null);
+    setRewriteError(null);
+    setRewriteLoading(false);
+    setRewriteStartedHere(false);
+    setRewriteNotice({
+      title: REVIEW_ONLY_REWRITE_TITLE,
+      message: isReviewOnlyRewriteMessage(message) && String(message).includes('token')
+        ? message
+        : REVIEW_ONLY_REWRITE_MESSAGE,
+    });
+  }, []);
 
   const syncRewriteJob = useCallback((job) => {
     setRewriteJob(job);
@@ -98,14 +128,19 @@ export default function Report() {
       const { data } = await getRewriteStatus(rewriteId);
       syncRewriteJob(data);
       if (data.status === 'failed') {
-        setRewriteError(data.error || 'Rewrite failed');
+        const failedMessage = data.error || 'Rewrite failed';
+        if (isReviewOnlyRewriteMessage(failedMessage)) {
+          showReviewOnlyRewriteNotice(failedMessage);
+        } else {
+          setRewriteError(failedMessage);
+        }
       }
       return data;
     } catch (err) {
       setRewriteError(err.response?.data?.detail || 'Failed to check rewrite status');
       return null;
     }
-  }, [syncRewriteJob]);
+  }, [showReviewOnlyRewriteNotice, syncRewriteJob]);
 
   const closeRewriteEventSource = useCallback(() => {
     if (rewriteEventSourceRef.current) {
@@ -134,7 +169,12 @@ export default function Report() {
 
       syncRewriteJob(data);
       if (data.status === 'failed') {
-        setRewriteError(data.error || 'Rewrite failed');
+        const failedMessage = data.error || 'Rewrite failed';
+        if (isReviewOnlyRewriteMessage(failedMessage)) {
+          showReviewOnlyRewriteNotice(failedMessage);
+        } else {
+          setRewriteError(failedMessage);
+        }
         closeRewriteEventSource();
       }
       if (data.status === 'completed') {
@@ -154,7 +194,7 @@ export default function Report() {
     });
 
     return true;
-  }, [closeRewriteEventSource, pollRewriteStatus, syncRewriteJob]);
+  }, [closeRewriteEventSource, pollRewriteStatus, showReviewOnlyRewriteNotice, syncRewriteJob]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -282,6 +322,8 @@ export default function Report() {
       if (err.response?.status === 402) {
         setRewriteJob(null);
         setRewriteError(msg);
+      } else if (err.response?.status === 422 || isReviewOnlyRewriteMessage(msg)) {
+        showReviewOnlyRewriteNotice(msg);
       } else {
         setRewriteJob((prev) => prev ? {
           ...prev,
@@ -297,6 +339,12 @@ export default function Report() {
 
   return (
     <main className="dash-shell">
+      <RewriteNoticeDialog
+        open={Boolean(rewriteNotice)}
+        title={rewriteNotice?.title}
+        message={rewriteNotice?.message}
+        onClose={() => setRewriteNotice(null)}
+      />
       <div className="container">
         {/* Back link */}
         <Link to="/reports" className="report-back">
@@ -535,6 +583,54 @@ export default function Report() {
 
       </div>
     </main>
+  );
+}
+
+function RewriteNoticeDialog({ open, title, message, onClose }) {
+  const closeButtonRef = useRef(null);
+
+  useEffect(() => {
+    if (open) {
+      closeButtonRef.current?.focus();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rewrite-notice-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="rewrite-notice-title" className="modal-title">{title}</h3>
+        <p className="modal-message">{message}</p>
+        <div className="modal-actions">
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="btn btn-primary btn-small"
+            onClick={onClose}
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

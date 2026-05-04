@@ -15,6 +15,8 @@ async def create_rewrite(req: RewriteCreateRequest, user: dict = Depends(get_cur
     try:
         result = await rewrite_service.create_rewrite(req.scan_id, user["id"])
         return RewriteOut(**result)
+    except rewrite_service.NoRewriteableFindingsError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         msg = str(e)
         if "Insufficient" in msg:

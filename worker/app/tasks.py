@@ -474,6 +474,21 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             progress_percent=25,
             progress_message="Selecting AI sections",
         )
+        review_only_message = (
+            "No rewriteable AI sections were found. The findings on this report are review-only, "
+            "so DraftProof did not use any tokens for a rewrite."
+        )
+        rewrite_decision = report_json.get("rewrite_decision") or {}
+        if isinstance(rewrite_decision, dict) and rewrite_decision.get("run_rewrite") is False:
+            update_rewrite_status(
+                rewrite_id,
+                "failed",
+                error=review_only_message,
+                progress_message="Review-only findings; no rewrite needed",
+            )
+            release_rewrite_credits(rewrite_id)
+            return {"status": "failed", "error": "review-only findings"}
+
         # findings is a dict: {critical: [...], high: [...], medium: [...], low: [...]}
         # Include: auto_fixable/auto_rewrite_candidate + review_only findings whose
         # title maps to a rephrasable type in the planner's FINDING_ROUTING table.
@@ -499,11 +514,11 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             update_rewrite_status(
                 rewrite_id,
                 "failed",
-                error="No rephrasable findings to rewrite",
-                progress_message="No rewriteable AI sections found",
+                error=review_only_message,
+                progress_message="Review-only findings; no rewrite needed",
             )
             release_rewrite_credits(rewrite_id)
-            return {"status": "failed", "error": "no rephrasable findings"}
+            return {"status": "failed", "error": "review-only findings"}
 
         # 3. Run rewrite pipeline
         from poc.rewrite_pipeline import run_rewrite_pipeline
