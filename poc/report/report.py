@@ -1296,6 +1296,9 @@ class ReportBuilder:
             # AI Generation (Phase 1)
             "tier": layer3.tier.value,
             "ai_likelihood_score": round(layer3.ai_likelihood_score * 100, 2),
+            "authorship_rating": layer3.authorship_rating,
+            "authorship_rating_label": layer3.authorship_rating.get("label"),
+            "authorship_rating_code": layer3.authorship_rating.get("code"),
             "ai_cluster_boost": round(layer3.ai_cluster_boost * 100, 2) if layer3.ai_cluster_boost else 0,
             "ai_cluster_name": layer3.ai_cluster_name,
             "ai_components": {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()},

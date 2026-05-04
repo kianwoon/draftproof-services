@@ -341,9 +341,13 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _ab = report.ai_risk_badge
         _abt = _ab.get("tier", "")
         _abs = _ab.get("ai_likelihood_score", 0)
+        _rating = _ab.get("authorship_rating") or {}
+        _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
         lines.append(f"![{_abt_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
+        if _rating_label:
+            lines.append(f"**Authorship Rating:** {_rating_label}")
 
         # Writing Quality badge beside AI badge
         wq_tier_header = _ab.get("writing_quality_tier", "")
@@ -397,6 +401,15 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
         lines.append("")
         lines.append(f"- **Score**: `{ai_score:.2f}%`")
+        rating = badge.get("authorship_rating") or {}
+        if rating:
+            lines.append(f"- **Authorship Rating**: **{rating.get('label', '')}**")
+            if rating.get("summary"):
+                lines.append(f"- **Rating Meaning**: {rating.get('summary')}")
+            if rating.get("confidence"):
+                lines.append(f"- **Rating Confidence**: `{str(rating.get('confidence')).title()}`")
+            if rating.get("disclaimer"):
+                lines.append(f"- **Important**: {rating.get('disclaimer')}")
 
         cluster_boost = badge.get("ai_cluster_boost", 0)
         cluster_name = badge.get("ai_cluster_name")
@@ -657,7 +670,16 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         }
         explanation = tier_explanation.get(badge_tier, "")
         badge_tier_display = _BADGE_TIER_LABELS.get(badge_tier, badge_tier)
-        lines.append(f"> **Tier Reason:** Tier {badge_tier_display} at {badge_score:.1f}% — {explanation}")
+        rating = report.ai_risk_badge.get("authorship_rating") or {}
+        if rating.get("label"):
+            lines.append(
+                f"> **Tier Reason:** {rating.get('label')} at {badge_score:.1f}% "
+                f"(Tier {badge_tier_display}) — {rating.get('summary') or explanation}"
+            )
+        else:
+            lines.append(f"> **Tier Reason:** Tier {badge_tier_display} at {badge_score:.1f}% — {explanation}")
+        if rating.get("caution_notes"):
+            lines.append(f"> **Rating Notes:** {' '.join(rating.get('caution_notes') or [])}")
         if badge_reasons:
             readable = [r.replace("_", " ") for r in badge_reasons]
             lines.append(f"> **Triggers:** {', '.join(readable)}")

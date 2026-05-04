@@ -365,6 +365,9 @@ export default function Report() {
   const badge = report.ai_risk_badge || {};
   const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
+  const authorshipRating = badge.authorship_rating || {};
+  const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
+  const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
 
@@ -527,6 +530,14 @@ export default function Report() {
           <span className="report-stat-value">{report.issues.length}</span>
           <span className="report-stat-label">Total Findings</span>
         </div>
+        {authorshipRatingLabel && (
+          <div className="report-stat">
+            <span className="report-stat-value" style={{ color: tier.color }} title={authorshipRatingFullLabel || authorshipRatingLabel}>
+              {authorshipRatingLabel}
+            </span>
+            <span className="report-stat-label">Authorship Rating</span>
+          </div>
+        )}
         {aiScore != null && (
           <div className="report-stat">
             <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(aiScore, 2)}</span>

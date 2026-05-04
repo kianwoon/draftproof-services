@@ -108,6 +108,7 @@ class ClusterScore:
 class Layer3Result:
     tier: Tier
     ai_likelihood_score: float
+    authorship_rating: dict[str, Any]
     ai_cluster_boost: float
     ai_cluster_name: Optional[str]
     ai_phase: ClusterScore
@@ -194,6 +195,106 @@ def confidence_from_coverage(
     if score >= 0.45:
         return Confidence.MEDIUM
     return Confidence.LOW
+
+
+def derive_authorship_rating(
+    *,
+    ai_score: float,
+    ai_tier: Tier,
+    writing_quality_score: float,
+    writing_quality_tier: QualityTier,
+    confidence: Confidence,
+    verified_ai_provenance: bool = False,
+    human_provenance_positive: bool = False,
+) -> dict[str, Any]:
+    """Translate detector scores into a user-facing authorship rating.
+
+    This is deliberately a rating layer, not a verdict layer. It keeps the
+    numeric score as the source of truth and labels the strength of scanner
+    signals in language that users can act on.
+    """
+    if verified_ai_provenance:
+        code = "ai_generated"
+    elif ai_score >= 0.65 or ai_tier == Tier.RED:
+        code = "ai_generated_signals"
+    elif ai_score >= 0.48 or ai_tier == Tier.ORANGE:
+        code = "likely_ai"
+    elif ai_score >= 0.32 or ai_tier == Tier.AMBER:
+        code = "possible_ai_assisted"
+    elif ai_score >= 0.18:
+        code = "unlikely_ai"
+    else:
+        code = "human_likely"
+
+    definitions = {
+        "human_likely": {
+            "label": "Human-Likely",
+            "short_label": "Human",
+            "risk_level": "very_low",
+            "summary": "Very low AI-style signal strength.",
+            "recommended_action": "No AI-focused rewrite is needed unless specific findings matter to the user.",
+        },
+        "unlikely_ai": {
+            "label": "Unlikely AI",
+            "short_label": "Unlikely AI",
+            "risk_level": "low",
+            "summary": "Low AI-style signal strength with some normal review signals.",
+            "recommended_action": "Review only the highlighted sentences or weak source/detail findings.",
+        },
+        "possible_ai_assisted": {
+            "label": "Possible AI-Assisted",
+            "short_label": "Possible AI",
+            "risk_level": "medium",
+            "summary": "Moderate AI-style signals are present, but the scan is not strong enough for a high-confidence label.",
+            "recommended_action": "Use guided revision: add evidence, narrow broad claims, and retry detector-gated rewrite.",
+        },
+        "likely_ai": {
+            "label": "Likely AI",
+            "short_label": "Likely AI",
+            "risk_level": "high",
+            "summary": "Elevated AI-style signals align across enough scanner components to require careful review.",
+            "recommended_action": "Prioritize paragraph-level grounding, source links, concrete examples, and final full-scan gating.",
+        },
+        "ai_generated_signals": {
+            "label": "AI-Generated Signals",
+            "short_label": "AI-Generated",
+            "risk_level": "very_high",
+            "summary": "High AI-style signal strength across the detect pipeline.",
+            "recommended_action": "Preserve the original unless revision produces a clearly better final scan; use manual evidence additions first.",
+        },
+        "ai_generated": {
+            "label": "AI-Generated",
+            "short_label": "AI-Generated",
+            "risk_level": "verified",
+            "summary": "Verified AI provenance was provided to the scanner.",
+            "recommended_action": "Treat as confirmed AI-assisted content and revise according to the user's disclosure requirements.",
+        },
+    }
+    rating = dict(definitions[code])
+    rating.update({
+        "code": code,
+        "score": round(ai_score * 100, 2),
+        "confidence": confidence.value,
+        "ai_tier": ai_tier.value,
+        "writing_quality_score": round(writing_quality_score * 100, 2),
+        "writing_quality_tier": writing_quality_tier.value,
+        "is_verdict": False,
+        "disclaimer": "This rating summarizes DraftProof detector signals. It is not proof of authorship.",
+    })
+
+    caution_notes = []
+    if confidence == Confidence.LOW:
+        caution_notes.append("Low confidence: text length or available signals are limited.")
+    if human_provenance_positive:
+        caution_notes.append("Positive human provenance was considered; review the rating in that context.")
+    if writing_quality_tier in (QualityTier.REVIEW, QualityTier.HIGH_REVIEW) and code in {
+        "possible_ai_assisted",
+        "likely_ai",
+        "ai_generated_signals",
+    }:
+        caution_notes.append("Writing-quality risks may be contributing to the apparent AI-style profile.")
+    rating["caution_notes"] = caution_notes
+    return rating
 
 
 def merge_confidence(*levels: Confidence) -> Confidence:
@@ -1047,6 +1148,15 @@ class Layer3Scorer:
         review_priority = self._derive_review_priority(ai_tier, quality_tier, writing_phase.score)
         confidence = merge_confidence(ai_phase.confidence, writing_phase.confidence)
         reasons = list(ai_phase.reasons) + list(writing_phase.reasons)
+        authorship_rating = derive_authorship_rating(
+            ai_score=ai_phase.score,
+            ai_tier=ai_tier,
+            writing_quality_score=writing_phase.score,
+            writing_quality_tier=quality_tier,
+            confidence=confidence,
+            verified_ai_provenance=data.verified_ai_provenance,
+            human_provenance_positive=data.human_provenance_positive,
+        )
 
         guardrails = []
         if data.human_provenance_positive:
@@ -1057,6 +1167,7 @@ class Layer3Scorer:
         return Layer3Result(
             tier=ai_tier,
             ai_likelihood_score=ai_phase.score,
+            authorship_rating=authorship_rating,
             ai_cluster_boost=cluster_boost,
             ai_cluster_name=cluster_name,
             ai_phase=ai_phase,
