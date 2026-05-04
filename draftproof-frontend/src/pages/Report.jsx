@@ -38,6 +38,26 @@ function formatMetricPercent(value, digits = 1) {
   return `${percent.toFixed(digits)}%`;
 }
 
+function deriveAuthorshipRatingFallback(score, tierValue) {
+  if (score == null || Number.isNaN(Number(score))) return null;
+  const percent = Math.abs(Number(score)) <= 1 ? Number(score) * 100 : Number(score);
+  const tier = String(tierValue || '').toLowerCase();
+
+  if (percent >= 65 || tier === 'red') {
+    return { label: 'AI-Generated Signals', short_label: 'AI-Generated' };
+  }
+  if (percent >= 48 || tier === 'orange') {
+    return { label: 'Likely AI', short_label: 'Likely AI' };
+  }
+  if (percent >= 32 || tier === 'amber' || tier === 'moderate') {
+    return { label: 'Possible AI-Assisted', short_label: 'Possible AI' };
+  }
+  if (percent >= 18) {
+    return { label: 'Unlikely AI', short_label: 'Unlikely AI' };
+  }
+  return { label: 'Human-Likely', short_label: 'Human' };
+}
+
 function formatSignedDelta(original, next) {
   if (original == null || next == null) return '—';
   const delta = Number(next) - Number(original);
@@ -365,7 +385,7 @@ export default function Report() {
   const badge = report.ai_risk_badge || {};
   const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
-  const authorshipRating = badge.authorship_rating || {};
+  const authorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(aiScore, badge.tier || report.tier) || {};
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
