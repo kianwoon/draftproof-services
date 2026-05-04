@@ -1928,7 +1928,7 @@ def run_rewrite(
             span_info += (
                 f"\nRETRY ({attempt+1}): All candidates failed local gates. "
                 f"Avoid these failures: {rejection_summary}. "
-                "Keep the paragraph less generic and output 3 new one-sentence candidates."
+                f"Keep the paragraph less generic and output 6 new one-sentence candidates that score below {MEDIUM_PREDICTABILITY_CEILING:.2f}."
             )
 
         if best_candidate_info:
@@ -1940,9 +1940,10 @@ def run_rewrite(
         if rewritten_sentence is None or (drift and not drift.accepted):
             findings_skipped += len(actions_for_sentence)
             failed_targets += len(actions_for_sentence)
-            consecutive_failed_targets += len(actions_for_sentence)
+            consecutive_failed_targets += 1
             reason = "rewrite_failed" if rewritten_sentence is None else "semantic_drift"
             sim_note = f" ({drift.similarity:.3f})" if drift else ""
+            rejection_summary = "; ".join(r.get("reason", "") for r in rejected_candidates[-5:])
             floor_reasons.append(FloorReason(
                 finding_id=getattr(f, "id", str(id(f))),
                 reason_type=reason,
@@ -1954,6 +1955,8 @@ def run_rewrite(
                 "finding_type": f.finding_type,
                 "reverted": True,
                 "note": f"floor: {reason}{sim_note}",
+                "rejected_candidates": rejected_candidates[-8:],
+                "rejection_summary": rejection_summary,
             })
             continue
 
