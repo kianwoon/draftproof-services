@@ -454,6 +454,9 @@ assert_test("Return exactly 3 candidates" in prompt, "prompt asks for exactly 3 
 assert_test("<TARGET>" in prompt, "prompt references marked target sentence")
 assert_test("technical accuracy" in prompt and "digital landscape" in prompt, "prompt includes anti-polish examples")
 assert_test("students' with 'learners" in prompt or "students' with 'learners" in prompt.replace("’", "'"), "prompt preserves student voice level")
+assert_test("risk mitigation, not writing improvement" in prompt, "prompt frames task as mitigation not polishing")
+assert_test("methods, source relationships, motivations" in prompt, "prompt forbids unsupported method/source/motivation additions")
+assert_test("near-original candidate is better than an unsupported rewrite" in prompt, "prompt prefers conservative candidates")
 
 for bad in (
     "The chart improves technical accuracy for each learner.",

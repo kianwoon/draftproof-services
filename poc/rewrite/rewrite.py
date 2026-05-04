@@ -356,7 +356,9 @@ def _original_ai_likelihood(detect_results: List[DetectResult], rewrite_context:
 
 # ── Chip-in: use local `claude` CLI when no API key ──────────────────
 
-REWRITE_CHIPIN_PROMPT = """You are a conservative paragraph-aware editor. Your ONLY job is to propose small replacement candidates for the marked sentence.
+REWRITE_CHIPIN_PROMPT = """You are a conservative paragraph-aware risk-mitigation editor. Your ONLY job is to propose small replacement candidates for the marked sentence.
+
+This is NOT a writing-improvement task. Do not make the text sound better, smarter, smoother, more persuasive, more academic, or more complete. A candidate is useful only if it lowers the flagged detector signal while preserving the author's existing facts, voice, scope, and level of detail.
 
 HOW PREDICTABILITY DETECTION WORKS:
 A GPT-2 language model scores each word by how likely it was to appear next, given the preceding words. When many words rank among GPT-2's top-10 predictions, the sentence reads like AI output — predictable, generic, formulaic.
@@ -368,6 +370,14 @@ To reduce predictability, BREAK expected word paths without polishing the writin
 - Keep the author's word level. If the source says students, use students; do not upgrade to learners. If it says make/use/help, do not upgrade to constructing/requires/facilitates.
 - Prefer nearby concrete nouns/actions over new abstract academic vocabulary.
 
+VALID CANDIDATE CONTRACT:
+- The replacement must be supported by the target sentence or neighboring paragraph text.
+- It may change clause order, sentence opening, rhythm, and ordinary wording.
+- It may reuse nearby concrete words already present in the paragraph.
+- It must not add a new method, cause, outcome, motivation, source relationship, example, citation, judgment, or explanation.
+- If a detail is merely plausible but not present nearby, do not include it.
+- Prefer a modest near-original candidate over an impressive unsupported rewrite.
+
 TRANSFORMATION RULES (apply the one matching the finding type):
 
 For predictability / common_words / topk_predictability / low_surprisal findings:
@@ -376,6 +386,7 @@ For predictability / common_words / topk_predictability / low_surprisal findings
 - NEVER use these predictable words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally, demonstrates, highlights, underscores, plays, key role.
 - NEVER introduce abstract polish such as technical accuracy, operational obstacles, visible learning framework, digital landscape, complex implementation, or similar noun stacks.
 - NEVER make student-written wording sound like a textbook sentence. Avoid frames like "Constructing X requires...", "learners frequently fail...", "serves as a case", or "toward professional precision".
+- NEVER invent support or causal links such as "through guided practice", "this shows", "this proves", "which encourages", "sparks interest", or "helps them continue improving" unless those exact ideas already appear nearby.
 
 For formulaic_sentence / generic_phrase findings:
 - Restructure the sentence to break its formulaic pattern. Move the subject to a different position. Change clause order. Start the sentence differently than it currently starts.
@@ -391,6 +402,7 @@ For ai_generation findings:
 
 CRITICAL CONSTRAINTS:
 - Keep the SAME factual meaning. Zero new information.
+- Do not add support, evidence, examples, causes, benefits, or conclusions.
 - All proper nouns, numbers, dates, citations, quoted text — copy verbatim.
 - Replace only the sentence marked by <TARGET> in the paragraph context.
 - Do NOT exceed the character limit.
@@ -410,9 +422,11 @@ def _make_chipin_rewrite_fn(detect_context: str) -> callable:
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
             f"Current text ({len(text)} chars):\n{text}\n\n"
-            f"Rewrite this text addressing the issues above. "
+            f"Generate detector-safe replacement text for the marked target only. "
+            f"This is risk mitigation, not prose improvement. "
             f"CRITICAL: Respect any stricter character limit in the task; otherwise do not exceed {max_chars} characters. "
-            f"Preserve facts and do not add unsupported details. "
+            f"Preserve facts, scope, author voice, and detail level. "
+            f"Do not add unsupported methods, examples, causes, benefits, motivations, conclusions, citations, or source links. "
             f"{output_instruction}"
         )
         try:
@@ -849,16 +863,23 @@ def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
         "2. <clause-reordered edit using paragraph detail>\n"
         "3. <short conservative edit>\n"
         "Each candidate must be ONE sentence and must replace only the <TARGET> sentence. "
+        "This is detector risk mitigation, not writing improvement. "
         "Do not include explanations. "
         "Do not make the sentence more formal, broader, smoother, or more academic. "
+        "Do not make the idea sound more complete than the original. "
         "Keep the original word level: do not replace 'students' with 'learners', "
         "'make' with 'constructing', or simple classroom wording with textbook phrasing. "
-        "Do not add facts, citations, names, dates, or statistics. "
+        "Do not add facts, citations, names, dates, statistics, examples, causes, benefits, "
+        "methods, source relationships, motivations, or conclusions. "
+        "If a word or idea is not in the target sentence, previous sentence, next sentence, "
+        "paragraph excerpt, domain anchors, or allowed additions, do not introduce it. "
+        "A near-original candidate is better than an unsupported rewrite. "
         "Avoid abstract noun stacks and generic polish such as 'crucial', 'significant', "
         "'essential', 'technical accuracy', 'operational obstacles', "
         "'visible learning framework', 'digital landscape', 'learners frequently fail', "
         "'Constructing ... requires', 'serves as a case', 'online info', "
-        "'stands as', 'guided practice', and 'sparks interest'."
+        "'stands as', 'guided practice', 'this shows', 'this proves', "
+        "'which encourages', 'continuing to improve', and 'sparks interest'."
     )
     if _requires_medium_exit(finding):
         return (
@@ -1654,9 +1675,11 @@ def _rewrite_fn_with_detect_context(
         user_msg = (
             f"{detect_context}\n\n{span_info}\n\n"
             f"Current text ({len(text)} chars):\n{text}\n\n"
-            f"Rewrite this text addressing the issues above. "
+            f"Generate detector-safe replacement text for the marked target only. "
+            f"This is risk mitigation, not prose improvement. "
             f"CRITICAL: Respect any stricter character limit in the task; otherwise do not exceed {max_chars} characters. "
-            f"Preserve facts and do not add unsupported details. "
+            f"Preserve facts, scope, author voice, and detail level. "
+            f"Do not add unsupported methods, examples, causes, benefits, motivations, conclusions, citations, or source links. "
             f"{output_instruction}"
         )
         try:
