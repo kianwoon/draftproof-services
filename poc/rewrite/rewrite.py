@@ -1107,11 +1107,17 @@ def _generic_polish_count(text: str) -> int:
         r"\bto address modern\b", r"\bto thrive amidst\b",
         r"\bnot enough\b", r"\bcan be effective\b", r"\btakes time\b",
         r"\bdeconstructed\b", r"\bmimicry\b", r"\btransform(?:s|ing)?\b",
-        r"\bboost(?:s|ing)? (?:their )?confidence\b",
+        r"\bboost(?:s|ing)? (?:their )?(?:confidence|motivation)\b",
         r"\bserves as a practical model\b",
-        r"\bsteep operational\b", r"\boperational trial\b",
+        r"\bsteep operational\b", r"\boperational (?:trial|obstacles?)\b",
         r"\bencounter complex\b", r"\bmonopoly\b", r"\bdissolved\b",
         r"\bexclusive gateway\b", r"\brepository\b",
+        r"\bnavigating projection\b", r"\bgeometric outcomes\b",
+        r"\belevations of the hair subsection\b",
+        r"\bemotional labor\b", r"\btechnical oversight\b",
+        r"\bdilute the frequency\b", r"\bvisible learning framework\b",
+        r"\bpreserves technical rigor\b", r"\bendless online tutorials\b",
+        r"\bdigital landscape\b", r"\bsaturate(?:s|d)?\b",
     ]
     lower = text.lower()
     return sum(len(re.findall(p, lower)) for p in patterns)
@@ -1129,9 +1135,10 @@ def _candidate_style_reject_reason(original_sentence: str, candidate_sentence: s
     # uses dense nominal phrasing.
     noun_stack = re.search(
         r"\b(?:technical|operational|instructional|cognitive|practical|formal|"
-        r"individualized|specialized|complex)\s+"
+        r"individualized|specialized|complex|digital|geometric|visible)\s+"
         r"(?:accuracy|trial|model|concepts?|corrections?|structures?|guidance|"
-        r"implementation|engagement)\b",
+        r"implementation|engagement|obstacles?|oversight|rigor|landscape|"
+        r"outcomes?|framework)\b",
         candidate_sentence,
         re.I,
     )

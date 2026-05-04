@@ -99,9 +99,18 @@ def _extract_named_entities(text: str) -> Set[str]:
     """
     entities = set()
 
-    # Multi-word capitalized sequences (always proper nouns)
-    for m in re.finditer(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b', text):
-        entities.add(m.group(1))
+    heading_words = {
+        "abstract", "introduction", "conclusion", "references", "appendix",
+        "background", "discussion", "method", "methods", "results",
+    }
+
+    # Multi-word capitalized sequences (always proper nouns), but do not treat
+    # headings joined to the first sentence across a newline as entities.
+    for m in re.finditer(r'\b([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)\b', text):
+        entity = m.group(1)
+        if entity.split()[0].lower() in heading_words:
+            continue
+        entities.add(entity)
 
     # Single capitalized words: only if NOT after sentence boundary
     for m in re.finditer(r'(?<!^)(?<![.!?]\s)\b([A-Z][a-z]{2,})\b', text):
