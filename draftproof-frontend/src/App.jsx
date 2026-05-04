@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -10,6 +10,7 @@ import SignIn from './pages/SignIn';
 import AuthCallback from './pages/AuthCallback';
 import Scan from './pages/Scan';
 import Report from './pages/Report';
+import Rewrite from './pages/Rewrite';
 import Reports from './pages/Reports';
 import Pricing from './pages/Pricing';
 import Why from './pages/Why';
@@ -58,11 +59,6 @@ function ScrollToHash() {
   return null;
 }
 
-function RewriteRedirect() {
-  const { id } = useParams();
-  return <Navigate to={`/report/${id}`} replace />;
-}
-
 export default function App() {
   const { pathname } = useLocation();
   const hideFooter = pathname === '/';
@@ -86,7 +82,7 @@ export default function App() {
             <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
             <Route path="/report/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
-            <Route path="/report/:id/rewrite" element={<ProtectedRoute><RewriteRedirect /></ProtectedRoute>} />
+            <Route path="/report/:id/rewrite" element={<ProtectedRoute><Rewrite /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

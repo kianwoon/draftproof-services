@@ -252,7 +252,7 @@ export default function Report() {
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
     : 0;
   const rewriteProgressMessage = currentRewrite?.progress_message || formatRewriteStatus(currentRewrite?.status);
-  const showRewriteProgress = rewriteStartedHere || rewriteInProgress || rewriteLoading || rewriteError;
+  const showRewriteProgress = rewriteStartedHere || rewriteInProgress || hasCompletedRewrite || rewriteLoading || rewriteError;
 
   const handleRewrite = async (event) => {
     event?.preventDefault();
@@ -356,6 +356,14 @@ export default function Report() {
                 />
               </div>
             </div>
+            {hasCompletedRewrite && currentRewrite?.id && (
+              <Link
+                to={`/report/${id}/rewrite?rid=${currentRewrite.id}`}
+                className="rewrite-results-link"
+              >
+                View Rewrite Result
+              </Link>
+            )}
           </div>
         )}
 

@@ -12,6 +12,28 @@ from app.models.db import async_session, RewriteJob, ScanJob, CreditAccount, Cre
 logger = logging.getLogger("rewrite_service")
 
 _STALE_THRESHOLD = timedelta(minutes=REWRITE_STALE_THRESHOLD_MINUTES)
+_ACTIVE_REWRITE_STATUSES = ("pending", "processing", "retrying")
+
+
+async def _release_active_reservation(session, job_id: uuid.UUID) -> None:
+    reservation_result = await session.execute(
+        select(CreditReservation).where(
+            CreditReservation.job_type == "rewrite",
+            CreditReservation.job_id == job_id,
+            CreditReservation.status == "active",
+        ).with_for_update()
+    )
+    reservation = reservation_result.scalar_one_or_none()
+    if not reservation:
+        return
+
+    acct_result = await session.execute(
+        select(CreditAccount).where(CreditAccount.id == reservation.credit_account_id).with_for_update()
+    )
+    acct = acct_result.scalar_one_or_none()
+    if acct:
+        acct.reserved_tokens = max(0, acct.reserved_tokens - reservation.tokens_reserved)
+    reservation.status = "released"
 
 
 async def create_rewrite(scan_id: str, user_id: str) -> dict:
@@ -25,7 +47,7 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
                 ScanJob.id == scan_uuid,
                 ScanJob.user_id == uid,
                 ScanJob.status == "completed",
-            )
+            ).with_for_update()
         )
         scan = result.scalar_one_or_none()
         if not scan:
@@ -36,45 +58,28 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         stale = await session.execute(
             select(RewriteJob).where(
                 RewriteJob.scan_id == scan_uuid,
-                RewriteJob.status.in_(["pending", "processing"]),
+                RewriteJob.status.in_(_ACTIVE_REWRITE_STATUSES),
                 RewriteJob.created_at < stale_cutoff,
             )
         )
         for stale_job in stale.scalars().all():
             stale_job.status = "failed"
-            stale_job.error = "Stale rewrite — timed out"
+            stale_job.error = "Stale rewrite timed out"
+            stale_job.progress_message = "Rewrite timed out"
             stale_job.completed_at = datetime.now(timezone.utc)
+            await _release_active_reservation(session, stale_job.id)
 
         # Check for actively running rewrites (recent, not stale)
         existing = await session.execute(
             select(RewriteJob).where(
                 RewriteJob.scan_id == scan_uuid,
-                RewriteJob.status.in_(["pending", "processing"]),
-            )
+                RewriteJob.status.in_(_ACTIVE_REWRITE_STATUSES),
+            ).order_by(RewriteJob.created_at.desc()).limit(1)
         )
         existing_job = existing.scalar_one_or_none()
         if existing_job:
-            # Resume the existing rewrite. This covers jobs left in processing
-            # by a worker crash or rollout where the task never actually ran.
-            existing_job.status = "pending"
-            existing_job.error = None
-            existing_job.progress_percent = 0
-            existing_job.progress_message = "Queued"
             await session.commit()
-
-            from app.services.celery_client import run_rewrite
-            run_rewrite.delay(str(existing_job.id), scan_id)
-
-            return {
-                "id": str(existing_job.id),
-                "scan_id": str(existing_job.scan_id),
-                "status": "pending",
-                "error": None,
-                "progress_percent": 0,
-                "progress_message": "Queued",
-                "created_at": existing_job.created_at.isoformat() if existing_job.created_at else None,
-                "completed_at": existing_job.completed_at.isoformat() if existing_job.completed_at else None,
-            }
+            return _rewrite_to_dict(existing_job)
 
         acct_result = await session.execute(
             select(CreditAccount).where(CreditAccount.user_id == uid).with_for_update()
@@ -127,17 +132,20 @@ async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | Non
         q = select(RewriteJob).where(RewriteJob.id == uuid.UUID(rewrite_id))
         if user_id:
             q = q.where(RewriteJob.user_id == uuid.UUID(user_id))
+        q = q.with_for_update()
         result = await session.execute(q)
         job = result.scalar_one_or_none()
         if not job:
             return None
 
-        if job.status in ("pending", "processing") and job.created_at:
+        if job.status in _ACTIVE_REWRITE_STATUSES and job.created_at:
             age = datetime.now(timezone.utc) - job.created_at
             if age > _STALE_THRESHOLD:
                 job.status = "failed"
                 job.error = "Rewrite timed out"
                 job.progress_message = "Rewrite timed out"
+                job.completed_at = datetime.now(timezone.utc)
+                await _release_active_reservation(session, job.id)
                 await session.commit()
                 await session.refresh(job)
 

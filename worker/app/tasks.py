@@ -654,5 +654,3 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             )
             release_rewrite_credits(rewrite_id)
             raise
-            update_rewrite_status(rewrite_id, "failed", error=str(e))
-            raise
