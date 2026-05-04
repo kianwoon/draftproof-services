@@ -697,7 +697,21 @@ def _extract_flagged_tokens(sent_data: dict) -> Optional[str]:
     """Get the most predictable tokens from sentence-level data."""
     tokens = sent_data.get("top_predicted_tokens", [])
     if tokens:
-        return ", ".join(f'"{t}"' for t in tokens[:3])
+        formatted = []
+        for t in tokens[:5]:
+            if isinstance(t, dict):
+                token = t.get("token", "")
+                rank = t.get("rank")
+                prob = t.get("probability")
+                detail = f'"{token}"'
+                if rank is not None:
+                    detail += f" rank={rank}"
+                if isinstance(prob, (int, float)):
+                    detail += f" p={prob:.1%}"
+                formatted.append(detail)
+            else:
+                formatted.append(f'"{t}"')
+        return ", ".join(formatted)
     return None
 
 
@@ -1891,6 +1905,33 @@ def run_rewrite(
             span_info_parts.append(
                 "Scan rewrite instruction: " + str(metadata_context["signal_instruction"])
             )
+        if isinstance(metadata_context, dict):
+            problem_tokens = metadata_context.get("problem_tokens") or []
+            if problem_tokens:
+                formatted_tokens = []
+                for item in problem_tokens[:8]:
+                    if isinstance(item, dict):
+                        token = item.get("token", "")
+                        rank = item.get("rank")
+                        prob = item.get("probability")
+                        token_text = f'"{token}"'
+                        if rank is not None:
+                            token_text += f" rank={rank}"
+                        if isinstance(prob, (int, float)):
+                            token_text += f" p={prob:.1%}"
+                        formatted_tokens.append(token_text)
+                    elif isinstance(item, str):
+                        formatted_tokens.append(f'"{item}"')
+                if formatted_tokens:
+                    span_info_parts.append(
+                        "GPT-2 problem tokens from scan: " + ", ".join(formatted_tokens)
+                    )
+            predictable_spans = metadata_context.get("predictable_token_spans") or []
+            if predictable_spans:
+                span_info_parts.append(
+                    "Predictable token spans from scan: "
+                    + ", ".join(f'"{span}"' for span in predictable_spans[:5])
+                )
         constraint_lines = _rewrite_constraint_lines(rewrite_context)
         if constraint_lines:
             span_info_parts.extend(constraint_lines)

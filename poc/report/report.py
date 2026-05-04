@@ -12,6 +12,7 @@ Run:  cd poc/report && python demo.py
 
 import sys
 import os
+import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from enum import Enum
@@ -504,6 +505,71 @@ class ReportBuilder:
         if raw is None:
             return
 
+        def _token_signal_fields(token_results) -> Dict[str, Any]:
+            tokens = []
+            for tr in token_results or []:
+                if isinstance(tr, dict):
+                    token = str(tr.get("token", ""))
+                    rank = tr.get("rank")
+                    prob = tr.get("probability")
+                    surprisal = tr.get("surprisal")
+                    top10 = bool(tr.get("top_10", tr.get("top10", False)))
+                    top50 = bool(tr.get("top_50", tr.get("top50", False)))
+                else:
+                    token = str(getattr(tr, "token", ""))
+                    rank = getattr(tr, "rank", None)
+                    prob = getattr(tr, "probability", None)
+                    surprisal = getattr(tr, "surprisal", None)
+                    top10 = bool(getattr(tr, "top_10", False))
+                    top50 = bool(getattr(tr, "top_50", False))
+                token_raw = token
+                token_clean = token.strip()
+                if not token_clean:
+                    continue
+                item = {
+                    "token": token_clean,
+                    "raw_token": token_raw,
+                    "rank": int(rank) if isinstance(rank, int) else rank,
+                    "probability": round(float(prob), 6) if isinstance(prob, (int, float)) else prob,
+                    "surprisal": round(float(surprisal), 4) if isinstance(surprisal, (int, float)) else surprisal,
+                    "top10": top10,
+                    "top50": top50,
+                }
+                tokens.append(item)
+
+            ranked = sorted(
+                [
+                    t for t in tokens
+                    if t.get("top10") and re.search(r"[A-Za-z0-9]", str(t.get("token", "")))
+                ],
+                key=lambda t: (
+                    t.get("rank") if isinstance(t.get("rank"), int) else 999999,
+                    -(t.get("probability") or 0),
+                ),
+            )
+            spans = []
+            current = []
+            for t in tokens:
+                if t.get("top10"):
+                    current.append(str(t.get("raw_token") or t.get("token") or ""))
+                elif current:
+                    if len(current) >= 2:
+                        span = "".join(current)
+                        span = re.sub(r"\s+", " ", span).strip()
+                        if span:
+                            spans.append(span)
+                    current = []
+            if current and len(current) >= 2:
+                span = "".join(current)
+                span = re.sub(r"\s+", " ", span).strip()
+                if span:
+                    spans.append(span)
+
+            return {
+                "top_predicted_tokens": ranked[:10],
+                "predictable_token_spans": [s for s in spans if s][:6],
+            }
+
         sentences = []
         generic_phrases = []
         sent_idx = 0
@@ -516,6 +582,7 @@ class ReportBuilder:
                     continue
                 sent_idx += 1
                 sent_id = s.get("sentence_id", f"s{sent_idx:03d}")
+                token_fields = _token_signal_fields(s.get("token_results", []))
                 sentences.append({
                     "sentence_id": sent_id,
                     "sentence": s.get("sentence") or s.get("text", ""),
@@ -528,11 +595,13 @@ class ReportBuilder:
                     "start_char": s.get("start_char", 0),
                     "end_char": s.get("end_char", 0),
                     "paragraph_id": s.get("paragraph_id", ""),
+                    **token_fields,
                 })
             else:
                 # Scanner object — use attribute access
                 sent_idx += 1
                 sent_id = f"s{sent_idx:03d}"
+                token_fields = _token_signal_fields(getattr(s, "token_results", []))
                 sentences.append({
                     "sentence_id": sent_id,
                     "sentence": s.sentence,
@@ -545,6 +614,7 @@ class ReportBuilder:
                     "start_char": getattr(s, "start_char", 0),
                     "end_char": getattr(s, "end_char", 0),
                     "paragraph_id": getattr(s, "paragraph_id", ""),
+                    **token_fields,
                 })
             for p in getattr(s, "matched_generic_phrases", []):
                 generic_phrases.append(p)
@@ -1515,6 +1585,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "next_sentence": next_sentence,
             "paragraph_excerpt": paragraph_text[:700],
             "domain_anchors": anchors,
+            "problem_tokens": sent.get("top_predicted_tokens", []),
+            "predictable_token_spans": sent.get("predictable_token_spans", []),
             "signal_instruction": _rewrite_signal_instruction(f, anchors),
             "predictability_metrics": {
                 "score": sent.get("risk"),
@@ -1890,7 +1962,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "sentences": [
                 {"sentence_id": s.get("sentence_id", ""),
                  "text": s["sentence"][:100], "risk": s["risk_label"],
-                 "score": s["risk"], "top10": s["top10_ratio"]}
+                 "score": s["risk"], "top10": s["top10_ratio"],
+                 "top_predicted_tokens": s.get("top_predicted_tokens", []),
+                 "predictable_token_spans": s.get("predictable_token_spans", [])}
                 for s in report.predictability.sentences
             ],
             "all_sentences": [
@@ -1901,7 +1975,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                  "top10_ratio": s["top10_ratio"],
                  "top50_ratio": s["top50_ratio"],
                  "avg_probability": s["avg_probability"],
-                 "avg_surprisal": s["avg_surprisal"]}
+                 "avg_surprisal": s["avg_surprisal"],
+                 "top_predicted_tokens": s.get("top_predicted_tokens", []),
+                 "predictable_token_spans": s.get("predictable_token_spans", [])}
                 for s in report.predictability.sentences
             ],
             "score_derivation": {
