@@ -855,7 +855,7 @@ def run_rewrite_pipeline(
     with open(json_path_out, "w") as f:
         json.dump(summary, f, indent=2, default=str)
 
-    if summary.get("rollback_applied"):
+    if summary.get("rollback_applied") or summary.get("no_text_change"):
         pipeline_status = "original_preserved"
     elif summary.get("outcome") == "partially_improved":
         pipeline_status = "partially_improved"

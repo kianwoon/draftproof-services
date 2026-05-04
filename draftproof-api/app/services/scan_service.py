@@ -160,19 +160,61 @@ _STALE_THRESHOLD = timedelta(minutes=10)
 
 
 async def _mark_stale_jobs_failed(user_id: uuid.UUID | None = None) -> None:
-    """Bulk-mark processing/pending jobs older than threshold as failed."""
+    """Bulk-mark processing/pending jobs older than threshold as failed.
+
+    Also releases any active credit reservations for those jobs so tokens
+    are not permanently locked.
+    """
+    import logging
+    log = logging.getLogger("scan_service.stale")
     cutoff = datetime.now(timezone.utc) - _STALE_THRESHOLD
     async with async_session() as session:
-        q = (
-            update(ScanJob)
-            .where(ScanJob.status.in_(["processing", "pending"]))
-            .where(ScanJob.created_at < cutoff)
-            .values(status="failed", progress_message="Scan timed out")
+        # Find stale job IDs first
+        q = select(ScanJob.id).where(
+            ScanJob.status.in_(["processing", "pending"]),
+            ScanJob.created_at < cutoff,
         )
         if user_id:
             q = q.where(ScanJob.user_id == user_id)
-        await session.execute(q)
+        result = await session.execute(q)
+        stale_ids = [row[0] for row in result.all()]
+
+        if not stale_ids:
+            return
+
+        # Mark jobs as failed
+        await session.execute(
+            update(ScanJob)
+            .where(ScanJob.id.in_(stale_ids))
+            .values(status="failed", progress_message="Scan timed out")
+        )
+
+        # Release active credit reservations for those jobs
+        reservations = await session.execute(
+            select(CreditReservation).where(
+                CreditReservation.job_id.in_(stale_ids),
+                CreditReservation.status == "active",
+            )
+        )
+        released_count = 0
+        for res in reservations.scalars().all():
+            res.status = "released"
+            # Return reserved tokens back to available
+            acct = await session.execute(
+                select(CreditAccount).where(CreditAccount.id == res.credit_account_id)
+            )
+            account = acct.scalar_one_or_none()
+            if account:
+                account.reserved_tokens -= res.tokens_reserved
+                released_count += res.tokens_reserved
+            log.info(
+                "Released reservation %s: %d tokens for job %s",
+                res.id, res.tokens_reserved, res.job_id,
+            )
+
         await session.commit()
+        if released_count:
+            log.info("Stale job cleanup: %d jobs, %d tokens released", len(stale_ids), released_count)
 
 
 async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
@@ -195,6 +237,21 @@ async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
             if age > _STALE_THRESHOLD:
                 job.status = "failed"
                 job.progress_message = "Scan timed out"
+                # Release any active credit reservation
+                res_result = await session.execute(
+                    select(CreditReservation).where(
+                        CreditReservation.job_id == job.id,
+                        CreditReservation.status == "active",
+                    )
+                )
+                for res in res_result.scalars().all():
+                    res.status = "released"
+                    acct_result = await session.execute(
+                        select(CreditAccount).where(CreditAccount.id == res.credit_account_id)
+                    )
+                    account = acct_result.scalar_one_or_none()
+                    if account:
+                        account.reserved_tokens -= res.tokens_reserved
                 await session.commit()
                 await session.refresh(job)
 

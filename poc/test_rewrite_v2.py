@@ -8,6 +8,7 @@ Run:  cd poc && python test_rewrite_v2.py
 
 import sys
 import os
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "."))
 
@@ -35,6 +36,7 @@ from rewrite.rewrite import (
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
+from rewrite_pipeline import run_rewrite_pipeline
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
 
@@ -632,6 +634,16 @@ assert_test(
     throttle_result.summary.get("rewrite_effective_config", {}).get("effective_auto_target_limit") == 1,
     "guided revision records effective auto-target limit",
 )
+
+pipeline_no_change = run_rewrite_pipeline(
+    detect_json={
+        "input_text": "Students use the chart.",
+        "ai_risk_badge": {"ai_likelihood_score": 40.0, "writing_quality_score": 50.0},
+        "findings": {"critical": [], "high": [], "medium": [], "low": []},
+    },
+    output_dir=tempfile.mkdtemp(prefix="draftproof-test-"),
+)
+assert_test(pipeline_no_change["status"] == "clean", "pipeline skips when no rewrite is needed")
 
 
 # ════════════════════════════════════════════════════════════════════════
