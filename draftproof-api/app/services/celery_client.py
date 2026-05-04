@@ -20,6 +20,7 @@ celery_app.conf.update(
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
         "app.tasks.run_rewrite": {"queue": "scan"},
+        "app.tasks.regenerate_rewrite_report_assets": {"queue": "scan"},
     },
     broker_transport_options={
         "visibility_timeout": CELERY_VISIBILITY_TIMEOUT_SECONDS,
@@ -30,3 +31,4 @@ celery_app.conf.update(
 # Task name follows Celery convention: <module>.<function>
 scan_document = celery_app.signature("app.tasks.scan_document")
 run_rewrite = celery_app.signature("app.tasks.run_rewrite")
+regenerate_rewrite_report_assets = celery_app.signature("app.tasks.regenerate_rewrite_report_assets")

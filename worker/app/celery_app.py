@@ -30,6 +30,7 @@ app.conf.update(
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
         "app.tasks.run_rewrite": {"queue": "scan"},
+        "app.tasks.regenerate_rewrite_report_assets": {"queue": "scan"},
     },
     task_default_queue="default",
     # Keep the visibility timeout longer than the longest task. Re-delivering

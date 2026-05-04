@@ -244,6 +244,27 @@ async def get_rewrite_report(rewrite_id: str, user_id: str) -> dict | None:
         return None
 
 
+async def regenerate_rewrite_report_assets(rewrite_id: str, user_id: str) -> dict | None:
+    """Regenerate stored rewrite.md/rewrite.pdf through the worker."""
+    job_info = await get_rewrite(rewrite_id, user_id)
+    if not job_info:
+        return None
+    if job_info["status"] != "completed":
+        raise ValueError("Rewrite is not completed")
+
+    from celery.exceptions import TimeoutError as CeleryTimeoutError
+    from app.services.celery_client import regenerate_rewrite_report_assets as regen_task
+
+    def _enqueue_and_wait():
+        task = regen_task.delay(rewrite_id, job_info["scan_id"])
+        return task.get(timeout=45)
+
+    try:
+        return await asyncio.to_thread(_enqueue_and_wait)
+    except CeleryTimeoutError:
+        return {"status": "queued", "rewrite_id": rewrite_id, "scan_id": job_info["scan_id"]}
+
+
 async def get_rewrite_download_url(rewrite_id: str, fmt: str, user_id: str) -> str | None:
     """Generate presigned download URL for rewrite output."""
     job_info = await get_rewrite(rewrite_id, user_id)

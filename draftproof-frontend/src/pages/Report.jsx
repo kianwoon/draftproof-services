@@ -538,13 +538,13 @@ export default function Report() {
           })}
           {aiScore != null && (
             <div className="report-stat">
-              <span className="report-stat-value" style={{ color: tier.color }}>{Number(aiScore).toFixed(2)}%</span>
+              <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(aiScore, 2)}</span>
               <span className="report-stat-label">AI Score</span>
             </div>
           )}
           {writingScore != null && (
             <div className="report-stat">
-              <span className="report-stat-value" style={{ color: '#6366f1' }}>{Number(writingScore).toFixed(2)}%</span>
+              <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 2)}</span>
               <span className="report-stat-label">Writing Score</span>
             </div>
           )}

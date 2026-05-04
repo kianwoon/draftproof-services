@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson } from '../api/draftproofApi';
+import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson, regenerateRewriteReport } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import { useAuth } from '../context/AuthContext';
 
@@ -57,6 +57,13 @@ export default function Rewrite() {
 
   const handleDownload = async (fmt) => {
     try {
+      if (fmt === 'pdf') {
+        const { data: regen } = await regenerateRewriteReport(rewriteId);
+        if (regen?.status && regen.status !== 'completed') {
+          setError('Rewrite PDF is being regenerated. Please try the download again in a moment.');
+          return;
+        }
+      }
       const { data } = await getRewriteDownload(rewriteId, fmt);
       if (data.url) {
         window.open(data.url, '_blank');

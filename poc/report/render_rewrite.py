@@ -259,6 +259,7 @@ def render_rewrite_report(
         ai_improved = new_ai < orig_ai - 0.05
         ai_worse = new_ai > orig_ai + 0.05
         quality_improved = new_wq < orig_wq - 0.05
+        quality_worse = new_wq > orig_wq + 0.05
         findings_improved = n_total < o_total
         findings_worse = n_total > o_total
         severity_worse = n_severity > o_severity or n_review_burden > o_review_burden
@@ -269,9 +270,12 @@ def render_rewrite_report(
         )
         original_preserved = no_text_change or (rollback and final_looks_original)
         final_output_preserved = original_preserved
+        score_improved = ai_improved or quality_improved or findings_improved
+        score_worse = ai_worse or quality_worse
         improved_with_review = (
             not original_preserved
-            and (ai_improved or quality_improved or findings_improved)
+            and score_improved
+            and not score_worse
             and not findings_worse
             and not severity_worse
             and (ai_improved or quality_improved)
@@ -279,8 +283,8 @@ def render_rewrite_report(
         mixed_result = (
             not original_preserved
             and not improved_with_review
-            and (ai_improved or quality_improved or findings_improved)
-            and (findings_worse or severity_worse)
+            and score_improved
+            and (score_worse or findings_worse or severity_worse)
         )
         scan_regressed = (
             not original_preserved
@@ -333,8 +337,8 @@ def render_rewrite_report(
         lines.append("")
         lines.append("| Metric | Original | Final Output | Change |")
         lines.append("|--------|----------|--------------|--------|")
-        lines.append(f"| **AI Likelihood** | `{orig_ai:.1f}%` | `{new_ai:.1f}%` | `{ai_delta:+.1f}%` |")
-        lines.append(f"| **Writing Quality Risk** | `{orig_wq:.1f}%` | `{new_wq:.1f}%` | `{wq_delta:+.1f}%` |")
+        lines.append(f"| **AI Likelihood** | `{orig_ai:.2f}%` | `{new_ai:.2f}%` | `{ai_delta:+.2f}%` |")
+        lines.append(f"| **Writing Quality Risk** | `{orig_wq:.2f}%` | `{new_wq:.2f}%` | `{wq_delta:+.2f}%` |")
         lines.append(f"| **Total Findings** | {o_total} | {n_total} | `{n_total - o_total:+d}` |")
 
         # Axis-level scores

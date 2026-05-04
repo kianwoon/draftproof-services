@@ -39,6 +39,7 @@ export const getPurchaseHistory = (page = 1, perPage = 5, opts = {}) =>
 export const createRewrite = (scanId) => api.post('/rewrites/', { scan_id: scanId });
 export const getRewriteStatus = (rewriteId) => api.get(`/rewrites/${rewriteId}`);
 export const getRewriteReport = (rewriteId) => api.get(`/rewrites/${rewriteId}/report`);
+export const regenerateRewriteReport = (rewriteId) => api.post(`/rewrites/${rewriteId}/report/regenerate`);
 export const getRewriteDownload = (rewriteId, format) => api.get(`/rewrites/${rewriteId}/download/${format}`);
 export const getDetectJson = (rewriteId) => api.get(`/rewrites/${rewriteId}/detect-json`);
 

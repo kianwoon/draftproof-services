@@ -92,6 +92,17 @@ async def get_rewrite_report(rewrite_id: str, user: dict = Depends(get_current_u
     return RewriteReportOut(**data)
 
 
+@router.post("/{rewrite_id}/report/regenerate")
+async def regenerate_rewrite_report(rewrite_id: str, user: dict = Depends(get_current_user)):
+    try:
+        result = await rewrite_service.regenerate_rewrite_report_assets(rewrite_id, user["id"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not result:
+        raise HTTPException(status_code=404, detail="Rewrite not found")
+    return result
+
+
 @router.get("/{rewrite_id}/download/{fmt}")
 async def download_rewrite(rewrite_id: str, fmt: str, user: dict = Depends(get_current_user)):
     if fmt not in ("pdf", "md", "txt", "log"):

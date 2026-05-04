@@ -9,6 +9,9 @@ _app_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.join(_app_dir, "..", "..")
 if _repo_root not in sys.path:
     sys.path.insert(0, os.path.abspath(_repo_root))
+_poc_dir = os.path.join(_repo_root, "poc")
+if _poc_dir not in sys.path:
+    sys.path.insert(0, os.path.abspath(_poc_dir))
 
 from .celery_app import app
 from .config import settings
@@ -132,6 +135,32 @@ def _flatten_report_findings(report_json: dict) -> dict:
             )
             by_id[finding_id] = snapshot
     return by_id
+
+
+def _extract_rewrite_scan_summary(report_dict: dict) -> dict:
+    badge = report_dict.get("ai_risk_badge") or {}
+    findings = report_dict.get("findings", {})
+    return {
+        "ai_risk_badge": badge,
+        "overall_tier": report_dict.get("overall_tier", "?"),
+        "findings": {
+            tier: [
+                {
+                    "finding_id": finding.get("finding_id"),
+                    "title": finding.get("title"),
+                    "category": finding.get("category"),
+                }
+                for finding in findings.get(tier, [])
+                if isinstance(finding, dict)
+            ]
+            for tier in ("critical", "high", "medium", "low")
+        },
+    }
+
+
+def _fetch_r2_json(s3, bucket: str, key: str) -> dict:
+    resp = s3.get_object(Bucket=bucket, Key=key)
+    return json.loads(resp["Body"].read())
 
 
 def _target_contexts(plan_items, findings_by_id: dict) -> list:
@@ -669,3 +698,55 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             )
             release_rewrite_credits(rewrite_id)
             raise
+
+
+@app.task(bind=True, max_retries=1, default_retry_delay=30)
+def regenerate_rewrite_report_assets(self, rewrite_id: str, scan_id: str) -> dict:
+    """Regenerate rewrite.md and rewrite.pdf from stored JSON without charging tokens."""
+    from .storage import upload_rewrite_files, _client as _r2_client
+    from .config import settings as worker_settings
+    from report.render_rewrite import render_rewrite_report
+    from report.pdf import render_pdf
+    import tempfile
+
+    try:
+        rewrite_job = get_rewrite_job(rewrite_id)
+        if not rewrite_job:
+            return {"status": "failed", "error": "rewrite job not found"}
+        if str(rewrite_job.get("scan_id")) != str(scan_id):
+            return {"status": "failed", "error": "scan mismatch"}
+        if rewrite_job.get("status") != "completed":
+            return {"status": "failed", "error": "rewrite is not completed"}
+
+        s3 = _r2_client()
+        bucket = worker_settings.R2_BUCKET_NAME
+        report_json = _fetch_r2_json(s3, bucket, f"reports/{scan_id}/report.json")
+        rewrite_json = _fetch_r2_json(s3, bucket, f"reports/{scan_id}/rewrite/rewrite.json")
+
+        summary = rewrite_json.setdefault("summary", {})
+        summary["detect_scan_original_saved"] = _extract_rewrite_scan_summary(report_json)
+
+        md_text = render_rewrite_report(
+            summary=summary,
+            sentence_comparison=rewrite_json.get("sentence_comparison") or [],
+            ai_findings=rewrite_json.get("ai_findings") or [],
+            verbose=False,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = os.path.join(tmpdir, "rewrite.pdf")
+            render_pdf(md_text, pdf_path)
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+
+        upload_rewrite_files(
+            scan_id=scan_id,
+            md_text=md_text,
+            pdf_bytes=pdf_bytes,
+            json_data=rewrite_json,
+            rewritten_text=rewrite_json.get("final_text") or "",
+        )
+        return {"status": "completed", "rewrite_id": rewrite_id, "scan_id": scan_id}
+    except Exception as e:
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=e)
+        raise
