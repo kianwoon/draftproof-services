@@ -513,41 +513,41 @@ export default function Report() {
         <div className="report-summary-bar">
           <div className="report-stat report-risk-stat" style={{ background: tier.bg }}>
             <span className="report-risk-icon" style={{ color: tier.color }} aria-hidden="true">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d={tier.icon} />
-                <circle cx="12" cy="12" r="10" />
-              </svg>
-            </span>
-            <span className="report-risk-copy">
-              <span className="report-risk-value" style={{ color: tier.color }}>{tier.label}</span>
-              <span className="report-stat-label">Risk Tier</span>
-            </span>
-          </div>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d={tier.icon} />
+              <circle cx="12" cy="12" r="10" />
+            </svg>
+          </span>
+          <span className="report-risk-copy">
+            <span className="report-risk-value" style={{ color: tier.color }}>{tier.label}</span>
+            <span className="report-stat-label">Risk Tier</span>
+          </span>
+        </div>
+        <div className="report-stat">
+          <span className="report-stat-value">{report.issues.length}</span>
+          <span className="report-stat-label">Total Findings</span>
+        </div>
+        {aiScore != null && (
           <div className="report-stat">
-            <span className="report-stat-value">{report.issues.length}</span>
-            <span className="report-stat-label">Total Findings</span>
+            <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(aiScore, 2)}</span>
+            <span className="report-stat-label">AI Score</span>
           </div>
-          {Object.entries(issueCounts).filter(([, v]) => v > 0).map(([sev, count]) => {
-            const sc = SEVERITY_CONFIG[sev];
-            return (
-              <div key={sev} className="report-stat">
-                <span className="report-stat-value" style={{ color: sc.color }}>{count}</span>
-                <span className="report-stat-label">{sc.label}</span>
-              </div>
-            );
-          })}
-          {aiScore != null && (
-            <div className="report-stat">
-              <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(aiScore, 2)}</span>
-              <span className="report-stat-label">AI Score</span>
+        )}
+        {writingScore != null && (
+          <div className="report-stat">
+            <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 2)}</span>
+            <span className="report-stat-label">Writing Score</span>
+          </div>
+        )}
+        {Object.entries(issueCounts).filter(([, v]) => v > 0).map(([sev, count]) => {
+          const sc = SEVERITY_CONFIG[sev];
+          return (
+            <div key={sev} className="report-stat">
+              <span className="report-stat-value" style={{ color: sc.color }}>{count}</span>
+              <span className="report-stat-label">{sc.label}</span>
             </div>
-          )}
-          {writingScore != null && (
-            <div className="report-stat">
-              <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 2)}</span>
-              <span className="report-stat-label">Writing Score</span>
-            </div>
-          )}
+          );
+        })}
         </div>
 
         {hasRewriteResult && (
