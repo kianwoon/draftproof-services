@@ -2210,7 +2210,7 @@ th {
 }
 
 .report-stat-value {
-  font-size: clamp(1.15rem, 1.8vw, 1.65rem);
+  font-size: clamp(1.05rem, 1.5vw, 1.45rem);
   font-weight: 850;
   color: var(--navy-950);
   line-height: 1;
@@ -2347,7 +2347,7 @@ th {
 
 .rewrite-summary-stat span {
   color: var(--navy-950);
-  font-size: clamp(1.1rem, 1.6vw, 1.5rem);
+  font-size: clamp(1.05rem, 1.5vw, 1.35rem);
   font-weight: 850;
   line-height: 1.15;
 }
