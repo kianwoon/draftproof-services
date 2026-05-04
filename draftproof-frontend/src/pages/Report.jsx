@@ -68,8 +68,8 @@ function buildRewriteResultSummary(rewriteReport) {
   ).length;
 
   return {
-    original_risk: detectScores.original_ai ?? originalBadge.ai_likelihood_score ?? summary.original_risk,
-    rewrite_risk: detectScores.rewritten_ai ?? rewrittenBadge.ai_likelihood_score ?? summary.final_risk,
+    original_risk: summary.original_risk ?? detectScores.original_ai ?? originalBadge.ai_likelihood_score,
+    rewrite_risk: summary.final_risk ?? detectScores.rewritten_ai ?? rewrittenBadge.ai_likelihood_score,
     original_findings: originalFindings,
     rewritten_findings: rewrittenFindings,
     changed_sentences: changedSentences,
