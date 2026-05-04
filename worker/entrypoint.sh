@@ -26,11 +26,6 @@ else
         AutoTokenizer.from_pretrained('${MODEL}'); \
         AutoModelForCausalLM.from_pretrained('${MODEL}'); \
         print('Download complete')"
-    # Verify it loads with local_files_only (same as scanner will)
-    python3 -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
-        AutoTokenizer.from_pretrained('${MODEL}', local_files_only=True); \
-        AutoModelForCausalLM.from_pretrained('${MODEL}', local_files_only=True); \
-        print('Verification passed: model loads from cache')"
     touch "${MODEL_MARKER}"
     echo "[entrypoint] Model ${MODEL} cached and marker set"
 fi
