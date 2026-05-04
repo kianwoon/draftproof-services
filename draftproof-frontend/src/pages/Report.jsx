@@ -113,6 +113,8 @@ export default function Report() {
     i.signal_category === 'authorship_risk' ||
     i.actionability === 'auto_rewrite_candidate'
   );
+  const hasCompletedRewrite = report.rewrite?.status === 'completed';
+  const canStartRewrite = hasAIFindings && !hasCompletedRewrite;
 
   const handleRewrite = async () => {
     setRewriteLoading(true);
@@ -159,7 +161,7 @@ export default function Report() {
               {tier.label}
             </span>
           </div>
-          {hasAIFindings && (
+          {canStartRewrite && (
             <button
               className="rewrite-btn"
               onClick={handleRewrite}
@@ -174,7 +176,7 @@ export default function Report() {
               {rewriteLoading ? 'Starting...' : 'Rewrite AI Sections'}
             </button>
           )}
-          {report.rewrite && report.rewrite.status === 'completed' && (
+          {hasCompletedRewrite && (
             <Link
               to={`/report/${id}/rewrite?rid=${report.rewrite.id}`}
               style={{
