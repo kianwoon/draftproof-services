@@ -57,6 +57,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # Redis / Celery
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_VISIBILITY_TIMEOUT_SECONDS = int(os.getenv("CELERY_VISIBILITY_TIMEOUT_SECONDS", "900"))
 
 # R2 Storage (for fetching report JSON)
 R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "")
@@ -66,3 +67,4 @@ R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "draftproof-reports")
 
 # Rewrite
 REWRITE_TOKEN_COST = 2
+REWRITE_STALE_THRESHOLD_MINUTES = int(os.getenv("REWRITE_STALE_THRESHOLD_MINUTES", "15"))

@@ -145,7 +145,13 @@ def _serialize_effective_rewrite_plan(plan) -> dict:
     }
 
 
-@app.task(bind=True, max_retries=2, default_retry_delay=30, soft_time_limit=300, time_limit=330)
+@app.task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=settings.SCAN_SOFT_TIME_LIMIT_SECONDS,
+    time_limit=settings.SCAN_TIME_LIMIT_SECONDS,
+)
 def scan_document(self, job_id: str, text: str) -> dict:
     """Run the full detect pipeline on text and store results."""
     try:
@@ -214,7 +220,13 @@ def scan_document(self, job_id: str, text: str) -> dict:
             raise  # Re-raise original — Celery marks as FAILURE, not RETRY
 
 
-@app.task(bind=True, max_retries=1, default_retry_delay=30, soft_time_limit=600, time_limit=630)
+@app.task(
+    bind=True,
+    max_retries=1,
+    default_retry_delay=30,
+    soft_time_limit=settings.REWRITE_SOFT_TIME_LIMIT_SECONDS,
+    time_limit=settings.REWRITE_TIME_LIMIT_SECONDS,
+)
 def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
     """Run the rewrite pipeline on a completed scan's results."""
     from .storage import upload_rewrite_files, _client as _r2_client
@@ -363,7 +375,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         return {"status": "completed"}
 
     except SoftTimeLimitExceeded:
-        update_rewrite_status(rewrite_id, "failed", error="Rewrite timed out (5 min limit)")
+        timeout_minutes = max(1, settings.REWRITE_SOFT_TIME_LIMIT_SECONDS // 60)
+        update_rewrite_status(
+            rewrite_id,
+            "failed",
+            error=f"Rewrite timed out ({timeout_minutes} min limit)",
+        )
         release_rewrite_credits(rewrite_id)
         return {"status": "failed", "error": "timeout"}
     except Exception as e:

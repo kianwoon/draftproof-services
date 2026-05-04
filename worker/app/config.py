@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
     LLM_MODEL: str = ""
     LLM_BASE_URL: str = ""
+    SCAN_SOFT_TIME_LIMIT_SECONDS: int = 300
+    SCAN_TIME_LIMIT_SECONDS: int = 330
+    REWRITE_SOFT_TIME_LIMIT_SECONDS: int = 720
+    REWRITE_TIME_LIMIT_SECONDS: int = 780
+    CELERY_VISIBILITY_TIMEOUT_SECONDS: int = 900
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

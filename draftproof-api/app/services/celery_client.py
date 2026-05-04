@@ -3,7 +3,7 @@
 import ssl
 
 from celery import Celery
-from app.config import REDIS_URL
+from app.config import CELERY_VISIBILITY_TIMEOUT_SECONDS, REDIS_URL
 
 celery_app = Celery("draftproof-api", broker=REDIS_URL, backend=REDIS_URL)
 
@@ -20,6 +20,9 @@ celery_app.conf.update(
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
         "app.tasks.run_rewrite": {"queue": "scan"},
+    },
+    broker_transport_options={
+        "visibility_timeout": CELERY_VISIBILITY_TIMEOUT_SECONDS,
     },
 )
 

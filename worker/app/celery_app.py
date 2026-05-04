@@ -32,6 +32,13 @@ app.conf.update(
         "app.tasks.run_rewrite": {"queue": "scan"},
     },
     task_default_queue="default",
-    # Re-deliver unacked tasks after 2 minutes if worker crashed
-    broker_transport_options={"visibility_timeout": 120},
+    # Keep the visibility timeout longer than the longest task. Re-delivering
+    # a live rewrite task causes duplicate executions while the first worker is
+    # still doing final detector scans.
+    broker_transport_options={
+        "visibility_timeout": max(
+            settings.CELERY_VISIBILITY_TIMEOUT_SECONDS,
+            settings.REWRITE_TIME_LIMIT_SECONDS + 120,
+        ),
+    },
 )

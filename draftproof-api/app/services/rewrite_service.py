@@ -6,12 +6,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
-from app.config import REWRITE_TOKEN_COST
+from app.config import REWRITE_STALE_THRESHOLD_MINUTES, REWRITE_TOKEN_COST
 from app.models.db import async_session, RewriteJob, ScanJob, CreditAccount, CreditReservation
 
 logger = logging.getLogger("rewrite_service")
 
-_STALE_THRESHOLD = timedelta(minutes=5)
+_STALE_THRESHOLD = timedelta(minutes=REWRITE_STALE_THRESHOLD_MINUTES)
 
 
 async def create_rewrite(scan_id: str, user_id: str) -> dict:
