@@ -247,7 +247,7 @@ export default function Report() {
   const currentRewrite = rewriteJob || report.rewrite;
   const rewriteInProgress = isRewriteActive(currentRewrite?.status);
   const hasCompletedRewrite = currentRewrite?.status === 'completed';
-  const canStartRewrite = hasAIFindings && !hasCompletedRewrite;
+  const canStartRewrite = hasAIFindings;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
     : 0;
@@ -331,14 +331,6 @@ export default function Report() {
             >
               {rewriteLoading ? 'Starting rewrite...' : rewriteInProgress ? 'Resume Rewrite' : 'Rewrite AI Sections'}
             </button>
-          )}
-          {hasCompletedRewrite && (
-            <Link
-              to={`/report/${id}/rewrite?rid=${currentRewrite.id}`}
-              className="rewrite-results-link"
-            >
-              View Rewrite Results
-            </Link>
           )}
         </div>
         {showRewriteProgress && (
