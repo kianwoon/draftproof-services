@@ -15,15 +15,8 @@ COPY worker/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
-# Pre-download GPT-2 model during build so no runtime download needed
+# HF cache — Koyeb volume mounts here so model persists across deploys
 ENV HF_HOME=/app/hf_cache
-# PREDICTABILITY_MODEL env var controls which model at runtime (default: gpt2)
-# We pre-download the default here; if you change the env var, rebuild with --build-arg
-ARG PREDICTABILITY_MODEL=gpt2
-RUN python3 -c "from transformers import AutoTokenizer, AutoModelForCausalLM; \
-    AutoTokenizer.from_pretrained('${PREDICTABILITY_MODEL}'); \
-    AutoModelForCausalLM.from_pretrained('${PREDICTABILITY_MODEL}'); \
-    print('Model cached in image')"
 
 # Copy both worker/ and poc/ so worker can import poc modules
 COPY poc/ /app/poc/
@@ -31,4 +24,6 @@ COPY worker/ /app/worker/
 
 WORKDIR /app/worker
 
-ENTRYPOINT ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "scan,default"]
+# entrypoint.sh checks volume for cached model before starting Celery
+RUN chmod +x /app/worker/entrypoint.sh
+ENTRYPOINT ["/app/worker/entrypoint.sh"]
