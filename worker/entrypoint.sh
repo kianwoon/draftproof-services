@@ -56,6 +56,16 @@ params = sum(p.numel() for p in model.parameters())
 size_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / 1024 / 1024
 log.info("Model loaded: %s (%s params, %.0f MB) in %.1fs", model_name, f"{params:,}", size_mb, load_s)
 
+# Log torch build config for performance debugging
+log.info("Torch: version=%s build=%s MKL=%s OpenMP=%s threads=%d",
+    torch.__version__,
+    torch.version.debug or "release",
+    torch.backends.mkl.is_available(),
+    torch.backends.openmp.is_available(),
+    torch.get_num_threads(),
+)
+log.info("Device: %s", model.device if hasattr(model, 'device') else 'cpu')
+
 # 10-sentence benchmark
 sentences = [
     "The implementation of these strategies serves as a practical model for addressing complex challenges in modern educational environments.",
@@ -90,6 +100,8 @@ else:
     log.info("FAST: avg %.0fms/sentence — good performance", avg_ms)
 
 # Store preloaded model in a module-level cache so scanner reuses it
+import sys
+sys.path.insert(0, "/app")
 import poc.predictability.scanner as _sc
 _sc._PRELOADED_MODEL = model
 _sc._PRELOADED_TOKENIZER = tok
