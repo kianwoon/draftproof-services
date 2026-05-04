@@ -2200,7 +2200,7 @@ th {
   min-height: 64px;
   min-width: 0;
   flex: 0 0 auto;
-  padding: .5rem clamp(1rem, 2vw, 2rem);
+  padding: .5rem clamp(.6rem, 1.5vw, 1.6rem);
   border-left: 1px solid #e2e8f0;
   overflow: hidden;
 }
@@ -2211,7 +2211,7 @@ th {
 }
 
 .report-stat-value {
-  font-size: .95rem;
+  font-size: .9rem;
   font-weight: 850;
   color: var(--navy-950);
   line-height: 1;
@@ -2230,10 +2230,10 @@ th {
 .report-risk-stat {
   flex-direction: row;
   align-items: center;
-  gap: 1.05rem;
+  gap: .85rem;
   flex: 0 0 auto;
-  min-width: 200px;
-  padding: .5rem 1.35rem .5rem 2rem;
+  min-width: 0;
+  padding: .5rem 1rem .5rem 1rem;
   border-left: 0;
   border-radius: 12px;
   margin: 0;
@@ -2243,15 +2243,15 @@ th {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 52px;
-  height: 52px;
-  border-radius: 18px;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
   background: rgba(255,255,255,.45);
 }
 
 .report-risk-icon svg {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
 }
 
 .report-risk-copy {
@@ -2263,7 +2263,7 @@ th {
 .report-risk-value {
   display: inline-flex;
   align-items: center;
-  font-size: 1.35rem;
+  font-size: 1.1rem;
   font-weight: 800;
   line-height: 1.1;
   white-space: nowrap;
@@ -2291,9 +2291,9 @@ th {
   display: grid;
   place-items: center;
   position: relative;
-  flex: 0 0 76px;
-  width: 74px;
-  height: 74px;
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
   color: #16a34a;
   margin-right: 0;
   border-radius: 999px;
@@ -2304,8 +2304,8 @@ th {
 .rewrite-summary-icon span {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: 36px;
+  height: 36px;
   border-radius: 999px;
   background: #dcfce7;
 }
@@ -2315,13 +2315,13 @@ th {
   flex-direction: column;
   justify-content: center;
   flex: 0 0 auto;
-  min-width: 200px;
-  padding: .5rem clamp(1rem, 1.8vw, 1.55rem) .5rem .75rem;
+  min-width: 0;
+  padding: .5rem clamp(.6rem, 1.4vw, 1.2rem) .5rem .6rem;
 }
 
 .rewrite-summary-kicker {
   color: #059669;
-  font-size: 1.1rem;
+  font-size: .95rem;
   font-weight: 800;
   letter-spacing: 0;
   text-transform: none;
@@ -2330,8 +2330,8 @@ th {
 
 .rewrite-summary-main strong {
   color: var(--ink);
-  margin-top: .45rem;
-  font-size: .98rem;
+  margin-top: .35rem;
+  font-size: .82rem;
   font-weight: 650;
   line-height: 1.25;
 }
@@ -2342,16 +2342,18 @@ th {
   justify-content: center;
   min-width: 0;
   min-height: 58px;
-  flex: 1 1 80px;
-  padding: .5rem clamp(.75rem, 1.1vw, 1.2rem);
+  flex: 0 0 auto;
+  padding: .5rem clamp(.6rem, 1.1vw, 1rem);
   border-left: 1px solid #bbf7d0;
+  overflow: hidden;
 }
 
 .rewrite-summary-stat span {
   color: var(--navy-950);
-  font-size: clamp(1.05rem, 1.5vw, 1.35rem);
+  font-size: .9rem;
   font-weight: 850;
   line-height: 1.15;
+  white-space: nowrap;
 }
 
 .rewrite-summary-stat small {
