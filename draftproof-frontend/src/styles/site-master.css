@@ -2183,8 +2183,8 @@ th {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0;
-  padding: 1.9rem 2rem;
+  gap: .5rem 0;
+  padding: 1.9rem 0;
   background: rgba(255, 255, 255, .88);
   border-radius: 16px;
   border: 1px solid #e2e8f0;
@@ -2199,8 +2199,8 @@ th {
   justify-content: center;
   min-height: 64px;
   min-width: 0;
-  flex: 1 1 92px;
-  padding: 0 clamp(1rem, 2vw, 2rem);
+  flex: 1 1 0;
+  padding: .5rem clamp(1rem, 2vw, 2rem);
   border-left: 1px solid #e2e8f0;
 }
 
@@ -2231,11 +2231,11 @@ th {
   align-items: center;
   gap: 1.05rem;
   flex: 0 0 auto;
-  min-width: 210px;
-  padding: 1.15rem 1.35rem;
+  min-width: 200px;
+  padding: .5rem 1.35rem .5rem 2rem;
   border-left: 0;
   border-radius: 12px;
-  margin: -.35rem clamp(1rem, 2vw, 2rem) -.35rem 0;
+  margin: 0;
 }
 
 .report-risk-icon {
@@ -2273,12 +2273,12 @@ th {
 }
 
 .report-rewrite-summary-bar {
-  display: grid;
-  grid-template-columns: 76px minmax(210px, 1.1fr) repeat(4, minmax(106px, .75fr)) minmax(218px, auto);
+  display: flex;
   align-items: center;
-  gap: 0;
-  padding: 1.55rem 1.7rem;
-  margin: -0.25rem 0 2rem;
+  flex-wrap: wrap;
+  gap: .5rem 0;
+  padding: 1.55rem 0;
+  margin: 0 0 2rem;
   border: 1px solid #86efac;
   border-radius: 16px;
   background: linear-gradient(90deg, #f0fdf4 0%, #f7fffb 100%);
@@ -2290,6 +2290,7 @@ th {
   display: grid;
   place-items: center;
   position: relative;
+  flex: 0 0 76px;
   width: 74px;
   height: 74px;
   color: #16a34a;
@@ -2312,8 +2313,9 @@ th {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-width: 0;
-  padding: 0 clamp(1rem, 1.8vw, 1.55rem) 0 .75rem;
+  flex: 0 0 auto;
+  min-width: 200px;
+  padding: .5rem clamp(1rem, 1.8vw, 1.55rem) .5rem .75rem;
 }
 
 .rewrite-summary-kicker {
@@ -2339,7 +2341,8 @@ th {
   justify-content: center;
   min-width: 0;
   min-height: 58px;
-  padding: 0 clamp(.75rem, 1.1vw, 1.2rem);
+  flex: 1 1 0;
+  padding: .5rem clamp(.75rem, 1.1vw, 1.2rem);
   border-left: 1px solid #bbf7d0;
 }
 
@@ -2645,7 +2648,7 @@ th {
 
 @media (max-width: 1280px) {
   .report-summary-bar {
-    gap: 1.2rem 0;
+    gap: .75rem 0;
   }
   .report-risk-stat {
     flex-basis: 100%;
@@ -2655,8 +2658,8 @@ th {
     border-left: 0;
   }
   .report-rewrite-summary-bar {
-    grid-template-columns: 64px minmax(165px, 1fr) repeat(4, minmax(76px, .7fr)) minmax(205px, auto);
-    padding: 1.45rem;
+    gap: .75rem 0;
+    padding: 1.45rem 0;
   }
   .rewrite-summary-icon {
     width: 64px;
@@ -2673,7 +2676,7 @@ th {
     font-size: .92rem;
   }
   .rewrite-summary-stat {
-    padding: 0 .75rem;
+    padding: .5rem .75rem;
   }
   .rewrite-summary-stat span {
     font-size: 1.35rem;
@@ -2698,7 +2701,6 @@ th {
   .report-hero-info h1 { font-size: clamp(2.2rem, 12vw, 3.3rem); }
   .report-summary-bar,
   .report-rewrite-summary-bar {
-    grid-template-columns: 1fr;
     gap: 1rem;
     padding: 1.2rem;
   }
@@ -2708,10 +2710,12 @@ th {
     border-top: 1px solid #e2e8f0;
     padding: 1rem 0 0;
     min-width: 0;
+    flex-basis: 100%;
   }
   .report-risk-stat {
     margin: 0;
     min-width: 0;
+    flex-basis: auto;
   }
   .rewrite-summary-icon {
     width: 70px;
@@ -2723,7 +2727,6 @@ th {
     padding-right: 0;
   }
   .report-rewrite-summary-bar .rewrite-results-link {
-    justify-self: stretch;
     margin-left: 0;
     width: 100%;
   }
