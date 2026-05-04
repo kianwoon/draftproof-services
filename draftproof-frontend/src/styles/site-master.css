@@ -2183,14 +2183,14 @@ th {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: .5rem 0;
-  padding: 1.9rem 0;
+  gap: .75rem 0;
+  padding: 1.5rem 0;
   background: rgba(255, 255, 255, .88);
   border-radius: 16px;
   border: 1px solid #e2e8f0;
   box-shadow: 0 16px 34px rgba(15, 23, 42, .08);
-  margin-bottom: 2rem;
-  overflow: visible;
+  margin-bottom: 2.5rem;
+  overflow: hidden;
 }
 
 .report-stat {
@@ -2276,14 +2276,14 @@ th {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: .5rem 0;
-  padding: 1.55rem 0;
+  gap: .75rem 0;
+  padding: 1.25rem 0;
   margin: 0 0 2rem;
   border: 1px solid #86efac;
   border-radius: 16px;
   background: linear-gradient(90deg, #f0fdf4 0%, #f7fffb 100%);
   box-shadow: 0 12px 30px rgba(22, 163, 74, .08);
-  overflow: visible;
+  overflow: hidden;
 }
 
 .rewrite-summary-icon {
