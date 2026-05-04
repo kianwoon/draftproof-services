@@ -197,6 +197,72 @@ def _component_driver_bucket_item(driver: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _score_mitigation_targets(component_drivers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Prioritized score levers for reducing the next detect scan.
+
+    These are not promises of exact badge movement. They identify the component
+    scores most worth reducing and the revision action that can plausibly move
+    them below review thresholds without inventing content.
+    """
+    targets: List[Dict[str, Any]] = []
+    for driver in component_drivers:
+        component = str(driver.get("component") or "")
+        score = float(driver.get("score") or 0.0)
+        bucket = str(driver.get("bucket") or "review_only")
+        if score < 50:
+            continue
+        if score >= 80:
+            target = 55.0
+            priority = "highest"
+        elif score >= 65:
+            target = 50.0
+            priority = "high"
+        else:
+            target = 45.0
+            priority = "medium"
+        reduction = max(0.0, score - target)
+        if bucket == "needs_source_or_example":
+            if component == "unsupported_claim_risk":
+                action = "Add citation/example support or soften confident unsupported claims."
+            elif component == "source_grounding_risk":
+                action = "Connect sources directly to the claims they support."
+            elif component == "citation_weakness_risk":
+                action = "Repair in-text citation linkage around key claims."
+            elif component in {"broad_claim_risk", "generic_assertion_risk"}:
+                action = "Narrow broad claims to the exact class, unit, method, or observation."
+            else:
+                action = driver.get("mitigation") or "Add author-supplied evidence or concrete detail."
+        elif bucket == "auto_rewrite":
+            action = "Retry detector-gated sentence rewrite after evidence/source gaps are reduced."
+        elif bucket == "structure_guidance":
+            action = "Revise paragraph structure before retrying sentence-level rewrite."
+        else:
+            action = driver.get("mitigation") or "Review this signal manually."
+        targets.append({
+            "component": component,
+            "bucket": bucket,
+            "current_score": round(score, 2),
+            "target_score": round(target, 2),
+            "reduction_needed": round(reduction, 2),
+            "priority": priority,
+            "action": action,
+        })
+    bucket_rank = {
+        "needs_source_or_example": 0,
+        "structure_guidance": 1,
+        "auto_rewrite": 2,
+        "review_only": 3,
+    }
+    return sorted(
+        targets,
+        key=lambda item: (
+            bucket_rank.get(item["bucket"], 9),
+            -float(item["reduction_needed"]),
+            -float(item["current_score"]),
+        ),
+    )
+
+
 def _reference_pattern(component: str) -> Dict[str, str] | None:
     patterns = {
         "generic_assertion_risk": {
@@ -411,5 +477,6 @@ def build_mitigation_plan(
         "counts": dict(counts),
         "buckets": buckets,
         "component_drivers": component_drivers,
+        "score_mitigation_targets": _score_mitigation_targets(component_drivers),
         "reference_patterns": _reference_patterns(component_drivers, buckets),
     }

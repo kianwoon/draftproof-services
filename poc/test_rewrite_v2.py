@@ -578,6 +578,7 @@ driver_plan = build_mitigation_plan(
 )
 assert_test(driver_plan["counts"]["needs_source_or_example"] == 2, "component drivers produce evidence guidance counts")
 assert_test(driver_plan["primary_mode"] == "guided_revision", "component drivers set guided revision mode")
+assert_test(driver_plan["score_mitigation_targets"][0]["component"] == "unsupported_claim_risk", "score mitigation targets prioritize largest evidence driver")
 guided_report = render_rewrite_report(
     summary={
         "no_text_change": True,
@@ -597,6 +598,7 @@ guided_report = render_rewrite_report(
 )
 assert_test("## Guided Revision Checklist" in guided_report, "guided report highlights revision checklist")
 assert_test("automatic sentence edits cannot safely supply" in guided_report, "guided report explains why original is preserved")
+assert_test("## Risk Score Mitigation Targets" in guided_report, "guided report shows score mitigation targets")
 
 throttle_text = (
     "Students use the chart to plan the cut. "

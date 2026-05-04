@@ -431,6 +431,29 @@ def render_rewrite_report(
         lines.append("")
 
     if mitigation:
+        score_targets = mitigation.get("score_mitigation_targets") or []
+        if score_targets:
+            lines.append("## Risk Score Mitigation Targets")
+            lines.append("")
+            lines.append(
+                "These are the highest-value score levers to work on before retrying automatic rewrite. The target is to move each driver out of the strongest-risk band without inventing evidence."
+            )
+            lines.append("")
+            lines.append("| Priority | Score Driver | Current | Target | Reduction Needed | Best Mitigation |")
+            lines.append("|----------|--------------|--------:|-------:|-----------------:|-----------------|")
+            for item in score_targets[:6]:
+                component = str(item.get("component", "")).replace("_risk", "").replace("_", " ").title()
+                priority = str(item.get("priority", "")).title()
+                current = item.get("current_score", 0)
+                target = item.get("target_score", 0)
+                reduction = item.get("reduction_needed", 0)
+                action = str(item.get("action", "")).replace("|", "·")
+                lines.append(
+                    f"| {priority} | {component} | `{float(current):.1f}%` | "
+                    f"`{float(target):.1f}%` | `{float(reduction):.1f}%` | {action} |"
+                )
+            lines.append("")
+
         checklist = _guided_revision_checklist(mitigation)
         if final_output_preserved and checklist:
             lines.append("## Guided Revision Checklist")

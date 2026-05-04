@@ -374,6 +374,7 @@ def _build_rewrite_debug_log(
             "mitigation_counts": mitigation.get("counts"),
             "mitigation_primary_mode": mitigation.get("primary_mode"),
             "component_drivers": mitigation.get("component_drivers"),
+            "score_mitigation_targets": mitigation.get("score_mitigation_targets"),
             "guided_revision": _guided_revision_debug_preview(mitigation),
         },
         "loop_history": summary.get("detect_loop_history") or summary.get("loop_history"),
