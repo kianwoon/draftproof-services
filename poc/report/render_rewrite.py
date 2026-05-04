@@ -488,18 +488,20 @@ def render_rewrite_report(
                 "These are not kept automatically in the final output. Bracketed text marks new content that DraftProof is proposing as a structure only; replace it with verified source, example, or author detail before using."
             )
             lines.append("")
-            lines.append("| Priority | Where | Suggested Addition | Why It Helps | User Review |")
-            lines.append("|----------|-------|--------------------|--------------|-------------|")
+            lines.append("| Priority | Where | Target Text | Suggested Addition | Why It Helps | User Review |")
+            lines.append("|----------|-------|-------------|--------------------|--------------|-------------|")
             for item in marked_suggestions[:6]:
                 priority = str(item.get("priority", "")).title()
                 where = str(item.get("where", "")).replace("|", "·")
+                target_text = str(item.get("target_text") or item.get("evidence") or "").replace("|", "·")
+                target_text = html.escape(target_text)
                 suggestion = _highlight_placeholders(
                     str(item.get("suggested_addition", "")).replace("|", "·")
                 )
                 why = str(item.get("why_it_helps", "")).replace("|", "·")
                 note = str(item.get("user_note", "")).replace("|", "·")
                 lines.append(
-                    f"| {priority} | {where} | {suggestion} | {why} | {note} |"
+                    f"| {priority} | {where} | {target_text} | {suggestion} | {why} | {note} |"
                 )
             lines.append("")
 

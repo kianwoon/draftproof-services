@@ -724,7 +724,27 @@ driver_plan = build_mitigation_plan(
         "ai_risk_badge": {
             "ai_components": {"unsupported_claim_risk": 90.0},
             "writing_components": {"source_grounding_risk": 70.0},
-        }
+        },
+        "rewrite_plan": {
+            "auto_target_context": [{
+                "finding": {
+                    "finding_id": "f001",
+                    "title": "medium_predictability",
+                    "sentence_id": "s001",
+                    "evidence": "School is no longer the only place to acquire knowledge.",
+                    "rewrite_context": {
+                        "paragraph_id": "p001",
+                        "previous_sentence": "",
+                        "next_sentence": "Online information now fills students' daily lives.",
+                        "paragraph_excerpt": (
+                            "School is no longer the only place to acquire knowledge. "
+                            "Online information now fills students' daily lives."
+                        ),
+                        "signal_instruction": "Break the common-word path and ground the claim in nearby context.",
+                    },
+                }
+            }]
+        },
     },
 )
 assert_test(driver_plan["counts"]["needs_source_or_example"] == 2, "component drivers produce evidence guidance counts")
@@ -738,6 +758,8 @@ assert_test(
 marked = driver_plan["marked_content_suggestions"]
 assert_test(marked[0]["auto_apply"] is False, "marked content suggestions are not auto-applied")
 assert_test("[ADD SOURCE OR EXAMPLE]" in marked[0]["suggested_addition"], "marked suggestions visibly bracket new content")
+assert_test("School is no longer" in marked[0]["target_text"], "marked suggestions point to concrete target text")
+assert_test("Sentence s001" in marked[0]["where"], "marked suggestions include concrete sentence location")
 assert_test(
     any(item["action_type"] == "add_source_bridge" for item in marked),
     "marked suggestions include source bridge structure",
@@ -766,6 +788,7 @@ assert_test("## Risk Score Mitigation Targets" in guided_report, "guided report 
 assert_test("## Risk Mitigation Actions" in guided_report, "guided report shows concrete mitigation actions")
 assert_test("## Suggested Additions For Review" in guided_report, "guided report shows marked content suggestions")
 assert_test("[ADD SOURCE OR EXAMPLE]" in guided_report, "guided report highlights bracketed suggested content")
+assert_test("School is no longer the only place" in guided_report, "guided report shows concrete target text for suggestions")
 
 partial_ok, partial_reason, partial_delta = _target_predictability_acceptance(
     {"risk": 0.5083, "label": "medium"},

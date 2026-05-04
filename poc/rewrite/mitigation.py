@@ -6,6 +6,7 @@ that need author evidence, source grounding, or structural revision.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Any, Dict, List
 
@@ -515,9 +516,248 @@ def _suggestion_rule(component: str) -> Dict[str, str]:
     })
 
 
+def _clean_text(value: Any, limit: int = 260) -> str:
+    if isinstance(value, dict):
+        value = (
+            value.get("summary")
+            or value.get("affected_span")
+            or value.get("text")
+            or value.get("sentence")
+            or ""
+        )
+    if not isinstance(value, str):
+        value = str(value or "")
+    cleaned = " ".join(value.split())
+    if not cleaned:
+        return ""
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 1)].rstrip() + "..."
+
+
+def _target_where(*, sentence_id: Any = "", paragraph_id: Any = "") -> str:
+    pieces = []
+    if paragraph_id:
+        pieces.append(f"Paragraph {paragraph_id}")
+    if sentence_id:
+        pieces.append(f"Sentence {sentence_id}")
+    return ", ".join(pieces)
+
+
+def _iter_finding_rows(raw_json: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    findings = (raw_json or {}).get("findings") or {}
+    if isinstance(findings, dict):
+        for tier in ("critical", "high", "medium", "low", "review"):
+            for item in findings.get(tier, []) or []:
+                if isinstance(item, dict):
+                    row = dict(item)
+                    row.setdefault("tier", tier)
+                    rows.append(row)
+    elif isinstance(findings, list):
+        rows.extend([dict(item) for item in findings if isinstance(item, dict)])
+
+    for key in ("rewrite_edit_briefs", "rewrite_briefs", "edit_briefs"):
+        for item in (raw_json or {}).get(key, []) or []:
+            if isinstance(item, dict):
+                row = dict(item)
+                row.setdefault("source", key)
+                rows.append(row)
+
+    plan = (raw_json or {}).get("rewrite_plan") or {}
+    if isinstance(plan, dict):
+        for key in ("auto_target_context", "manual_required", "review_only", "suggestion_only"):
+            for item in plan.get(key, []) or []:
+                if not isinstance(item, dict):
+                    continue
+                finding = item.get("finding")
+                if isinstance(finding, dict):
+                    row = dict(finding)
+                    row.setdefault("source", key)
+                    rows.append(row)
+                else:
+                    row = dict(item)
+                    row.setdefault("source", key)
+                    rows.append(row)
+    return rows
+
+
+def _claim_targets(
+    raw_json: Dict[str, Any],
+    buckets: Dict[str, List[Dict[str, Any]]],
+    limit: int = 10,
+) -> List[Dict[str, str]]:
+    """Extract concrete text locations that can receive review-required support."""
+    targets: List[Dict[str, str]] = []
+
+    def add_target(
+        *,
+        target_text: Any = "",
+        sentence_id: Any = "",
+        paragraph_id: Any = "",
+        paragraph_excerpt: Any = "",
+        finding_id: Any = "",
+        finding_type: Any = "",
+        instruction: Any = "",
+        reason: Any = "",
+        component_hint: Any = "",
+    ) -> None:
+        text = _clean_text(target_text)
+        if not text or len(text.split()) < 5:
+            return
+        if " words, " in text or text == "low_specificity":
+            return
+        where = _target_where(sentence_id=sentence_id, paragraph_id=paragraph_id)
+        targets.append({
+            "target_text": text,
+            "where": where,
+            "sentence_id": str(sentence_id or ""),
+            "paragraph_id": str(paragraph_id or ""),
+            "paragraph_excerpt": _clean_text(paragraph_excerpt, 360),
+            "finding_id": str(finding_id or ""),
+            "finding_type": str(finding_type or ""),
+            "instruction": _clean_text(instruction, 220),
+            "reason": _clean_text(reason, 180),
+            "component_hint": str(component_hint or ""),
+        })
+
+    for item in buckets.get("needs_source_or_example") or []:
+        if item.get("component_driver"):
+            continue
+        add_target(
+            target_text=item.get("flagged_excerpt") or item.get("evidence"),
+            sentence_id=item.get("sentence_id"),
+            finding_id=item.get("finding_id"),
+            finding_type=item.get("finding_type"),
+            instruction=item.get("mitigation"),
+            reason=item.get("reason"),
+            component_hint=item.get("finding_type"),
+        )
+
+    for item in buckets.get("auto_rewrite") or []:
+        if item.get("component_driver"):
+            continue
+        add_target(
+            target_text=item.get("flagged_excerpt") or item.get("evidence"),
+            sentence_id=item.get("sentence_id"),
+            finding_id=item.get("finding_id"),
+            finding_type=item.get("finding_type"),
+            instruction=item.get("mitigation"),
+            reason=item.get("reason"),
+            component_hint=item.get("finding_type"),
+        )
+
+    for row in _iter_finding_rows(raw_json or {}):
+        context = row.get("rewrite_context") if isinstance(row.get("rewrite_context"), dict) else {}
+        target_text = (
+            row.get("target_sentence")
+            or row.get("sentence")
+            or row.get("text")
+            or row.get("evidence")
+            or context.get("target_sentence")
+        )
+        instruction = (
+            row.get("instruction")
+            or row.get("recommendation")
+            or context.get("signal_instruction")
+            or row.get("reason")
+        )
+        location = row.get("location") if isinstance(row.get("location"), dict) else {}
+        add_target(
+            target_text=target_text,
+            sentence_id=row.get("sentence_id") or context.get("sentence_id") or location.get("sentence_id"),
+            paragraph_id=row.get("paragraph_id") or context.get("paragraph_id") or location.get("paragraph_id"),
+            paragraph_excerpt=row.get("paragraph_excerpt") or context.get("paragraph_excerpt"),
+            finding_id=row.get("finding_id") or row.get("id"),
+            finding_type=row.get("finding_type") or row.get("title") or row.get("component"),
+            instruction=instruction,
+            reason=row.get("recommendation") or row.get("reason") or row.get("title"),
+            component_hint=row.get("finding_type") or row.get("title") or row.get("component"),
+        )
+
+    deduped: List[Dict[str, str]] = []
+    seen = set()
+    for target in targets:
+        key = re.sub(r"\W+", " ", target["target_text"].lower()).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if not target["where"]:
+            target["where"] = "Flagged claim or paragraph"
+        deduped.append(target)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _component_matches_target(component: str, target: Dict[str, str]) -> bool:
+    hint = (target.get("component_hint") or target.get("finding_type") or "").lower()
+    component_base = component.replace("_risk", "").replace("_", " ")
+    if "source" in component or "citation" in component:
+        return any(token in hint for token in ("source", "citation", "uncited", "ground"))
+    if "unsupported" in component:
+        return any(token in hint for token in ("unsupported", "claim", "ungrounded"))
+    if "broad" in component or "generic" in component:
+        return any(token in hint for token in ("broad", "generic", "specificity", "predictability"))
+    if "lived" in component:
+        return any(token in hint for token in ("lived", "specific", "detail", "process"))
+    return component_base in hint
+
+
+def _pick_claim_target(component: str, targets: List[Dict[str, str]], used: set[int]) -> Dict[str, str]:
+    for idx, target in enumerate(targets):
+        if idx not in used and _component_matches_target(component, target):
+            used.add(idx)
+            return target
+    for idx, target in enumerate(targets):
+        if idx not in used:
+            used.add(idx)
+            return target
+    return {}
+
+
+def _tailored_suggested_addition(component: str, target_text: str, fallback: str) -> str:
+    if not target_text:
+        return fallback
+    quoted = f'"{target_text}"'
+    if component == "unsupported_claim_risk":
+        return (
+            f"After {quoted}, add: [ADD SOURCE OR EXAMPLE] supports this claim because "
+            "[EXPLAIN THE CONNECTION]. If support is limited, soften the claim to: "
+            "This may suggest [CAREFUL, LIMITED CONCLUSION]."
+        )
+    if component == "source_grounding_risk":
+        return (
+            f"Connect {quoted} to evidence: According to [ADD SOURCE/AUTHOR], [ADD SOURCE IDEA]. "
+            "This supports the claim because [EXPLAIN THE LINK IN YOUR OWN WORDS]."
+        )
+    if component == "citation_weakness_risk":
+        return (
+            f"Attach citation support to {quoted}: [ADD CITATION] reports [SPECIFIC EVIDENCE], "
+            "which matters here because [CONNECT EVIDENCE TO THIS PARAGRAPH]."
+        )
+    if component == "broad_claim_risk":
+        return (
+            f"Narrow {quoted}: For [SPECIFIC CLASS/UNIT/METHOD/CONTEXT], "
+            "[SPECIFIC OBSERVATION] may support [LIMITED OUTCOME]."
+        )
+    if component == "generic_assertion_risk":
+        return (
+            f"Ground {quoted}: In [SPECIFIC SETTING/TASK], [CONCRETE DETAIL] shows "
+            "[LIMITED POINT]."
+        )
+    if component == "lived_detail_risk":
+        return (
+            f"Add author/process detail near {quoted}: During [SPECIFIC ACTIVITY/SESSION], "
+            "I observed [SPECIFIC ACTION OR RESULT], which matters because [WHAT IT SHOWS]."
+        )
+    return fallback
+
+
 def _marked_content_suggestions(
     component_drivers: List[Dict[str, Any]],
     buckets: Dict[str, List[Dict[str, Any]]],
+    raw_json: Dict[str, Any] | None = None,
     limit: int = 6,
 ) -> List[Dict[str, Any]]:
     """Review-required additions with visible placeholders.
@@ -526,6 +766,8 @@ def _marked_content_suggestions(
     support structure, but every model-supplied gap is bracketed for user review.
     """
     suggestions: List[Dict[str, Any]] = []
+    claim_targets = _claim_targets(raw_json or {}, buckets)
+    used_targets: set[int] = set()
     needs_items = buckets.get("needs_source_or_example") or []
     excerpt_by_component: Dict[str, Dict[str, Any]] = {}
     for item in needs_items:
@@ -542,10 +784,22 @@ def _marked_content_suggestions(
             continue
         rule = _suggestion_rule(component)
         source_item = excerpt_by_component.get(component) or {}
+        claim_target = _pick_claim_target(component, claim_targets, used_targets)
         sentence_id = source_item.get("sentence_id") or ""
-        evidence = source_item.get("flagged_excerpt") or source_item.get("evidence") or ""
+        evidence = (
+            claim_target.get("target_text")
+            or source_item.get("flagged_excerpt")
+            or source_item.get("evidence")
+            or ""
+        )
         where = (
-            f"Sentence {sentence_id}" if sentence_id else "Document-level claim/source gap"
+            claim_target.get("where")
+            or (f"Sentence {sentence_id}" if sentence_id else "Document-level claim/source gap")
+        )
+        suggestion = _tailored_suggested_addition(
+            component,
+            claim_target.get("target_text", ""),
+            rule["suggested_addition"],
         )
         suggestions.append({
             "component": component,
@@ -555,8 +809,11 @@ def _marked_content_suggestions(
             "action_type": rule["action_type"],
             "title": rule["title"],
             "where": where,
+            "target_text": claim_target.get("target_text", ""),
+            "paragraph_excerpt": claim_target.get("paragraph_excerpt", ""),
+            "scanner_instruction": claim_target.get("instruction", ""),
             "evidence": evidence,
-            "suggested_addition": rule["suggested_addition"],
+            "suggested_addition": suggestion,
             "why_it_helps": rule["why_it_helps"],
             "user_note": rule["user_note"],
             "auto_apply": False,
@@ -792,6 +1049,6 @@ def build_mitigation_plan(
         "component_drivers": component_drivers,
         "score_mitigation_targets": _score_mitigation_targets(component_drivers),
         "risk_mitigation_actions": _risk_mitigation_actions(component_drivers),
-        "marked_content_suggestions": _marked_content_suggestions(component_drivers, buckets),
+        "marked_content_suggestions": _marked_content_suggestions(component_drivers, buckets, raw_json or {}),
         "reference_patterns": _reference_patterns(component_drivers, buckets),
     }

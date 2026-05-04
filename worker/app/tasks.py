@@ -277,6 +277,8 @@ def _guided_revision_debug_preview(mitigation: dict, limit: int = 5) -> dict:
                 "action_type": _truncate_debug_value(item.get("action_type") or "", 120),
                 "title": _truncate_debug_value(item.get("title") or "", 160),
                 "where": _truncate_debug_value(item.get("where") or "", 160),
+                "target_text": _truncate_debug_value(item.get("target_text") or "", 260),
+                "scanner_instruction": _truncate_debug_value(item.get("scanner_instruction") or "", 220),
                 "suggested_addition": _truncate_debug_value(item.get("suggested_addition") or "", 320),
                 "auto_apply": item.get("auto_apply"),
             }
