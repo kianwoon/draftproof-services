@@ -22,6 +22,12 @@ from poc.predictability.phrase_packs import get_generic_phrases
 
 GENERIC_PHRASES = get_generic_phrases()
 
+SCANNER_VERSION = "vectorized-gpt2-v2"
+
+# Preloaded model cache — set by worker entrypoint to avoid re-loading on first scan
+_PRELOADED_MODEL = None
+_PRELOADED_TOKENIZER = None
+
 
 @dataclass
 class TokenResult:
@@ -95,17 +101,30 @@ class PredictabilityScanner:
         self.weights = weights or self.DEFAULT_WEIGHTS
         self.generic_phrases = custom_phrases or GENERIC_PHRASES
         model_name = model_name or os.environ.get("PREDICTABILITY_MODEL", "gpt2")
+        self.model_name = model_name
 
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-            self.model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True)
-        except OSError:
-            import logging
-            logging.getLogger(__name__).warning("Model not in cache, downloading from HuggingFace...")
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(model_name)
-        self.model.to(self.device)
-        self.model.eval()
+        # Use preloaded model from worker entrypoint if available
+        if _PRELOADED_MODEL is not None and _PRELOADED_TOKENIZER is not None:
+            logger.info("Using preloaded %s model from entrypoint cache", model_name)
+            self.tokenizer = _PRELOADED_TOKENIZER
+            self.model = _PRELOADED_MODEL
+        else:
+            logger.info("Loading %s model (no preload cache found) ...", model_name)
+            try:
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+                self.model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True)
+            except OSError:
+                logger.warning("Model not in cache, downloading from HuggingFace...")
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+                self.model = AutoModelForCausalLM.from_pretrained(model_name)
+            self.model.to(self.device)
+            self.model.eval()
+
+        logger.info(
+            "Scanner ready: version=%s model=%s device=%s params=%s",
+            SCANNER_VERSION, self.model_name, self.device,
+            f"{sum(p.numel() for p in self.model.parameters()):,}",
+        )
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -270,7 +289,7 @@ class PredictabilityScanner:
         sentences = self.split_sentences(text)
         eligible = [s for s in sentences if len(str(s).split()) >= 8]
         total = len(eligible)
-        logger.info("Predictability scan: %d eligible sentences (of %d total)", total, len(sentences))
+        logger.info("Predictability scan: %d eligible sentences (of %d total) model=%s version=%s", total, len(sentences), self.model_name, SCANNER_VERSION)
         results = []
         t0 = time.monotonic()
         for i, s in enumerate(eligible):
@@ -307,6 +326,8 @@ class PredictabilityScanner:
             sample_confidence_reason = None
 
         return {
+            "scanner_version": SCANNER_VERSION,
+            "model_name": self.model_name,
             "overall_risk": round(overall, 4),
             "sample_confidence": sample_confidence,
             "sample_confidence_reason": sample_confidence_reason,
