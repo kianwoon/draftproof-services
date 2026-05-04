@@ -300,7 +300,18 @@ def _rewrite_to_dict(job: RewriteJob) -> dict:
         "status": job.status,
         "error": job.error,
         "progress_percent": job.progress_percent,
-        "progress_message": job.progress_message,
+        "progress_message": _normalize_rewrite_progress_message(job.progress_message),
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
     }
+
+
+def _normalize_rewrite_progress_message(message: str | None) -> str | None:
+    if not message:
+        return message
+
+    normalized = message.strip().lower()
+    if "rewriting your document" in normalized:
+        return "Rewriting AI sections"
+
+    return message

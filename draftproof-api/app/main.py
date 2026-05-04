@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
@@ -117,6 +117,15 @@ async def health():
 static_path = os.path.join(os.path.dirname(__file__), "..", "static")
 if os.path.isdir(static_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(static_path, "assets")), name="assets")
+
+    @app.get("/report/{report_id}/rewrite")
+    async def legacy_rewrite_route(report_id: str, request: Request):
+        if not request.query_params.get("rid"):
+            return RedirectResponse(url=f"/report/{report_id}", status_code=302)
+        return FileResponse(
+            os.path.join(static_path, "index.html"),
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @app.get("/{path:path}")
     async def serve_spa(path: str):

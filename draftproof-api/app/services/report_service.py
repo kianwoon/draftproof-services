@@ -107,6 +107,17 @@ def _flatten_findings(results_json: dict) -> list[dict]:
     return issues
 
 
+def _normalize_rewrite_progress_message(message: str | None) -> str | None:
+    if not message:
+        return message
+
+    normalized = message.strip().lower()
+    if "rewriting your document" in normalized:
+        return "Rewriting AI sections"
+
+    return message
+
+
 async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
     """Fetch a completed scan report by scan job ID, optionally scoped to a user."""
     async with async_session() as session:
@@ -168,7 +179,7 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
                 "status": rw_job.status,
                 "error": rw_job.error,
                 "progress_percent": rw_job.progress_percent,
-                "progress_message": rw_job.progress_message,
+                "progress_message": _normalize_rewrite_progress_message(rw_job.progress_message),
                 "created_at": rw_job.created_at.isoformat() if rw_job.created_at else None,
                 "completed_at": rw_job.completed_at.isoformat() if rw_job.completed_at else None,
             }

@@ -69,6 +69,23 @@ function isRewriteActive(status) {
   return ['pending', 'processing', 'retrying'].includes(status);
 }
 
+function normalizeRewriteProgressMessage(message, status) {
+  if (!message) return formatRewriteStatus(status);
+  const normalized = String(message).trim().toLowerCase();
+  if (normalized.includes('rewriting your document')) {
+    return 'Rewriting AI sections';
+  }
+  return message;
+}
+
+function normalizeRewriteJob(job) {
+  if (!job) return job;
+  return {
+    ...job,
+    progress_message: normalizeRewriteProgressMessage(job.progress_message, job.status),
+  };
+}
+
 const REVIEW_ONLY_REWRITE_TITLE = 'No rewriteable AI sections';
 const REVIEW_ONLY_REWRITE_MESSAGE = 'This report only has review-only signals. There is nothing DraftProof can rewrite automatically, so no tokens were deducted.';
 const REVIEW_ONLY_REWRITE_PATTERNS = [
@@ -114,12 +131,13 @@ export default function Report() {
   }, []);
 
   const syncRewriteJob = useCallback((job) => {
-    setRewriteJob(job);
-    if (job?.status && job.status !== 'failed') {
+    const normalizedJob = normalizeRewriteJob(job);
+    setRewriteJob(normalizedJob);
+    if (normalizedJob?.status && normalizedJob.status !== 'failed') {
       setRewriteError(null);
     }
-    if (job?.status === 'completed') {
-      setReport((prev) => prev ? { ...prev, rewrite: job } : prev);
+    if (normalizedJob?.status === 'completed') {
+      setReport((prev) => prev ? { ...prev, rewrite: normalizedJob } : prev);
     }
   }, []);
 
@@ -203,7 +221,7 @@ export default function Report() {
         setReport(data);
         if (data.rewrite) {
           setRewriteSseUnavailable(false);
-          setRewriteJob(data.rewrite);
+          setRewriteJob(normalizeRewriteJob(data.rewrite));
           if (data.rewrite.id && isRewriteActive(data.rewrite.status)) {
             connectRewriteEvents(data.rewrite.id);
           }
@@ -291,7 +309,10 @@ export default function Report() {
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
     : 0;
-  const rewriteProgressMessage = currentRewrite?.progress_message || formatRewriteStatus(currentRewrite?.status);
+  const rewriteProgressMessage = normalizeRewriteProgressMessage(
+    currentRewrite?.progress_message,
+    currentRewrite?.status
+  );
   const showRewriteProgress = rewriteStartedHere || rewriteInProgress || hasCompletedRewrite || rewriteLoading || rewriteError;
 
   const handleRewrite = async (event) => {
