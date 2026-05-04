@@ -775,6 +775,24 @@ def _rewrite_task_instruction(finding: Finding, max_chars: int) -> str:
 def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
     """Ask the LLM for several paragraph-aware sentence candidates."""
     base = _rewrite_task_instruction(finding, max_chars)
+    if _requires_medium_exit(finding):
+        return (
+            f"{base}\n"
+            "The current target is a MEDIUM predictability finding. A small score reduction is not enough: "
+            f"the replacement must aim to fall below {MEDIUM_PREDICTABILITY_CEILING:.2f} and leave the medium band. "
+            "Avoid generic/predictable frames such as 'This is...', 'Because of this...', "
+            "'The goal should be...', 'modern world', 'not only...', and 'people who can'. "
+            "Use varied clause order, concrete everyday phrasing, and a less formulaic sentence path. "
+            "Return exactly 6 candidates as numbered lines:\n"
+            "1. <plain natural edit>\n"
+            "2. <structural edit>\n"
+            "3. <short direct edit>\n"
+            "4. <clause-reordered edit>\n"
+            "5. <less formulaic edit>\n"
+            "6. <fallback conservative edit>\n"
+            "Each candidate must be ONE sentence and must replace only the target sentence. "
+            "Do not include explanations."
+        )
     return (
         f"{base}\n"
         "Return exactly 3 candidates as numbered lines:\n"
@@ -891,6 +909,34 @@ def _candidate_quality_score(
         - length_penalty,
         4,
     )
+
+
+MEDIUM_PREDICTABILITY_CEILING = 0.45
+
+
+def _requires_medium_exit(finding: Finding) -> bool:
+    """True when a medium target should be accepted only below medium threshold."""
+    return (
+        finding.risk_level == "medium"
+        and (
+            "predictability" in finding.finding_type
+            or "topk" in finding.finding_type
+            or "surprisal" in finding.finding_type
+        )
+    )
+
+
+def _sentence_predictability(scanner: PredictabilityScanner, sentence: str) -> Dict[str, Any]:
+    """Return target-sentence predictability score and label."""
+    try:
+        result = scanner.scan_sentence(sentence)
+        return {
+            "risk": float(getattr(result, "predictability_risk", 0.0) or 0.0),
+            "label": getattr(result, "risk_label", ""),
+        }
+    except Exception as exc:
+        logger.warning("Target sentence predictability check failed: %s", exc)
+        return {"risk": None, "label": ""}
 
 
 def _enrich_span_info(finding: Finding, rewrite_context: Optional[Any], sent_idx: int) -> str:
@@ -1801,6 +1847,33 @@ def run_rewrite(
                     })
                     continue
 
+                target_orig_pred = {"risk": None, "label": ""}
+                target_new_pred = {"risk": None, "label": ""}
+                if _requires_medium_exit(f):
+                    target_scanner = predictability_guard._get_scanner()
+                    target_orig_pred = _sentence_predictability(target_scanner, original_sentence)
+                    target_new_pred = _sentence_predictability(target_scanner, candidate_sentence)
+                    target_new_risk = target_new_pred.get("risk")
+                    target_new_label = target_new_pred.get("label")
+                    if (
+                        target_new_risk is None
+                        or target_new_risk >= MEDIUM_PREDICTABILITY_CEILING
+                        or target_new_label in {"medium", "high"}
+                    ):
+                        candidate_rejects.append(
+                            "target_still_medium "
+                            f"{target_new_label or '?'}:{target_new_risk}"
+                        )
+                        rejected_candidates.append({
+                            "candidate": cand_idx,
+                            "reason": "; ".join(candidate_rejects),
+                            "target_orig_risk": target_orig_pred.get("risk"),
+                            "target_new_risk": target_new_risk,
+                            "target_new_label": target_new_label,
+                            "text": candidate_sentence[:100],
+                        })
+                        continue
+
                 component_ok, component_reason = _component_regression_check(current_text, candidate_text)
                 if not component_ok:
                     candidate_rejects.append(f"badge_component_regression {component_reason}")
@@ -1840,6 +1913,10 @@ def run_rewrite(
                     "drift": candidate_drift,
                     "orig_risk": reg_check.orig_risk,
                     "new_risk": reg_check.new_risk,
+                    "target_orig_risk": target_orig_pred.get("risk"),
+                    "target_orig_label": target_orig_pred.get("label"),
+                    "target_new_risk": target_new_pred.get("risk"),
+                    "target_new_label": target_new_pred.get("label"),
                 }
                 if best_candidate_info is None or score > best_candidate_info["score"]:
                     best_candidate_info = info
@@ -1909,6 +1986,10 @@ def run_rewrite(
             "candidate_count": len(rejected_candidates) + (1 if best_candidate_info else 0),
             "orig_risk": best_candidate_info.get("orig_risk") if best_candidate_info else None,
             "new_risk": best_candidate_info.get("new_risk") if best_candidate_info else None,
+            "target_orig_risk": best_candidate_info.get("target_orig_risk") if best_candidate_info else None,
+            "target_orig_label": best_candidate_info.get("target_orig_label") if best_candidate_info else None,
+            "target_new_risk": best_candidate_info.get("target_new_risk") if best_candidate_info else None,
+            "target_new_label": best_candidate_info.get("target_new_label") if best_candidate_info else None,
             "note": "applied candidate",
         })
 
