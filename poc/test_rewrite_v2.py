@@ -476,6 +476,28 @@ coherence_reason = _paragraph_coherence_reject_reason(
     ["chart", "practice", "cutting", "guide"],
 )
 assert_test(bool(coherence_reason), "paragraph coherence guard rejects unsupported abstraction/anchor loss")
+colloquial_reason = _paragraph_coherence_reject_reason(
+    "In the contemporary education environment, school is no longer the only place to acquire knowledge.",
+    "With online info filling daily life, school no longer stands as the only way to gain knowledge.",
+    "",
+    "Online information filled almost everyone’s life, and everyone can obtain all kinds of knowledge and information from the internet now.",
+    ["education", "school", "knowledge", "information"],
+)
+assert_test(
+    "unsupported_new_phrase" in colloquial_reason,
+    "paragraph coherence guard rejects unsupported colloquial rewrite phrasing",
+)
+method_reason = _paragraph_coherence_reject_reason(
+    "This enables the student to understand the precision required for each procedure and stimulates the desire to learn for them.",
+    "Students learn the exact precision and steps for each procedure through guided practice, moving from simple attempts to careful execution, which encourages them and sparks their interest in continuing to improve.",
+    "",
+    "",
+    ["student", "precision", "procedure", "learn"],
+)
+assert_test(
+    "unsupported_new_phrase" in method_reason,
+    "paragraph coherence guard rejects unsupported method/motivation additions",
+)
 
 pred_raw = {
     "sentences": [

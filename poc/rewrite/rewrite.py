@@ -857,7 +857,8 @@ def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
         "Avoid abstract noun stacks and generic polish such as 'crucial', 'significant', "
         "'essential', 'technical accuracy', 'operational obstacles', "
         "'visible learning framework', 'digital landscape', 'learners frequently fail', "
-        "'Constructing ... requires', and 'serves as a case'."
+        "'Constructing ... requires', 'serves as a case', 'online info', "
+        "'stands as', 'guided practice', and 'sparks interest'."
     )
     if _requires_medium_exit(finding):
         return (
@@ -1153,6 +1154,22 @@ def _paragraph_coherence_reject_reason(
     cand_abstract = sum(len(re.findall(p, candidate_sentence, re.I)) for p in abstract_patterns)
     if cand_abstract > orig_abstract:
         return f"unsupported_abstraction {orig_abstract}->{cand_abstract}"
+
+    surrounding = " ".join(
+        part for part in (original_sentence, previous_sentence, next_sentence) if part
+    ).lower()
+    unsupported_additions = [
+        r"\bonline info\b",
+        r"\bstands as\b",
+        r"\bguided practice\b",
+        r"\bsparks? (?:their |student )?interest\b",
+        r"\bcontinuing to improve\b",
+        r"\bdaily life\b",
+    ]
+    for pattern in unsupported_additions:
+        match = re.search(pattern, candidate_sentence, re.I)
+        if match and not re.search(pattern, surrounding, re.I):
+            return f"unsupported_new_phrase '{match.group(0)}'"
 
     return ""
 
