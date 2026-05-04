@@ -13,7 +13,16 @@ if _repo_root not in sys.path:
 from .celery_app import app
 from .config import settings
 from .storage import upload_report_files
-from .db import get_scan_job, update_job_status, capture_credits, get_rewrite_job, update_rewrite_status, capture_rewrite_credits, release_rewrite_credits
+from .db import (
+    get_scan_job,
+    update_job_status,
+    capture_credits,
+    get_rewrite_job,
+    claim_rewrite_job,
+    update_rewrite_status,
+    capture_rewrite_credits,
+    release_rewrite_credits,
+)
 from celery.exceptions import SoftTimeLimitExceeded
 
 
@@ -212,7 +221,15 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
     import tempfile
 
     try:
-        update_rewrite_status(rewrite_id, "processing")
+        rewrite_job = claim_rewrite_job(rewrite_id)
+        if not rewrite_job:
+            existing = get_rewrite_job(rewrite_id)
+            status = existing.get("status") if existing else "missing"
+            return {
+                "status": "skipped",
+                "reason": f"rewrite job already {status}",
+                "rewrite_id": rewrite_id,
+            }
 
         # 1. Fetch report.json from R2
         scan_job = get_scan_job(scan_id)

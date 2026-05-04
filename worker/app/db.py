@@ -115,6 +115,21 @@ def get_rewrite_job(job_id: str) -> Optional[dict]:
         return cur.fetchone()
 
 
+def claim_rewrite_job(job_id: str) -> Optional[dict]:
+    """Atomically move a rewrite job into processing if it has not run yet."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """UPDATE rewrite_jobs
+               SET status = 'processing'
+               WHERE id = %s
+                 AND status IN ('pending', 'retrying')
+               RETURNING *""",
+            (job_id,),
+        )
+        return cur.fetchone()
+
+
 def update_rewrite_status(job_id: str, status: str, error: str = None):
     sets = ["status = %s"]
     vals = [status]
