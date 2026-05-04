@@ -429,9 +429,18 @@ def _reference_patterns(
         seen.add(pattern["focus"])
         if len(selected) >= limit:
             break
+    bucket_priority = {
+        "needs_source_or_example": 0,
+        "structure_guidance": 1,
+        "auto_rewrite": 2,
+        "review_only": 3,
+    }
     return sorted(
         selected,
-        key=lambda item: 0 if item.get("flagged_excerpt") else 1,
+        key=lambda item: (
+            bucket_priority.get(_pattern_bucket(str(item.get("component", ""))), 9),
+            0 if item.get("flagged_excerpt") else 1,
+        ),
     )
 
 
