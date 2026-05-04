@@ -38,11 +38,42 @@ function formatMetricPercent(value) {
   return `${percent.toFixed(1)}%`;
 }
 
-function formatCountDelta(original, next) {
+function formatSignedDelta(original, next) {
   if (original == null || next == null) return '—';
-  const delta = Number(original) - Number(next);
+  const delta = Number(next) - Number(original);
   if (Number.isNaN(delta)) return '—';
-  return delta > 0 ? `-${delta}` : `${delta}`;
+  if (delta > 0) return `+${delta}`;
+  return `${delta}`;
+}
+
+function countRewriteFindings(findings) {
+  if (!findings || typeof findings !== 'object') return null;
+  return ['critical', 'high', 'medium', 'low', 'info'].reduce((total, tier) => {
+    const rows = findings[tier];
+    return total + (Array.isArray(rows) ? rows.length : 0);
+  }, 0);
+}
+
+function buildRewriteResultSummary(rewriteReport) {
+  const summary = rewriteReport?.summary || rewriteReport?.rewrite_summary || {};
+  const detectScores = summary.detect_scores || {};
+  const originalScan = summary.detect_scan_original || {};
+  const rewrittenScan = summary.detect_scan_rewritten || {};
+  const originalBadge = originalScan.ai_risk_badge || {};
+  const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
+  const originalFindings = detectScores.original_findings ?? countRewriteFindings(originalScan.findings);
+  const rewrittenFindings = detectScores.rewritten_findings ?? countRewriteFindings(rewrittenScan.findings);
+  const changedSentences = (rewriteReport?.sentence_comparison || []).filter(
+    (row) => String(row.orig_sentence || '').trim() !== String(row.new_sentence || '').trim()
+  ).length;
+
+  return {
+    original_risk: detectScores.original_ai ?? originalBadge.ai_likelihood_score ?? summary.original_risk,
+    rewrite_risk: detectScores.rewritten_ai ?? rewrittenBadge.ai_likelihood_score ?? summary.final_risk,
+    original_findings: originalFindings,
+    rewritten_findings: rewrittenFindings,
+    changed_sentences: changedSentences,
+  };
 }
 
 function findingDescription(issue) {
@@ -296,14 +327,7 @@ export default function Report() {
     getRewriteReport(completedRewrite.id)
       .then(({ data }) => {
         if (cancelled) return;
-        const summary = data?.summary || {};
-        const changedSentences = (data?.sentence_comparison || []).filter(
-          (row) => String(row.orig_sentence || '').trim() !== String(row.new_sentence || '').trim()
-        ).length;
-        setRewriteResultSummary({
-          ...summary,
-          changed_sentences: changedSentences,
-        });
+        setRewriteResultSummary(buildRewriteResultSummary(data));
       })
       .catch(() => {
         if (!cancelled) setRewriteResultSummary(null);
@@ -545,11 +569,11 @@ export default function Report() {
               <small>Original risk</small>
             </div>
             <div className="rewrite-summary-stat">
-              <span>{formatMetricPercent(rewriteResultSummary?.final_risk)}</span>
+              <span>{formatMetricPercent(rewriteResultSummary?.rewrite_risk)}</span>
               <small>Rewrite risk</small>
             </div>
             <div className="rewrite-summary-stat">
-              <span>{formatCountDelta(rewriteResultSummary?.original_findings, rewriteResultSummary?.rewritten_findings)}</span>
+              <span>{formatSignedDelta(rewriteResultSummary?.original_findings, rewriteResultSummary?.rewritten_findings)}</span>
               <small>Findings change</small>
             </div>
             <div className="rewrite-summary-stat">
