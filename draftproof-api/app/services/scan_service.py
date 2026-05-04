@@ -83,6 +83,8 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
         "id": str(job_id),
         "document_id": document_id,
         "status": "pending",
+        "progress_percent": 0,
+        "progress_message": "Queued",
         "report_id": None,
     }
 
@@ -110,7 +112,7 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
                 .where(ScanJob.user_id == uid)
                 .where(ScanJob.status.in_(["processing", "pending"]))
                 .where(ScanJob.created_at < cutoff)
-                .values(status="failed")
+                .values(status="failed", progress_message="Scan timed out")
             )
             await session.commit()
 
@@ -139,6 +141,8 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
                     "ai_score": float(j.ai_score) if j.ai_score is not None else None,
                     "writing_score": float(j.writing_score) if j.writing_score is not None else None,
                     "finding_count": j.finding_count,
+                    "progress_percent": j.progress_percent,
+                    "progress_message": j.progress_message,
                     "word_count": j.word_count,
                     "created_at": j.created_at.isoformat() if j.created_at else None,
                     "completed_at": j.completed_at.isoformat() if j.completed_at else None,
@@ -163,7 +167,7 @@ async def _mark_stale_jobs_failed(user_id: uuid.UUID | None = None) -> None:
             update(ScanJob)
             .where(ScanJob.status.in_(["processing", "pending"]))
             .where(ScanJob.created_at < cutoff)
-            .values(status="failed")
+            .values(status="failed", progress_message="Scan timed out")
         )
         if user_id:
             q = q.where(ScanJob.user_id == user_id)
@@ -190,6 +194,7 @@ async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
             age = datetime.now(timezone.utc) - job.created_at
             if age > _STALE_THRESHOLD:
                 job.status = "failed"
+                job.progress_message = "Scan timed out"
                 await session.commit()
                 await session.refresh(job)
 
@@ -202,6 +207,8 @@ async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
             "ai_score": float(job.ai_score) if job.ai_score is not None else None,
             "writing_score": float(job.writing_score) if job.writing_score is not None else None,
             "finding_count": job.finding_count,
+            "progress_percent": job.progress_percent,
+            "progress_message": job.progress_message,
         }
 
 

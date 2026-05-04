@@ -21,6 +21,8 @@ class ScanOut(BaseModel):
     report_id: Optional[str] = None
     tier: Optional[str] = None
     finding_count: Optional[int] = None
+    progress_percent: int = 0
+    progress_message: Optional[str] = None
 
 
 class IssueOut(BaseModel):

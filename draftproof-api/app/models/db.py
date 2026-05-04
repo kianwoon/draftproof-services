@@ -161,6 +161,8 @@ class ScanJob(Base):
     ai_score = Column(Numeric(6, 2))
     writing_score = Column(Numeric(6, 2))
     finding_count = Column(Integer)
+    progress_percent = Column(Integer, nullable=False, default=0)
+    progress_message = Column(Text)
     report_urls = Column(JSONB, default=dict)
     error = Column(Text)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

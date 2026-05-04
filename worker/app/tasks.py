@@ -315,14 +315,33 @@ def _serialize_effective_rewrite_plan(plan) -> dict:
 def scan_document(self, job_id: str, text: str) -> dict:
     """Run the full detect pipeline on text and store results."""
     try:
-        update_job_status(job_id, "processing")
+        update_job_status(
+            job_id,
+            "processing",
+            progress_percent=10,
+            progress_message="Preparing scan",
+        )
 
         from poc.detect_pipeline import run_detect
         import tempfile
 
+        def report_progress(percent: int, message: str) -> None:
+            update_job_status(
+                job_id,
+                "processing",
+                progress_percent=max(0, min(99, int(percent))),
+                progress_message=message,
+            )
+
         with tempfile.TemporaryDirectory() as tmpdir:
             model_name = os.environ.get("PREDICTABILITY_MODEL", "gpt2")
-            result = run_detect(text, tmpdir, verbose=True, model_name=model_name)
+            result = run_detect(
+                text,
+                tmpdir,
+                verbose=True,
+                model_name=model_name,
+                progress_callback=report_progress,
+            )
 
             tier = result["tier"]
             finding_count = result["findings"]
@@ -344,6 +363,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
             with open(result["json_path"]) as f:
                 results_json = json.load(f)
 
+            report_progress(97, "Uploading report files")
             urls = upload_report_files(job_id, md_text, pdf_bytes, results_json)
 
             report_urls = {
@@ -364,19 +384,36 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 writing_score=writing_score,
                 finding_count=finding_count,
                 report_urls=report_urls,
+                progress_percent=100,
+                progress_message="Scan complete",
             )
 
             return {"status": "completed", "tier": tier, "findings": finding_count}
 
     except SoftTimeLimitExceeded:
-        update_job_status(job_id, "failed", error="Scan timed out (5 min limit)")
+        update_job_status(
+            job_id,
+            "failed",
+            error="Scan timed out (5 min limit)",
+            progress_message="Scan timed out",
+        )
         return {"status": "failed", "error": "timeout"}
     except Exception as e:
         if self.request.retries < self.max_retries:
-            update_job_status(job_id, "retrying", error=str(e))
+            update_job_status(
+                job_id,
+                "retrying",
+                error=str(e),
+                progress_message="Retrying scan",
+            )
             raise self.retry(exc=e)
         else:
-            update_job_status(job_id, "failed", error=str(e))
+            update_job_status(
+                job_id,
+                "failed",
+                error=str(e),
+                progress_message="Scan failed",
+            )
             raise  # Re-raise original — Celery marks as FAILURE, not RETRY
 
 

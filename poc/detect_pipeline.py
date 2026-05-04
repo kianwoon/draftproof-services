@@ -38,15 +38,23 @@ def read_input(args) -> str:
     sys.exit(1)
 
 
-def run_detect(text: str, output_dir: str, verbose: bool = False, model_name: str | None = None) -> dict:
+def run_detect(
+    text: str,
+    output_dir: str,
+    verbose: bool = False,
+    model_name: str | None = None,
+    progress_callback=None,
+) -> dict:
     t0 = time.time()
     runner = DetectionRunner()
     kwargs = {}
     if model_name:
         kwargs["predictability_model"] = model_name
-    det_report = runner.run_all(text, **kwargs)
+    det_report = runner.run_all(text, progress_callback=progress_callback, **kwargs)
     elapsed = time.time() - t0
 
+    if progress_callback:
+        progress_callback(82, "Building report")
     builder = ReportBuilder()
     builder.add_detection_report(det_report)
     if det_report.postprocess_results:
@@ -60,12 +68,18 @@ def run_detect(text: str, output_dir: str, verbose: bool = False, model_name: st
     md_path = os.path.join(output_dir, f"draftproof_{ts}.md")
     json_path = os.path.join(output_dir, f"draftproof_{ts}.json")
 
+    if progress_callback:
+        progress_callback(88, "Rendering markdown report")
     with open(md_path, "w") as f:
         f.write(render_report(draft_report, verbose=verbose))
 
+    if progress_callback:
+        progress_callback(92, "Rendering PDF report")
     pdf_path = os.path.join(output_dir, f"draftproof_{ts}.pdf")
     render_pdf(render_report(draft_report, verbose=verbose), pdf_path)
 
+    if progress_callback:
+        progress_callback(95, "Writing scan results")
     json_data = report_to_dict(draft_report)
     json_data["input_text"] = text
     with open(json_path, "w") as f:
