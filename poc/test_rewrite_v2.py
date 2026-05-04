@@ -447,6 +447,7 @@ prompt = _candidate_task_instruction(
 assert_test("Return exactly 3 candidates" in prompt, "prompt asks for exactly 3 candidates")
 assert_test("<TARGET>" in prompt, "prompt references marked target sentence")
 assert_test("technical accuracy" in prompt and "digital landscape" in prompt, "prompt includes anti-polish examples")
+assert_test("students' with 'learners" in prompt or "students' with 'learners" in prompt.replace("’", "'"), "prompt preserves student voice level")
 
 for bad in (
     "The chart improves technical accuracy for each learner.",
@@ -455,6 +456,8 @@ for bad in (
     "This breakdown helps students master the exact grip and tension, giving them the boost needed to perform.",
     "The Graduated haircut serves as a specific case here.",
     "Teaching it in a salon classroom presents a constant hurdle.",
+    "Constructing triangle shapes requires lifting hair at projection angles from 1 to 90 degrees, yet learners frequently fail to see how a chosen degree creates that specific stacked silhouette.",
+    "Taking the Graduated structure as a case, we see how these procedures guide the cut.",
 ):
     reason = _candidate_style_reject_reason("Students use the chart during practice.", bad)
     assert_test(bool(reason), f"anti-polish guard rejects: {bad}")

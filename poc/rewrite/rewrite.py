@@ -365,6 +365,7 @@ To reduce predictability, BREAK expected word paths without polishing the writin
 - Do not just swap one word for a synonym.
 - Keep the sentence grounded in the paragraph's existing concrete detail.
 - Preserve the same author voice, including plain wording and first-person classroom reflection when present.
+- Keep the author's word level. If the source says students, use students; do not upgrade to learners. If it says make/use/help, do not upgrade to constructing/requires/facilitates.
 - Prefer nearby concrete nouns/actions over new abstract academic vocabulary.
 
 TRANSFORMATION RULES (apply the one matching the finding type):
@@ -374,6 +375,7 @@ For predictability / common_words / topk_predictability / low_surprisal findings
 - Prefer concrete, specific wording from the surrounding context over generic academic terms.
 - NEVER use these predictable words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally, demonstrates, highlights, underscores, plays, key role.
 - NEVER introduce abstract polish such as technical accuracy, operational obstacles, visible learning framework, digital landscape, complex implementation, or similar noun stacks.
+- NEVER make student-written wording sound like a textbook sentence. Avoid frames like "Constructing X requires...", "learners frequently fail...", "serves as a case", or "toward professional precision".
 
 For formulaic_sentence / generic_phrase findings:
 - Restructure the sentence to break its formulaic pattern. Move the subject to a different position. Change clause order. Start the sentence differently than it currently starts.
@@ -849,10 +851,13 @@ def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
         "Each candidate must be ONE sentence and must replace only the <TARGET> sentence. "
         "Do not include explanations. "
         "Do not make the sentence more formal, broader, smoother, or more academic. "
+        "Keep the original word level: do not replace 'students' with 'learners', "
+        "'make' with 'constructing', or simple classroom wording with textbook phrasing. "
         "Do not add facts, citations, names, dates, or statistics. "
         "Avoid abstract noun stacks and generic polish such as 'crucial', 'significant', "
         "'essential', 'technical accuracy', 'operational obstacles', "
-        "'visible learning framework', and 'digital landscape'."
+        "'visible learning framework', 'digital landscape', 'learners frequently fail', "
+        "'Constructing ... requires', and 'serves as a case'."
     )
     if _requires_medium_exit(finding):
         return (
@@ -1269,9 +1274,47 @@ def _generic_polish_count(text: str) -> int:
         r"\bprofessional precision\b", r"\bboost needed to perform\b",
         r"\bmaster the exact\b", r"\bpresents? a constant hurdle\b",
         r"\bresearch backing\b",
+        r"\bconstructing\b.{0,60}\brequires\b",
+        r"\blearners?\s+(?:frequently|often|commonly)\s+(?:fail|struggle)\b",
+        r"\btoward precise\b", r"\btoward professional\b",
+        r"\bbasic mimicry\b", r"\bbuilding the confidence they need\b",
+        r"\btaking\b.{0,80}\bas a case\b",
+        r"\bguide(?:s|d|ing)? the cut\b",
+        r"\bchosen degree creates\b", r"\bstacked silhouette\b",
     ]
     lower = text.lower()
     return sum(len(re.findall(p, lower)) for p in patterns)
+
+
+def _plain_voice_register_drift(original_sentence: str, candidate_sentence: str) -> str:
+    """Detect candidates that upgrade plain student voice into textbook prose."""
+    original_lower = original_sentence.lower()
+    candidate_lower = candidate_sentence.lower()
+    plain_markers = [
+        r"\bstudents?\b", r"\bteacher(?:s)?\b", r"\bI\b", r"\bwe\b",
+        r"\bmake\b", r"\buse\b", r"\bhelp\b", r"\bvery difficult\b",
+        r"\busually\b", r"\bcan\b", r"\bshould\b", r"\bin my\b",
+    ]
+    plain_source = sum(bool(re.search(p, original_sentence, re.I)) for p in plain_markers) >= 2
+    if not plain_source:
+        return ""
+
+    upgraded_terms = [
+        "learners", "constructing", "requires", "frequently fail",
+        "professional precision", "basic mimicry", "serves as a case",
+        "as a case", "stacked silhouette", "chosen degree creates",
+        "toward precise", "toward professional", "facilitates",
+    ]
+    introduced = [
+        term for term in upgraded_terms
+        if term in candidate_lower and term not in original_lower
+    ]
+    if introduced:
+        return "plain_voice_register_drift: " + ", ".join(introduced[:3])
+
+    if "student" in original_lower and "learner" in candidate_lower and "learner" not in original_lower:
+        return "plain_voice_register_drift: student->learner"
+    return ""
 
 
 def _candidate_style_reject_reason(original_sentence: str, candidate_sentence: str) -> str:
@@ -1280,6 +1323,10 @@ def _candidate_style_reject_reason(original_sentence: str, candidate_sentence: s
     cand_polish = _generic_polish_count(candidate_sentence)
     if cand_polish > orig_polish:
         return f"polished_generic_drift {orig_polish}->{cand_polish}"
+
+    register_reason = _plain_voice_register_drift(original_sentence, candidate_sentence)
+    if register_reason:
+        return register_reason
 
     # Long noun stacks often reduce GPT-2 predictability while increasing AI
     # style risk. Keep sentence edits plain unless the source sentence already
