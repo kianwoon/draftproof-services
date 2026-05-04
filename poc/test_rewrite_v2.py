@@ -825,6 +825,30 @@ assert_test(
     "guided revision records effective auto-target limit",
 )
 
+suggestion_only_context = DetectJSONContext(
+    detect_results=[make_detect_result(throttle_findings[:1])],
+    input_text=throttle_text,
+    raw_json={
+        "ai_risk_badge": {
+            "ai_likelihood_score": 40.0,
+            "ai_components": {"unsupported_claim_risk": 90.0},
+            "writing_components": {"source_grounding_risk": 70.0},
+        }
+    },
+)
+suggestion_only_result = run_rewrite(
+    throttle_text,
+    [make_detect_result(throttle_findings[:1])],
+    rewrite_fn=lambda text, prompt: "1. Students apply structured guidance materials during repeated practice activities.",
+    config=RewriteConfig(max_auto_targets=1, max_llm_calls=1),
+    rewrite_context=suggestion_only_context,
+    ai_only=False,
+)
+assert_test(
+    suggestion_only_result.summary.get("outcome") == "suggestion_only",
+    "marked suggestions change no-kept-edit outcome to suggestion_only",
+)
+
 pipeline_no_change = run_rewrite_pipeline(
     detect_json={
         "input_text": "Students use the chart.",

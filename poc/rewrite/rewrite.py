@@ -3454,6 +3454,12 @@ def run_rewrite(
         outcome = RewriteOutcome.IMPROVED
     elif findings_fixed > 0 and findings_skipped > 0:
         outcome = RewriteOutcome.PARTIALLY_IMPROVED
+    elif (
+        findings_skipped > 0
+        and findings_fixed == 0
+        and (runtime_mitigation_plan.get("marked_content_suggestions") or [])
+    ):
+        outcome = RewriteOutcome.SUGGESTION_ONLY
     elif findings_skipped > 0 and findings_fixed == 0:
         outcome = RewriteOutcome.FLOOR_REACHED
     elif plan.manual_required and not plan.auto_fixable:
