@@ -347,9 +347,9 @@ def _make_chipin_rewrite_fn(detect_context: str) -> callable:
     """Create a rewrite function that calls the local `claude` CLI."""
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
         max_chars = int(len(text) * 1.40)
-        wants_candidates = "Return exactly 3 candidates" in span_info
+        wants_candidates = "Return exactly 3 candidates" in span_info or "Return exactly 6 candidates" in span_info
         output_instruction = (
-            "Return exactly 3 numbered replacement candidates and no commentary."
+            "Return numbered replacement candidates and no commentary."
             if wants_candidates else
             "Output ONLY the rewritten text. No quotes, no commentary."
         )
@@ -817,7 +817,7 @@ def _parse_rewrite_candidates(output: Optional[str], original_sentence: str = ""
         line = raw_line.strip()
         if not line:
             continue
-        match = re.match(r"^(?:candidate\s*)?[\(\[]?([1-3])[\)\].:-]\s*(.+)$", line, re.I)
+        match = re.match(r"^(?:candidate\s*)?[\(\[]?([1-9])[\)\].:-]\s*(.+)$", line, re.I)
         bullet = re.match(r"^[-*]\s+(.+)$", line)
         if match:
             if current:
@@ -847,7 +847,7 @@ def _parse_rewrite_candidates(output: Optional[str], original_sentence: str = ""
             continue
         seen.add(key)
         cleaned.append(cand)
-        if len(cleaned) >= 3:
+        if len(cleaned) >= 6:
             break
     return cleaned
 
@@ -1115,9 +1115,9 @@ def _rewrite_fn_with_detect_context(
 
     def rewrite_fn(text: str, span_info: str) -> Optional[str]:
         max_chars = int(len(text) * 1.40)
-        wants_candidates = "Return exactly 3 candidates" in span_info
+        wants_candidates = "Return exactly 3 candidates" in span_info or "Return exactly 6 candidates" in span_info
         output_instruction = (
-            "Return exactly 3 numbered replacement candidates and no commentary."
+            "Return numbered replacement candidates and no commentary."
             if wants_candidates else
             "Output ONLY the rewritten text. No quotes, no commentary."
         )
