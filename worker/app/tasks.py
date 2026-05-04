@@ -232,6 +232,37 @@ def _manual_suggestions_debug_preview(rows, limit: int = 12) -> dict:
     }
 
 
+def _guided_revision_debug_preview(mitigation: dict, limit: int = 5) -> dict:
+    drivers = mitigation.get("component_drivers") or []
+    actions = []
+    for driver in drivers:
+        if driver.get("bucket") != "needs_source_or_example":
+            continue
+        component = str(driver.get("component") or "")
+        mitigation_text = str(driver.get("mitigation") or "")
+        actions.append({
+            "component": component,
+            "score": driver.get("score"),
+            "action": _truncate_debug_value(mitigation_text, 220),
+        })
+        if len(actions) >= limit:
+            break
+    patterns = []
+    for pattern in (mitigation.get("reference_patterns") or [])[:limit]:
+        if not isinstance(pattern, dict):
+            continue
+        patterns.append({
+            "focus": _truncate_debug_value(pattern.get("focus") or "", 120),
+            "try_pattern": _truncate_debug_value(pattern.get("try_pattern") or "", 260),
+            "why": _truncate_debug_value(pattern.get("why") or "", 220),
+        })
+    return {
+        "primary_mode": mitigation.get("primary_mode"),
+        "top_actions": actions,
+        "reference_patterns": patterns,
+    }
+
+
 def _build_rewrite_debug_log(
     rewrite_id: str,
     scan_id: str,
@@ -343,6 +374,7 @@ def _build_rewrite_debug_log(
             "mitigation_counts": mitigation.get("counts"),
             "mitigation_primary_mode": mitigation.get("primary_mode"),
             "component_drivers": mitigation.get("component_drivers"),
+            "guided_revision": _guided_revision_debug_preview(mitigation),
         },
         "loop_history": summary.get("detect_loop_history") or summary.get("loop_history"),
         "sentence_comparison_count": len(sentence_comparison),

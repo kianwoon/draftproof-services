@@ -99,6 +99,49 @@ def _top_user_actions(mitigation: dict, limit: int = 5) -> List[str]:
     return deduped[:limit]
 
 
+def _guided_revision_checklist(mitigation: dict, limit: int = 5) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    for driver in mitigation.get("component_drivers") or []:
+        bucket = driver.get("bucket")
+        component = str(driver.get("component", ""))
+        if bucket not in {"needs_source_or_example", "structure_guidance"}:
+            continue
+        guidance = _driver_guidance(driver)
+        if component == "unsupported_claim_risk":
+            where = "Confident claims without visible support"
+            add = "A source, classroom example, or softer claim wording"
+            retry = "After claims are supported or narrowed"
+        elif component == "source_grounding_risk":
+            where = "Claims that cite theory but do not explain the source link"
+            add = "Author/source name plus a sentence explaining how it supports the claim"
+            retry = "After source-to-claim links are explicit"
+        elif component == "citation_weakness_risk":
+            where = "Paragraphs with weak or missing in-text citation linkage"
+            add = "The missing citation or a clearer attribution phrase"
+            retry = "After citation linkage is repaired"
+        elif component in {"broad_claim_risk", "generic_assertion_risk"}:
+            where = "Broad statements that could fit many drafts"
+            add = "The exact class, unit, method, learner group, or observation"
+            retry = "After broad claims are narrowed to the draft context"
+        elif component == "lived_detail_risk":
+            where = "General claims about learning or practice"
+            add = "A real process detail from the author's class, salon, lesson, or workflow"
+            retry = "After lived/process detail is added"
+        else:
+            where = guidance["issue"]
+            add = guidance["action"]
+            retry = "After this manual revision is done"
+        rows.append({
+            "priority": guidance["signal"],
+            "where": where,
+            "add": add,
+            "retry": retry,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 def _bucket_plain_label(bucket: str) -> str:
     labels = {
         "needs_source_or_example": "Evidence or specificity",
@@ -388,6 +431,25 @@ def render_rewrite_report(
         lines.append("")
 
     if mitigation:
+        checklist = _guided_revision_checklist(mitigation)
+        if final_output_preserved and checklist:
+            lines.append("## Guided Revision Checklist")
+            lines.append("")
+            lines.append(
+                "DraftProof preserved the original because automatic sentence edits cannot safely supply missing evidence or source context. Use this checklist before retrying rewrite."
+            )
+            lines.append("")
+            lines.append("| Priority Signal | Where To Look | Add Or Change | Retry When |")
+            lines.append("|-----------------|---------------|---------------|------------|")
+            for row in checklist:
+                lines.append(
+                    f"| {row['priority'].replace('|', '·')} | "
+                    f"{row['where'].replace('|', '·')} | "
+                    f"{row['add'].replace('|', '·')} | "
+                    f"{row['retry'].replace('|', '·')} |"
+                )
+            lines.append("")
+
         lines.append("## Revision Brief")
         lines.append("")
         counts = mitigation.get("counts") or {}

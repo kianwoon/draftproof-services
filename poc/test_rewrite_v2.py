@@ -578,6 +578,25 @@ driver_plan = build_mitigation_plan(
 )
 assert_test(driver_plan["counts"]["needs_source_or_example"] == 2, "component drivers produce evidence guidance counts")
 assert_test(driver_plan["primary_mode"] == "guided_revision", "component drivers set guided revision mode")
+guided_report = render_rewrite_report(
+    summary={
+        "no_text_change": True,
+        "converged": False,
+        "mitigation_plan": driver_plan,
+        "detect_scan_original_saved": {
+            "ai_risk_badge": {"ai_likelihood_score": 40.0, "writing_quality_score": 50.0},
+            "findings": {"critical": [], "high": [], "medium": [], "low": []},
+        },
+        "detect_scan_rewritten": {
+            "ai_risk_badge": {"ai_likelihood_score": 40.0, "writing_quality_score": 50.0},
+            "findings": {"critical": [], "high": [], "medium": [], "low": []},
+        },
+    },
+    sentence_comparison=[],
+    ai_findings=[],
+)
+assert_test("## Guided Revision Checklist" in guided_report, "guided report highlights revision checklist")
+assert_test("automatic sentence edits cannot safely supply" in guided_report, "guided report explains why original is preserved")
 
 throttle_text = (
     "Students use the chart to plan the cut. "
