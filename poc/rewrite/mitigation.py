@@ -171,6 +171,32 @@ def _component_items(raw_json: Dict[str, Any]) -> List[Dict[str, Any]]:
     return sorted(items, key=lambda item: item["score"], reverse=True)
 
 
+def _component_driver_bucket_item(driver: Dict[str, Any]) -> Dict[str, Any]:
+    component = str(driver.get("component") or "")
+    score = float(driver.get("score") or 0.0)
+    if score >= 80:
+        risk_level = "high"
+    elif score >= 60:
+        risk_level = "medium"
+    else:
+        risk_level = "review"
+    return {
+        "finding_id": "",
+        "finding_type": component,
+        "risk_level": risk_level,
+        "scanner": "ai_risk_badge",
+        "sentence_id": "",
+        "fixability": "manual",
+        "action": "guided_revision",
+        "reason": f"Document-level component driver scored {score:.1f}.",
+        "required_inputs": [],
+        "evidence": "",
+        "mitigation": driver.get("mitigation") or "Review this document-level signal manually.",
+        "component_driver": True,
+        "score": score,
+    }
+
+
 def _reference_pattern(component: str) -> Dict[str, str] | None:
     patterns = {
         "generic_assertion_risk": {
@@ -365,6 +391,11 @@ def build_mitigation_plan(
             buckets.setdefault(bucket, []).append(item)
 
     component_drivers = _component_items(raw_json or {})
+    for driver in component_drivers:
+        bucket = driver.get("bucket")
+        if bucket not in {"needs_source_or_example", "structure_guidance", "review_only"}:
+            continue
+        buckets.setdefault(bucket, []).append(_component_driver_bucket_item(driver))
     counts = Counter({key: len(value) for key, value in buckets.items()})
 
     primary_mode = "auto_rewrite"

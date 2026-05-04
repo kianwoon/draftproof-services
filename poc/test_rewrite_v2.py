@@ -32,6 +32,7 @@ from rewrite.rewrite import (
     _candidate_style_reject_reason,
     _paragraph_coherence_reject_reason,
 )
+from rewrite.mitigation import build_mitigation_plan
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
 
@@ -561,6 +562,18 @@ rollback_report = render_rewrite_report(
 )
 assert_test("## Attempted Rewrite" in rollback_report, "rollback report shows attempted rewrite")
 assert_test("## Manual Suggestions" in rollback_report, "rollback report keeps manual suggestions")
+
+driver_plan = build_mitigation_plan(
+    plan=None,
+    raw_json={
+        "ai_risk_badge": {
+            "ai_components": {"unsupported_claim_risk": 90.0},
+            "writing_components": {"source_grounding_risk": 70.0},
+        }
+    },
+)
+assert_test(driver_plan["counts"]["needs_source_or_example"] == 2, "component drivers produce evidence guidance counts")
+assert_test(driver_plan["primary_mode"] == "guided_revision", "component drivers set guided revision mode")
 
 
 # ════════════════════════════════════════════════════════════════════════
