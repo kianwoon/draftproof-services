@@ -2180,8 +2180,9 @@ th {
 
 /* Summary bar */
 .report-summary-bar {
-  display: flex;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(210px, 1.25fr) repeat(5, minmax(92px, 1fr));
+  align-items: center;
   gap: 0;
   padding: 1.9rem 2rem;
   background: rgba(255, 255, 255, .88);
@@ -2189,7 +2190,7 @@ th {
   border: 1px solid #e2e8f0;
   box-shadow: 0 16px 34px rgba(15, 23, 42, .08);
   margin-bottom: 2rem;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .report-stat {
@@ -2197,8 +2198,8 @@ th {
   flex-direction: column;
   justify-content: center;
   min-height: 64px;
-  min-width: 128px;
-  padding: 0 2rem;
+  min-width: 0;
+  padding: 0 clamp(1rem, 2vw, 2rem);
   border-left: 1px solid #e2e8f0;
 }
 
@@ -2212,6 +2213,7 @@ th {
   font-weight: 850;
   color: var(--navy-950);
   line-height: 1;
+  white-space: nowrap;
 }
 
 .report-stat-label {
@@ -2227,11 +2229,11 @@ th {
   flex-direction: row;
   align-items: center;
   gap: 1.05rem;
-  min-width: 250px;
+  min-width: 0;
   padding: 1.15rem 1.35rem;
   border-left: 0;
   border-radius: 12px;
-  margin: -.35rem 2rem -.35rem 0;
+  margin: -.35rem clamp(1rem, 2vw, 2rem) -.35rem 0;
 }
 
 .report-risk-icon {
@@ -2269,7 +2271,8 @@ th {
 }
 
 .report-rewrite-summary-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(170px, 1.2fr) repeat(4, minmax(94px, .8fr)) auto;
   align-items: center;
   gap: 0;
   padding: 1.75rem 1.85rem;
@@ -2278,14 +2281,13 @@ th {
   border-radius: 16px;
   background: linear-gradient(90deg, #f0fdf4 0%, #f7fffb 100%);
   box-shadow: 0 12px 30px rgba(22, 163, 74, .08);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .rewrite-summary-icon {
   display: grid;
   place-items: center;
   position: relative;
-  flex: 0 0 86px;
   width: 86px;
   height: 86px;
   color: #16a34a;
@@ -2308,8 +2310,8 @@ th {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-width: 220px;
-  padding-right: 2rem;
+  min-width: 0;
+  padding-right: clamp(1rem, 2vw, 2rem);
 }
 
 .rewrite-summary-kicker {
@@ -2332,9 +2334,9 @@ th {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-width: 132px;
+  min-width: 0;
   min-height: 58px;
-  padding: 0 1.6rem;
+  padding: 0 clamp(1rem, 1.6vw, 1.6rem);
   border-left: 1px solid #bbf7d0;
 }
 
@@ -2356,7 +2358,8 @@ th {
 }
 
 .report-rewrite-summary-bar .rewrite-results-link {
-  margin-left: auto;
+  justify-self: end;
+  margin-left: 1rem;
   min-height: 52px;
   padding-inline: 1.35rem;
   background: linear-gradient(135deg, #059669, #047857);
@@ -2634,6 +2637,29 @@ th {
 
 /* ── Responsive ─────────────────────────────── */
 
+@media (max-width: 1120px) {
+  .report-summary-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 1.2rem;
+  }
+  .report-risk-stat {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+  .report-risk-stat + .report-stat {
+    border-left: 0;
+  }
+  .report-rewrite-summary-bar {
+    grid-template-columns: auto minmax(220px, 1fr) repeat(2, minmax(110px, .7fr));
+    row-gap: 1.25rem;
+  }
+  .report-rewrite-summary-bar .rewrite-results-link {
+    grid-column: 2 / -1;
+    justify-self: start;
+    margin-left: 0;
+  }
+}
+
 @media (max-width: 768px) {
   .reports-table-wrap { overflow-x: auto; }
   .reports-table { min-width: 780px; }
@@ -2644,8 +2670,7 @@ th {
   .report-hero-info h1 { font-size: clamp(2.2rem, 12vw, 3.3rem); }
   .report-summary-bar,
   .report-rewrite-summary-bar {
-    flex-direction: column;
-    align-items: stretch;
+    grid-template-columns: 1fr;
     gap: 1rem;
     padding: 1.2rem;
   }
@@ -2657,10 +2682,13 @@ th {
     min-width: 0;
   }
   .report-risk-stat {
+    grid-column: auto;
     margin: 0;
     min-width: 0;
   }
   .rewrite-summary-icon {
+    width: 70px;
+    height: 70px;
     margin-right: 0;
   }
   .rewrite-summary-main {
@@ -2668,6 +2696,8 @@ th {
     padding-right: 0;
   }
   .report-rewrite-summary-bar .rewrite-results-link {
+    grid-column: auto;
+    justify-self: stretch;
     margin-left: 0;
     width: 100%;
   }
