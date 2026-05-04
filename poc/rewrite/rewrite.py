@@ -854,14 +854,32 @@ def _rewrite_task_instruction(finding: Finding, max_chars: int) -> str:
     )
 
 
-def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
+def _candidate_task_instruction(
+    finding: Finding,
+    max_chars: int,
+    rewrite_operation: Optional[Dict[str, Any]] = None,
+) -> str:
     """Ask the LLM for several paragraph-aware sentence candidates."""
     base = _rewrite_task_instruction(finding, max_chars)
+    shapes = []
+    if isinstance(rewrite_operation, dict):
+        shapes = [
+            str(item).strip()
+            for item in (rewrite_operation.get("candidate_shapes") or [])
+            if str(item).strip()
+        ][:3]
+    while len(shapes) < 3:
+        defaults = [
+            "minimal plain edit",
+            "clause-reordered edit using paragraph detail",
+            "short conservative edit",
+        ]
+        shapes.append(defaults[len(shapes)])
     common_rules = (
         "Return exactly 3 candidates as numbered lines:\n"
-        "1. <minimal plain edit>\n"
-        "2. <clause-reordered edit using paragraph detail>\n"
-        "3. <short conservative edit>\n"
+        f"1. <{shapes[0]}>\n"
+        f"2. <{shapes[1]}>\n"
+        f"3. <{shapes[2]}>\n"
         "Each candidate must be ONE sentence and must replace only the <TARGET> sentence. "
         "This is detector risk mitigation, not writing improvement. "
         "Do not include explanations. "
@@ -1271,6 +1289,194 @@ def _signal_driven_instruction(
         "Signal instruction: Use the scanner evidence above as the edit target. "
         "Prefer supported, domain-specific wording over generic paraphrase."
     )
+
+
+def _signal_list(edit_brief: Dict[str, Any], metadata_context: Dict[str, Any], key: str) -> List[Any]:
+    values: List[Any] = []
+    signals = edit_brief.get("signals") if isinstance(edit_brief, dict) else {}
+    for source in (signals if isinstance(signals, dict) else {}, metadata_context if isinstance(metadata_context, dict) else {}):
+        raw = source.get(key) or []
+        if isinstance(raw, list):
+            values.extend(raw)
+    return values
+
+
+def _signal_number(edit_brief: Dict[str, Any], key: str) -> Optional[float]:
+    signals = edit_brief.get("signals") if isinstance(edit_brief, dict) else {}
+    if not isinstance(signals, dict):
+        return None
+    value = signals.get(key)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _token_names(tokens: List[Any], limit: int = 6) -> List[str]:
+    names: List[str] = []
+    for item in tokens[:limit]:
+        token = ""
+        if isinstance(item, dict):
+            token = str(item.get("token") or "").strip()
+        elif isinstance(item, str):
+            token = item.strip()
+        if token and token.lower() not in {t.lower() for t in names}:
+            names.append(token)
+    return names
+
+
+def _plan_rewrite_operation(
+    *,
+    finding: Finding,
+    edit_brief: Dict[str, Any],
+    metadata_context: Dict[str, Any],
+    original_sentence: str,
+    previous_sentence: str,
+    next_sentence: str,
+    domain_anchors: List[str],
+) -> Dict[str, Any]:
+    """Turn scan signals into a concrete edit operation for the LLM.
+
+    The operation constrains how candidates should be generated. This keeps the
+    model from treating every finding as a general rewrite request.
+    """
+    ftype = finding.finding_type
+    problem_tokens = _token_names(_signal_list(edit_brief, metadata_context, "problem_tokens"))
+    predictable_spans = [
+        str(span).strip()
+        for span in _signal_list(edit_brief, metadata_context, "predictable_token_spans")
+        if str(span).strip()
+    ][:5]
+    word_count = len(re.findall(r"\b\w+\b", original_sentence))
+    has_long_clause = word_count >= 28 or len(original_sentence) >= 180 or original_sentence.count(",") >= 2
+    top10_ratio = _signal_number(edit_brief, "top10_ratio")
+    score = _signal_number(edit_brief, "score")
+    anchors = [term for term in domain_anchors[:8] if isinstance(term, str) and term.strip()]
+
+    if ftype in {"low_specificity", "source_grounding", "polished_but_ungrounded", "uncited_claim", "uncited_in_body"}:
+        return {
+            "operation": "manual_support_only",
+            "objective": "Do not auto-rewrite; this needs author evidence, source linkage, or claim softening.",
+            "allowed_moves": ["Return no automatic candidate unless the text can be softened without adding support."],
+            "forbidden_moves": ["Do not invent citations, examples, source relationships, causes, or evidence."],
+            "candidate_shapes": [
+                "source-neutral softening only",
+                "scope-narrowing only",
+                "near-original preservation",
+            ],
+            "problem_tokens": problem_tokens,
+            "predictable_spans": predictable_spans,
+            "domain_anchors": anchors,
+        }
+
+    if ftype in {"formulaic_sentence", "generic_phrase", "generic_formulaic_language"}:
+        operation = "break_formulaic_frame"
+        objective = "Break the formulaic frame without adding new meaning."
+        shapes = [
+            "remove or replace the formulaic opener",
+            "move the concrete subject/action earlier",
+            "shorten the phrase while preserving meaning",
+        ]
+    elif has_long_clause and ("predictability" in ftype or "topk" in ftype or "surprisal" in ftype):
+        operation = "shorten_and_reorder"
+        objective = "Cut filler and change clause order around the predictable path."
+        shapes = [
+            "shorter sentence that cuts filler",
+            "clause-reordered sentence using existing words",
+            "near-original sentence with only the predictable span changed",
+        ]
+    elif ftype in {"high_topk_predictability", "low_surprisal", "low_surprisal_pattern"}:
+        operation = "change_opening_and_token_path"
+        objective = "Change the sentence opening and route around top-k problem tokens."
+        shapes = [
+            "open with a nearby concrete anchor",
+            "move the target claim after the concrete context",
+            "near-original sentence with the problem-token path changed",
+        ]
+    elif "predictability" in ftype and predictable_spans:
+        operation = "rebuild_predictable_span"
+        objective = "Change the predictable span while keeping the same claim and local vocabulary."
+        shapes = [
+            "minimal edit around the predictable span",
+            "clause-reordered edit using paragraph anchors",
+            "short conservative edit that avoids the same token path",
+        ]
+    elif "predictability" in ftype and problem_tokens:
+        operation = "route_around_problem_tokens"
+        objective = "Avoid the exact common token route while preserving the same meaning."
+        shapes = [
+            "minimal edit around problem tokens",
+            "different sentence opening using a nearby anchor",
+            "short near-original edit",
+        ]
+    elif anchors:
+        operation = "context_anchor_rewrite"
+        objective = "Use nearby anchors to make a plain, context-bound sentence without new facts."
+        shapes = [
+            "minimal anchor-preserving edit",
+            "clause reorder using one nearby anchor",
+            "short conservative edit",
+        ]
+    else:
+        operation = "minimal_plain_route_change"
+        objective = "Make the smallest sentence-route change that can reduce the signal."
+        shapes = [
+            "minimal plain edit",
+            "small clause-order change",
+            "short conservative edit",
+        ]
+
+    forbidden = [
+        "No new facts, examples, citations, causes, benefits, motivations, source links, or conclusions.",
+        "No smoother academic phrasing or abstract noun stacks.",
+        "No new method words unless already present nearby.",
+    ]
+    allowed = [
+        "Change opening, clause order, rhythm, and local word path.",
+        "Reuse words from the target, neighboring sentences, paragraph excerpt, domain anchors, and allowed additions.",
+        "Keep the same author voice and detail level.",
+    ]
+    return {
+        "operation": operation,
+        "objective": objective,
+        "allowed_moves": allowed,
+        "forbidden_moves": forbidden,
+        "candidate_shapes": shapes,
+        "problem_tokens": problem_tokens,
+        "predictable_spans": predictable_spans,
+        "domain_anchors": anchors,
+        "metrics": {
+            "score": score,
+            "top10_ratio": top10_ratio,
+            "word_count": word_count,
+        },
+        "previous_sentence_available": bool(previous_sentence),
+        "next_sentence_available": bool(next_sentence),
+    }
+
+
+def _rewrite_operation_lines(operation: Dict[str, Any]) -> List[str]:
+    if not operation:
+        return []
+    lines = [
+        "Rewrite operation: " + str(operation.get("operation") or "minimal_plain_route_change"),
+        "Operation objective: " + str(operation.get("objective") or "Reduce the target signal conservatively."),
+    ]
+    problem_tokens = operation.get("problem_tokens") or []
+    if problem_tokens:
+        lines.append("Operation problem tokens: " + ", ".join(f'"{t}"' for t in problem_tokens[:6]))
+    predictable_spans = operation.get("predictable_spans") or []
+    if predictable_spans:
+        lines.append("Operation predictable spans: " + ", ".join(f'"{s}"' for s in predictable_spans[:4]))
+    anchors = operation.get("domain_anchors") or []
+    if anchors:
+        lines.append("Operation legal anchors: " + ", ".join(str(a) for a in anchors[:8]))
+    allowed = operation.get("allowed_moves") or []
+    if allowed:
+        lines.append("Allowed operation moves: " + " ".join(f"- {move}" for move in allowed[:4]))
+    forbidden = operation.get("forbidden_moves") or []
+    if forbidden:
+        lines.append("Forbidden operation moves: " + " ".join(f"- {move}" for move in forbidden[:4]))
+    return lines
 
 
 def _term_coverage(text: str, terms: List[str]) -> int:
@@ -2390,6 +2596,16 @@ def run_rewrite(
         constraint_lines = _rewrite_constraint_lines(rewrite_context)
         if constraint_lines:
             span_info_parts.extend(constraint_lines)
+        rewrite_operation = _plan_rewrite_operation(
+            finding=f,
+            edit_brief=edit_brief,
+            metadata_context=metadata_context if isinstance(metadata_context, dict) else {},
+            original_sentence=original_sentence,
+            previous_sentence=ctx_before,
+            next_sentence=ctx_after,
+            domain_anchors=domain_anchors,
+        )
+        span_info_parts.extend(_rewrite_operation_lines(rewrite_operation))
         span_info_parts.append(
             _signal_driven_instruction(f, enriched, domain_anchors)
         )
@@ -2499,7 +2715,11 @@ def run_rewrite(
                     circuit_breaker_reason = f"max_llm_calls reached ({config.max_llm_calls})"
                     break
                 llm_calls_used += 1
-                prompt = span_info + "\n\n" + _candidate_task_instruction(f, max_sent_chars)
+                prompt = span_info + "\n\n" + _candidate_task_instruction(
+                    f,
+                    max_sent_chars,
+                    rewrite_operation,
+                )
                 raw_output = loop_rewrite_fn(original_sentence, prompt)
                 candidates = _parse_rewrite_candidates(raw_output, original_sentence)
                 if not candidates and raw_output:
@@ -2813,6 +3033,7 @@ def run_rewrite(
             "finding_type": f.finding_type,
             "finding_types": [a.finding.finding_type for a in actions_for_sentence],
             "candidate_score": best_candidate_info.get("score") if best_candidate_info else None,
+            "rewrite_operation": rewrite_operation.get("operation"),
         })
         loop_history.append({
             "loop": loops_used,
@@ -2820,6 +3041,7 @@ def run_rewrite(
             "finding_id": _finding_id(f),
             "finding_type": f.finding_type,
             "finding_types": [a.finding.finding_type for a in actions_for_sentence],
+            "rewrite_operation": rewrite_operation.get("operation"),
             "findings_fixed": len(actions_for_sentence),
             "orig_length": len(original_sentence),
             "new_length": len(rewritten_sentence),

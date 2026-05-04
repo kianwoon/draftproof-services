@@ -32,7 +32,9 @@ from rewrite.parse_detect import DetectJSONContext
 from rewrite.rewrite import (
     _candidate_task_instruction,
     _candidate_style_reject_reason,
+    _plan_rewrite_operation,
     _paragraph_coherence_reject_reason,
+    _rewrite_operation_lines,
     _target_predictability_acceptance,
     run_rewrite,
 )
@@ -457,6 +459,63 @@ assert_test("students' with 'learners" in prompt or "students' with 'learners" i
 assert_test("risk mitigation, not writing improvement" in prompt, "prompt frames task as mitigation not polishing")
 assert_test("methods, source relationships, motivations" in prompt, "prompt forbids unsupported method/source/motivation additions")
 assert_test("near-original candidate is better than an unsupported rewrite" in prompt, "prompt prefers conservative candidates")
+
+operation = _plan_rewrite_operation(
+    finding=Finding(
+        finding_type="medium_predictability",
+        risk_level="medium",
+        evidence_strength="moderate",
+        detail="",
+        evidence="",
+        recommendation="",
+        suggested_action_type="",
+    ),
+    edit_brief={
+        "signals": {
+            "score": 0.51,
+            "top10_ratio": 0.7,
+            "problem_tokens": [{"token": "only"}, {"token": "knowledge"}],
+            "predictable_token_spans": ["only place to acquire knowledge"],
+        }
+    },
+    metadata_context={},
+    original_sentence="In the contemporary education environment, school is no longer the only place to acquire knowledge.",
+    previous_sentence="",
+    next_sentence="Online information filled almost everyone’s life.",
+    domain_anchors=["education", "school", "knowledge", "information"],
+)
+assert_test(operation["operation"] == "rebuild_predictable_span", "signals choose predictable-span rewrite operation")
+operation_lines = "\n".join(_rewrite_operation_lines(operation))
+assert_test("Operation problem tokens" in operation_lines, "operation prompt exposes problem tokens")
+assert_test("Forbidden operation moves" in operation_lines, "operation prompt exposes forbidden moves")
+operation_prompt = _candidate_task_instruction(
+    Finding(finding_type="medium_predictability", risk_level="medium", evidence_strength="moderate", detail="", evidence="", recommendation="", suggested_action_type=""),
+    180,
+    operation,
+)
+assert_test("minimal edit around the predictable span" in operation_prompt, "candidate shapes follow rewrite operation")
+
+long_operation = _plan_rewrite_operation(
+    finding=Finding(
+        finding_type="medium_predictability",
+        risk_level="medium",
+        evidence_strength="moderate",
+        detail="",
+        evidence="",
+        recommendation="",
+        suggested_action_type="",
+    ),
+    edit_brief={"signals": {"problem_tokens": [{"token": "procedure"}]}},
+    metadata_context={},
+    original_sentence=(
+        "This enables the student to understand the precision required for each procedure as well as the specific techniques involved, "
+        "and move the student from simplicity to precision, plus, which provides significant encouragement and stimulates the desire to learn for them."
+    ),
+    previous_sentence="",
+    next_sentence="",
+    domain_anchors=["student", "precision", "procedure", "techniques"],
+)
+assert_test(long_operation["operation"] == "shorten_and_reorder", "long predictable sentence chooses shorten/reorder operation")
 
 for bad in (
     "The chart improves technical accuracy for each learner.",
