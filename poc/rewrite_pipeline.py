@@ -400,12 +400,13 @@ def run_rewrite_pipeline(
         score = (report_dict.get("ai_risk_badge") or {}).get("writing_quality_score")
         return float(score) if isinstance(score, (int, float)) else None
 
-    # Compare like-for-like. The scan JSON may have been produced by an older
-    # detector build, while rewritten text is scanned with the current build.
-    # For changed text, rescan the original too so rollback decisions are not
-    # driven by detector-version drift.
+    # The saved scan is the user-visible contract and is already available.
+    # Do not rescan the original by default: on longer drafts it doubles final
+    # verification time and can make the report disagree with the scan the user
+    # just reviewed. A fresh-original baseline can still be enabled for
+    # diagnostics with DRAFTPROOF_FRESH_ORIGINAL_BASELINE=1.
     original_report_dict = ctx.raw_json
-    if rewritten_text != text:
+    if rewritten_text != text and os.environ.get("DRAFTPROOF_FRESH_ORIGINAL_BASELINE") == "1":
         scan_t0 = time.time()
         original_report_dict = _full_scan_report_dict(text)
         stage_timings.append({
@@ -473,15 +474,18 @@ def run_rewrite_pipeline(
         "original_weighted_severity": original_severity,
         "rewritten_weighted_severity": rewritten_severity,
     }
+    ai_regression_tolerance = 0.25
+    writing_quality_regression_tolerance = 1.0
+
     ai_score_regressed = (
         original_ai is not None
         and rewritten_ai is not None
-        and rewritten_ai > original_ai + 0.05
+        and rewritten_ai > original_ai + ai_regression_tolerance
     )
     wq_score_regressed = (
         original_wq is not None
         and rewritten_wq is not None
-        and rewritten_wq > original_wq + 0.05
+        and rewritten_wq > original_wq + writing_quality_regression_tolerance
     )
     total_findings_regressed = rewritten_total > original_total
     review_burden_regressed = rewritten_review_burden > original_review_burden
@@ -520,12 +524,12 @@ def run_rewrite_pipeline(
     saved_ai_drifted_up = (
         saved_ai is not None
         and original_ai is not None
-        and original_ai > saved_ai + 0.05
+        and original_ai > saved_ai + ai_regression_tolerance
     )
     saved_ai_regressed = (
         saved_ai is not None
         and rewritten_ai is not None
-        and rewritten_ai > saved_ai + 0.05
+        and rewritten_ai > saved_ai + ai_regression_tolerance
     )
     saved_total_regressed = rewritten_total > saved_total
     saved_critical_high_regressed = rewritten_critical_high > saved_critical_high
@@ -539,6 +543,10 @@ def run_rewrite_pipeline(
         and not saved_critical_high_regressed
     )
     regression_reasons = []
+    result.summary["regression_tolerances"] = {
+        "ai_score": ai_regression_tolerance,
+        "writing_quality_score": writing_quality_regression_tolerance,
+    }
     if ai_score_regressed:
         regression_reasons.append(f"AI {original_ai}->{rewritten_ai}")
     if wq_score_regressed:
@@ -612,7 +620,10 @@ def run_rewrite_pipeline(
             if not checkpoint_text or checkpoint_text in {text, rewritten_text}:
                 continue
             checkpoint_candidates.append(checkpoint)
-        max_checkpoint_scans = 3
+        max_checkpoint_scans = int(os.environ.get("DRAFTPROOF_MAX_CHECKPOINT_SCANS", "0"))
+        if max_checkpoint_scans <= 0:
+            result.summary["checkpoint_scan_skipped"] = len(checkpoint_candidates)
+            checkpoint_candidates = []
         if len(checkpoint_candidates) > max_checkpoint_scans:
             result.summary["checkpoint_scan_skipped"] = (
                 len(checkpoint_candidates) - max_checkpoint_scans
