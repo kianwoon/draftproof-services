@@ -65,6 +65,10 @@ function formatRewriteStatus(status) {
   return 'Rewriting AI sections';
 }
 
+function isRewriteActive(status) {
+  return ['pending', 'processing', 'retrying'].includes(status);
+}
+
 export default function Report() {
   const { id } = useParams();
   const [report, setReport] = useState(null);
@@ -74,10 +78,14 @@ export default function Report() {
   const [rewriteJob, setRewriteJob] = useState(null);
   const [rewriteLoading, setRewriteLoading] = useState(false);
   const [rewriteError, setRewriteError] = useState(null);
+  const [rewriteStartedHere, setRewriteStartedHere] = useState(false);
   const rewritePollRef = useRef(null);
 
   const syncRewriteJob = useCallback((job) => {
     setRewriteJob(job);
+    if (job?.status && job.status !== 'failed') {
+      setRewriteError(null);
+    }
     if (job?.status === 'completed') {
       setReport((prev) => prev ? { ...prev, rewrite: job } : prev);
     }
@@ -118,7 +126,7 @@ export default function Report() {
       rewritePollRef.current = null;
     }
 
-    if (!rewriteJob?.id || !['pending', 'processing', 'retrying'].includes(rewriteJob.status)) {
+    if (!rewriteJob?.id || !isRewriteActive(rewriteJob.status)) {
       return undefined;
     }
 
@@ -171,15 +179,20 @@ export default function Report() {
     i.actionability === 'auto_rewrite_candidate'
   );
   const currentRewrite = rewriteJob || report.rewrite;
-  const rewriteInProgress = ['pending', 'processing', 'retrying'].includes(currentRewrite?.status);
+  const rewriteInProgress = isRewriteActive(currentRewrite?.status);
   const hasCompletedRewrite = currentRewrite?.status === 'completed';
   const canStartRewrite = hasAIFindings && !hasCompletedRewrite && !rewriteInProgress;
   const rewriteProgress = currentRewrite
-    ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : 0)))
+    ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
     : 0;
   const rewriteProgressMessage = currentRewrite?.progress_message || formatRewriteStatus(currentRewrite?.status);
+  const showRewriteProgress = rewriteStartedHere || rewriteInProgress || rewriteLoading || rewriteError;
 
-  const handleRewrite = async () => {
+  const handleRewrite = async (event) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (rewriteLoading || rewriteInProgress) return;
+    setRewriteStartedHere(true);
     setRewriteLoading(true);
     setRewriteError(null);
     setRewriteJob({
@@ -192,7 +205,7 @@ export default function Report() {
     try {
       const { data } = await createRewrite(id);
       syncRewriteJob(data);
-      await pollRewriteStatus(data.id);
+      if (data.id) await pollRewriteStatus(data.id);
     } catch (err) {
       const msg = err.response?.data?.detail || 'Failed to start rewrite';
       if (err.response?.status === 402) {
@@ -238,40 +251,34 @@ export default function Report() {
               {tier.label}
             </span>
           </div>
-          {canStartRewrite && (
+          {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
             <button
+              type="button"
               className="rewrite-btn"
               onClick={handleRewrite}
-              disabled={rewriteLoading}
-              style={{
-                marginLeft: '12px', padding: '8px 18px', borderRadius: '8px',
-                background: rewriteLoading ? '#94a3b8' : '#6366f1', color: '#fff',
-                border: 'none', cursor: rewriteLoading ? 'wait' : 'pointer',
-                fontSize: '14px', fontWeight: 600, whiteSpace: 'nowrap',
-              }}
+              disabled={rewriteLoading || rewriteInProgress}
             >
-              {rewriteLoading ? 'Starting...' : 'Rewrite AI Sections'}
+              {rewriteLoading ? 'Starting rewrite...' : rewriteInProgress ? 'Rewrite in progress' : 'Rewrite AI Sections'}
             </button>
           )}
           {hasCompletedRewrite && (
             <Link
               to={`/report/${id}/rewrite?rid=${currentRewrite.id}`}
-              style={{
-                display: 'inline-block', padding: '10px 20px', borderRadius: '8px',
-                background: '#059669', color: '#fff', textDecoration: 'none',
-                fontSize: '14px', fontWeight: 600, marginLeft: '12px',
-              }}
+              className="rewrite-results-link"
             >
               View Rewrite Results
             </Link>
           )}
         </div>
-        {(rewriteInProgress || rewriteLoading || rewriteError) && (
-          <div className="report-rewrite-progress">
+        {showRewriteProgress && (
+          <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
             <div className="scan-progress" role="status" aria-live="polite">
               <div className="scan-progress-meta">
-                <span>{rewriteError || rewriteProgressMessage || 'Rewriting AI sections'}</span>
-                <span>{rewriteProgress}%</span>
+                <span>
+                  {rewriteError || rewriteProgressMessage || 'Rewriting AI sections'}
+                  {rewriteInProgress && <em> Keep this report open; results will appear when ready.</em>}
+                </span>
+                <span>{hasCompletedRewrite ? 'Done' : `${rewriteProgress}%`}</span>
               </div>
               <div
                 className="scan-progress-track"
@@ -282,10 +289,15 @@ export default function Report() {
               >
                 <div
                   className="scan-progress-fill"
-                  style={{ width: `${rewriteProgress}%` }}
+                  style={{ width: `${hasCompletedRewrite ? 100 : rewriteProgress}%` }}
                 />
               </div>
             </div>
+            {hasCompletedRewrite && (
+              <Link to={`/report/${id}/rewrite?rid=${currentRewrite.id}`} className="rewrite-progress-link">
+                Open rewrite results
+              </Link>
+            )}
           </div>
         )}
 

@@ -41,7 +41,7 @@ export default function Header() {
       </Link>
 
       <nav className="nav-links" aria-label="Primary">
-        {user ? <Link to="/dashboard">Dashboard</Link> : <Link to="/">Home</Link>}
+        {user && <Link to="/dashboard">Dashboard</Link>}
         {user && (
           <div className="nav-dropdown" ref={dropdownRef}
             onMouseEnter={() => setScanOpen(true)}
@@ -80,7 +80,7 @@ export default function Header() {
         {user && <Link to="/history">History</Link>}
         <Link to="/why">Why</Link>
         <Link to="/pricing">Pricing</Link>
-        <Link to="/#engine">How it works</Link>
+        <Link to="/#report">Sample report</Link>
       </nav>
 
       {user ? (
@@ -99,7 +99,7 @@ export default function Header() {
         </div>
       ) : (
         <Link to="/signin" className="btn btn-primary btn-small">
-          Sign in
+          Start review
         </Link>
       )}
 
@@ -115,19 +115,19 @@ export default function Header() {
       {menuOpen && (
         <div className="mobile-menu" onClick={() => setMenuOpen(false)}>
           <div className="mobile-menu-inner" onClick={(e) => e.stopPropagation()}>
-            {user ? <Link to="/dashboard" className="mobile-link">Dashboard</Link> : <Link to="/" className="mobile-link">Home</Link>}
+            {user && <Link to="/dashboard" className="mobile-link">Dashboard</Link>}
             {user && <Link to="/scan" className="mobile-link">Scan</Link>}
             {user && <Link to="/reports" className="mobile-link">Reports</Link>}
             {user && <Link to="/buy" className="mobile-link">Buy Tokens</Link>}
             {user && <Link to="/history" className="mobile-link">History</Link>}
             <Link to="/why" className="mobile-link">Why</Link>
             <Link to="/pricing" className="mobile-link">Pricing</Link>
-            <Link to="/#engine" className="mobile-link">How it works</Link>
+            <Link to="/#report" className="mobile-link">Sample report</Link>
             <div className="mobile-menu-actions">
               {user ? (
                 <button onClick={() => { handleLogout(); setMenuOpen(false); }} className="btn btn-secondary">Sign out</button>
               ) : (
-                <Link to="/signin" className="btn btn-primary">Sign in</Link>
+                <Link to="/signin" className="btn btn-primary">Start review</Link>
               )}
             </div>
           </div>

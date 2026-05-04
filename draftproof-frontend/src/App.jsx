@@ -36,11 +36,25 @@ function HomeRedirect() {
 function ScrollToHash() {
   const location = useLocation();
   useEffect(() => {
-    if (location.hash) {
-      const id = location.hash.slice(1);
+    if (!location.hash) return undefined;
+
+    const id = location.hash.slice(1);
+    const scrollToTarget = () => {
       const el = document.getElementById(id);
-      if (el) el.scrollIntoView({ behavior: 'smooth' });
-    }
+      if (el) {
+        const shell = el.closest('.snap-shell');
+        if (shell) {
+          const top = Math.max(0, el.offsetTop - shell.offsetTop);
+          shell.scrollTo({ top, behavior: 'auto' });
+        } else {
+          el.scrollIntoView({ behavior: 'auto' });
+        }
+      }
+    };
+
+    requestAnimationFrame(scrollToTarget);
+    const retry = window.setTimeout(scrollToTarget, 100);
+    return () => window.clearTimeout(retry);
   }, [location.hash]);
   return null;
 }
