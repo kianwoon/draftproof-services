@@ -213,9 +213,15 @@ def derive_authorship_rating(
     numeric score as the source of truth and labels the strength of scanner
     signals in language that users can act on.
     """
+    near_red_humanised_profile = (
+        ai_score >= 0.60
+        and writing_quality_score >= 0.65
+        and writing_quality_tier == QualityTier.HIGH_REVIEW
+    )
+
     if verified_ai_provenance:
         code = "ai_generated"
-    elif ai_score >= 0.65 or ai_tier == Tier.RED:
+    elif ai_score >= 0.65 or ai_tier == Tier.RED or near_red_humanised_profile:
         code = "ai_generated_signals"
     elif ai_score >= 0.48 or ai_tier == Tier.ORANGE:
         code = "likely_ai"
@@ -293,6 +299,8 @@ def derive_authorship_rating(
         "ai_generated_signals",
     }:
         caution_notes.append("Writing-quality risks may be contributing to the apparent AI-style profile.")
+    if near_red_humanised_profile and code == "ai_generated_signals":
+        caution_notes.append("Escalated because high AI-style signals align with high writing-quality/template risk.")
     rating["caution_notes"] = caution_notes
     return rating
 

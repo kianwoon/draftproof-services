@@ -62,6 +62,19 @@ low_conf = derive_authorship_rating(
 )
 assert_true(low_conf["caution_notes"], "low confidence rating includes caution notes")
 
+humanised = derive_authorship_rating(
+    ai_score=0.6315,
+    ai_tier=Tier.ORANGE,
+    writing_quality_score=0.6761,
+    writing_quality_tier=QualityTier.HIGH_REVIEW,
+    confidence=Confidence.HIGH,
+)
+assert_equal(humanised["code"], "ai_generated_signals", "near-red humanised AI profile escalates rating")
+assert_true(
+    any("Escalated" in note for note in humanised["caution_notes"]),
+    "near-red humanised profile includes escalation note",
+)
+
 scored = Layer3Scorer().score(
     Layer3Input(
         predictability=0.58,
