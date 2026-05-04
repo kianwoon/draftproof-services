@@ -72,7 +72,10 @@ function isRewriteActive(status) {
 function normalizeRewriteProgressMessage(message, status) {
   if (!message) return formatRewriteStatus(status);
   const normalized = String(message).trim().toLowerCase();
-  if (normalized.includes('rewriting your document')) {
+  if (
+    normalized.includes('rewriting your document') ||
+    normalized.includes('this may take 1-3 minutes')
+  ) {
     return 'Rewriting AI sections';
   }
   return message;
@@ -427,7 +430,7 @@ export default function Report() {
             </div>
             {hasCompletedRewrite && currentRewrite?.id && (
               <Link
-                to={`/report/${id}/rewrite?rid=${currentRewrite.id}`}
+                to={`/rewrite/${currentRewrite.id}`}
                 className="rewrite-results-link"
               >
                 View Rewrite Result

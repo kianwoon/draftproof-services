@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import { useAuth } from '../context/AuthContext';
@@ -9,9 +9,7 @@ function normalizeSentence(value) {
 }
 
 export default function Rewrite() {
-  const { id: scanId } = useParams();
-  const [params] = useSearchParams();
-  const rewriteId = params.get('rid');
+  const { rewriteId } = useParams();
   const { refreshBalance } = useAuth();
   const [rewrite, setRewrite] = useState(null);
   const [report, setReport] = useState(null);
@@ -54,7 +52,7 @@ export default function Rewrite() {
   }, [rewriteId, refreshBalance]);
 
   if (!rewriteId) {
-    return <Navigate to={`/report/${scanId}`} replace />;
+    return <Navigate to="/reports" replace />;
   }
 
   const handleDownload = async (fmt) => {
@@ -88,11 +86,12 @@ export default function Rewrite() {
     (row) => normalizeSentence(row.orig_sentence) !== normalizeSentence(row.new_sentence)
   );
   const outcome = summary.outcome || (rewrite?.status === 'completed' ? 'completed' : rewrite?.status || '');
+  const scanId = rewrite?.scan_id;
 
   return (
     <main className="dash-shell">
       <div className="container">
-        <Link to={`/report/${scanId}`} className="report-back">
+        <Link to={scanId ? `/report/${scanId}` : '/reports'} className="report-back">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>

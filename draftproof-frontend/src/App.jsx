@@ -82,7 +82,7 @@ export default function App() {
             <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
             <Route path="/report/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
-            <Route path="/report/:id/rewrite" element={<ProtectedRoute><Rewrite /></ProtectedRoute>} />
+            <Route path="/rewrite/:rewriteId" element={<ProtectedRoute><Rewrite /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

@@ -311,7 +311,11 @@ def _normalize_rewrite_progress_message(message: str | None) -> str | None:
         return message
 
     normalized = message.strip().lower()
-    if "rewriting your document" in normalized:
+    legacy_messages = (
+        "rewriting your document",
+        "this may take 1-3 minutes",
+    )
+    if any(legacy_message in normalized for legacy_message in legacy_messages):
         return "Rewriting AI sections"
 
     return message

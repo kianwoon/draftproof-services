@@ -120,12 +120,10 @@ if os.path.isdir(static_path):
 
     @app.get("/report/{report_id}/rewrite")
     async def legacy_rewrite_route(report_id: str, request: Request):
-        if not request.query_params.get("rid"):
-            return RedirectResponse(url=f"/report/{report_id}", status_code=302)
-        return FileResponse(
-            os.path.join(static_path, "index.html"),
-            headers={"Cache-Control": "no-cache"},
-        )
+        rewrite_id = request.query_params.get("rid")
+        if rewrite_id:
+            return RedirectResponse(url=f"/rewrite/{rewrite_id}", status_code=302)
+        return RedirectResponse(url=f"/report/{report_id}", status_code=302)
 
     @app.get("/{path:path}")
     async def serve_spa(path: str):
