@@ -48,38 +48,52 @@ def get_scan_job(job_id: str) -> Optional[dict]:
 
 def update_job_status(job_id: str, status: str, **fields):
     """Update scan_job status and optional fields."""
-    sets = []
-    vals = []
-    for key in (
-        "tier",
-        "ai_score",
-        "writing_score",
-        "finding_count",
-        "report_urls",
-        "error",
-        "progress_percent",
-        "progress_message",
-    ):
-        if key in fields:
-            sets.append(f"{key} = %s")
-            val = psycopg2.extras.Json(fields[key]) if key == "report_urls" else fields[key]
-            vals.append(val)
-    if status == "processing":
-        sets.append("started_at = COALESCE(started_at, now())")
-    if status == "completed":
-        sets.append("completed_at = now()")
-    if sets:
+    def _fields(include_progress: bool = True):
+        sets = []
+        vals = []
+        allowed = (
+            "tier",
+            "ai_score",
+            "writing_score",
+            "finding_count",
+            "report_urls",
+            "error",
+            "progress_percent",
+            "progress_message",
+        )
+        for key in allowed:
+            if key in fields:
+                if not include_progress and key in ("progress_percent", "progress_message"):
+                    continue
+                sets.append(f"{key} = %s")
+                val = psycopg2.extras.Json(fields[key]) if key == "report_urls" else fields[key]
+                vals.append(val)
+        if status == "processing":
+            sets.append("started_at = COALESCE(started_at, now())")
+        if status == "completed":
+            sets.append("completed_at = now()")
+        return sets, vals
+
+    def _execute(include_progress: bool = True):
+        sets, vals = _fields(include_progress)
         with get_conn() as conn:
-            conn.cursor().execute(
-                f"UPDATE scan_jobs SET status = %s, {', '.join(sets)} WHERE id = %s",
-                [status] + vals + [job_id],
-            )
-    else:
-        with get_conn() as conn:
-            conn.cursor().execute(
-                "UPDATE scan_jobs SET status = %s WHERE id = %s",
-                [status, job_id],
-            )
+            if sets:
+                conn.cursor().execute(
+                    f"UPDATE scan_jobs SET status = %s, {', '.join(sets)} WHERE id = %s",
+                    [status] + vals + [job_id],
+                )
+            else:
+                conn.cursor().execute(
+                    "UPDATE scan_jobs SET status = %s WHERE id = %s",
+                    [status, job_id],
+                )
+
+    try:
+        _execute()
+    except psycopg2.errors.UndefinedColumn as exc:
+        if "progress_" not in str(exc):
+            raise
+        _execute(include_progress=False)
 
 
 def capture_credits(user_id: str, job_id: str, word_count: int):
@@ -146,24 +160,36 @@ def update_rewrite_status(
     progress_percent: int = None,
     progress_message: str = None,
 ):
-    sets = ["status = %s"]
-    vals = [status]
-    if status == "completed":
-        sets.append("completed_at = now()")
-    if error:
-        sets.append("error = %s")
-        vals.append(error)
-    if progress_percent is not None:
-        sets.append("progress_percent = %s")
-        vals.append(max(0, min(100, int(progress_percent))))
-    if progress_message is not None:
-        sets.append("progress_message = %s")
-        vals.append(progress_message)
-    with get_conn() as conn:
-        conn.cursor().execute(
-            f"UPDATE rewrite_jobs SET {', '.join(sets)} WHERE id = %s",
-            vals + [job_id],
-        )
+    def _fields(include_progress: bool = True):
+        sets = ["status = %s"]
+        vals = [status]
+        if status == "completed":
+            sets.append("completed_at = now()")
+        if error:
+            sets.append("error = %s")
+            vals.append(error)
+        if include_progress and progress_percent is not None:
+            sets.append("progress_percent = %s")
+            vals.append(max(0, min(100, int(progress_percent))))
+        if include_progress and progress_message is not None:
+            sets.append("progress_message = %s")
+            vals.append(progress_message)
+        return sets, vals
+
+    def _execute(include_progress: bool = True):
+        sets, vals = _fields(include_progress)
+        with get_conn() as conn:
+            conn.cursor().execute(
+                f"UPDATE rewrite_jobs SET {', '.join(sets)} WHERE id = %s",
+                vals + [job_id],
+            )
+
+    try:
+        _execute()
+    except psycopg2.errors.UndefinedColumn as exc:
+        if "progress_" not in str(exc):
+            raise
+        _execute(include_progress=False)
 
 
 def release_rewrite_credits(job_id: str):
