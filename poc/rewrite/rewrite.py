@@ -750,7 +750,7 @@ def _needs_structural_rewrite(finding: Finding) -> bool:
 
 def _max_candidate_chars(original_sentence: str, finding: Finding) -> int:
     """Allow more room when GPT-2 says structure, not a word, is the problem."""
-    ratio = 1.35 if _needs_structural_rewrite(finding) else 1.20
+    ratio = 1.70 if _needs_structural_rewrite(finding) else 1.20
     return int(len(original_sentence) * ratio)
 
 
@@ -782,13 +782,16 @@ def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
             f"the replacement must aim to fall below {MEDIUM_PREDICTABILITY_CEILING:.2f} and leave the medium band. "
             "Avoid generic/predictable frames such as 'This is...', 'Because of this...', "
             "'The goal should be...', 'modern world', 'not only...', and 'people who can'. "
+            "Use the Signal instruction, Domain anchors, and Allowed concrete additions above. "
+            "At least 3 candidates must convert the sentence into a supported concrete situation, observation, or domain action instead of a generic paraphrase. "
+            "Do not use metaphorical polish when a concrete domain noun/action is available. "
             "Use varied clause order, concrete everyday phrasing, and a less formulaic sentence path. "
             "Return exactly 6 candidates as numbered lines:\n"
-            "1. <plain natural edit>\n"
-            "2. <structural edit>\n"
+            "1. <domain-anchor observation>\n"
+            "2. <structural edit using supported context>\n"
             "3. <short direct edit>\n"
-            "4. <clause-reordered edit>\n"
-            "5. <less formulaic edit>\n"
+            "4. <clause-reordered edit with concrete action>\n"
+            "5. <less formulaic edit using paragraph detail>\n"
             "6. <fallback conservative edit>\n"
             "Each candidate must be ONE sentence and must replace only the target sentence. "
             "Do not include explanations."
@@ -875,6 +878,165 @@ def _marked_paragraph(paragraph: str, sentence: str) -> str:
     return f"<TARGET>{sentence}</TARGET>"
 
 
+def _domain_anchor_terms(
+    rewrite_context: Optional[Any],
+    paragraph: str,
+    sentence: str,
+    limit: int = 12,
+) -> List[str]:
+    """Return domain terms from the scan that are relevant to this target."""
+    if not rewrite_context or not hasattr(rewrite_context, "raw_json"):
+        return []
+    raw = rewrite_context.raw_json or {}
+    domain_profile = raw.get("domain_profile") or {}
+    terms = domain_profile.get("matched_domain_terms") or []
+    if not isinstance(terms, list):
+        return []
+
+    context_text = f"{paragraph} {sentence}"
+    context = context_text.lower()
+    priority_terms = []
+    if sentence and sentence in paragraph:
+        before = paragraph.split(sentence, 1)[0]
+        before_sentences = [
+            s.strip() for s in re.split(r"(?<=[.!?])\s+", before)
+            if s.strip()
+        ]
+        focus = " ".join(before_sentences[-2:])
+        focus_stopwords = {
+            "about", "after", "again", "also", "being", "because", "before",
+            "between", "could", "does", "every", "from", "have", "into",
+            "many", "more", "most", "need", "needs", "only", "same",
+            "should", "simply", "some", "than", "that", "their", "them",
+            "there", "these", "they", "this", "those", "time", "when",
+            "where", "while", "with", "without", "would",
+            "another", "complex", "especially", "explain", "gives", "issue",
+            "layer", "limits", "memory", "multiple", "problem", "process",
+            "working", "information",
+            "elements", "handled", "must",
+        }
+        for word in re.findall(r"\b[A-Za-z][A-Za-z-]{3,}\b", focus):
+            clean = word.strip()
+            lower = clean.lower()
+            if lower not in focus_stopwords and clean not in priority_terms:
+                priority_terms.append(clean)
+
+    matched = []
+    fallback = []
+    for term in terms:
+        if not isinstance(term, str):
+            continue
+        clean = term.strip()
+        if not clean:
+            continue
+        lower = clean.lower()
+        if lower in context:
+            matched.append(clean)
+        elif len(fallback) < limit:
+            fallback.append(clean)
+
+    constraints = raw.get("rewrite_constraints") or {}
+    for item in constraints.get("allowed_additions") or []:
+        for chunk in re.split(r"[:;,]", str(item)):
+            clean = chunk.strip()
+            if clean and clean.lower() in context:
+                matched.append(clean)
+
+    stopwords = {
+        "about", "after", "again", "being", "because", "before", "between",
+        "could", "every", "from", "have", "into", "many", "more", "most",
+        "only", "same", "should", "simply", "some", "than", "that", "their",
+        "them", "there", "these", "they", "this", "those", "time", "when",
+        "where", "while", "with", "without", "would",
+    }
+    for word in re.findall(r"\b[A-Za-z][A-Za-z-]{3,}\b", context_text):
+        lower = word.lower()
+        if lower not in stopwords:
+            matched.append(word)
+
+    ranked = sorted(set(matched), key=lambda t: (-len(t.split()), -len(t), t.lower()))
+    ranked = [t for t in ranked if t.lower() not in {"same time"}]
+    ordered = []
+    for term in priority_terms + ranked:
+        lower = term.lower()
+        if lower not in {t.lower() for t in ordered}:
+            ordered.append(term)
+        if len(ordered) >= limit:
+            return ordered
+    if ordered:
+        return ordered
+    return fallback[:limit]
+
+
+def _rewrite_constraint_lines(rewrite_context: Optional[Any], limit: int = 3) -> List[str]:
+    if not rewrite_context or not hasattr(rewrite_context, "raw_json"):
+        return []
+    constraints = (rewrite_context.raw_json or {}).get("rewrite_constraints") or {}
+    lines: List[str] = []
+    allowed = constraints.get("allowed_additions") or []
+    if allowed:
+        lines.append("Allowed concrete additions from scan: " + "; ".join(str(x) for x in allowed[:limit]))
+    do_not_add = constraints.get("do_not_add") or []
+    if do_not_add:
+        lines.append("Do not add: " + "; ".join(str(x) for x in do_not_add[:limit]))
+    rule = constraints.get("rewrite_rule")
+    if rule:
+        lines.append("Rewrite rule from scan: " + str(rule))
+    return lines
+
+
+def _signal_driven_instruction(
+    finding: Finding,
+    enriched_text: str,
+    domain_anchors: List[str],
+) -> str:
+    """Convert scanner signals into concrete LLM instructions."""
+    anchors = ", ".join(domain_anchors[:8]) if domain_anchors else "terms already present in the paragraph"
+    if finding.finding_type in ("medium_predictability", "high_predictability"):
+        return (
+            "Signal instruction: This is a common-word / predictable-path sentence. "
+            "Do not make it smoother. Rebuild it around a concrete observation, condition, or action already supported by the paragraph. "
+            f"Use 1-3 relevant domain anchors if natural: {anchors}. "
+            "Replace broad wording such as 'theory is there', 'many of them', 'not enough', 'can be effective', or 'at the same time' with a specific situation from the context."
+        )
+    if finding.finding_type in ("high_topk_predictability", "low_surprisal", "low_surprisal_pattern"):
+        return (
+            "Signal instruction: This is a top-k predictability pattern. "
+            "Change the sentence opening and word path, not just synonyms. "
+            f"Start from a domain object, action, constraint, or observed situation using anchors such as: {anchors}."
+        )
+    if finding.finding_type in ("formulaic_sentence", "generic_phrase", "generic_formulaic_language"):
+        return (
+            "Signal instruction: This is formulaic language. "
+            "Break the template by changing clause order and replacing generic academic phrasing with context-specific detail already present nearby."
+        )
+    if "Specificity" in enriched_text or finding.finding_type in ("vague_claim", "low_specificity"):
+        return (
+            "Signal instruction: Specificity is weak. "
+            "Add only supported concrete detail from the paragraph or scan constraints; do not invent new facts, citations, names, dates, or statistics."
+        )
+    return (
+        "Signal instruction: Use the scanner evidence above as the edit target. "
+        "Prefer supported, domain-specific wording over generic paraphrase."
+    )
+
+
+def _term_coverage(text: str, terms: List[str]) -> int:
+    lower = text.lower()
+    return sum(1 for term in terms if term.lower() in lower)
+
+
+def _concrete_observation_count(text: str) -> int:
+    patterns = [
+        r"\bI\b", r"\bmy\b", r"\bwe\b", r"\bour\b",
+        r"\bin practice\b", r"\bin my context\b", r"\bin class\b",
+        r"\bfor example\b", r"\bfor instance\b", r"\bI notice\b",
+        r"\bI see\b", r"\bI usually\b", r"\bwhen\b.+\bthen\b",
+        r"\b\d+(?:\.\d+)?\b",
+    ]
+    return sum(len(re.findall(pattern, text, re.I)) for pattern in patterns)
+
+
 def _generic_polish_count(text: str) -> int:
     patterns = [
         r"\bcrucial\b", r"\bvital\b", r"\bessential\b", r"\bsignificant\b",
@@ -882,6 +1044,7 @@ def _generic_polish_count(text: str) -> int:
         r"\bmodern world\b", r"\bplays? a key role\b",
         r"\bdemonstrates?\b", r"\bhighlights?\b", r"\bunderscores?\b",
         r"\bto address modern\b", r"\bto thrive amidst\b",
+        r"\bnot enough\b", r"\bcan be effective\b", r"\btakes time\b",
     ]
     lower = text.lower()
     return sum(len(re.findall(p, lower)) for p in patterns)
@@ -894,17 +1057,28 @@ def _candidate_quality_score(
     candidate_paragraph: str,
     predictability_delta: float,
     drift_similarity: float,
+    domain_anchor_terms: Optional[List[str]] = None,
 ) -> float:
     """Higher is better. Rewards local signal improvement without polished generic drift."""
+    domain_anchor_terms = domain_anchor_terms or []
     orig_generic = _generic_polish_count(original_paragraph)
     cand_generic = _generic_polish_count(candidate_paragraph)
     generic_penalty = max(0, cand_generic - orig_generic) * 0.25
+    orig_anchor_coverage = _term_coverage(original_sentence, domain_anchor_terms)
+    cand_anchor_coverage = _term_coverage(candidate_sentence, domain_anchor_terms)
+    anchor_gain = max(0, cand_anchor_coverage - orig_anchor_coverage)
+    orig_observation = _concrete_observation_count(original_sentence)
+    cand_observation = _concrete_observation_count(candidate_sentence)
+    observation_gain = max(0, cand_observation - orig_observation)
+    concreteness_bonus = min(0.30, (anchor_gain * 0.06) + (observation_gain * 0.04))
     length_ratio = len(candidate_sentence) / max(len(original_sentence), 1)
-    length_penalty = max(0.0, abs(length_ratio - 1.0) - 0.20) * 0.5
+    length_tolerance = 0.45 if domain_anchor_terms else 0.20
+    length_penalty = max(0.0, abs(length_ratio - 1.0) - length_tolerance) * 0.25
     improvement = max(0.0, predictability_delta)
     return round(
         (0.55 * improvement)
         + (0.25 * drift_similarity)
+        + concreteness_bonus
         - generic_penalty
         - length_penalty,
         4,
@@ -1695,6 +1869,34 @@ def run_rewrite(
         enriched = _enrich_span_info(f, rewrite_context, sent_idx)
         if enriched:
             span_info_parts.append(enriched)
+        domain_anchors = _domain_anchor_terms(
+            rewrite_context,
+            original_paragraph,
+            original_sentence,
+        )
+        metadata_context = f.metadata.get("rewrite_context") if isinstance(f.metadata, dict) else {}
+        if isinstance(metadata_context, dict):
+            metadata_anchors = metadata_context.get("domain_anchors") or []
+            if isinstance(metadata_anchors, list):
+                merged = []
+                for term in list(metadata_anchors) + domain_anchors:
+                    if isinstance(term, str) and term and term.lower() not in {t.lower() for t in merged}:
+                        merged.append(term)
+                domain_anchors = merged[:12]
+        if domain_anchors:
+            span_info_parts.append(
+                "Domain anchors from scan/context: " + ", ".join(domain_anchors)
+            )
+        if isinstance(metadata_context, dict) and metadata_context.get("signal_instruction"):
+            span_info_parts.append(
+                "Scan rewrite instruction: " + str(metadata_context["signal_instruction"])
+            )
+        constraint_lines = _rewrite_constraint_lines(rewrite_context)
+        if constraint_lines:
+            span_info_parts.extend(constraint_lines)
+        span_info_parts.append(
+            _signal_driven_instruction(f, enriched, domain_anchors)
+        )
         # Concrete finding-specific strategy
         span_info_parts.append("Strategy: " + _derive_strategy(f, enriched))
         span_info_parts.append("Flagged phrase: '" + f.evidence + "'")
@@ -1892,6 +2094,7 @@ def run_rewrite(
                     candidate_paragraph=candidate_paragraph,
                     predictability_delta=max(0.0, reg_check.orig_risk - reg_check.new_risk),
                     drift_similarity=candidate_drift.similarity,
+                    domain_anchor_terms=domain_anchors,
                 )
                 if score < config.min_improvement:
                     candidate_rejects.append(

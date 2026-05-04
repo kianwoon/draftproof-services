@@ -44,7 +44,7 @@ def _extract_metadata(fr: dict) -> dict:
     meta = {}
     for key in ("score", "top10_ratio", "subtype", "signal_category",
                 "finding_id", "actionability", "adjustment", "raw_risk",
-                "category", "scanner"):
+                "category", "scanner", "rewrite_context"):
         if key in fr and fr[key] is not None:
             meta[key] = fr[key]
     evidence = fr.get("evidence")

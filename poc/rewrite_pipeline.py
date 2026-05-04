@@ -512,6 +512,16 @@ def run_rewrite_pipeline(
             and rewritten_wq < original_wq - 0.05
         )
     )
+    fresh_ai_improved = (
+        original_ai is not None
+        and rewritten_ai is not None
+        and rewritten_ai < original_ai - 0.05
+    )
+    saved_ai_drifted_up = (
+        saved_ai is not None
+        and original_ai is not None
+        and original_ai > saved_ai + 0.05
+    )
     saved_ai_regressed = (
         saved_ai is not None
         and rewritten_ai is not None
@@ -519,6 +529,15 @@ def run_rewrite_pipeline(
     )
     saved_total_regressed = rewritten_total > saved_total
     saved_critical_high_regressed = rewritten_critical_high > saved_critical_high
+    saved_ai_regression_explained_by_drift = (
+        saved_ai_regressed
+        and saved_ai_drifted_up
+        and fresh_ai_improved
+        and not ai_score_regressed
+        and not review_burden_regressed
+        and not severity_regressed
+        and not saved_critical_high_regressed
+    )
     regression_reasons = []
     if ai_score_regressed:
         regression_reasons.append(f"AI {original_ai}->{rewritten_ai}")
@@ -546,17 +565,23 @@ def run_rewrite_pipeline(
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
     elif total_regressed_without_review_gain and not (review_burden_regressed or severity_regressed):
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
-    # The saved scan is the user-visible contract, but total finding count can
-    # drift between the saved report and a fresh detector run. Treat AI score
-    # and critical/high count as hard guards; use total count as a guard only
-    # when the fresh baseline did not improve.
-    if saved_ai_regressed:
+    # The saved scan is the user-visible contract, but detector scores can drift
+    # between the saved report and a fresh rescan. Critical/high findings remain
+    # hard guards. AI and total count are strict only when the fresh baseline did
+    # not improve or the saved-score increase is not explained by baseline drift.
+    if saved_ai_regressed and not saved_ai_regression_explained_by_drift:
         regression_reasons.append(f"user_visible_ai {saved_ai}->{rewritten_ai}")
+    elif saved_ai_regressed:
+        result.summary.setdefault("saved_contract_notes", []).append(
+            "user_visible_ai increased "
+            f"{saved_ai}->{rewritten_ai}, but fresh baseline improved "
+            f"{original_ai}->{rewritten_ai}; kept attempted rewrite for review."
+        )
     if (
         saved_total_regressed
         and (
             not fresh_baseline_improved
-            or saved_ai_regressed
+            or (saved_ai_regressed and not saved_ai_regression_explained_by_drift)
             or saved_critical_high_regressed
             or rewritten_review_burden > original_review_burden
             or rewritten_severity > original_severity
@@ -638,8 +663,18 @@ def run_rewrite_pipeline(
             )
             cp_saved_total_regressed = cp_total > saved_total
             cp_saved_critical_high_regressed = cp_critical_high > saved_critical_high
-            cp_violates_saved_contract = (
+            cp_saved_ai_regression_explained_by_drift = (
                 cp_saved_ai_regressed
+                and saved_ai_drifted_up
+                and original_ai is not None
+                and cp_ai is not None
+                and cp_ai < original_ai - 0.05
+                and cp_review_burden <= original_review_burden
+                and cp_severity <= original_severity
+                and not cp_saved_critical_high_regressed
+            )
+            cp_violates_saved_contract = (
+                (cp_saved_ai_regressed and not cp_saved_ai_regression_explained_by_drift)
                 or cp_saved_critical_high_regressed
                 or (
                     cp_saved_total_regressed

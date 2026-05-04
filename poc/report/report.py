@@ -1407,6 +1407,124 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         """Delegate to module-level determine_actionability."""
         return determine_actionability(f, all_findings)
 
+    pred_sentences = report.predictability.sentences if report.predictability else []
+    pred_by_id = {
+        s.get("sentence_id"): s
+        for s in pred_sentences
+        if s.get("sentence_id")
+    }
+    pred_index_by_id = {
+        s.get("sentence_id"): i
+        for i, s in enumerate(pred_sentences)
+        if s.get("sentence_id")
+    }
+    paragraph_by_id = {}
+    for s in pred_sentences:
+        pid = s.get("paragraph_id")
+        sid = s.get("sentence_id")
+        if pid and sid:
+            paragraph_by_id.setdefault(pid, []).append(s)
+
+    def _content_terms(text: str, limit: int = 12) -> list:
+        stopwords = {
+            "about", "after", "again", "also", "being", "because", "before",
+            "between", "could", "does", "every", "from", "have", "into",
+            "many", "more", "most", "need", "needs", "only", "same",
+            "should", "simply", "some", "than", "that", "their", "them",
+            "there", "these", "they", "this", "those", "time", "when",
+            "where", "while", "with", "without", "would",
+            "another", "complex", "especially", "explain", "gives", "issue",
+            "layer", "limits", "memory", "multiple", "problem", "process",
+            "working", "information", "elements", "handled", "must",
+        }
+        role_terms = {"learner", "learners", "student", "students", "teacher", "teachers", "educator", "educators"}
+        text = _re.sub(r"\([^)]*\d{4}[^)]*\)", " ", text or "")
+        terms = []
+        for word in _re.findall(r"\b[A-Za-z][A-Za-z-]{3,}\b", text):
+            lower = word.lower()
+            if word.isupper() or (word[0].isupper() and lower not in role_terms):
+                continue
+            word = lower if lower in role_terms else word
+            if lower not in stopwords and lower not in {t.lower() for t in terms}:
+                terms.append(word)
+            if len(terms) >= limit:
+                break
+        return terms
+
+    def _rewrite_signal_instruction(f: Finding, anchors: list) -> str:
+        anchor_text = ", ".join(anchors[:8]) if anchors else "nearby paragraph terms"
+        if f.title in ("medium_predictability", "high_predictability"):
+            return (
+                "Break the common-word path. Rebuild the sentence around a concrete "
+                f"condition, observation, or action supported nearby. Use anchors if natural: {anchor_text}."
+            )
+        if f.title in ("high_topk_predictability", "low_surprisal", "low_surprisal_pattern"):
+            return (
+                "Change the sentence opening and token path. Start from a concrete "
+                f"domain object, action, or constraint using nearby anchors: {anchor_text}."
+            )
+        if f.title == "low_specificity":
+            return (
+                "Do not auto-rewrite this as a sentence patch. Add only supported concrete detail "
+                "from existing domain terms, source material, or the author's stated context."
+            )
+        return "Use the finding signal and nearby context to avoid generic paraphrase."
+
+    def _rewrite_context_for_finding(f: Finding) -> Optional[Dict[str, Any]]:
+        sid = f.sentence_id
+        sent = pred_by_id.get(sid)
+        if not sent:
+            if f.title == "low_specificity":
+                domain_terms = []
+                if f.metadata and isinstance(f.metadata, dict):
+                    domain_terms = f.metadata.get("domain_terms", []) or []
+                return {
+                    "scope": "document",
+                    "signal_instruction": _rewrite_signal_instruction(f, domain_terms[:8]),
+                    "domain_anchors": domain_terms[:12],
+                    "safe_addition_types": [
+                        "source-backed detail",
+                        "existing domain term",
+                        "author observation already present in the draft",
+                    ],
+                }
+            return None
+
+        idx = pred_index_by_id.get(sid, -1)
+        previous_sentence = pred_sentences[idx - 1]["sentence"] if idx > 0 else ""
+        next_sentence = pred_sentences[idx + 1]["sentence"] if 0 <= idx < len(pred_sentences) - 1 else ""
+        pid = sent.get("paragraph_id")
+        paragraph_items = paragraph_by_id.get(pid, []) if pid else []
+        paragraph_text = " ".join(item.get("sentence", "") for item in paragraph_items)
+        paragraph_idx = next(
+            (i for i, item in enumerate(paragraph_items) if item.get("sentence_id") == sid),
+            -1,
+        )
+        if paragraph_idx >= 0:
+            focus_items = paragraph_items[max(0, paragraph_idx - 4): paragraph_idx + 2]
+            focus_text = " ".join(item.get("sentence", "") for item in focus_items)
+        else:
+            focus_text = " ".join(x for x in (previous_sentence, sent.get("sentence", ""), next_sentence) if x)
+        anchors = _content_terms(focus_text) or _content_terms(paragraph_text)
+
+        return {
+            "scope": "sentence",
+            "sentence_id": sid,
+            "paragraph_id": pid,
+            "previous_sentence": previous_sentence,
+            "next_sentence": next_sentence,
+            "paragraph_excerpt": paragraph_text[:700],
+            "domain_anchors": anchors,
+            "signal_instruction": _rewrite_signal_instruction(f, anchors),
+            "predictability_metrics": {
+                "score": sent.get("risk"),
+                "risk_label": sent.get("risk_label"),
+                "top10_ratio": sent.get("top10_ratio"),
+                "top50_ratio": sent.get("top50_ratio"),
+                "avg_surprisal": sent.get("avg_surprisal"),
+            },
+        }
+
     def _tier_findings(tier: Tier) -> list:
         return [
             {
@@ -1425,6 +1543,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "sentence_index": int(f.sentence_id[1:]) if f.sentence_id and f.sentence_id.startswith("s") and f.sentence_id[1:].isdigit() else None,
                 "evidence": _structured_evidence(f),
                 "recommendation": f.recommendation,
+                "rewrite_context": _rewrite_context_for_finding(f),
                 "adjustment": f.metadata.get("adjustment") if f.metadata else None,
                 "detail": f.detail,
             }
