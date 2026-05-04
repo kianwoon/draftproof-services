@@ -26,6 +26,155 @@ from .db import (
 from celery.exceptions import SoftTimeLimitExceeded
 
 
+def _truncate_debug_value(value, limit: int = 320):
+    if isinstance(value, str):
+        text = " ".join(value.split())
+        return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+    return value
+
+
+def _compact_debug_list(items, limit: int = 10):
+    if not isinstance(items, list):
+        return items
+    compacted = items[:limit]
+    if len(items) > limit:
+        compacted = compacted + [{"omitted": len(items) - limit}]
+    return compacted
+
+
+def _compact_rewrite_context(context) -> dict:
+    if not isinstance(context, dict):
+        return {}
+
+    compact = {}
+    for key in (
+        "scope",
+        "sentence_id",
+        "paragraph_id",
+        "previous_sentence",
+        "next_sentence",
+        "paragraph_excerpt",
+        "signal_instruction",
+        "safe_addition_types",
+    ):
+        if key in context:
+            compact[key] = _truncate_debug_value(context.get(key))
+
+    anchors = context.get("domain_anchors")
+    if isinstance(anchors, list):
+        compact["domain_anchors"] = _compact_debug_list(anchors, 16)
+
+    spans = context.get("predictable_token_spans")
+    if isinstance(spans, list):
+        compact["predictable_token_spans"] = _compact_debug_list(
+            [_truncate_debug_value(s, 120) for s in spans if s],
+            16,
+        )
+
+    tokens = context.get("problem_tokens")
+    if isinstance(tokens, list):
+        compact_tokens = []
+        for token in tokens[:20]:
+            if isinstance(token, dict):
+                compact_tokens.append({
+                    "token": token.get("token"),
+                    "rank": token.get("rank"),
+                    "probability": token.get("probability"),
+                    "surprisal": token.get("surprisal"),
+                })
+            else:
+                compact_tokens.append(_truncate_debug_value(token, 80))
+        if len(tokens) > 20:
+            compact_tokens.append({"omitted": len(tokens) - 20})
+        compact["problem_tokens"] = compact_tokens
+
+    metrics = context.get("predictability_metrics")
+    if isinstance(metrics, dict):
+        compact["predictability_metrics"] = metrics
+
+    return compact
+
+
+def _flatten_report_findings(report_json: dict) -> dict:
+    by_id = {}
+    for tier_name, findings in (report_json.get("findings") or {}).items():
+        if not isinstance(findings, list):
+            continue
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            finding_id = finding.get("finding_id")
+            if not finding_id:
+                continue
+            snapshot = {
+                "finding_id": finding_id,
+                "tier": tier_name,
+                "title": finding.get("title"),
+                "scanner": finding.get("scanner") or finding.get("category"),
+                "adjusted_risk": finding.get("adjusted_risk"),
+                "actionability": finding.get("actionability"),
+                "sentence_id": finding.get("sentence_id"),
+                "paragraph_id": finding.get("paragraph_id"),
+                "score": finding.get("score"),
+                "recommendation": _truncate_debug_value(finding.get("recommendation")),
+            }
+            evidence = finding.get("evidence")
+            if isinstance(evidence, dict):
+                snapshot["evidence"] = {
+                    "summary": _truncate_debug_value(evidence.get("summary")),
+                    "metrics": evidence.get("metrics"),
+                    "affected_span": _truncate_debug_value(evidence.get("affected_span")),
+                }
+            else:
+                snapshot["evidence"] = _truncate_debug_value(evidence)
+            snapshot["rewrite_context"] = _compact_rewrite_context(
+                finding.get("rewrite_context")
+            )
+            by_id[finding_id] = snapshot
+    return by_id
+
+
+def _target_contexts(plan_items, findings_by_id: dict) -> list:
+    contexts = []
+    for item in plan_items or []:
+        if not isinstance(item, dict):
+            continue
+        finding_id = item.get("finding_id")
+        finding_snapshot = findings_by_id.get(finding_id, {})
+        contexts.append({
+            "plan_item": item,
+            "finding": finding_snapshot,
+        })
+    return contexts
+
+
+def _sentence_comparison_debug_preview(rows, limit: int = 20) -> dict:
+    changed = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        original = row.get("orig_sentence") or ""
+        rewritten = row.get("new_sentence") or ""
+        if original.strip() == rewritten.strip():
+            continue
+        changed.append({
+            "index": row.get("index"),
+            "orig_tier": row.get("orig_tier"),
+            "orig_risk": row.get("orig_risk"),
+            "orig_top10": row.get("orig_top10"),
+            "orig_sentence": _truncate_debug_value(original, 420),
+            "new_tier": row.get("new_tier"),
+            "new_risk": row.get("new_risk"),
+            "new_top10": row.get("new_top10"),
+            "new_sentence": _truncate_debug_value(rewritten, 420),
+        })
+    return {
+        "changed_count": len(changed),
+        "preview": changed[:limit],
+        "omitted": max(0, len(changed) - limit),
+    }
+
+
 def _build_rewrite_debug_log(
     rewrite_id: str,
     scan_id: str,
@@ -43,6 +192,8 @@ def _build_rewrite_debug_log(
     final_scan = summary.get("detect_scan_rewritten") or {}
     attempted_scan = summary.get("detect_scan_attempted") or final_scan
     effective_plan = rewrite_json.get("effective_rewrite_plan") or {}
+    findings_by_id = _flatten_report_findings(report_json)
+    sentence_comparison = rewrite_json.get("sentence_comparison") or []
 
     saved_scores = {
         "ai_likelihood_score": badge.get("ai_likelihood_score"),
@@ -73,6 +224,10 @@ def _build_rewrite_debug_log(
                 "mode": rewrite_plan.get("mode"),
                 "overall_action": rewrite_plan.get("overall_action"),
                 "auto_fixable": rewrite_plan.get("auto_fixable"),
+                "auto_target_context": _target_contexts(
+                    rewrite_plan.get("auto_fixable"),
+                    findings_by_id,
+                ),
                 "manual_required": rewrite_plan.get("manual_required"),
                 "review_only": rewrite_plan.get("review_only"),
                 "no_action": rewrite_plan.get("no_action"),
@@ -108,12 +263,17 @@ def _build_rewrite_debug_log(
             "final_scores": _badge_scores(final_scan),
             "detect_scores": summary.get("detect_scores"),
             "effective_rewrite_plan": effective_plan,
+            "effective_target_context": _target_contexts(
+                effective_plan.get("auto_fixable"),
+                findings_by_id,
+            ),
             "mitigation_counts": mitigation.get("counts"),
             "mitigation_primary_mode": mitigation.get("primary_mode"),
             "component_drivers": mitigation.get("component_drivers"),
         },
         "loop_history": summary.get("detect_loop_history") or summary.get("loop_history"),
-        "sentence_comparison_count": len(rewrite_json.get("sentence_comparison") or []),
+        "sentence_comparison_count": len(sentence_comparison),
+        "sentence_comparison_changes": _sentence_comparison_debug_preview(sentence_comparison),
     }
     return json.dumps(log_data, indent=2, ensure_ascii=False, default=str)
 

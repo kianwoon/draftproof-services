@@ -133,9 +133,11 @@ export default function Rewrite() {
   const summary = report?.summary || report?.rewrite_summary || {};
   const converged = summary.converged ?? false;
   const outcome = summary.outcome || '';
-  const hasChangedSentences = (report?.sentence_comparison || []).some(
-    (sc) => (sc.orig_sentence || '') !== (sc.new_sentence || '')
+  const normalizedSentence = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const changedSentenceRows = (report?.sentence_comparison || []).filter(
+    (sc) => normalizedSentence(sc.orig_sentence) !== normalizedSentence(sc.new_sentence)
   );
+  const hasChangedSentences = changedSentenceRows.length > 0;
   const noTextChange = Boolean(summary.no_text_change) ||
     ((summary.passes_completed ?? 0) === 0 && !hasChangedSentences);
 
@@ -518,9 +520,9 @@ export default function Rewrite() {
         )}
 
         {/* Sentence comparison */}
-        {report?.sentence_comparison?.length > 0 && (
+        {changedSentenceRows.length > 0 && (
           <div style={{ margin: '24px 0' }}>
-            <h3>Sentence Changes ({report.sentence_comparison.length})</h3>
+            <h3>Sentence Changes ({changedSentenceRows.length})</h3>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
@@ -531,9 +533,9 @@ export default function Rewrite() {
                   </tr>
                 </thead>
                 <tbody>
-                  {report.sentence_comparison.map((sc, i) => (
+                  {changedSentenceRows.map((sc, i) => (
                     <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '8px', color: '#64748b' }}>{i + 1}</td>
+                      <td style={{ padding: '8px', color: '#64748b' }}>{sc.index ?? i + 1}</td>
                       <td style={{ padding: '8px' }}>{sc.orig_sentence || '-'}</td>
                       <td style={{ padding: '8px', color: '#22c55e' }}>{sc.new_sentence || '-'}</td>
                     </tr>
