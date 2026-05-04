@@ -31,11 +31,11 @@ function pct(value) {
   return `${(Number(value) * 100).toFixed(0)}%`;
 }
 
-function formatMetricPercent(value) {
+function formatMetricPercent(value, digits = 1) {
   if (value == null || Number.isNaN(Number(value))) return '—';
   const number = Number(value);
   const percent = Math.abs(number) <= 1 ? number * 100 : number;
-  return `${percent.toFixed(1)}%`;
+  return `${percent.toFixed(digits)}%`;
 }
 
 function formatSignedDelta(original, next) {
@@ -565,12 +565,12 @@ export default function Report() {
               <strong>AI sections rewritten</strong>
             </div>
             <div className="rewrite-summary-stat">
-              <span>{formatMetricPercent(rewriteResultSummary?.original_risk)}</span>
-              <small>Original risk</small>
+              <span>{formatMetricPercent(rewriteResultSummary?.original_risk, 2)}</span>
+              <small>AI score before</small>
             </div>
             <div className="rewrite-summary-stat">
-              <span>{formatMetricPercent(rewriteResultSummary?.rewrite_risk)}</span>
-              <small>Rewrite risk</small>
+              <span>{formatMetricPercent(rewriteResultSummary?.rewrite_risk, 2)}</span>
+              <small>AI score after</small>
             </div>
             <div className="rewrite-summary-stat">
               <span>{formatSignedDelta(rewriteResultSummary?.original_findings, rewriteResultSummary?.rewritten_findings)}</span>
