@@ -214,7 +214,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
             raise  # Re-raise original — Celery marks as FAILURE, not RETRY
 
 
-@app.task(bind=True, max_retries=1, default_retry_delay=30, soft_time_limit=300, time_limit=330)
+@app.task(bind=True, max_retries=1, default_retry_delay=30, soft_time_limit=600, time_limit=630)
 def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
     """Run the rewrite pipeline on a completed scan's results."""
     from .storage import upload_rewrite_files, _client as _r2_client
