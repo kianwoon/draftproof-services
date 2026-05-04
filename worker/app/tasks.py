@@ -204,6 +204,34 @@ def _sentence_comparison_debug_preview(rows, limit: int = 20) -> dict:
     }
 
 
+def _manual_suggestions_debug_preview(rows, limit: int = 12) -> dict:
+    suggestions = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        suggestions.append({
+            "finding_id": row.get("finding_id"),
+            "scanner_target": row.get("scanner_target"),
+            "original_sentence": _truncate_debug_value(
+                row.get("original_sentence") or "", 320
+            ),
+            "suggested_sentence": _truncate_debug_value(
+                row.get("suggested_sentence") or "", 360
+            ),
+            "rejection_reason": _truncate_debug_value(
+                row.get("rejection_reason") or "", 240
+            ),
+            "why_review_manually": _truncate_debug_value(
+                row.get("why_review_manually") or "", 240
+            ),
+        })
+    return {
+        "count": len(suggestions),
+        "preview": suggestions[:limit],
+        "omitted": max(0, len(suggestions) - limit),
+    }
+
+
 def _build_rewrite_debug_log(
     rewrite_id: str,
     scan_id: str,
@@ -280,9 +308,15 @@ def _build_rewrite_debug_log(
             "rollback_reason": summary.get("rollback_reason"),
             "passes_completed": summary.get("passes_completed"),
             "target_count": summary.get("target_count"),
+            "unique_target_count": summary.get("unique_target_count"),
+            "selected_finding_count": summary.get("selected_finding_count"),
             "llm_calls_used": summary.get("llm_calls_used"),
             "accepted_edits": summary.get("accepted_edits"),
             "manual_suggestions_count": len(summary.get("manual_suggestions") or []),
+            "manual_suggestions": _manual_suggestions_debug_preview(
+                summary.get("manual_suggestions") or []
+            ),
+            "checkpoint_selected": summary.get("checkpoint_selected"),
             "auto_target_cap": summary.get("auto_target_cap"),
             "failed_targets": summary.get("failed_targets"),
             "consecutive_failed_targets": summary.get("consecutive_failed_targets"),

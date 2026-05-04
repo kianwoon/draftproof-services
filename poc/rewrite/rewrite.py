@@ -2964,6 +2964,8 @@ def run_rewrite(
     }
     summary["llm_calls_used"] = llm_calls_used
     summary["target_count"] = len(grouped_actions)
+    summary["unique_target_count"] = len(grouped_actions)
+    summary["selected_finding_count"] = len(auto_targets)
     summary["accepted_edits"] = findings_fixed
     summary["manual_suggestions"] = manual_suggestions
     summary["accepted_candidate_suggestions"] = accepted_candidate_suggestions
