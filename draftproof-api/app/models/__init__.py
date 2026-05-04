@@ -86,5 +86,11 @@ class RewriteOut(BaseModel):
 
 class RewriteReportOut(BaseModel):
     summary: Optional[Any] = None
+    rewrite_summary: Optional[Any] = None
+    status: Optional[str] = None
+    original_text: Optional[str] = None
+    final_text: Optional[str] = None
+    convergence_reason: Optional[str] = None
     sentence_comparison: Optional[list] = None
     ai_findings: Optional[list] = None
+    effective_rewrite_plan: Optional[Any] = None

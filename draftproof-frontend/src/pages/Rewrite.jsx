@@ -8,6 +8,16 @@ function normalizeSentence(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function renderPlaceholderText(value) {
+  return String(value || '').split(/(\[[^\[\]]+\])/g).map((part, index) => {
+    if (!part) return null;
+    if (/^\[[^\[\]]+\]$/.test(part)) {
+      return <mark key={`${part}-${index}`} className="rewrite-placeholder">{part}</mark>;
+    }
+    return <span key={`${part}-${index}`}>{part}</span>;
+  });
+}
+
 export default function Rewrite() {
   const { rewriteId } = useParams();
   const { refreshBalance } = useAuth();
@@ -93,6 +103,14 @@ export default function Rewrite() {
   };
 
   const summary = report?.summary || report?.rewrite_summary || {};
+  const mitigationPlan = summary.mitigation_plan || report?.mitigation_plan || {};
+  const markedSuggestions = (
+    mitigationPlan.marked_content_suggestions ||
+    summary.marked_content_suggestions ||
+    report?.marked_content_suggestions ||
+    []
+  ).filter(Boolean);
+  const manualSuggestions = (summary.manual_suggestions || report?.manual_suggestions || []).filter(Boolean);
   const sentenceRows = (report?.sentence_comparison || []).filter(
     (row) => normalizeSentence(row.orig_sentence) !== normalizeSentence(row.new_sentence)
   );
@@ -175,6 +193,85 @@ export default function Rewrite() {
               </table>
             </div>
           </div>
+        )}
+
+        {markedSuggestions.length > 0 && (
+          <section className="rewrite-review-section">
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">Review Required</span>
+                <h3>Suggested Additions For Review</h3>
+              </div>
+              <span className="rewrite-review-count">{markedSuggestions.length}</span>
+            </div>
+            <p className="rewrite-review-copy">
+              These suggestions are not inserted automatically. Bracketed text marks details the user must verify, replace, or remove before using.
+            </p>
+            <div className="rewrite-suggestion-grid">
+              {markedSuggestions.map((item, i) => (
+                <article className="rewrite-suggestion-card" key={`${item.component || 'suggestion'}-${i}`}>
+                  <div className="rewrite-suggestion-meta">
+                    <span>{item.priority ? String(item.priority).replaceAll('_', ' ') : `Suggestion ${i + 1}`}</span>
+                    <span>{item.where || 'Flagged text'}</span>
+                  </div>
+                  <h4>{item.title || 'Suggested review addition'}</h4>
+                  {(item.target_text || item.evidence) && (
+                    <div className="rewrite-target-block">
+                      <span>Target text</span>
+                      <p>{item.target_text || item.evidence}</p>
+                    </div>
+                  )}
+                  <div className="rewrite-addition-block">
+                    <span>Suggested addition</span>
+                    <p>{renderPlaceholderText(item.suggested_addition)}</p>
+                  </div>
+                  {(item.why_it_helps || item.user_note) && (
+                    <div className="rewrite-review-note">
+                      {item.why_it_helps && <p>{item.why_it_helps}</p>}
+                      {item.user_note && <p>{item.user_note}</p>}
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {manualSuggestions.length > 0 && (
+          <section className="rewrite-review-section">
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">Manual Options</span>
+                <h3>Manual Suggestions</h3>
+              </div>
+              <span className="rewrite-review-count">{manualSuggestions.length}</span>
+            </div>
+            <div className="rewrite-suggestion-grid">
+              {manualSuggestions.slice(0, 12).map((item, i) => (
+                <article className="rewrite-suggestion-card" key={`${item.finding_id || 'manual'}-${i}`}>
+                  <div className="rewrite-suggestion-meta">
+                    <span>{item.scanner_target || item.finding_type || `Suggestion ${i + 1}`}</span>
+                    <span>{item.rejection_reason || 'Review manually'}</span>
+                  </div>
+                  {item.original_sentence && (
+                    <div className="rewrite-target-block">
+                      <span>Original</span>
+                      <p>{item.original_sentence}</p>
+                    </div>
+                  )}
+                  {item.suggested_sentence && (
+                    <div className="rewrite-addition-block">
+                      <span>Suggested sentence</span>
+                      <p>{item.suggested_sentence}</p>
+                    </div>
+                  )}
+                  {item.why_review_manually && (
+                    <div className="rewrite-review-note"><p>{item.why_review_manually}</p></div>
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
         )}
 
         {rewrite?.status === 'completed' && (
