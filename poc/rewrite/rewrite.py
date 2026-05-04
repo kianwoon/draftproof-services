@@ -194,9 +194,13 @@ def _filter_ai_guided_findings(
     medium predictability sentences as rewrite targets. High findings remain
     manual/review guidance because automatic rewriting has been too regressive.
     """
-    filtered = _filter_ai_findings(detect_results, target_severity=target_severity)
-
     raw_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
+    auto_ids = _rewrite_plan_auto_ids(raw_json)
+
+    filtered = _filter_ai_findings(detect_results, target_severity=target_severity)
+    if auto_ids:
+        filtered = _filter_detect_results_by_finding_ids(filtered, auto_ids)
+
     ai_components = ((raw_json or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
     use_predictability = (
         ai_components.get("predictability", 0) >= 40
@@ -224,6 +228,9 @@ def _filter_ai_guided_findings(
             key = ((f.metadata or {}).get("finding_id"), f.finding_type, f.evidence)
             if key in seen:
                 continue
+            finding_id = (f.metadata or {}).get("finding_id")
+            if auto_ids and finding_id not in auto_ids:
+                continue
             if (
                 f.finding_type in supporting_types
                 and f.risk_level == target_severity
@@ -240,6 +247,46 @@ def _filter_ai_guided_findings(
             confidence_reason=dr.confidence_reason,
             risk_distribution=dr.risk_distribution,
             findings=support,
+            policy_message=dr.policy_message,
+            raw=dr.raw,
+            feature_summary=dr.feature_summary or {},
+        ))
+    return filtered
+
+
+def _rewrite_plan_auto_ids(raw_json: Optional[dict]) -> set:
+    """IDs that the scan phase explicitly allowed for automatic rewrite."""
+    if not isinstance(raw_json, dict):
+        return set()
+    plan = raw_json.get("rewrite_plan") or {}
+    ids = set()
+    for item in plan.get("auto_fixable") or []:
+        if isinstance(item, dict) and item.get("finding_id"):
+            ids.add(item["finding_id"])
+    return ids
+
+
+def _filter_detect_results_by_finding_ids(
+    detect_results: List[DetectResult],
+    allowed_ids: set,
+) -> List[DetectResult]:
+    if not allowed_ids:
+        return detect_results
+    filtered = []
+    for dr in detect_results:
+        keep = [
+            f for f in dr.findings
+            if (f.metadata or {}).get("finding_id") in allowed_ids
+        ]
+        if not keep:
+            continue
+        filtered.append(DetectResult(
+            scanner=dr.scanner,
+            overall_risk=dr.overall_risk,
+            confidence=dr.confidence,
+            confidence_reason=dr.confidence_reason,
+            risk_distribution=dr.risk_distribution,
+            findings=keep,
             policy_message=dr.policy_message,
             raw=dr.raw,
             feature_summary=dr.feature_summary or {},
@@ -1369,11 +1416,52 @@ def _build_sentence_index(text: str) -> tuple:
 
 def _find_sentence_index(sentences: List[str], evidence: str) -> int:
     """Find which sentence contains the evidence text."""
-    evidence_start = evidence[:30] if len(evidence) > 30 else evidence
+    normalized_evidence = _normalize_sentence_match_text(evidence)
+    evidence_start = (
+        normalized_evidence[:30]
+        if len(normalized_evidence) > 30
+        else normalized_evidence
+    )
+    if not evidence_start:
+        return -1
     for i, s in enumerate(sentences):
-        if evidence_start in s:
+        if evidence_start in _normalize_sentence_match_text(s):
             return i
-    return -1
+
+    evidence_tokens = _match_tokens(normalized_evidence)
+    if not evidence_tokens:
+        return -1
+    best_idx = -1
+    best_score = 0.0
+    best_overlap = 0
+    evidence_set = set(evidence_tokens)
+    for i, s in enumerate(sentences):
+        sent_tokens = _match_tokens(s)
+        if not sent_tokens:
+            continue
+        overlap = len(evidence_set & set(sent_tokens))
+        score = overlap / max(min(len(evidence_set), len(set(sent_tokens))), 1)
+        if score > best_score or (score == best_score and overlap > best_overlap):
+            best_idx = i
+            best_score = score
+            best_overlap = overlap
+    return best_idx if best_score >= 0.45 else -1
+
+
+def _match_tokens(text: str) -> List[str]:
+    return [
+        token.lower()
+        for token in re.findall(r"[A-Za-z][A-Za-z'-]{2,}", text or "")
+        if len(token) >= 4
+    ]
+
+
+def _normalize_sentence_match_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _finding_id(finding: Finding) -> str:
+    return (finding.metadata or {}).get("finding_id") or getattr(finding, "id", "")
 
 
 def _paragraph_indices(sent_idx: int, sentences: List[str], para_map: Optional[Dict[int, int]] = None) -> List[int]:
@@ -1799,9 +1887,10 @@ def run_rewrite(
         sent_idx = loc.get("sentence_index", -1)
 
         # Try sentence_index first, then fuzzy match
+        evidence_start = _normalize_sentence_match_text(f.evidence)[:30]
         if sent_idx >= 0 and sent_idx < len(current_sentences):
             # Verify the indexed sentence actually contains the evidence
-            if f.evidence[:30] not in current_sentences[sent_idx]:
+            if evidence_start not in _normalize_sentence_match_text(current_sentences[sent_idx]):
                 sent_idx = _find_sentence_index(current_sentences, f.evidence)
         else:
             sent_idx = _find_sentence_index(current_sentences, f.evidence)
@@ -1822,13 +1911,15 @@ def run_rewrite(
         if sent_idx < 0:
             findings_skipped += len(actions_for_sentence)
             floor_reasons.append(FloorReason(
-                finding_id=getattr(f, "id", str(id(f))),
+                finding_id=_finding_id(f),
                 reason_type="sentence_not_found",
                 explanation=f"Cannot locate: '{f.evidence[:50]}...'",
             ))
             loop_history.append({
                 "loop": loops_used,
+                "finding_id": _finding_id(f),
                 "finding_type": f.finding_type,
+                "evidence": f.evidence[:160],
                 "reverted": True,
                 "note": "skipped: sentence not found",
             })
@@ -1838,16 +1929,18 @@ def run_rewrite(
 
         # Check evidence still present in text (not just this sentence —
         # evidence may span a boundary our splitter creates)
-        if f.evidence[:30] not in current_text:
+        if evidence_start and evidence_start not in _normalize_sentence_match_text(current_text):
             findings_skipped += len(actions_for_sentence)
             floor_reasons.append(FloorReason(
-                finding_id=getattr(f, "id", str(id(f))),
+                finding_id=_finding_id(f),
                 reason_type="evidence_not_found",
                 explanation="Evidence gone from sentence",
             ))
             loop_history.append({
                 "loop": loops_used,
+                "finding_id": _finding_id(f),
                 "finding_type": f.finding_type,
+                "evidence": f.evidence[:160],
                 "reverted": True,
                 "note": "skipped: evidence not found in sentence",
             })
@@ -2189,14 +2282,16 @@ def run_rewrite(
             sim_note = f" ({drift.similarity:.3f})" if drift else ""
             rejection_summary = "; ".join(r.get("reason", "") for r in rejected_candidates[-5:])
             floor_reasons.append(FloorReason(
-                finding_id=getattr(f, "id", str(id(f))),
+                finding_id=_finding_id(f),
                 reason_type=reason,
                 explanation=f"Sentence {reason}{sim_note} after retries",
             ))
             loop_history.append({
                 "loop": loops_used,
                 "sentence": sent_idx,
+                "finding_id": _finding_id(f),
                 "finding_type": f.finding_type,
+                "evidence": f.evidence[:160],
                 "reverted": True,
                 "note": f"floor: {reason}{sim_note}",
                 "rejected_candidates": rejected_candidates[-8:],
@@ -2221,13 +2316,15 @@ def run_rewrite(
         loop_history.append({
             "loop": loops_used,
             "sentence": sent_idx,
+            "finding_id": _finding_id(f),
             "finding_type": f.finding_type,
             "finding_types": [a.finding.finding_type for a in actions_for_sentence],
             "findings_fixed": len(actions_for_sentence),
             "orig_length": len(original_sentence),
             "new_length": len(rewritten_sentence),
-            "orig_text": original_sentence[:80],
-            "new_text": rewritten_sentence[:80],
+            "evidence": f.evidence[:240],
+            "orig_text": original_sentence[:240],
+            "new_text": rewritten_sentence[:240],
             "candidate_score": best_candidate_info.get("score") if best_candidate_info else None,
             "candidate_attempt": best_candidate_info.get("attempt") if best_candidate_info else None,
             "candidate_count": len(rejected_candidates) + (1 if best_candidate_info else 0),
