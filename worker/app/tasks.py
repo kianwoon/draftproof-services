@@ -303,6 +303,8 @@ def _build_rewrite_debug_log(
             "outcome": summary.get("outcome"),
             "rewrite_runtime_version": summary.get("rewrite_runtime_version"),
             "rewrite_effective_config": summary.get("rewrite_effective_config"),
+            "mitigation_primary_mode_at_runtime": summary.get("mitigation_primary_mode_at_runtime"),
+            "guided_revision_throttle": summary.get("guided_revision_throttle"),
             "no_text_change": summary.get("no_text_change"),
             "rollback_applied": summary.get("rollback_applied"),
             "rollback_reason": summary.get("rollback_reason"),

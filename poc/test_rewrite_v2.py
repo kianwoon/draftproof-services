@@ -27,10 +27,12 @@ from rewrite import (
 )
 from rewrite.voice import VoiceCheck
 from rewrite.parse_detect import DetectJSONParser
+from rewrite.parse_detect import DetectJSONContext
 from rewrite.rewrite import (
     _candidate_task_instruction,
     _candidate_style_reject_reason,
     _paragraph_coherence_reject_reason,
+    run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
 from report import ReportBuilder, report_to_dict
@@ -574,6 +576,62 @@ driver_plan = build_mitigation_plan(
 )
 assert_test(driver_plan["counts"]["needs_source_or_example"] == 2, "component drivers produce evidence guidance counts")
 assert_test(driver_plan["primary_mode"] == "guided_revision", "component drivers set guided revision mode")
+
+throttle_text = (
+    "Students use the chart to plan the cut. "
+    "Teachers use the chart to explain the next section."
+)
+throttle_findings = [
+    Finding(
+        finding_type="medium_predictability",
+        risk_level="medium",
+        evidence_strength="moderate",
+        detail="predictable",
+        evidence="Students use the chart to plan the cut.",
+        recommendation="rewrite",
+        suggested_action_type="auto",
+        actionability="auto_fixable",
+        location={"sentence_index": 0, "sentence_id": "s001"},
+        metadata={"finding_id": "f001", "scanner": "predictability"},
+    ),
+    Finding(
+        finding_type="medium_predictability",
+        risk_level="medium",
+        evidence_strength="moderate",
+        detail="predictable",
+        evidence="Teachers use the chart to explain the next section.",
+        recommendation="rewrite",
+        suggested_action_type="auto",
+        actionability="auto_fixable",
+        location={"sentence_index": 1, "sentence_id": "s002"},
+        metadata={"finding_id": "f002", "scanner": "predictability"},
+    ),
+]
+throttle_context = DetectJSONContext(
+    detect_results=[make_detect_result(throttle_findings)],
+    input_text=throttle_text,
+    raw_json={
+        "ai_risk_badge": {
+            "ai_likelihood_score": 40.0,
+            "ai_components": {"unsupported_claim_risk": 90.0},
+            "writing_components": {"source_grounding_risk": 70.0},
+        }
+    },
+)
+throttle_calls = []
+throttle_result = run_rewrite(
+    throttle_text,
+    [make_detect_result(throttle_findings)],
+    rewrite_fn=lambda text, prompt: throttle_calls.append((text, prompt)) or "1. Students check the chart before planning the cut.",
+    config=RewriteConfig(max_auto_targets=6, max_llm_calls=6),
+    rewrite_context=throttle_context,
+    ai_only=False,
+)
+assert_test(len(throttle_calls) <= 1, "guided revision throttles automatic rewrite calls")
+assert_test(
+    throttle_result.summary.get("rewrite_effective_config", {}).get("effective_auto_target_limit") == 1,
+    "guided revision records effective auto-target limit",
+)
 
 
 # ════════════════════════════════════════════════════════════════════════

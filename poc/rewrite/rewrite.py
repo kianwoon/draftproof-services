@@ -2033,6 +2033,10 @@ def run_rewrite(
     circuit_breaker_reason: Optional[str] = None
     manual_suggestions: List[Dict[str, Any]] = []
     accepted_candidate_suggestions: List[Dict[str, Any]] = []
+    runtime_mitigation_plan = build_mitigation_plan(
+        plan,
+        getattr(rewrite_context, "raw_json", None),
+    )
 
     # ── Step 3: Per-finding rewrite loop (LLM, all findings) ────────
     current_weighted_risk = weighted_finding_score(
@@ -2058,7 +2062,21 @@ def run_rewrite(
 
     grouped_actions: List[List[Any]] = []
     grouped_by_key: Dict[str, List[Any]] = {}
-    auto_targets = plan.auto_fixable[:max(0, config.max_auto_targets)]
+    effective_auto_target_limit = max(0, config.max_auto_targets)
+    guided_throttle_reason = ""
+    if runtime_mitigation_plan.get("primary_mode") == "guided_revision":
+        evidence_count = int(
+            (runtime_mitigation_plan.get("counts") or {}).get("needs_source_or_example", 0)
+            or 0
+        )
+        auto_count = len(plan.auto_fixable)
+        if evidence_count >= max(1, auto_count // 2):
+            effective_auto_target_limit = min(effective_auto_target_limit, 1)
+            guided_throttle_reason = (
+                "guided_revision_primary: evidence/source drivers dominate; "
+                "automatic rewrite limited to one sample"
+            )
+    auto_targets = plan.auto_fixable[:effective_auto_target_limit]
     capped_auto_targets = max(0, len(plan.auto_fixable) - len(auto_targets))
     for action in auto_targets:
         key = _action_group_key(action)
@@ -2069,7 +2087,11 @@ def run_rewrite(
     if capped_auto_targets:
         loop_history.append({
             "loop": 0,
-            "note": f"auto target cap applied ({len(auto_targets)}/{len(plan.auto_fixable)})",
+            "note": (
+                guided_throttle_reason
+                or f"auto target cap applied ({len(auto_targets)}/{len(plan.auto_fixable)})"
+            ),
+            "auto_target_limit": effective_auto_target_limit,
             "skipped_auto_targets": capped_auto_targets,
         })
 
@@ -3004,11 +3026,15 @@ def run_rewrite(
     summary["rewrite_effective_config"] = {
         "max_llm_calls": config.max_llm_calls,
         "max_auto_targets": config.max_auto_targets,
+        "effective_auto_target_limit": effective_auto_target_limit,
         "max_failed_targets": config.max_failed_targets,
         "max_consecutive_failed_targets": config.max_consecutive_failed_targets,
         "max_rewrite_seconds": config.max_rewrite_seconds,
         "max_detect_loops": config.max_detect_loops,
     }
+    summary["mitigation_primary_mode_at_runtime"] = runtime_mitigation_plan.get("primary_mode")
+    if guided_throttle_reason:
+        summary["guided_revision_throttle"] = guided_throttle_reason
     summary["llm_calls_used"] = llm_calls_used
     summary["target_count"] = len(grouped_actions)
     summary["unique_target_count"] = len(grouped_actions)
@@ -3019,8 +3045,10 @@ def run_rewrite(
     if capped_auto_targets:
         summary["auto_target_cap"] = {
             "max_auto_targets": config.max_auto_targets,
+            "effective_auto_target_limit": effective_auto_target_limit,
             "available_auto_targets": len(plan.auto_fixable),
             "skipped_auto_targets": capped_auto_targets,
+            "reason": guided_throttle_reason or "max_auto_targets",
         }
     summary["failed_targets"] = failed_targets
     summary["consecutive_failed_targets"] = consecutive_failed_targets
