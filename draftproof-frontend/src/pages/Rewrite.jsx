@@ -59,6 +59,10 @@ export default function Rewrite() {
     try {
       if (fmt === 'pdf') {
         const { data: regen } = await regenerateRewriteReport(rewriteId);
+        if (regen?.status === 'worker_unavailable') {
+          setError('Rewrite PDF regeneration is not available yet. Please wait for the worker deploy to finish, then try again.');
+          return;
+        }
         if (regen?.status && regen.status !== 'completed') {
           setError('Rewrite PDF is being regenerated. Please try the download again in a moment.');
           return;

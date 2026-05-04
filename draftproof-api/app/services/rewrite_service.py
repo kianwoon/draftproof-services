@@ -252,7 +252,7 @@ async def regenerate_rewrite_report_assets(rewrite_id: str, user_id: str) -> dic
     if job_info["status"] != "completed":
         raise ValueError("Rewrite is not completed")
 
-    from celery.exceptions import TimeoutError as CeleryTimeoutError
+    from celery.exceptions import NotRegistered, TimeoutError as CeleryTimeoutError
     from app.services.celery_client import regenerate_rewrite_report_assets as regen_task
 
     def _enqueue_and_wait():
@@ -261,6 +261,16 @@ async def regenerate_rewrite_report_assets(rewrite_id: str, user_id: str) -> dic
 
     try:
         return await asyncio.to_thread(_enqueue_and_wait)
+    except NotRegistered:
+        logger.warning(
+            "Rewrite report regeneration worker task is not registered yet for rewrite %s",
+            rewrite_id,
+        )
+        return {
+            "status": "worker_unavailable",
+            "rewrite_id": rewrite_id,
+            "scan_id": job_info["scan_id"],
+        }
     except CeleryTimeoutError:
         return {"status": "queued", "rewrite_id": rewrite_id, "scan_id": job_info["scan_id"]}
 
