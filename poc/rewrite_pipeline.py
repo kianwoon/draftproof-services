@@ -497,6 +497,28 @@ def run_rewrite_pipeline(
         total_findings_regressed
         and rewritten_review_burden >= original_review_burden
     )
+    fresh_baseline_improved = (
+        rewritten_review_burden < original_review_burden
+        or rewritten_severity < original_severity
+        or rewritten_total < original_total
+        or (
+            original_ai is not None
+            and rewritten_ai is not None
+            and rewritten_ai < original_ai - 0.05
+        )
+        or (
+            original_wq is not None
+            and rewritten_wq is not None
+            and rewritten_wq < original_wq - 0.05
+        )
+    )
+    saved_ai_regressed = (
+        saved_ai is not None
+        and rewritten_ai is not None
+        and rewritten_ai > saved_ai + 0.05
+    )
+    saved_total_regressed = rewritten_total > saved_total
+    saved_critical_high_regressed = rewritten_critical_high > saved_critical_high
     regression_reasons = []
     if ai_score_regressed:
         regression_reasons.append(f"AI {original_ai}->{rewritten_ai}")
@@ -524,14 +546,30 @@ def run_rewrite_pipeline(
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
     elif total_regressed_without_review_gain and not (review_burden_regressed or severity_regressed):
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
-    # The saved scan is the user-visible contract. Fresh-vs-fresh comparison
-    # protects detector drift, but the final rewrite must not look worse than
-    # the scan result the user just reviewed.
-    if saved_ai is not None and rewritten_ai is not None and rewritten_ai > saved_ai + 0.05:
+    # The saved scan is the user-visible contract, but total finding count can
+    # drift between the saved report and a fresh detector run. Treat AI score
+    # and critical/high count as hard guards; use total count as a guard only
+    # when the fresh baseline did not improve.
+    if saved_ai_regressed:
         regression_reasons.append(f"user_visible_ai {saved_ai}->{rewritten_ai}")
-    if rewritten_total > saved_total:
+    if (
+        saved_total_regressed
+        and (
+            not fresh_baseline_improved
+            or saved_ai_regressed
+            or saved_critical_high_regressed
+            or rewritten_review_burden > original_review_burden
+            or rewritten_severity > original_severity
+        )
+    ):
         regression_reasons.append(f"user_visible_findings {saved_total}->{rewritten_total}")
-    if rewritten_critical_high > saved_critical_high:
+    elif saved_total_regressed:
+        result.summary.setdefault("saved_contract_notes", []).append(
+            "user_visible_findings increased "
+            f"{saved_total}->{rewritten_total}, but fresh baseline improved "
+            f"{original_total}->{rewritten_total}; kept attempted rewrite for review."
+        )
+    if saved_critical_high_regressed:
         regression_reasons.append(
             f"user_visible_critical_high_findings {saved_critical_high}->{rewritten_critical_high}"
         )
@@ -593,10 +631,24 @@ def run_rewrite_pipeline(
                 len(original_report_dict.get("findings", {}).get("critical", []))
                 + len(original_report_dict.get("findings", {}).get("high", []))
             )
+            cp_saved_ai_regressed = (
+                saved_ai is not None
+                and cp_ai is not None
+                and cp_ai > saved_ai + 0.05
+            )
+            cp_saved_total_regressed = cp_total > saved_total
+            cp_saved_critical_high_regressed = cp_critical_high > saved_critical_high
             cp_violates_saved_contract = (
-                (saved_ai is not None and cp_ai is not None and cp_ai > saved_ai + 0.05)
-                or cp_total > saved_total
-                or cp_critical_high > saved_critical_high
+                cp_saved_ai_regressed
+                or cp_saved_critical_high_regressed
+                or (
+                    cp_saved_total_regressed
+                    and (
+                        not cp_improved
+                        or cp_review_burden > original_review_burden
+                        or cp_severity > original_severity
+                    )
+                )
             )
             if (
                 cp_ai_regressed

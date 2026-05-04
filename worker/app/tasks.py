@@ -101,6 +101,7 @@ def _build_rewrite_debug_log(
             "stage_timings": summary.get("stage_timings"),
             "comparison_baseline": summary.get("comparison_baseline"),
             "baseline_rescan_delta": summary.get("baseline_rescan_delta"),
+            "saved_contract_notes": summary.get("saved_contract_notes"),
             "saved_user_visible_scores": saved_scores,
             "original_scores": _badge_scores(original_scan),
             "attempted_scores": _badge_scores(attempted_scan),
