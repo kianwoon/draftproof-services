@@ -571,6 +571,17 @@ assert_test(
     "unsupported_new_phrase" in current_learning_reason,
     "paragraph coherence guard rejects broad current-learning candidate",
 )
+knowledge_happens_reason = _paragraph_coherence_reject_reason(
+    "In the contemporary education environment, school is no longer the only place to acquire knowledge.",
+    "In today's education environment, acquiring knowledge happens in more places than just school.",
+    "",
+    "Online information filled almost everyone’s life, and everyone can obtain all kinds of knowledge and information from the internet now.",
+    ["education", "school", "knowledge", "information"],
+)
+assert_test(
+    "unsupported_new_phrase" in knowledge_happens_reason,
+    "paragraph coherence guard rejects broad knowledge-happens candidate",
+)
 method_reason = _paragraph_coherence_reject_reason(
     "This enables the student to understand the precision required for each procedure and stimulates the desire to learn for them.",
     "Students learn the exact precision and steps for each procedure through guided practice, moving from simple attempts to careful execution, which encourages them and sparks their interest in continuing to improve.",
