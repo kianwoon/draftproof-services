@@ -306,6 +306,7 @@ def _build_rewrite_debug_log(
             "mitigation_primary_mode_at_runtime": summary.get("mitigation_primary_mode_at_runtime"),
             "guided_revision_throttle": summary.get("guided_revision_throttle"),
             "no_text_change": summary.get("no_text_change"),
+            "no_text_change_reason": summary.get("no_text_change_reason"),
             "rollback_applied": summary.get("rollback_applied"),
             "rollback_reason": summary.get("rollback_reason"),
             "passes_completed": summary.get("passes_completed"),
