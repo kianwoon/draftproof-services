@@ -206,6 +206,8 @@ def derive_authorship_rating(
     confidence: Confidence,
     verified_ai_provenance: bool = False,
     human_provenance_positive: bool = False,
+    ai_components: Optional[dict[str, float]] = None,
+    writing_components: Optional[dict[str, float]] = None,
 ) -> dict[str, Any]:
     """Translate detector scores into a user-facing authorship rating.
 
@@ -218,10 +220,22 @@ def derive_authorship_rating(
         and writing_quality_score >= 0.65
         and writing_quality_tier == QualityTier.HIGH_REVIEW
     )
+    ai_components = ai_components or {}
+    writing_components = writing_components or {}
+    high_component_alignment = (
+        ai_score >= 0.58
+        and clamp(ai_components.get("topk_pattern")) >= 0.80
+        and clamp(ai_components.get("generic_assertion_risk")) >= 0.80
+        and (
+            clamp(writing_components.get("unsupported_claim_risk")) >= 0.80
+            or clamp(writing_components.get("source_grounding_risk")) >= 0.70
+            or clamp(writing_components.get("broad_claim_risk")) >= 0.70
+        )
+    )
 
     if verified_ai_provenance:
         code = "ai_generated"
-    elif ai_score >= 0.65 or ai_tier == Tier.RED or near_red_humanised_profile:
+    elif ai_score >= 0.65 or ai_tier == Tier.RED or near_red_humanised_profile or high_component_alignment:
         code = "ai_generated_signals"
     elif ai_score >= 0.48 or ai_tier == Tier.ORANGE:
         code = "likely_ai"
@@ -301,6 +315,8 @@ def derive_authorship_rating(
         caution_notes.append("Writing-quality risks may be contributing to the apparent AI-style profile.")
     if near_red_humanised_profile and code == "ai_generated_signals":
         caution_notes.append("Escalated because high AI-style signals align with high writing-quality/template risk.")
+    if high_component_alignment and code == "ai_generated_signals":
+        caution_notes.append("Escalated because high top-k predictability, generic assertion, and weak grounding signals align.")
     rating["caution_notes"] = caution_notes
     return rating
 
@@ -1176,6 +1192,8 @@ class Layer3Scorer:
             confidence=confidence,
             verified_ai_provenance=data.verified_ai_provenance,
             human_provenance_positive=data.human_provenance_positive,
+            ai_components=ai_phase.components,
+            writing_components=writing_phase.components,
         )
 
         guardrails = []

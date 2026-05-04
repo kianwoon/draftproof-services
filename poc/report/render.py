@@ -141,13 +141,32 @@ def _authorship_rating_from_badge(badge: dict) -> dict:
         else writing_score
     )
     tier = str((badge or {}).get("tier") or "").upper()
+    ai_components = (badge or {}).get("ai_components") or {}
+    writing_components = (badge or {}).get("writing_components") or {}
+
+    def _component_score(values: dict, key: str) -> float:
+        value = values.get(key)
+        if not isinstance(value, (int, float)):
+            return 0.0
+        return value * 100 if abs(value) <= 1 else value
+
     high_quality = (
         isinstance(writing_score, (int, float))
         and writing_score >= 65
         and str((badge or {}).get("writing_quality_tier") or "").upper() in {"HIGH_REVIEW", ""}
     )
+    high_component_alignment = (
+        ai_score >= 58
+        and _component_score(ai_components, "topk_pattern") >= 80
+        and _component_score(ai_components, "generic_assertion_risk") >= 80
+        and (
+            _component_score(writing_components, "unsupported_claim_risk") >= 80
+            or _component_score(writing_components, "source_grounding_risk") >= 70
+            or _component_score(writing_components, "broad_claim_risk") >= 70
+        )
+    )
 
-    if ai_score >= 65 or tier == "RED" or (ai_score >= 60 and high_quality):
+    if ai_score >= 65 or tier == "RED" or (ai_score >= 60 and high_quality) or high_component_alignment:
         return {
             "label": "AI-Generated Signals",
             "short_label": "AI-Generated",

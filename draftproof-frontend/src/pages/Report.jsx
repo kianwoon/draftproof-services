@@ -38,15 +38,29 @@ function formatMetricPercent(value, digits = 1) {
   return `${percent.toFixed(digits)}%`;
 }
 
-function deriveAuthorshipRatingFallback(score, tierValue, writingScore) {
-  if (score == null || Number.isNaN(Number(score))) return null;
-  const percent = Math.abs(Number(score)) <= 1 ? Number(score) * 100 : Number(score);
-  const writingPercent = writingScore == null || Number.isNaN(Number(writingScore))
-    ? null
-    : (Math.abs(Number(writingScore)) <= 1 ? Number(writingScore) * 100 : Number(writingScore));
-  const tier = String(tierValue || '').toLowerCase();
+function metricValue(value) {
+  if (value == null || Number.isNaN(Number(value))) return null;
+  const number = Number(value);
+  return Math.abs(number) <= 1 ? number * 100 : number;
+}
 
-  if (percent >= 65 || tier === 'red' || (percent >= 60 && writingPercent != null && writingPercent >= 65)) {
+function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiComponents = {}, writingComponents = {}) {
+  if (score == null || Number.isNaN(Number(score))) return null;
+  const percent = metricValue(score);
+  const writingPercent = metricValue(writingScore);
+  const tier = String(tierValue || '').toLowerCase();
+  const highComponentAlignment = (
+    percent >= 58 &&
+    (metricValue(aiComponents.topk_pattern) || 0) >= 80 &&
+    (metricValue(aiComponents.generic_assertion_risk) || 0) >= 80 &&
+    (
+      (metricValue(writingComponents.unsupported_claim_risk) || 0) >= 80 ||
+      (metricValue(writingComponents.source_grounding_risk) || 0) >= 70 ||
+      (metricValue(writingComponents.broad_claim_risk) || 0) >= 70
+    )
+  );
+
+  if (percent >= 65 || tier === 'red' || (percent >= 60 && writingPercent != null && writingPercent >= 65) || highComponentAlignment) {
     return { label: 'AI-Generated Signals', short_label: 'AI-Generated' };
   }
   if (percent >= 48 || tier === 'orange') {
@@ -388,7 +402,13 @@ export default function Report() {
   const badge = report.ai_risk_badge || {};
   const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
-  const authorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(aiScore, badge.tier || report.tier, writingScore) || {};
+  const authorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
+    aiScore,
+    badge.tier || report.tier,
+    writingScore,
+    badge.ai_components,
+    badge.writing_components
+  ) || {};
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };

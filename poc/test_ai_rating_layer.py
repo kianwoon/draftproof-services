@@ -76,6 +76,28 @@ assert_true(
     "near-red humanised profile includes escalation note",
 )
 
+strong_humaniser = derive_authorship_rating(
+    ai_score=0.6035,
+    ai_tier=Tier.ORANGE,
+    writing_quality_score=0.6256,
+    writing_quality_tier=QualityTier.REVIEW,
+    confidence=Confidence.HIGH,
+    ai_components={
+        "topk_pattern": 0.8923,
+        "generic_assertion_risk": 0.90,
+    },
+    writing_components={
+        "unsupported_claim_risk": 0.90,
+        "source_grounding_risk": 0.70,
+        "broad_claim_risk": 0.75,
+    },
+)
+assert_equal(
+    strong_humaniser["code"],
+    "ai_generated_signals",
+    "component-aligned humaniser profile escalates rating even below high-review writing tier",
+)
+
 render_fallback = _authorship_rating_from_badge({
     "tier": "ORANGE",
     "ai_likelihood_score": 63.15,
@@ -86,6 +108,26 @@ assert_equal(
     render_fallback["label"],
     "AI-Generated Signals",
     "detect PDF renderer derives missing authorship rating from score fields",
+)
+
+render_component_fallback = _authorship_rating_from_badge({
+    "tier": "ORANGE",
+    "ai_likelihood_score": 60.35,
+    "writing_quality_score": 62.56,
+    "ai_components": {
+        "topk_pattern": 89.23,
+        "generic_assertion_risk": 90.0,
+    },
+    "writing_components": {
+        "unsupported_claim_risk": 90.0,
+        "source_grounding_risk": 70.0,
+        "broad_claim_risk": 75.0,
+    },
+})
+assert_equal(
+    render_component_fallback["label"],
+    "AI-Generated Signals",
+    "detect PDF renderer uses aligned component evidence for humaniser profile",
 )
 
 scored = Layer3Scorer().score(
@@ -128,6 +170,6 @@ template_ai = Layer3Scorer().score(
 assert_equal(template_ai.ai_cluster_name, "template_ai_style", "education AI sample triggers template AI cluster")
 assert_true(template_ai.ai_likelihood_score >= 0.58, "template AI cluster floors the AI score above possible-AI band")
 assert_equal(template_ai.tier, Tier.ORANGE, "template AI sample escalates to orange tier")
-assert_equal(template_ai.authorship_rating["code"], "likely_ai", "template AI sample rates as likely AI")
+assert_equal(template_ai.authorship_rating["code"], "ai_generated_signals", "template AI sample rates as AI-generated signals")
 
 print("AI rating layer tests passed")
