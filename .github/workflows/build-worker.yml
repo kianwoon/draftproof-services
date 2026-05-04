@@ -1,0 +1,92 @@
+name: Build & Deploy Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - 'poc/**'
+      - '.github/workflows/build-worker.yml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: kianwoon/draftproof-worker
+  SERVICE_ID: "2af91bbc-6519-4559-a3cc-1b6349ce020e"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: worker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger Koyeb redeploy
+        env:
+          KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          echo "Triggering Koyeb redeploy for worker..."
+          SVC=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            "https://app.koyeb.com/v1/services/${SERVICE_ID}")
+          DEPLOY_ID=$(echo "$SVC" | jq -r '.service.latest_deployment_id')
+          echo "Latest deployment: ${DEPLOY_ID}"
+
+          DEPLOY=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            "https://app.koyeb.com/v1/deployments/${DEPLOY_ID}")
+          DEFINITION=$(echo "$DEPLOY" | jq '.deployment.definition')
+          echo "Definition name: $(echo "$DEFINITION" | jq -r '.name')"
+
+          UPDATED=$(echo "$DEFINITION" | jq --arg sha "$COMMIT_SHA" '.git.sha = $sha')
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+            "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
+            -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"definition\": $UPDATED}")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          STATUS=$(echo "$BODY" | jq -r '.deployment.status // "unknown"')
+          DEPLOY_SHA=$(echo "$BODY" | jq -r '.deployment.definition.git.sha // "n/a"')
+          echo "HTTP ${HTTP_CODE} — deployment ${STATUS} — sha ${DEPLOY_SHA:0:7}"
+
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "ERROR: Koyeb deploy failed"
+            echo "$BODY" | jq '.' >&2
+            exit 1
+          fi
+          echo "Koyeb deploy triggered successfully"
