@@ -71,6 +71,8 @@ from llm.gateway import LLMGateway, LLMConfig
 
 logger = logging.getLogger(__name__)
 
+REWRITE_RUNTIME_VERSION = "context-aware-rewrite-v3"
+
 
 def _metrics_from_detect(detect_report, text: str):
     """Extract predictability metrics from an already-run DetectionReport.
@@ -2947,6 +2949,15 @@ def run_rewrite(
         raw_json=getattr(rewrite_context, "raw_json", None),
     )
     summary["rollback_applied"] = rolled_back_for_regression
+    summary["rewrite_runtime_version"] = REWRITE_RUNTIME_VERSION
+    summary["rewrite_effective_config"] = {
+        "max_llm_calls": config.max_llm_calls,
+        "max_auto_targets": config.max_auto_targets,
+        "max_failed_targets": config.max_failed_targets,
+        "max_consecutive_failed_targets": config.max_consecutive_failed_targets,
+        "max_rewrite_seconds": config.max_rewrite_seconds,
+        "max_detect_loops": config.max_detect_loops,
+    }
     summary["llm_calls_used"] = llm_calls_used
     summary["target_count"] = len(grouped_actions)
     summary["accepted_edits"] = findings_fixed
