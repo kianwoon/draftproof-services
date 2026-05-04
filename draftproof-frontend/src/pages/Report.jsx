@@ -356,11 +356,6 @@ export default function Report() {
                 />
               </div>
             </div>
-            {hasCompletedRewrite && (
-              <Link to={`/report/${id}/rewrite?rid=${currentRewrite.id}`} className="rewrite-progress-link">
-                Open rewrite results
-              </Link>
-            )}
           </div>
         )}
 
