@@ -2139,7 +2139,8 @@ th {
 /* Summary bar */
 .report-summary-bar {
   display: flex;
-  gap: 2rem;
+  align-items: stretch;
+  gap: 1.4rem;
   padding: 1.25rem 1.5rem;
   background: var(--surface);
   border-radius: var(--radius-sm);
@@ -2151,6 +2152,8 @@ th {
 .report-stat {
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  min-height: 44px;
 }
 
 .report-stat-value {
@@ -2165,6 +2168,27 @@ th {
   text-transform: uppercase;
   letter-spacing: .04em;
   font-weight: 500;
+}
+
+.report-risk-stat {
+  min-width: 138px;
+  padding: .65rem .9rem;
+  border-radius: 8px;
+  margin: -.45rem 0;
+}
+
+.report-risk-value {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  font-size: .95rem;
+  font-weight: 800;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.report-risk-value svg {
+  flex: 0 0 auto;
 }
 
 /* Downloads */

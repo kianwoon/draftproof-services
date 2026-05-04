@@ -385,15 +385,6 @@ export default function Report() {
             <h1>{report.document_name}</h1>
             {report.created_at && <p className="report-meta">{formatDate(report.created_at)}</p>}
           </div>
-          <div className="report-hero-tier" style={{ background: tier.bg }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={tier.color} strokeWidth="2" strokeLinecap="round">
-              <path d={tier.icon} />
-              <circle cx="12" cy="12" r="10" />
-            </svg>
-            <span style={{ color: tier.color }}>
-              {tier.label}
-            </span>
-          </div>
           {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
             <button
               type="button"
@@ -441,6 +432,16 @@ export default function Report() {
 
         {/* Summary bar */}
         <div className="report-summary-bar">
+          <div className="report-stat report-risk-stat" style={{ background: tier.bg }}>
+            <span className="report-risk-value" style={{ color: tier.color }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d={tier.icon} />
+                <circle cx="12" cy="12" r="10" />
+              </svg>
+              {tier.label}
+            </span>
+            <span className="report-stat-label">Risk Tier</span>
+          </div>
           <div className="report-stat">
             <span className="report-stat-value">{report.issues.length}</span>
             <span className="report-stat-label">Total Findings</span>
