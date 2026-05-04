@@ -1106,9 +1106,39 @@ def _generic_polish_count(text: str) -> int:
         r"\bdemonstrates?\b", r"\bhighlights?\b", r"\bunderscores?\b",
         r"\bto address modern\b", r"\bto thrive amidst\b",
         r"\bnot enough\b", r"\bcan be effective\b", r"\btakes time\b",
+        r"\bdeconstructed\b", r"\bmimicry\b", r"\btransform(?:s|ing)?\b",
+        r"\bboost(?:s|ing)? (?:their )?confidence\b",
+        r"\bserves as a practical model\b",
+        r"\bsteep operational\b", r"\boperational trial\b",
+        r"\bencounter complex\b", r"\bmonopoly\b", r"\bdissolved\b",
+        r"\bexclusive gateway\b", r"\brepository\b",
     ]
     lower = text.lower()
     return sum(len(re.findall(p, lower)) for p in patterns)
+
+
+def _candidate_style_reject_reason(original_sentence: str, candidate_sentence: str) -> str:
+    """Reject detector-gaming rewrites that sound more polished/abstract."""
+    orig_polish = _generic_polish_count(original_sentence)
+    cand_polish = _generic_polish_count(candidate_sentence)
+    if cand_polish > orig_polish:
+        return f"polished_generic_drift {orig_polish}->{cand_polish}"
+
+    # Long noun stacks often reduce GPT-2 predictability while increasing AI
+    # style risk. Keep sentence edits plain unless the source sentence already
+    # uses dense nominal phrasing.
+    noun_stack = re.search(
+        r"\b(?:technical|operational|instructional|cognitive|practical|formal|"
+        r"individualized|specialized|complex)\s+"
+        r"(?:accuracy|trial|model|concepts?|corrections?|structures?|guidance|"
+        r"implementation|engagement)\b",
+        candidate_sentence,
+        re.I,
+    )
+    if noun_stack and not re.search(re.escape(noun_stack.group(0)), original_sentence, re.I):
+        return f"new_abstract_noun_stack '{noun_stack.group(0)}'"
+
+    return ""
 
 
 def _candidate_quality_score(
@@ -2213,6 +2243,16 @@ def run_rewrite(
                 component_ok, component_reason = _component_regression_check(current_text, candidate_text)
                 if not component_ok:
                     candidate_rejects.append(f"badge_component_regression {component_reason}")
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
+                    })
+                    continue
+
+                style_reason = _candidate_style_reject_reason(original_sentence, candidate_sentence)
+                if style_reason:
+                    candidate_rejects.append(style_reason)
                     rejected_candidates.append({
                         "candidate": cand_idx,
                         "reason": "; ".join(candidate_rejects),

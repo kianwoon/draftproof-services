@@ -650,7 +650,7 @@ def run_rewrite_pipeline(
             cp_wq_regressed = (
                 original_wq is not None
                 and cp_wq is not None
-                and cp_wq > original_wq + 0.05
+                and cp_wq > original_wq + writing_quality_regression_tolerance
             )
             cp_improved = (
                 cp_review_burden < original_review_burden
