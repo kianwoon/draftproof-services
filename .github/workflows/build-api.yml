@@ -58,12 +58,13 @@ jobs:
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
         run: |
-          echo "Deploying ghcr.io/kianwoon/draftproof-api:latest to Koyeb..."
+          IMAGE_TAG="ghcr.io/kianwoon/draftproof-api:sha-${GITHUB_SHA::7}"
+          echo "Deploying ${IMAGE_TAG} to Koyeb..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
             -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"definition":{"docker":{"image":"ghcr.io/kianwoon/draftproof-api:latest","image_registry_secret":"e3888d3f"}}}')
+            -d "{\"definition\":{\"docker\":{\"image\":\"${IMAGE_TAG}\",\"image_registry_secret\":\"e3888d3f\"}}}")
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
