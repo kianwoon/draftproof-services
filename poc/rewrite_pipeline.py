@@ -751,6 +751,7 @@ def run_rewrite_pipeline(
         result.summary["detect_scan_attempted"] = _extract_scan_summary(attempted_report_dict)
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings
+    result.sentence_comparison = sentence_comparison
 
     # Generate dedicated rewrite report
     rewrite_md = render_rewrite_report(

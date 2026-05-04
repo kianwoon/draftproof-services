@@ -41,7 +41,7 @@ def _build_rewrite_debug_log(
     badge = report_json.get("ai_risk_badge") or {}
     original_scan = summary.get("detect_scan_original") or {}
     final_scan = summary.get("detect_scan_rewritten") or {}
-    attempted_scan = summary.get("detect_scan_attempted") or {}
+    attempted_scan = summary.get("detect_scan_attempted") or final_scan
     effective_plan = rewrite_json.get("effective_rewrite_plan") or {}
 
     saved_scores = {
