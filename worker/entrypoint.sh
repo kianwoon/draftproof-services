@@ -17,6 +17,13 @@ echo "[entrypoint] ============================================"
 # Ensure cache dir exists
 mkdir -p "${CACHE_DIR}"
 
+# Migrate old generic marker to model-specific marker
+OLD_MARKER="${CACHE_DIR}/.model_ready"
+if [ -f "${OLD_MARKER}" ] && [ ! -f "${MODEL_MARKER}" ]; then
+    echo "[entrypoint] Migrating old marker to ${MODEL_MARKER}"
+    mv "${OLD_MARKER}" "${MODEL_MARKER}"
+fi
+
 # Download model to volume if not already cached
 if [ -f "${MODEL_MARKER}" ]; then
     echo "[entrypoint] Model ${MODEL} already cached on volume (marker exists), skipping download"
