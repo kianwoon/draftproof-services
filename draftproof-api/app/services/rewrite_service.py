@@ -136,6 +136,17 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
             await session.commit()
             return _rewrite_to_dict(existing_job)
 
+        completed = await session.execute(
+            select(RewriteJob).where(
+                RewriteJob.scan_id == scan_uuid,
+                RewriteJob.status == "completed",
+            ).order_by(RewriteJob.completed_at.desc(), RewriteJob.created_at.desc()).limit(1)
+        )
+        completed_job = completed.scalar_one_or_none()
+        if completed_job:
+            await session.commit()
+            return _rewrite_to_dict(completed_job)
+
         report_json = await _fetch_scan_report_json(scan_id)
         if report_json is not None and not _has_rewriteable_findings(report_json):
             if stale_jobs:

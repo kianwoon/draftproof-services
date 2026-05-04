@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getReport, createRewrite, getRewriteStatus, buildApiEventUrl } from '../api/draftproofApi';
+import { getReport, createRewrite, getRewriteStatus, getRewriteReport, buildApiEventUrl } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 
 const TIER_CONFIG = {
@@ -29,6 +29,20 @@ function formatDate(iso) {
 function pct(value) {
   if (value == null || Number.isNaN(Number(value))) return null;
   return `${(Number(value) * 100).toFixed(0)}%`;
+}
+
+function formatMetricPercent(value) {
+  if (value == null || Number.isNaN(Number(value))) return '—';
+  const number = Number(value);
+  const percent = Math.abs(number) <= 1 ? number * 100 : number;
+  return `${percent.toFixed(1)}%`;
+}
+
+function formatCountDelta(original, next) {
+  if (original == null || next == null) return '—';
+  const delta = Number(original) - Number(next);
+  if (Number.isNaN(delta)) return '—';
+  return delta > 0 ? `-${delta}` : `${delta}`;
 }
 
 function findingDescription(issue) {
@@ -117,6 +131,7 @@ export default function Report() {
   const [rewriteStartedHere, setRewriteStartedHere] = useState(false);
   const [rewriteSseUnavailable, setRewriteSseUnavailable] = useState(false);
   const [rewriteNotice, setRewriteNotice] = useState(null);
+  const [rewriteResultSummary, setRewriteResultSummary] = useState(null);
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
 
@@ -141,6 +156,7 @@ export default function Report() {
     }
     if (normalizedJob?.status === 'completed') {
       setReport((prev) => prev ? { ...prev, rewrite: normalizedJob } : prev);
+      setRewriteStartedHere(false);
     }
   }, []);
 
@@ -269,6 +285,35 @@ export default function Report() {
     };
   }, [rewriteJob?.id, rewriteJob?.status, rewriteSseUnavailable, pollRewriteStatus, connectRewriteEvents]);
 
+  useEffect(() => {
+    const completedRewrite = rewriteJob?.status === 'completed' ? rewriteJob : report?.rewrite;
+    if (!completedRewrite?.id || completedRewrite.status !== 'completed') {
+      setRewriteResultSummary(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    getRewriteReport(completedRewrite.id)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const summary = data?.summary || {};
+        const changedSentences = (data?.sentence_comparison || []).filter(
+          (row) => String(row.orig_sentence || '').trim() !== String(row.new_sentence || '').trim()
+        ).length;
+        setRewriteResultSummary({
+          ...summary,
+          changed_sentences: changedSentences,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setRewriteResultSummary(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rewriteJob, report?.rewrite]);
+
   if (loading) return (
     <main className="dash-shell">
       <div className="container">
@@ -308,7 +353,8 @@ export default function Report() {
   const currentRewrite = rewriteJob || report.rewrite;
   const rewriteInProgress = isRewriteActive(currentRewrite?.status);
   const hasCompletedRewrite = currentRewrite?.status === 'completed';
-  const canStartRewrite = hasAIFindings;
+  const hasRewriteResult = hasCompletedRewrite && Boolean(currentRewrite?.id);
+  const canStartRewrite = hasAIFindings && !hasRewriteResult;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
     : 0;
@@ -316,12 +362,14 @@ export default function Report() {
     currentRewrite?.progress_message,
     currentRewrite?.status
   );
-  const showRewriteProgress = rewriteStartedHere || rewriteInProgress || hasCompletedRewrite || rewriteLoading || rewriteError;
+  const showRewriteProgress = !hasRewriteResult && (
+    rewriteStartedHere || rewriteInProgress || rewriteLoading || rewriteError
+  );
 
   const handleRewrite = async (event) => {
     event?.preventDefault();
     event?.stopPropagation();
-    if (rewriteLoading) return;
+    if (rewriteLoading || hasRewriteResult) return;
     setRewriteStartedHere(true);
     setRewriteLoading(true);
     setRewriteError(null);
@@ -419,14 +467,6 @@ export default function Report() {
                 />
               </div>
             </div>
-            {hasCompletedRewrite && currentRewrite?.id && (
-              <Link
-                to={`/rewrite/${currentRewrite.id}`}
-                className="rewrite-results-link"
-              >
-                View Rewrite Result
-              </Link>
-            )}
           </div>
         )}
 
@@ -468,6 +508,37 @@ export default function Report() {
             </div>
           )}
         </div>
+
+        {hasRewriteResult && (
+          <div className="report-rewrite-summary-bar">
+            <div className="rewrite-summary-main">
+              <span className="rewrite-summary-kicker">Rewrite complete</span>
+              <strong>AI sections rewritten</strong>
+            </div>
+            <div className="rewrite-summary-stat">
+              <span>{formatMetricPercent(rewriteResultSummary?.original_risk)}</span>
+              <small>Original risk</small>
+            </div>
+            <div className="rewrite-summary-stat">
+              <span>{formatMetricPercent(rewriteResultSummary?.final_risk)}</span>
+              <small>Rewrite risk</small>
+            </div>
+            <div className="rewrite-summary-stat">
+              <span>{formatCountDelta(rewriteResultSummary?.original_findings, rewriteResultSummary?.rewritten_findings)}</span>
+              <small>Findings change</small>
+            </div>
+            <div className="rewrite-summary-stat">
+              <span>{rewriteResultSummary?.changed_sentences ?? '—'}</span>
+              <small>Sentences changed</small>
+            </div>
+            <Link
+              to={`/rewrite/${currentRewrite.id}`}
+              className="rewrite-results-link"
+            >
+              View Rewrite Result
+            </Link>
+          </div>
+        )}
 
         {/* Download links */}
         {report.report_pdf_url && (
