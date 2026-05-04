@@ -12,6 +12,7 @@ export default function Scan() {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
+  const [showProgress, setShowProgress] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
   const [progressMessage, setProgressMessage] = useState(null);
   const [error, setError] = useState(null);
@@ -53,6 +54,7 @@ export default function Scan() {
       updateProgress(data);
       if (data.status === 'completed') return true;
       if (data.status === 'failed') {
+        setProgressMessage('Scan failed');
         setServerError('Scan failed on the server');
         return false;
       }
@@ -95,12 +97,14 @@ export default function Scan() {
         updateProgress(data);
         if (data.status === 'completed') finish(true);
         if (data.status === 'failed') {
+          setProgressMessage('Scan failed');
           setServerError('Scan failed on the server');
           finish(false);
         }
       });
 
       source.addEventListener('scan-error', () => {
+        setProgressMessage('Scan failed');
         setServerError('Scan failed on the server');
         finish(false);
       });
@@ -113,11 +117,18 @@ export default function Scan() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!text.trim()) {
+      setError('Please enter some text');
+      setShowProgress(false);
+      return;
+    }
     if (balance !== null && balance < tokensRequired) {
       setInsufficientTokens(true);
+      setShowProgress(false);
       return;
     }
     setBusy(true);
+    setShowProgress(true);
     setError(null);
     setServerError(null);
     setProgressPercent(0);
@@ -129,7 +140,6 @@ export default function Scan() {
 
     try {
       let scan;
-      if (!text.trim()) { setError('Please enter some text'); setBusy(false); return; }
       setStatus('Queuing scan...');
       setProgressPercent(3);
       setProgressMessage('Queuing scan');
@@ -151,10 +161,13 @@ export default function Scan() {
       const msg = err.response?.data?.detail || 'Scan failed';
       const httpStatus = err.response?.status;
       if (httpStatus === 400 && msg.toLowerCase().includes('insufficient')) {
+        setShowProgress(false);
         setInsufficientTokens(true);
       } else if (httpStatus >= 400) {
+        setProgressMessage('Scan failed');
         setServerError(msg);
       } else {
+        setProgressMessage('Scan failed');
         setError(msg);
       }
     } finally {
@@ -179,7 +192,10 @@ export default function Scan() {
           className="scan-textarea"
           placeholder="Paste your document text here..."
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            if (!busy) setShowProgress(false);
+          }}
           rows={14}
         />
         <div className="word-count">
@@ -198,7 +214,7 @@ export default function Scan() {
         <button type="submit" className="btn btn-primary" disabled={busy}>
           {busy ? (status || 'Scanning...') : 'Start Scan'}
         </button>
-        {busy && (
+        {showProgress && (
           <div className="scan-progress" role="status" aria-live="polite">
             <div className="scan-progress-meta">
               <span>{progressMessage || status || 'Scanning...'}</span>
