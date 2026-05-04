@@ -2199,9 +2199,10 @@ th {
   justify-content: center;
   min-height: 64px;
   min-width: 0;
-  flex: 1 1 80px;
+  flex: 0 0 auto;
   padding: .5rem clamp(1rem, 2vw, 2rem);
   border-left: 1px solid #e2e8f0;
+  overflow: hidden;
 }
 
 .report-stat:first-child,
@@ -2210,10 +2211,11 @@ th {
 }
 
 .report-stat-value {
-  font-size: clamp(1.05rem, 1.5vw, 1.45rem);
+  font-size: 1.25rem;
   font-weight: 850;
   color: var(--navy-950);
   line-height: 1;
+  white-space: nowrap;
 }
 
 .report-stat-label {
