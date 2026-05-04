@@ -33,10 +33,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     auth_api_paths = ("/api/auth/google/", "/api/auth/microsoft/")
     if request.url.path.startswith(auth_api_paths):
         return _auth_error_redirect(exc.status_code, exc.detail or "Authentication failed")
-    # All other routes: return JSON
+    # Pass through domain-specific error messages (e.g. "Insufficient tokens")
+    # instead of replacing them with generic text
+    detail = exc.detail if exc.detail and len(exc.detail) < 200 else _friendly_message(exc.status_code)
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": _friendly_message(exc.status_code)},
+        content={"detail": detail},
     )
 
 

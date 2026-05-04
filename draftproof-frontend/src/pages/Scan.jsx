@@ -159,7 +159,12 @@ export default function Scan() {
       if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
       const msg = err.response?.data?.detail || 'Scan failed';
       const httpStatus = err.response?.status;
-      if (httpStatus === 400 && msg.toLowerCase().includes('insufficient')) {
+      const isInsufficient = httpStatus === 400 && (
+        msg.toLowerCase().includes('insufficient') ||
+        msg.toLowerCase().includes('no credit account') ||
+        msg.toLowerCase().includes('purchase')
+      );
+      if (isInsufficient) {
         setShowProgress(false);
         setInsufficientTokens(true);
       } else if (httpStatus >= 400) {
