@@ -447,6 +447,126 @@ def _risk_mitigation_actions(component_drivers: List[Dict[str, Any]]) -> List[Di
     return actions
 
 
+def _suggestion_rule(component: str) -> Dict[str, str]:
+    rules = {
+        "unsupported_claim_risk": {
+            "action_type": "add_support_or_soften",
+            "title": "Add support or soften the claim",
+            "suggested_addition": (
+                "[ADD SOURCE OR EXAMPLE] supports this point because [EXPLAIN THE CONNECTION]. "
+                "If support is limited, change the claim to: This may suggest [CAREFUL CONCLUSION]."
+            ),
+            "why_it_helps": "Targets unsupported claim risk without pretending the missing evidence already exists.",
+            "user_note": "Replace the bracketed parts with a real source, example, or softer conclusion before using.",
+        },
+        "source_grounding_risk": {
+            "action_type": "add_source_bridge",
+            "title": "Connect the source to the claim",
+            "suggested_addition": (
+                "According to [ADD SOURCE/AUTHOR], [ADD SOURCE IDEA]. "
+                "This supports [CLAIM] because [EXPLAIN THE LINK IN YOUR OWN WORDS]."
+            ),
+            "why_it_helps": "Makes the source-to-claim relationship visible instead of leaving the claim floating.",
+            "user_note": "Use only a source and source idea that are actually part of the draft or assignment.",
+        },
+        "citation_weakness_risk": {
+            "action_type": "repair_citation_bridge",
+            "title": "Repair citation linkage",
+            "suggested_addition": (
+                "[ADD CITATION] reports [SPECIFIC EVIDENCE], which matters here because [CONNECT EVIDENCE TO THIS PARAGRAPH]."
+            ),
+            "why_it_helps": "Links citation, evidence, and paragraph point in one visible step.",
+            "user_note": "Replace the placeholders with the exact cited evidence and correct citation.",
+        },
+        "broad_claim_risk": {
+            "action_type": "narrow_with_context",
+            "title": "Narrow the claim with context",
+            "suggested_addition": (
+                "For [SPECIFIC CLASS/UNIT/METHOD/CONTEXT], [SPECIFIC OBSERVATION] may support [LIMITED OUTCOME]."
+            ),
+            "why_it_helps": "Moves broad generic claims into a limited, checkable context.",
+            "user_note": "Use a real context from the paper; do not keep placeholders.",
+        },
+        "generic_assertion_risk": {
+            "action_type": "add_specific_detail",
+            "title": "Add specific detail",
+            "suggested_addition": (
+                "In [SPECIFIC SETTING/TASK], [CONCRETE DETAIL] shows [LIMITED POINT]."
+            ),
+            "why_it_helps": "Replaces reusable assertion patterns with author-specific detail.",
+            "user_note": "Fill the placeholders with details that are already true for the work.",
+        },
+        "lived_detail_risk": {
+            "action_type": "add_author_process_detail",
+            "title": "Add author/process detail",
+            "suggested_addition": (
+                "During [SPECIFIC ACTIVITY/SESSION], I observed [SPECIFIC ACTION OR RESULT], which matters because [WHAT IT SHOWS]."
+            ),
+            "why_it_helps": "Adds visible author/process presence without silently inventing a story.",
+            "user_note": "Only use this if the observation really happened.",
+        },
+    }
+    return rules.get(component, {
+        "action_type": "add_reviewed_context",
+        "title": "Add reviewed context",
+        "suggested_addition": "[ADD VERIFIED DETAIL] connects this point to [CLAIM OR SOURCE].",
+        "why_it_helps": "Provides a marked place for user-verified context.",
+        "user_note": "Replace bracketed content with verified information before using.",
+    })
+
+
+def _marked_content_suggestions(
+    component_drivers: List[Dict[str, Any]],
+    buckets: Dict[str, List[Dict[str, Any]]],
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    """Review-required additions with visible placeholders.
+
+    These are intentionally separate from final output. They may propose new
+    support structure, but every model-supplied gap is bracketed for user review.
+    """
+    suggestions: List[Dict[str, Any]] = []
+    needs_items = buckets.get("needs_source_or_example") or []
+    excerpt_by_component: Dict[str, Dict[str, Any]] = {}
+    for item in needs_items:
+        component = str(item.get("finding_type") or "")
+        if not component or item.get("component_driver"):
+            continue
+        if component not in excerpt_by_component:
+            excerpt_by_component[component] = item
+
+    for target in _score_mitigation_targets(component_drivers):
+        component = str(target.get("component") or "")
+        bucket = str(target.get("bucket") or "")
+        if bucket != "needs_source_or_example":
+            continue
+        rule = _suggestion_rule(component)
+        source_item = excerpt_by_component.get(component) or {}
+        sentence_id = source_item.get("sentence_id") or ""
+        evidence = source_item.get("flagged_excerpt") or source_item.get("evidence") or ""
+        where = (
+            f"Sentence {sentence_id}" if sentence_id else "Document-level claim/source gap"
+        )
+        suggestions.append({
+            "component": component,
+            "priority": target.get("priority"),
+            "current_score": target.get("current_score"),
+            "target_score": target.get("target_score"),
+            "action_type": rule["action_type"],
+            "title": rule["title"],
+            "where": where,
+            "evidence": evidence,
+            "suggested_addition": rule["suggested_addition"],
+            "why_it_helps": rule["why_it_helps"],
+            "user_note": rule["user_note"],
+            "auto_apply": False,
+            "highlight_policy": "All bracketed text is proposed content that must be replaced or verified by the user.",
+        })
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
 def _reference_pattern(component: str) -> Dict[str, str] | None:
     patterns = {
         "generic_assertion_risk": {
@@ -672,5 +792,6 @@ def build_mitigation_plan(
         "component_drivers": component_drivers,
         "score_mitigation_targets": _score_mitigation_targets(component_drivers),
         "risk_mitigation_actions": _risk_mitigation_actions(component_drivers),
+        "marked_content_suggestions": _marked_content_suggestions(component_drivers, buckets),
         "reference_patterns": _reference_patterns(component_drivers, buckets),
     }

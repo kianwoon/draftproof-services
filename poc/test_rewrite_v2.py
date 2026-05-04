@@ -560,6 +560,17 @@ assert_test(
     "unsupported_new_phrase" in latest_colloquial_reason,
     "paragraph coherence guard rejects latest online-info candidate",
 )
+current_learning_reason = _paragraph_coherence_reject_reason(
+    "In the contemporary education environment, school is no longer the only place to acquire knowledge.",
+    "School remains a part of education, but many now get knowledge from other places in the current learning environment.",
+    "",
+    "Online information filled almost everyone’s life, and everyone can obtain all kinds of knowledge and information from the internet now.",
+    ["education", "school", "knowledge", "information"],
+)
+assert_test(
+    "unsupported_new_phrase" in current_learning_reason,
+    "paragraph coherence guard rejects broad current-learning candidate",
+)
 method_reason = _paragraph_coherence_reject_reason(
     "This enables the student to understand the precision required for each procedure and stimulates the desire to learn for them.",
     "Students learn the exact precision and steps for each procedure through guided practice, moving from simple attempts to careful execution, which encourages them and sparks their interest in continuing to improve.",
@@ -581,6 +592,28 @@ latest_method_reason = _paragraph_coherence_reject_reason(
 assert_test(
     "unsupported_new_phrase" in latest_method_reason,
     "paragraph coherence guard rejects latest scaffolding candidate",
+)
+method_label_reason = _paragraph_coherence_reject_reason(
+    "This enables the student to understand the precision required for each procedure as well as the specific techniques involved, and move the student from simplicity to precision, plus, which provides significant encouragement and stimulates the desire to learn for them.",
+    "By focusing on each procedure's precision and techniques, this method moves students from simple to precise work and encourages their desire to keep learning.",
+    "",
+    "",
+    ["student", "precision", "procedure", "techniques"],
+)
+assert_test(
+    "unsupported_new_phrase" in method_label_reason,
+    "paragraph coherence guard rejects method-label candidate",
+)
+new_terms_reason = _paragraph_coherence_reject_reason(
+    "Students use the chart during practice.",
+    "Students use the chart during structured guidance materials and repeated practice activities.",
+    "",
+    "",
+    ["students", "chart", "practice"],
+)
+assert_test(
+    "unsupported_new_terms" in new_terms_reason,
+    "paragraph coherence guard rejects clusters of unsupported new content words",
 )
 
 pred_raw = {
@@ -691,6 +724,13 @@ assert_test(
     any(item["action_type"] == "connect_source_to_claim" for item in driver_plan["risk_mitigation_actions"]),
     "risk actions include source-to-claim mitigation",
 )
+marked = driver_plan["marked_content_suggestions"]
+assert_test(marked[0]["auto_apply"] is False, "marked content suggestions are not auto-applied")
+assert_test("[ADD SOURCE OR EXAMPLE]" in marked[0]["suggested_addition"], "marked suggestions visibly bracket new content")
+assert_test(
+    any(item["action_type"] == "add_source_bridge" for item in marked),
+    "marked suggestions include source bridge structure",
+)
 assert_test(driver_plan["reference_patterns"][0]["component"] == "unsupported_claim_risk", "guided reference patterns prioritize evidence drivers")
 guided_report = render_rewrite_report(
     summary={
@@ -713,6 +753,8 @@ assert_test("## Guided Revision Checklist" in guided_report, "guided report high
 assert_test("automatic sentence edits cannot safely supply" in guided_report, "guided report explains why original is preserved")
 assert_test("## Risk Score Mitigation Targets" in guided_report, "guided report shows score mitigation targets")
 assert_test("## Risk Mitigation Actions" in guided_report, "guided report shows concrete mitigation actions")
+assert_test("## Suggested Additions For Review" in guided_report, "guided report shows marked content suggestions")
+assert_test("[ADD SOURCE OR EXAMPLE]" in guided_report, "guided report highlights bracketed suggested content")
 
 partial_ok, partial_reason, partial_delta = _target_predictability_acceptance(
     {"risk": 0.5083, "label": "medium"},

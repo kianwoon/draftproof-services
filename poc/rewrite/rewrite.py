@@ -1201,6 +1201,14 @@ def _paragraph_coherence_reject_reason(
         r"\bonline info\b",
         r"\bstands as\b",
         r"\bsole place\b",
+        r"\bmany now\b",
+        r"\bcurrent learning environment\b",
+        r"\blearning environment\b",
+        r"\bthis method\b",
+        r"\bthe method\b",
+        r"\bby focusing on\b",
+        r"\bfocusing on each procedure\b",
+        r"\bfrom simple to precise work\b",
         r"\bscaffolding\b",
         r"\bbreaking down each step\b",
         r"\bgrasp(?:s|ed|ing)?\b",
@@ -1215,6 +1223,14 @@ def _paragraph_coherence_reject_reason(
         match = re.search(pattern, candidate_sentence, re.I)
         if match and not re.search(pattern, surrounding, re.I):
             return f"unsupported_new_phrase '{match.group(0)}'"
+
+    new_terms = _unsupported_new_content_words(
+        candidate_sentence,
+        surrounding,
+        domain_anchor_terms or [],
+    )
+    if len(new_terms) >= 3:
+        return "unsupported_new_terms " + ",".join(new_terms[:5])
 
     return ""
 
@@ -1488,6 +1504,47 @@ def _rewrite_operation_lines(operation: Dict[str, Any]) -> List[str]:
 def _term_coverage(text: str, terms: List[str]) -> int:
     lower = text.lower()
     return sum(1 for term in terms if term.lower() in lower)
+
+
+def _unsupported_new_content_words(
+    candidate_sentence: str,
+    surrounding_text: str,
+    domain_anchor_terms: List[str],
+    limit: int = 5,
+) -> List[str]:
+    """Return new content words that are not grounded in context or anchors."""
+    allowed_text = surrounding_text.lower()
+    anchor_set = {str(term).lower() for term in domain_anchor_terms or []}
+    stopwords = {
+        "about", "after", "again", "also", "being", "because", "before",
+        "between", "could", "does", "each", "every", "from", "have", "into",
+        "many", "more", "most", "need", "needs", "only", "same", "should",
+        "simply", "some", "than", "that", "their", "them", "there", "these",
+        "they", "this", "those", "time", "when", "where", "while", "with",
+        "without", "would", "current", "modern", "today", "now",
+    }
+    risky_new_words = {
+        "method", "methods", "practice", "practicing", "scaffolding",
+        "focus", "focusing", "grasp", "grasps", "accurate", "cuts",
+        "encourage", "encourages", "interest", "learning", "benefit",
+        "benefits", "support", "supports", "prove", "proves", "show",
+        "shows", "outcome", "outcomes", "result", "results",
+    }
+    new_words: List[str] = []
+    for word in re.findall(r"\b[A-Za-z][A-Za-z-]{3,}\b", candidate_sentence):
+        lower = word.lower()
+        if lower in stopwords:
+            continue
+        if lower in anchor_set:
+            continue
+        if lower in allowed_text:
+            continue
+        if lower in risky_new_words or len(lower) >= 7:
+            if lower not in new_words:
+                new_words.append(lower)
+        if len(new_words) >= limit:
+            break
+    return new_words
 
 
 def _concrete_observation_count(text: str) -> int:
