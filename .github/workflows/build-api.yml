@@ -54,32 +54,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trigger Koyeb redeploy via GHCR image
+      - name: Deploy to Koyeb via GHCR image
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
-          IMAGE_TAG: ${{ steps.meta.outputs.tags }}
         run: |
           echo "Deploying ghcr.io/kianwoon/draftproof-api:latest to Koyeb..."
-          SVC=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
-            "https://app.koyeb.com/v1/services/${SERVICE_ID}")
-          DEPLOY_ID=$(echo "$SVC" | jq -r '.service.latest_deployment_id')
-
-          DEPLOY=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
-            "https://app.koyeb.com/v1/deployments/${DEPLOY_ID}")
-          DEFINITION=$(echo "$DEPLOY" | jq '.deployment.definition')
-
-          # Replace git source with GHCR image
-          UPDATED=$(echo "$DEFINITION" | jq '
-            .image = "ghcr.io/kianwoon/draftproof-api:latest" |
-            .image_registry_secret = "e3888d3f" |
-            del(.git)
-          ')
-
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
             -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"definition\": $UPDATED}")
+            -d '{"definition":{"docker":{"image":"ghcr.io/kianwoon/draftproof-api:latest","image_registry_secret":"e3888d3f"}}}')
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
