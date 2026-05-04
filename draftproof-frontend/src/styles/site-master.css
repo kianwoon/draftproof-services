@@ -1559,6 +1559,11 @@ th {
   transition: width .25s ease;
 }
 
+.report-rewrite-progress {
+  margin: -1rem 0 1.5rem;
+  max-width: 520px;
+}
+
 .upload-zone {
   padding: 2rem;
   border: 2px dashed var(--line);

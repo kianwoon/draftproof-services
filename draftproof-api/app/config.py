@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -54,6 +55,8 @@ TOKEN_PACKS = {
 
 # Frontend URL for redirects
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+_frontend_origin = urlparse(FRONTEND_URL.split(",")[0].strip())
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in {"1", "true", "yes"} if os.getenv("COOKIE_SECURE") else _frontend_origin.scheme == "https"
 
 # Redis / Celery
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

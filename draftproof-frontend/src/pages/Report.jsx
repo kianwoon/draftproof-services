@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getReport, createRewrite } from '../api/draftproofApi';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { getReport, createRewrite, getRewriteStatus } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 
 const TIER_CONFIG = {
@@ -56,19 +56,54 @@ function findingEvidenceSummary(issue) {
   return '';
 }
 
+function formatRewriteStatus(status) {
+  if (status === 'pending') return 'Queued';
+  if (status === 'processing') return 'Rewriting AI sections';
+  if (status === 'retrying') return 'Retrying rewrite';
+  if (status === 'completed') return 'Rewrite complete';
+  if (status === 'failed') return 'Rewrite failed';
+  return 'Rewriting AI sections';
+}
+
 export default function Report() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedIssue, setExpandedIssue] = useState(null);
+  const [rewriteJob, setRewriteJob] = useState(null);
   const [rewriteLoading, setRewriteLoading] = useState(false);
+  const [rewriteError, setRewriteError] = useState(null);
+  const rewritePollRef = useRef(null);
+
+  const syncRewriteJob = useCallback((job) => {
+    setRewriteJob(job);
+    if (job?.status === 'completed') {
+      setReport((prev) => prev ? { ...prev, rewrite: job } : prev);
+    }
+  }, []);
+
+  const pollRewriteStatus = useCallback(async (rewriteId) => {
+    try {
+      const { data } = await getRewriteStatus(rewriteId);
+      syncRewriteJob(data);
+      if (data.status === 'failed') {
+        setRewriteError(data.error || 'Rewrite failed');
+      }
+      return data;
+    } catch (err) {
+      setRewriteError(err.response?.data?.detail || 'Failed to check rewrite status');
+      return null;
+    }
+  }, [syncRewriteJob]);
 
   useEffect(() => {
     const ac = new AbortController();
     getReport(id, { signal: ac.signal })
-      .then(({ data }) => setReport(data))
+      .then(({ data }) => {
+        setReport(data);
+        if (data.rewrite) setRewriteJob(data.rewrite);
+      })
       .catch((err) => {
         if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
         setError(err.response?.data?.detail || 'Failed to load report');
@@ -76,6 +111,28 @@ export default function Report() {
       .finally(() => setLoading(false));
     return () => ac.abort();
   }, [id]);
+
+  useEffect(() => {
+    if (rewritePollRef.current) {
+      clearInterval(rewritePollRef.current);
+      rewritePollRef.current = null;
+    }
+
+    if (!rewriteJob?.id || !['pending', 'processing', 'retrying'].includes(rewriteJob.status)) {
+      return undefined;
+    }
+
+    rewritePollRef.current = setInterval(() => {
+      pollRewriteStatus(rewriteJob.id);
+    }, 5000);
+
+    return () => {
+      if (rewritePollRef.current) {
+        clearInterval(rewritePollRef.current);
+        rewritePollRef.current = null;
+      }
+    };
+  }, [rewriteJob?.id, rewriteJob?.status, pollRewriteStatus]);
 
   if (loading) return (
     <main className="dash-shell">
@@ -113,21 +170,41 @@ export default function Report() {
     i.signal_category === 'authorship_risk' ||
     i.actionability === 'auto_rewrite_candidate'
   );
-  const hasCompletedRewrite = report.rewrite?.status === 'completed';
-  const canStartRewrite = hasAIFindings && !hasCompletedRewrite;
+  const currentRewrite = rewriteJob || report.rewrite;
+  const rewriteInProgress = ['pending', 'processing', 'retrying'].includes(currentRewrite?.status);
+  const hasCompletedRewrite = currentRewrite?.status === 'completed';
+  const canStartRewrite = hasAIFindings && !hasCompletedRewrite && !rewriteInProgress;
+  const rewriteProgress = currentRewrite
+    ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : 0)))
+    : 0;
+  const rewriteProgressMessage = currentRewrite?.progress_message || formatRewriteStatus(currentRewrite?.status);
 
   const handleRewrite = async () => {
     setRewriteLoading(true);
+    setRewriteError(null);
+    setRewriteJob({
+      id: null,
+      scan_id: id,
+      status: 'pending',
+      progress_percent: 3,
+      progress_message: 'Queuing rewrite',
+    });
     try {
       const { data } = await createRewrite(id);
-      navigate(`/report/${id}/rewrite?rid=${data.id}`);
+      syncRewriteJob(data);
+      await pollRewriteStatus(data.id);
     } catch (err) {
-      if (err.response?.status === 409) {
-        // Rewrite already in progress — go to the rewrite page to poll
-        navigate(`/report/${id}/rewrite`);
+      const msg = err.response?.data?.detail || 'Failed to start rewrite';
+      if (err.response?.status === 402) {
+        setRewriteJob(null);
+        setRewriteError(msg);
       } else {
-        const msg = err.response?.data?.detail || 'Failed to start rewrite';
-        alert(msg);
+        setRewriteJob((prev) => prev ? {
+          ...prev,
+          status: 'failed',
+          progress_message: 'Rewrite failed',
+        } : null);
+        setRewriteError(msg);
       }
     } finally {
       setRewriteLoading(false);
@@ -178,7 +255,7 @@ export default function Report() {
           )}
           {hasCompletedRewrite && (
             <Link
-              to={`/report/${id}/rewrite?rid=${report.rewrite.id}`}
+              to={`/report/${id}/rewrite?rid=${currentRewrite.id}`}
               style={{
                 display: 'inline-block', padding: '10px 20px', borderRadius: '8px',
                 background: '#059669', color: '#fff', textDecoration: 'none',
@@ -189,6 +266,28 @@ export default function Report() {
             </Link>
           )}
         </div>
+        {(rewriteInProgress || rewriteLoading || rewriteError) && (
+          <div className="report-rewrite-progress">
+            <div className="scan-progress" role="status" aria-live="polite">
+              <div className="scan-progress-meta">
+                <span>{rewriteError || rewriteProgressMessage || 'Rewriting AI sections'}</span>
+                <span>{rewriteProgress}%</span>
+              </div>
+              <div
+                className="scan-progress-track"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={rewriteProgress}
+              >
+                <div
+                  className="scan-progress-fill"
+                  style={{ width: `${rewriteProgress}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Summary bar */}
         <div className="report-summary-bar">

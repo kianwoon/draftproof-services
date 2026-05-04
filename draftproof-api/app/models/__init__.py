@@ -78,6 +78,8 @@ class RewriteOut(BaseModel):
     scan_id: str
     status: str
     error: Optional[str] = None
+    progress_percent: int = 0
+    progress_message: Optional[str] = None
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 

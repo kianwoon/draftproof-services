@@ -60,6 +60,8 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
                 "scan_id": str(existing_job.scan_id),
                 "status": existing_job.status,
                 "error": existing_job.error,
+                "progress_percent": existing_job.progress_percent,
+                "progress_message": existing_job.progress_message,
                 "created_at": existing_job.created_at.isoformat() if existing_job.created_at else None,
                 "completed_at": existing_job.completed_at.isoformat() if existing_job.completed_at else None,
             }
@@ -80,6 +82,8 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
             scan_id=scan_uuid,
             user_id=uid,
             status="pending",
+            progress_percent=0,
+            progress_message="Queued",
         )
         session.add(rewrite_job)
 
@@ -98,7 +102,13 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
     from app.services.celery_client import run_rewrite
     run_rewrite.delay(str(job_id), scan_id)
 
-    return {"id": str(job_id), "scan_id": scan_id, "status": "pending"}
+    return {
+        "id": str(job_id),
+        "scan_id": scan_id,
+        "status": "pending",
+        "progress_percent": 0,
+        "progress_message": "Queued",
+    }
 
 
 async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | None:
@@ -117,6 +127,7 @@ async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | Non
             if age > _STALE_THRESHOLD:
                 job.status = "failed"
                 job.error = "Rewrite timed out"
+                job.progress_message = "Rewrite timed out"
                 await session.commit()
                 await session.refresh(job)
 
@@ -209,6 +220,8 @@ def _rewrite_to_dict(job: RewriteJob) -> dict:
         "scan_id": str(job.scan_id),
         "status": job.status,
         "error": job.error,
+        "progress_percent": job.progress_percent,
+        "progress_message": job.progress_message,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
     }

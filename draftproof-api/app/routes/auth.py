@@ -10,7 +10,7 @@ from jose import jwt
 
 from app.config import (
     SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_HOURS,
-    ALLOWED_EMAIL_DOMAINS, FRONTEND_URL,
+    ALLOWED_EMAIL_DOMAINS, COOKIE_SECURE, FRONTEND_URL,
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
     MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_TENANT,
 )
@@ -41,14 +41,15 @@ oauth.register(
 
 def _build_callback_url(request: Request, callback_name: str) -> str:
     url = str(request.url_for(callback_name))
-    if url.startswith("http://"):
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    is_local = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    if url.startswith("http://") and not is_local:
         url = "https://" + url[7:]
     # If the resolved host doesn't look like our public domain,
     # rebuild using FRONTEND_URL's host (handles proxy/internal hosts).
-    from urllib.parse import urlparse
     primary_origin = urlparse(FRONTEND_URL.split(",")[0].strip())
-    parsed = urlparse(url)
-    if primary_origin.hostname and parsed.hostname != primary_origin.hostname:
+    if primary_origin.hostname and parsed.hostname != primary_origin.hostname and not is_local:
         url = url.replace(f"://{parsed.hostname}", f"://{primary_origin.hostname}", 1)
     return url
 
@@ -200,7 +201,7 @@ async def auth_google_callback(request: Request, db: AsyncSession = Depends(get_
         response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
         response.set_cookie(
             "token", jwt_token,
-            httponly=True, secure=True, samesite="lax",
+            httponly=True, secure=COOKIE_SECURE, samesite="lax",
             max_age=JWT_EXPIRATION_HOURS * 3600,
             path="/",
         )
@@ -265,7 +266,7 @@ async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(g
         response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
         response.set_cookie(
             "token", jwt_token,
-            httponly=True, secure=True, samesite="lax",
+            httponly=True, secure=COOKIE_SECURE, samesite="lax",
             max_age=JWT_EXPIRATION_HOURS * 3600,
             path="/",
         )
@@ -318,7 +319,7 @@ async def logout():
     # Explicitly expire the cookie by setting max_age=0 with empty value
     response.set_cookie(
         "token", "",
-        httponly=True, secure=True, samesite="lax",
+        httponly=True, secure=COOKIE_SECURE, samesite="lax",
         max_age=0, path="/",
     )
     # Also try delete_cookie for good measure

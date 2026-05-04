@@ -442,6 +442,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             }
 
         # 1. Fetch report.json from R2
+        update_rewrite_status(
+            rewrite_id,
+            "processing",
+            progress_percent=10,
+            progress_message="Fetching original report",
+        )
         scan_job = get_scan_job(scan_id)
         report_json = None
         try:
@@ -452,11 +458,22 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             )
             report_json = json.loads(resp["Body"].read())
         except Exception:
-            update_rewrite_status(rewrite_id, "failed", error="Original report not found in R2")
+            update_rewrite_status(
+                rewrite_id,
+                "failed",
+                error="Original report not found in R2",
+                progress_message="Original report not found",
+            )
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "report not found"}
 
         # 2. Filter findings: only rephrase-fixable ones
+        update_rewrite_status(
+            rewrite_id,
+            "processing",
+            progress_percent=25,
+            progress_message="Selecting AI sections",
+        )
         # findings is a dict: {critical: [...], high: [...], medium: [...], low: [...]}
         # Include: auto_fixable/auto_rewrite_candidate + review_only findings whose
         # title maps to a rephrasable type in the planner's FINDING_ROUTING table.
@@ -479,7 +496,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             )
         ]
         if not rephrasable_findings:
-            update_rewrite_status(rewrite_id, "failed", error="No rephrasable findings to rewrite")
+            update_rewrite_status(
+                rewrite_id,
+                "failed",
+                error="No rephrasable findings to rewrite",
+                progress_message="No rewriteable AI sections found",
+            )
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "no rephrasable findings"}
 
@@ -489,11 +511,22 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
 
         llm_api_key = settings.LLM_API_KEY or settings.OPENROUTER_API_KEY
         if not llm_api_key:
-            update_rewrite_status(rewrite_id, "failed", error="LLM_API_KEY not configured — rewrite requires an LLM API key")
+            update_rewrite_status(
+                rewrite_id,
+                "failed",
+                error="LLM_API_KEY not configured — rewrite requires an LLM API key",
+                progress_message="Rewrite service is not configured",
+            )
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "missing LLM API key"}
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            update_rewrite_status(
+                rewrite_id,
+                "processing",
+                progress_percent=40,
+                progress_message="Rewriting AI sections",
+            )
             result = run_rewrite_pipeline(
                 detect_json=report_json,
                 output_dir=tmpdir,
@@ -507,11 +540,22 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             )
 
             if result["status"] in ("skipped", "clean"):
-                update_rewrite_status(rewrite_id, "failed", error=result.get("message", "Rewrite not needed"))
+                update_rewrite_status(
+                    rewrite_id,
+                    "failed",
+                    error=result.get("message", "Rewrite not needed"),
+                    progress_message="Rewrite not needed",
+                )
                 release_rewrite_credits(rewrite_id)
                 return {"status": "skipped"}
 
             # Read files WHILE tmpdir still exists (before with block exits)
+            update_rewrite_status(
+                rewrite_id,
+                "processing",
+                progress_percent=80,
+                progress_message="Preparing rewrite report",
+            )
             rw = result.get("result")
             md_path = result.get("md_path")
             pdf_path = result.get("pdf_path")
@@ -561,6 +605,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 pipeline_result=result,
                 rewrite_json=rewrite_json,
             )
+            update_rewrite_status(
+                rewrite_id,
+                "processing",
+                progress_percent=92,
+                progress_message="Uploading rewrite results",
+            )
             upload_rewrite_files(scan_id, md_text, pdf_bytes, rewrite_json, rewritten_text, debug_log)
 
         # 5. Capture credits
@@ -568,7 +618,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         if user_id:
             capture_rewrite_credits(str(user_id), rewrite_id)
 
-        update_rewrite_status(rewrite_id, "completed")
+        update_rewrite_status(
+            rewrite_id,
+            "completed",
+            progress_percent=100,
+            progress_message="Rewrite complete",
+        )
         return {"status": "completed"}
 
     except SoftTimeLimitExceeded:
@@ -577,15 +632,26 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             rewrite_id,
             "failed",
             error=f"Rewrite timed out ({timeout_minutes} min limit)",
+            progress_message="Rewrite timed out",
         )
         release_rewrite_credits(rewrite_id)
         return {"status": "failed", "error": "timeout"}
     except Exception as e:
         if self.request.retries < self.max_retries:
-            update_rewrite_status(rewrite_id, "retrying", error=str(e))
+            update_rewrite_status(
+                rewrite_id,
+                "retrying",
+                error=str(e),
+                progress_message="Retrying rewrite",
+            )
             raise self.retry(exc=e)
         else:
-            update_rewrite_status(rewrite_id, "failed", error=str(e))
+            update_rewrite_status(
+                rewrite_id,
+                "failed",
+                error=str(e),
+                progress_message="Rewrite failed",
+            )
             release_rewrite_credits(rewrite_id)
             raise
             update_rewrite_status(rewrite_id, "failed", error=str(e))

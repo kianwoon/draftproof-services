@@ -178,6 +178,8 @@ class RewriteJob(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(Text, nullable=False, default="pending", index=True)
     error = Column(Text)
+    progress_percent = Column(Integer, nullable=False, default=0)
+    progress_message = Column(Text)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime(timezone=True))
 

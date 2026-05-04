@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse
 from app.routes import documents, scans, reports, rewrites, auth, payments
 from app.models.db import init_db, async_session
-from app.config import SECRET_KEY, FRONTEND_URL
+from app.config import COOKIE_SECURE, SECRET_KEY, FRONTEND_URL
 from sqlalchemy import text as sa_text
 
 logger = logging.getLogger("draftproof")
@@ -80,8 +80,8 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
     session_cookie="session",
-    same_site="none",
-    https_only=True,
+    same_site="lax",
+    https_only=COOKIE_SECURE,
 )
 app.add_middleware(
     CORSMiddleware,

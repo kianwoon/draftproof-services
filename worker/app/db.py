@@ -139,7 +139,13 @@ def claim_rewrite_job(job_id: str) -> Optional[dict]:
         return cur.fetchone()
 
 
-def update_rewrite_status(job_id: str, status: str, error: str = None):
+def update_rewrite_status(
+    job_id: str,
+    status: str,
+    error: str = None,
+    progress_percent: int = None,
+    progress_message: str = None,
+):
     sets = ["status = %s"]
     vals = [status]
     if status == "completed":
@@ -147,6 +153,12 @@ def update_rewrite_status(job_id: str, status: str, error: str = None):
     if error:
         sets.append("error = %s")
         vals.append(error)
+    if progress_percent is not None:
+        sets.append("progress_percent = %s")
+        vals.append(max(0, min(100, int(progress_percent))))
+    if progress_message is not None:
+        sets.append("progress_message = %s")
+        vals.append(progress_message)
     with get_conn() as conn:
         conn.cursor().execute(
             f"UPDATE rewrite_jobs SET {', '.join(sets)} WHERE id = %s",

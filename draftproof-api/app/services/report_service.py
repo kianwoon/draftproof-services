@@ -154,19 +154,22 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
         # Prefer AI badge tier over findings-based tier (matches PDF)
         display_tier = ai_badge_tier or job.tier
 
-        # Check for completed rewrite
+        # Check for the latest rewrite so the report page can show active progress
         rewrite_info = None
         rw_result = await session.execute(
             select(RewriteJob).where(
                 RewriteJob.scan_id == job.id,
-                RewriteJob.status == "completed",
-            ).order_by(RewriteJob.completed_at.desc()).limit(1)
+            ).order_by(RewriteJob.created_at.desc()).limit(1)
         )
         rw_job = rw_result.scalar_one_or_none()
         if rw_job:
             rewrite_info = {
                 "id": str(rw_job.id),
                 "status": rw_job.status,
+                "error": rw_job.error,
+                "progress_percent": rw_job.progress_percent,
+                "progress_message": rw_job.progress_message,
+                "created_at": rw_job.created_at.isoformat() if rw_job.created_at else None,
                 "completed_at": rw_job.completed_at.isoformat() if rw_job.completed_at else None,
             }
 
