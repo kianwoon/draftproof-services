@@ -862,8 +862,8 @@ def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
     if _requires_medium_exit(finding):
         return (
             f"{base}\n"
-            "The current target is a MEDIUM predictability finding. A small score reduction is not enough: "
-            f"the replacement must aim to fall below {MEDIUM_PREDICTABILITY_CEILING:.2f} and leave the medium band. "
+            "The current target is a MEDIUM predictability finding. Aim to fall below "
+            f"{MEDIUM_PREDICTABILITY_CEILING:.2f}; if that is not possible, still produce the strongest safe measurable reduction. "
             "Avoid generic/predictable frames such as 'This is...', 'Because of this...', "
             "'The goal should be...', 'modern world', 'not only...', and 'people who can'. "
             "Use the Signal instruction, Domain anchors, and Allowed concrete additions above. "
@@ -1141,7 +1141,8 @@ def _paragraph_coherence_reject_reason(
     anchors = domain_anchor_terms or []
     orig_coverage = _term_coverage(original_sentence, anchors)
     cand_coverage = _term_coverage(candidate_sentence, anchors)
-    if orig_coverage >= 2 and cand_coverage < max(1, orig_coverage - 1):
+    min_anchor_coverage = max(1, int((orig_coverage * 0.35) + 0.999))
+    if orig_coverage >= 2 and cand_coverage < min_anchor_coverage:
         return f"domain_anchor_loss {orig_coverage}->{cand_coverage}"
 
     abstract_patterns = [
@@ -1382,6 +1383,8 @@ def _candidate_quality_score(
 
 
 MEDIUM_PREDICTABILITY_CEILING = 0.45
+MIN_TARGET_PREDICTABILITY_DELTA = 0.025
+MIN_TARGET_PREDICTABILITY_RELATIVE_DELTA = 0.06
 
 
 def _requires_medium_exit(finding: Finding) -> bool:
@@ -1393,6 +1396,46 @@ def _requires_medium_exit(finding: Finding) -> bool:
             or "topk" in finding.finding_type
             or "surprisal" in finding.finding_type
         )
+    )
+
+
+def _target_predictability_acceptance(
+    original_pred: Dict[str, Any],
+    candidate_pred: Dict[str, Any],
+) -> tuple[bool, str, float]:
+    """Accept clear mitigation, not only full band exit.
+
+    A final full-scan gate still decides whether the edit is kept globally. This
+    local gate should reject regressions and tiny/no-op edits, but it should not
+    throw away a measurable target reduction just because one sentence remains
+    slightly inside the medium band.
+    """
+    orig_risk = original_pred.get("risk")
+    new_risk = candidate_pred.get("risk")
+    new_label = str(candidate_pred.get("label") or "")
+    if orig_risk is None or new_risk is None:
+        return False, f"target_predictability_unavailable {new_label or '?'}:{new_risk}", 0.0
+    try:
+        orig_val = float(orig_risk)
+        new_val = float(new_risk)
+    except (TypeError, ValueError):
+        return False, f"target_predictability_unavailable {new_label or '?'}:{new_risk}", 0.0
+    delta = orig_val - new_val
+    relative_delta = delta / max(orig_val, 0.001)
+    if new_val >= orig_val:
+        return False, f"target_not_improved {orig_val:.4f}->{new_val:.4f}", delta
+    if new_val < MEDIUM_PREDICTABILITY_CEILING and new_label not in {"medium", "high"}:
+        return True, "", delta
+    if (
+        new_label != "high"
+        and delta >= MIN_TARGET_PREDICTABILITY_DELTA
+        and relative_delta >= MIN_TARGET_PREDICTABILITY_RELATIVE_DELTA
+    ):
+        return True, "target_reduced_but_still_medium", delta
+    return (
+        False,
+        f"target_reduction_too_small {new_label or '?'}:{new_val:.4f} delta:{delta:.4f}",
+        delta,
     )
 
 
@@ -2071,10 +2114,11 @@ def run_rewrite(
         )
         auto_count = len(plan.auto_fixable)
         if evidence_count >= max(1, auto_count // 2):
-            effective_auto_target_limit = min(effective_auto_target_limit, 1)
+            guided_cap = max(1, min(3, auto_count))
+            effective_auto_target_limit = min(effective_auto_target_limit, guided_cap)
             guided_throttle_reason = (
                 "guided_revision_primary: evidence/source drivers dominate; "
-                "automatic rewrite limited to one sample"
+                f"automatic rewrite limited to {effective_auto_target_limit} high-signal target(s)"
             )
     auto_targets = plan.auto_fixable[:effective_auto_target_limit]
     capped_auto_targets = max(0, len(plan.auto_fixable) - len(auto_targets))
@@ -2544,21 +2588,19 @@ def run_rewrite(
 
                 target_orig_pred = {"risk": None, "label": ""}
                 target_new_pred = {"risk": None, "label": ""}
+                target_acceptance_note = ""
                 if _requires_medium_exit(f):
                     target_scanner = predictability_guard._get_scanner()
                     target_orig_pred = _sentence_predictability(target_scanner, original_sentence)
                     target_new_pred = _sentence_predictability(target_scanner, candidate_sentence)
                     target_new_risk = target_new_pred.get("risk")
                     target_new_label = target_new_pred.get("label")
-                    if (
-                        target_new_risk is None
-                        or target_new_risk >= MEDIUM_PREDICTABILITY_CEILING
-                        or target_new_label in {"medium", "high"}
-                    ):
-                        candidate_rejects.append(
-                            "target_still_medium "
-                            f"{target_new_label or '?'}:{target_new_risk}"
-                        )
+                    target_ok, target_reason, _target_delta = _target_predictability_acceptance(
+                        target_orig_pred,
+                        target_new_pred,
+                    )
+                    if not target_ok:
+                        candidate_rejects.append(target_reason)
                         rejected_candidates.append({
                             "candidate": cand_idx,
                             "reason": "; ".join(candidate_rejects),
@@ -2573,6 +2615,7 @@ def run_rewrite(
                             candidate_drift,
                         )
                         continue
+                    target_acceptance_note = target_reason
 
                 component_ok, component_reason = _component_regression_check(current_text, candidate_text)
                 if not component_ok:
@@ -2664,6 +2707,7 @@ def run_rewrite(
                     "target_orig_label": target_orig_pred.get("label"),
                     "target_new_risk": target_new_pred.get("risk"),
                     "target_new_label": target_new_pred.get("label"),
+                    "target_acceptance_note": target_acceptance_note,
                 }
                 if best_candidate_info is None or score > best_candidate_info["score"]:
                     best_candidate_info = info

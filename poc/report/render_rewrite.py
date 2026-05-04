@@ -454,6 +454,32 @@ def render_rewrite_report(
                 )
             lines.append("")
 
+        risk_actions = mitigation.get("risk_mitigation_actions") or []
+        if risk_actions:
+            lines.append("## Risk Mitigation Actions")
+            lines.append("")
+            lines.append(
+                "Use these actions when automatic rewrite cannot safely create the missing evidence or context. They are written to reduce the next scan's strongest score drivers without inventing facts."
+            )
+            lines.append("")
+            lines.append("| Priority | Action | Score Driver | User Input Needed | Safe Edit Pattern |")
+            lines.append("|----------|--------|--------------|-------------------|-------------------|")
+            for item in risk_actions[:6]:
+                priority = str(item.get("priority", "")).title()
+                title = str(item.get("title", "")).replace("|", "·")
+                component = str(item.get("component", "")).replace("_risk", "").replace("_", " ").title()
+                current = item.get("current_score", 0)
+                target = item.get("target_score", 0)
+                needed = str(item.get("user_input_needed", "")).replace("|", "·")
+                pattern = _highlight_placeholders(
+                    str(item.get("safe_edit_pattern", "")).replace("|", "·")
+                )
+                lines.append(
+                    f"| {priority} | {title} | {component} `{float(current):.1f}% -> {float(target):.1f}%` | "
+                    f"{needed} | {pattern} |"
+                )
+            lines.append("")
+
         checklist = _guided_revision_checklist(mitigation)
         if final_output_preserved and checklist:
             lines.append("## Guided Revision Checklist")

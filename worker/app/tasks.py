@@ -259,6 +259,18 @@ def _guided_revision_debug_preview(mitigation: dict, limit: int = 5) -> dict:
     return {
         "primary_mode": mitigation.get("primary_mode"),
         "top_actions": actions,
+        "risk_mitigation_actions": [
+            {
+                "component": _truncate_debug_value(item.get("component") or "", 120),
+                "action_type": _truncate_debug_value(item.get("action_type") or "", 120),
+                "title": _truncate_debug_value(item.get("title") or "", 160),
+                "current_score": item.get("current_score"),
+                "target_score": item.get("target_score"),
+                "safe_edit_pattern": _truncate_debug_value(item.get("safe_edit_pattern") or "", 260),
+            }
+            for item in (mitigation.get("risk_mitigation_actions") or [])[:limit]
+            if isinstance(item, dict)
+        ],
         "reference_patterns": patterns,
     }
 
@@ -375,6 +387,7 @@ def _build_rewrite_debug_log(
             "mitigation_primary_mode": mitigation.get("primary_mode"),
             "component_drivers": mitigation.get("component_drivers"),
             "score_mitigation_targets": mitigation.get("score_mitigation_targets"),
+            "risk_mitigation_actions": mitigation.get("risk_mitigation_actions"),
             "guided_revision": _guided_revision_debug_preview(mitigation),
         },
         "loop_history": summary.get("detect_loop_history") or summary.get("loop_history"),

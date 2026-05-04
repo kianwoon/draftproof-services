@@ -263,6 +263,190 @@ def _score_mitigation_targets(component_drivers: List[Dict[str, Any]]) -> List[D
     )
 
 
+def _risk_mitigation_action_rule(component: str, bucket: str) -> Dict[str, str]:
+    """Concrete revision action for a component score driver.
+
+    These actions are intentionally conservative. They tell the user how to
+    move a score driver without asking the model to invent citations, facts,
+    examples, or lived experience.
+    """
+    rules = {
+        "unsupported_claim_risk": {
+            "action_type": "soften_or_support_claim",
+            "title": "Support or soften unsupported claims",
+            "user_input_needed": "Citation, source detail, classroom/example evidence, or approval to reduce certainty.",
+            "safe_edit_pattern": (
+                "Change a confident claim into either '[source/example] indicates [limited claim]' "
+                "or 'This may suggest [careful conclusion]' when evidence is limited."
+            ),
+            "why_it_reduces_score": (
+                "The scan is reacting to confident claims that are not visibly supported. "
+                "Adding support or lowering certainty targets that driver directly."
+            ),
+        },
+        "broad_claim_risk": {
+            "action_type": "narrow_claim_scope",
+            "title": "Narrow broad claims",
+            "user_input_needed": "The exact learner group, class, unit, method, observation, or condition.",
+            "safe_edit_pattern": (
+                "Replace '[topic] improves outcomes' with 'For [specific context], [method] may support "
+                "[specific outcome] when [condition/evidence] is present.'"
+            ),
+            "why_it_reduces_score": (
+                "Broad claims look generic because they could fit many documents. "
+                "Scope limits make the claim more grounded and less template-like."
+            ),
+        },
+        "generic_assertion_risk": {
+            "action_type": "make_assertion_specific",
+            "title": "Make generic assertions specific",
+            "user_input_needed": "A concrete detail already true for the draft: method, task, setting, source, or observation.",
+            "safe_edit_pattern": (
+                "Replace a general sentence with 'In [specific setting/task], [specific detail] shows [limited point].'"
+            ),
+            "why_it_reduces_score": (
+                "The driver rises when claims sound reusable across topics. "
+                "Specific context and limited conclusions reduce that pattern."
+            ),
+        },
+        "source_grounding_risk": {
+            "action_type": "connect_source_to_claim",
+            "title": "Connect sources directly to claims",
+            "user_input_needed": "The source/author name and the exact idea or evidence it supports.",
+            "safe_edit_pattern": (
+                "Use 'According to [source], [source idea]. This supports [claim] because [author explanation].'"
+            ),
+            "why_it_reduces_score": (
+                "The scan needs to see the source-to-claim bridge. "
+                "Attribution plus explanation is stronger than adding a citation alone."
+            ),
+        },
+        "citation_weakness_risk": {
+            "action_type": "repair_citation_linkage",
+            "title": "Repair citation linkage",
+            "user_input_needed": "Missing citation, author/source name, or the exact cited evidence.",
+            "safe_edit_pattern": (
+                "Attach the citation to the claim it supports, then add one clause explaining why that evidence matters."
+            ),
+            "why_it_reduces_score": (
+                "Weak citation linkage leaves claims floating. "
+                "Clear attribution and explanation reduce source-grounding weakness."
+            ),
+        },
+        "lived_detail_risk": {
+            "action_type": "add_lived_or_process_detail",
+            "title": "Add real process detail",
+            "user_input_needed": "A real class, project, client, lesson, workflow, observation, or constraint.",
+            "safe_edit_pattern": (
+                "Add 'During [specific activity/session], I observed [specific action/result], which matters because [point].'"
+            ),
+            "why_it_reduces_score": (
+                "Real process detail makes the writing less generic without changing the factual basis."
+            ),
+        },
+        "paragraph_uniformity_risk": {
+            "action_type": "vary_paragraph_roles",
+            "title": "Vary paragraph roles",
+            "user_input_needed": "Author decision on which paragraph should start from evidence, problem, reflection, or conclusion.",
+            "safe_edit_pattern": (
+                "Revise one paragraph to open with evidence or a concrete situation instead of another claim-summary pattern."
+            ),
+            "why_it_reduces_score": (
+                "Uniform paragraph shape can read as generated. "
+                "Different paragraph roles reduce structural regularity."
+            ),
+        },
+        "signpost_paragraph_risk": {
+            "action_type": "replace_formulaic_signpost",
+            "title": "Replace formulaic signposting",
+            "user_input_needed": "The concrete evidence, situation, or problem the paragraph is about.",
+            "safe_edit_pattern": (
+                "Start the paragraph with '[specific evidence/situation]' and then explain the paragraph point."
+            ),
+            "why_it_reduces_score": (
+                "Formulaic openings are easy scanner targets. "
+                "A concrete opening changes the paragraph route."
+            ),
+        },
+        "burstiness_risk": {
+            "action_type": "vary_sentence_rhythm",
+            "title": "Vary sentence rhythm",
+            "user_input_needed": "Author choice on which point deserves a short emphasis sentence.",
+            "safe_edit_pattern": (
+                "Use one short sentence for the main point, then follow with a longer sentence that adds context or evidence."
+            ),
+            "why_it_reduces_score": (
+                "Similar sentence lengths and shapes increase rhythm regularity. "
+                "Intentional variation reduces that signal."
+            ),
+        },
+        "topk_pattern": {
+            "action_type": "retry_after_evidence_work",
+            "title": "Retry sentence rewrite after stronger grounding",
+            "user_input_needed": "No extra input if evidence/source drivers are already reduced.",
+            "safe_edit_pattern": (
+                "Start from the paragraph's concrete context first, then state the point in a narrower second clause."
+            ),
+            "why_it_reduces_score": (
+                "Predictability rewrite is more effective after broad unsupported claims are narrowed."
+            ),
+        },
+        "predictability": {
+            "action_type": "retry_after_evidence_work",
+            "title": "Retry sentence rewrite after stronger grounding",
+            "user_input_needed": "No extra input if evidence/source drivers are already reduced.",
+            "safe_edit_pattern": (
+                "Start from the paragraph's concrete context first, then state the point in a narrower second clause."
+            ),
+            "why_it_reduces_score": (
+                "Predictability rewrite is more effective after broad unsupported claims are narrowed."
+            ),
+        },
+    }
+    default = {
+        "action_type": "review_score_driver",
+        "title": "Review score driver",
+        "user_input_needed": "Author judgment about the highlighted issue.",
+        "safe_edit_pattern": "Revise only with details that are already true for the draft.",
+        "why_it_reduces_score": "This component is above threshold and needs direct manual attention.",
+    }
+    if bucket == "auto_rewrite":
+        default = {
+            "action_type": "retry_detector_gated_sentence_rewrite",
+            "title": "Retry detector-gated sentence rewrite",
+            "user_input_needed": "No new facts; use existing paragraph context only.",
+            "safe_edit_pattern": "Change sentence route, not just synonyms, then keep only non-regressing output.",
+            "why_it_reduces_score": "This is a local wording signal that the rewrite engine can test with a final scan gate.",
+        }
+    return rules.get(component, default)
+
+
+def _risk_mitigation_actions(component_drivers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    targets = _score_mitigation_targets(component_drivers)
+    drivers_by_component = {str(driver.get("component") or ""): driver for driver in component_drivers}
+    actions: List[Dict[str, Any]] = []
+    for target in targets:
+        component = str(target.get("component") or "")
+        bucket = str(target.get("bucket") or "review_only")
+        rule = _risk_mitigation_action_rule(component, bucket)
+        driver = drivers_by_component.get(component, {})
+        actions.append({
+            "component": component,
+            "bucket": bucket,
+            "priority": target.get("priority"),
+            "current_score": target.get("current_score"),
+            "target_score": target.get("target_score"),
+            "reduction_needed": target.get("reduction_needed"),
+            "action_type": rule["action_type"],
+            "title": rule["title"],
+            "user_input_needed": rule["user_input_needed"],
+            "safe_edit_pattern": rule["safe_edit_pattern"],
+            "why_it_reduces_score": rule["why_it_reduces_score"],
+            "scanner_mitigation": driver.get("mitigation") or target.get("action") or "",
+        })
+    return actions
+
+
 def _reference_pattern(component: str) -> Dict[str, str] | None:
     patterns = {
         "generic_assertion_risk": {
@@ -487,5 +671,6 @@ def build_mitigation_plan(
         "buckets": buckets,
         "component_drivers": component_drivers,
         "score_mitigation_targets": _score_mitigation_targets(component_drivers),
+        "risk_mitigation_actions": _risk_mitigation_actions(component_drivers),
         "reference_patterns": _reference_patterns(component_drivers, buckets),
     }

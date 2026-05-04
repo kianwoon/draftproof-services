@@ -33,6 +33,7 @@ from rewrite.rewrite import (
     _candidate_task_instruction,
     _candidate_style_reject_reason,
     _paragraph_coherence_reject_reason,
+    _target_predictability_acceptance,
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
@@ -579,6 +580,11 @@ driver_plan = build_mitigation_plan(
 assert_test(driver_plan["counts"]["needs_source_or_example"] == 2, "component drivers produce evidence guidance counts")
 assert_test(driver_plan["primary_mode"] == "guided_revision", "component drivers set guided revision mode")
 assert_test(driver_plan["score_mitigation_targets"][0]["component"] == "unsupported_claim_risk", "score mitigation targets prioritize largest evidence driver")
+assert_test(driver_plan["risk_mitigation_actions"][0]["action_type"] == "soften_or_support_claim", "risk actions turn score drivers into concrete mitigation actions")
+assert_test(
+    any(item["action_type"] == "connect_source_to_claim" for item in driver_plan["risk_mitigation_actions"]),
+    "risk actions include source-to-claim mitigation",
+)
 assert_test(driver_plan["reference_patterns"][0]["component"] == "unsupported_claim_risk", "guided reference patterns prioritize evidence drivers")
 guided_report = render_rewrite_report(
     summary={
@@ -600,6 +606,20 @@ guided_report = render_rewrite_report(
 assert_test("## Guided Revision Checklist" in guided_report, "guided report highlights revision checklist")
 assert_test("automatic sentence edits cannot safely supply" in guided_report, "guided report explains why original is preserved")
 assert_test("## Risk Score Mitigation Targets" in guided_report, "guided report shows score mitigation targets")
+assert_test("## Risk Mitigation Actions" in guided_report, "guided report shows concrete mitigation actions")
+
+partial_ok, partial_reason, partial_delta = _target_predictability_acceptance(
+    {"risk": 0.5083, "label": "medium"},
+    {"risk": 0.4612, "label": "medium"},
+)
+assert_test(partial_ok, "predictability gate accepts meaningful medium-band reduction")
+assert_test(partial_reason == "target_reduced_but_still_medium", "predictability gate records partial reduction reason")
+assert_test(partial_delta > 0.04, "predictability gate exposes local reduction amount")
+tiny_ok, tiny_reason, _ = _target_predictability_acceptance(
+    {"risk": 0.5083, "label": "medium"},
+    {"risk": 0.5000, "label": "medium"},
+)
+assert_test(not tiny_ok and "target_reduction_too_small" in tiny_reason, "predictability gate still rejects tiny no-op reductions")
 
 throttle_text = (
     "Students use the chart to plan the cut. "
@@ -651,9 +671,9 @@ throttle_result = run_rewrite(
     rewrite_context=throttle_context,
     ai_only=False,
 )
-assert_test(len(throttle_calls) <= 1, "guided revision throttles automatic rewrite calls")
+assert_test(len(throttle_calls) <= 3, "guided revision throttles automatic rewrite calls")
 assert_test(
-    throttle_result.summary.get("rewrite_effective_config", {}).get("effective_auto_target_limit") == 1,
+    throttle_result.summary.get("rewrite_effective_config", {}).get("effective_auto_target_limit") == 2,
     "guided revision records effective auto-target limit",
 )
 
