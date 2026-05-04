@@ -57,19 +57,19 @@ function countRewriteFindings(findings) {
 function buildRewriteResultSummary(rewriteReport) {
   const summary = rewriteReport?.summary || rewriteReport?.rewrite_summary || {};
   const detectScores = summary.detect_scores || {};
-  const originalScan = summary.detect_scan_original || {};
+  const originalScan = summary.detect_scan_original_saved || summary.detect_scan_original || {};
   const rewrittenScan = summary.detect_scan_rewritten || {};
   const originalBadge = originalScan.ai_risk_badge || {};
   const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
-  const originalFindings = detectScores.original_findings ?? countRewriteFindings(originalScan.findings);
-  const rewrittenFindings = detectScores.rewritten_findings ?? countRewriteFindings(rewrittenScan.findings);
+  const originalFindings = countRewriteFindings(originalScan.findings) ?? detectScores.original_findings;
+  const rewrittenFindings = countRewriteFindings(rewrittenScan.findings) ?? detectScores.rewritten_findings;
   const changedSentences = (rewriteReport?.sentence_comparison || []).filter(
     (row) => String(row.orig_sentence || '').trim() !== String(row.new_sentence || '').trim()
   ).length;
 
   return {
-    original_risk: summary.original_risk ?? detectScores.original_ai ?? originalBadge.ai_likelihood_score,
-    rewrite_risk: summary.final_risk ?? detectScores.rewritten_ai ?? rewrittenBadge.ai_likelihood_score,
+    original_risk: originalBadge.ai_likelihood_score ?? detectScores.original_ai ?? summary.original_risk,
+    rewrite_risk: rewrittenBadge.ai_likelihood_score ?? detectScores.rewritten_ai ?? summary.final_risk,
     original_findings: originalFindings,
     rewritten_findings: rewrittenFindings,
     changed_sentences: changedSentences,

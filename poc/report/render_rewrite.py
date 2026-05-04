@@ -227,7 +227,7 @@ def render_rewrite_report(
     no_text_change_reason = summary.get("no_text_change_reason", "")
 
     # Detect scan comparison.
-    orig_scan = summary.get("detect_scan_original", {})
+    orig_scan = summary.get("detect_scan_original_saved") or summary.get("detect_scan_original", {})
     new_scan = summary.get("detect_scan_rewritten", {})
     attempted_scan = summary.get("detect_scan_attempted", {})
     rollback = summary.get("rollback_applied", False)
@@ -320,7 +320,7 @@ def render_rewrite_report(
         elif no_text_change:
             lines.append("DraftProof found revision opportunities, but the main issues need evidence, examples, or source context from the author.")
         elif improved_with_review:
-            lines.append("AI likelihood and writing-quality risk improved. Review the new findings before keeping the final output.")
+            lines.append("At least one measured risk signal improved. Review the new findings before keeping the final output.")
         elif mixed_result:
             lines.append("Some risk scores improved, but the final scan added findings or increased review burden. Review the revision plan before keeping the final output.")
         elif improved:
