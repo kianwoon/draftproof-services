@@ -54,14 +54,24 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         )
         existing_job = existing.scalar_one_or_none()
         if existing_job:
-            # Return existing rewrite instead of erroring — allows frontend to resume polling
+            # Resume the existing rewrite. This covers jobs left in processing
+            # by a worker crash or rollout where the task never actually ran.
+            existing_job.status = "pending"
+            existing_job.error = None
+            existing_job.progress_percent = 0
+            existing_job.progress_message = "Queued"
+            await session.commit()
+
+            from app.services.celery_client import run_rewrite
+            run_rewrite.delay(str(existing_job.id), scan_id)
+
             return {
                 "id": str(existing_job.id),
                 "scan_id": str(existing_job.scan_id),
-                "status": existing_job.status,
-                "error": existing_job.error,
-                "progress_percent": existing_job.progress_percent,
-                "progress_message": existing_job.progress_message,
+                "status": "pending",
+                "error": None,
+                "progress_percent": 0,
+                "progress_message": "Queued",
                 "created_at": existing_job.created_at.isoformat() if existing_job.created_at else None,
                 "completed_at": existing_job.completed_at.isoformat() if existing_job.completed_at else None,
             }

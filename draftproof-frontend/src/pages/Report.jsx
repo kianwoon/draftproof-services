@@ -247,7 +247,7 @@ export default function Report() {
   const currentRewrite = rewriteJob || report.rewrite;
   const rewriteInProgress = isRewriteActive(currentRewrite?.status);
   const hasCompletedRewrite = currentRewrite?.status === 'completed';
-  const canStartRewrite = hasAIFindings && !hasCompletedRewrite && !rewriteInProgress;
+  const canStartRewrite = hasAIFindings && !hasCompletedRewrite;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
     : 0;
@@ -257,7 +257,7 @@ export default function Report() {
   const handleRewrite = async (event) => {
     event?.preventDefault();
     event?.stopPropagation();
-    if (rewriteLoading || rewriteInProgress) return;
+    if (rewriteLoading) return;
     setRewriteStartedHere(true);
     setRewriteLoading(true);
     setRewriteError(null);
@@ -327,9 +327,9 @@ export default function Report() {
               type="button"
               className="rewrite-btn"
               onClick={handleRewrite}
-              disabled={rewriteLoading || rewriteInProgress}
+              disabled={rewriteLoading}
             >
-              {rewriteLoading ? 'Starting rewrite...' : rewriteInProgress ? 'Rewrite in progress' : 'Rewrite AI Sections'}
+              {rewriteLoading ? 'Starting rewrite...' : rewriteInProgress ? 'Resume Rewrite' : 'Rewrite AI Sections'}
             </button>
           )}
           {hasCompletedRewrite && (
