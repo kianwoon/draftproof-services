@@ -54,23 +54,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trigger Koyeb redeploy
+      - name: Trigger Koyeb redeploy via GHCR image
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
-          COMMIT_SHA: ${{ github.sha }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tags }}
         run: |
-          echo "Triggering Koyeb redeploy for API..."
+          echo "Deploying ghcr.io/kianwoon/draftproof-api:latest to Koyeb..."
           SVC=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}")
           DEPLOY_ID=$(echo "$SVC" | jq -r '.service.latest_deployment_id')
-          echo "Latest deployment: ${DEPLOY_ID}"
 
           DEPLOY=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             "https://app.koyeb.com/v1/deployments/${DEPLOY_ID}")
           DEFINITION=$(echo "$DEPLOY" | jq '.deployment.definition')
-          echo "Definition name: $(echo "$DEFINITION" | jq -r '.name')"
 
-          UPDATED=$(echo "$DEFINITION" | jq --arg sha "$COMMIT_SHA" '.git.sha = $sha')
+          # Replace git source with GHCR image
+          UPDATED=$(echo "$DEFINITION" | jq '
+            .image = "ghcr.io/kianwoon/draftproof-api:latest" |
+            .image_registry_secret = "e3888d3f" |
+            del(.git)
+          ')
 
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
@@ -80,10 +83,7 @@ jobs:
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-          STATUS=$(echo "$BODY" | jq -r '.deployment.status // "unknown"')
-          DEPLOY_SHA=$(echo "$BODY" | jq -r '.deployment.definition.git.sha // "n/a"')
-          echo "HTTP ${HTTP_CODE} — deployment ${STATUS} — sha ${DEPLOY_SHA:0:7}"
-
+          echo "HTTP ${HTTP_CODE}"
           if [ "$HTTP_CODE" -ge 400 ]; then
             echo "ERROR: Koyeb deploy failed"
             echo "$BODY" | jq '.' >&2
