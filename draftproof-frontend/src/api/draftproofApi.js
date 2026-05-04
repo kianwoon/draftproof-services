@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
   timeout: 300000, // 5 min — rewrite pipeline can take 3+ min
@@ -39,5 +41,13 @@ export const getRewriteStatus = (rewriteId) => api.get(`/rewrites/${rewriteId}`)
 export const getRewriteReport = (rewriteId) => api.get(`/rewrites/${rewriteId}/report`);
 export const getRewriteDownload = (rewriteId, format) => api.get(`/rewrites/${rewriteId}/download/${format}`);
 export const getDetectJson = (rewriteId) => api.get(`/rewrites/${rewriteId}/detect-json`);
+
+export function buildApiEventUrl(path) {
+  if (/^https?:\/\//i.test(API_BASE_URL)) {
+    const base = new URL(API_BASE_URL);
+    return `${base.origin}${base.pathname.replace(/\/$/, '')}${path}`;
+  }
+  return `${API_BASE_URL.replace(/\/$/, '')}${path}`;
+}
 
 export default api;

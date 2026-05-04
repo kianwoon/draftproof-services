@@ -1,4 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends
+import asyncio
+import json
+
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse
 from app.models import RewriteCreateRequest, RewriteOut, RewriteReportOut
 from app.services import rewrite_service
 from app.routes.auth import get_current_user
@@ -28,6 +32,54 @@ async def get_rewrite(rewrite_id: str, user: dict = Depends(get_current_user)):
     if not result:
         raise HTTPException(status_code=404, detail="Rewrite not found")
     return RewriteOut(**result)
+
+
+@router.get("/{rewrite_id}/events")
+async def stream_rewrite_events(
+    rewrite_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    async def event_stream():
+        last_payload = None
+        while True:
+            if await request.is_disconnected():
+                break
+
+            result = await rewrite_service.get_rewrite(rewrite_id, user_id=user["id"])
+            if not result:
+                yield "event: rewrite-error\ndata: {\"detail\":\"Rewrite not found\"}\n\n"
+                break
+
+            payload = {
+                "id": result["id"],
+                "scan_id": result["scan_id"],
+                "status": result["status"],
+                "error": result["error"],
+                "progress_percent": result["progress_percent"],
+                "progress_message": result["progress_message"],
+                "created_at": result["created_at"],
+                "completed_at": result["completed_at"],
+            }
+            data = json.dumps(payload)
+            if data != last_payload:
+                yield f"event: progress\ndata: {data}\n\n"
+                last_payload = data
+
+            if result["status"] in ("completed", "failed"):
+                break
+
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{rewrite_id}/report", response_model=RewriteReportOut)

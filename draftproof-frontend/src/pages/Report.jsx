@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getReport, createRewrite, getRewriteStatus } from '../api/draftproofApi';
+import { getReport, createRewrite, getRewriteStatus, buildApiEventUrl } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 
 const TIER_CONFIG = {
@@ -79,7 +79,9 @@ export default function Report() {
   const [rewriteLoading, setRewriteLoading] = useState(false);
   const [rewriteError, setRewriteError] = useState(null);
   const [rewriteStartedHere, setRewriteStartedHere] = useState(false);
+  const [rewriteSseUnavailable, setRewriteSseUnavailable] = useState(false);
   const rewritePollRef = useRef(null);
+  const rewriteEventSourceRef = useRef(null);
 
   const syncRewriteJob = useCallback((job) => {
     setRewriteJob(job);
@@ -105,20 +107,78 @@ export default function Report() {
     }
   }, [syncRewriteJob]);
 
+  const closeRewriteEventSource = useCallback(() => {
+    if (rewriteEventSourceRef.current) {
+      rewriteEventSourceRef.current.close();
+      rewriteEventSourceRef.current = null;
+    }
+  }, []);
+
+  const connectRewriteEvents = useCallback((rewriteId) => {
+    closeRewriteEventSource();
+    if (!window.EventSource) return false;
+
+    const source = new EventSource(buildRewriteEventsUrl(rewriteId), { withCredentials: true });
+    rewriteEventSourceRef.current = source;
+
+    source.addEventListener('progress', (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        closeRewriteEventSource();
+        setRewriteSseUnavailable(true);
+        pollRewriteStatus(rewriteId);
+        return;
+      }
+
+      syncRewriteJob(data);
+      if (data.status === 'failed') {
+        setRewriteError(data.error || 'Rewrite failed');
+        closeRewriteEventSource();
+      }
+      if (data.status === 'completed') {
+        closeRewriteEventSource();
+      }
+    });
+
+    source.addEventListener('rewrite-error', () => {
+      setRewriteError('Rewrite failed');
+      closeRewriteEventSource();
+    });
+
+    source.addEventListener('error', () => {
+      closeRewriteEventSource();
+      setRewriteSseUnavailable(true);
+      pollRewriteStatus(rewriteId);
+    });
+
+    return true;
+  }, [closeRewriteEventSource, pollRewriteStatus, syncRewriteJob]);
+
   useEffect(() => {
     const ac = new AbortController();
     getReport(id, { signal: ac.signal })
       .then(({ data }) => {
         setReport(data);
-        if (data.rewrite) setRewriteJob(data.rewrite);
+        if (data.rewrite) {
+          setRewriteSseUnavailable(false);
+          setRewriteJob(data.rewrite);
+          if (data.rewrite.id && isRewriteActive(data.rewrite.status)) {
+            connectRewriteEvents(data.rewrite.id);
+          }
+        }
       })
       .catch((err) => {
         if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
         setError(err.response?.data?.detail || 'Failed to load report');
       })
       .finally(() => setLoading(false));
-    return () => ac.abort();
-  }, [id]);
+    return () => {
+      ac.abort();
+      closeRewriteEventSource();
+    };
+  }, [id, closeRewriteEventSource, connectRewriteEvents]);
 
   useEffect(() => {
     if (rewritePollRef.current) {
@@ -130,9 +190,15 @@ export default function Report() {
       return undefined;
     }
 
-    rewritePollRef.current = setInterval(() => {
-      pollRewriteStatus(rewriteJob.id);
-    }, 5000);
+    if (rewriteEventSourceRef.current) {
+      return undefined;
+    }
+
+    if (rewriteSseUnavailable || !connectRewriteEvents(rewriteJob.id)) {
+      rewritePollRef.current = setInterval(() => {
+        pollRewriteStatus(rewriteJob.id);
+      }, 5000);
+    }
 
     return () => {
       if (rewritePollRef.current) {
@@ -140,7 +206,7 @@ export default function Report() {
         rewritePollRef.current = null;
       }
     };
-  }, [rewriteJob?.id, rewriteJob?.status, pollRewriteStatus]);
+  }, [rewriteJob?.id, rewriteJob?.status, rewriteSseUnavailable, pollRewriteStatus, connectRewriteEvents]);
 
   if (loading) return (
     <main className="dash-shell">
@@ -195,6 +261,7 @@ export default function Report() {
     setRewriteStartedHere(true);
     setRewriteLoading(true);
     setRewriteError(null);
+    setRewriteSseUnavailable(false);
     setRewriteJob({
       id: null,
       scan_id: id,
@@ -205,7 +272,11 @@ export default function Report() {
     try {
       const { data } = await createRewrite(id);
       syncRewriteJob(data);
-      if (data.id) await pollRewriteStatus(data.id);
+      if (data.id) {
+        if (!connectRewriteEvents(data.id)) {
+          await pollRewriteStatus(data.id);
+        }
+      }
     } catch (err) {
       const msg = err.response?.data?.detail || 'Failed to start rewrite';
       if (err.response?.status === 402) {
@@ -470,4 +541,8 @@ export default function Report() {
       </div>
     </main>
   );
+}
+
+function buildRewriteEventsUrl(rewriteId) {
+  return buildApiEventUrl(`/rewrites/${rewriteId}/events`);
 }

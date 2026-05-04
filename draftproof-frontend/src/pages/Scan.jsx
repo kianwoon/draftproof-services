@@ -1,12 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { startScanWithText, getScanStatus } from '../api/draftproofApi';
+import { startScanWithText, getScanStatus, buildApiEventUrl } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 export default function Scan() {
   const [text, setText] = useState('');
@@ -257,12 +256,7 @@ function sleep(ms) {
 }
 
 function buildScanEventsUrl(scanId) {
-  const path = `/scans/${scanId}/events`;
-  if (/^https?:\/\//i.test(API_BASE_URL)) {
-    const base = new URL(API_BASE_URL);
-    return `${base.origin}${base.pathname.replace(/\/$/, '')}${path}`;
-  }
-  return `${API_BASE_URL.replace(/\/$/, '')}${path}`;
+  return buildApiEventUrl(`/scans/${scanId}/events`);
 }
 
 function formatStatus(status) {
