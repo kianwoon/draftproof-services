@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-MODEL="gpt2-medium"
+MODEL="${PREDICTABILITY_MODEL:-gpt2}"
 CACHE_DIR="${HF_HOME}/hub"
 MODEL_MARKER="${CACHE_DIR}/.model_ready"
 

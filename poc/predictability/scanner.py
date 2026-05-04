@@ -6,6 +6,7 @@ High predictability across many tokens = formulaic / generic writing.
 
 import logging
 import math
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -80,7 +81,7 @@ class PredictabilityScanner:
 
     def __init__(
         self,
-        model_name: str = "gpt2-medium",
+        model_name: Optional[str] = None,
         custom_phrases: Optional[List[str]] = None,
         weights: Optional[Dict[str, float]] = None,
         high_threshold: float = 0.55,
@@ -93,6 +94,7 @@ class PredictabilityScanner:
         self.review_threshold = review_threshold
         self.weights = weights or self.DEFAULT_WEIGHTS
         self.generic_phrases = custom_phrases or GENERIC_PHRASES
+        model_name = model_name or os.environ.get("PREDICTABILITY_MODEL", "gpt2")
 
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
@@ -176,16 +178,21 @@ class PredictabilityScanner:
             logits = outputs.logits
 
         token_results: List[TokenResult] = []
+        # logits[i-1] predicts token at position i. Do the expensive rank/prob
+        # work in one vectorized pass. The previous implementation sorted the
+        # full GPT-2 vocabulary for every token, which made CPU scans crawl.
+        shift_logits = logits[0, :-1, :]
+        actual_ids = input_ids[0, 1:]
+        actual_logits = shift_logits.gather(1, actual_ids.unsqueeze(1)).squeeze(1)
+        ranks = (shift_logits > actual_logits.unsqueeze(1)).sum(dim=1) + 1
+        actual_log_probs = torch.log_softmax(shift_logits, dim=-1).gather(
+            1, actual_ids.unsqueeze(1)
+        ).squeeze(1)
+        actual_probs = torch.exp(actual_log_probs)
 
-        # logits[i-1] predicts token at position i
-        for i in range(1, input_ids.shape[1]):
-            actual_id = input_ids[0, i].item()
-            probs = torch.softmax(logits[0, i - 1], dim=-1)
-            prob = probs[actual_id].item()
-
-            sorted_indices = torch.argsort(probs, descending=True)
-            rank = (sorted_indices == actual_id).nonzero(as_tuple=True)[0].item() + 1
-
+        for offset, actual_id in enumerate(actual_ids.tolist()):
+            prob = actual_probs[offset].item()
+            rank = int(ranks[offset].item())
             token_results.append(TokenResult(
                 token=self.tokenizer.decode([actual_id]),
                 probability=prob,

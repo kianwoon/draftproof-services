@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     R2_SECRET_ACCESS_KEY: str = ""
     R2_BUCKET_NAME: str = "draftproof-reports"
     R2_PUBLIC_URL: str = ""
-    PREDICTABILITY_MODEL: str = "gpt2-medium"
+    PREDICTABILITY_MODEL: str = "gpt2"
     LLM_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
     LLM_MODEL: str = ""
