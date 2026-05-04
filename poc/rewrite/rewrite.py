@@ -24,6 +24,7 @@ import subprocess
 import logging
 import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import List, Optional, Dict, Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -353,15 +354,16 @@ def _original_ai_likelihood(detect_results: List[DetectResult], rewrite_context:
 
 # ── Chip-in: use local `claude` CLI when no API key ──────────────────
 
-REWRITE_CHIPIN_PROMPT = """You are a text editor. Your ONLY job is to make the flagged sentence sound LESS like AI-generated text.
+REWRITE_CHIPIN_PROMPT = """You are a conservative paragraph-aware editor. Your ONLY job is to propose small replacement candidates for the marked sentence.
 
 HOW PREDICTABILITY DETECTION WORKS:
 A GPT-2 language model scores each word by how likely it was to appear next, given the preceding words. When many words rank among GPT-2's top-10 predictions, the sentence reads like AI output — predictable, generic, formulaic.
 
-To reduce predictability, you must BREAK expected word sequences:
-- Don't just swap one word for a synonym — the replacement may be equally predictable.
-- Instead, RESTRUCTURE the sentence so the flagged words appear in a different context, or replace them with context-specific wording that GPT-2 wouldn't predict.
-- Varying sentence length and clause structure also helps (short, long, medium — not uniform).
+To reduce predictability, BREAK expected word paths without polishing the writing:
+- Do not just swap one word for a synonym.
+- Keep the sentence grounded in the paragraph's existing concrete detail.
+- Preserve the same author voice, including plain wording and first-person classroom reflection when present.
+- Prefer nearby concrete nouns/actions over new abstract academic vocabulary.
 
 TRANSFORMATION RULES (apply the one matching the finding type):
 
@@ -369,6 +371,7 @@ For predictability / common_words / topk_predictability / low_surprisal findings
 - If GPT-2 analysis is provided, use it: the flagged tokens are the most predictable words. Replace them OR restructure the sentence so they become less predictable in context.
 - Prefer concrete, specific wording from the surrounding context over generic academic terms.
 - NEVER use these predictable words: crucial, vital, essential, significant, notable, furthermore, moreover, additionally, demonstrates, highlights, underscores, plays, key role.
+- NEVER introduce abstract polish such as technical accuracy, operational obstacles, visible learning framework, digital landscape, complex implementation, or similar noun stacks.
 
 For formulaic_sentence / generic_phrase findings:
 - Restructure the sentence to break its formulaic pattern. Move the subject to a different position. Change clause order. Start the sentence differently than it currently starts.
@@ -385,9 +388,9 @@ For ai_generation findings:
 CRITICAL CONSTRAINTS:
 - Keep the SAME factual meaning. Zero new information.
 - All proper nouns, numbers, dates, citations, quoted text — copy verbatim.
-- For sentence-level rewrites, output one sentence unless the task explicitly provides a larger region.
+- Replace only the sentence marked by <TARGET> in the paragraph context.
 - Do NOT exceed the character limit.
-- Output ONLY the rewritten text. No quotes, no commentary."""
+- Output only the requested numbered candidate lines. No explanations."""
 
 
 def _make_chipin_rewrite_fn(detect_context: str) -> callable:
@@ -820,22 +823,35 @@ def _rewrite_task_instruction(finding: Finding, max_chars: int) -> str:
     if _needs_structural_rewrite(finding):
         return (
             "Use the GPT-2 signal to produce ONE structurally different sentence. "
-            "Do not solve this with synonym swaps alone. Change clause order, sentence opening, "
-            "or the context around the flagged predictable tokens while preserving the same facts. "
-            f"MUST NOT exceed {max_chars} characters. "
-            "Output ONLY the rewritten sentence."
+        "Do not solve this with synonym swaps alone. Change clause order, sentence opening, "
+        "or the context around the flagged predictable tokens while preserving the same facts. "
+        f"MUST NOT exceed {max_chars} characters. "
+        "Follow the candidate-output format below."
         )
     return (
         "Apply a narrow in-place edit to fix the finding above. "
         "Change only what is needed. "
         f"MUST NOT exceed {max_chars} characters. "
-        "Output ONLY the rewritten text."
+        "Follow the candidate-output format below."
     )
 
 
 def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
     """Ask the LLM for several paragraph-aware sentence candidates."""
     base = _rewrite_task_instruction(finding, max_chars)
+    common_rules = (
+        "Return exactly 3 candidates as numbered lines:\n"
+        "1. <minimal plain edit>\n"
+        "2. <clause-reordered edit using paragraph detail>\n"
+        "3. <short conservative edit>\n"
+        "Each candidate must be ONE sentence and must replace only the <TARGET> sentence. "
+        "Do not include explanations. "
+        "Do not make the sentence more formal, broader, smoother, or more academic. "
+        "Do not add facts, citations, names, dates, or statistics. "
+        "Avoid abstract noun stacks and generic polish such as 'crucial', 'significant', "
+        "'essential', 'technical accuracy', 'operational obstacles', "
+        "'visible learning framework', and 'digital landscape'."
+    )
     if _requires_medium_exit(finding):
         return (
             f"{base}\n"
@@ -844,27 +860,14 @@ def _candidate_task_instruction(finding: Finding, max_chars: int) -> str:
             "Avoid generic/predictable frames such as 'This is...', 'Because of this...', "
             "'The goal should be...', 'modern world', 'not only...', and 'people who can'. "
             "Use the Signal instruction, Domain anchors, and Allowed concrete additions above. "
-            "At least 3 candidates must convert the sentence into a supported concrete situation, observation, or domain action instead of a generic paraphrase. "
+            "Each candidate should convert the sentence into a supported concrete situation, observation, or domain action instead of a generic paraphrase. "
             "Do not use metaphorical polish when a concrete domain noun/action is available. "
             "Use varied clause order, concrete everyday phrasing, and a less formulaic sentence path. "
-            "Return exactly 6 candidates as numbered lines:\n"
-            "1. <domain-anchor observation>\n"
-            "2. <structural edit using supported context>\n"
-            "3. <short direct edit>\n"
-            "4. <clause-reordered edit with concrete action>\n"
-            "5. <less formulaic edit using paragraph detail>\n"
-            "6. <fallback conservative edit>\n"
-            "Each candidate must be ONE sentence and must replace only the target sentence. "
-            "Do not include explanations."
+            f"{common_rules}"
         )
     return (
         f"{base}\n"
-        "Return exactly 3 candidates as numbered lines:\n"
-        "1. <minimal edit>\n"
-        "2. <structural edit>\n"
-        "3. <plain natural edit>\n"
-        "Each candidate must be ONE sentence and must replace only the target sentence. "
-        "Do not include explanations."
+        f"{common_rules}"
     )
 
 
@@ -1027,6 +1030,148 @@ def _domain_anchor_terms(
     if ordered:
         return ordered
     return fallback[:limit]
+
+
+def _rewrite_edit_brief_for_target(
+    rewrite_context: Optional[Any],
+    finding: Finding,
+) -> Dict[str, Any]:
+    """Return the detect-produced edit brief for this finding when available."""
+    if not rewrite_context or not hasattr(rewrite_context, "raw_json"):
+        return {}
+    raw = rewrite_context.raw_json or {}
+    briefs = raw.get("rewrite_edit_briefs") or []
+    if not isinstance(briefs, list):
+        return {}
+    finding_id = _finding_id(finding)
+    loc = finding.location or {}
+    sentence_id = loc.get("sentence_id")
+    for brief in briefs:
+        if not isinstance(brief, dict):
+            continue
+        if finding_id and brief.get("finding_id") == finding_id:
+            return brief
+        if (
+            sentence_id
+            and brief.get("sentence_id") == sentence_id
+            and (brief.get("signals") or {}).get("finding_type") == finding.finding_type
+        ):
+            return brief
+    return {}
+
+
+def _brief_signal_lines(brief: Dict[str, Any]) -> List[str]:
+    if not brief:
+        return []
+    lines = []
+    role = brief.get("paragraph_role")
+    if role:
+        lines.append(f"Paragraph role: {role}")
+    instruction = brief.get("instruction")
+    if instruction:
+        lines.append("Detect edit instruction: " + str(instruction))
+    signals = brief.get("signals") or {}
+    if signals:
+        metrics = []
+        for key in ("score", "top10_ratio", "top50_ratio", "avg_surprisal"):
+            value = signals.get(key)
+            if isinstance(value, (int, float)):
+                metrics.append(f"{key}={value:.3f}")
+        if metrics:
+            lines.append("Edit-brief metrics: " + ", ".join(metrics))
+        tokens = signals.get("problem_tokens") or []
+        if tokens:
+            formatted = []
+            for item in tokens[:6]:
+                if isinstance(item, dict):
+                    token = item.get("token", "")
+                    rank = item.get("rank")
+                    text = f'"{token}"'
+                    if rank is not None:
+                        text += f" rank={rank}"
+                    formatted.append(text)
+                elif isinstance(item, str):
+                    formatted.append(f'"{item}"')
+            if formatted:
+                lines.append("Edit-brief problem tokens: " + ", ".join(formatted))
+        spans = signals.get("predictable_token_spans") or []
+        if spans:
+            lines.append(
+                "Edit-brief predictable spans: "
+                + ", ".join(f'"{span}"' for span in spans[:5])
+            )
+    return lines
+
+
+def _protected_texts_from_brief(brief: Dict[str, Any]) -> List[str]:
+    protected = []
+    for item in (brief or {}).get("protected_spans") or []:
+        if isinstance(item, dict) and item.get("text"):
+            protected.append(str(item["text"]))
+    return protected
+
+
+def _paragraph_coherence_reject_reason(
+    original_sentence: str,
+    candidate_sentence: str,
+    previous_sentence: str,
+    next_sentence: str,
+    domain_anchor_terms: Optional[List[str]] = None,
+) -> str:
+    """Reject candidates that work locally but harm paragraph coherence."""
+    for label, neighbor in (("previous", previous_sentence), ("next", next_sentence)):
+        if not neighbor:
+            continue
+        similarity = SequenceMatcher(
+            None,
+            candidate_sentence.lower(),
+            neighbor.lower(),
+            autojunk=False,
+        ).ratio()
+        if similarity >= 0.88:
+            return f"duplicates_{label}_sentence {similarity:.2f}"
+
+    anchors = domain_anchor_terms or []
+    orig_coverage = _term_coverage(original_sentence, anchors)
+    cand_coverage = _term_coverage(candidate_sentence, anchors)
+    if orig_coverage >= 2 and cand_coverage < max(1, orig_coverage - 1):
+        return f"domain_anchor_loss {orig_coverage}->{cand_coverage}"
+
+    abstract_patterns = [
+        r"\b(?:framework|landscape|rigor|implementation|engagement|outcomes?|obstacles?|oversight)\b",
+        r"\b(?:complex|technical|operational|visible|digital|geometric)\s+\w+",
+    ]
+    orig_abstract = sum(len(re.findall(p, original_sentence, re.I)) for p in abstract_patterns)
+    cand_abstract = sum(len(re.findall(p, candidate_sentence, re.I)) for p in abstract_patterns)
+    if cand_abstract > orig_abstract:
+        return f"unsupported_abstraction {orig_abstract}->{cand_abstract}"
+
+    return ""
+
+
+def _manual_suggestion_item(
+    *,
+    finding: Finding,
+    original_sentence: str,
+    candidate_sentence: str,
+    rejection_reason: str,
+    paragraph_role: str = "",
+) -> Dict[str, Any]:
+    return {
+        "finding_id": _finding_id(finding),
+        "finding_type": finding.finding_type,
+        "risk_level": finding.risk_level,
+        "scanner_target": (finding.metadata or {}).get("scanner") or (finding.metadata or {}).get("category") or "",
+        "sentence_id": (finding.location or {}).get("sentence_id"),
+        "paragraph_role": paragraph_role or "unknown",
+        "original_sentence": original_sentence,
+        "suggested_sentence": candidate_sentence,
+        "rejection_reason": rejection_reason,
+        "why_review_manually": (
+            "This candidate preserved enough meaning to be useful, but an automatic guard rejected it. "
+            "Review it manually before using it."
+        ),
+    }
 
 
 def _rewrite_constraint_lines(rewrite_context: Optional[Any], limit: int = 3) -> List[str]:
@@ -1833,6 +1978,8 @@ def run_rewrite(
     failed_targets = 0
     consecutive_failed_targets = 0
     circuit_breaker_reason: Optional[str] = None
+    manual_suggestions: List[Dict[str, Any]] = []
+    accepted_candidate_suggestions: List[Dict[str, Any]] = []
 
     # ── Step 3: Per-finding rewrite loop (LLM, all findings) ────────
     current_weighted_risk = weighted_finding_score(
@@ -1858,12 +2005,20 @@ def run_rewrite(
 
     grouped_actions: List[List[Any]] = []
     grouped_by_key: Dict[str, List[Any]] = {}
-    for action in plan.auto_fixable:
+    auto_targets = plan.auto_fixable[:max(0, config.max_auto_targets)]
+    capped_auto_targets = max(0, len(plan.auto_fixable) - len(auto_targets))
+    for action in auto_targets:
         key = _action_group_key(action)
         if key not in grouped_by_key:
             grouped_by_key[key] = []
             grouped_actions.append(grouped_by_key[key])
         grouped_by_key[key].append(action)
+    if capped_auto_targets:
+        loop_history.append({
+            "loop": 0,
+            "note": f"auto target cap applied ({len(auto_targets)}/{len(plan.auto_fixable)})",
+            "skipped_auto_targets": capped_auto_targets,
+        })
 
     risk_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
     for actions_for_sentence in grouped_actions:
@@ -1988,6 +2143,7 @@ def run_rewrite(
         ctx_before = current_sentences[sent_idx - 1] if sent_idx > 0 else ""
         ctx_after = current_sentences[sent_idx + 1] if sent_idx < len(current_sentences) - 1 else ""
         original_paragraph = _paragraph_context(current_sentences, current_para_map, sent_idx)
+        edit_brief = _rewrite_edit_brief_for_target(rewrite_context, f)
 
         # Protected spans within this sentence
         all_protected = detect_protected_spans(current_text)
@@ -2013,11 +2169,21 @@ def run_rewrite(
         enriched = _enrich_span_info(f, rewrite_context, sent_idx)
         if enriched:
             span_info_parts.append(enriched)
+        brief_lines = _brief_signal_lines(edit_brief)
+        if brief_lines:
+            span_info_parts.extend(brief_lines)
         domain_anchors = _domain_anchor_terms(
             rewrite_context,
             original_paragraph,
             original_sentence,
         )
+        brief_anchors = edit_brief.get("domain_anchors") if isinstance(edit_brief, dict) else []
+        if isinstance(brief_anchors, list) and brief_anchors:
+            merged = []
+            for term in list(brief_anchors) + domain_anchors:
+                if isinstance(term, str) and term and term.lower() not in {t.lower() for t in merged}:
+                    merged.append(term)
+            domain_anchors = merged[:12]
         metadata_context = f.metadata.get("rewrite_context") if isinstance(f.metadata, dict) else {}
         if isinstance(metadata_context, dict):
             metadata_anchors = metadata_context.get("domain_anchors") or []
@@ -2082,6 +2248,11 @@ def run_rewrite(
         if sent_protected:
             protected_items = ", ".join(ps.text for ps in sent_protected)
             span_info_parts.append("Must preserve exactly: " + protected_items)
+        brief_protected = _protected_texts_from_brief(edit_brief)
+        if brief_protected:
+            span_info_parts.append(
+                "Must preserve from edit brief: " + ", ".join(brief_protected[:10])
+            )
         # Fallback: keep legacy sentence metrics if enrichment was empty
         if not enriched:
             sentence_metrics = _sentence_signal_context(rewrite_context, f, sent_idx)
@@ -2123,7 +2294,46 @@ def run_rewrite(
         rejected_candidates: List[Dict[str, Any]] = []
         max_sent_chars = _max_candidate_chars(original_sentence, f)
 
-        for attempt in range(2):
+        def _remember_manual_suggestion(
+            candidate_sentence: str,
+            reason: str,
+            candidate_drift: Optional[DriftCheck] = None,
+        ) -> None:
+            if not candidate_sentence:
+                return
+            similarity = (
+                candidate_drift.similarity
+                if candidate_drift is not None
+                else SequenceMatcher(None, original_sentence.lower(), candidate_sentence.lower(), autojunk=False).ratio()
+            )
+            if similarity < 0.70:
+                return
+            item = _manual_suggestion_item(
+                finding=f,
+                original_sentence=original_sentence,
+                candidate_sentence=candidate_sentence,
+                rejection_reason=reason,
+                paragraph_role=str(edit_brief.get("paragraph_role") or "unknown"),
+            )
+            key = (
+                item.get("finding_id"),
+                item.get("original_sentence"),
+                item.get("suggested_sentence"),
+                item.get("rejection_reason"),
+            )
+            existing = {
+                (
+                    s.get("finding_id"),
+                    s.get("original_sentence"),
+                    s.get("suggested_sentence"),
+                    s.get("rejection_reason"),
+                )
+                for s in manual_suggestions
+            }
+            if key not in existing and len(manual_suggestions) < 24:
+                manual_suggestions.append(item)
+
+        for attempt in range(1):
             candidates: List[str] = []
             if loop_rewrite_fn:
                 if llm_calls_used >= config.max_llm_calls:
@@ -2168,6 +2378,11 @@ def run_rewrite(
                         "reason": "; ".join(candidate_rejects),
                         "text": candidate_sentence[:100],
                     })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
                     continue
 
                 protected_lost = [ps for ps in sent_protected
@@ -2180,6 +2395,28 @@ def run_rewrite(
                         "reason": "; ".join(candidate_rejects),
                         "text": candidate_sentence[:100],
                     })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
+                    continue
+
+                brief_lost = [text for text in brief_protected if text not in candidate_sentence]
+                if brief_lost:
+                    candidate_rejects.append(
+                        "brief_protected_span_lost " + ", ".join(f"'{text}'" for text in brief_lost[:5])
+                    )
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
+                    })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
                     continue
 
                 if original_sentence in current_text:
@@ -2201,6 +2438,11 @@ def run_rewrite(
                         "reason": "; ".join(candidate_rejects),
                         "text": candidate_sentence[:100],
                     })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
                     continue
 
                 reg_check = predictability_guard.check(
@@ -2218,6 +2460,11 @@ def run_rewrite(
                         "reason": "; ".join(candidate_rejects),
                         "text": candidate_sentence[:100],
                     })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
                     continue
 
                 target_orig_pred = {"risk": None, "label": ""}
@@ -2245,6 +2492,11 @@ def run_rewrite(
                             "target_new_label": target_new_label,
                             "text": candidate_sentence[:100],
                         })
+                        _remember_manual_suggestion(
+                            candidate_sentence,
+                            "; ".join(candidate_rejects),
+                            candidate_drift,
+                        )
                         continue
 
                 component_ok, component_reason = _component_regression_check(current_text, candidate_text)
@@ -2255,6 +2507,11 @@ def run_rewrite(
                         "reason": "; ".join(candidate_rejects),
                         "text": candidate_sentence[:100],
                     })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
                     continue
 
                 style_reason = _candidate_style_reject_reason(original_sentence, candidate_sentence)
@@ -2265,6 +2522,32 @@ def run_rewrite(
                         "reason": "; ".join(candidate_rejects),
                         "text": candidate_sentence[:100],
                     })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
+                    continue
+
+                coherence_reason = _paragraph_coherence_reject_reason(
+                    original_sentence,
+                    candidate_sentence,
+                    ctx_before,
+                    ctx_after,
+                    domain_anchors,
+                )
+                if coherence_reason:
+                    candidate_rejects.append(f"paragraph_coherence {coherence_reason}")
+                    rejected_candidates.append({
+                        "candidate": cand_idx,
+                        "reason": "; ".join(candidate_rejects),
+                        "text": candidate_sentence[:100],
+                    })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
                     continue
 
                 candidate_paragraph = original_paragraph.replace(original_sentence, candidate_sentence, 1)
@@ -2287,6 +2570,11 @@ def run_rewrite(
                         "score": score,
                         "text": candidate_sentence[:100],
                     })
+                    _remember_manual_suggestion(
+                        candidate_sentence,
+                        "; ".join(candidate_rejects),
+                        candidate_drift,
+                    )
                     continue
                 info = {
                     "candidate": cand_idx,
@@ -2350,6 +2638,13 @@ def run_rewrite(
         findings_fixed += len(actions_for_sentence)
         consecutive_failed_targets = 0
         current_text = candidate_text
+        accepted_candidate_suggestions.append(_manual_suggestion_item(
+            finding=f,
+            original_sentence=original_sentence,
+            candidate_sentence=rewritten_sentence,
+            rejection_reason="accepted_locally_pending_final_full_scan",
+            paragraph_role=str(edit_brief.get("paragraph_role") or "unknown"),
+        ))
         local_score_total += float(best_candidate_info.get("score", 0.0)) if best_candidate_info else 0.0
         rewrite_checkpoints.append({
             "text": current_text,
@@ -2653,6 +2948,16 @@ def run_rewrite(
     )
     summary["rollback_applied"] = rolled_back_for_regression
     summary["llm_calls_used"] = llm_calls_used
+    summary["target_count"] = len(grouped_actions)
+    summary["accepted_edits"] = findings_fixed
+    summary["manual_suggestions"] = manual_suggestions
+    summary["accepted_candidate_suggestions"] = accepted_candidate_suggestions
+    if capped_auto_targets:
+        summary["auto_target_cap"] = {
+            "max_auto_targets": config.max_auto_targets,
+            "available_auto_targets": len(plan.auto_fixable),
+            "skipped_auto_targets": capped_auto_targets,
+        }
     summary["failed_targets"] = failed_targets
     summary["consecutive_failed_targets"] = consecutive_failed_targets
     if circuit_breaker_reason:

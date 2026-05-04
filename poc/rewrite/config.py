@@ -58,7 +58,7 @@ class RewriteBudget:
 class RewriteConfig:
     """Controls for the rewrite loop."""
     max_passes: int = 2
-    max_detect_loops: int = 3
+    max_detect_loops: int = 0
     target_top10: float = 0.50
     min_weighted_improvement: float = 1.0
     max_semantic_drift: float = 0.12
@@ -72,8 +72,9 @@ class RewriteConfig:
     base_url: Optional[str] = None  # None → resolved by LLMGateway (OpenRouter default)
     llm_timeout_seconds: int = 20
     llm_max_retries: int = 1
-    max_rewrite_seconds: int = 180
-    max_llm_calls: int = 8
+    max_rewrite_seconds: int = 90
+    max_llm_calls: int = 6
+    max_auto_targets: int = 6
     max_failed_targets: int = 3
     max_consecutive_failed_targets: int = 2
 

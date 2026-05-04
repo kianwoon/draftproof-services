@@ -531,6 +531,39 @@ def render_rewrite_report(
             lines.append(f"| {i} | {risk} | {ftype} | {reason} | {evidence} |")
         lines.append("")
 
+    attempted_changes = [
+        sc for sc in (summary.get("attempted_sentence_comparison") or [])
+        if sc.get("orig_sentence", "") != sc.get("new_sentence", "")
+    ]
+    if rollback and attempted_changes:
+        lines.append("## Attempted Rewrite")
+        lines.append("")
+        lines.append("These edits passed local rewrite checks, but the final full scan regressed, so DraftProof preserved the original final output.")
+        lines.append("")
+        lines.append("| # | Original | Attempted Output |")
+        lines.append("|--:|----------|------------------|")
+        for i, sc in enumerate(attempted_changes[:12], 1):
+            orig_text = sc.get("orig_sentence", "").replace("\n", " ").replace("|", "·")
+            new_text = sc.get("new_sentence", "").replace("\n", " ").replace("|", "·")
+            lines.append(f"| {i} | {orig_text} | {new_text} |")
+        lines.append("")
+
+    manual_suggestions = summary.get("manual_suggestions") or []
+    if manual_suggestions:
+        lines.append("## Manual Suggestions")
+        lines.append("")
+        lines.append("These candidates were not automatically kept. Review them manually before using them.")
+        lines.append("")
+        lines.append("| # | Finding | Reason | Original | Suggested |")
+        lines.append("|--:|---------|--------|----------|-----------|")
+        for i, item in enumerate(manual_suggestions[:16], 1):
+            finding = str(item.get("finding_type", "?")).replace("|", "·")
+            reason = str(item.get("rejection_reason", "")).replace("|", "·")
+            orig_text = str(item.get("original_sentence", "")).replace("\n", " ").replace("|", "·")
+            suggestion = str(item.get("suggested_sentence", "")).replace("\n", " ").replace("|", "·")
+            lines.append(f"| {i} | {finding} | {reason} | {orig_text} | {suggestion} |")
+        lines.append("")
+
     # Protected / Review-only
     protected = summary.get("protected_actions", [])
     if protected:

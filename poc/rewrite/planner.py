@@ -24,22 +24,6 @@ FIXABILITY_PARTIAL = "partial"
 FIXABILITY_MANUAL = "manual"
 FIXABILITY_PROTECTED = "protected"
 
-# Signals that justify auto-rewriting medium_predictability
-COMPANION_SIGNALS = {
-    "generic_phrase",
-    "style_shift",
-    "formulaic_sentence",
-    "close_paraphrase",
-    "patchwriting",
-    "semantic_overlap",
-    "mechanical_transition",
-    "generic_enumeration",
-    "vague_claim",
-    "similarity_overlap",
-    "weak_source_grounding",
-}
-
-
 @dataclass
 class FixabilityDecision:
     finding_id: str
@@ -114,10 +98,10 @@ FINDING_ROUTING: Dict[str, dict] = {
         "reason": "Formulaic language can be rephrased locally.",
     },
     "repetitive_sentence_structure": {
-        "fixability": FIXABILITY_AUTO,
-        "action": "suggest_rewrite",
+        "fixability": FIXABILITY_MANUAL,
+        "action": "review_structure",
         "scope": "sentence_pair",
-        "reason": "Repeated sentence structure can be varied locally.",
+        "reason": "Repeated structure is a rhythm signal; automatic sentence edits often create broader scan regressions.",
     },
     "low_burstiness": {
         "fixability": FIXABILITY_MANUAL,
@@ -171,31 +155,38 @@ FINDING_ROUTING: Dict[str, dict] = {
         "reason": "Low AI-likelihood does not justify automatic rewriting.",
     },
     "close_paraphrase": {
-        "fixability": FIXABILITY_PARTIAL,
-        "action": "rewrite_from_source_card",
+        "fixability": FIXABILITY_MANUAL,
+        "action": "manual_source_rewrite",
         "scope": "paragraph",
-        "reason": "Can revise expression, but source grounding must be preserved.",
+        "reason": "Similarity/source-adjacent findings need source-aware manual revision, not AI-style mitigation.",
         "required_inputs": ["source_card", "citation"],
     },
     "patchwriting": {
-        "fixability": FIXABILITY_PARTIAL,
-        "action": "rewrite_from_source_card",
+        "fixability": FIXABILITY_MANUAL,
+        "action": "manual_source_rewrite",
         "scope": "paragraph",
-        "reason": "Can revise expression, but source grounding must be preserved.",
+        "reason": "Similarity/source-adjacent findings need source-aware manual revision, not AI-style mitigation.",
         "required_inputs": ["source_card", "citation"],
     },
     "semantic_overlap": {
-        "fixability": FIXABILITY_PARTIAL,
-        "action": "rewrite_from_source_card",
+        "fixability": FIXABILITY_MANUAL,
+        "action": "manual_source_rewrite",
         "scope": "paragraph",
-        "reason": "Can revise expression, but source grounding must be preserved.",
+        "reason": "Similarity/source-adjacent findings need source-aware manual revision, not AI-style mitigation.",
         "required_inputs": ["source_card"],
     },
     "paragraph_level_overlap": {
-        "fixability": FIXABILITY_PARTIAL,
-        "action": "rewrite_from_source_card",
+        "fixability": FIXABILITY_MANUAL,
+        "action": "manual_source_rewrite",
         "scope": "paragraph",
-        "reason": "Can revise expression, but source grounding must be preserved.",
+        "reason": "Similarity/source-adjacent findings need source-aware manual revision, not AI-style mitigation.",
+        "required_inputs": ["source_card"],
+    },
+    "similarity_overlap": {
+        "fixability": FIXABILITY_MANUAL,
+        "action": "manual_source_rewrite",
+        "scope": "paragraph",
+        "reason": "Similarity/source-adjacent findings need source-aware manual revision, not AI-style mitigation.",
         "required_inputs": ["source_card"],
     },
     "exact_copy": {
@@ -390,36 +381,10 @@ class RewritePlanner:
     """Classify findings into fixability buckets and build a rewrite plan."""
 
     def plan(self, detect_results: List[DetectResult]) -> RewritePlan:
-        # Collect all finding types for compound-signal check
-        all_finding_types = set()
-        for dr in detect_results:
-            for f in dr.findings:
-                all_finding_types.add(f.finding_type)
-
-        has_companion = bool(all_finding_types & COMPANION_SIGNALS)
-
         actions = []
         for dr in detect_results:
             for f in dr.findings:
                 decision = route_finding(f)
-
-                # Compound-signal override: medium_predictability with companion → auto.
-                # Do not override explicit detect decisions. The scan pipeline owns
-                # the rewrite gate; planner only fills gaps for legacy inputs.
-                if (
-                    f.finding_type == "medium_predictability"
-                    and f.risk_level == "medium"
-                    and has_companion
-                    and f.actionability not in ("review_only", "manual_required", "no_action")
-                ):
-                    decision = FixabilityDecision(
-                        finding_id=decision.finding_id,
-                        finding_type=decision.finding_type,
-                        fixability=FIXABILITY_AUTO,
-                        action="suggest_rewrite",
-                        scope="sentence",
-                        reason="Medium predictability paired with companion signal → auto-rewrite.",
-                    )
 
                 eligible = decision.fixability in {FIXABILITY_AUTO, FIXABILITY_PARTIAL}
                 weight = RISK_WEIGHTS.get(f.risk_level, 1)
@@ -436,7 +401,11 @@ class RewritePlanner:
 
         # Sort: highest weight first, then by scope (narrower first)
         scope_order = {"span": 0, "sentence": 1, "sentence_pair": 2, "paragraph": 3, "full": 4}
-        actions.sort(key=lambda a: (-a.weight, scope_order.get(a.scope, 5)))
+        actions.sort(key=lambda a: (
+            -a.weight,
+            -int(bool((a.finding.metadata or {}).get("rewrite_context"))),
+            scope_order.get(a.scope, 5),
+        ))
 
         auto_fixable = [a for a in actions if a.fixability in {FIXABILITY_AUTO, FIXABILITY_PARTIAL} and a.action_type != "review_only"]
         manual_required = [a for a in actions if a.fixability == FIXABILITY_MANUAL]

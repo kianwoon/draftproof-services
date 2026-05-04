@@ -26,6 +26,14 @@ from rewrite import (
     FIXABILITY_AUTO, FIXABILITY_PARTIAL, FIXABILITY_MANUAL, FIXABILITY_PROTECTED,
 )
 from rewrite.voice import VoiceCheck
+from rewrite.parse_detect import DetectJSONParser
+from rewrite.rewrite import (
+    _candidate_task_instruction,
+    _candidate_style_reject_reason,
+    _paragraph_coherence_reject_reason,
+)
+from report import ReportBuilder, report_to_dict
+from report.render_rewrite import render_rewrite_report
 
 
 # ── Test data ──────────────────────────────────────────────────────────
@@ -107,8 +115,8 @@ planner = RewritePlanner()
 plan = planner.plan([dr])
 
 assert_test(len(plan.actions) == 7, f"7 total actions (got {len(plan.actions)})")
-assert_test(len(plan.auto_fixable) == 3, f"3 medium auto-fixable (got {len(plan.auto_fixable)})")
-assert_test(len(plan.manual_required) == 3, f"3 manual/review-required (got {len(plan.manual_required)})")
+assert_test(len(plan.auto_fixable) == 2, f"2 medium auto-fixable (got {len(plan.auto_fixable)})")
+assert_test(len(plan.manual_required) == 4, f"4 manual/review-required (got {len(plan.manual_required)})")
 assert_test(len(plan.protected) == 1, f"1 protected (got {len(plan.protected)})")
 assert_test(plan.rewritable_risk > 0, f"rewritable_risk > 0 (got {plan.rewritable_risk})")
 assert_test(plan.rewritable_risk < plan.total_weighted_risk, f"rewritable < total ({plan.rewritable_risk} < {plan.total_weighted_risk})")
@@ -320,6 +328,10 @@ assert_test(cfg.budget.max_changed_char_ratio == 0.15, f"default char ratio=0.15
 assert_test(cfg.budget.max_total_changed_sentence_ratio == 0.30, f"total sentence cap=0.30")
 assert_test(cfg.budget.max_total_changed_char_ratio == 0.25, f"total char cap=0.25")
 assert_test(not cfg.suggestion_only, f"suggestion_only defaults to False")
+assert_test(cfg.max_llm_calls == 6, f"default max_llm_calls=6 (got {cfg.max_llm_calls})")
+assert_test(cfg.max_auto_targets == 6, f"default max_auto_targets=6 (got {cfg.max_auto_targets})")
+assert_test(cfg.max_rewrite_seconds == 90, f"default max_rewrite_seconds=90 (got {cfg.max_rewrite_seconds})")
+assert_test(cfg.max_detect_loops == 0, f"default max_detect_loops=0 (got {cfg.max_detect_loops})")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -396,7 +408,158 @@ assert_test(outcomes == expected, f"outcomes match: {outcomes}")
 
 # ════════════════════════════════════════════════════════════════════════
 print(f"\n{'=' * 70}")
-print("15. FULL PLANNER→GUARD→SCORE PIPELINE")
+print("15. CONTEXT-AWARE REWRITE CONTRACT")
+print("=" * 70)
+
+json_ctx = DetectJSONParser.parse_dict({
+    "input_text": "First sentence. Second sentence.",
+    "findings": {
+        "medium": [{
+            "finding_id": "f001",
+            "title": "medium_predictability",
+            "category": "predictability",
+            "adjusted_risk": "medium",
+            "actionability": "auto_fixable",
+            "sentence_id": "s002",
+            "sentence_index": 2,
+            "evidence": "Second sentence.",
+            "detail": "predictable",
+            "recommendation": "rewrite",
+        }]
+    }
+})
+parsed_finding = json_ctx.detect_results[0].findings[0]
+assert_test(parsed_finding.location["sentence_index"] == 1, "s002 parses to zero-based sentence_index=1")
+
+strict_findings = [
+    Finding(finding_type="low_specificity", risk_level="medium", evidence_strength="moderate", detail="", evidence="Claim.", recommendation="", suggested_action_type="", actionability="auto_fixable"),
+    Finding(finding_type="similarity_overlap", risk_level="medium", evidence_strength="moderate", detail="", evidence="Overlap.", recommendation="", suggested_action_type="", actionability="auto_fixable"),
+    Finding(finding_type="repetitive_sentence_structure", risk_level="medium", evidence_strength="moderate", detail="", evidence="Repeat.", recommendation="", suggested_action_type="", actionability="auto_fixable"),
+]
+strict_plan = planner.plan([make_detect_result(strict_findings)])
+assert_test(len(strict_plan.auto_fixable) == 0, "low_specificity/similarity/structure are not auto-rewritten")
+assert_test(len(strict_plan.manual_required) == 3, "strict findings route to manual review")
+
+prompt = _candidate_task_instruction(
+    Finding(finding_type="medium_predictability", risk_level="medium", evidence_strength="moderate", detail="", evidence="", recommendation="", suggested_action_type=""),
+    180,
+)
+assert_test("Return exactly 3 candidates" in prompt, "prompt asks for exactly 3 candidates")
+assert_test("<TARGET>" in prompt, "prompt references marked target sentence")
+assert_test("technical accuracy" in prompt and "digital landscape" in prompt, "prompt includes anti-polish examples")
+
+for bad in (
+    "The chart improves technical accuracy for each learner.",
+    "Students face operational obstacles during practice.",
+    "This visible learning framework preserves technical rigor in the digital landscape.",
+):
+    reason = _candidate_style_reject_reason("Students use the chart during practice.", bad)
+    assert_test(bool(reason), f"anti-polish guard rejects: {bad}")
+
+coherence_reason = _paragraph_coherence_reject_reason(
+    "Students use the chart during practice.",
+    "The chart supports a visible learning framework.",
+    "I use the chart before cutting starts.",
+    "They compare the guide after each section.",
+    ["chart", "practice", "cutting", "guide"],
+)
+assert_test(bool(coherence_reason), "paragraph coherence guard rejects unsupported abstraction/anchor loss")
+
+pred_raw = {
+    "sentences": [
+        {
+            "sentence_id": "s001",
+            "sentence": "In my class, learners first map the section on a chart.",
+            "risk_label": "low",
+            "score": 0.2,
+            "top10_ratio": 0.3,
+            "top50_ratio": 0.5,
+            "avg_surprisal": 4.0,
+            "paragraph_id": "p001",
+            "top_predicted_tokens": [],
+            "predictable_token_spans": [],
+        },
+        {
+            "sentence_id": "s002",
+            "sentence": "This helps students understand the process.",
+            "risk_label": "medium",
+            "score": 0.52,
+            "top10_ratio": 0.72,
+            "top50_ratio": 0.9,
+            "avg_surprisal": 2.5,
+            "paragraph_id": "p001",
+            "token_results": [{"token": "helps", "raw_token": " helps", "rank": 1, "probability": 0.2, "top10": True}],
+            "top_predicted_tokens": [{"token": "helps", "rank": 1, "probability": 0.2, "top10": True}],
+            "predictable_token_spans": ["helps students"],
+        },
+    ]
+}
+brief_finding = Finding(
+    finding_type="medium_predictability",
+    risk_level="medium",
+    evidence_strength="moderate",
+    detail="predictable",
+    evidence="This helps students understand the process.",
+    recommendation="rewrite",
+    suggested_action_type="",
+    location={"sentence_index": 1},
+    metadata={"finding_id": "f002"},
+    actionability="auto_fixable",
+)
+brief_builder = ReportBuilder()
+brief_builder.set_meta(original_text="In my class, learners first map the section on a chart. This helps students understand the process.")
+brief_builder.add_detection(DetectResult(
+    scanner="predictability",
+    overall_risk=0.5,
+    confidence="medium",
+    confidence_reason="test",
+    findings=[brief_finding],
+    raw=pred_raw,
+))
+brief_json = report_to_dict(brief_builder.build())
+briefs = brief_json.get("rewrite_edit_briefs") or []
+assert_test(len(briefs) == 1, "detect JSON includes rewrite_edit_briefs")
+assert_test(briefs[0]["sentence_index"] == 1, "rewrite brief sentence_index is zero-based")
+assert_test(briefs[0]["previous_sentence"].startswith("In my class"), "rewrite brief includes previous sentence")
+assert_test(briefs[0]["signals"]["problem_tokens"], "rewrite brief includes problem tokens")
+
+rollback_report = render_rewrite_report(
+    summary={
+        "rollback_applied": True,
+        "converged": False,
+        "detect_scan_original_saved": {
+            "ai_risk_badge": {"ai_likelihood_score": 40.0, "writing_quality_score": 50.0},
+            "findings": {"critical": [], "high": [], "medium": [], "low": []},
+        },
+        "detect_scan_rewritten": {
+            "ai_risk_badge": {"ai_likelihood_score": 40.0, "writing_quality_score": 50.0},
+            "findings": {"critical": [], "high": [], "medium": [], "low": []},
+        },
+        "detect_scan_attempted": {
+            "ai_risk_badge": {"ai_likelihood_score": 45.0, "writing_quality_score": 50.0},
+            "findings": {"critical": [], "high": [{"finding_id": "new"}], "medium": [], "low": []},
+        },
+        "attempted_sentence_comparison": [{
+            "orig_sentence": "Students use the chart.",
+            "new_sentence": "The chart supports a visible learning framework.",
+        }],
+        "manual_suggestions": [{
+            "finding_type": "medium_predictability",
+            "rejection_reason": "final full detect scan regressed",
+            "original_sentence": "Students use the chart.",
+            "suggested_sentence": "Students check the chart before the next section.",
+        }],
+    },
+    sentence_comparison=[],
+    ai_findings=[],
+)
+assert_test("## Attempted Rewrite" in rollback_report, "rollback report shows attempted rewrite")
+assert_test("## Manual Suggestions" in rollback_report, "rollback report keeps manual suggestions")
+
+
+# ════════════════════════════════════════════════════════════════════════
+print(f"\n{'=' * 70}")
+print("16. FULL PLANNER→GUARD→SCORE PIPELINE")
 print("=" * 70)
 
 # Simulate the full flow

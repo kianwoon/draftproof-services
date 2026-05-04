@@ -149,7 +149,7 @@ def run_rewrite_pipeline(
     detect_json: dict = None,
     output_dir: str = None,
     max_passes: int = 3,
-    max_detect_loops: int = 2,
+    max_detect_loops: int = 0,
     target_top10: float = 0.50,
     model: str = None,
     api_key: str = None,
@@ -282,8 +282,8 @@ def run_rewrite_pipeline(
         rewrite_context=ctx,
         ai_only=ai_only,
     )
-    elapsed = time.time() - t0
-    stage_timings = [{"stage": "rewrite_engine", "seconds": round(elapsed, 3)}]
+    engine_elapsed = time.time() - t0
+    stage_timings = [{"stage": "rewrite_engine", "seconds": round(engine_elapsed, 3)}]
 
     # ── Write output ────────────────────────────────────────────────
     if output_dir is None:
@@ -764,12 +764,44 @@ def run_rewrite_pipeline(
             f"final full detect scan regressed "
             f"({'; '.join(regression_reasons)})"
         )
+        attempted_text = rewritten_text
+        attempted_sentence_comparison = sentence_comparison
+        rollback_suggestions = result.summary.setdefault("manual_suggestions", [])
+        accepted_suggestions = result.summary.get("accepted_candidate_suggestions") or []
+        existing = {
+            (
+                s.get("original_sentence"),
+                s.get("suggested_sentence"),
+                s.get("rejection_reason"),
+            )
+            for s in rollback_suggestions
+            if isinstance(s, dict)
+        }
+        for item in accepted_suggestions:
+            if not isinstance(item, dict):
+                continue
+            suggestion = dict(item)
+            suggestion["rejection_reason"] = reason
+            suggestion["why_review_manually"] = (
+                "This edit passed local guards, but the final full detect scan regressed. "
+                "Review manually before using it."
+            )
+            key = (
+                suggestion.get("original_sentence"),
+                suggestion.get("suggested_sentence"),
+                suggestion.get("rejection_reason"),
+            )
+            if key not in existing and len(rollback_suggestions) < 30:
+                rollback_suggestions.append(suggestion)
+                existing.add(key)
         rewritten_text = text
         if result.mp_result:
             result.mp_result.final_text = text
             result.mp_result.final_metrics = result.mp_result.original_metrics
             result.mp_result.converged = False
             result.mp_result.convergence_reason = reason
+        result.summary["attempted_final_text"] = attempted_text
+        result.summary["attempted_sentence_comparison"] = attempted_sentence_comparison
         result.summary["final_text"] = text
         result.summary["converged"] = False
         result.summary["rollback_applied"] = True
@@ -814,7 +846,9 @@ def run_rewrite_pipeline(
     render_pdf(rewrite_md, pdf_path)
 
     summary = result.summary
-    summary["rewrite_time"] = elapsed
+    total_elapsed = time.time() - t0
+    summary["rewrite_engine_time"] = engine_elapsed
+    summary["rewrite_time"] = total_elapsed
     summary["original_tier"] = ctx.overall_tier
     summary["rewrite_decision"] = ctx.rewrite_decision
 
@@ -827,7 +861,7 @@ def run_rewrite_pipeline(
         "pdf_path": pdf_path,
         "json_path": json_path_out,
         "result": result,
-        "elapsed": elapsed,
+        "elapsed": total_elapsed,
     }
 
 
@@ -837,7 +871,7 @@ def main():
     parser.add_argument("--text", "-t", help="Inline text to detect + rewrite")
     parser.add_argument("--output", "-o", default=None, help="Output directory")
     parser.add_argument("--passes", type=int, default=3, help="Max rewrite passes")
-    parser.add_argument("--max-loops", type=int, default=1, help="Max detect-rewrite loops")
+    parser.add_argument("--max-loops", type=int, default=0, help="Max detect-rewrite loops")
     parser.add_argument("--target-top10", type=float, default=0.50, help="Target top-10 ratio")
     parser.add_argument("--model", default=None, help="LLM model (default: from LLM_MODEL env var)")
     parser.add_argument("--api-key", default=None, help="API key (or set OPENROUTER_API_KEY)")

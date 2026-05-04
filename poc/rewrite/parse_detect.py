@@ -31,8 +31,10 @@ def _extract_location(fr: dict) -> dict:
         m = re.match(r"s0*(\d+)", fr["sentence_id"])
         if m:
             loc["sentence_index"] = int(m.group(1)) - 1  # convert to 0-based
-    # Also check for explicit sentence_index (0-based) in the JSON
-    if fr.get("sentence_index") is not None:
+    # Also check for explicit sentence_index only when sentence_id is missing.
+    # Older JSON accidentally stored one-based sentence_index values (s002 → 2);
+    # sentence_id is the more stable contract, so it must win when present.
+    if fr.get("sentence_index") is not None and "sentence_index" not in loc:
         loc["sentence_index"] = fr["sentence_index"]
     if isinstance(fr.get("evidence"), dict) and fr["evidence"].get("affected_span"):
         loc["affected_span"] = fr["evidence"]["affected_span"]

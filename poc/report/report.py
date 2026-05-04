@@ -244,16 +244,7 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
     # Document-level low_specificity: auto-fixable only if NOT already downgraded
     # If AI likelihood is low and domain grounding is strong, specificity is review-level
     if title == "low_specificity":
-        if adj != "medium":
-            return "manual_required"
-        has_adjustment = (
-            f.metadata
-            and isinstance(f.metadata, dict)
-            and f.metadata.get("adjustment")
-        )
-        if has_adjustment:
-            return "review_only"
-        return "auto_fixable"
+        return "manual_required"
     # Medium predictability: only auto-fix if co-located with document-level signals
     # (low_specificity, uncited_claim) that confirm AI origin. Medium predictability
     # alone is common in clear human writing — auto-rewriting it makes things worse.
@@ -437,6 +428,7 @@ class ReportBuilder:
                 evidence=f.evidence,
                 recommendation=f.recommendation,
                 metadata=meta,
+                finding_id=meta.get("finding_id", ""),
                 sentence_id=sent_id,
                 signal_category=signal_cat,
             ))
@@ -1597,6 +1589,129 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             },
         }
 
+    def _sentence_index_from_id(sentence_id: str) -> Optional[int]:
+        if not sentence_id:
+            return None
+        m = _re.match(r"s0*(\d+)$", sentence_id)
+        if not m:
+            return None
+        return max(0, int(m.group(1)) - 1)
+
+    def _paragraph_role(sentence_id: str, paragraph_items: list) -> str:
+        if not sentence_id or not paragraph_items:
+            return "unknown"
+        paragraph_idx = next(
+            (i for i, item in enumerate(paragraph_items) if item.get("sentence_id") == sentence_id),
+            -1,
+        )
+        if paragraph_idx < 0:
+            return "unknown"
+        sentence_text = paragraph_items[paragraph_idx].get("sentence", "").strip().lower()
+        if paragraph_idx == 0 and sentence_id in {"s001", "s002"}:
+            return "intro"
+        if any(marker in sentence_text for marker in ("according to", "(", "et al.", "explains", "argues", "suggests")):
+            return "evidence"
+        if any(marker in sentence_text for marker in ("i ", "my ", "in my context", "i see", "i usually", "from my")):
+            return "reflection"
+        if any(marker in sentence_text for marker in ("however", "because of this", "another issue", "at the same time")):
+            return "transition"
+        if sentence_text.startswith(("in conclusion", "overall", "this review has argued")):
+            return "conclusion"
+        if paragraph_idx == len(paragraph_items) - 1 and len(pred_sentences) >= 4:
+            return "conclusion" if sentence_id == pred_sentences[-1].get("sentence_id") else "reflection"
+        return "unknown"
+
+    def _protected_spans_for_sentence(sentence: str) -> list:
+        spans = []
+
+        def add(kind: str, pattern: str):
+            for m in _re.finditer(pattern, sentence or ""):
+                text = m.group(0).strip()
+                if text:
+                    spans.append({
+                        "text": text,
+                        "type": kind,
+                        "start": m.start(),
+                        "end": m.end(),
+                    })
+
+        add("citation", r"\([A-Z][A-Za-z .,&-]+,\s*(?:n\.d\.|\d{4})[^)]*\)")
+        add("quote", r'"[^"]+"|“[^”]+”')
+        add("url", r"https?://\S+")
+        add("number", r"\b\d+(?:\.\d+)?%?\b")
+        add("unit_code", r"\b[A-Z]{3,}[A-Z0-9]{2,}\b")
+        add("institution", r"\b(?:Box Hill Institute|Certificate III|Australian Government|Department of Employment and Workplace Relations)\b")
+
+        unique = []
+        seen = set()
+        for span in spans:
+            key = (span["text"], span["type"], span["start"])
+            if key not in seen:
+                seen.add(key)
+                unique.append(span)
+        return unique
+
+    def _rewrite_permission(f: Finding, bucket: str) -> str:
+        if bucket in {"citation_repair", "manual_required"}:
+            return "manual"
+        if bucket == "optional_structure_review":
+            return "suggestion_only"
+        if bucket in {"review_only", "no_action"}:
+            return "suggestion_only"
+        if f.title in {"low_specificity", "close_paraphrase", "patchwriting", "semantic_overlap", "paragraph_level_overlap", "similarity_overlap"}:
+            return "manual"
+        if f.category in {"citation", "similarity", "integrity"}:
+            return "manual"
+        return "auto" if bucket == "auto_fixable" else "suggestion_only"
+
+    def _rewrite_edit_brief_for_finding(f: Finding) -> Optional[Dict[str, Any]]:
+        sid = f.sentence_id
+        sent = pred_by_id.get(sid)
+        if not sent:
+            return None
+
+        idx = pred_index_by_id.get(sid, -1)
+        pid = sent.get("paragraph_id", "")
+        paragraph_items = paragraph_by_id.get(pid, []) if pid else []
+        paragraph_text = " ".join(item.get("sentence", "") for item in paragraph_items)
+        target_sentence = sent.get("sentence", "")
+        anchors = _content_terms(
+            " ".join(x for x in (
+                pred_sentences[idx - 1]["sentence"] if idx > 0 else "",
+                target_sentence,
+                pred_sentences[idx + 1]["sentence"] if 0 <= idx < len(pred_sentences) - 1 else "",
+                paragraph_text,
+            ) if x)
+        )
+        bucket = _determine_actionability(f, all_findings)
+        signals = {
+            "finding_type": f.title,
+            "risk": sent.get("risk_label"),
+            "score": sent.get("risk"),
+            "top10_ratio": sent.get("top10_ratio"),
+            "top50_ratio": sent.get("top50_ratio"),
+            "avg_surprisal": sent.get("avg_surprisal"),
+            "problem_tokens": sent.get("top_predicted_tokens", []),
+            "predictable_token_spans": sent.get("predictable_token_spans", []),
+            "signal_category": f.signal_category or (f.metadata or {}).get("signal_category"),
+        }
+        return {
+            "finding_id": f.finding_id,
+            "sentence_id": sid,
+            "paragraph_id": pid,
+            "sentence_index": _sentence_index_from_id(sid),
+            "target_sentence": target_sentence,
+            "previous_sentence": pred_sentences[idx - 1]["sentence"] if idx > 0 else "",
+            "next_sentence": pred_sentences[idx + 1]["sentence"] if 0 <= idx < len(pred_sentences) - 1 else "",
+            "paragraph_excerpt": paragraph_text[:900],
+            "paragraph_role": _paragraph_role(sid, paragraph_items),
+            "signals": signals,
+            "domain_anchors": anchors,
+            "protected_spans": _protected_spans_for_sentence(target_sentence),
+            "rewrite_permission": _rewrite_permission(f, bucket),
+            "instruction": _rewrite_signal_instruction(f, anchors),
+        }
+
     def _tier_findings(tier: Tier) -> list:
         return [
             {
@@ -1612,7 +1727,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "adjusted_risk": f.adjusted_risk,
                 "actionability": _determine_actionability(f, all_findings),
                 "sentence_id": f.sentence_id or None,
-                "sentence_index": int(f.sentence_id[1:]) if f.sentence_id and f.sentence_id.startswith("s") and f.sentence_id[1:].isdigit() else None,
+                "sentence_index": _sentence_index_from_id(f.sentence_id),
                 "evidence": _structured_evidence(f),
                 "recommendation": f.recommendation,
                 "rewrite_context": _rewrite_context_for_finding(f),
@@ -1621,6 +1736,20 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             }
             for f in report.findings_by_tier.get(tier.value, [])
         ]
+
+    def _rewrite_edit_briefs() -> list:
+        briefs = []
+        seen = set()
+        for f in all_findings:
+            brief = _rewrite_edit_brief_for_finding(f)
+            if not brief:
+                continue
+            key = brief.get("finding_id") or (brief.get("sentence_id"), brief.get("signals", {}).get("finding_type"))
+            if key in seen:
+                continue
+            seen.add(key)
+            briefs.append(brief)
+        return briefs
 
     all_findings = []
     for tier_val in ("critical", "high", "medium", "low"):
@@ -1863,6 +1992,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "medium": _tier_findings(Tier.MEDIUM),
             "low": _tier_findings(Tier.LOW),
         },
+        "rewrite_edit_briefs": _rewrite_edit_briefs(),
         "false_positives": report.false_positives,
         "rewrite_plan": {
             "mode": rewrite_mode,
