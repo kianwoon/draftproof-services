@@ -428,10 +428,25 @@ export default function Report() {
 
         {/* Report header */}
         <div className="report-hero">
-          <div className="report-hero-info">
-            <div className="report-eyebrow">Analysis Report</div>
-            <h1>{report.document_name}</h1>
-            {report.created_at && <p className="report-meta">{formatDate(report.created_at)}</p>}
+          <div className="report-hero-title-row">
+            <div className="report-doc-icon" aria-hidden="true">
+              <svg width="42" height="42" viewBox="0 0 42 42" fill="none">
+                <rect x="8" y="9" width="26" height="24" rx="5" stroke="currentColor" strokeWidth="3"/>
+                <path d="M13 25l6-6 5 5 6-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <div className="report-hero-info">
+              <div className="report-eyebrow">Analysis Report</div>
+              <h1>{report.document_name}</h1>
+              {report.created_at && (
+                <p className="report-meta">
+                  <svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M4.5 1.8v2M11.5 1.8v2M2.5 6h11M3.5 3.5h9A1.5 1.5 0 0114 5v7.5A1.5 1.5 0 0112.5 14h-9A1.5 1.5 0 012 12.5V5a1.5 1.5 0 011.5-1.5z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                  </svg>
+                  {formatDate(report.created_at)}
+                </p>
+              )}
+            </div>
           </div>
           {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
             <button
@@ -473,14 +488,16 @@ export default function Report() {
         {/* Summary bar */}
         <div className="report-summary-bar">
           <div className="report-stat report-risk-stat" style={{ background: tier.bg }}>
-            <span className="report-risk-value" style={{ color: tier.color }}>
+            <span className="report-risk-icon" style={{ color: tier.color }} aria-hidden="true">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <path d={tier.icon} />
                 <circle cx="12" cy="12" r="10" />
               </svg>
-              {tier.label}
             </span>
-            <span className="report-stat-label">Risk Tier</span>
+            <span className="report-risk-copy">
+              <span className="report-risk-value" style={{ color: tier.color }}>{tier.label}</span>
+              <span className="report-stat-label">Risk Tier</span>
+            </span>
           </div>
           <div className="report-stat">
             <span className="report-stat-value">{report.issues.length}</span>
@@ -511,6 +528,14 @@ export default function Report() {
 
         {hasRewriteResult && (
           <div className="report-rewrite-summary-bar">
+            <div className="rewrite-summary-icon" aria-hidden="true">
+              <span>
+                <svg width="42" height="42" viewBox="0 0 42 42" fill="none">
+                  <circle cx="21" cy="21" r="15" fill="currentColor"/>
+                  <path d="M14 21.5l4.5 4.5L28.5 16" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </span>
+            </div>
             <div className="rewrite-summary-main">
               <span className="rewrite-summary-kicker">Rewrite complete</span>
               <strong>AI sections rewritten</strong>
@@ -535,6 +560,10 @@ export default function Report() {
               to={`/rewrite/${currentRewrite.id}`}
               className="rewrite-results-link"
             >
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                <path d="M5 2.5h5.2L13 5.3v10.2H5V2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+                <path d="M10 2.5v3h3M6.8 8.3h4M6.8 11h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+              </svg>
               View Rewrite Result
             </Link>
           </div>
