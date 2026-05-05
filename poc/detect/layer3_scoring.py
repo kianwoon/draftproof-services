@@ -63,6 +63,7 @@ class Layer3Input:
     burstiness_risk: Optional[float] = None
     repeated_sentence_structure_risk: Optional[float] = None
     generic_assertion_risk: Optional[float] = None
+    qualifying_text_ai_density: Optional[float] = None
 
     # Grounding scanner outputs
     broad_claim_risk: Optional[float] = None
@@ -224,12 +225,26 @@ def derive_authorship_rating(
     writing_components = writing_components or {}
     high_component_alignment = (
         ai_score >= 0.58
-        and clamp(ai_components.get("topk_pattern")) >= 0.80
+        and (
+            clamp(ai_components.get("topk_pattern")) >= 0.80
+            or clamp(ai_components.get("qualifying_text_ai_density")) >= 0.70
+        )
         and clamp(ai_components.get("generic_assertion_risk")) >= 0.80
         and (
             clamp(writing_components.get("unsupported_claim_risk")) >= 0.80
             or clamp(writing_components.get("source_grounding_risk")) >= 0.70
             or clamp(writing_components.get("broad_claim_risk")) >= 0.70
+        )
+    )
+    high_density_alignment = (
+        ai_score >= 0.45
+        and clamp(ai_components.get("qualifying_text_ai_density")) >= 0.70
+        and clamp(ai_components.get("topk_pattern")) >= 0.60
+        and clamp(ai_components.get("generic_assertion_risk")) >= 0.80
+        and (
+            clamp(writing_components.get("unsupported_claim_risk")) >= 0.75
+            or clamp(writing_components.get("source_grounding_risk")) >= 0.65
+            or clamp(writing_components.get("broad_claim_risk")) >= 0.65
         )
     )
     likely_component_alignment = (
@@ -250,7 +265,7 @@ def derive_authorship_rating(
 
     if verified_ai_provenance:
         code = "ai_generated"
-    elif ai_score >= 0.65 or ai_tier == Tier.RED or near_red_humanised_profile or high_component_alignment:
+    elif ai_score >= 0.65 or ai_tier == Tier.RED or near_red_humanised_profile or high_component_alignment or high_density_alignment:
         code = "ai_generated_signals"
     elif likely_component_alignment:
         code = "likely_ai"
@@ -334,6 +349,10 @@ def derive_authorship_rating(
         caution_notes.append("Escalated because high AI-style signals align with high writing-quality/template risk.")
     if high_component_alignment and code == "ai_generated_signals":
         caution_notes.append("Escalated because high top-k predictability, generic assertion, and weak grounding signals align.")
+    if high_density_alignment and code == "ai_generated_signals":
+        caution_notes.append("Escalated because qualifying long-form text has dense aligned AI-style signals.")
+    if clamp(ai_components.get("qualifying_text_ai_density")) >= 0.70 and code == "ai_generated_signals":
+        caution_notes.append("Qualifying long-form text shows dense AI-style signal alignment across the document.")
     rating["caution_notes"] = caution_notes
     return rating
 
@@ -910,6 +929,95 @@ def estimate_broad_claim_risk(text: str) -> float:
     return 0.15
 
 
+def estimate_qualifying_text_ai_density(
+    text: str,
+    *,
+    predictability: Optional[float] = None,
+    topk_pattern: Optional[float] = None,
+    generic_assertion_risk: Optional[float] = None,
+    broad_claim_risk: Optional[float] = None,
+    unsupported_claim_risk: Optional[float] = None,
+    source_grounding_strength: Optional[float] = None,
+    lived_detail_risk: Optional[float] = None,
+    formulaic_progression_risk: Optional[float] = None,
+    balanced_framing_risk: Optional[float] = None,
+) -> float:
+    """Estimate how much qualifying long-form text carries aligned AI-style signals.
+
+    This is a document-level density signal. It should not fire on short notes,
+    references, bullets, or isolated citation/similarity issues. It looks for a
+    long-form body where moderate mechanical predictability combines with broad
+    assertions, weak grounding, and low author/process detail.
+    """
+    words = text.split()
+    sentences = split_sentences(text)
+    paragraphs = split_paragraphs(text)
+    if len(words) < 300 or len(sentences) < 12:
+        return 0.0
+
+    qualifying_sentences = []
+    for sentence in sentences:
+        stripped = sentence.strip()
+        word_count = len(stripped.split())
+        lower = stripped.lower()
+        if word_count < 8:
+            continue
+        if lower.startswith(("http", "www.")):
+            continue
+        if re.match(r"^\s*(references|bibliography|works cited)\b", lower):
+            continue
+        if stripped.startswith(("-", "*", "•")):
+            continue
+        if stripped.count('"') >= 2 or stripped.count("'") >= 2:
+            continue
+        qualifying_sentences.append(stripped)
+
+    qualifying_ratio = len(qualifying_sentences) / max(len(sentences), 1)
+    long_form_ratio = sum(len(p.split()) >= 45 and len(split_sentences(p)) >= 2 for p in paragraphs) / max(len(paragraphs), 1)
+    if len(qualifying_sentences) < 10 or qualifying_ratio < 0.55:
+        return 0.0
+
+    starter_hits = 0
+    for sentence in qualifying_sentences:
+        lower = sentence.lower()
+        if any(lower.startswith(starter) for starter in GENERIC_ESSAY_STARTERS):
+            starter_hits += 1
+    starter_density = starter_hits / max(len(qualifying_sentences), 1)
+
+    topk = clamp(topk_pattern)
+    pred = clamp(predictability)
+    generic_assertion = clamp(generic_assertion_risk)
+    broad = clamp(broad_claim_risk)
+    unsupported = clamp(unsupported_claim_risk)
+    source_gap = 1.0 - clamp(source_grounding_strength)
+    lived_gap = clamp(lived_detail_risk)
+    formulaic = clamp(formulaic_progression_risk, default=estimate_formulaic_progression_risk(text))
+    balanced = clamp(balanced_framing_risk, default=estimate_balanced_generic_framing_risk(text))
+
+    score = weighted_average({
+        "topk_pattern": (topk, 0.18),
+        "predictability": (pred, 0.10),
+        "generic_assertion_risk": (generic_assertion, 0.16),
+        "unsupported_claim_risk": (unsupported, 0.14),
+        "source_grounding_risk": (source_gap, 0.12),
+        "broad_claim_risk": (broad, 0.10),
+        "lived_detail_risk": (lived_gap, 0.08),
+        "formulaic_progression": (formulaic, 0.06),
+        "balanced_framing": (balanced, 0.04),
+        "starter_density": (min(1.0, starter_density * 4.0), 0.02),
+    })
+
+    if long_form_ratio >= 0.55:
+        score += 0.04
+    if qualifying_ratio >= 0.75:
+        score += 0.03
+    if generic_assertion >= 0.80 and unsupported >= 0.75 and source_gap >= 0.65:
+        score += 0.06
+    if topk >= 0.60 and generic_assertion >= 0.80:
+        score += 0.05
+    return round(clamp(score), 4)
+
+
 def estimate_unsupported_claim_risk(
     text: str,
     has_citations: bool = False,
@@ -959,16 +1067,18 @@ class Layer3Scorer:
         burstiness = clamp(data.burstiness_risk)
         repeated_struct = clamp(data.repeated_sentence_structure_risk)
         generic_assertion = clamp(data.generic_assertion_risk)
+        qualifying_density = clamp(data.qualifying_text_ai_density)
         balanced_hedging = clamp(data.balanced_hedging_risk)
 
         AI_WEIGHTS = {
-            "predictability": 0.22,
-            "topk_pattern": 0.18,
-            "generic_phrase_density": 0.17,
-            "burstiness_risk": 0.13,
-            "repeated_sentence_structure_risk": 0.12,
-            "generic_assertion_risk": 0.08,
-            "balanced_hedging_risk": 0.10,
+            "predictability": 0.19,
+            "topk_pattern": 0.17,
+            "generic_phrase_density": 0.13,
+            "burstiness_risk": 0.10,
+            "repeated_sentence_structure_risk": 0.10,
+            "generic_assertion_risk": 0.10,
+            "qualifying_text_ai_density": 0.13,
+            "balanced_hedging_risk": 0.08,
         }
 
         components = {
@@ -978,6 +1088,7 @@ class Layer3Scorer:
             "burstiness_risk": burstiness,
             "repeated_sentence_structure_risk": repeated_struct,
             "generic_assertion_risk": generic_assertion,
+            "qualifying_text_ai_density": qualifying_density,
             "balanced_hedging_risk": balanced_hedging,
         }
 
@@ -1004,6 +1115,17 @@ class Layer3Scorer:
             and balanced_hedging >= 0.30
         )
 
+        qualifying_density_ai = (
+            qualifying_density >= 0.70
+            and topk >= 0.60
+            and generic_assertion >= 0.80
+            and (
+                clamp(data.unsupported_claim_risk) >= 0.75
+                or 1.0 - clamp(data.source_grounding_strength) >= 0.65
+                or clamp(data.broad_claim_risk) >= 0.65
+            )
+        )
+
         template_ai_style = (
             predictability >= 0.42
             and topk >= 0.75
@@ -1011,7 +1133,10 @@ class Layer3Scorer:
             and generic_assertion >= 0.75
         )
 
-        if template_ai_style:
+        if qualifying_density_ai:
+            cluster_boost = 0.12
+            cluster_name = "qualifying_text_ai_density"
+        elif template_ai_style:
             cluster_boost = 0.12
             cluster_name = "template_ai_style"
         elif known_ai_style:
@@ -1022,6 +1147,8 @@ class Layer3Scorer:
             cluster_name = "humanised_ai"
 
         score = clamp(score + cluster_boost)
+        if qualifying_density_ai:
+            score = max(score, 0.60)
         if template_ai_style:
             score = max(score, 0.58)
 
@@ -1033,14 +1160,15 @@ class Layer3Scorer:
         available = sum(1 for v in [
             data.predictability, data.topk_pattern, data.generic_phrase_density,
             data.burstiness_risk, data.repeated_sentence_structure_risk,
-            data.generic_assertion_risk, data.balanced_hedging_risk,
+            data.generic_assertion_risk, data.qualifying_text_ai_density,
+            data.balanced_hedging_risk,
         ] if v is not None)
 
         confidence = confidence_from_coverage(
             word_count=data.word_count,
             sentence_count=data.sentence_count,
             available_count=available,
-            expected_count=7,
+            expected_count=8,
         )
 
         reasons = []
@@ -1271,6 +1399,19 @@ def build_layer3_input_from_text(
         unsupported_claim_risk = estimate_unsupported_claim_risk(text, has_citations=has_cites)
 
     generic_assertion = estimate_generic_assertion_risk(text)
+    lived_detail = estimate_lived_detail_risk(text, domain_lived_detail_patterns)
+    qualifying_density = estimate_qualifying_text_ai_density(
+        text,
+        predictability=predictability,
+        topk_pattern=topk_pattern,
+        generic_assertion_risk=generic_assertion,
+        broad_claim_risk=broad_claim_risk,
+        unsupported_claim_risk=unsupported_claim_risk,
+        source_grounding_strength=source_grounding_strength,
+        lived_detail_risk=lived_detail,
+        formulaic_progression_risk=formulaic_progression,
+        balanced_framing_risk=balanced_framing,
+    )
 
     return Layer3Input(
         predictability=predictability,
@@ -1279,9 +1420,10 @@ def build_layer3_input_from_text(
         burstiness_risk=estimate_burstiness_risk(text),
         repeated_sentence_structure_risk=estimate_repeated_sentence_structure_risk(text),
         generic_assertion_risk=generic_assertion,
+        qualifying_text_ai_density=qualifying_density,
 
         broad_claim_risk=broad_claim_risk,
-        lived_detail_risk=estimate_lived_detail_risk(text, domain_lived_detail_patterns),
+        lived_detail_risk=lived_detail,
         citation_weakness_risk=citation_weakness_risk,
         unsupported_claim_risk=unsupported_claim_risk,
         source_grounding_strength=source_grounding_strength,

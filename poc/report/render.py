@@ -157,12 +157,26 @@ def _authorship_rating_from_badge(badge: dict) -> dict:
     )
     high_component_alignment = (
         ai_score >= 58
-        and _component_score(ai_components, "topk_pattern") >= 80
+        and (
+            _component_score(ai_components, "topk_pattern") >= 80
+            or _component_score(ai_components, "qualifying_text_ai_density") >= 70
+        )
         and _component_score(ai_components, "generic_assertion_risk") >= 80
         and (
             _component_score(writing_components, "unsupported_claim_risk") >= 80
             or _component_score(writing_components, "source_grounding_risk") >= 70
             or _component_score(writing_components, "broad_claim_risk") >= 70
+        )
+    )
+    high_density_alignment = (
+        ai_score >= 45
+        and _component_score(ai_components, "qualifying_text_ai_density") >= 70
+        and _component_score(ai_components, "topk_pattern") >= 60
+        and _component_score(ai_components, "generic_assertion_risk") >= 80
+        and (
+            _component_score(writing_components, "unsupported_claim_risk") >= 75
+            or _component_score(writing_components, "source_grounding_risk") >= 65
+            or _component_score(writing_components, "broad_claim_risk") >= 65
         )
     )
 
@@ -183,7 +197,7 @@ def _authorship_rating_from_badge(badge: dict) -> dict:
         )
     )
 
-    if ai_score >= 65 or tier == "RED" or (ai_score >= 60 and high_quality) or high_component_alignment:
+    if ai_score >= 65 or tier == "RED" or (ai_score >= 60 and high_quality) or high_component_alignment or high_density_alignment:
         return {
             "label": "AI-Generated / AI-Paraphrased Signals",
             "short_label": "AI Signals",

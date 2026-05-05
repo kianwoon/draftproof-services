@@ -51,12 +51,26 @@ function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiCompon
   const tier = String(tierValue || '').toLowerCase();
   const highComponentAlignment = (
     percent >= 58 &&
-    (metricValue(aiComponents.topk_pattern) || 0) >= 80 &&
+    (
+      (metricValue(aiComponents.topk_pattern) || 0) >= 80 ||
+      (metricValue(aiComponents.qualifying_text_ai_density) || 0) >= 70
+    ) &&
     (metricValue(aiComponents.generic_assertion_risk) || 0) >= 80 &&
     (
       (metricValue(writingComponents.unsupported_claim_risk) || 0) >= 80 ||
       (metricValue(writingComponents.source_grounding_risk) || 0) >= 70 ||
       (metricValue(writingComponents.broad_claim_risk) || 0) >= 70
+    )
+  );
+  const highDensityAlignment = (
+    percent >= 45 &&
+    (metricValue(aiComponents.qualifying_text_ai_density) || 0) >= 70 &&
+    (metricValue(aiComponents.topk_pattern) || 0) >= 60 &&
+    (metricValue(aiComponents.generic_assertion_risk) || 0) >= 80 &&
+    (
+      (metricValue(writingComponents.unsupported_claim_risk) || 0) >= 75 ||
+      (metricValue(writingComponents.source_grounding_risk) || 0) >= 65 ||
+      (metricValue(writingComponents.broad_claim_risk) || 0) >= 65
     )
   );
   const likelyComponentAlignment = (
@@ -76,7 +90,7 @@ function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiCompon
     )
   );
 
-  if (percent >= 65 || tier === 'red' || (percent >= 60 && writingPercent != null && writingPercent >= 65) || highComponentAlignment) {
+  if (percent >= 65 || tier === 'red' || (percent >= 60 && writingPercent != null && writingPercent >= 65) || highComponentAlignment || highDensityAlignment) {
     return { label: 'AI-Generated / AI-Paraphrased Signals', short_label: 'AI Signals' };
   }
   if (likelyComponentAlignment) {
