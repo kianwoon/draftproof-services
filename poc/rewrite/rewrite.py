@@ -2288,6 +2288,57 @@ def _select_density_paragraph(
     return best_idx, best_region, best_meta
 
 
+def _splice_density_candidate(
+    current_text: str,
+    paragraph_index: int,
+    source_region: str,
+    candidate_region: str,
+    region_meta: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Replace only the selected density region, not the whole document.
+
+    Density mitigation can select a normalized sentence window from an oversized
+    paragraph. If that normalized window is not an exact substring, replacing the
+    whole paragraph would drop the rest of the document.
+    """
+    if not current_text or not candidate_region:
+        return ""
+    if source_region and source_region in current_text:
+        return current_text.replace(source_region, candidate_region, 1)
+
+    paragraphs = _split_paragraphs(current_text)
+    if paragraph_index < 0 or paragraph_index >= len(paragraphs):
+        return ""
+
+    meta = region_meta or {}
+    paragraph = paragraphs[paragraph_index]
+    if meta.get("region_type") == "sentence_window":
+        sentences = _split_sentences(paragraph)
+        start = int(meta.get("sentence_start") or 0)
+        count = int(meta.get("sentence_count") or 0)
+        if sentences and count > 0 and 0 <= start < len(sentences):
+            end = min(len(sentences), start + count)
+            rewritten_sentences = _split_sentences(candidate_region) or [candidate_region]
+            new_sentences = sentences[:start] + rewritten_sentences + sentences[end:]
+            paragraphs[paragraph_index] = " ".join(s.strip() for s in new_sentences if s.strip())
+            return "\n\n".join(paragraphs)
+
+    if meta.get("region_type") == "word_window":
+        source_word_count = len((source_region or "").split())
+        if source_word_count > 0:
+            words = paragraph.split()
+            paragraphs[paragraph_index] = " ".join(
+                [candidate_region] + words[source_word_count:]
+            )
+            return "\n\n".join(paragraphs)
+
+    if meta.get("region_type") == "paragraph":
+        paragraphs[paragraph_index] = candidate_region
+        return "\n\n".join(paragraphs)
+
+    return ""
+
+
 def _density_component_lines(raw_json: Optional[Dict[str, Any]]) -> List[str]:
     names = [
         "qualifying_text_ai_density",
@@ -3025,14 +3076,13 @@ def run_rewrite(
             })
             return
 
-        candidate_text = ""
-        if density_paragraph in current_text:
-            candidate_text = current_text.replace(density_paragraph, density_candidate, 1)
-        else:
-            candidate_paragraphs = _split_paragraphs(current_text)
-            if 0 <= para_idx < len(candidate_paragraphs):
-                candidate_paragraphs[para_idx] = density_candidate
-                candidate_text = "\n\n".join(candidate_paragraphs)
+        candidate_text = _splice_density_candidate(
+            current_text,
+            para_idx,
+            density_paragraph,
+            density_candidate,
+            density_meta,
+        )
         if not candidate_text:
             density_paragraph_pass["reason"] = "density_region_splice_failed"
             return
@@ -3959,10 +4009,14 @@ def run_rewrite(
                     "new_text": density_candidate[:240] if density_candidate else "",
                 })
             else:
-                candidate_paragraphs = _split_paragraphs(current_text)
-                if 0 <= para_idx < len(candidate_paragraphs):
-                    candidate_paragraphs[para_idx] = density_candidate
-                    candidate_text = "\n\n".join(candidate_paragraphs)
+                candidate_text = _splice_density_candidate(
+                    current_text,
+                    para_idx,
+                    density_paragraph,
+                    density_candidate,
+                    density_meta,
+                )
+                if candidate_text:
                     voice_check = voice_guard.check(current_text, candidate_text)
                     if not voice_check.accepted:
                         density_paragraph_pass["reason"] = f"voice_eroded {voice_check.reject_reason}"
@@ -4032,7 +4086,7 @@ def run_rewrite(
                             "note": "applied density paragraph candidate",
                         })
                 else:
-                    density_paragraph_pass["reason"] = "paragraph_index_invalid"
+                    density_paragraph_pass["reason"] = "density_region_splice_failed"
     elif density_score >= 70.0 and not density_paragraph_pass.get("attempted"):
         if loop_rewrite_fn is None:
             density_paragraph_pass["reason"] = "no_llm_available"

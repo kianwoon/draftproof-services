@@ -40,6 +40,7 @@ from rewrite.rewrite import (
     _density_paragraph_prompt,
     _density_paragraph_reject_reason,
     _density_repair_prompt,
+    _splice_density_candidate,
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
@@ -1116,6 +1117,23 @@ assert_test(
     bool(_density_paragraph_reject_reason(density_para, bad_density_candidate, density_context)),
     "density guard rejects polished abstraction patterns",
 )
+
+single_paragraph_doc = (
+    "Sentence one starts the document. Sentence two is the dense target. "
+    "Sentence three is also part of the target. Sentence four must remain. "
+    "Sentence five must also remain."
+)
+density_window = "Sentence two is the dense target. Sentence three is also part of the target."
+spliced_density = _splice_density_candidate(
+    single_paragraph_doc,
+    0,
+    density_window.replace("  ", " "),
+    "Replacement sentence A. Replacement sentence B.",
+    {"region_type": "sentence_window", "sentence_start": 1, "sentence_count": 2},
+)
+assert_test("Sentence one starts the document." in spliced_density, "density splice preserves text before sentence window")
+assert_test("Sentence four must remain." in spliced_density, "density splice preserves text after sentence window")
+assert_test("Replacement sentence A." in spliced_density, "density splice inserts replacement window")
 
 long_density_text = (
     "Opening note before the dense section.\n\n"
