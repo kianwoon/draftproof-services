@@ -305,6 +305,7 @@ def _build_rewrite_debug_log(
     original_scan = summary.get("detect_scan_original") or {}
     final_scan = summary.get("detect_scan_rewritten") or {}
     attempted_scan = summary.get("detect_scan_attempted") or final_scan
+    effective_badge = (original_scan.get("ai_risk_badge") or badge or {})
     effective_plan = rewrite_json.get("effective_rewrite_plan") or {}
     findings_by_id = _flatten_report_findings(report_json)
     sentence_comparison = rewrite_json.get("sentence_comparison") or []
@@ -354,22 +355,28 @@ def _build_rewrite_debug_log(
                 "citation_repairs": rewrite_plan.get("citation_repairs"),
             },
             "ai_risk_badge": {
-                "tier": badge.get("tier"),
-                "ai_likelihood_score": badge.get("ai_likelihood_score"),
-                "authorship_rating": badge.get("authorship_rating"),
-                "authorship_rating_label": badge.get("authorship_rating_label"),
-                "authorship_rating_code": badge.get("authorship_rating_code"),
-                "ai_cluster_name": badge.get("ai_cluster_name"),
-                "ai_cluster_boost": badge.get("ai_cluster_boost"),
-                "writing_quality_score": badge.get("writing_quality_score"),
-                "writing_quality_tier": badge.get("writing_quality_tier"),
-                "review_priority": badge.get("review_priority"),
-                "confidence": badge.get("confidence"),
-                "ai_components": badge.get("ai_components"),
-                "writing_components": badge.get("writing_components"),
-                "reasons": badge.get("reasons"),
-                "guardrails": badge.get("guardrails"),
-                "schema_enriched_from_input_text": badge.get("schema_enriched_from_input_text"),
+                "tier": effective_badge.get("tier"),
+                "ai_likelihood_score": effective_badge.get("ai_likelihood_score"),
+                "authorship_rating": effective_badge.get("authorship_rating"),
+                "authorship_rating_label": effective_badge.get("authorship_rating_label"),
+                "authorship_rating_code": effective_badge.get("authorship_rating_code"),
+                "ai_cluster_name": effective_badge.get("ai_cluster_name"),
+                "ai_cluster_boost": effective_badge.get("ai_cluster_boost"),
+                "writing_quality_score": effective_badge.get("writing_quality_score"),
+                "writing_quality_tier": effective_badge.get("writing_quality_tier"),
+                "review_priority": effective_badge.get("review_priority"),
+                "confidence": effective_badge.get("confidence"),
+                "ai_components": effective_badge.get("ai_components"),
+                "writing_components": effective_badge.get("writing_components"),
+                "reasons": effective_badge.get("reasons"),
+                "guardrails": effective_badge.get("guardrails"),
+                "schema_enriched_from_input_text": effective_badge.get("schema_enriched_from_input_text"),
+                "saved_scan_contract": {
+                    "tier": badge.get("tier"),
+                    "ai_likelihood_score": badge.get("ai_likelihood_score"),
+                    "authorship_rating_label": badge.get("authorship_rating_label"),
+                    "authorship_rating_code": badge.get("authorship_rating_code"),
+                },
             },
         },
         "rewrite_summary": {
