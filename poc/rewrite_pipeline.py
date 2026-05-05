@@ -332,10 +332,11 @@ def run_rewrite_pipeline(
             else "No automatic rewrite was applied"
         )
         rewritten_report_dict = ctx.raw_json
-    elif result.final_detect_report is not None:
-        # Run a fresh full scan on the rewritten text for accurate scores.
-        # The targeted rescan reuses old scores for unchanged sentences, which
-        # produces misleading "After" numbers vs what a real rescan would show.
+    else:
+        # Text changed — run a single fresh full scan on the rewritten text.
+        # The rewrite engine's targeted rescan reuses old scores for unchanged
+        # sentences, which produces misleading "After" numbers. One full scan
+        # here gives accurate user-facing report scores.
         scan_t0 = time.time()
         rewritten_detect_runner = DetectionRunner()
         rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
@@ -351,33 +352,6 @@ def run_rewrite_pipeline(
         rewritten_builder.set_meta(scan_time=0, original_text=rewritten_text)
         rewritten_draft_report = rewritten_builder.build()
         rewritten_report_dict = report_to_dict(rewritten_draft_report)
-    else:
-        # Fallback: no cached detect report — run full scan
-        scan_t0 = time.time()
-        rewritten_detect_runner = DetectionRunner()
-        rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
-        stage_timings.append({
-            "stage": "fresh_rewritten_scan",
-            "seconds": round(time.time() - scan_t0, 3),
-        })
-
-        rewritten_builder = ReportBuilder()
-        rewritten_builder.add_detection_report(rewritten_detect_report)
-        if rewritten_detect_report.postprocess_results:
-            rewritten_builder.add_postprocess_results(rewritten_detect_report.postprocess_results)
-        rewritten_builder.set_meta(scan_time=0, original_text=rewritten_text)
-        rewritten_draft_report = rewritten_builder.build()
-        rewritten_report_dict = report_to_dict(rewritten_draft_report)
-
-    def _full_scan_report_dict(scan_text: str) -> dict:
-        detect_runner = DetectionRunner()
-        detect_report = detect_runner.run_all(scan_text)
-        builder = ReportBuilder()
-        builder.add_detection_report(detect_report)
-        if detect_report.postprocess_results:
-            builder.add_postprocess_results(detect_report.postprocess_results)
-        builder.set_meta(scan_time=0, original_text=scan_text)
-        return report_to_dict(builder.build())
 
     def _finding_total(report_dict):
         findings = report_dict.get("findings", {})
@@ -399,6 +373,16 @@ def run_rewrite_pipeline(
     def _badge_wq(report_dict):
         score = (report_dict.get("ai_risk_badge") or {}).get("writing_quality_score")
         return float(score) if isinstance(score, (int, float)) else None
+
+    def _full_scan_report_dict(scan_text: str) -> dict:
+        detect_runner = DetectionRunner()
+        detect_report = detect_runner.run_all(scan_text)
+        builder = ReportBuilder()
+        builder.add_detection_report(detect_report)
+        if detect_report.postprocess_results:
+            builder.add_postprocess_results(detect_report.postprocess_results)
+        builder.set_meta(scan_time=0, original_text=scan_text)
+        return report_to_dict(builder.build())
 
     # The saved scan is the user-visible contract and is already available.
     # Do not rescan the original by default: on longer drafts it doubles final
