@@ -1291,9 +1291,31 @@ assert_test(
 rescue_prompt = _density_rescue_prompt(density_text, density_context, density_plan)
 assert_test("AI-first density rescue pass" in rescue_prompt, "density rescue prompt identifies AI-first rescue")
 assert_test("break the repeated long-form AI-style pattern" in rescue_prompt, "density rescue prompt targets document pattern")
+assert_test("synonym swaps and light polishing" in rescue_prompt, "density rescue prompt rejects light polishing")
 assert_test("Output the complete rewritten draft only" in rescue_prompt, "density rescue prompt requires full draft output")
 assert_test("qualifying_text_ai_density=82.0%" in rescue_prompt, "density rescue prompt includes density driver")
 assert_test("Certificate III Hairdressing" in rescue_prompt, "density rescue prompt preserves named entities")
+rescue_total_prompt = _density_rescue_prompt(
+    density_text,
+    density_context,
+    density_plan,
+    rescue_mode="total_reconstruction",
+)
+assert_test("Rescue mode: total reconstruction" in rescue_total_prompt, "density rescue supports total reconstruction mode")
+rescue_structure_prompt = _density_rescue_prompt(
+    density_text,
+    density_context,
+    density_plan,
+    rescue_mode="paragraph_restructure",
+)
+assert_test("Rescue mode: paragraph restructuring" in rescue_structure_prompt, "density rescue supports paragraph restructuring mode")
+rescue_process_prompt = _density_rescue_prompt(
+    density_text,
+    density_context,
+    density_plan,
+    rescue_mode="process_voice",
+)
+assert_test("Rescue mode: concrete process voice" in rescue_process_prompt, "density rescue supports process voice mode")
 cleaned_rescue = _clean_density_rescue_output(
     "Final draft:\n\nFirst rewritten paragraph.\n\n\nSecond rewritten paragraph.",
     "Original paragraph.",
