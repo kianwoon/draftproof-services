@@ -1,17 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="DraftProof">
-  <rect width="64" height="64" rx="14" fill="#0D1B2A"/>
+  <rect width="64" height="64" rx="12" fill="#0D1B2A"/>
   <path
-    d="M32 10.5 47.5 16v11.2c0 10.2-6.2 16.6-15.5 20.3-9.3-3.7-15.5-10.1-15.5-20.3V16L32 10.5Z"
-    fill="rgba(58,168,118,0.14)"
+    d="M32 5.5 53 13v14.9c0 14-8.5 22.7-21 27.6-12.5-4.9-21-13.6-21-27.6V13L32 5.5Z"
+    fill="#3BA876"
     stroke="#3BA876"
-    stroke-width="3"
+    stroke-width="2"
     stroke-linejoin="round"
   />
   <path
-    d="m24.2 31.8 5.2 5.1 10.9-12"
+    d="m22.1 31.8 7.1 7 14.1-15.5"
     fill="none"
     stroke="#FFFFFF"
-    stroke-width="4.2"
+    stroke-width="6"
     stroke-linecap="round"
     stroke-linejoin="round"
   />
