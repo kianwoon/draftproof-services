@@ -1,4 +1,5 @@
 """Celery tasks — scan_document runs the full detect pipeline."""
+# v2: scan progress published to Redis via publish_scan_progress
 
 import sys
 import os
