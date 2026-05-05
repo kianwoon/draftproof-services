@@ -64,11 +64,12 @@ fi
 # Preload model into memory before Celery starts (saves ~2s per first task)
 echo "[entrypoint] Preloading ${MODEL} into memory..."
 python3 -c "
+import sys
+sys.path.insert(0, '/app/poc')
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 model = AutoModelForCausalLM.from_pretrained('${MODEL}', torch_dtype=torch.float32)
 tokenizer = AutoTokenizer.from_pretrained('${MODEL}')
-# Store in the scanner module so tasks reuse it
 from predictability.scanner import PredictabilityScanner
 s = PredictabilityScanner.__new__(PredictabilityScanner)
 s._model = model
