@@ -682,6 +682,7 @@ def run_rewrite_pipeline(
     )
     ai_first_min_drop = float(os.environ.get("DRAFTPROOF_AI_FIRST_MIN_DROP", "5.0"))
     ai_first_target = float(os.environ.get("DRAFTPROOF_AI_FIRST_TARGET", "60.0"))
+    ai_first_required_min_ai = float(os.environ.get("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", "50.0"))
     ai_first_success = (
         rewritten_text != text
         and isinstance(ai_first_delta, (int, float))
@@ -695,6 +696,29 @@ def run_rewrite_pipeline(
             )
         )
     )
+    ai_first_required = (
+        rewritten_text != text
+        and ai_first_reference is not None
+        and ai_first_reference >= ai_first_required_min_ai
+    )
+    if ai_first_required and not ai_first_success:
+        delta_text = f"{ai_first_delta:.2f}" if isinstance(ai_first_delta, (int, float)) else "unknown"
+        regression_reasons.append(
+            f"ai_first_gate_failed {ai_first_reference}->{rewritten_ai} "
+            f"delta={delta_text} required_delta={ai_first_min_drop:.2f}"
+        )
+        result.summary["ai_first_mitigation"] = {
+            "kept": False,
+            "reference_ai": ai_first_reference,
+            "rewritten_ai": rewritten_ai,
+            "ai_delta": round(ai_first_delta, 3) if isinstance(ai_first_delta, (int, float)) else None,
+            "min_drop": ai_first_min_drop,
+            "target": ai_first_target,
+            "required_min_ai": ai_first_required_min_ai,
+            "hard_regressions": [
+                f"ai_first_gate_failed {ai_first_reference}->{rewritten_ai}"
+            ],
+        }
     if ai_first_success:
         hard_regression_reasons = []
         soft_regression_reasons = []

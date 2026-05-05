@@ -3206,11 +3206,22 @@ def run_rewrite(
         plan,
         getattr(rewrite_context, "raw_json", None),
     )
+    original_badge_ai_score = _report_badge_score(
+        getattr(rewrite_context, "raw_json", None),
+        "ai_likelihood_score",
+    )
+    density_ai_threshold = (
+        60.0
+        if isinstance(original_badge_ai_score, (int, float)) and original_badge_ai_score >= 50.0
+        else 70.0
+    )
     density_paragraph_pass: Dict[str, Any] = {
         "attempted": False,
         "applied": False,
         "reason": "not_needed",
         "attempts": [],
+        "ai_trigger_score": original_badge_ai_score,
+        "density_threshold": density_ai_threshold,
         "density_score": _badge_component_score(
             getattr(rewrite_context, "raw_json", None),
             "qualifying_text_ai_density",
@@ -3238,7 +3249,10 @@ def run_rewrite(
         max_density_passes = max(1, int(getattr(config, "max_density_passes", 1) or 1))
         if len(density_attempts) >= max_density_passes:
             return
-        if density_score < 70.0:
+        if density_score < density_ai_threshold:
+            density_paragraph_pass["reason"] = (
+                f"density_score_below_threshold {density_score:.2f}<{density_ai_threshold:.2f}"
+            )
             return
         if loop_rewrite_fn is None:
             density_paragraph_pass["reason"] = "no_llm_available"
@@ -3663,7 +3677,7 @@ def run_rewrite(
 
     raw_context_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
     if (
-        float(density_paragraph_pass.get("density_score") or 0.0) >= 70.0
+        float(density_paragraph_pass.get("density_score") or 0.0) >= density_ai_threshold
         and density_mitigation_llm_calls >= 4
         and current_text != content
         and isinstance(raw_context_json, dict)
@@ -3884,7 +3898,7 @@ def run_rewrite(
     effective_auto_target_limit = max(0, config.max_auto_targets)
     guided_throttle_reason = ""
     if runtime_mitigation_plan.get("primary_mode") == "guided_revision":
-        density_is_primary = float(density_paragraph_pass.get("density_score") or 0.0) >= 70.0
+        density_is_primary = float(density_paragraph_pass.get("density_score") or 0.0) >= density_ai_threshold
         evidence_count = int(
             (runtime_mitigation_plan.get("counts") or {}).get("needs_source_or_example", 0)
             or 0
@@ -5044,7 +5058,7 @@ def run_rewrite(
     net_findings_fixed = original_finding_count - final_finding_count
     target_weight_delta = original_target_weight - final_target_weight
     ai_likelihood_delta = original_ai_likelihood - final_ai_likelihood
-    density_ai_primary = float(density_paragraph_pass.get("density_score") or 0.0) >= 70.0
+    density_ai_primary = float(density_paragraph_pass.get("density_score") or 0.0) >= density_ai_threshold
     if density_ai_primary:
         meaningful_global_improvement = (
             ai_likelihood_delta >= 0.01

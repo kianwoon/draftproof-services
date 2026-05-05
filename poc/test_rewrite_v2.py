@@ -1426,6 +1426,51 @@ assert_test(
     "effective config records density-first priority",
 )
 
+near_threshold_density_context = DetectJSONContext(
+    detect_results=[make_detect_result([])],
+    input_text=density_text,
+    raw_json={
+        "ai_risk_badge": {
+            "ai_likelihood_score": 59.73,
+            "ai_components": {
+                "qualifying_text_ai_density": 69.93,
+                "generic_assertion_risk": 76.0,
+            },
+        },
+        "domain_profile": density_context.raw_json["domain_profile"],
+        "rewrite_edit_briefs": density_context.raw_json["rewrite_edit_briefs"],
+    },
+)
+near_threshold_calls = []
+
+
+def near_threshold_rewrite_fn(text, prompt):
+    near_threshold_calls.append((text, prompt))
+    if "Density paragraph mitigation pass" in prompt:
+        return (
+            "In Certificate III Hairdressing, learners practise support, technology, and salon skills together. "
+            "The teacher checks how the method is used while the required salon skills are still covered."
+        )
+    return "1. The class uses support while covering salon skills."
+
+
+near_threshold_result = run_rewrite(
+    density_text,
+    [make_detect_result([density_first_finding])],
+    rewrite_fn=near_threshold_rewrite_fn,
+    config=RewriteConfig(max_auto_targets=0, max_llm_calls=1),
+    rewrite_context=near_threshold_density_context,
+    ai_only=False,
+)
+assert_test(
+    near_threshold_calls and "Density paragraph mitigation pass" in near_threshold_calls[0][1],
+    "AI-risk near-threshold density still triggers paragraph mitigation",
+)
+assert_test(
+    near_threshold_result.summary.get("density_paragraph_pass", {}).get("density_threshold") == 60.0,
+    "AI-risk density threshold lowers to 60 for mitigation",
+)
+
 
 # ════════════════════════════════════════════════════════════════════════
 print(f"\n{'=' * 70}")
