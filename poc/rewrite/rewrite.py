@@ -71,7 +71,7 @@ from llm.gateway import LLMGateway, LLMConfig
 
 logger = logging.getLogger(__name__)
 
-REWRITE_RUNTIME_VERSION = "context-aware-rewrite-v3"
+REWRITE_RUNTIME_VERSION = "context-aware-rewrite-v4-ai-rescue"
 
 
 def _metrics_from_detect(detect_report, text: str):
