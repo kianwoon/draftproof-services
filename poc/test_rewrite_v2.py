@@ -52,7 +52,12 @@ from rewrite.rewrite import (
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
-from rewrite_pipeline import run_rewrite_pipeline, _build_aligned_sentence_comparison, _ai_first_gate_status
+from rewrite_pipeline import (
+    run_rewrite_pipeline,
+    _build_aligned_sentence_comparison,
+    _ai_first_gate_status,
+    _ai_search_marked_grounding_candidates,
+)
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
 
@@ -802,6 +807,33 @@ cross_ai_gate = _ai_first_gate_status(62.0, 59.8, True)
 assert_test(
     cross_ai_gate["required"] and cross_ai_gate["success"],
     "AI-first gate accepts crossing below 60 percent",
+)
+
+ai_search_candidates = _ai_search_marked_grounding_candidates(
+    "The system needs a practical method for training. "
+    "Students learn better when the work is clear. "
+    "This creates a stronger result for the class. "
+    "The process should support learners during practice. "
+    "It can help students understand the method. "
+    "The teacher has to manage the lesson carefully. "
+    "This is important because the skill requires control. "
+    "The final result depends on the student applying the steps. "
+    "Assessment should include the learning process. "
+    "The goal is to improve confidence and understanding."
+)
+candidate_labels = [label for label, _ in ai_search_candidates]
+candidate_text = "\n".join(text for _, text in ai_search_candidates)
+assert_test(
+    "deterministic_process_anchor_generic" in candidate_labels,
+    "AI search includes deterministic process-anchor candidate",
+)
+assert_test(
+    "[[REVIEW:" in candidate_text,
+    "AI search keeps marked review-grounding candidates",
+)
+assert_test(
+    "In my chair," in candidate_text or "During consultation," in candidate_text,
+    "AI search process-anchor candidate adds concrete author/process anchors",
 )
 
 ai_first_report = render_rewrite_report(

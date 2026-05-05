@@ -105,12 +105,13 @@ async def stream_scan_events(
 
                     if current_payload.get("status") in ("completed", "failed"):
                         return
-                    continue
 
-            # Fallback: poll DB every 5s when Redis is unavailable
+            # Durable fallback: even when Redis is healthy, periodically check
+            # Postgres so a missed stream event cannot leave the UI waiting.
             now = asyncio.get_running_loop().time()
             if now - last_db_check < 5:
-                await asyncio.sleep(1)
+                if redis_unavailable:
+                    await asyncio.sleep(1)
                 continue
 
             result = await get_scan(scan_id, user_id=user["id"])
