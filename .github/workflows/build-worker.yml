@@ -51,19 +51,21 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          no-cache: true
 
       - name: Deploy to Koyeb via GHCR image
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
+          IMAGE_TAG: ghcr.io/kianwoon/draftproof-worker:sha-${{ github.sha }}
         run: |
-          echo "Deploying ghcr.io/kianwoon/draftproof-worker:latest to Koyeb..."
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          IMAGE="ghcr.io/kianwoon/draftproof-worker:sha-${SHORT_SHA}"
+          echo "Deploying ${IMAGE} to Koyeb..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
             -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"definition":{"docker":{"image":"ghcr.io/kianwoon/draftproof-worker:latest","image_registry_secret":"e3888d3f"}}}')
+            -d "{\"definition\":{\"docker\":{\"image\":\"${IMAGE}\",\"image_registry_secret\":\"e3888d3f\"}}}")
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
