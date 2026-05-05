@@ -2065,6 +2065,22 @@ th {
   isolation: isolate;
 }
 
+.app-hero-dark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(7, 18, 31, .94) 0%, rgba(7, 18, 31, .88) 48%, rgba(7, 18, 31, .82) 100%),
+    radial-gradient(circle at 86% 24%, rgba(58, 168, 118, .10), transparent 24rem);
+}
+
+.app-hero-dark .code-texture {
+  z-index: 0;
+  opacity: .42;
+}
+
 .app-hero-dark > :not(.code-texture) {
   position: relative;
   z-index: 2;
@@ -2547,11 +2563,11 @@ th {
 }
 
 .pricing-hero h1 {
-  color: var(--ink);
+  color: #fff;
 }
 
 .pricing-lead {
-  color: var(--muted);
+  color: rgba(255, 255, 255, .64);
   font-size: 1.05rem;
   margin: 0;
 }
@@ -4338,12 +4354,12 @@ th {
 }
 
 .why-hero h1 {
-  color: var(--ink);
+  color: #fff;
   margin: 0 0 16px;
 }
 
 .why-hero .lead {
-  color: var(--muted);
+  color: rgba(255, 255, 255, .64);
   font-size: 1.05rem;
   line-height: 1.7;
   max-width: 760px;
@@ -4515,12 +4531,12 @@ th {
 }
 
 .legal-hero h1 {
-  color: var(--ink);
+  color: #fff;
   margin: 0 0 16px;
 }
 
 .legal-hero .lead {
-  color: var(--muted);
+  color: rgba(255, 255, 255, .64);
   font-size: 1.05rem;
   line-height: 1.7;
   max-width: 760px;
@@ -4649,4 +4665,39 @@ th {
     padding: 0.5rem;
     font-size: 0.82rem;
   }
+}
+
+/* Final dark-surface contract: every navy hero must keep readable content above texture. */
+.app-hero.app-hero-dark > :not(.code-texture) {
+  position: relative !important;
+  z-index: 3 !important;
+}
+
+.app-hero.app-hero-dark h1,
+.app-hero.app-hero-dark h2,
+.app-hero.app-hero-dark h3,
+.why-hero.app-hero-dark h1,
+.pricing-hero.app-hero-dark h1,
+.legal-hero.app-hero-dark h1 {
+  color: #f8fafc !important;
+  opacity: 1 !important;
+  text-shadow: 0 1px 18px rgba(0, 0, 0, .35);
+}
+
+.app-hero.app-hero-dark p,
+.app-hero.app-hero-dark .lead,
+.pricing-hero.app-hero-dark .pricing-lead,
+.why-hero.app-hero-dark .lead,
+.legal-hero.app-hero-dark .lead {
+  color: rgba(248, 250, 252, .76) !important;
+  opacity: 1 !important;
+}
+
+.app-hero.app-hero-dark .eyebrow {
+  color: rgba(248, 250, 252, .50) !important;
+}
+
+.why-hero.app-hero-dark .why-punch {
+  color: #3aa876 !important;
+  opacity: 1 !important;
 }
