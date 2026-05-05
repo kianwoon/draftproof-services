@@ -41,5 +41,12 @@ app.conf.update(
             settings.CELERY_VISIBILITY_TIMEOUT_SECONDS,
             settings.REWRITE_TIME_LIMIT_SECONDS + 120,
         ),
+        # Reduce broker heartbeats from default 2s → 120s.
+        # Single-worker setup doesn't need frequent health checks.
+        # Saves ~40K Redis commands/day.
+        "health_check_interval": 120,
     },
+    # Result TTL — results expire after 1 hour (default is 1 day).
+    # Reduces Redis key count from stored task results.
+    result_expires=3600,
 )

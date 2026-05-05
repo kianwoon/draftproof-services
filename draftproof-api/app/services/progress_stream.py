@@ -30,7 +30,7 @@ async def read_rewrite_progress(
     rewrite_id: str,
     last_id: str = "$",
     *,
-    block_ms: int = 1000,
+    block_ms: int = 3000,
     count: int = 10,
 ) -> list[tuple[str, dict]] | None:
     """Read rewrite progress events.

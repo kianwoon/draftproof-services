@@ -62,7 +62,7 @@ async def stream_scan_events(
             if result["status"] in ("completed", "failed"):
                 break
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)
 
     return StreamingResponse(
         event_stream(),
