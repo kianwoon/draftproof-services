@@ -46,6 +46,7 @@ from rewrite.rewrite import (
     _select_best_density_candidate,
     _clean_density_rescue_output,
     _density_rescue_prompt,
+    _density_rescue_retry_prompt,
     _density_repair_prompt,
     _splice_density_candidate,
     run_rewrite,
@@ -1295,6 +1296,10 @@ assert_test("synonym swaps and light polishing" in rescue_prompt, "density rescu
 assert_test("Output the complete rewritten draft only" in rescue_prompt, "density rescue prompt requires full draft output")
 assert_test("qualifying_text_ai_density=82.0%" in rescue_prompt, "density rescue prompt includes density driver")
 assert_test("Certificate III Hairdressing" in rescue_prompt, "density rescue prompt preserves named entities")
+assert_test(
+    rescue_prompt.rfind("Return the complete rewritten draft only") > rescue_prompt.rfind("</TARGET_DOCUMENT>"),
+    "density rescue final output instruction appears after target document",
+)
 rescue_total_prompt = _density_rescue_prompt(
     density_text,
     density_context,
@@ -1324,6 +1329,14 @@ assert_test(
     cleaned_rescue == "First rewritten paragraph.\n\nSecond rewritten paragraph.",
     "density rescue cleaner preserves paragraph breaks",
 )
+retry_rescue_prompt = _density_rescue_retry_prompt(
+    rescue_prompt,
+    "candidate_too_short 190<2900",
+    density_text,
+)
+assert_test("previous answer was rejected" in retry_rescue_prompt, "density rescue retry explains invalid output")
+assert_test("complete rewritten draft" in retry_rescue_prompt, "density rescue retry requires full draft")
+assert_test("Final instruction: output only" in retry_rescue_prompt, "density rescue retry ends with output-only instruction")
 local_repair_prompt = _density_repair_prompt(
     density_para,
     "bad candidate density paragraph",

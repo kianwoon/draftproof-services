@@ -2550,6 +2550,7 @@ def _density_rescue_prompt(
         *mode_lines,
         "Use total reconstruction at paragraph and sentence level: rebuild sentence routes, vary paragraph openings, and change explanation order where meaning allows.",
         "Keep paragraph count within one paragraph of the source unless the draft is a single paragraph.",
+        "Keep the rewritten draft close to the source length. Do not summarize or shorten the document.",
         "Keep the same topic, facts, citations, unit codes, names, numbers, and author stance.",
         "Do not invent new evidence, sources, dates, institutions, claims, examples, or learner events.",
         "Do not remove citations or named entities. Do not paraphrase citations, names, course codes, or unit codes.",
@@ -2558,8 +2559,6 @@ def _density_rescue_prompt(
         "Avoid broad polished phrases and academic filler: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident, especially true.",
         "Avoid keeping the same sequence of sentence openings. Do not simply swap synonyms.",
         "If a paragraph sounds like a clean explanatory essay, rebuild it around a specific classroom/process detail first, then a narrower claim.",
-        "Output the complete rewritten draft only. No notes, headings added by you, bullet points, or commentary.",
-        "Draft:\n<TARGET_DOCUMENT>\n" + draft_text + "\n</TARGET_DOCUMENT>",
     ]
     if component_lines:
         lines.append("Scan component drivers: " + ", ".join(component_lines))
@@ -2574,6 +2573,34 @@ def _density_rescue_prompt(
     constraint_lines = _rewrite_constraint_lines(rewrite_context, limit=6)
     if constraint_lines:
         lines.extend(constraint_lines)
+    lines.extend([
+        "Draft:\n<TARGET_DOCUMENT>\n" + draft_text + "\n</TARGET_DOCUMENT>",
+        "Output the complete rewritten draft only.",
+        "Return the complete rewritten draft only.",
+        "Do not return notes, analysis, bullets, headings added by you, or a shortened summary.",
+    ])
+    return "\n".join(lines)
+
+
+def _density_rescue_retry_prompt(
+    base_prompt: str,
+    rejection_reason: str,
+    source_text: str,
+) -> str:
+    """Prompt repair for malformed full-draft rescue outputs."""
+    protected = [span.text or source_text[span.start_char:span.end_char] for span in detect_protected_spans(source_text)]
+    min_chars = max(200, int(len(source_text) * 0.70))
+    lines = [
+        "Your previous answer was rejected by the rewrite gate.",
+        f"Rejection reason: {rejection_reason}.",
+        f"Return a complete rewritten draft of at least {min_chars} characters.",
+        "Do not summarize, explain, list changes, or return only one paragraph.",
+        "Preserve all protected spans exactly.",
+    ]
+    if protected:
+        lines.append("Protected spans: " + "; ".join(protected[:24]))
+    lines.append(base_prompt)
+    lines.append("Final instruction: output only the complete rewritten draft text.")
     return "\n".join(lines)
 
 
@@ -3804,6 +3831,9 @@ def run_rewrite(
                         "source": "original_text",
                         "candidate_limit": len(rescue_modes),
                     })
+                    rescue_retry_enabled = os.environ.get("DRAFTPROOF_DENSITY_RESCUE_RETRY", "1") != "0"
+                    min_rescue_chars = max(200, int(len(source_text_for_rescue) * 0.70))
+                    source_protected_spans = detect_protected_spans(source_text_for_rescue)
                     for rescue_mode in rescue_modes:
                         rescue_prompt = _density_rescue_prompt(
                             source_text_for_rescue,
@@ -3824,14 +3854,53 @@ def run_rewrite(
                             "passed": False,
                             "reason": "",
                         }
+                        invalid_reason = ""
+                        if not rescue_candidate:
+                            invalid_reason = "empty_rescue_candidate"
+                        elif len(rescue_candidate) < min_rescue_chars:
+                            invalid_reason = (
+                                f"candidate_too_short {len(rescue_candidate)}<{min_rescue_chars}"
+                            )
+                        elif not protected_spans_preserved(
+                            source_text_for_rescue,
+                            rescue_candidate,
+                            source_protected_spans,
+                        ):
+                            invalid_reason = "protected_span_lost"
+                        if invalid_reason and rescue_retry_enabled:
+                            retry_prompt = _density_rescue_retry_prompt(
+                                rescue_prompt,
+                                invalid_reason,
+                                source_text_for_rescue,
+                            )
+                            llm_calls_used += 1
+                            density_mitigation_llm_calls += 1
+                            retry_output = loop_rewrite_fn(source_text_for_rescue, retry_prompt)
+                            retry_candidate = _clean_density_rescue_output(
+                                retry_output,
+                                source_text_for_rescue,
+                            )
+                            candidate_eval.update({
+                                "retried": True,
+                                "retry_reason": invalid_reason,
+                                "retry_candidate_length": len(retry_candidate or ""),
+                            })
+                            rescue_candidate = retry_candidate
+                            candidate_eval["candidate_length"] = len(rescue_candidate or "")
                         if not rescue_candidate:
                             candidate_eval["reason"] = "empty_rescue_candidate"
+                            rescue_evaluations.append(candidate_eval)
+                            continue
+                        if len(rescue_candidate) < min_rescue_chars:
+                            candidate_eval["reason"] = (
+                                f"candidate_too_short {len(rescue_candidate)}<{min_rescue_chars}"
+                            )
                             rescue_evaluations.append(candidate_eval)
                             continue
                         if not protected_spans_preserved(
                             source_text_for_rescue,
                             rescue_candidate,
-                            detect_protected_spans(source_text_for_rescue),
+                            source_protected_spans,
                         ):
                             candidate_eval["reason"] = "protected_span_lost"
                             rescue_evaluations.append(candidate_eval)
