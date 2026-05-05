@@ -2393,9 +2393,6 @@ def _density_paragraph_reject_reason(
     drift = check_semantic_drift(original_paragraph, candidate_paragraph, threshold=0.50)
     if not drift.accepted:
         return "semantic_drift " + "; ".join(drift.reasons[:3])
-    component_ok, component_reason = _component_regression_check(original_paragraph, candidate_paragraph)
-    if not component_ok:
-        return "component_regression " + component_reason
     if _generic_polish_count(candidate_paragraph) > _generic_polish_count(original_paragraph):
         return "generic_polish_increase"
     anchors = _domain_anchor_terms(rewrite_context, original_paragraph, original_paragraph, limit=12)
@@ -3036,30 +3033,14 @@ def run_rewrite(
 
         component_ok, component_reason = _component_regression_check(current_text, candidate_text)
         if not component_ok:
-            density_paragraph_pass["reason"] = f"document_component_regression {component_reason}"
-            manual_suggestions.append({
-                "finding_id": "density_paragraph_rebuild",
-                "finding_type": "qualifying_text_ai_density",
-                "risk_level": "high",
-                "scanner_target": "ai_generation",
-                "sentence_id": None,
-                "paragraph_role": "unknown",
-                "original_sentence": density_paragraph,
-                "suggested_sentence": density_candidate,
-                "rejection_reason": density_paragraph_pass["reason"],
-                "why_review_manually": (
-                    "This paragraph candidate may reduce AI density, but a whole-document writing-quality "
-                    "component regressed. Review manually before using it."
-                ),
-            })
+            density_paragraph_pass["component_warning"] = f"document_component_regression {component_reason}"
             loop_history.append({
                 "loop": loops_used + 1,
                 "phase": phase,
                 "paragraph": para_idx,
-                "note": "density paragraph pass rejected",
-                "rejection_reason": density_paragraph_pass["reason"],
+                "note": "density paragraph component warning; AI-first final scan will decide",
+                "warning": density_paragraph_pass["component_warning"],
             })
-            return
 
         voice_check = voice_guard.check(current_text, candidate_text)
         if not voice_check.accepted:
