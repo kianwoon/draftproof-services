@@ -36,6 +36,9 @@ from rewrite.rewrite import (
     _paragraph_coherence_reject_reason,
     _rewrite_operation_lines,
     _target_predictability_acceptance,
+    _select_density_paragraph,
+    _density_paragraph_prompt,
+    _density_paragraph_reject_reason,
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
@@ -952,7 +955,137 @@ assert_test(pipeline_no_change["status"] == "clean", "pipeline skips when no rew
 
 # ════════════════════════════════════════════════════════════════════════
 print(f"\n{'=' * 70}")
-print("16. FULL PLANNER→GUARD→SCORE PIPELINE")
+print("16. DENSITY PARAGRAPH MITIGATION")
+print("=" * 70)
+
+density_text = (
+    "The learner practises consultation skills before cutting hair. The teacher checks the plan.\n\n"
+    "Inclusive Learning Design in Certificate III Hairdressing is important because it helps all learners succeed "
+    "in a modern learning environment. This shows that teachers should provide support and guidance while using "
+    "technology and different methods. Overall, the approach creates better outcomes for students while still "
+    "covering the required salon skills."
+)
+density_context = DetectJSONContext(
+    detect_results=[make_detect_result([])],
+    input_text=density_text,
+    raw_json={
+        "ai_risk_badge": {
+            "ai_components": {
+                "qualifying_text_ai_density": 82.0,
+                "generic_assertion_risk": 76.0,
+            }
+        },
+        "domain_profile": {
+            "matched_domain_terms": [
+                "Certificate III Hairdressing",
+                "consultation",
+                "salon skills",
+                "teacher",
+                "learners",
+            ]
+        },
+        "rewrite_edit_briefs": [
+            {
+                "finding_id": "f-density",
+                "paragraph_excerpt": (
+                    "Inclusive Learning Design in Certificate III Hairdressing is important because it helps all learners succeed "
+                    "in a modern learning environment."
+                ),
+                "signals": {"finding_type": "medium_predictability"},
+            }
+        ],
+    },
+)
+density_plan = build_mitigation_plan(
+    RewritePlan(
+        actions=[],
+        auto_fixable=[],
+        manual_required=[],
+        protected=[],
+        review_only=[],
+        total_weighted_risk=0.0,
+        auto_risk=0.0,
+        manual_risk=0.0,
+        protected_risk=0.0,
+        rewritable_risk=0.0,
+    ),
+    density_context.raw_json,
+)
+density_idx, density_para, density_meta = _select_density_paragraph(
+    density_text,
+    density_context,
+    density_plan,
+)
+assert_test(density_idx == 1, "density pass selects high-signal paragraph")
+assert_test(density_meta.get("matched_items", 0) >= 1, "density selection uses scan pointers")
+
+density_prompt = _density_paragraph_prompt(density_para, density_context, density_plan)
+assert_test("<TARGET>" in density_prompt and "</TARGET>" in density_prompt, "density prompt marks target paragraph")
+assert_test("Output exactly one replacement paragraph" in density_prompt, "density prompt requests one paragraph")
+assert_test("qualifying_text_ai_density=82.0%" in density_prompt, "density prompt includes component score")
+assert_test("Certificate III Hairdressing" in density_prompt, "density prompt includes domain anchors")
+assert_test("digital landscape" in density_prompt, "density prompt includes anti-polish examples")
+
+bad_density_candidate = (
+    "Inclusive Learning Design in Certificate III Hairdressing provides a visible learning framework in a digital landscape, "
+    "preserving technical rigor while learners encounter operational obstacles across complex outcomes."
+)
+assert_test(
+    bool(_density_paragraph_reject_reason(density_para, bad_density_candidate, density_context)),
+    "density guard rejects polished abstraction patterns",
+)
+
+density_first_finding = Finding(
+    finding_type="generic_phrase",
+    risk_level="medium",
+    evidence_strength="moderate",
+    detail="generic phrase",
+    evidence="modern learning environment",
+    recommendation="rewrite",
+    suggested_action_type="auto",
+    actionability="auto_fixable",
+    location={"sentence_index": 2, "sentence_id": "s003"},
+    metadata={"finding_id": "density-first", "scanner": "ai_generation"},
+)
+density_first_calls = []
+
+
+def density_first_rewrite_fn(text, prompt):
+    density_first_calls.append((text, prompt))
+    if "Density paragraph mitigation pass" in prompt:
+        return (
+            "Inclusive Learning Design in Certificate III Hairdressing helps learners connect support, technology, "
+            "and salon skills in the same lesson. The teacher can check how each learner uses the method while still "
+            "covering the required salon skills."
+        )
+    return "1. The class uses technology and support while covering the required salon skills."
+
+
+density_first_result = run_rewrite(
+    density_text,
+    [make_detect_result([density_first_finding])],
+    rewrite_fn=density_first_rewrite_fn,
+    config=RewriteConfig(max_auto_targets=6, max_llm_calls=1),
+    rewrite_context=density_context,
+    ai_only=False,
+)
+assert_test(
+    density_first_calls and "Density paragraph mitigation pass" in density_first_calls[0][1],
+    "density paragraph mitigation runs before sentence rewrites",
+)
+assert_test(
+    density_first_result.summary.get("density_paragraph_pass", {}).get("phase") == "before_sentence_rewrites",
+    "density paragraph pass records first-priority phase",
+)
+assert_test(
+    density_first_result.summary.get("rewrite_effective_config", {}).get("density_mitigation_priority") == "before_sentence_rewrites",
+    "effective config records density-first priority",
+)
+
+
+# ════════════════════════════════════════════════════════════════════════
+print(f"\n{'=' * 70}")
+print("17. FULL PLANNER→GUARD→SCORE PIPELINE")
 print("=" * 70)
 
 # Simulate the full flow

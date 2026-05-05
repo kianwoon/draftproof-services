@@ -25,7 +25,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "rewriter"))
@@ -2009,6 +2009,274 @@ def _build_sentence_index(text: str) -> tuple:
     return sentences, para_map
 
 
+def _badge_component_score(raw_json: Optional[Dict[str, Any]], component: str) -> float:
+    """Return a badge component as a percentage-style score."""
+    if not isinstance(raw_json, dict):
+        return 0.0
+    badge = raw_json.get("ai_risk_badge") or {}
+    if not isinstance(badge, dict):
+        return 0.0
+    sections = [
+        badge.get("ai_components") or {},
+        badge.get("writing_components") or {},
+        badge,
+    ]
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        value = section.get(component)
+        if isinstance(value, (int, float)):
+            value = float(value)
+            return value * 100.0 if 0.0 <= value <= 1.0 else value
+    return 0.0
+
+
+def _iter_raw_rewrite_items(raw_json: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collect likely finding/brief/plan rows from detect JSON."""
+    if not isinstance(raw_json, dict):
+        return []
+    items: List[Dict[str, Any]] = []
+    for key in ("rewrite_edit_briefs", "rewrite_briefs", "rewrite_targets"):
+        rows = raw_json.get(key) or []
+        if isinstance(rows, list):
+            items.extend(row for row in rows if isinstance(row, dict))
+
+    findings = raw_json.get("findings") or {}
+    if isinstance(findings, dict):
+        for rows in findings.values():
+            if isinstance(rows, list):
+                items.extend(row for row in rows if isinstance(row, dict))
+    elif isinstance(findings, list):
+        items.extend(row for row in findings if isinstance(row, dict))
+
+    plan = raw_json.get("rewrite_plan") or raw_json.get("rewrite_strategy") or {}
+    if isinstance(plan, dict):
+        for key in (
+            "auto_target_context",
+            "manual_required",
+            "review_only",
+            "suggestion_only",
+            "marked_content_suggestions",
+        ):
+            rows = plan.get(key) or []
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if isinstance(row, dict):
+                    items.append(row)
+                    finding = row.get("finding")
+                    if isinstance(finding, dict):
+                        items.append(finding)
+    return items
+
+
+def _raw_item_text_values(item: Dict[str, Any]) -> List[str]:
+    values: List[str] = []
+    keys = (
+        "paragraph_excerpt",
+        "target_text",
+        "target_sentence",
+        "original_sentence",
+        "evidence",
+        "detail",
+    )
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    for nested_key in ("rewrite_context", "context", "signals"):
+        nested = item.get(nested_key)
+        if isinstance(nested, dict):
+            for key in keys:
+                value = nested.get(key)
+                if isinstance(value, str) and value.strip():
+                    values.append(value.strip())
+    return values
+
+
+def _text_overlap_score(needle: str, haystack: str) -> float:
+    needle_norm = _normalize_sentence_match_text(needle).lower().replace("...", "")
+    haystack_norm = _normalize_sentence_match_text(haystack).lower()
+    if not needle_norm or not haystack_norm:
+        return 0.0
+    if len(needle_norm) >= 40 and needle_norm[:80] in haystack_norm:
+        return 4.0
+    needle_tokens = set(_match_tokens(needle_norm))
+    hay_tokens = set(_match_tokens(haystack_norm))
+    if not needle_tokens or not hay_tokens:
+        return 0.0
+    overlap = len(needle_tokens & hay_tokens)
+    return overlap / max(len(needle_tokens), 1)
+
+
+def _select_density_paragraph(
+    text: str,
+    rewrite_context: Optional[Any] = None,
+    mitigation_plan: Optional[Dict[str, Any]] = None,
+) -> Tuple[int, str, Dict[str, Any]]:
+    """Pick the paragraph most likely responsible for AI-density risk."""
+    raw_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
+    paragraphs = _split_paragraphs(text)
+    if not paragraphs:
+        return -1, "", {}
+
+    items = _iter_raw_rewrite_items(raw_json)
+    for suggestion in (mitigation_plan or {}).get("marked_content_suggestions") or []:
+        if isinstance(suggestion, dict):
+            items.append(suggestion)
+
+    best_idx = -1
+    best_score = -1.0
+    best_meta: Dict[str, Any] = {}
+    for idx, paragraph in enumerate(paragraphs):
+        word_count = len(re.findall(r"\b\w+\b", paragraph))
+        if word_count < 45:
+            continue
+        score = min(word_count / 85.0, 2.0)
+        meta: Dict[str, Any] = {"word_count": word_count, "matched_items": 0}
+        paragraph_lower = paragraph.lower()
+        for item in items:
+            item_score = 0.0
+            for value in _raw_item_text_values(item):
+                item_score = max(item_score, _text_overlap_score(value, paragraph))
+            item_text = " ".join(str(item.get(k, "")) for k in ("finding_type", "action_type", "title", "detail"))
+            if re.search(r"density|predictab|generic|unsupported|source|ground", item_text, re.I):
+                item_score += 0.35
+            if item_score >= 0.55:
+                meta["matched_items"] += 1
+                score += min(item_score, 4.0)
+
+        generic_count = _generic_polish_count(paragraph)
+        if generic_count:
+            score += min(generic_count * 0.5, 2.0)
+            meta["generic_polish_count"] = generic_count
+        if re.search(r"\b(?:important|significant|essential|crucial|modern|today|overall)\b", paragraph_lower):
+            score += 0.35
+        if score > best_score:
+            best_idx = idx
+            best_score = score
+            best_meta = meta
+    if best_idx < 0:
+        candidates = [(i, p) for i, p in enumerate(paragraphs) if len(p.split()) >= 35]
+        if not candidates:
+            return -1, "", {}
+        best_idx, best_para = max(candidates, key=lambda pair: len(pair[1].split()))
+        return best_idx, best_para, {"fallback": "longest_paragraph", "word_count": len(best_para.split())}
+    return best_idx, paragraphs[best_idx], best_meta
+
+
+def _density_component_lines(raw_json: Optional[Dict[str, Any]]) -> List[str]:
+    names = [
+        "qualifying_text_ai_density",
+        "generic_assertion_risk",
+        "broad_claim_risk",
+        "unsupported_claim_risk",
+        "source_grounding_risk",
+        "lived_detail_risk",
+    ]
+    lines = []
+    for name in names:
+        value = _badge_component_score(raw_json, name)
+        if value > 0:
+            lines.append(f"{name}={value:.1f}%")
+    return lines
+
+
+def _density_paragraph_prompt(
+    paragraph: str,
+    rewrite_context: Optional[Any],
+    mitigation_plan: Optional[Dict[str, Any]],
+) -> str:
+    raw_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
+    domain_terms = _domain_anchor_terms(rewrite_context, paragraph, paragraph, limit=12)
+    protected = [span.text or paragraph[span.start_char:span.end_char] for span in detect_protected_spans(paragraph)]
+    component_lines = _density_component_lines(raw_json)
+    marked = []
+    for suggestion in (mitigation_plan or {}).get("marked_content_suggestions") or []:
+        if isinstance(suggestion, dict) and suggestion.get("action_type") in {
+            "rebuild_paragraph_density",
+            "paragraph_density_rebuild",
+        }:
+            marked.append(str(suggestion.get("why_it_helps") or suggestion.get("instruction") or suggestion.get("title") or ""))
+    lines = [
+        "Density paragraph mitigation pass.",
+        "Rewrite exactly this one paragraph, not the whole document.",
+        "Goal: reduce dense AI-style signal by changing paragraph evidence flow, not by polishing vocabulary.",
+        "Keep the same facts, scope, order of ideas, and plain author voice.",
+        "Do not add citations, names, dates, research claims, examples, procedures, or facts that are not already in the paragraph.",
+        "Prefer concrete words already present in the paragraph or nearby domain anchors.",
+        "Avoid generic academic phrasing: crucial, significant, essential, landscape, framework, technical rigor, operational obstacles, visible learning framework, digital landscape.",
+        "Avoid abstract noun stacks and broad claims. Do not make the paragraph smoother if that removes specificity.",
+        "Output exactly one replacement paragraph. No numbering, bullets, quotes, headings, or commentary.",
+        "Target paragraph:\n<TARGET>\n" + paragraph + "\n</TARGET>",
+    ]
+    if component_lines:
+        lines.append("Scan component drivers: " + ", ".join(component_lines))
+    if domain_terms:
+        lines.append("Domain anchors to preserve when natural: " + ", ".join(domain_terms))
+    if protected:
+        lines.append("Protected spans that must remain unchanged: " + "; ".join(protected[:12]))
+    if marked:
+        lines.append("Scanner mitigation guidance: " + " ".join(m for m in marked if m)[:600])
+    constraint_lines = _rewrite_constraint_lines(rewrite_context, limit=4)
+    if constraint_lines:
+        lines.extend(constraint_lines)
+    return "\n".join(lines)
+
+
+def _clean_density_paragraph_output(output: Optional[str], original_paragraph: str) -> str:
+    if not output:
+        return ""
+    text = output.strip()
+    if text.startswith("```") and text.endswith("```"):
+        text = text.strip("`").strip()
+    text = re.sub(r"^(?:rewritten|replacement)\s+paragraph\s*:\s*", "", text, flags=re.I).strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) > 1:
+        numbered = []
+        for line in lines:
+            match = re.match(r"^(?:[\(\[]?\d+[\)\].:-]|[-*])\s*(.+)$", line)
+            numbered.append(match.group(1).strip() if match else line)
+        text = " ".join(numbered)
+    else:
+        text = lines[0] if lines else text
+    text = text.strip().strip('"').strip("'").strip()
+    text = " ".join(text.split())
+    if text == _normalize_sentence_match_text(original_paragraph):
+        return ""
+    return text
+
+
+def _density_paragraph_reject_reason(
+    original_paragraph: str,
+    candidate_paragraph: str,
+    rewrite_context: Optional[Any] = None,
+) -> str:
+    if not candidate_paragraph:
+        return "empty_candidate"
+    orig_words = len(original_paragraph.split())
+    cand_words = len(candidate_paragraph.split())
+    if orig_words and (cand_words < orig_words * 0.65 or cand_words > orig_words * 1.35):
+        return f"length_ratio {orig_words}->{cand_words}"
+    protected = detect_protected_spans(original_paragraph)
+    if protected and not protected_spans_preserved(original_paragraph, candidate_paragraph, protected):
+        return "protected_span_lost"
+    drift = check_semantic_drift(original_paragraph, candidate_paragraph, threshold=0.50)
+    if not drift.accepted:
+        return "semantic_drift " + "; ".join(drift.reasons[:3])
+    component_ok, component_reason = _component_regression_check(original_paragraph, candidate_paragraph)
+    if not component_ok:
+        return "component_regression " + component_reason
+    if _generic_polish_count(candidate_paragraph) > _generic_polish_count(original_paragraph):
+        return "generic_polish_increase"
+    anchors = _domain_anchor_terms(rewrite_context, original_paragraph, original_paragraph, limit=12)
+    orig_coverage = _term_coverage(original_paragraph, anchors)
+    cand_coverage = _term_coverage(candidate_paragraph, anchors)
+    if orig_coverage >= 3 and cand_coverage < max(1, int(orig_coverage * 0.60)):
+        return f"domain_anchor_loss {orig_coverage}->{cand_coverage}"
+    return ""
+
+
 def _find_sentence_index(sentences: List[str], evidence: str) -> int:
     """Find which sentence contains the evidence text."""
     normalized_evidence = _normalize_sentence_match_text(evidence)
@@ -2397,6 +2665,17 @@ def run_rewrite(
         plan,
         getattr(rewrite_context, "raw_json", None),
     )
+    density_paragraph_pass: Dict[str, Any] = {
+        "attempted": False,
+        "applied": False,
+        "reason": "not_needed",
+        "density_score": _badge_component_score(
+            getattr(rewrite_context, "raw_json", None),
+            "qualifying_text_ai_density",
+        ),
+    }
+    density_mitigation_llm_calls = 0
+    sentence_llm_call_limit = config.max_llm_calls
 
     # ── Step 3: Per-finding rewrite loop (LLM, all findings) ────────
     current_weighted_risk = weighted_finding_score(
@@ -2408,6 +2687,206 @@ def run_rewrite(
     # target sentence + context. Much smaller surface area = less hallucination.
     sentences, para_map = _build_sentence_index(current_text)
     rewrite_start_time = time.monotonic()
+
+    def _attempt_density_paragraph_pass(phase: str) -> None:
+        nonlocal current_text, findings_fixed, loops_used, llm_calls_used, density_mitigation_llm_calls
+
+        density_score = float(density_paragraph_pass.get("density_score") or 0.0)
+        if density_paragraph_pass.get("attempted"):
+            return
+        if density_score < 70.0:
+            return
+        if loop_rewrite_fn is None:
+            density_paragraph_pass["reason"] = "no_llm_available"
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "note": "density paragraph pass skipped: no LLM available",
+                "density_score": round(density_score, 2),
+            })
+            return
+        if (time.monotonic() - rewrite_start_time) > config.max_rewrite_seconds:
+            density_paragraph_pass["reason"] = (
+                f"rewrite time budget exceeded ({config.max_rewrite_seconds}s)"
+            )
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "note": "density paragraph pass skipped: " + density_paragraph_pass["reason"],
+                "density_score": round(density_score, 2),
+            })
+            return
+
+        para_idx, density_paragraph, density_meta = _select_density_paragraph(
+            current_text,
+            rewrite_context,
+            runtime_mitigation_plan,
+        )
+        density_paragraph_pass.update({
+            "attempted": True,
+            "applied": False,
+            "phase": phase,
+            "paragraph_index": para_idx,
+            "paragraph_meta": density_meta,
+            "reason": "",
+        })
+        if para_idx < 0 or not density_paragraph:
+            density_paragraph_pass["reason"] = "no_eligible_paragraph"
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "note": "density paragraph pass skipped: no eligible paragraph",
+                "density_score": round(density_score, 2),
+            })
+            return
+
+        llm_calls_used += 1
+        density_mitigation_llm_calls += 1
+        density_prompt = _density_paragraph_prompt(
+            density_paragraph,
+            rewrite_context,
+            runtime_mitigation_plan,
+        )
+        raw_density_output = loop_rewrite_fn(density_paragraph, density_prompt)
+        density_candidate = _clean_density_paragraph_output(
+            raw_density_output,
+            density_paragraph,
+        )
+        density_reject_reason = _density_paragraph_reject_reason(
+            density_paragraph,
+            density_candidate,
+            rewrite_context,
+        )
+        if density_reject_reason:
+            density_paragraph_pass["reason"] = density_reject_reason
+            if density_candidate:
+                manual_item = {
+                    "finding_id": "density_paragraph_rebuild",
+                    "finding_type": "qualifying_text_ai_density",
+                    "risk_level": "high",
+                    "scanner_target": "ai_generation",
+                    "sentence_id": None,
+                    "paragraph_role": "unknown",
+                    "original_sentence": density_paragraph,
+                    "suggested_sentence": density_candidate,
+                    "rejection_reason": density_reject_reason,
+                    "why_review_manually": (
+                        "This paragraph-level candidate targets the dense AI-style pattern, "
+                        "but an automatic guard rejected it. Review the paragraph manually before using it."
+                    ),
+                }
+                key = (
+                    manual_item["finding_id"],
+                    manual_item["original_sentence"],
+                    manual_item["suggested_sentence"],
+                    manual_item["rejection_reason"],
+                )
+                existing = {
+                    (
+                        s.get("finding_id"),
+                        s.get("original_sentence"),
+                        s.get("suggested_sentence"),
+                        s.get("rejection_reason"),
+                    )
+                    for s in manual_suggestions
+                }
+                if key not in existing and len(manual_suggestions) < 24:
+                    manual_suggestions.append(manual_item)
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "paragraph": para_idx,
+                "note": "density paragraph pass rejected",
+                "rejection_reason": density_reject_reason,
+                "density_score": round(density_score, 2),
+                "orig_text": density_paragraph[:240],
+                "new_text": density_candidate[:240] if density_candidate else "",
+            })
+            return
+
+        candidate_paragraphs = _split_paragraphs(current_text)
+        if not (0 <= para_idx < len(candidate_paragraphs)):
+            density_paragraph_pass["reason"] = "paragraph_index_invalid"
+            return
+
+        candidate_paragraphs[para_idx] = density_candidate
+        candidate_text = "\n\n".join(candidate_paragraphs)
+        voice_check = voice_guard.check(current_text, candidate_text)
+        if not voice_check.accepted:
+            density_paragraph_pass["reason"] = f"voice_eroded {voice_check.reject_reason}"
+            manual_suggestions.append({
+                "finding_id": "density_paragraph_rebuild",
+                "finding_type": "qualifying_text_ai_density",
+                "risk_level": "high",
+                "scanner_target": "ai_generation",
+                "sentence_id": None,
+                "paragraph_role": "unknown",
+                "original_sentence": density_paragraph,
+                "suggested_sentence": density_candidate,
+                "rejection_reason": density_paragraph_pass["reason"],
+                "why_review_manually": (
+                    "The paragraph candidate may help the density signal, but it changed voice enough "
+                    "that it should be reviewed manually."
+                ),
+            })
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "paragraph": para_idx,
+                "note": "density paragraph pass rejected",
+                "rejection_reason": density_paragraph_pass["reason"],
+            })
+            return
+
+        current_text = candidate_text
+        findings_fixed += 1
+        loops_used += 1
+        density_paragraph_pass.update({
+            "applied": True,
+            "reason": "accepted_locally_pending_final_full_scan",
+            "orig_length": len(density_paragraph),
+            "new_length": len(density_candidate),
+        })
+        accepted_candidate_suggestions.append({
+            "finding_id": "density_paragraph_rebuild",
+            "finding_type": "qualifying_text_ai_density",
+            "risk_level": "high",
+            "scanner_target": "ai_generation",
+            "sentence_id": None,
+            "paragraph_role": "unknown",
+            "original_sentence": density_paragraph,
+            "suggested_sentence": density_candidate,
+            "rejection_reason": "accepted_locally_pending_final_full_scan",
+            "why_review_manually": (
+                "This paragraph-level edit was accepted locally, but the final full scan remains the authority."
+            ),
+        })
+        rewrite_checkpoints.append({
+            "text": current_text,
+            "edits": findings_fixed,
+            "local_score_total": round(local_score_total, 4),
+            "paragraph": para_idx,
+            "finding_type": "qualifying_text_ai_density",
+            "rewrite_operation": "density_paragraph_rebuild",
+        })
+        loop_history.append({
+            "loop": loops_used,
+            "phase": phase,
+            "paragraph": para_idx,
+            "finding_type": "qualifying_text_ai_density",
+            "rewrite_operation": "density_paragraph_rebuild",
+            "orig_length": len(density_paragraph),
+            "new_length": len(density_candidate),
+            "density_score": round(density_score, 2),
+            "orig_text": density_paragraph[:240],
+            "new_text": density_candidate[:240],
+            "note": "applied density paragraph candidate",
+        })
+
+    # Best mitigation first: if the scan says the problem is document-level
+    # density, act on the strongest paragraph before spending calls on
+    # sentence-level cleanup.
+    _attempt_density_paragraph_pass("before_sentence_rewrites")
 
     def _action_group_key(action):
         finding = action.finding
@@ -2459,11 +2938,11 @@ def run_rewrite(
     risk_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
     for actions_for_sentence in grouped_actions:
         if (
-            llm_calls_used >= config.max_llm_calls
+            llm_calls_used >= sentence_llm_call_limit
             or failed_targets >= config.max_failed_targets
             or consecutive_failed_targets >= config.max_consecutive_failed_targets
         ):
-            if llm_calls_used >= config.max_llm_calls:
+            if llm_calls_used >= sentence_llm_call_limit:
                 circuit_breaker_reason = f"max_llm_calls reached ({config.max_llm_calls})"
             elif failed_targets >= config.max_failed_targets:
                 circuit_breaker_reason = f"max_failed_targets reached ({config.max_failed_targets})"
@@ -2782,7 +3261,7 @@ def run_rewrite(
         for attempt in range(1):
             candidates: List[str] = []
             if loop_rewrite_fn:
-                if llm_calls_used >= config.max_llm_calls:
+                if llm_calls_used >= sentence_llm_call_limit:
                     circuit_breaker_reason = f"max_llm_calls reached ({config.max_llm_calls})"
                     break
                 llm_calls_used += 1
@@ -3131,6 +3610,191 @@ def run_rewrite(
             "note": "applied candidate",
         })
 
+    # ── Density paragraph pass ───────────────────────────────────────
+    # Sentence edits can reduce local top-k signals while leaving the bigger
+    # Turnitin-like pattern intact: a dense paragraph made of generic,
+    # unsupported, smoothly sequenced claims. When the detector exposes that
+    # component, spend at most one extra LLM call on the highest-signal
+    # paragraph, then keep the existing final full-scan gate as the authority.
+    density_score = float(density_paragraph_pass.get("density_score") or 0.0)
+    should_try_density_pass = (
+        density_score >= 70.0
+        and not density_paragraph_pass.get("attempted")
+        and loop_rewrite_fn is not None
+        and llm_calls_used < config.max_llm_calls
+        and (time.monotonic() - rewrite_start_time) <= config.max_rewrite_seconds
+    )
+    if should_try_density_pass:
+        para_idx, density_paragraph, density_meta = _select_density_paragraph(
+            current_text,
+            rewrite_context,
+            runtime_mitigation_plan,
+        )
+        density_paragraph_pass.update({
+            "attempted": True,
+            "paragraph_index": para_idx,
+            "paragraph_meta": density_meta,
+            "reason": "",
+        })
+        if para_idx < 0 or not density_paragraph:
+            density_paragraph_pass["reason"] = "no_eligible_paragraph"
+            loop_history.append({
+                "loop": loops_used + 1,
+                "note": "density paragraph pass skipped: no eligible paragraph",
+                "density_score": round(density_score, 2),
+            })
+        else:
+            llm_calls_used += 1
+            density_prompt = _density_paragraph_prompt(
+                density_paragraph,
+                rewrite_context,
+                runtime_mitigation_plan,
+            )
+            raw_density_output = loop_rewrite_fn(density_paragraph, density_prompt)
+            density_candidate = _clean_density_paragraph_output(
+                raw_density_output,
+                density_paragraph,
+            )
+            density_reject_reason = _density_paragraph_reject_reason(
+                density_paragraph,
+                density_candidate,
+                rewrite_context,
+            )
+            if density_reject_reason:
+                density_paragraph_pass["reason"] = density_reject_reason
+                if density_candidate:
+                    manual_item = {
+                        "finding_id": "density_paragraph_rebuild",
+                        "finding_type": "qualifying_text_ai_density",
+                        "risk_level": "high",
+                        "scanner_target": "ai_generation",
+                        "sentence_id": None,
+                        "paragraph_role": "unknown",
+                        "original_sentence": density_paragraph,
+                        "suggested_sentence": density_candidate,
+                        "rejection_reason": density_reject_reason,
+                        "why_review_manually": (
+                            "This paragraph-level candidate targets the dense AI-style pattern, "
+                            "but an automatic guard rejected it. Review the paragraph manually before using it."
+                        ),
+                    }
+                    key = (
+                        manual_item["finding_id"],
+                        manual_item["original_sentence"],
+                        manual_item["suggested_sentence"],
+                        manual_item["rejection_reason"],
+                    )
+                    existing = {
+                        (
+                            s.get("finding_id"),
+                            s.get("original_sentence"),
+                            s.get("suggested_sentence"),
+                            s.get("rejection_reason"),
+                        )
+                        for s in manual_suggestions
+                    }
+                    if key not in existing and len(manual_suggestions) < 24:
+                        manual_suggestions.append(manual_item)
+                loop_history.append({
+                    "loop": loops_used + 1,
+                    "paragraph": para_idx,
+                    "note": "density paragraph pass rejected",
+                    "rejection_reason": density_reject_reason,
+                    "density_score": round(density_score, 2),
+                    "orig_text": density_paragraph[:240],
+                    "new_text": density_candidate[:240] if density_candidate else "",
+                })
+            else:
+                candidate_paragraphs = _split_paragraphs(current_text)
+                if 0 <= para_idx < len(candidate_paragraphs):
+                    candidate_paragraphs[para_idx] = density_candidate
+                    candidate_text = "\n\n".join(candidate_paragraphs)
+                    voice_check = voice_guard.check(current_text, candidate_text)
+                    if not voice_check.accepted:
+                        density_paragraph_pass["reason"] = f"voice_eroded {voice_check.reject_reason}"
+                        manual_suggestions.append({
+                            "finding_id": "density_paragraph_rebuild",
+                            "finding_type": "qualifying_text_ai_density",
+                            "risk_level": "high",
+                            "scanner_target": "ai_generation",
+                            "sentence_id": None,
+                            "paragraph_role": "unknown",
+                            "original_sentence": density_paragraph,
+                            "suggested_sentence": density_candidate,
+                            "rejection_reason": density_paragraph_pass["reason"],
+                            "why_review_manually": (
+                                "The paragraph candidate may help the density signal, but it changed voice enough "
+                                "that it should be reviewed manually."
+                            ),
+                        })
+                        loop_history.append({
+                            "loop": loops_used + 1,
+                            "paragraph": para_idx,
+                            "note": "density paragraph pass rejected",
+                            "rejection_reason": density_paragraph_pass["reason"],
+                        })
+                    else:
+                        current_text = candidate_text
+                        findings_fixed += 1
+                        loops_used += 1
+                        density_paragraph_pass.update({
+                            "applied": True,
+                            "reason": "accepted_locally_pending_final_full_scan",
+                            "orig_length": len(density_paragraph),
+                            "new_length": len(density_candidate),
+                        })
+                        accepted_candidate_suggestions.append({
+                            "finding_id": "density_paragraph_rebuild",
+                            "finding_type": "qualifying_text_ai_density",
+                            "risk_level": "high",
+                            "scanner_target": "ai_generation",
+                            "sentence_id": None,
+                            "paragraph_role": "unknown",
+                            "original_sentence": density_paragraph,
+                            "suggested_sentence": density_candidate,
+                            "rejection_reason": "accepted_locally_pending_final_full_scan",
+                            "why_review_manually": (
+                                "This paragraph-level edit was accepted locally, but the final full scan remains the authority."
+                            ),
+                        })
+                        rewrite_checkpoints.append({
+                            "text": current_text,
+                            "edits": findings_fixed,
+                            "local_score_total": round(local_score_total, 4),
+                            "paragraph": para_idx,
+                            "finding_type": "qualifying_text_ai_density",
+                            "rewrite_operation": "density_paragraph_rebuild",
+                        })
+                        loop_history.append({
+                            "loop": loops_used,
+                            "paragraph": para_idx,
+                            "finding_type": "qualifying_text_ai_density",
+                            "rewrite_operation": "density_paragraph_rebuild",
+                            "orig_length": len(density_paragraph),
+                            "new_length": len(density_candidate),
+                            "density_score": round(density_score, 2),
+                            "orig_text": density_paragraph[:240],
+                            "new_text": density_candidate[:240],
+                            "note": "applied density paragraph candidate",
+                        })
+                else:
+                    density_paragraph_pass["reason"] = "paragraph_index_invalid"
+    elif density_score >= 70.0:
+        if loop_rewrite_fn is None:
+            density_paragraph_pass["reason"] = "no_llm_available"
+        elif llm_calls_used >= config.max_llm_calls:
+            density_paragraph_pass["reason"] = f"max_llm_calls reached ({config.max_llm_calls})"
+        else:
+            density_paragraph_pass["reason"] = (
+                f"rewrite time budget exceeded ({config.max_rewrite_seconds}s)"
+            )
+        loop_history.append({
+            "loop": loops_used + 1,
+            "note": "density paragraph pass skipped: " + density_paragraph_pass["reason"],
+            "density_score": round(density_score, 2),
+            "llm_calls_used": llm_calls_used,
+        })
+
     # ── Outer detect-rewrite loop ───────────────────────────────────
     # Re-detect after batch rewrite. If new findings appear, loop again.
     detect_loops_used = 0
@@ -3402,6 +4066,9 @@ def run_rewrite(
     summary["rewrite_runtime_version"] = REWRITE_RUNTIME_VERSION
     summary["rewrite_effective_config"] = {
         "max_llm_calls": config.max_llm_calls,
+        "sentence_llm_call_limit": sentence_llm_call_limit,
+        "density_mitigation_llm_calls": density_mitigation_llm_calls,
+        "density_mitigation_priority": "before_sentence_rewrites",
         "max_auto_targets": config.max_auto_targets,
         "effective_auto_target_limit": effective_auto_target_limit,
         "max_failed_targets": config.max_failed_targets,
@@ -3417,6 +4084,7 @@ def run_rewrite(
     summary["unique_target_count"] = len(grouped_actions)
     summary["selected_finding_count"] = len(auto_targets)
     summary["accepted_edits"] = findings_fixed
+    summary["density_paragraph_pass"] = density_paragraph_pass
     summary["manual_suggestions"] = manual_suggestions
     summary["accepted_candidate_suggestions"] = accepted_candidate_suggestions
     if capped_auto_targets:
