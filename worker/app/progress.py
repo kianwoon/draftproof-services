@@ -25,6 +25,10 @@ def _redis_client():
     return _client
 
 
+def scan_progress_key(scan_id: str) -> str:
+    return f"scan_progress:{scan_id}"
+
+
 def rewrite_progress_key(rewrite_id: str) -> str:
     return f"rewrite_progress:{rewrite_id}"
 
@@ -63,3 +67,33 @@ def publish_rewrite_progress(
         client.expire(key, _STREAM_TTL_SECONDS)
     except Exception:
         logger.warning("Failed to publish rewrite progress to Redis", exc_info=True)
+
+
+def publish_scan_progress(
+    scan_id: str,
+    *,
+    status: str,
+    progress_percent: int | None = None,
+    progress_message: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Publish scan progress event to Redis (best-effort)."""
+    fields = {
+        "id": str(scan_id),
+        "status": status or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if progress_percent is not None:
+        fields["progress_percent"] = str(max(0, min(100, int(progress_percent))))
+    if progress_message is not None:
+        fields["progress_message"] = progress_message
+    if error is not None:
+        fields["error"] = error
+
+    try:
+        client = _redis_client()
+        key = scan_progress_key(scan_id)
+        client.xadd(key, fields, maxlen=_STREAM_MAXLEN, approximate=True)
+        client.expire(key, _STREAM_TTL_SECONDS)
+    except Exception:
+        logger.warning("Failed to publish scan progress to Redis", exc_info=True)

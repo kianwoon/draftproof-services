@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 _client = None
 
 
+def scan_progress_key(scan_id: str) -> str:
+    return f"scan_progress:{scan_id}"
+
+
 def rewrite_progress_key(rewrite_id: str) -> str:
     return f"rewrite_progress:{rewrite_id}"
 
@@ -46,6 +50,34 @@ async def read_rewrite_progress(
         )
     except Exception:
         logger.warning("Failed to read rewrite progress from Redis", exc_info=True)
+        return None
+
+    events = []
+    for _, entries in response:
+        for event_id, fields in entries:
+            events.append((event_id, fields))
+    return events
+
+
+async def read_scan_progress(
+    scan_id: str,
+    last_id: str = "$",
+    *,
+    block_ms: int = 3000,
+    count: int = 10,
+) -> list[tuple[str, dict]] | None:
+    """Read scan progress events from Redis stream.
+
+    Returns None when Redis is unavailable (fallback to DB polling).
+    """
+    try:
+        response = await _redis_client().xread(
+            {scan_progress_key(scan_id): last_id},
+            block=block_ms,
+            count=count,
+        )
+    except Exception:
+        logger.warning("Failed to read scan progress from Redis", exc_info=True)
         return None
 
     events = []

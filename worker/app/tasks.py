@@ -17,7 +17,7 @@ if _poc_dir not in sys.path:
 from .celery_app import app
 from .config import settings
 from .storage import upload_report_files
-from .progress import publish_rewrite_progress
+from .progress import publish_rewrite_progress, publish_scan_progress
 from .db import (
     get_scan_job,
     update_job_status,
@@ -480,16 +480,25 @@ def scan_document(self, job_id: str, text: str) -> dict:
             progress_percent=10,
             progress_message="Preparing scan",
         )
+        publish_scan_progress(
+            job_id, status="processing",
+            progress_percent=10, progress_message="Preparing scan",
+        )
 
         from poc.detect_pipeline import run_detect
         import tempfile
 
         def report_progress(percent: int, message: str) -> None:
+            pct = max(0, min(99, int(percent)))
             update_job_status(
                 job_id,
                 "processing",
-                progress_percent=max(0, min(99, int(percent))),
+                progress_percent=pct,
                 progress_message=message,
+            )
+            publish_scan_progress(
+                job_id, status="processing",
+                progress_percent=pct, progress_message=message,
             )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -546,6 +555,10 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 progress_percent=100,
                 progress_message="Scan complete",
             )
+            publish_scan_progress(
+                job_id, status="completed",
+                progress_percent=100, progress_message="Scan complete",
+            )
 
             return {"status": "completed", "tier": tier, "findings": finding_count}
 
@@ -556,6 +569,10 @@ def scan_document(self, job_id: str, text: str) -> dict:
             error="Scan timed out (5 min limit)",
             progress_message="Scan timed out",
         )
+        publish_scan_progress(
+            job_id, status="failed",
+            error="Scan timed out", progress_message="Scan timed out",
+        )
         return {"status": "failed", "error": "timeout"}
     except Exception as e:
         if self.request.retries < self.max_retries:
@@ -565,6 +582,10 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 error=str(e),
                 progress_message="Retrying scan",
             )
+            publish_scan_progress(
+                job_id, status="retrying",
+                error=str(e), progress_message="Retrying scan",
+            )
             raise self.retry(exc=e)
         else:
             update_job_status(
@@ -572,6 +593,10 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 "failed",
                 error=str(e),
                 progress_message="Scan failed",
+            )
+            publish_scan_progress(
+                job_id, status="failed",
+                error=str(e), progress_message="Scan failed",
             )
             raise  # Re-raise original — Celery marks as FAILURE, not RETRY
 

@@ -1,13 +1,17 @@
 import asyncio
 import json
+import re
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from app.models import ScanRequest, ScanOut
 from app.services.scan_service import create_scan, get_scan, list_scans, delete_scan
+from app.services import progress_stream
 from app.routes.auth import get_current_user
 
 router = APIRouter()
+
+_REDIS_STREAM_ID_RE = re.compile(r"^\d+-\d+$")
 
 
 @router.get("/")
@@ -37,16 +41,84 @@ async def stream_scan_events(
     user: dict = Depends(get_current_user),
 ):
     async def event_stream():
-        last_payload = None
+        redis_unavailable = False
+        last_stream_id = request.headers.get("last-event-id") or "$"
+        if last_stream_id != "$" and not _REDIS_STREAM_ID_RE.match(last_stream_id):
+            last_stream_id = "$"
+
+        # Send initial state from DB
+        result = await get_scan(scan_id, user_id=user["id"])
+        if not result:
+            yield "event: scan-error\ndata: {\"detail\":\"Scan not found\"}\n\n"
+            return
+
+        current_payload = {
+            "id": result["id"],
+            "status": result["status"],
+            "report_id": result["report_id"],
+            "progress_percent": result["progress_percent"],
+            "progress_message": result["progress_message"],
+        }
+        data = json.dumps(current_payload)
+        yield f"event: progress\ndata: {data}\n\n"
+        last_payload = data
+
+        if result["status"] in ("completed", "failed"):
+            return
+
+        last_db_check = asyncio.get_running_loop().time()
+
         while True:
             if await request.is_disconnected():
                 break
+
+            # Try Redis stream first (fast, no DB hit)
+            if not redis_unavailable:
+                events = await progress_stream.read_scan_progress(
+                    scan_id,
+                    last_stream_id,
+                    block_ms=3000,
+                    count=10,
+                )
+                if events is None:
+                    redis_unavailable = True
+                else:
+                    for event_id, fields in events:
+                        last_stream_id = event_id
+                        payload = dict(current_payload)
+                        if fields.get("status"):
+                            payload["status"] = fields["status"]
+                        if "progress_percent" in fields:
+                            try:
+                                payload["progress_percent"] = max(0, min(100, int(fields["progress_percent"])))
+                            except (ValueError, TypeError):
+                                pass
+                        if "progress_message" in fields:
+                            payload["progress_message"] = fields["progress_message"]
+                        if "error" in fields:
+                            payload["error"] = fields.get("error") or None
+                        current_payload = payload
+                        data = json.dumps(payload)
+                        if data != last_payload:
+                            yield f"event: progress\ndata: {data}\n\n"
+                            last_payload = data
+
+                    if current_payload.get("status") in ("completed", "failed"):
+                        return
+                    continue
+
+            # Fallback: poll DB every 5s when Redis is unavailable
+            now = asyncio.get_running_loop().time()
+            if now - last_db_check < 5:
+                await asyncio.sleep(1)
+                continue
 
             result = await get_scan(scan_id, user_id=user["id"])
             if not result:
                 yield "event: scan-error\ndata: {\"detail\":\"Scan not found\"}\n\n"
                 break
 
+            last_db_check = now
             payload = {
                 "id": result["id"],
                 "status": result["status"],
@@ -61,8 +133,6 @@ async def stream_scan_events(
 
             if result["status"] in ("completed", "failed"):
                 break
-
-            await asyncio.sleep(3)
 
     return StreamingResponse(
         event_stream(),
