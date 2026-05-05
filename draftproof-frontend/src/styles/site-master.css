@@ -2383,6 +2383,71 @@ th {
   flex-wrap: wrap;
 }
 
+/* Rewritten document */
+.rewritten-document-section {
+  margin: 24px 0;
+}
+
+.rewritten-document-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: .85rem;
+}
+
+.rewritten-document-heading h3 {
+  margin: 0;
+}
+
+.copy-rewrite-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: .55rem .95rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--navy-950);
+  font: inherit;
+  font-size: .86rem;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
+}
+
+.copy-rewrite-btn:hover {
+  border-color: var(--blue-700);
+  background: var(--blue-100);
+  color: var(--blue-700);
+}
+
+.copy-rewrite-btn.is-copied {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.copy-rewrite-btn.has-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.rewritten-document-content {
+  max-height: 600px;
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
 /* Rewrite review suggestions */
 .rewrite-review-section {
   margin: 2rem 0;

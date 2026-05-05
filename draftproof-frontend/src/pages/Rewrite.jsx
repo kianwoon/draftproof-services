@@ -25,6 +25,7 @@ export default function Rewrite() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(Boolean(rewriteId));
   const [error, setError] = useState(null);
+  const [copyStatus, setCopyStatus] = useState('idle');
 
   useEffect(() => {
     if (!rewriteId) return undefined;
@@ -102,6 +103,23 @@ export default function Rewrite() {
     }
   };
 
+  const handleCopyRewrittenDocument = async () => {
+    if (!report?.final_text) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(report.final_text);
+      } else {
+        copyTextFallback(report.final_text);
+      }
+      setCopyStatus('copied');
+      window.setTimeout(() => setCopyStatus('idle'), 1800);
+    } catch {
+      setCopyStatus('error');
+      window.setTimeout(() => setCopyStatus('idle'), 2200);
+    }
+  };
+
   const summary = report?.summary || report?.rewrite_summary || {};
   const mitigationPlan = summary.mitigation_plan || report?.mitigation_plan || {};
   const markedSuggestions = (
@@ -151,22 +169,22 @@ export default function Rewrite() {
         {error && <ErrorReload message={error} />}
 
         {report?.final_text && (
-          <div style={{ margin: '24px 0' }}>
-            <h3>Rewritten Document</h3>
-            <div style={{
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: 12,
-              padding: 20,
-              whiteSpace: 'pre-wrap',
-              fontFamily: 'Georgia, serif',
-              lineHeight: 1.7,
-              maxHeight: 600,
-              overflow: 'auto',
-            }}>
+          <section className="rewritten-document-section">
+            <div className="rewritten-document-heading">
+              <h3>Rewritten Document</h3>
+              <button
+                type="button"
+                className={`copy-rewrite-btn${copyStatus === 'copied' ? ' is-copied' : ''}${copyStatus === 'error' ? ' has-error' : ''}`}
+                onClick={handleCopyRewrittenDocument}
+                aria-live="polite"
+              >
+                {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy'}
+              </button>
+            </div>
+            <div className="rewritten-document-content">
               {report.final_text}
             </div>
-          </div>
+          </section>
         )}
 
         {sentenceRows.length > 0 && (
@@ -293,4 +311,18 @@ export default function Rewrite() {
       </div>
     </main>
   );
+}
+
+function copyTextFallback(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-9999px';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!copied) throw new Error('Copy command failed');
 }
