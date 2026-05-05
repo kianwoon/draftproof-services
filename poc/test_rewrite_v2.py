@@ -40,6 +40,7 @@ from rewrite.rewrite import (
     _select_density_paragraph,
     _density_paragraph_prompt,
     _density_paragraph_reject_reason,
+    _density_entity_only_drift,
     _density_repair_prompt,
     _splice_density_candidate,
     run_rewrite,
@@ -1117,6 +1118,14 @@ density_repair_prompt = _density_repair_prompt(
 assert_test("Previous rejected candidate" in density_repair_prompt, "density repair prompt includes rejected candidate")
 assert_test("Box Hill Institute" in density_repair_prompt, "density repair prompt repeats lost named entity")
 assert_test("Repair only the safety failure" in density_repair_prompt, "density repair prompt limits retry scope")
+assert_test(
+    _density_entity_only_drift("semantic_drift lost_named_entity: 'Box Hill Institute'"),
+    "density entity-only drift can be downgraded after repair",
+)
+assert_test(
+    not _density_entity_only_drift("semantic_drift number_changed: '2024'"),
+    "density entity downgrade does not allow number drift",
+)
 polish_repair_prompt = _density_repair_prompt(
     density_para,
     "This is especially true when learners move from observing a demonstration to cutting a controlled haircut themselves.",

@@ -2484,6 +2484,21 @@ def _density_paragraph_reject_reason(
     return ""
 
 
+def _density_entity_only_drift(reason: str) -> bool:
+    """True when density drift is only the fuzzy named-entity guard.
+
+    The generic semantic guard can over-extract title-case section headings
+    from PDF/text extraction, especially when headings and body text are merged
+    into one long paragraph. For AI-density mitigation, this should be a
+    warning after repair, not a hard blocker. Protected spans, numbers,
+    citations, quotes, and domain-anchor loss are still enforced separately.
+    """
+    if not reason or not reason.startswith("semantic_drift"):
+        return False
+    drift_bits = [bit.strip() for bit in reason[len("semantic_drift"):].split(";") if bit.strip()]
+    return bool(drift_bits) and all(bit.startswith("lost_named_entity:") for bit in drift_bits)
+
+
 def _density_repair_prompt(
     original_region: str,
     previous_candidate: str,
@@ -3067,6 +3082,18 @@ def run_rewrite(
             elif repaired_candidate:
                 density_candidate = repaired_candidate
                 density_reject_reason = repaired_reject_reason
+
+        if density_reject_reason and _density_entity_only_drift(density_reject_reason):
+            density_paragraph_pass["entity_warning"] = density_reject_reason
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "paragraph": para_idx,
+                "note": "density paragraph entity warning; AI-first final scan will decide",
+                "warning": density_reject_reason,
+                "density_score": round(density_score, 2),
+            })
+            density_reject_reason = ""
 
         if density_reject_reason:
             density_paragraph_pass["reason"] = density_reject_reason
