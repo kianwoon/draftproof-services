@@ -12,10 +12,10 @@ export default function CodeTexture({ className = '', id = 'codeTexture' }) {
     >
       <defs>
         <linearGradient id={gradientId} x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0%" stopColor="#0D1B2A" stopOpacity="0" />
-          <stop offset="12%" stopColor="#0D1B2A" stopOpacity="0.95" />
-          <stop offset="82%" stopColor="#0D1B2A" stopOpacity="0.74" />
-          <stop offset="100%" stopColor="#0D1B2A" stopOpacity="0" />
+          <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0" />
+          <stop offset="12%" stopColor="#FFFFFF" stopOpacity="0.95" />
+          <stop offset="82%" stopColor="#FFFFFF" stopOpacity="0.74" />
+          <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0" />
         </linearGradient>
         <mask id={maskId}>
           <rect width="1440" height="320" fill={`url(#${gradientId})`} />

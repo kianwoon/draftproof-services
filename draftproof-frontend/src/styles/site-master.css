@@ -1511,7 +1511,7 @@ th {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  opacity: .88;
+  opacity: .86;
 }
 
 .hero-code-field {
@@ -1519,30 +1519,31 @@ th {
 }
 
 .footer-code-texture {
-  opacity: .80;
+  opacity: .72;
 }
 
 .app-hero-dark .code-texture {
-  opacity: .95;
+  opacity: .82;
 }
 
 .dash-hero .code-texture {
-  opacity: .95;
+  opacity: .82;
 }
 
 .signin-trust-panel .code-texture {
-  opacity: .95;
+  opacity: .82;
 }
 
 .code-texture-layer text {
-  fill: rgba(255, 255, 255, .42);
+  fill: rgba(255, 255, 255, .30);
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  font-size: 20px;
+  font-size: 22px;
+  font-weight: 650;
   letter-spacing: .08em;
 }
 
 .code-texture-layer .code-row-b text {
-  fill: rgba(58, 168, 118, .70);
+  fill: rgba(58, 168, 118, .52);
 }
 
 .app-hero-dark .code-texture-layer text,
@@ -1552,7 +1553,7 @@ th {
 .landing-hero .code-texture-layer text,
 .checks-section .code-texture-layer text,
 .landing-cta .code-texture-layer text {
-  fill: rgba(255, 255, 255, .36);
+  fill: rgba(255, 255, 255, .34);
   text-shadow: 0 0 14px rgba(255, 255, 255, .12);
 }
 
@@ -1563,7 +1564,7 @@ th {
 .landing-hero .code-texture-layer .code-row-b text,
 .checks-section .code-texture-layer .code-row-b text,
 .landing-cta .code-texture-layer .code-row-b text {
-  fill: rgba(58, 168, 118, .78);
+  fill: rgba(58, 168, 118, .58);
 }
 
 .code-row {
@@ -1578,7 +1579,7 @@ th {
 
 .code-row-b {
   animation: codeDriftRight 34s linear infinite;
-  opacity: .78;
+  opacity: .86;
 }
 
 @keyframes codeDriftLeft {
@@ -2116,13 +2117,13 @@ th {
   z-index: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(7, 18, 31, .78) 0%, rgba(7, 18, 31, .68) 48%, rgba(7, 18, 31, .58) 100%),
+    linear-gradient(90deg, rgba(7, 18, 31, .58) 0%, rgba(7, 18, 31, .48) 48%, rgba(7, 18, 31, .38) 100%),
     radial-gradient(circle at 86% 24%, rgba(58, 168, 118, .10), transparent 24rem);
 }
 
 .app-hero-dark .code-texture {
   z-index: 1;
-  opacity: .95;
+  opacity: .82;
 }
 
 .app-hero-dark > :not(.code-texture) {
