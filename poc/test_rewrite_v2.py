@@ -52,7 +52,7 @@ from rewrite.rewrite import (
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
-from rewrite_pipeline import run_rewrite_pipeline, _build_aligned_sentence_comparison
+from rewrite_pipeline import run_rewrite_pipeline, _build_aligned_sentence_comparison, _ai_first_gate_status
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
 
@@ -792,6 +792,17 @@ rollback_report = render_rewrite_report(
 )
 assert_test("## Attempted Rewrite" in rollback_report, "rollback report shows attempted rewrite")
 assert_test("## Manual Suggestions" in rollback_report, "rollback report keeps manual suggestions")
+
+weak_ai_gate = _ai_first_gate_status(59.73, 59.42, True)
+assert_test(
+    weak_ai_gate["required"] and not weak_ai_gate["success"],
+    "AI-first gate rejects tiny mitigation below 5-point drop",
+)
+cross_ai_gate = _ai_first_gate_status(62.0, 59.8, True)
+assert_test(
+    cross_ai_gate["required"] and cross_ai_gate["success"],
+    "AI-first gate accepts crossing below 60 percent",
+)
 
 ai_first_report = render_rewrite_report(
     summary={

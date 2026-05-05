@@ -25,17 +25,172 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_from_json
 from rewrite import run_rewrite, RewriteModuleResult
+from rewrite.guards import detect_protected_spans, protected_spans_preserved, check_semantic_drift
 from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
 from detect.run import DetectionRunner
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
 from report.report import ReportBuilder, report_to_dict
+from llm.gateway import LLMGateway, LLMConfig
 
 
 def _metric_decimal(value, default=0.0):
     if not isinstance(value, (int, float)):
         return default
     return value / 100.0 if abs(value) > 1 else value
+
+
+def _ai_first_gate_status(
+    reference_ai,
+    candidate_ai,
+    text_changed: bool,
+    min_drop: float = 5.0,
+    target: float = 60.0,
+    required_min_ai: float = 50.0,
+) -> dict:
+    """Evaluate whether a candidate clears the product AI-mitigation gate."""
+    delta = (
+        reference_ai - candidate_ai
+        if isinstance(reference_ai, (int, float)) and isinstance(candidate_ai, (int, float))
+        else None
+    )
+    required = (
+        bool(text_changed)
+        and isinstance(reference_ai, (int, float))
+        and reference_ai >= required_min_ai
+    )
+    success = (
+        bool(text_changed)
+        and isinstance(delta, (int, float))
+        and (
+            delta >= min_drop
+            or (
+                isinstance(reference_ai, (int, float))
+                and reference_ai >= target
+                and isinstance(candidate_ai, (int, float))
+                and candidate_ai < target
+            )
+        )
+    )
+    return {
+        "required": required,
+        "success": success,
+        "delta": delta,
+        "reference_ai": reference_ai,
+        "candidate_ai": candidate_ai,
+        "min_drop": min_drop,
+        "target": target,
+        "required_min_ai": required_min_ai,
+    }
+
+
+def _clean_full_document_candidate(output: str, original_text: str) -> str:
+    if not output:
+        return ""
+    text = output.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+    text = re.sub(
+        r"^(?:rewritten|replacement|final)\s+(?:draft|document|text)\s*:\s*",
+        "",
+        text,
+        flags=re.I,
+    ).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    paragraphs = [" ".join(p.strip().split()) for p in re.split(r"\n\s*\n", text) if p.strip()]
+    text = "\n\n".join(paragraphs).strip()
+    return "" if text == original_text.strip() else text
+
+
+def _ai_search_signal_brief(raw_json: dict) -> str:
+    badge = (raw_json or {}).get("ai_risk_badge") or {}
+    ai_components = badge.get("ai_components") or {}
+    writing_components = badge.get("writing_components") or {}
+    parts = []
+    if isinstance(ai_components, dict):
+        ranked = sorted(
+            ((k, v) for k, v in ai_components.items() if isinstance(v, (int, float))),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        if ranked:
+            parts.append("AI component drivers: " + ", ".join(f"{k}={v:.2f}%" for k, v in ranked[:8]))
+    if isinstance(writing_components, dict):
+        ranked = sorted(
+            ((k, v) for k, v in writing_components.items() if isinstance(v, (int, float))),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        if ranked:
+            parts.append("Writing-risk context: " + ", ".join(f"{k}={v:.2f}%" for k, v in ranked[:8]))
+    suggestions = (((raw_json or {}).get("rewrite_guidance") or {}).get("guided_revision") or {}).get("risk_mitigation_actions") or []
+    action_lines = []
+    for item in suggestions[:6]:
+        if isinstance(item, dict):
+            title = item.get("title") or item.get("action_type")
+            pattern = item.get("safe_edit_pattern")
+            if title and pattern:
+                action_lines.append(f"{title}: {pattern}")
+    if action_lines:
+        parts.append("Scanner rewrite actions: " + " | ".join(action_lines))
+    return "\n".join(parts)
+
+
+def _ai_search_prompt(source_text: str, raw_json: dict, strategy: str) -> str:
+    signal_brief = _ai_search_signal_brief(raw_json)
+    strategy_lines = {
+        "syntax_demolition": [
+            "Strategy: syntax demolition.",
+            "Break original sentence routes. Do not keep the same subject-verb-object path when meaning allows.",
+            "Split some long balanced sentences and merge a few short neighboring sentences where natural.",
+        ],
+        "paragraph_resequence": [
+            "Strategy: paragraph resequencing.",
+            "Change how paragraphs arrive at their point. Start from a concrete action, mistake, observation, or consequence before the broad claim.",
+            "Avoid the same explanatory order used in the source.",
+        ],
+        "plain_workshop_voice": [
+            "Strategy: plain workshop voice.",
+            "Make the draft sound like a knowledgeable person explaining work they have actually seen.",
+            "Use concrete verbs and uneven sentence length. Keep useful roughness.",
+        ],
+        "claim_narrowing": [
+            "Strategy: claim narrowing.",
+            "Turn broad claims into context-limited claims. Add cautious wording where evidence is implied but not supplied.",
+            "Do not add new sources or fabricated evidence.",
+        ],
+        "cadence_disruption": [
+            "Strategy: cadence disruption.",
+            "Break repeated clean essay cadence. Vary openings, sentence length, and paragraph rhythm.",
+            "Avoid polished connector chains and abstract summary language.",
+        ],
+        "anchor_first_rebuild": [
+            "Strategy: anchor-first rebuild.",
+            "For each paragraph, preserve the factual anchors, then rebuild the surrounding explanation from scratch.",
+            "Prefer domain details already present in the source over new vocabulary.",
+        ],
+    }.get(strategy, ["Strategy: rewrite for lower measured AI score."])
+    lines = [
+        "DraftProof AI-score mitigation search.",
+        "Objective: produce the lowest measured AI-likelihood score among candidate drafts.",
+        "This is not copyediting. This is not polish. This is detector-targeted reconstruction.",
+        *strategy_lines,
+        "Hard constraints:",
+        "Keep the same topic, stance, factual claims, numbers, names, quotes, citations, unit codes, and chronology.",
+        "Do not invent new evidence, citations, sources, dates, institutions, or examples.",
+        "Do not summarize or shorten the document. Keep length within about 85% to 115% of the source.",
+        "Avoid generic polished phrases: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident.",
+        "Use concrete wording, varied sentence routes, and paragraph-level reconstruction.",
+    ]
+    if signal_brief:
+        lines.append(signal_brief)
+    lines.extend([
+        "SOURCE DRAFT:\n<TARGET_DOCUMENT>\n" + source_text + "\n</TARGET_DOCUMENT>",
+        "Output the complete rewritten draft only.",
+        "No commentary, no bullets, no headings added by you, no score estimate.",
+    ])
+    return "\n".join(lines)
 
 
 def _enrich_report_authorship_schema(report_dict: dict) -> dict:
@@ -541,6 +696,196 @@ def run_rewrite_pipeline(
         "original_weighted_severity": original_severity,
         "rewritten_weighted_severity": rewritten_severity,
     }
+    ai_first_min_drop = float(os.environ.get("DRAFTPROOF_AI_FIRST_MIN_DROP", "5.0"))
+    ai_first_target = float(os.environ.get("DRAFTPROOF_AI_FIRST_TARGET", "60.0"))
+    ai_first_required_min_ai = float(os.environ.get("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", "50.0"))
+    ai_search_selected = False
+
+    # Dedicated AI-score search. This is separate from local sentence rewrite:
+    # generate multiple full-document candidates, scan every valid candidate,
+    # and keep the one with the lowest measured AI likelihood.
+    ai_search_reference = saved_ai if saved_ai is not None else original_ai
+    ai_search_enabled = os.environ.get("DRAFTPROOF_AI_MITIGATION_SEARCH", "1") != "0"
+    if (
+        ai_search_enabled
+        and isinstance(ai_search_reference, (int, float))
+        and ai_search_reference >= ai_first_required_min_ai
+    ):
+        search_started = time.time()
+        strategies = [
+            "syntax_demolition",
+            "paragraph_resequence",
+            "plain_workshop_voice",
+            "claim_narrowing",
+            "cadence_disruption",
+            "anchor_first_rebuild",
+        ]
+        try:
+            search_limit = max(1, int(os.environ.get("DRAFTPROOF_AI_SEARCH_CANDIDATES", "6")))
+        except ValueError:
+            search_limit = 6
+        strategies = strategies[:search_limit]
+        search_summary = {
+            "enabled": True,
+            "reference_ai": ai_search_reference,
+            "starting_ai": rewritten_ai,
+            "candidate_limit": len(strategies),
+            "selected": False,
+            "candidates": [],
+        }
+        effective_key = (
+            api_key
+            or os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("LLM_API_KEY")
+        )
+        if not effective_key:
+            search_summary["reason"] = "no_llm_available"
+        else:
+            try:
+                gateway = LLMGateway(LLMConfig(
+                    api_key=effective_key,
+                    model=model or os.environ.get("LLM_MODEL"),
+                    base_url=base_url,
+                    timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
+                    max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
+                    max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
+                    temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.75")),
+                ))
+                source_protected = detect_protected_spans(text)
+                min_chars = max(200, int(len(text) * 0.75))
+                max_chars = max(min_chars, int(len(text) * 1.30))
+                best_text = rewritten_text
+                best_report = rewritten_report_dict
+                best_ai = rewritten_ai if isinstance(rewritten_ai, (int, float)) else 999.0
+                best_strategy = None
+                for index, strategy in enumerate(strategies, start=1):
+                    report_progress(
+                        min(79, 76 + index),
+                        f"Trying AI mitigation candidate {index}/{len(strategies)}",
+                    )
+                    candidate_eval = {
+                        "strategy": strategy,
+                        "passed_local_checks": False,
+                    }
+                    try:
+                        prompt = _ai_search_prompt(text, ctx.raw_json, strategy)
+                        response = gateway.chat(
+                            prompt,
+                            system=(
+                                "You are DraftProof's AI-score mitigation engine. "
+                                "Return only the complete rewritten document."
+                            ),
+                            temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.75")),
+                            max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
+                        )
+                        candidate = _clean_full_document_candidate(response.content, text)
+                    except Exception as exc:
+                        candidate_eval["reason"] = f"llm_error {exc}"
+                        search_summary["candidates"].append(candidate_eval)
+                        continue
+
+                    candidate_eval["candidate_length"] = len(candidate or "")
+                    if not candidate:
+                        candidate_eval["reason"] = "empty_candidate"
+                        search_summary["candidates"].append(candidate_eval)
+                        continue
+                    if len(candidate) < min_chars:
+                        candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{min_chars}"
+                        search_summary["candidates"].append(candidate_eval)
+                        continue
+                    if len(candidate) > max_chars:
+                        candidate_eval["reason"] = f"candidate_too_long {len(candidate)}>{max_chars}"
+                        search_summary["candidates"].append(candidate_eval)
+                        continue
+                    if not protected_spans_preserved(text, candidate, source_protected):
+                        candidate_eval["reason"] = "protected_span_lost"
+                        search_summary["candidates"].append(candidate_eval)
+                        continue
+                    drift = check_semantic_drift(text, candidate, threshold=0.15)
+                    candidate_eval["drift_similarity"] = round(drift.similarity, 3)
+                    if not drift.accepted:
+                        candidate_eval["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
+                        search_summary["candidates"].append(candidate_eval)
+                        continue
+
+                    candidate_eval["passed_local_checks"] = True
+                    scan_t0 = time.time()
+                    candidate_report = _full_scan_report_dict(candidate)
+                    candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
+                    candidate_ai = _badge_ai(candidate_report)
+                    candidate_wq = _badge_wq(candidate_report)
+                    candidate_eval.update({
+                        "ai": candidate_ai,
+                        "ai_delta_vs_reference": (
+                            round(ai_search_reference - candidate_ai, 3)
+                            if isinstance(candidate_ai, (int, float)) else None
+                        ),
+                        "writing_quality": candidate_wq,
+                        "findings": _finding_total(candidate_report),
+                        "review_burden": _review_burden(candidate_report),
+                        "weighted_severity": _weighted_severity(candidate_report),
+                    })
+                    score_to_beat = min(best_ai, ai_search_reference)
+                    if isinstance(candidate_ai, (int, float)) and candidate_ai < score_to_beat - 0.05:
+                        best_ai = candidate_ai
+                        best_text = candidate
+                        best_report = candidate_report
+                        best_strategy = strategy
+                        candidate_eval["selected_so_far"] = True
+                    search_summary["candidates"].append(candidate_eval)
+
+                if best_strategy:
+                    previous_ai = rewritten_ai
+                    rewritten_text = best_text
+                    rewritten_report_dict = best_report
+                    rewritten_ai = _badge_ai(rewritten_report_dict)
+                    rewritten_wq = _badge_wq(rewritten_report_dict)
+                    rewritten_total = _finding_total(rewritten_report_dict)
+                    rewritten_review_burden = _review_burden(rewritten_report_dict)
+                    rewritten_severity = _weighted_severity(rewritten_report_dict)
+                    rewritten_critical_high = (
+                        len(rewritten_report_dict.get("findings", {}).get("critical", []))
+                        + len(rewritten_report_dict.get("findings", {}).get("high", []))
+                    )
+                    if result.mp_result:
+                        result.mp_result.final_text = rewritten_text
+                        result.mp_result.converged = True
+                        result.mp_result.convergence_reason = (
+                            f"Selected AI mitigation search candidate: {best_strategy}"
+                        )
+                    sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                    ai_search_selected = True
+                    result.summary.pop("no_text_change", None)
+                    result.summary.pop("no_text_change_reason", None)
+                    search_summary.update({
+                        "selected": True,
+                        "selected_strategy": best_strategy,
+                        "previous_ai": previous_ai,
+                        "selected_ai": rewritten_ai,
+                        "selected_ai_delta_vs_reference": (
+                            round(ai_search_reference - rewritten_ai, 3)
+                            if isinstance(rewritten_ai, (int, float)) else None
+                        ),
+                    })
+            except Exception as exc:
+                search_summary["reason"] = f"search_error {exc}"
+        search_summary["seconds"] = round(time.time() - search_started, 3)
+        result.summary["ai_mitigation_search"] = search_summary
+        stage_timings.append({
+            "stage": "ai_mitigation_search",
+            "seconds": search_summary["seconds"],
+            "candidates": len(search_summary.get("candidates", [])),
+            "selected": search_summary.get("selected", False),
+        })
+
+        result.summary["detect_scores"].update({
+            "rewritten_ai": rewritten_ai,
+            "rewritten_writing_quality": rewritten_wq,
+            "rewritten_findings": rewritten_total,
+            "rewritten_review_burden": rewritten_review_burden,
+            "rewritten_weighted_severity": rewritten_severity,
+        })
+
     ai_regression_tolerance = 0.25
     writing_quality_regression_tolerance = 1.0
 
@@ -675,32 +1020,17 @@ def run_rewrite_pipeline(
             f"user_visible_critical_high_findings {saved_critical_high}->{rewritten_critical_high}"
         )
     ai_first_reference = saved_ai if saved_ai is not None else original_ai
-    ai_first_delta = (
-        ai_first_reference - rewritten_ai
-        if ai_first_reference is not None and rewritten_ai is not None
-        else None
+    ai_first_gate = _ai_first_gate_status(
+        ai_first_reference,
+        rewritten_ai,
+        rewritten_text != text,
+        min_drop=ai_first_min_drop,
+        target=ai_first_target,
+        required_min_ai=ai_first_required_min_ai,
     )
-    ai_first_min_drop = float(os.environ.get("DRAFTPROOF_AI_FIRST_MIN_DROP", "5.0"))
-    ai_first_target = float(os.environ.get("DRAFTPROOF_AI_FIRST_TARGET", "60.0"))
-    ai_first_required_min_ai = float(os.environ.get("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", "50.0"))
-    ai_first_success = (
-        rewritten_text != text
-        and isinstance(ai_first_delta, (int, float))
-        and (
-            ai_first_delta >= ai_first_min_drop
-            or (
-                ai_first_reference is not None
-                and ai_first_reference >= ai_first_target
-                and rewritten_ai is not None
-                and rewritten_ai < ai_first_target
-            )
-        )
-    )
-    ai_first_required = (
-        rewritten_text != text
-        and ai_first_reference is not None
-        and ai_first_reference >= ai_first_required_min_ai
-    )
+    ai_first_delta = ai_first_gate["delta"]
+    ai_first_success = ai_first_gate["success"] or bool(ai_search_selected)
+    ai_first_required = ai_first_gate["required"]
     if ai_first_required and not ai_first_success:
         delta_text = f"{ai_first_delta:.2f}" if isinstance(ai_first_delta, (int, float)) else "unknown"
         regression_reasons.append(
@@ -739,6 +1069,7 @@ def run_rewrite_pipeline(
         regression_reasons = hard_regression_reasons
         result.summary["ai_first_mitigation"] = {
             "kept": not hard_regression_reasons,
+            "source": "ai_mitigation_search" if ai_search_selected else "threshold",
             "reference_ai": ai_first_reference,
             "rewritten_ai": rewritten_ai,
             "ai_delta": round(ai_first_delta, 3) if isinstance(ai_first_delta, (int, float)) else None,
@@ -748,10 +1079,16 @@ def run_rewrite_pipeline(
             "hard_regressions": hard_regression_reasons,
         }
         if not hard_regression_reasons:
-            result.summary.setdefault("saved_contract_notes", []).append(
-                "AI-first mitigation kept the rewrite because AI likelihood improved enough; "
-                "writing quality and lower-severity finding changes are follow-up work."
-            )
+            if ai_search_selected:
+                result.summary.setdefault("saved_contract_notes", []).append(
+                    "AI mitigation search kept the lowest-AI scanned candidate; "
+                    "writing quality and lower-severity finding changes are follow-up work."
+                )
+            else:
+                result.summary.setdefault("saved_contract_notes", []).append(
+                    "AI-first mitigation kept the rewrite because AI likelihood improved enough; "
+                    "writing quality and lower-severity finding changes are follow-up work."
+                )
     if followup_warnings:
         result.summary["post_ai_followups"] = followup_warnings
         writing_quality_followups = [
@@ -853,6 +1190,15 @@ def run_rewrite_pipeline(
                     )
                 )
             )
+            cp_ai_first_reference = saved_ai if saved_ai is not None else original_ai
+            cp_ai_first_gate = _ai_first_gate_status(
+                cp_ai_first_reference,
+                cp_ai,
+                checkpoint.get("text") != text,
+                min_drop=ai_first_min_drop,
+                target=ai_first_target,
+                required_min_ai=ai_first_required_min_ai,
+            )
             if (
                 cp_ai_regressed
                 or cp_total > original_total
@@ -861,6 +1207,7 @@ def run_rewrite_pipeline(
                 or cp_critical_high > original_critical_high
                 or cp_violates_saved_contract
                 or not cp_improved
+                or (cp_ai_first_gate["required"] and not cp_ai_first_gate["success"])
             ):
                 continue
 
@@ -891,6 +1238,14 @@ def run_rewrite_pipeline(
                 "local_score_total": best_checkpoint.get("local_score_total", 0.0),
                 "reason": "final rewrite regressed; kept best non-regressing checkpoint",
                 "final_regression_reasons": regression_reasons,
+                "ai_first_gate": _ai_first_gate_status(
+                    saved_ai if saved_ai is not None else original_ai,
+                    _badge_ai(best_checkpoint_report),
+                    best_checkpoint.get("text") != text,
+                    min_drop=ai_first_min_drop,
+                    target=ai_first_target,
+                    required_min_ai=ai_first_required_min_ai,
+                ),
             }
             result.summary["detect_scores"].update({
                 "rewritten_ai": _badge_ai(rewritten_report_dict),
