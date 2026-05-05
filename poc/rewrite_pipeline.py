@@ -155,6 +155,17 @@ def _ai_search_prompt(source_text: str, raw_json: dict, strategy: str) -> str:
             "Make the draft sound like a knowledgeable person explaining work they have actually seen.",
             "Use concrete verbs and uneven sentence length. Keep useful roughness.",
         ],
+        "review_marked_grounding": [
+            "Strategy: review-marked grounding.",
+            "Where the scan points to unsupported or generic claims, add clearly marked author-review material using [[REVIEW: ...]] brackets.",
+            "The bracketed material must be framed as a place for the user to verify or replace, not as a fabricated fact.",
+            "Use these marked additions to break generic claim flow with source/evidence prompts, concrete context prompts, or careful limitation prompts.",
+        ],
+        "source_bridge_rebuild": [
+            "Strategy: source bridge rebuild.",
+            "Do not leave historical or technical claims floating. Add source-bridge sentences only when they can be phrased as review prompts.",
+            "Use [[REVIEW: add source here explaining ...]] where the source is missing, then reconnect the claim in plainer wording.",
+        ],
         "claim_narrowing": [
             "Strategy: claim narrowing.",
             "Turn broad claims into context-limited claims. Add cautious wording where evidence is implied but not supplied.",
@@ -179,7 +190,10 @@ def _ai_search_prompt(source_text: str, raw_json: dict, strategy: str) -> str:
         "Hard constraints:",
         "Keep the same topic, stance, factual claims, numbers, names, quotes, citations, unit codes, and chronology.",
         "Do not invent new evidence, citations, sources, dates, institutions, or examples.",
+        "If evidence is missing and the strategy allows marked grounding, use [[REVIEW: ...]] bracketed text instead of inventing the evidence.",
         "Do not summarize or shorten the document. Keep length within about 85% to 115% of the source.",
+        "Do not leave any non-protected source sentence verbatim. Rebuild every sentence route.",
+        "Change most sentence openings and vary paragraph openings. Avoid preserving the same paragraph order inside every paragraph.",
         "Avoid generic polished phrases: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident.",
         "Use concrete wording, varied sentence routes, and paragraph-level reconstruction.",
     ]
@@ -716,14 +730,16 @@ def run_rewrite_pipeline(
             "syntax_demolition",
             "paragraph_resequence",
             "plain_workshop_voice",
+            "review_marked_grounding",
+            "source_bridge_rebuild",
             "claim_narrowing",
             "cadence_disruption",
             "anchor_first_rebuild",
         ]
         try:
-            search_limit = max(1, int(os.environ.get("DRAFTPROOF_AI_SEARCH_CANDIDATES", "6")))
+            search_limit = max(1, int(os.environ.get("DRAFTPROOF_AI_SEARCH_CANDIDATES", "8")))
         except ValueError:
-            search_limit = 6
+            search_limit = 8
         strategies = strategies[:search_limit]
         search_summary = {
             "enabled": True,

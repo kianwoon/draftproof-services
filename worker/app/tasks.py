@@ -408,6 +408,7 @@ def _build_rewrite_debug_log(
             "findings_fixed": summary.get("findings_fixed"),
             "findings_skipped": summary.get("findings_skipped"),
             "circuit_breaker_reason": summary.get("circuit_breaker_reason"),
+            "ai_mitigation_search": summary.get("ai_mitigation_search"),
             "stage_timings": summary.get("stage_timings"),
             "comparison_baseline": summary.get("comparison_baseline"),
             "baseline_rescan_delta": summary.get("baseline_rescan_delta"),
