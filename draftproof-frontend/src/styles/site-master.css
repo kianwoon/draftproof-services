@@ -2944,6 +2944,10 @@ th {
   max-width: var(--max-w);
 }
 
+.history-page-shell .container {
+  max-width: var(--max-w);
+}
+
 .reports-hero {
   align-items: stretch;
 }
@@ -3039,6 +3043,7 @@ th {
 
 .history-table-wrap {
   max-width: 960px;
+  margin: 0 auto;
 }
 
 .reports-table {
@@ -3160,6 +3165,16 @@ th {
 .score-value-warning { color: #8A621D; }
 .score-value-negative { color: #A32D2D; }
 .score-value-neutral { color: var(--muted); }
+
+.history-token-count {
+  color: var(--green-dark);
+  font-weight: 500;
+}
+
+.history-amount {
+  color: var(--ink);
+  font-weight: 500;
+}
 
 .btn-delete {
   color: #A32D2D;

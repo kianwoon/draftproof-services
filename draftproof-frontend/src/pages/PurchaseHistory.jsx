@@ -6,10 +6,10 @@ import ErrorReload from '../components/ErrorReload';
 const PAGE_SIZE = 5;
 
 const STATUS_MAP = {
-  paid:      { label: 'Paid',      color: '#16a34a', bg: '#f0fdf4' },
-  pending:   { label: 'Pending',   color: '#94a3b8', bg: '#f1f5f9' },
-  failed:    { label: 'Failed',    color: '#dc2626', bg: '#fef2f2' },
-  completed: { label: 'Completed', color: '#16a34a', bg: '#f0fdf4' },
+  paid:      { label: 'Paid', tone: 'positive' },
+  pending:   { label: 'Pending', tone: 'neutral' },
+  failed:    { label: 'Failed', tone: 'negative' },
+  completed: { label: 'Completed', tone: 'positive' },
 };
 
 function formatDate(iso) {
@@ -50,7 +50,7 @@ export default function PurchaseHistory() {
 
   if (loading) {
     return (
-      <main className="dash-shell">
+      <main className="app-page history-page-shell">
         <div className="container">
           <div className="reports-loading">
             <div className="reports-spinner" />
@@ -63,7 +63,7 @@ export default function PurchaseHistory() {
 
   if (error) {
     return (
-      <main className="dash-shell">
+      <main className="app-page history-page-shell">
         <div className="container">
           <ErrorReload message={error} />
         </div>
@@ -72,19 +72,27 @@ export default function PurchaseHistory() {
   }
 
   return (
-    <main className="app-page">
+    <main className="app-page history-page-shell">
       <div className="container">
-        <section className="app-hero">
+        <section className="app-hero app-hero-dark reports-hero">
           <div>
             <p className="eyebrow">Billing</p>
             <h1>Purchase history</h1>
             <p>
-              {total} transaction{total !== 1 ? 's' : ''}
+              Track token purchases, payment status, and billing activity for
+              your DraftProof account.
             </p>
           </div>
-          <button onClick={() => navigate('/buy')} className="btn btn-primary">
-            Buy tokens
-          </button>
+          <div className="reports-hero-actions">
+            <div className="app-hero-stat">
+              <span>Transactions</span>
+              <strong>{total}</strong>
+              <small>{totalPages > 1 ? `Page ${page} of ${totalPages}` : 'Billing archive'}</small>
+            </div>
+            <button onClick={() => navigate('/buy')} className="btn btn-ghost">
+              Buy tokens
+            </button>
+          </div>
         </section>
 
         {payments.length === 0 ? (
@@ -107,14 +115,14 @@ export default function PurchaseHistory() {
               </thead>
               <tbody>
                 {payments.map((p) => {
-                  const st = STATUS_MAP[p.status] || { label: p.status, color: '#64748b', bg: '#f8fafc' };
+                  const st = STATUS_MAP[p.status] || { label: p.status, tone: 'neutral' };
                   return (
                     <tr key={p.id}>
-                      <td>{formatDate(p.created_at)}</td>
-                      <td className="td-findings">{p.tokens}</td>
-                      <td>{formatAmount(p.amount_cents, p.currency)}</td>
+                      <td className="td-date">{formatDate(p.created_at)}</td>
+                      <td><strong className="history-token-count">{p.tokens}</strong></td>
+                      <td className="history-amount">{formatAmount(p.amount_cents, p.currency)}</td>
                       <td>
-                        <span className="status-badge" style={{ color: st.color, backgroundColor: st.bg }}>
+                        <span className={`status-badge status-badge-${st.tone}`}>
                           {st.label}
                         </span>
                       </td>
