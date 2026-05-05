@@ -65,7 +65,8 @@ fi
 echo "[entrypoint] Preloading ${MODEL} into memory..."
 python3 -c "
 import sys
-sys.path.insert(0, '/app/poc')
+sys.path.insert(0, '/app')
+	sys.path.insert(0, '/app/poc')
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 model = AutoModelForCausalLM.from_pretrained('${MODEL}', torch_dtype=torch.float32)
