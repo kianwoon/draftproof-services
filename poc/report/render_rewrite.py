@@ -48,6 +48,17 @@ def _tier(report: dict) -> str:
     return (_badge(report).get("tier") or (report or {}).get("overall_tier", "?")).upper()
 
 
+def _authorship_label(report: dict) -> str:
+    badge = _badge(report)
+    rating = badge.get("authorship_rating") or {}
+    return (
+        rating.get("short_label")
+        or rating.get("label")
+        or badge.get("authorship_rating_label")
+        or ""
+    )
+
+
 def _signal_label(name: str) -> str:
     return str(name or "").replace("_", " ").title()
 
@@ -381,6 +392,10 @@ def render_rewrite_report(
         lines.append("| Metric | Original | Final Output | Change |")
         lines.append("|--------|----------|--------------|--------|")
         lines.append(f"| **AI Likelihood** | `{orig_ai:.2f}%` | `{new_ai:.2f}%` | `{ai_delta:+.2f}%` |")
+        orig_authorship = _authorship_label(orig_scan)
+        new_authorship = _authorship_label(new_scan)
+        if orig_authorship or new_authorship:
+            lines.append(f"| **Authorship Rating** | {orig_authorship or '-'} | {new_authorship or '-'} | - |")
         lines.append(f"| **Writing Quality Risk** | `{orig_wq:.2f}%` | `{new_wq:.2f}%` | `{wq_delta:+.2f}%` |")
         lines.append(f"| **Total Findings** | {o_total} | {n_total} | `{n_total - o_total:+d}` |")
 

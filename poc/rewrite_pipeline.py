@@ -28,7 +28,77 @@ from rewrite import run_rewrite, RewriteModuleResult
 from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
 from detect.run import DetectionRunner
+from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
 from report.report import ReportBuilder, report_to_dict
+
+
+def _metric_decimal(value, default=0.0):
+    if not isinstance(value, (int, float)):
+        return default
+    return value / 100.0 if abs(value) > 1 else value
+
+
+def _enrich_report_authorship_schema(report_dict: dict) -> dict:
+    """Backfill current authorship fields for older saved scan JSON.
+
+    Rewrite jobs often consume the saved scan JSON as their contract. If the
+    scan was created before a detector/schema upgrade, the rewrite report can
+    otherwise omit newer fields such as qualifying_text_ai_density even though
+    the saved JSON still contains enough input text and scanner components to
+    derive them cheaply.
+    """
+    if not isinstance(report_dict, dict):
+        return report_dict
+
+    badge = report_dict.get("ai_risk_badge") or {}
+    if not isinstance(badge, dict):
+        return report_dict
+
+    ai_components = badge.get("ai_components") or {}
+    has_density = isinstance(ai_components, dict) and "qualifying_text_ai_density" in ai_components
+    if badge.get("authorship_rating") and has_density:
+        return report_dict
+
+    text = report_dict.get("input_text") or report_dict.get("original_text") or ""
+    if not isinstance(text, str) or len(text.split()) < 300:
+        return report_dict
+
+    writing_components = badge.get("writing_components") or {}
+    layer3_input = build_layer3_input_from_text(
+        text,
+        predictability=_metric_decimal(ai_components.get("predictability")),
+        topk_pattern=_metric_decimal(ai_components.get("topk_pattern")),
+        generic_phrase_density=_metric_decimal(ai_components.get("generic_phrase_density")),
+        broad_claim_risk=_metric_decimal(writing_components.get("broad_claim_risk")),
+        citation_weakness_risk=_metric_decimal(writing_components.get("citation_weakness_risk")),
+        unsupported_claim_risk=_metric_decimal(writing_components.get("unsupported_claim_risk")),
+        source_grounding_strength=_metric_decimal(writing_components.get("source_grounding_strength")),
+        domain_grounding_strength=_metric_decimal(writing_components.get("domain_grounding_strength")),
+    )
+    layer3 = Layer3Scorer().score(layer3_input)
+
+    enriched = dict(report_dict)
+    enriched_badge = dict(badge)
+    enriched_badge.update({
+        "tier": layer3.tier.value,
+        "ai_likelihood_score": round(layer3.ai_likelihood_score * 100, 2),
+        "authorship_rating": layer3.authorship_rating,
+        "authorship_rating_label": layer3.authorship_rating.get("label"),
+        "authorship_rating_code": layer3.authorship_rating.get("code"),
+        "ai_cluster_boost": round(layer3.ai_cluster_boost * 100, 2) if layer3.ai_cluster_boost else 0,
+        "ai_cluster_name": layer3.ai_cluster_name,
+        "ai_components": {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()},
+        "writing_quality_tier": layer3.writing_quality_tier.value,
+        "writing_quality_score": round(layer3.writing_quality_score * 100, 2),
+        "writing_components": {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()},
+        "review_priority": layer3.review_priority,
+        "confidence": layer3.confidence.value,
+        "reasons": layer3.reasons,
+        "guardrails": layer3.guardrails,
+        "schema_enriched_from_input_text": True,
+    })
+    enriched["ai_risk_badge"] = enriched_badge
+    return enriched
 
 
 def _detail_value(detail: dict, *keys, default=0):
@@ -226,6 +296,9 @@ def run_rewrite_pipeline(
 
     if not text or not text.strip():
         raise ValueError("Empty input text")
+
+    if isinstance(getattr(ctx, "raw_json", None), dict):
+        ctx.raw_json = _enrich_report_authorship_schema(ctx.raw_json)
 
     # ── Check rewrite decision from detect ──────────────────────────
     if ctx.rewrite_decision and not ctx.rewrite_decision.get("run_rewrite", True):
