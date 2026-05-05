@@ -1511,38 +1511,59 @@ th {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  opacity: .72;
+  opacity: .88;
 }
 
 .hero-code-field {
-  opacity: .95;
+  opacity: 1;
 }
 
 .footer-code-texture {
-  opacity: .46;
+  opacity: .80;
 }
 
 .app-hero-dark .code-texture {
-  opacity: .68;
+  opacity: .95;
 }
 
 .dash-hero .code-texture {
-  opacity: .60;
+  opacity: .95;
 }
 
 .signin-trust-panel .code-texture {
-  opacity: .72;
+  opacity: .95;
 }
 
 .code-texture-layer text {
-  fill: rgba(255, 255, 255, .20);
+  fill: rgba(255, 255, 255, .42);
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 20px;
   letter-spacing: .08em;
 }
 
 .code-texture-layer .code-row-b text {
-  fill: rgba(58, 168, 118, .32);
+  fill: rgba(58, 168, 118, .70);
+}
+
+.app-hero-dark .code-texture-layer text,
+.dash-hero .code-texture-layer text,
+.signin-trust-panel .code-texture-layer text,
+.global-footer-wrap .code-texture-layer text,
+.landing-hero .code-texture-layer text,
+.checks-section .code-texture-layer text,
+.landing-cta .code-texture-layer text {
+  fill: rgba(255, 255, 255, .36);
+  text-shadow: 0 0 14px rgba(255, 255, 255, .12);
+}
+
+.app-hero-dark .code-texture-layer .code-row-b text,
+.dash-hero .code-texture-layer .code-row-b text,
+.signin-trust-panel .code-texture-layer .code-row-b text,
+.global-footer-wrap .code-texture-layer .code-row-b text,
+.landing-hero .code-texture-layer .code-row-b text,
+.checks-section .code-texture-layer .code-row-b text,
+.landing-cta .code-texture-layer .code-row-b text {
+  fill: rgba(58, 168, 118, .78);
 }
 
 .code-row {
@@ -2101,7 +2122,7 @@ th {
 
 .app-hero-dark .code-texture {
   z-index: 1;
-  opacity: .68;
+  opacity: .95;
 }
 
 .app-hero-dark > :not(.code-texture) {
