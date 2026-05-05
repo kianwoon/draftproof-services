@@ -17,6 +17,7 @@ if _poc_dir not in sys.path:
 from .celery_app import app
 from .config import settings
 from .storage import upload_report_files
+from .progress import publish_rewrite_progress
 from .db import (
     get_scan_job,
     update_job_status,
@@ -588,6 +589,16 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
     from .config import settings as worker_settings
     import tempfile
 
+    def publish_progress(status: str, percent: int | None = None, message: str | None = None, error: str | None = None) -> None:
+        publish_rewrite_progress(
+            rewrite_id,
+            status=status,
+            progress_percent=percent,
+            progress_message=message,
+            scan_id=scan_id,
+            error=error,
+        )
+
     try:
         rewrite_job = claim_rewrite_job(rewrite_id)
         if not rewrite_job:
@@ -606,6 +617,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             progress_percent=10,
             progress_message="Fetching original report",
         )
+        publish_progress("processing", 10, "Fetching original report")
         scan_job = get_scan_job(scan_id)
         report_json = None
         try:
@@ -622,6 +634,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 error="Original report not found in R2",
                 progress_message="Original report not found",
             )
+            publish_progress("failed", 10, "Original report not found", "Original report not found in R2")
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "report not found"}
 
@@ -632,6 +645,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             progress_percent=25,
             progress_message="Selecting AI sections",
         )
+        publish_progress("processing", 25, "Selecting AI sections")
         review_only_message = (
             "No rewriteable AI sections were found. The findings on this report are review-only, "
             "so DraftProof did not use any tokens for a rewrite."
@@ -644,6 +658,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 error=review_only_message,
                 progress_message="Review-only findings; no rewrite needed",
             )
+            publish_progress("failed", 25, "Review-only findings; no rewrite needed", review_only_message)
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "review-only findings"}
 
@@ -675,6 +690,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 error=review_only_message,
                 progress_message="Review-only findings; no rewrite needed",
             )
+            publish_progress("failed", 25, "Review-only findings; no rewrite needed", review_only_message)
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "review-only findings"}
 
@@ -690,6 +706,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 error="LLM_API_KEY not configured — rewrite requires an LLM API key",
                 progress_message="Rewrite service is not configured",
             )
+            publish_progress(
+                "failed",
+                25,
+                "Rewrite service is not configured",
+                "LLM_API_KEY not configured — rewrite requires an LLM API key",
+            )
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "missing LLM API key"}
 
@@ -700,26 +722,42 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 progress_percent=40,
                 progress_message="Rewriting AI sections",
             )
+            publish_progress("processing", 40, "Rewriting AI sections")
 
-            last_rewrite_progress = {"percent": 39, "updated_at": 0.0}
+            last_rewrite_progress = {
+                "redis_percent": 39,
+                "redis_updated_at": 0.0,
+                "db_percent": 40,
+                "db_updated_at": time.monotonic(),
+            }
 
             def report_rewrite_progress(percent: int, message: str) -> None:
                 normalized_percent = max(40, min(79, int(percent)))
                 now = time.monotonic()
                 if (
-                    normalized_percent <= last_rewrite_progress["percent"]
+                    normalized_percent <= last_rewrite_progress["redis_percent"]
                     and normalized_percent < 76
-                    and now - last_rewrite_progress["updated_at"] < 2.0
+                    and now - last_rewrite_progress["redis_updated_at"] < 0.5
                 ):
                     return
-                update_rewrite_status(
-                    rewrite_id,
-                    "processing",
-                    progress_percent=normalized_percent,
-                    progress_message=message,
+                publish_progress("processing", normalized_percent, message)
+                last_rewrite_progress["redis_percent"] = normalized_percent
+                last_rewrite_progress["redis_updated_at"] = now
+
+                should_persist = (
+                    normalized_percent >= 76
+                    or normalized_percent - last_rewrite_progress["db_percent"] >= 5
+                    or now - last_rewrite_progress["db_updated_at"] >= 12.0
                 )
-                last_rewrite_progress["percent"] = normalized_percent
-                last_rewrite_progress["updated_at"] = now
+                if should_persist:
+                    update_rewrite_status(
+                        rewrite_id,
+                        "processing",
+                        progress_percent=normalized_percent,
+                        progress_message=message,
+                    )
+                    last_rewrite_progress["db_percent"] = normalized_percent
+                    last_rewrite_progress["db_updated_at"] = now
 
             result = run_rewrite_pipeline(
                 detect_json=report_json,
@@ -741,6 +779,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     error=result.get("message", "Rewrite not needed"),
                     progress_message="Rewrite not needed",
                 )
+                publish_progress("failed", 40, "Rewrite not needed", result.get("message", "Rewrite not needed"))
                 release_rewrite_credits(rewrite_id)
                 return {"status": "skipped"}
 
@@ -751,6 +790,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 progress_percent=80,
                 progress_message="Preparing rewrite report",
             )
+            publish_progress("processing", 80, "Preparing rewrite report")
             rw = result.get("result")
             md_path = result.get("md_path")
             pdf_path = result.get("pdf_path")
@@ -806,6 +846,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 progress_percent=92,
                 progress_message="Uploading rewrite results",
             )
+            publish_progress("processing", 92, "Uploading rewrite results")
             upload_rewrite_files(scan_id, md_text, pdf_bytes, rewrite_json, rewritten_text, debug_log)
 
         # 5. Capture credits
@@ -819,6 +860,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             progress_percent=100,
             progress_message="Rewrite complete",
         )
+        publish_progress("completed", 100, "Rewrite complete")
         return {"status": "completed"}
 
     except SoftTimeLimitExceeded:
@@ -829,6 +871,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             error=f"Rewrite timed out ({timeout_minutes} min limit)",
             progress_message="Rewrite timed out",
         )
+        publish_progress("failed", None, "Rewrite timed out", f"Rewrite timed out ({timeout_minutes} min limit)")
         release_rewrite_credits(rewrite_id)
         return {"status": "failed", "error": "timeout"}
     except Exception as e:
@@ -839,6 +882,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 error=str(e),
                 progress_message="Retrying rewrite",
             )
+            publish_progress("retrying", None, "Retrying rewrite", str(e))
             raise self.retry(exc=e)
         else:
             update_rewrite_status(
@@ -847,6 +891,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 error=str(e),
                 progress_message="Rewrite failed",
             )
+            publish_progress("failed", None, "Rewrite failed", str(e))
             release_rewrite_credits(rewrite_id)
             raise
 
