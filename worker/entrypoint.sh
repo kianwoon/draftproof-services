@@ -78,4 +78,7 @@ exec celery -A app.celery_app worker \
     --loglevel=info \
     --concurrency=1 \
     --pool=prefork \
-    -Q default,scan
+    -Q default,scan \
+    --without-heartbeat \
+    --without-gossip \
+    --without-mingle

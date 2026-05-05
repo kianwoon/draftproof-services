@@ -24,9 +24,13 @@ app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
-    task_track_started=True,
+    task_track_started=False,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # Disable Celery's internal event stream — single worker, no monitoring.
+    # Event polling was generating ~11K reads/sec on Redis.
+    worker_send_task_events=False,
+    task_ignore_result=True,
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
         "app.tasks.run_rewrite": {"queue": "scan"},
