@@ -42,47 +42,55 @@ export default function BuyTokens() {
   };
 
   return (
-    <div className="container" style={{ paddingTop: 'calc(var(--header-h) + 4rem)', paddingBottom: '4rem' }}>
-      <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-        <h2 style={{ marginBottom: '0.5rem' }}>Buy Tokens</h2>
-        <p style={{ color: 'var(--text-2)' }}>USD $1.90 per token — each scan costs 1 token per document.</p>
-        {balance !== null && (
-          <p className="balance-display">Current balance: <strong>{balance} tokens</strong></p>
-        )}
-      </div>
-
-      {message && (
-        <div className={`alert alert-${message.type}`}>
-          {message.text}
-        </div>
-      )}
-
-      {serverError && <ErrorReload message={serverError} />}
-
-      <div className="pack-grid">
-        {packs.map(pack => (
-          <div key={pack.id} className="pack-card">
-            <h3>{pack.name}</h3>
-            <div className="pack-tokens">{pack.tokens} tokens</div>
-            <div className="pack-price">USD ${pack.price_usd.toFixed(2)}</div>
-            <div className="pack-unit">${(pack.price_usd / pack.tokens).toFixed(2)} / token</div>
-            <button
-              className="btn btn-primary"
-              onClick={() => handleBuy(pack.id)}
-              disabled={loading}
-              style={{ width: '100%', marginTop: '1rem' }}
-            >
-              {loading ? 'Redirecting...' : 'Buy Now'}
-            </button>
+    <main className="app-page">
+      <div className="container">
+        <section className="app-hero app-hero-dark buy-hero">
+          <div>
+            <p className="eyebrow">Tokens</p>
+            <h1>Buy review credits when you need them.</h1>
+            <p>No subscription. Tokens stay in your account until you use them.</p>
           </div>
-        ))}
-      </div>
+          {balance !== null && (
+            <div className="app-hero-stat">
+              <span>Current balance</span>
+              <strong>{balance} token{balance === 1 ? '' : 's'}</strong>
+              <small>1 token per 1,000 words</small>
+            </div>
+          )}
+        </section>
 
-      <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-        <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>
-          Back to Dashboard
-        </button>
+        {message && (
+          <div className={`alert alert-${message.type}`}>
+            {message.text}
+          </div>
+        )}
+
+        {serverError && <ErrorReload message={serverError} />}
+
+        <div className="pack-grid">
+          {packs.map(pack => (
+            <div key={pack.id} className="pack-card">
+              <p className="eyebrow">{pack.name}</p>
+              <div className="pack-tokens">{pack.tokens} tokens</div>
+              <div className="pack-price">USD ${pack.price_usd.toFixed(2)}</div>
+              <div className="pack-unit">${(pack.price_usd / pack.tokens).toFixed(2)} / token</div>
+              <button
+                className="btn btn-primary"
+                onClick={() => handleBuy(pack.id)}
+                disabled={loading}
+              >
+                {loading ? 'Redirecting...' : 'Buy now'}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="page-actions-center">
+          <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>
+            Back to dashboard
+          </button>
+        </div>
       </div>
-    </div>
+    </main>
   );
 }

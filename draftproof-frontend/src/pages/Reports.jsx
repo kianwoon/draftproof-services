@@ -104,12 +104,13 @@ export default function Reports() {
   }
 
   return (
-    <main className="dash-shell">
+    <main className="app-page">
       <div className="container">
-        <div className="reports-header">
+        <section className="app-hero">
           <div>
-            <h1>Your Reports</h1>
-            <p className="reports-subtitle">
+            <p className="eyebrow">Report library</p>
+            <h1>Your reports</h1>
+            <p>
               {total} scan{total !== 1 ? 's' : ''} total
               {totalPages > 1 && ` — Page ${page} of ${totalPages}`}
             </p>
@@ -119,9 +120,9 @@ export default function Reports() {
               <path d="M2 4.5A2.5 2.5 0 014.5 2h7A2.5 2.5 0 0114 4.5v7a2.5 2.5 0 01-2.5 2.5h-7A2.5 2.5 0 012 11.5v-7z" stroke="currentColor" strokeWidth="1.4"/>
               <path d="M5 8h6M8 5v6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
             </svg>
-            New Scan
+            New scan
           </Link>
-        </div>
+        </section>
 
         {scans.length === 0 ? (
           <div className="reports-empty">

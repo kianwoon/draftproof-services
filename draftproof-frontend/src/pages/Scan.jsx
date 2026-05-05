@@ -186,72 +186,100 @@ export default function Scan() {
   };
 
   return (
-    <main className="dash-shell">
-    <div className="container scan-page">
-      <h1>Scan Document</h1>
-
-      <form onSubmit={handleSubmit} className="scan-form">
-        <>
-        <textarea
-          className="scan-textarea"
-          placeholder="Paste your document text here..."
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            if (!busy) setShowProgress(false);
-          }}
-          rows={14}
-        />
-        <div className="word-count">
-          {wordCount.toLocaleString()} word{wordCount !== 1 ? 's' : ''}
-          {tokensRequired > 0 && (
-            <span className="word-tokens">
-              {' '}— {tokensRequired} token{tokensRequired !== 1 ? 's' : ''} required
-              {tokensRequired > 1 && (
-                <span className="word-limit"> (1 token per 1,000 words)</span>
-              )}
-            </span>
-          )}
-        </div>
-        </>
-
-        <button type="submit" className="btn btn-primary" disabled={busy}>
-          {busy ? (status || 'Scanning...') : 'Start Scan'}
-        </button>
-        {showProgress && (
-          <div className="scan-progress" role="status" aria-live="polite">
-            <div className="scan-progress-meta">
-              <span>{progressMessage || status || 'Scanning...'}</span>
-              <span>{progressPercent}%</span>
-            </div>
-            <div
-              className="scan-progress-track"
-              role="progressbar"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              aria-valuenow={progressPercent}
-            >
-              <div
-                className="scan-progress-fill"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
+    <main className="app-page scan-shell">
+      <div className="container">
+        <section className="app-hero app-hero-dark">
+          <div>
+            <p className="eyebrow">Pre-submission review</p>
+            <h1>Scan your draft for fixable integrity signals.</h1>
+            <p>
+              Paste your text to review citation gaps, source grounding, generic
+              phrasing, and authorship signals before submission.
+            </p>
           </div>
-        )}
-      </form>
+          <div className="app-hero-stat">
+            <span>Available balance</span>
+            <strong>{balance === null ? 'Checking' : `${balance} token${balance === 1 ? '' : 's'}`}</strong>
+            <small>1 token per 1,000 words</small>
+          </div>
+        </section>
 
-      {error && <p className="error">{error}</p>}
-      {serverError && <p className="error">{serverError}</p>}
+        <section className="scan-workspace">
+          <form onSubmit={handleSubmit} className="scan-form">
+            <label className="scan-label" htmlFor="scan-text">
+              Document text
+              <span>Paste plain text from your paper, report, or essay.</span>
+            </label>
+            <textarea
+              id="scan-text"
+              className="scan-textarea"
+              placeholder="Paste your document text here..."
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                if (!busy) setShowProgress(false);
+              }}
+              rows={16}
+            />
+            <div className="scan-meta-row">
+              <span>{wordCount.toLocaleString()} word{wordCount !== 1 ? 's' : ''}</span>
+              {tokensRequired > 0 && (
+                <strong>
+                  {tokensRequired} token{tokensRequired !== 1 ? 's' : ''} required
+                </strong>
+              )}
+            </div>
 
-      <ConfirmDialog
-        open={insufficientTokens}
-        title="Not enough tokens"
-        message="You don't have enough tokens to scan this document. Purchase more tokens to continue."
-        confirmLabel="Buy tokens"
-        onConfirm={() => navigate('/buy')}
-        onCancel={() => setInsufficientTokens(false)}
-      />
-    </div>
+            <button type="submit" className="btn btn-primary" disabled={busy}>
+              {busy ? (status || 'Scanning...') : 'Start scan'}
+            </button>
+
+            {showProgress && (
+              <div className="scan-progress" role="status" aria-live="polite">
+                <div className="scan-progress-meta">
+                  <span>{progressMessage || status || 'Scanning...'}</span>
+                  <span>{progressPercent}%</span>
+                </div>
+                <div
+                  className="scan-progress-track"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow={progressPercent}
+                >
+                  <div
+                    className="scan-progress-fill"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </form>
+
+          <aside className="scan-side-panel" aria-label="What DraftProof checks">
+            <p className="eyebrow">Review scope</p>
+            <h2>What gets checked</h2>
+            <ul>
+              <li><span>1</span>Citation gaps and unsupported claims</li>
+              <li><span>2</span>Source fit against the claim being made</li>
+              <li><span>3</span>Generic or boilerplate phrasing</li>
+              <li><span>4</span>Review-only authorship signals</li>
+            </ul>
+          </aside>
+        </section>
+
+        {error && <p className="error">{error}</p>}
+        {serverError && <p className="error">{serverError}</p>}
+
+        <ConfirmDialog
+          open={insufficientTokens}
+          title="Not enough tokens"
+          message="You don't have enough tokens to scan this document. Purchase more tokens to continue."
+          confirmLabel="Buy tokens"
+          onConfirm={() => navigate('/buy')}
+          onCancel={() => setInsufficientTokens(false)}
+        />
+      </div>
     </main>
   );
 }
@@ -265,10 +293,12 @@ function buildScanEventsUrl(scanId) {
 }
 
 function formatStatus(status) {
-  if (status === 'pending') return 'Queued';
-  if (status === 'processing') return 'Scanning';
-  if (status === 'retrying') return 'Retrying scan';
-  if (status === 'completed') return 'Scan complete';
-  if (status === 'failed') return 'Scan failed';
-  return 'Scanning';
+  switch (status) {
+    case 'pending': return 'Queued';
+    case 'processing': return 'Scanning document';
+    case 'retrying': return 'Retrying scan';
+    case 'completed': return 'Scan complete';
+    case 'failed': return 'Scan failed';
+    default: return status || 'Scanning...';
+  }
 }

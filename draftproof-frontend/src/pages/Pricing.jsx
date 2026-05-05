@@ -7,12 +7,19 @@ export default function Pricing() {
   return (
     <main className="pricing-shell">
       <div className="container">
-        <section className="pricing-hero">
+        <section className="pricing-hero app-hero app-hero-dark">
+          <div>
           <p className="eyebrow">Pricing</p>
           <h1>Pay for the review you need.</h1>
           <p className="pricing-lead">
             No subscriptions. Buy tokens once and use them for grounded review or focused revision.
           </p>
+          </div>
+          <div className="app-hero-stat">
+            <span>Base rate</span>
+            <strong>$1.90</strong>
+            <small>per 1,000 words</small>
+          </div>
         </section>
 
         <div className="pricing-grid">

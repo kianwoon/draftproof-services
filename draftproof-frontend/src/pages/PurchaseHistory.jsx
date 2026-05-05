@@ -72,19 +72,20 @@ export default function PurchaseHistory() {
   }
 
   return (
-    <main className="dash-shell">
+    <main className="app-page">
       <div className="container">
-        <div className="reports-header">
+        <section className="app-hero">
           <div>
-            <h1>Purchase History</h1>
-            <p className="reports-subtitle">
+            <p className="eyebrow">Billing</p>
+            <h1>Purchase history</h1>
+            <p>
               {total} transaction{total !== 1 ? 's' : ''}
             </p>
           </div>
           <button onClick={() => navigate('/buy')} className="btn btn-primary">
-            Buy Tokens
+            Buy tokens
           </button>
-        </div>
+        </section>
 
         {payments.length === 0 ? (
           <div className="reports-empty">
@@ -94,7 +95,7 @@ export default function PurchaseHistory() {
             </button>
           </div>
         ) : (
-          <div className="reports-table-wrap" style={{ maxWidth: 960 }}>
+          <div className="reports-table-wrap history-table-wrap">
             <table className="reports-table">
               <thead>
                 <tr>

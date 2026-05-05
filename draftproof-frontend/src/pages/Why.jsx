@@ -6,7 +6,8 @@ export default function Why() {
       <div className="container">
 
         {/* Hero */}
-        <section className="why-hero">
+        <section className="why-hero app-hero app-hero-dark">
+          <div>
           <p className="eyebrow">Why DraftProof Exists</p>
           <h1>
             We built DraftProof because the way people read, learn, write, and
@@ -23,6 +24,7 @@ export default function Why() {
             The problem is no longer only plagiarism. The problem is trust.
           </p>
           <p className="why-punch">The source is getting harder to see.</p>
+          </div>
         </section>
 
         {/* Section 1 */}
