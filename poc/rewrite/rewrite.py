@@ -2492,6 +2492,60 @@ def _density_transformation_too_small(original_paragraph: str, candidate_paragra
     return False
 
 
+def _density_predictability_signal(
+    scanner: PredictabilityScanner,
+    text: str,
+) -> Dict[str, Any]:
+    try:
+        metrics = compute_metrics(text, scanner)
+        return {
+            "risk": round(float(getattr(metrics, "risk", 0.0) or 0.0), 4),
+            "top10": round(float(getattr(metrics, "top10_ratio", 0.0) or 0.0), 4),
+            "surprisal": round(float(getattr(metrics, "surprisal", 0.0) or 0.0), 4),
+        }
+    except Exception as exc:
+        logger.warning("Density local predictability check failed: %s", exc)
+        return {"risk": None, "top10": None, "surprisal": None, "error": str(exc)}
+
+
+def _density_local_signal_acceptance(
+    scanner: PredictabilityScanner,
+    original_paragraph: str,
+    candidate_paragraph: str,
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """Require density paragraph edits to improve the local detector proxy."""
+    original = _density_predictability_signal(scanner, original_paragraph)
+    candidate = _density_predictability_signal(scanner, candidate_paragraph)
+    signal = {"original": original, "candidate": candidate}
+    if original.get("risk") is None or candidate.get("risk") is None:
+        return True, "", signal
+
+    orig_risk = float(original.get("risk") or 0.0)
+    cand_risk = float(candidate.get("risk") or 0.0)
+    orig_top10 = float(original.get("top10") or 0.0)
+    cand_top10 = float(candidate.get("top10") or 0.0)
+    risk_delta = orig_risk - cand_risk
+    top10_delta = orig_top10 - cand_top10
+    signal.update({
+        "risk_delta": round(risk_delta, 4),
+        "top10_delta": round(top10_delta, 4),
+    })
+
+    if cand_risk > orig_risk + 0.01 or cand_top10 > orig_top10 + 0.02:
+        return (
+            False,
+            f"density_local_signal_regressed risk:{orig_risk:.4f}->{cand_risk:.4f} top10:{orig_top10:.4f}->{cand_top10:.4f}",
+            signal,
+        )
+    if risk_delta >= 0.025 or top10_delta >= 0.045:
+        return True, "", signal
+    return (
+        False,
+        f"density_local_signal_not_improved risk:{orig_risk:.4f}->{cand_risk:.4f} top10:{orig_top10:.4f}->{cand_top10:.4f}",
+        signal,
+    )
+
+
 def _density_paragraph_reject_reason(
     original_paragraph: str,
     candidate_paragraph: str,
@@ -2585,6 +2639,12 @@ def _density_repair_prompt(
             "The previous candidate kept too much of the original sentence footprint.",
             "Rebuild it again by changing sentence openings, linking phrases, clause order, and sentence boundaries while preserving facts.",
             "Do not solve this by synonym swaps. Move concrete process details to the front of sentences where natural.",
+        ])
+    if re.search(r"density_local_signal_(?:not_improved|regressed)", rejection_reason or "", re.I):
+        repair_lines.extend([
+            "The previous candidate failed the local GPT-2 detector check.",
+            "Make a stronger AI-risk mitigation rewrite: reduce predictable token paths, reduce generic transitions, and vary sentence starts.",
+            "Use shorter, more concrete sentences where natural. Keep names, citations, unit codes, numbers, and facts unchanged.",
         ])
     return "\n".join(repair_lines)
 
@@ -3142,6 +3202,79 @@ def run_rewrite(
             })
             density_reject_reason = ""
 
+        density_local_signal: Dict[str, Any] = {}
+        if not density_reject_reason:
+            local_ok, local_reason, density_local_signal = _density_local_signal_acceptance(
+                scanner,
+                density_paragraph,
+                density_candidate,
+            )
+            density_paragraph_pass["local_signal"] = density_local_signal
+            if not local_ok:
+                density_reject_reason = local_reason
+
+                if (
+                    density_candidate
+                    and llm_calls_used < config.max_llm_calls
+                    and (time.monotonic() - rewrite_start_time) <= config.max_rewrite_seconds
+                ):
+                    repair_prompt = _density_repair_prompt(
+                        density_paragraph,
+                        density_candidate,
+                        density_reject_reason,
+                        rewrite_context,
+                        runtime_mitigation_plan,
+                    )
+                    llm_calls_used += 1
+                    density_mitigation_llm_calls += 1
+                    repaired_output = loop_rewrite_fn(density_paragraph, repair_prompt)
+                    repaired_candidate = _clean_density_paragraph_output(
+                        repaired_output,
+                        density_paragraph,
+                    )
+                    repaired_reject_reason = _density_paragraph_reject_reason(
+                        density_paragraph,
+                        repaired_candidate,
+                        rewrite_context,
+                        allow_polish_warning=True,
+                    )
+                    if repaired_reject_reason and _density_entity_only_drift(repaired_reject_reason):
+                        density_paragraph_pass["entity_warning"] = repaired_reject_reason
+                        repaired_reject_reason = ""
+
+                    repaired_signal: Dict[str, Any] = {}
+                    if not repaired_reject_reason:
+                        repaired_ok, repaired_reason, repaired_signal = _density_local_signal_acceptance(
+                            scanner,
+                            density_paragraph,
+                            repaired_candidate,
+                        )
+                        if not repaired_ok:
+                            repaired_reject_reason = repaired_reason
+
+                    loop_history.append({
+                        "loop": loops_used + 1,
+                        "phase": phase,
+                        "paragraph": para_idx,
+                        "note": "density paragraph detector retry",
+                        "initial_rejection_reason": density_reject_reason,
+                        "repair_rejection_reason": repaired_reject_reason,
+                        "initial_local_signal": density_local_signal,
+                        "repair_local_signal": repaired_signal,
+                        "density_score": round(density_score, 2),
+                        "new_text": repaired_candidate[:240] if repaired_candidate else "",
+                    })
+                    if not repaired_reject_reason:
+                        density_candidate = repaired_candidate
+                        density_reject_reason = ""
+                        density_local_signal = repaired_signal
+                        density_paragraph_pass["local_signal"] = repaired_signal
+                    elif repaired_candidate:
+                        density_candidate = repaired_candidate
+                        density_reject_reason = repaired_reject_reason
+                        density_local_signal = repaired_signal or density_local_signal
+                        density_paragraph_pass["local_signal"] = density_local_signal
+
         if density_reject_reason:
             density_paragraph_pass["reason"] = density_reject_reason
             density_attempts.append({
@@ -3274,6 +3407,7 @@ def run_rewrite(
             "reason": "accepted_locally_pending_final_full_scan",
             "orig_length": len(density_paragraph),
             "new_length": len(density_candidate),
+            "local_signal": density_local_signal,
             **density_meta,
         })
         density_paragraph_pass.update({
@@ -3281,6 +3415,7 @@ def run_rewrite(
             "reason": "accepted_locally_pending_final_full_scan",
             "orig_length": len(density_paragraph),
             "new_length": len(density_candidate),
+            "local_signal": density_local_signal,
         })
         accepted_candidate_suggestions.append({
             "finding_id": "density_paragraph_rebuild",

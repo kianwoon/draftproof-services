@@ -42,6 +42,7 @@ from rewrite.rewrite import (
     _density_paragraph_reject_reason,
     _density_entity_only_drift,
     _density_transformation_too_small,
+    _density_local_signal_acceptance,
     _density_repair_prompt,
     _splice_density_candidate,
     run_rewrite,
@@ -344,10 +345,10 @@ assert_test(cfg.budget.max_changed_char_ratio == 0.15, f"default char ratio=0.15
 assert_test(cfg.budget.max_total_changed_sentence_ratio == 0.30, f"total sentence cap=0.30")
 assert_test(cfg.budget.max_total_changed_char_ratio == 0.25, f"total char cap=0.25")
 assert_test(not cfg.suggestion_only, f"suggestion_only defaults to False")
-assert_test(cfg.max_llm_calls == 18, f"default max_llm_calls=18 (got {cfg.max_llm_calls})")
+assert_test(cfg.max_llm_calls == 30, f"default max_llm_calls=30 (got {cfg.max_llm_calls})")
 assert_test(cfg.max_auto_targets == 8, f"default max_auto_targets=8 (got {cfg.max_auto_targets})")
-assert_test(cfg.max_density_passes == 6, f"default max_density_passes=6 (got {cfg.max_density_passes})")
-assert_test(cfg.max_rewrite_seconds == 240, f"default max_rewrite_seconds=240 (got {cfg.max_rewrite_seconds})")
+assert_test(cfg.max_density_passes == 8, f"default max_density_passes=8 (got {cfg.max_density_passes})")
+assert_test(cfg.max_rewrite_seconds == 360, f"default max_rewrite_seconds=360 (got {cfg.max_rewrite_seconds})")
 assert_test(cfg.max_detect_loops == 0, f"default max_detect_loops=0 (got {cfg.max_detect_loops})")
 
 
@@ -1151,6 +1152,48 @@ transformation_repair_prompt = _density_repair_prompt(
     density_plan,
 )
 assert_test("sentence footprint" in transformation_repair_prompt, "density repair prompt handles weak transformation")
+
+
+class FakeDensityScanner:
+    def scan_text(self, text):
+        if "bad candidate" in text:
+            risk, top10 = 0.72, 0.80
+        elif "strong candidate" in text:
+            risk, top10 = 0.44, 0.48
+        else:
+            risk, top10 = 0.68, 0.76
+        sent = SimpleNamespace(
+            predictability_risk=risk,
+            top_10_ratio=top10,
+            avg_surprisal=3.0,
+            risk_label="medium",
+            sentence=text,
+        )
+        return {"sentences": [sent]}
+
+
+local_ok, local_reason, local_signal = _density_local_signal_acceptance(
+    FakeDensityScanner(),
+    "original density paragraph",
+    "strong candidate density paragraph",
+)
+assert_test(local_ok, "density local signal gate accepts detector-improving paragraph")
+assert_test(local_signal["risk_delta"] > 0, "density local signal records risk reduction")
+local_bad_ok, local_bad_reason, _ = _density_local_signal_acceptance(
+    FakeDensityScanner(),
+    "original density paragraph",
+    "bad candidate density paragraph",
+)
+assert_test(not local_bad_ok, "density local signal gate rejects detector-regressing paragraph")
+assert_test("density_local_signal_regressed" in local_bad_reason, "density local signal rejection is explicit")
+local_repair_prompt = _density_repair_prompt(
+    density_para,
+    "bad candidate density paragraph",
+    local_bad_reason,
+    density_context,
+    density_plan,
+)
+assert_test("local GPT-2 detector check" in local_repair_prompt, "density repair prompt handles local detector rejection")
 polish_repair_prompt = _density_repair_prompt(
     density_para,
     "This is especially true when learners move from observing a demonstration to cutting a controlled haircut themselves.",
