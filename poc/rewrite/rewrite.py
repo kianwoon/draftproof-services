@@ -3739,8 +3739,6 @@ def run_rewrite(
                 if (
                     rescue_enabled
                     and loop_rewrite_fn is not None
-                    and llm_calls_used < config.max_llm_calls
-                    and (time.monotonic() - rewrite_start_time) <= config.max_rewrite_seconds
                 ):
                     rescue_started = time.monotonic()
                     rescue_prompt = _density_rescue_prompt(
@@ -3841,14 +3839,20 @@ def run_rewrite(
                                     "density_delta": rescue_details["density_delta"],
                                 })
                 elif rescue_enabled:
-                    rescue_details["reason"] = (
-                        "rescue_skipped_budget_or_missing_llm"
-                        if loop_rewrite_fn is not None else "no_llm_available"
-                    )
+                    rescue_details["reason"] = "no_llm_available"
 
                 density_batch_gate["rescue"] = rescue_details
+                density_paragraph_pass["rescue"] = rescue_details
                 density_paragraph_pass["batch_gate"] = density_batch_gate
                 if not density_rescue_applied:
+                    loop_history.append({
+                        "loop": loops_used + 1,
+                        "phase": "after_density_before_sentence_rewrites",
+                        "finding_type": "qualifying_text_ai_density",
+                        "rewrite_operation": "density_full_draft_rescue",
+                        "note": "AI-first density rescue did not pass",
+                        **rescue_details,
+                    })
                     density_batch_gate_failed = True
                     circuit_breaker_reason = (
                         "density_batch_ai_gate_failed "
