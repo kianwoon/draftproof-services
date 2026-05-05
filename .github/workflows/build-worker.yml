@@ -14,7 +14,58 @@ env:
   SERVICE_ID: "2af91bbc-6519-4559-a3cc-1b6349ce020e"
 
 jobs:
+  # ── Detect what changed ──────────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      infra: ${{ steps.filter.outputs.infra }}
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            infra:
+              - 'worker/Dockerfile'
+              - 'worker/requirements.txt'
+              - 'worker/entrypoint.sh'
+            code:
+              - 'poc/**'
+
+  # ── Fast path: code-only changes (poc/ edits) ───────────────
+  # Skips Docker rebuild. Just triggers Koyeb redeploy;
+  # the worker's entrypoint.sh does git pull to get latest code.
+  code-deploy:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.infra != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Koyeb redeploy (no image rebuild)
+        env:
+          KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
+        run: |
+          echo "Code-only change — skipping Docker build"
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://app.koyeb.com/v1/services/${SERVICE_ID}/redeploy" \
+            -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            -H "Content-Type: application/json")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP ${HTTP_CODE}"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "ERROR: Koyeb redeploy failed"
+            echo "$BODY" | jq '.' >&2 || echo "$BODY" >&2
+            exit 1
+          fi
+          echo "Koyeb redeploy triggered (code-only, ~30s deploy)"
+
+  # ── Full path: Docker image rebuild ─────────────────────────
+  # Only when worker infra files change (Dockerfile, requirements,
+  # entrypoint.sh). Also runs when both code + infra change.
   build-and-deploy:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,7 +108,6 @@ jobs:
       - name: Deploy to Koyeb via GHCR image
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
-          IMAGE_TAG: ghcr.io/kianwoon/draftproof-worker:sha-${{ github.sha }}
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           IMAGE="ghcr.io/kianwoon/draftproof-worker:sha-${SHORT_SHA}"

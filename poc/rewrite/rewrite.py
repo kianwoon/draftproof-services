@@ -58,7 +58,7 @@ from rewrite.guards import (
     detect_protected_spans, check_semantic_drift, DriftCheck,
     RegressionMemory, mask_protected_spans,
     protected_spans_preserved, affected_region, transactional_apply, TransactionResult,
-    PredictabilityGuard,
+    PredictabilityGuard, _extract_named_entities,
 )
 from rewrite.scorer import (
     weighted_finding_score, weighted_rewritable_risk,
@@ -2278,6 +2278,7 @@ def _density_paragraph_prompt(
     raw_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
     domain_terms = _domain_anchor_terms(rewrite_context, paragraph, paragraph, limit=12)
     protected = [span.text or paragraph[span.start_char:span.end_char] for span in detect_protected_spans(paragraph)]
+    named_entities = sorted(_extract_named_entities(paragraph))
     component_lines = _density_component_lines(raw_json)
     marked = []
     for suggestion in (mitigation_plan or {}).get("marked_content_suggestions") or []:
@@ -2293,6 +2294,7 @@ def _density_paragraph_prompt(
         "Keep the same facts, scope, order of ideas, and plain author voice.",
         "Keep roughly the same coverage and sentence count. Do not summarize, compress, or skip steps.",
         "Do not add citations, names, dates, research claims, examples, procedures, or facts that are not already in the paragraph.",
+        "Do not add, remove, rename, shorten, or paraphrase institution names, course names, people names, or place names.",
         "Prefer concrete words already present in the paragraph or nearby domain anchors.",
         "Avoid generic academic phrasing: crucial, significant, essential, landscape, framework, technical rigor, operational obstacles, visible learning framework, digital landscape.",
         "Avoid abstract noun stacks and broad claims. Do not make the paragraph smoother if that removes specificity.",
@@ -2305,6 +2307,8 @@ def _density_paragraph_prompt(
         lines.append("Domain anchors to preserve when natural: " + ", ".join(domain_terms))
     if protected:
         lines.append("Protected spans that must remain unchanged: " + "; ".join(protected[:12]))
+    if named_entities:
+        lines.append("Named entities that must remain unchanged: " + "; ".join(named_entities[:12]))
     if marked:
         lines.append("Scanner mitigation guidance: " + " ".join(m for m in marked if m)[:600])
     constraint_lines = _rewrite_constraint_lines(rewrite_context, limit=4)

@@ -1039,6 +1039,7 @@ assert_test("<TARGET>" in density_prompt and "</TARGET>" in density_prompt, "den
 assert_test("Output exactly one replacement paragraph" in density_prompt, "density prompt requests one paragraph")
 assert_test("qualifying_text_ai_density=82.0%" in density_prompt, "density prompt includes component score")
 assert_test("Certificate III Hairdressing" in density_prompt, "density prompt includes domain anchors")
+assert_test("Named entities that must remain unchanged" in density_prompt, "density prompt preserves named entities")
 assert_test("digital landscape" in density_prompt, "density prompt includes anti-polish examples")
 
 bad_density_candidate = (
