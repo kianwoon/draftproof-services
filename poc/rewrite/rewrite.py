@@ -1236,6 +1236,8 @@ def _paragraph_coherence_reject_reason(
         r"\bdaily life\b",
         r"\bworks? in practice\b",
         r"\breveal(?:s|ed|ing)? how this relationship works\b",
+        r"\b(?:observe|notice|see) how this relationship works\b",
+        r"\bhow this relationship works\b",
     ]
     for pattern in unsupported_additions:
         match = re.search(pattern, candidate_sentence, re.I)
