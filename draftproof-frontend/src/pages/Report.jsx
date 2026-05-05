@@ -201,6 +201,32 @@ function normalizeRewriteJob(job) {
   };
 }
 
+const REWRITE_PROGRESS_MESSAGES = [
+  'Rewriting flagged passages while preserving the original meaning.',
+  'Checking revised text against the source draft.',
+  'Improving clarity, specificity, and academic tone.',
+  'Preparing highlighted rewrite results for this report.',
+];
+
+function formatElapsed(seconds) {
+  const total = Math.max(0, Number(seconds) || 0);
+  if (total < 60) return `${total} sec`;
+  const minutes = Math.floor(total / 60);
+  const remainingSeconds = total % 60;
+  return `${minutes} min ${String(remainingSeconds).padStart(2, '0')} sec`;
+}
+
+function getRewriteProgressDetail({ status, progress, elapsedSeconds, sseUnavailable }) {
+  if (status === 'pending') return 'Waiting for the rewrite worker to start.';
+  if (status === 'retrying') return 'The rewrite worker is retrying this step automatically.';
+  if (sseUnavailable) return 'Still checking the rewrite status every few seconds.';
+  if (progress >= 35 && progress <= 45 && elapsedSeconds >= 30) {
+    return 'This is usually the longest step. Longer reports can stay here while DraftProof rewrites and verifies flagged sections.';
+  }
+  const index = Math.floor(Math.max(0, elapsedSeconds) / 8) % REWRITE_PROGRESS_MESSAGES.length;
+  return REWRITE_PROGRESS_MESSAGES[index];
+}
+
 const REVIEW_ONLY_REWRITE_TITLE = 'No rewriteable AI sections';
 const REVIEW_ONLY_REWRITE_MESSAGE = 'This report only has review-only signals. There is nothing DraftProof can rewrite automatically, so no tokens were deducted.';
 const REVIEW_ONLY_REWRITE_PATTERNS = [
@@ -230,8 +256,10 @@ export default function Report() {
   const [rewriteSseUnavailable, setRewriteSseUnavailable] = useState(false);
   const [rewriteNotice, setRewriteNotice] = useState(null);
   const [rewriteResultSummary, setRewriteResultSummary] = useState(null);
+  const [rewriteElapsedSeconds, setRewriteElapsedSeconds] = useState(0);
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
+  const rewriteTimerStartRef = useRef(null);
 
   const showReviewOnlyRewriteNotice = useCallback((message) => {
     setRewriteJob(null);
@@ -405,6 +433,28 @@ export default function Report() {
     };
   }, [rewriteJob, report?.rewrite]);
 
+  const activeRewriteForTimer = rewriteJob || report?.rewrite;
+  const rewriteTimerActive = rewriteLoading || isRewriteActive(activeRewriteForTimer?.status);
+
+  useEffect(() => {
+    if (!rewriteTimerActive) {
+      rewriteTimerStartRef.current = null;
+      setRewriteElapsedSeconds(0);
+      return undefined;
+    }
+
+    if (!rewriteTimerStartRef.current) {
+      rewriteTimerStartRef.current = Date.now();
+      setRewriteElapsedSeconds(0);
+    }
+
+    const timer = setInterval(() => {
+      setRewriteElapsedSeconds(Math.floor((Date.now() - rewriteTimerStartRef.current) / 1000));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [rewriteTimerActive, activeRewriteForTimer?.id]);
+
   if (loading) return (
     <main className="dash-shell">
       <div className="container">
@@ -462,6 +512,15 @@ export default function Report() {
     currentRewrite?.progress_message,
     currentRewrite?.status
   );
+  const rewriteProgressDetail = !rewriteError && rewriteInProgress
+    ? getRewriteProgressDetail({
+      status: currentRewrite?.status,
+      progress: rewriteProgress,
+      elapsedSeconds: rewriteElapsedSeconds,
+      sseUnavailable: rewriteSseUnavailable,
+    })
+    : null;
+  const rewriteElapsedLabel = rewriteElapsedSeconds > 0 ? formatElapsed(rewriteElapsedSeconds) : null;
   const showRewriteProgress = !hasRewriteResult && (
     rewriteStartedHere || rewriteInProgress || rewriteLoading || rewriteError
   );
@@ -581,6 +640,18 @@ export default function Report() {
                   style={{ width: `${hasCompletedRewrite ? 100 : rewriteProgress}%` }}
                 />
               </div>
+              {rewriteProgressDetail && (
+                <div className="rewrite-progress-detail">
+                  <span className="rewrite-progress-pulse" aria-hidden="true" />
+                  <span>{rewriteProgressDetail}</span>
+                </div>
+              )}
+              {rewriteInProgress && (
+                <div className="rewrite-progress-footnote">
+                  {rewriteElapsedLabel && <span>Elapsed: {rewriteElapsedLabel}</span>}
+                  <span>Keep this page open; results will appear automatically.</span>
+                </div>
+              )}
             </div>
           </div>
         )}

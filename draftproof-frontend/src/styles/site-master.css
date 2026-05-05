@@ -1397,6 +1397,8 @@ th {
   .snap-shell { scroll-snap-type: none; }
   .btn { transition: none; }
   .code-row { animation: none !important; }
+  .scan-progress-fill::after,
+  .rewrite-progress-pulse { animation: none !important; }
 }
 
 /* ------------------------------------------------------------------
@@ -3086,6 +3088,63 @@ th {
   font-size: .78rem;
   font-style: normal;
   font-weight: 500;
+}
+
+.report-rewrite-progress:not(.has-error):not(.is-complete) .scan-progress-track {
+  position: relative;
+}
+
+.report-rewrite-progress:not(.has-error):not(.is-complete) .scan-progress-fill {
+  position: relative;
+  overflow: hidden;
+}
+
+.report-rewrite-progress:not(.has-error):not(.is-complete) .scan-progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .42), transparent);
+  animation: rewriteProgressSweep 1.5s linear infinite;
+}
+
+.rewrite-progress-detail {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-top: .28rem;
+  color: #334155;
+  font-size: .82rem;
+  line-height: 1.45;
+}
+
+.rewrite-progress-pulse {
+  width: .5rem;
+  height: .5rem;
+  border-radius: 999px;
+  background: var(--green);
+  box-shadow: 0 0 0 0 rgba(58, 168, 118, .42);
+  flex: 0 0 auto;
+  animation: rewritePulse 1.35s ease-out infinite;
+}
+
+.rewrite-progress-footnote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem .85rem;
+  margin-top: .1rem;
+  color: #64748b;
+  font-size: .76rem;
+  line-height: 1.45;
+}
+
+@keyframes rewriteProgressSweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+@keyframes rewritePulse {
+  70% { box-shadow: 0 0 0 7px rgba(58, 168, 118, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(58, 168, 118, 0); }
 }
 
 .rewrite-progress-link {
