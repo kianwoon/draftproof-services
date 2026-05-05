@@ -44,6 +44,8 @@ from rewrite.rewrite import (
     _density_transformation_too_small,
     _density_local_signal_acceptance,
     _select_best_density_candidate,
+    _clean_density_rescue_output,
+    _density_rescue_prompt,
     _density_repair_prompt,
     _splice_density_candidate,
     run_rewrite,
@@ -1285,6 +1287,20 @@ assert_test(len(best_density_evals) == 2, "density selector records both candida
 assert_test(
     any(item["label"] == "ai_stronger" and not item["rejection_reason"] for item in best_density_evals),
     "density selector evaluation records accepted stronger candidate",
+)
+rescue_prompt = _density_rescue_prompt(density_text, density_context, density_plan)
+assert_test("AI-first density rescue pass" in rescue_prompt, "density rescue prompt identifies AI-first rescue")
+assert_test("break the repeated long-form AI-style pattern" in rescue_prompt, "density rescue prompt targets document pattern")
+assert_test("Output the complete rewritten draft only" in rescue_prompt, "density rescue prompt requires full draft output")
+assert_test("qualifying_text_ai_density=82.0%" in rescue_prompt, "density rescue prompt includes density driver")
+assert_test("Certificate III Hairdressing" in rescue_prompt, "density rescue prompt preserves named entities")
+cleaned_rescue = _clean_density_rescue_output(
+    "Final draft:\n\nFirst rewritten paragraph.\n\n\nSecond rewritten paragraph.",
+    "Original paragraph.",
+)
+assert_test(
+    cleaned_rescue == "First rewritten paragraph.\n\nSecond rewritten paragraph.",
+    "density rescue cleaner preserves paragraph breaks",
 )
 local_repair_prompt = _density_repair_prompt(
     density_para,

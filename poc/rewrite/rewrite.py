@@ -2476,6 +2476,81 @@ def _clean_density_paragraph_output(output: Optional[str], original_paragraph: s
     return text
 
 
+def _clean_density_rescue_output(output: Optional[str], original_text: str) -> str:
+    """Clean a full-draft AI-density rescue response while preserving paragraphs."""
+    if not output:
+        return ""
+    text = output.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+    text = re.sub(
+        r"^(?:rewritten|replacement|final)\s+(?:draft|document|text)\s*:\s*",
+        "",
+        text,
+        flags=re.I,
+    ).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    paragraphs = [" ".join(p.strip().split()) for p in re.split(r"\n\s*\n", text) if p.strip()]
+    text = "\n\n".join(paragraphs).strip()
+    if text == _normalize_sentence_match_text(original_text):
+        return ""
+    return text
+
+
+def _density_rescue_prompt(
+    draft_text: str,
+    rewrite_context: Optional[Any],
+    mitigation_plan: Optional[Dict[str, Any]],
+) -> str:
+    """Prompt for an AI-first full-draft rescue after paragraph passes fail."""
+    raw_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
+    component_lines = _density_component_lines(raw_json)
+    domain_terms = _domain_anchor_terms(rewrite_context, draft_text, draft_text, limit=20)
+    protected = [span.text or draft_text[span.start_char:span.end_char] for span in detect_protected_spans(draft_text)]
+    named_entities = sorted(_extract_named_entities(draft_text))
+    action_lines = []
+    for action in (mitigation_plan or {}).get("score_mitigation_targets") or []:
+        if not isinstance(action, dict):
+            continue
+        component = action.get("component")
+        current = action.get("current_score")
+        target = action.get("target_score")
+        if component and isinstance(current, (int, float)):
+            action_lines.append(f"{component}: {current:.1f}% -> target {float(target or 0):.1f}%")
+    lines = [
+        "AI-first density rescue pass.",
+        "The previous paragraph-level rewrites did not reduce the full-document AI score enough.",
+        "Rewrite the full draft below for measured AI-likelihood mitigation. This is not a polish task.",
+        "Primary goal: break the repeated long-form AI-style pattern across the whole draft.",
+        "Use total reconstruction at paragraph and sentence level: rebuild sentence routes, vary paragraph openings, and change explanation order where meaning allows.",
+        "Keep the same topic, facts, citations, unit codes, names, numbers, and author stance.",
+        "Do not invent new evidence, sources, dates, institutions, claims, examples, or learner events.",
+        "Do not remove citations or named entities. Do not paraphrase citations, names, course codes, or unit codes.",
+        "Prefer concrete process wording already present in the draft: what learners see, cut, hold, check, wait for, repeat, miss, correct, or ask.",
+        "Use the author's direct classroom voice where present. Keep first-person observations natural.",
+        "Avoid broad polished phrases and academic filler: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident, especially true.",
+        "Avoid keeping the same sequence of sentence openings. Do not simply swap synonyms.",
+        "If a paragraph sounds like a clean explanatory essay, rebuild it around a specific classroom/process detail first, then a narrower claim.",
+        "Output the complete rewritten draft only. No notes, headings added by you, bullet points, or commentary.",
+        "Draft:\n<TARGET_DOCUMENT>\n" + draft_text + "\n</TARGET_DOCUMENT>",
+    ]
+    if component_lines:
+        lines.append("Scan component drivers: " + ", ".join(component_lines))
+    if action_lines:
+        lines.append("Mitigation targets: " + "; ".join(action_lines[:8]))
+    if domain_terms:
+        lines.append("Domain anchors to keep when natural: " + ", ".join(domain_terms))
+    if protected:
+        lines.append("Protected spans that must remain unchanged: " + "; ".join(protected[:24]))
+    if named_entities:
+        lines.append("Named entities that must remain unchanged: " + "; ".join(named_entities[:24]))
+    constraint_lines = _rewrite_constraint_lines(rewrite_context, limit=6)
+    if constraint_lines:
+        lines.extend(constraint_lines)
+    return "\n".join(lines)
+
+
 def _density_transformation_too_small(original_paragraph: str, candidate_paragraph: str) -> bool:
     """Detect density rewrites that only polish the same paragraph footprint."""
     orig_tokens = _match_tokens(original_paragraph.lower())
@@ -3112,6 +3187,7 @@ def run_rewrite(
     consecutive_failed_targets = 0
     circuit_breaker_reason: Optional[str] = None
     density_batch_gate_failed = False
+    density_rescue_applied = False
     manual_suggestions: List[Dict[str, Any]] = []
     accepted_candidate_suggestions: List[Dict[str, Any]] = []
     runtime_mitigation_plan = build_mitigation_plan(
@@ -3637,12 +3713,131 @@ def run_rewrite(
                 **density_batch_gate,
             })
             if not passed_gate:
-                density_batch_gate_failed = True
-                circuit_breaker_reason = (
-                    "density_batch_ai_gate_failed "
-                    f"ai_delta={density_batch_gate['ai_delta']} "
-                    f"density_delta={density_batch_gate['density_delta']}"
-                )
+                rescue_enabled = os.environ.get("DRAFTPROOF_DENSITY_RESCUE_PASS", "1") != "0"
+                rescue_details: Dict[str, Any] = {
+                    "enabled": rescue_enabled,
+                    "passed": False,
+                    "reason": "",
+                }
+                if (
+                    rescue_enabled
+                    and loop_rewrite_fn is not None
+                    and llm_calls_used < config.max_llm_calls
+                    and (time.monotonic() - rewrite_start_time) <= config.max_rewrite_seconds
+                ):
+                    rescue_started = time.monotonic()
+                    rescue_prompt = _density_rescue_prompt(
+                        current_text,
+                        rewrite_context,
+                        runtime_mitigation_plan,
+                    )
+                    llm_calls_used += 1
+                    density_mitigation_llm_calls += 1
+                    rescue_output = loop_rewrite_fn(current_text, rescue_prompt)
+                    rescue_candidate = _clean_density_rescue_output(rescue_output, current_text)
+                    rescue_details.update({
+                        "llm_call": True,
+                        "candidate_length": len(rescue_candidate or ""),
+                    })
+                    if not rescue_candidate:
+                        rescue_details["reason"] = "empty_rescue_candidate"
+                    elif not protected_spans_preserved(
+                        current_text,
+                        rescue_candidate,
+                        detect_protected_spans(current_text),
+                    ):
+                        rescue_details["reason"] = "protected_span_lost"
+                    else:
+                        rescue_drift = check_semantic_drift(
+                            current_text,
+                            rescue_candidate,
+                            threshold=0.20,
+                        )
+                        rescue_details["drift_similarity"] = round(rescue_drift.similarity, 3)
+                        if not rescue_drift.accepted:
+                            rescue_details["reason"] = "semantic_drift " + "; ".join(rescue_drift.reasons[:3])
+                        else:
+                            rescue_report = _full_scan_report_dict_for_rewrite_gate(rescue_candidate)
+                            rescue_ai_score = _report_badge_score(rescue_report, "ai_likelihood_score")
+                            rescue_density_score = _badge_component_score(
+                                rescue_report,
+                                "qualifying_text_ai_density",
+                            )
+                            rescue_ai_delta = (
+                                original_ai_score - rescue_ai_score
+                                if original_ai_score is not None and rescue_ai_score is not None
+                                else None
+                            )
+                            rescue_density_delta = (
+                                original_density_score - rescue_density_score
+                                if rescue_density_score is not None
+                                else None
+                            )
+                            rescue_passed = (
+                                (isinstance(rescue_ai_delta, (int, float)) and rescue_ai_delta >= 5.0)
+                                or (
+                                    original_ai_score is not None
+                                    and original_ai_score >= 60.0
+                                    and rescue_ai_score is not None
+                                    and rescue_ai_score < 60.0
+                                )
+                            )
+                            rescue_details.update({
+                                "passed": bool(rescue_passed),
+                                "original_ai": original_ai_score,
+                                "rescue_ai": rescue_ai_score,
+                                "ai_delta": round(rescue_ai_delta, 3) if isinstance(rescue_ai_delta, (int, float)) else None,
+                                "original_density": original_density_score,
+                                "rescue_density": rescue_density_score,
+                                "density_delta": round(rescue_density_delta, 3) if isinstance(rescue_density_delta, (int, float)) else None,
+                                "seconds": round(time.monotonic() - rescue_started, 3),
+                            })
+                            if rescue_passed:
+                                current_text = rescue_candidate
+                                findings_fixed += 1
+                                loops_used += 1
+                                density_rescue_applied = True
+                                density_batch_gate["passed"] = True
+                                density_batch_gate["rescue_passed"] = True
+                                density_batch_gate["checkpoint_ai"] = rescue_ai_score
+                                density_batch_gate["checkpoint_density"] = rescue_density_score
+                                density_batch_gate["ai_delta"] = rescue_details["ai_delta"]
+                                density_batch_gate["density_delta"] = rescue_details["density_delta"]
+                                rewrite_checkpoints.append({
+                                    "text": current_text,
+                                    "edits": findings_fixed,
+                                    "local_score_total": round(local_score_total, 4),
+                                    "finding_type": "qualifying_text_ai_density",
+                                    "rewrite_operation": "density_full_draft_rescue",
+                                })
+                                loop_history.append({
+                                    "loop": loops_used,
+                                    "phase": "after_density_before_sentence_rewrites",
+                                    "finding_type": "qualifying_text_ai_density",
+                                    "rewrite_operation": "density_full_draft_rescue",
+                                    "note": "applied AI-first density rescue candidate",
+                                    "original_ai": original_ai_score,
+                                    "rescue_ai": rescue_ai_score,
+                                    "ai_delta": rescue_details["ai_delta"],
+                                    "original_density": original_density_score,
+                                    "rescue_density": rescue_density_score,
+                                    "density_delta": rescue_details["density_delta"],
+                                })
+                elif rescue_enabled:
+                    rescue_details["reason"] = (
+                        "rescue_skipped_budget_or_missing_llm"
+                        if loop_rewrite_fn is not None else "no_llm_available"
+                    )
+
+                density_batch_gate["rescue"] = rescue_details
+                density_paragraph_pass["batch_gate"] = density_batch_gate
+                if not density_rescue_applied:
+                    density_batch_gate_failed = True
+                    circuit_breaker_reason = (
+                        "density_batch_ai_gate_failed "
+                        f"ai_delta={density_batch_gate['ai_delta']} "
+                        f"density_delta={density_batch_gate['density_delta']}"
+                    )
         except Exception as exc:
             density_paragraph_pass["batch_gate"] = {
                 "enabled": True,
