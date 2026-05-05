@@ -2188,7 +2188,7 @@ def _density_region_candidates(
     paragraph: str,
     paragraph_index: int,
     items: List[Dict[str, Any]],
-    max_words: int = 220,
+    max_words: int = 320,
 ) -> List[Tuple[str, Dict[str, Any]]]:
     """Return bounded density rewrite regions from a paragraph or long section."""
     word_count = len(re.findall(r"\b\w+\b", paragraph))
@@ -2215,6 +2215,7 @@ def _density_region_candidates(
         return [(region, meta)]
 
     candidates: List[Tuple[str, Dict[str, Any]]] = []
+    target_words = min(max_words, 220)
     for start in range(len(sentences)):
         window: List[str] = []
         total_words = 0
@@ -2224,7 +2225,7 @@ def _density_region_candidates(
                 break
             window.append(sentence)
             total_words += sent_words
-            if total_words >= 120:
+            if total_words >= target_words:
                 break
         if total_words < 45:
             continue

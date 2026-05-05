@@ -72,10 +72,10 @@ class RewriteConfig:
     base_url: Optional[str] = None  # None → resolved by LLMGateway (OpenRouter default)
     llm_timeout_seconds: int = 20
     llm_max_retries: int = 1
-    max_rewrite_seconds: int = 150
-    max_llm_calls: int = 10
+    max_rewrite_seconds: int = 240
+    max_llm_calls: int = 18
     max_auto_targets: int = 8
-    max_density_passes: int = 3
+    max_density_passes: int = 6
     max_failed_targets: int = 4
     max_consecutive_failed_targets: int = 3
 

@@ -343,10 +343,10 @@ assert_test(cfg.budget.max_changed_char_ratio == 0.15, f"default char ratio=0.15
 assert_test(cfg.budget.max_total_changed_sentence_ratio == 0.30, f"total sentence cap=0.30")
 assert_test(cfg.budget.max_total_changed_char_ratio == 0.25, f"total char cap=0.25")
 assert_test(not cfg.suggestion_only, f"suggestion_only defaults to False")
-assert_test(cfg.max_llm_calls == 10, f"default max_llm_calls=10 (got {cfg.max_llm_calls})")
+assert_test(cfg.max_llm_calls == 18, f"default max_llm_calls=18 (got {cfg.max_llm_calls})")
 assert_test(cfg.max_auto_targets == 8, f"default max_auto_targets=8 (got {cfg.max_auto_targets})")
-assert_test(cfg.max_density_passes == 3, f"default max_density_passes=3 (got {cfg.max_density_passes})")
-assert_test(cfg.max_rewrite_seconds == 150, f"default max_rewrite_seconds=150 (got {cfg.max_rewrite_seconds})")
+assert_test(cfg.max_density_passes == 6, f"default max_density_passes=6 (got {cfg.max_density_passes})")
+assert_test(cfg.max_rewrite_seconds == 240, f"default max_rewrite_seconds=240 (got {cfg.max_rewrite_seconds})")
 assert_test(cfg.max_detect_loops == 0, f"default max_detect_loops=0 (got {cfg.max_detect_loops})")
 
 
@@ -1183,7 +1183,7 @@ long_density_idx, long_density_region, long_density_meta = _select_density_parag
     density_plan,
 )
 assert_test(
-    len(long_density_region.split()) < 230,
+    len(long_density_region.split()) < 330,
     "density selector uses bounded window inside oversized paragraph",
 )
 assert_test(
