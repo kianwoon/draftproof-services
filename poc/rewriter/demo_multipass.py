@@ -135,8 +135,8 @@ def print_text_comparison(result: MultiPassResult):
 
 def main():
     print("DraftProof Multi-Pass Rewriter -- PoC Demo\n")
-    print("Loading scanner (gpt2-medium)...")
-    scanner = PredictabilityScanner(model_name="gpt2-medium")
+    print("Loading scanner (gpt2)...")
+    scanner = PredictabilityScanner(model_name="gpt2")
     print("Ready.\n")
 
     print("#" * 76)

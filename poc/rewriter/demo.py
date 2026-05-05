@@ -105,8 +105,8 @@ def print_before_after(text: str, scanner: PredictabilityScanner) -> None:
 def main():
     print("DraftProof Predictability Rewriter -- PoC\n")
 
-    print("Loading predictability scanner (gpt2-medium)...")
-    scanner = PredictabilityScanner(model_name="gpt2-medium")
+    print("Loading predictability scanner (gpt2)...")
+    scanner = PredictabilityScanner(model_name="gpt2")
     print("Ready.\n")
 
     # 1. Show span analysis for all texts

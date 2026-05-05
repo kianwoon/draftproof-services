@@ -32,8 +32,8 @@ _PRELOADED_MODEL_NAME = None
 
 def resolve_predictability_model_name(model_name: Optional[str] = None) -> str:
     """Resolve the runtime model name used by preload and scanner instances."""
-    requested = model_name or os.environ.get("PREDICTABILITY_MODEL", "gpt2-medium")
-    return str(requested or "gpt2-medium").strip() or "gpt2-medium"
+    requested = model_name or os.environ.get("PREDICTABILITY_MODEL", "gpt2")
+    return str(requested or "gpt2").strip() or "gpt2"
 
 
 @dataclass
@@ -311,7 +311,7 @@ class PredictabilityScanner:
     def scan_sentences_batch(self, sentences: List[str]) -> List[SentenceResult]:
         """Scan multiple sentences per model forward pass.
 
-        This keeps gpt2-medium warm and avoids one expensive CPU forward per
+        This keeps the configured GPT-2 model warm and avoids one expensive CPU forward per
         sentence. Long generated sentences are truncated to a bounded token
         window so a malformed candidate cannot stall the worker for minutes.
         """

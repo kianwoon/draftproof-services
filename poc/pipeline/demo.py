@@ -1,7 +1,7 @@
 """DraftProof Mini-Pipeline -- wires all 3 PoC modules together.
 
 Modules:
-  1. Predictability Scanner (gpt2-medium) -- token-level genericity risk
+  1. Predictability Scanner (gpt2) -- token-level genericity risk
   2. Similarity Scanner (all-MiniLM-L6-v2) -- source overlap detection
   3. Citation Checker -- body vs bibliography cross-check
 
@@ -76,9 +76,9 @@ def run_pipeline(body: str, bib: str, source_sentences: list) -> dict:
     sentences = split_sentences(body)
 
     # 1. Predictability
-    print("  [1/3] Loading predictability scanner (gpt2-medium)...")
+    print("  [1/3] Loading predictability scanner (gpt2)...")
     t0 = time.time()
-    pred_scanner = PredictabilityScanner(model_name="gpt2-medium")
+    pred_scanner = PredictabilityScanner(model_name="gpt2")
     print(f"        Loaded in {time.time() - t0:.1f}s")
     t0 = time.time()
     pred_result = pred_scanner.scan_text(body)

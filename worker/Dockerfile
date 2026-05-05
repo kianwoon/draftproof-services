@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 # HF cache — Koyeb volume mounts here so model persists across deploys
 ENV HF_HOME=/app/hf_cache
-ENV PREDICTABILITY_MODEL=gpt2-medium
+ENV PREDICTABILITY_MODEL=gpt2
 
 # Copy both poc/ and worker/ — poc/ baked in as fallback
 # Runtime git pull (if GIT_PAT set) overlays latest code on top

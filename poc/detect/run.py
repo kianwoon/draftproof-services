@@ -64,7 +64,7 @@ class DetectionRunner:
                 source_paragraphs: List[str] — enables paragraph-level similarity
                 bib_text: str — enables citation detection
                 auto_extract_bibliography: bool — auto-split refs from content
-                predictability_model: str — GPT-2 model name (default: gpt2-medium)
+                predictability_model: str — GPT-2 model name (default: gpt2)
                 domain_profile: str — domain tuning profile name
                 phrase_packs: List[str] — override phrase packs
         """
@@ -199,7 +199,7 @@ class DetectionRunner:
         """Run a single detector by name."""
         detectors = {
             "predictability": lambda: PredictabilityDetector(
-                model_name=kwargs.get("predictability_model", "gpt2-medium")
+                model_name=kwargs.get("predictability_model", "gpt2")
             ),
             "ai_generation": lambda: AIGenerationSignalDetector(),
             "similarity": lambda: SimilarityDetector(),
@@ -217,7 +217,7 @@ class DetectionRunner:
 
         detectors: List[BaseDetector] = [
             PredictabilityDetector(
-                model_name=kwargs.get("predictability_model", "gpt2-medium")
+                model_name=kwargs.get("predictability_model", "gpt2")
             ),
             AIGenerationSignalDetector(),
         ]

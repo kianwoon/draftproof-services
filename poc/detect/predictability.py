@@ -69,7 +69,7 @@ def _pre_filter_body(content: str) -> str:
 
 class PredictabilityDetector(BaseDetector):
 
-    def __init__(self, model_name: str = "gpt2-medium"):
+    def __init__(self, model_name: str = "gpt2"):
         self._model_name = model_name
         self._scanner = None
 

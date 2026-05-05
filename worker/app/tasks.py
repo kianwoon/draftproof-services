@@ -80,7 +80,7 @@ def _preload_predictability_model(**_kwargs):
 
         requested_threads = _configure_torch_threads(torch)
         model_name = scanner_module.resolve_predictability_model_name(
-            os.environ.get("PREDICTABILITY_MODEL", "gpt2-medium")
+            os.environ.get("PREDICTABILITY_MODEL", "gpt2")
         )
         if scanner_module._PRELOADED_MODEL is not None:
             return
@@ -641,7 +641,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
         with tempfile.TemporaryDirectory() as tmpdir:
             import predictability.scanner as scanner_module
             model_name = scanner_module.resolve_predictability_model_name(
-                os.environ.get("PREDICTABILITY_MODEL", "gpt2-medium")
+                os.environ.get("PREDICTABILITY_MODEL", "gpt2")
             )
             result = run_detect(
                 text,

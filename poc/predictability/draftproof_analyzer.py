@@ -35,7 +35,7 @@ except ImportError:
 class AnalyzerConfig:
     domains: List[str] = None          # phrase pack domains to load
     reference_draft: Optional[str] = None  # previous draft for comparison
-    scanner_model: str = "gpt2-medium"
+    scanner_model: str = "gpt2"
 
     def __post_init__(self):
         if self.domains is None:

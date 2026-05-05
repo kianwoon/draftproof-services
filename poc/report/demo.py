@@ -93,7 +93,7 @@ def main():
 
     # Init scanners
     print("Loading scanners...")
-    pred_scanner = _pred.PredictabilityScanner(model_name="gpt2-medium")
+    pred_scanner = _pred.PredictabilityScanner(model_name="gpt2")
     sim_scanner = _sim.SimilarityScanner()
     cite_scanner = _cite.CitationScanner()
     print("Ready.\n")

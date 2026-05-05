@@ -28,7 +28,7 @@ def run_pipeline(
     rewrite_model: Optional[str] = None,
     rewrite_max_passes: int = 3,
     rewrite_fn: Optional[callable] = None,
-    predictability_model: str = "gpt2-medium",
+    predictability_model: str = "gpt2",
 ) -> DraftReport:
     """Run the full DraftProof pipeline on content.
 
@@ -117,7 +117,7 @@ def run_detect_only(
     content: str,
     source_sentences: Optional[List[str]] = None,
     bib_text: Optional[str] = None,
-    predictability_model: str = "gpt2-medium",
+    predictability_model: str = "gpt2",
 ) -> List[DetectResult]:
     """Run detection only, return raw DetectResult list."""
     runner = DetectionRunner()
