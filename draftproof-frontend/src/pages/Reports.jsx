@@ -7,20 +7,10 @@ import ConfirmDialog from '../components/ConfirmDialog';
 const PAGE_SIZE = 10;
 
 const STATUS_MAP = {
-  pending:   { label: 'Pending',   color: '#94a3b8', bg: '#f1f5f9' },
-  processing:{ label: 'Scanning',  color: '#2563eb', bg: '#eff6ff' },
-  completed: { label: 'Completed', color: '#16a34a', bg: '#f0fdf4' },
-  failed:    { label: 'Failed',    color: '#dc2626', bg: '#fef2f2' },
-};
-
-const TIER_COLORS = {
-  low: '#22c55e',
-  moderate: '#f59e0b',
-  high: '#ef4444',
-  green: '#22c55e',
-  amber: '#f59e0b',
-  orange: '#f97316',
-  red: '#ef4444',
+  pending:   { label: 'Pending', tone: 'neutral' },
+  processing:{ label: 'Scanning', tone: 'active' },
+  completed: { label: 'Completed', tone: 'positive' },
+  failed:    { label: 'Failed', tone: 'negative' },
 };
 
 const TIER_LABELS = {
@@ -31,6 +21,16 @@ const TIER_LABELS = {
   amber: 'Moderate',
   orange: 'High',
   red: 'Critical',
+};
+
+const TIER_TONES = {
+  low: 'positive',
+  moderate: 'warning',
+  high: 'negative',
+  green: 'positive',
+  amber: 'warning',
+  orange: 'warning',
+  red: 'negative',
 };
 
 function formatDate(iso) {
@@ -82,7 +82,7 @@ export default function Reports() {
 
   if (loading) {
     return (
-      <main className="dash-shell">
+      <main className="app-page reports-page-shell">
         <div className="container">
           <div className="reports-loading">
             <div className="reports-spinner" />
@@ -95,7 +95,7 @@ export default function Reports() {
 
   if (error) {
     return (
-      <main className="dash-shell">
+      <main className="app-page reports-page-shell">
         <div className="container">
           <ErrorReload message={error} />
         </div>
@@ -104,24 +104,31 @@ export default function Reports() {
   }
 
   return (
-    <main className="app-page">
+    <main className="app-page reports-page-shell">
       <div className="container">
-        <section className="app-hero">
+        <section className="app-hero app-hero-dark reports-hero">
           <div>
             <p className="eyebrow">Report library</p>
             <h1>Your reports</h1>
             <p>
-              {total} scan{total !== 1 ? 's' : ''} total
-              {totalPages > 1 && ` — Page ${page} of ${totalPages}`}
+              Review past scans, open completed reports, and keep a clean trail
+              of what was checked before submission.
             </p>
           </div>
-          <Link to="/scan" className="btn btn-primary">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ marginRight: 6 }}>
-              <path d="M2 4.5A2.5 2.5 0 014.5 2h7A2.5 2.5 0 0114 4.5v7a2.5 2.5 0 01-2.5 2.5h-7A2.5 2.5 0 012 11.5v-7z" stroke="currentColor" strokeWidth="1.4"/>
-              <path d="M5 8h6M8 5v6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-            </svg>
-            New scan
-          </Link>
+          <div className="reports-hero-actions">
+            <div className="app-hero-stat">
+              <span>Total scans</span>
+              <strong>{total}</strong>
+              <small>{totalPages > 1 ? `Page ${page} of ${totalPages}` : 'Report archive'}</small>
+            </div>
+            <Link to="/scan" className="btn btn-ghost">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2 4.5A2.5 2.5 0 014.5 2h7A2.5 2.5 0 0114 4.5v7a2.5 2.5 0 01-2.5 2.5h-7A2.5 2.5 0 012 11.5v-7z" stroke="currentColor" strokeWidth="1.4"/>
+                <path d="M5 8h6M8 5v6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+              </svg>
+              New scan
+            </Link>
+          </div>
         </section>
 
         {scans.length === 0 ? (
@@ -141,8 +148,8 @@ export default function Reports() {
                 <tr>
                   <th>Date</th>
                   <th>Status</th>
-                  <th>Risk Level</th>
-                  <th>AI Score</th>
+                  <th>Review tier</th>
+                  <th>AI signal</th>
                   <th>Writing</th>
                   <th>Findings</th>
                   <th>Words</th>
@@ -152,30 +159,30 @@ export default function Reports() {
               <tbody>
                 {scans.map((scan) => {
                   const st = STATUS_MAP[scan.status] || STATUS_MAP.pending;
-                  const tierColor = TIER_COLORS[scan.tier];
+                  const tierTone = TIER_TONES[scan.tier] || 'neutral';
                   return (
                     <tr key={scan.id}>
                       <td className="td-date">{formatDate(scan.created_at)}</td>
                       <td>
-                        <span className="status-badge" style={{ color: st.color, background: st.bg }}>
+                        <span className={`status-badge status-badge-${st.tone}`}>
                           {st.label}
                         </span>
                       </td>
                       <td>
                         {scan.tier ? (
-                          <span className="tier-badge" style={{ color: tierColor, borderColor: tierColor }}>
+                          <span className={`tier-badge tier-badge-${tierTone}`}>
                             {TIER_LABELS[scan.tier] || scan.tier}
                           </span>
                         ) : '—'}
                       </td>
                       <td className="td-score">
                         {scan.ai_score != null ? (
-                          <span style={{ color: tierColor, fontWeight: 600 }}>{scan.ai_score.toFixed(1)}%</span>
+                          <strong className={`score-value score-value-${tierTone}`}>{scan.ai_score.toFixed(1)}%</strong>
                         ) : '—'}
                       </td>
                       <td className="td-score">
                         {scan.writing_score != null ? (
-                          <span style={{ color: '#6366f1', fontWeight: 600 }}>{scan.writing_score.toFixed(1)}%</span>
+                          <strong className="score-value score-value-positive">{scan.writing_score.toFixed(1)}%</strong>
                         ) : '—'}
                       </td>
                       <td className="td-findings">{scan.finding_count ?? '—'}</td>

@@ -2940,6 +2940,25 @@ th {
 
 /* ── View Reports Page ──────────────────────── */
 
+.reports-page-shell .container {
+  max-width: var(--max-w);
+}
+
+.reports-hero {
+  align-items: stretch;
+}
+
+.reports-hero-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.reports-hero-actions .btn {
+  align-self: center;
+  white-space: nowrap;
+}
+
 .reports-page h1 {
   font-size: clamp(2rem, 4vw, 2.8rem);
   margin-bottom: .2rem;
@@ -3015,6 +3034,7 @@ th {
   border: .5px solid rgba(13, 27, 42, .07);
   overflow-x: auto;
   box-shadow: none;
+  border-top: 3px solid var(--green);
 }
 
 .history-table-wrap {
@@ -3029,18 +3049,18 @@ th {
 
 .reports-table th {
   text-align: left;
-  padding: 12px 12px;
-  font-size: .78rem;
+  padding: 14px 16px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: .04em;
+  letter-spacing: .8px;
   border-bottom: .5px solid rgba(13, 27, 42, .08);
-  background: var(--surface-soft);
+  background: #fff;
 }
 
 .reports-table td {
-  padding: 12px 12px;
+  padding: 16px;
   border-bottom: .5px solid rgba(13, 27, 42, .06);
   vertical-align: middle;
 }
@@ -3049,25 +3069,74 @@ th {
 
 .reports-table tr:hover td { background: var(--surface-soft); }
 
-.td-date { color: var(--ink); font-weight: 500; white-space: nowrap; }
+.td-date {
+  color: var(--ink);
+  font-size: .88rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
 
 .status-badge {
   display: inline-block;
   padding: 3px 10px;
   border-radius: 12px;
-  font-size: .76rem;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.status-badge-neutral {
+  background: rgba(13, 27, 42, .07);
+  color: var(--muted);
+}
+
+.status-badge-active {
+  background: rgba(58, 168, 118, .12);
+  color: var(--green-dark);
+}
+
+.status-badge-positive {
+  background: #E1F5EE;
+  color: var(--green-dark);
+}
+
+.status-badge-negative {
+  background: #FCEBEB;
+  color: #A32D2D;
 }
 
 .tier-badge {
   display: inline-block;
   padding: 3px 10px;
   border-radius: 12px;
-  font-size: .76rem;
-  font-weight: 600;
-  border: 1.5px solid;
+  font-size: 11px;
+  font-weight: 500;
+  border: .5px solid;
   text-transform: capitalize;
 }
+
+.tier-badge-neutral {
+  border-color: rgba(13, 27, 42, .16);
+  color: var(--muted);
+}
+
+.tier-badge-positive {
+  border-color: rgba(58, 168, 118, .30);
+  background: rgba(58, 168, 118, .12);
+  color: var(--green-dark);
+}
+
+.tier-badge-warning {
+  border-color: rgba(201, 151, 58, .36);
+  background: rgba(201, 151, 58, .12);
+  color: #8A621D;
+}
+
+.tier-badge-negative {
+  border-color: rgba(226, 75, 74, .32);
+  background: rgba(226, 75, 74, .10);
+  color: #A32D2D;
+}
+
 .tier-score {
   font-weight: 400;
   opacity: .75;
@@ -3076,10 +3145,38 @@ th {
 
 .td-findings, .td-words, .td-score { color: var(--muted); }
 .muted-link { color: var(--muted); font-size: .84rem; }
-.td-actions { display: flex; gap: 6px; align-items: center; }
-.btn-delete { color: #dc2626; border: 1px solid #fecaca; background: #fff5f5; }
+.td-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.score-value {
+  font-weight: 500;
+}
+
+.score-value-positive { color: var(--green-dark); }
+.score-value-warning { color: #8A621D; }
+.score-value-negative { color: #A32D2D; }
+.score-value-neutral { color: var(--muted); }
+
+.btn-delete {
+  color: #A32D2D;
+  border: .5px solid rgba(226, 75, 74, .26);
+  background: #fff;
+}
 .btn-delete:hover:not(:disabled) { background: #fef2f2; }
 .btn-delete:disabled { opacity: .5; cursor: not-allowed; }
+
+@media (max-width: 760px) {
+  .reports-hero-actions {
+    flex-direction: column;
+  }
+  .reports-hero-actions .btn {
+    align-self: stretch;
+  }
+}
 
 /* ── Confirm Dialog ────────────────────────────── */
 .modal-backdrop {
