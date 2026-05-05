@@ -127,8 +127,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="engine" className="landing-section checks-section code-backed-section">
-        <HeroCodeField idPrefix="engine" className="section-code-field" />
+      <section id="engine" className="landing-section checks-section">
         <div className="section-inner">
           <p className="eyebrow">How It Works</p>
           <h2>Four checks. One clear report.</h2>
@@ -164,8 +163,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="cta" className="landing-cta code-backed-section">
-        <HeroCodeField idPrefix="cta" className="section-code-field" />
+      <section id="cta" className="landing-cta">
         <div className="section-inner">
           <p className="brand-pill">The world now produces more information than people can easily verify.</p>
           <h2>DraftProof is that review layer.</h2>

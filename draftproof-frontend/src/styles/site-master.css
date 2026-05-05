@@ -1483,19 +1483,15 @@ th {
   opacity: .95;
 }
 
-.section-code-field {
-  opacity: .55;
-}
-
 .hero-code-layer text {
-  fill: rgba(255, 255, 255, .26);
+  fill: rgba(255, 255, 255, .20);
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 20px;
   letter-spacing: .08em;
 }
 
 .hero-code-layer .code-row-b text {
-  fill: rgba(58, 168, 118, .42);
+  fill: rgba(58, 168, 118, .32);
 }
 
 .code-row {
@@ -1769,28 +1765,7 @@ th {
 }
 
 .checks-section {
-  position: relative;
   background: var(--navy-950);
-  overflow: hidden;
-  isolation: isolate;
-}
-
-.checks-section::after,
-.landing-cta::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, rgba(13, 27, 42, .92), rgba(13, 27, 42, .74)),
-    radial-gradient(circle at 18% 28%, rgba(58, 168, 118, .10), transparent 24rem);
-}
-
-.checks-section .section-inner,
-.landing-cta .section-inner {
-  position: relative;
-  z-index: 2;
 }
 
 .checks-section h2,
@@ -1893,13 +1868,10 @@ th {
 }
 
 .landing-cta {
-  position: relative;
   padding: 92px clamp(24px, 4vw, 48px);
   background: var(--navy-950);
   color: #fff;
   text-align: center;
-  overflow: hidden;
-  isolation: isolate;
 }
 
 .landing-cta .brand-pill {
