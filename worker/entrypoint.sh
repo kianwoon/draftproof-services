@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-MODEL="${PREDICTABILITY_MODEL:-gpt2}"
+MODEL="${PREDICTABILITY_MODEL:-gpt2-medium}"
 CACHE_DIR="${HF_HOME}/hub"
 # Model-specific marker so switching models triggers re-download
 MODEL_MARKER="${CACHE_DIR}/.model_ready_${MODEL}"

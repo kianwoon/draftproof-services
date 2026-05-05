@@ -47,7 +47,9 @@ def _preload_predictability_model(**_kwargs):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         import predictability.scanner as scanner_module
 
-        model_name = os.environ.get("PREDICTABILITY_MODEL", "gpt2")
+        model_name = scanner_module.resolve_predictability_model_name(
+            os.environ.get("PREDICTABILITY_MODEL", "gpt2-medium")
+        )
         if scanner_module._PRELOADED_MODEL is not None:
             return
         logger.info("Preloading predictability model in worker child: %s", model_name)
@@ -56,8 +58,53 @@ def _preload_predictability_model(**_kwargs):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model.to(device)
         model.eval()
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
         scanner_module._PRELOADED_MODEL = model
         scanner_module._PRELOADED_TOKENIZER = tokenizer
+        scanner_module._PRELOADED_MODEL_NAME = model_name
+        try:
+            mkl_available = bool(getattr(torch.backends, "mkl", None) and torch.backends.mkl.is_available())
+            openmp_available = bool(getattr(torch.backends, "openmp", None) and torch.backends.openmp.is_available())
+            logger.info(
+                "[preload] Torch: version=%s MKL=%s OpenMP=%s threads=%s",
+                torch.__version__,
+                mkl_available,
+                openmp_available,
+                torch.get_num_threads(),
+            )
+            sample_sentences = [
+                "Students practise the sectioning pattern before they cut.",
+                "The stylist checks the guide length against the previous section.",
+                "A colour correction can change once the cortex starts to swell.",
+                "The lesson needs a visible process, not only a final result.",
+                "During consultation, the client often explains the goal indirectly.",
+                "The teacher can slow the task down at the projection stage.",
+                "Learners need to connect the angle, tension, and design line.",
+                "The mannequin shows the mistake before the student sees it.",
+                "A short fringe can change the way a client reads their face.",
+                "The salon floor makes technical decisions visible very quickly.",
+            ]
+            encoded = tokenizer(
+                sample_sentences,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=int(os.environ.get("DRAFTPROOF_PREDICTABILITY_MAX_TOKENS", "384")),
+            )
+            encoded = {k: v.to(device) for k, v in encoded.items()}
+            bench_t0 = time.monotonic()
+            with torch.no_grad():
+                model(**encoded)
+            bench_ms = (time.monotonic() - bench_t0) * 1000
+            logger.info(
+                "[preload] Benchmark: %d sentences, total=%.0fms, avg=%.1fms/sent",
+                len(sample_sentences),
+                bench_ms,
+                bench_ms / max(len(sample_sentences), 1),
+            )
+        except Exception:
+            logger.warning("[preload] Benchmark failed", exc_info=True)
         logger.info("Predictability model preloaded in worker child: %s", model_name)
     except Exception:
         logger.warning("Failed to preload predictability model in worker child", exc_info=True)
@@ -559,7 +606,10 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 last_scan_progress["db_updated_at"] = now
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_name = os.environ.get("PREDICTABILITY_MODEL", "gpt2")
+            import predictability.scanner as scanner_module
+            model_name = scanner_module.resolve_predictability_model_name(
+                os.environ.get("PREDICTABILITY_MODEL", "gpt2-medium")
+            )
             result = run_detect(
                 text,
                 tmpdir,

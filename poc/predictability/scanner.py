@@ -27,6 +27,13 @@ SCANNER_VERSION = "vectorized-gpt2-v2"
 # Preloaded model cache — set by worker entrypoint to avoid re-loading on first scan
 _PRELOADED_MODEL = None
 _PRELOADED_TOKENIZER = None
+_PRELOADED_MODEL_NAME = None
+
+
+def resolve_predictability_model_name(model_name: Optional[str] = None) -> str:
+    """Resolve the runtime model name used by preload and scanner instances."""
+    requested = model_name or os.environ.get("PREDICTABILITY_MODEL", "gpt2-medium")
+    return str(requested or "gpt2-medium").strip() or "gpt2-medium"
 
 
 @dataclass
@@ -100,15 +107,26 @@ class PredictabilityScanner:
         self.review_threshold = review_threshold
         self.weights = weights or self.DEFAULT_WEIGHTS
         self.generic_phrases = custom_phrases or GENERIC_PHRASES
-        model_name = model_name or os.environ.get("PREDICTABILITY_MODEL", "gpt2")
+        model_name = resolve_predictability_model_name(model_name)
         self.model_name = model_name
 
         # Use preloaded model from worker entrypoint if available
-        if _PRELOADED_MODEL is not None and _PRELOADED_TOKENIZER is not None:
+        preloaded_matches = (
+            _PRELOADED_MODEL is not None
+            and _PRELOADED_TOKENIZER is not None
+            and _PRELOADED_MODEL_NAME == model_name
+        )
+        if preloaded_matches:
             logger.info("Using preloaded %s model from entrypoint cache", model_name)
             self.tokenizer = _PRELOADED_TOKENIZER
             self.model = _PRELOADED_MODEL
         else:
+            if _PRELOADED_MODEL is not None and _PRELOADED_MODEL_NAME != model_name:
+                logger.warning(
+                    "Ignoring preloaded predictability model %s; requested %s",
+                    _PRELOADED_MODEL_NAME,
+                    model_name,
+                )
             logger.info("Loading %s model (no preload cache found) ...", model_name)
             try:
                 self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
@@ -176,7 +194,13 @@ class PredictabilityScanner:
         return result
 
     def scan_sentence(self, sentence: str) -> SentenceResult:
-        encoded = self.tokenizer(sentence, return_tensors="pt")
+        max_tokens = int(os.environ.get("DRAFTPROOF_PREDICTABILITY_MAX_TOKENS", "384"))
+        encoded = self.tokenizer(
+            sentence,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_tokens,
+        )
         input_ids = encoded["input_ids"].to(self.device)
 
         if input_ids.shape[1] < 2:
@@ -192,16 +216,29 @@ class PredictabilityScanner:
                 error="Sentence too short to score.",
             )
 
+        if input_ids.shape[1] >= max_tokens:
+            logger.warning(
+                "Predictability sentence truncated to %d tokens: %.120r",
+                max_tokens,
+                sentence,
+            )
+
         with torch.no_grad():
             outputs = self.model(input_ids)
             logits = outputs.logits
 
+        return self._score_tokenized_sentence(sentence, input_ids[0, 1:], logits[0, :-1, :])
+
+    def _score_tokenized_sentence(
+        self,
+        sentence: str,
+        actual_ids: torch.Tensor,
+        shift_logits: torch.Tensor,
+    ) -> SentenceResult:
         token_results: List[TokenResult] = []
         # logits[i-1] predicts token at position i. Do the expensive rank/prob
         # work in one vectorized pass. The previous implementation sorted the
         # full GPT-2 vocabulary for every token, which made CPU scans crawl.
-        shift_logits = logits[0, :-1, :]
-        actual_ids = input_ids[0, 1:]
         actual_logits = shift_logits.gather(1, actual_ids.unsqueeze(1)).squeeze(1)
         ranks = (shift_logits > actual_logits.unsqueeze(1)).sum(dim=1) + 1
         actual_log_probs = torch.log_softmax(shift_logits, dim=-1).gather(
@@ -271,6 +308,59 @@ class PredictabilityScanner:
             token_results=token_results,
         )
 
+    def scan_sentences_batch(self, sentences: List[str]) -> List[SentenceResult]:
+        """Scan multiple sentences per model forward pass.
+
+        This keeps gpt2-medium warm and avoids one expensive CPU forward per
+        sentence. Long generated sentences are truncated to a bounded token
+        window so a malformed candidate cannot stall the worker for minutes.
+        """
+        if not sentences:
+            return []
+        max_tokens = int(os.environ.get("DRAFTPROOF_PREDICTABILITY_MAX_TOKENS", "384"))
+        encoded = self.tokenizer(
+            sentences,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=max_tokens,
+        )
+        input_ids = encoded["input_ids"].to(self.device)
+        attention_mask = encoded["attention_mask"].to(self.device)
+        lengths = attention_mask.sum(dim=1).tolist()
+        max_seen = max(int(length) for length in lengths) if lengths else 0
+        if max_seen >= max_tokens:
+            logger.warning(
+                "Predictability batch contains sentence(s) truncated to %d tokens",
+                max_tokens,
+            )
+
+        with torch.no_grad():
+            logits = self.model(input_ids, attention_mask=attention_mask).logits
+
+        results: List[SentenceResult] = []
+        for row, sentence in enumerate(sentences):
+            length = int(lengths[row])
+            if length < 2:
+                results.append(SentenceResult(
+                    sentence=sentence,
+                    risk_label="low",
+                    predictability_risk=0.0,
+                    avg_probability=0.0,
+                    avg_surprisal=0.0,
+                    top_10_ratio=0.0,
+                    top_50_ratio=0.0,
+                    matched_generic_phrases=[],
+                    error="Sentence too short to score.",
+                ))
+                continue
+            results.append(self._score_tokenized_sentence(
+                sentence,
+                input_ids[row, 1:length],
+                logits[row, : length - 1, :],
+            ))
+        return results
+
     def detect_style_shifts(self, results: List[SentenceResult]) -> List[Dict[str, Any]]:
         """Flag sudden predictability changes between consecutive sentences."""
         shifts = []
@@ -289,29 +379,50 @@ class PredictabilityScanner:
         sentences = self.split_sentences(text)
         eligible = [s for s in sentences if len(str(s).split()) >= 8]
         total = len(eligible)
-        logger.info("Predictability scan: %d eligible sentences (of %d total) model=%s version=%s", total, len(sentences), self.model_name, SCANNER_VERSION)
+        batch_size = max(1, int(os.environ.get("DRAFTPROOF_PREDICTABILITY_BATCH_SIZE", "8")))
+        logger.info(
+            "Predictability scan: %d eligible sentences (of %d total) model=%s version=%s batch_size=%d",
+            total,
+            len(sentences),
+            self.model_name,
+            SCANNER_VERSION,
+            batch_size,
+        )
         if progress_callback:
             progress_callback(10, f"Checking {total} sentence{'' if total == 1 else 's'} for predictability")
         results = []
         t0 = time.monotonic()
-        for i, s in enumerate(eligible):
-            sr = self.scan_sentence(str(s))
-            sr.start_char = getattr(s, "start_char", 0)
-            sr.end_char = getattr(s, "end_char", 0)
-            sr.paragraph_id = getattr(s, "paragraph_id", "p001")
-            results.append(sr)
-            if (i + 1) % 5 == 0 or (i + 1) == total:
+        for batch_start in range(0, total, batch_size):
+            batch = eligible[batch_start: batch_start + batch_size]
+            batch_t0 = time.monotonic()
+            batch_results = self.scan_sentences_batch([str(s) for s in batch])
+            for offset, sr in enumerate(batch_results):
+                s = batch[offset]
+                sr.start_char = getattr(s, "start_char", 0)
+                sr.end_char = getattr(s, "end_char", 0)
+                sr.paragraph_id = getattr(s, "paragraph_id", "p001")
+                results.append(sr)
+            completed = len(results)
+            batch_seconds = time.monotonic() - batch_t0
+            logger.info(
+                "Predictability batch: %d-%d/%d sentences in %.2fs",
+                batch_start + 1,
+                completed,
+                total,
+                batch_seconds,
+            )
+            if completed % 5 == 0 or completed == total:
                 elapsed = time.monotonic() - t0
-                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                rate = completed / elapsed if elapsed > 0 else 0
                 logger.info(
                     "Predictability progress: %d/%d sentences (%.1f/s, %.1fs elapsed)",
-                    i + 1, total, rate, elapsed,
+                    completed, total, rate, elapsed,
                 )
             if progress_callback:
-                pct = 10 + int(((i + 1) / max(total, 1)) * 85)
+                pct = 10 + int((completed / max(total, 1)) * 85)
                 progress_callback(
                     pct,
-                    f"Checked {i + 1}/{total} predictability sentence{'' if total == 1 else 's'}",
+                    f"Checked {completed}/{total} predictability sentence{'' if total == 1 else 's'}",
                 )
         if progress_callback:
             progress_callback(96, "Reviewing predictability patterns")
