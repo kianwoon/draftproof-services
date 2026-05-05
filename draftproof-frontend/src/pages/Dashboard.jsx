@@ -1,5 +1,6 @@
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import CodeTexture from '../components/CodeTexture';
 
 export default function Dashboard() {
   const { user, loading, balance } = useAuth();
@@ -23,6 +24,7 @@ export default function Dashboard() {
     <main className="dash-shell">
       <div className="container">
         <section className="dash-hero">
+          <CodeTexture id="dashboardHero" />
           <div className="dash-welcome">
             {user.avatar_url ? (
               <img src={user.avatar_url} alt={user.email} className="dash-avatar dash-avatar-img" />

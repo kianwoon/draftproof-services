@@ -1,6 +1,7 @@
 import { useAuth } from '../context/AuthContext';
 import { googleAuthUrl, microsoftAuthUrl } from '../api/authApi';
 import { Navigate, useSearchParams, useNavigate } from 'react-router-dom';
+import CodeTexture from '../components/CodeTexture';
 
 export default function SignIn() {
   const { user, loading } = useAuth();
@@ -34,6 +35,7 @@ export default function SignIn() {
     <main className="app-page signin-shell">
       <div className="container signin-layout">
         <section className="signin-trust-panel">
+          <CodeTexture id="signinTrust" />
           <p className="brand-pill">Writing integrity for education & research</p>
           <h1>Sign in to review drafts before submission.</h1>
           <p>

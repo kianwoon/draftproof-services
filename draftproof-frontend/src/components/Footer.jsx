@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
+import CodeTexture from './CodeTexture';
 
 export default function Footer() {
   return (
     <div className="global-footer-wrap">
+      <CodeTexture id="globalFooter" className="footer-code-texture" />
       <footer className="site-footer">
         <Link to="/" className="brand footer-brand">
           <span className="brand-mark" aria-hidden="true">
