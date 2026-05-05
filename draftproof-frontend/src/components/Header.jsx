@@ -27,9 +27,10 @@ export default function Header() {
   };
 
   const isScanActive = ['/scan', '/reports'].includes(location.pathname);
+  const isLanding = location.pathname === '/';
 
   return (
-    <header className="site-header" aria-label="Main navigation">
+    <header className={`site-header${isLanding ? ' site-header-dark' : ''}`} aria-label="Main navigation">
       <Link to="/" className="brand" aria-label="DraftProof home">
         <span className="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 32 32" role="img">
