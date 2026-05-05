@@ -3,7 +3,8 @@ export default function Privacy() {
     <main className="legal-shell">
       <div className="container">
 
-        <section className="legal-hero">
+        <section className="legal-hero app-hero app-hero-dark">
+          <div>
           <p className="eyebrow">Privacy Policy</p>
           <h1>How we handle your data</h1>
           <p className="lead">
@@ -11,7 +12,12 @@ export default function Privacy() {
             signals and review guidance. This page explains what data we collect,
             how we use it, and the choices you have.
           </p>
-          <p className="legal-date">Last updated: May 2026</p>
+          </div>
+          <div className="app-hero-stat">
+            <span>Last updated</span>
+            <strong>May 2026</strong>
+            <small>User-controlled deletion</small>
+          </div>
         </section>
 
         <section className="legal-section">

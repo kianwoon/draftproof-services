@@ -3,14 +3,20 @@ export default function Security() {
     <main className="legal-shell">
       <div className="container">
 
-        <section className="legal-hero">
+        <section className="legal-hero app-hero app-hero-dark">
+          <div>
           <p className="eyebrow">Security</p>
           <h1>How we protect your work</h1>
           <p className="lead">
             Academic documents deserve strong protection. Here is how
             DraftProof secures your data at every layer.
           </p>
-          <p className="legal-date">Last updated: May 2026</p>
+          </div>
+          <div className="app-hero-stat">
+            <span>Last updated</span>
+            <strong>May 2026</strong>
+            <small>Encrypted storage</small>
+          </div>
         </section>
 
         <section className="legal-section">
