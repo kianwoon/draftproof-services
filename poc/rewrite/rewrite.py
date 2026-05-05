@@ -42,7 +42,7 @@ from rewriter import (
     rewrite_text,
 )
 from style_analyzer import StyleAnalyzer, StyleProfile
-from report import ReportBuilder, render_report, render_markdown
+from report import ReportBuilder, render_report, render_markdown, report_to_dict
 from rewrite.config import (
     RewriteConfig, RewriteBudget, should_continue, LoopDecision,
     RewriteOutcome, RewriteSurface, FloorReason, classify_floor,
@@ -2081,6 +2081,23 @@ def _badge_component_score(raw_json: Optional[Dict[str, Any]], component: str) -
     return 0.0
 
 
+def _report_badge_score(report_dict: Optional[Dict[str, Any]], key: str) -> Optional[float]:
+    badge = (report_dict or {}).get("ai_risk_badge") or {}
+    value = badge.get(key)
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _full_scan_report_dict_for_rewrite_gate(scan_text: str) -> Dict[str, Any]:
+    runner = DetectionRunner()
+    detect_report = runner.run_all(scan_text)
+    builder = ReportBuilder()
+    builder.add_detection_report(detect_report)
+    if detect_report.postprocess_results:
+        builder.add_postprocess_results(detect_report.postprocess_results)
+    builder.set_meta(scan_time=0, original_text=scan_text)
+    return report_to_dict(builder.build())
+
+
 def _iter_raw_rewrite_items(raw_json: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Collect likely finding/brief/plan rows from detect JSON."""
     if not isinstance(raw_json, dict):
@@ -3037,6 +3054,7 @@ def run_rewrite(
     failed_targets = 0
     consecutive_failed_targets = 0
     circuit_breaker_reason: Optional[str] = None
+    density_batch_gate_failed = False
     manual_suggestions: List[Dict[str, Any]] = []
     accepted_candidate_suggestions: List[Dict[str, Any]] = []
     runtime_mitigation_plan = build_mitigation_plan(
@@ -3468,6 +3486,90 @@ def run_rewrite(
         if density_mitigation_llm_calls == before_density_calls:
             break
 
+    raw_context_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
+    if (
+        float(density_paragraph_pass.get("density_score") or 0.0) >= 70.0
+        and density_mitigation_llm_calls >= 4
+        and current_text != content
+        and isinstance(raw_context_json, dict)
+        and os.environ.get("DRAFTPROOF_DENSITY_BATCH_GATE", "1") != "0"
+    ):
+        gate_started = time.monotonic()
+        original_ai_score = _report_badge_score(raw_context_json, "ai_likelihood_score")
+        original_density_score = _badge_component_score(raw_context_json, "qualifying_text_ai_density")
+        try:
+            density_checkpoint_report = _full_scan_report_dict_for_rewrite_gate(current_text)
+            checkpoint_ai_score = _report_badge_score(density_checkpoint_report, "ai_likelihood_score")
+            checkpoint_density_score = _badge_component_score(
+                density_checkpoint_report,
+                "qualifying_text_ai_density",
+            )
+            ai_delta = (
+                original_ai_score - checkpoint_ai_score
+                if original_ai_score is not None and checkpoint_ai_score is not None
+                else None
+            )
+            density_delta = (
+                original_density_score - checkpoint_density_score
+                if checkpoint_density_score is not None
+                else None
+            )
+            accepted_density = len([
+                attempt for attempt in density_paragraph_pass.get("attempts", [])
+                if attempt.get("applied")
+            ])
+            density_batch_gate = {
+                "enabled": True,
+                "passed": False,
+                "checkpoint": "after_density_before_sentence_rewrites",
+                "original_ai": original_ai_score,
+                "checkpoint_ai": checkpoint_ai_score,
+                "ai_delta": round(ai_delta, 3) if isinstance(ai_delta, (int, float)) else None,
+                "original_density": original_density_score,
+                "checkpoint_density": checkpoint_density_score,
+                "density_delta": round(density_delta, 3) if isinstance(density_delta, (int, float)) else None,
+                "accepted_density_edits": accepted_density,
+                "density_llm_calls": density_mitigation_llm_calls,
+                "seconds": round(time.monotonic() - gate_started, 3),
+            }
+            passed_gate = (
+                (isinstance(ai_delta, (int, float)) and ai_delta >= 3.0)
+                or (isinstance(density_delta, (int, float)) and density_delta >= 3.0)
+                or (
+                    accepted_density >= 2
+                    and isinstance(ai_delta, (int, float))
+                    and ai_delta >= 1.5
+                    and isinstance(density_delta, (int, float))
+                    and density_delta >= 1.0
+                )
+            )
+            density_batch_gate["passed"] = bool(passed_gate)
+            density_paragraph_pass["batch_gate"] = density_batch_gate
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": "after_density_before_sentence_rewrites",
+                "note": (
+                    "density batch AI gate passed"
+                    if passed_gate else "density batch AI gate failed; sentence rewrites skipped"
+                ),
+                **density_batch_gate,
+            })
+            if not passed_gate:
+                density_batch_gate_failed = True
+                circuit_breaker_reason = (
+                    "density_batch_ai_gate_failed "
+                    f"ai_delta={density_batch_gate['ai_delta']} "
+                    f"density_delta={density_batch_gate['density_delta']}"
+                )
+        except Exception as exc:
+            density_paragraph_pass["batch_gate"] = {
+                "enabled": True,
+                "passed": None,
+                "error": str(exc),
+                "seconds": round(time.monotonic() - gate_started, 3),
+            }
+            logger.warning("Density batch AI gate failed to run: %s", exc)
+
     def _action_group_key(action):
         finding = action.finding
         evidence = (finding.evidence or "").strip()
@@ -3502,6 +3604,12 @@ def run_rewrite(
                 "guided_revision_primary: evidence/source drivers dominate; "
                 f"automatic rewrite limited to {effective_auto_target_limit} high-signal target(s)"
             )
+    if density_batch_gate_failed:
+        effective_auto_target_limit = 0
+        guided_throttle_reason = (
+            "density_batch_ai_gate_failed: density phase did not reduce total AI enough; "
+            "sentence rewrites skipped to avoid burning LLM calls"
+        )
     auto_targets = plan.auto_fixable[:effective_auto_target_limit]
     capped_auto_targets = max(0, len(plan.auto_fixable) - len(auto_targets))
     for action in auto_targets:
