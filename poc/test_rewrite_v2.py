@@ -790,6 +790,35 @@ rollback_report = render_rewrite_report(
 assert_test("## Attempted Rewrite" in rollback_report, "rollback report shows attempted rewrite")
 assert_test("## Manual Suggestions" in rollback_report, "rollback report keeps manual suggestions")
 
+ai_first_report = render_rewrite_report(
+    summary={
+        "rollback_applied": False,
+        "converged": True,
+        "ai_first_mitigation": {
+            "kept": True,
+            "reference_ai": 73.43,
+            "rewritten_ai": 57.33,
+            "ai_delta": 16.10,
+            "soft_followups": ["writing_quality 55.11->70.21"],
+        },
+        "detect_scan_original_saved": {
+            "ai_risk_badge": {"ai_likelihood_score": 73.43, "writing_quality_score": 55.11},
+            "findings": {"critical": [], "high": [], "medium": [{}] * 20, "low": [{}] * 44},
+        },
+        "detect_scan_rewritten": {
+            "ai_risk_badge": {"ai_likelihood_score": 57.33, "writing_quality_score": 70.21},
+            "findings": {"critical": [], "high": [], "medium": [{}] * 2, "low": [{}] * 3},
+        },
+    },
+    sentence_comparison=[],
+    ai_findings=[],
+)
+assert_test("**AI Mitigated**" in ai_first_report, "AI-first report labels kept AI mitigation")
+assert_test(
+    "Writing-quality or lower-severity changes are follow-up work" in ai_first_report,
+    "AI-first report explains quality follow-up instead of rollback",
+)
+
 comparison_mp = SimpleNamespace(
     original_text="A one. B two. C three. D four.",
     final_text="A one. B two rewritten with C three combined. D four.",

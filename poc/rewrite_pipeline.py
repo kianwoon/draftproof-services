@@ -662,10 +662,70 @@ def run_rewrite_pipeline(
         regression_reasons.append(
             f"user_visible_critical_high_findings {saved_critical_high}->{rewritten_critical_high}"
         )
+    ai_first_reference = saved_ai if saved_ai is not None else original_ai
+    ai_first_delta = (
+        ai_first_reference - rewritten_ai
+        if ai_first_reference is not None and rewritten_ai is not None
+        else None
+    )
+    ai_first_min_drop = float(os.environ.get("DRAFTPROOF_AI_FIRST_MIN_DROP", "5.0"))
+    ai_first_target = float(os.environ.get("DRAFTPROOF_AI_FIRST_TARGET", "60.0"))
+    ai_first_success = (
+        rewritten_text != text
+        and isinstance(ai_first_delta, (int, float))
+        and (
+            ai_first_delta >= ai_first_min_drop
+            or (
+                ai_first_reference is not None
+                and ai_first_reference >= ai_first_target
+                and rewritten_ai is not None
+                and rewritten_ai < ai_first_target
+            )
+        )
+    )
+    if ai_first_success:
+        hard_regression_reasons = []
+        soft_regression_reasons = []
+        for reason in regression_reasons:
+            if reason.startswith((
+                "AI ",
+                "user_visible_ai ",
+                "critical_high_findings ",
+                "user_visible_critical_high_findings ",
+            )):
+                hard_regression_reasons.append(reason)
+            else:
+                soft_regression_reasons.append(reason)
+        if soft_regression_reasons:
+            followup_warnings.extend(
+                f"post_ai_review {reason}" for reason in soft_regression_reasons
+            )
+        regression_reasons = hard_regression_reasons
+        result.summary["ai_first_mitigation"] = {
+            "kept": not hard_regression_reasons,
+            "reference_ai": ai_first_reference,
+            "rewritten_ai": rewritten_ai,
+            "ai_delta": round(ai_first_delta, 3) if isinstance(ai_first_delta, (int, float)) else None,
+            "min_drop": ai_first_min_drop,
+            "target": ai_first_target,
+            "soft_followups": soft_regression_reasons,
+            "hard_regressions": hard_regression_reasons,
+        }
+        if not hard_regression_reasons:
+            result.summary.setdefault("saved_contract_notes", []).append(
+                "AI-first mitigation kept the rewrite because AI likelihood improved enough; "
+                "writing quality and lower-severity finding changes are follow-up work."
+            )
     if followup_warnings:
-        result.summary["writing_quality_followups"] = followup_warnings
+        result.summary["post_ai_followups"] = followup_warnings
+        writing_quality_followups = [
+            warning for warning in followup_warnings
+            if str(warning).startswith("writing_quality ")
+        ]
+        if writing_quality_followups:
+            result.summary["writing_quality_followups"] = writing_quality_followups
         result.summary.setdefault("saved_contract_notes", []).append(
-            "AI-first mitigation kept the rewrite; writing-quality regression is reported as follow-up work."
+            "AI-first mitigation kept the rewrite; writing quality and lower-severity changes are reported as follow-up work."
         )
     product_regressed = (
         rewritten_text != text

@@ -314,6 +314,8 @@ def render_rewrite_report(
         ai_worse = new_ai > orig_ai + 0.05
         quality_improved = new_wq < orig_wq - 0.05
         quality_worse = new_wq > orig_wq + 0.05
+        ai_first = summary.get("ai_first_mitigation") or {}
+        ai_first_kept = bool(ai_first.get("kept")) and ai_improved
         findings_improved = n_total < o_total
         findings_worse = n_total > o_total
         severity_worse = n_severity > o_severity or n_review_burden > o_review_burden
@@ -368,12 +370,18 @@ def render_rewrite_report(
             improved=improved,
             converged=converged,
         )
+        if ai_first_kept:
+            result_label = "AI Mitigated"
 
         lines.append("### Result")
         lines.append("")
         lines.append(f"**{result_label}**")
         lines.append("")
-        if original_preserved and rollback and attempted_scan:
+        if ai_first_kept:
+            lines.append(
+                "AI likelihood improved enough to keep the rewrite. Writing-quality or lower-severity changes are follow-up work."
+            )
+        elif original_preserved and rollback and attempted_scan:
             lines.append("The attempted rewrite was not kept because the final scan did not improve.")
         elif no_text_change:
             lines.append("DraftProof found revision opportunities, but the main issues need evidence, examples, or source context from the author.")
