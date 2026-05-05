@@ -1234,6 +1234,8 @@ def _paragraph_coherence_reject_reason(
         r"\bpractic(?:e|ing) further\b",
         r"\bcontinuing to improve\b",
         r"\bdaily life\b",
+        r"\bworks? in practice\b",
+        r"\breveal(?:s|ed|ing)? how this relationship works\b",
     ]
     for pattern in unsupported_additions:
         match = re.search(pattern, candidate_sentence, re.I)
@@ -1607,6 +1609,9 @@ def _generic_polish_count(text: str) -> int:
         r"\btaking\b.{0,80}\bas a case\b",
         r"\bguide(?:s|d|ing)? the cut\b",
         r"\bchosen degree creates\b", r"\bstacked silhouette\b",
+        r"\bworks? in practice\b",
+        r"\breveal(?:s|ed|ing)? how this relationship works\b",
+        r"\bthis relationship works\b",
     ]
     lower = text.lower()
     return sum(len(re.findall(p, lower)) for p in patterns)

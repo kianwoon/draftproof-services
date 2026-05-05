@@ -567,6 +567,17 @@ assert_test(
     "unsupported_new_phrase" in latest_colloquial_reason,
     "paragraph coherence guard rejects latest online-info candidate",
 )
+relationship_practice_reason = _paragraph_coherence_reject_reason(
+    "Smaller class sizes make this relationship more apparent.",
+    "Smaller classes help reveal how this relationship works in practice.",
+    "When there are fewer learners, I can watch each section more closely.",
+    "This makes it easier to see where the haircut guide is being lost.",
+    ["class", "sizes", "relationship", "learners", "section", "haircut"],
+)
+assert_test(
+    "unsupported_new_phrase" in relationship_practice_reason,
+    "paragraph coherence guard rejects generic relationship-works candidate",
+)
 current_learning_reason = _paragraph_coherence_reject_reason(
     "In the contemporary education environment, school is no longer the only place to acquire knowledge.",
     "School remains a part of education, but many now get knowledge from other places in the current learning environment.",
