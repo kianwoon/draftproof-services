@@ -1422,12 +1422,35 @@ th {
   stroke: var(--green);
 }
 
-.site-header-dark .nav-links a {
+.site-header-dark .nav-links > a {
   color: rgba(255, 255, 255, .62);
 }
 
-.site-header-dark .nav-links a:hover {
+.site-header-dark .nav-links > a:hover {
   color: #fff;
+}
+
+.site-header-dark .nav-dropdown-menu {
+  background: var(--surface);
+  border-color: rgba(13, 27, 42, .10);
+}
+
+.site-header-dark .nav-dropdown-item {
+  color: var(--ink);
+  opacity: 1;
+}
+
+.site-header-dark .nav-dropdown-item:hover {
+  background: var(--surface-soft);
+  color: var(--blue-700);
+}
+
+.site-header-dark .nav-dropdown-item svg {
+  color: var(--muted);
+}
+
+.site-header-dark .nav-dropdown-item:hover svg {
+  color: var(--blue-700);
 }
 
 .site-header-dark > .btn-primary {
