@@ -6,8 +6,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
-from app.config import REWRITE_STALE_THRESHOLD_MINUTES, REWRITE_TOKEN_COST
+from app.config import REWRITE_STALE_THRESHOLD_MINUTES
 from app.models.db import async_session, RewriteJob, ScanJob, CreditAccount, CreditReservation
+from app.services.scan_service import _rewrite_cost
 
 logger = logging.getLogger("rewrite_service")
 
@@ -153,16 +154,23 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
                 await session.commit()
             raise NoRewriteableFindingsError(REVIEW_ONLY_REWRITE_MESSAGE)
 
+        # Get word count from scan job for cost calculation
+        scan_result = await session.execute(
+            select(ScanJob.word_count).where(ScanJob.id == scan_uuid)
+        )
+        word_count = scan_result.scalar_one_or_none() or 0
+        cost = _rewrite_cost(word_count)
+
         acct_result = await session.execute(
             select(CreditAccount).where(CreditAccount.user_id == uid).with_for_update()
         )
         acct = acct_result.scalar_one_or_none()
         if not acct:
             raise ValueError("No credit account found")
-        if acct.balance_tokens - acct.reserved_tokens < REWRITE_TOKEN_COST:
-            raise ValueError(f"Insufficient tokens (need {REWRITE_TOKEN_COST})")
+        if acct.balance_tokens - acct.reserved_tokens < cost:
+            raise ValueError(f"Insufficient tokens (need {cost})")
 
-        acct.reserved_tokens += REWRITE_TOKEN_COST
+        acct.reserved_tokens += cost
         job_id = uuid.uuid4()
         rewrite_job = RewriteJob(
             id=job_id,
@@ -179,7 +187,7 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
             credit_account_id=acct.id,
             job_type="rewrite",
             job_id=job_id,
-            tokens_reserved=REWRITE_TOKEN_COST,
+            tokens_reserved=cost,
             status="active",
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
         )
