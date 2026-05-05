@@ -565,6 +565,19 @@ def _clean_text(value: Any, limit: int = 260) -> str:
     return cleaned[: max(0, limit - 1)].rstrip() + "..."
 
 
+def _looks_truncated(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text.endswith("...") or text.endswith("…"):
+        return True
+    if text[-1] in ".?!;:)]}\"'":
+        return False
+    # Long sentence-like fragments without terminal punctuation are usually
+    # clipped by upstream debug/report limits and should not be quoted as-is.
+    return len(text.split()) >= 12
+
+
 def _target_where(*, sentence_id: Any = "", paragraph_id: Any = "") -> str:
     pieces = []
     if paragraph_id:
@@ -638,12 +651,15 @@ def _claim_targets(
         if " words, " in text or text == "low_specificity":
             return
         where = _target_where(sentence_id=sentence_id, paragraph_id=paragraph_id)
+        excerpt = _clean_text(paragraph_excerpt, 360)
+        if _looks_truncated(text) and excerpt and len(excerpt.split()) > len(text.split()):
+            text = excerpt
         targets.append({
             "target_text": text,
             "where": where,
             "sentence_id": str(sentence_id or ""),
             "paragraph_id": str(paragraph_id or ""),
-            "paragraph_excerpt": _clean_text(paragraph_excerpt, 360),
+            "paragraph_excerpt": excerpt,
             "finding_id": str(finding_id or ""),
             "finding_type": str(finding_type or ""),
             "instruction": _clean_text(instruction, 220),
@@ -721,6 +737,8 @@ def _claim_targets(
 
 
 def _component_matches_target(component: str, target: Dict[str, str]) -> bool:
+    if component == "qualifying_text_ai_density":
+        return bool(target.get("paragraph_excerpt")) or "paragraph" in (target.get("where") or "").lower()
     hint = (target.get("component_hint") or target.get("finding_type") or "").lower()
     component_base = component.replace("_risk", "").replace("_", " ")
     if "source" in component or "citation" in component:
@@ -735,6 +753,35 @@ def _component_matches_target(component: str, target: Dict[str, str]) -> bool:
 
 
 def _pick_claim_target(component: str, targets: List[Dict[str, str]], used: set[int]) -> Dict[str, str]:
+    if component == "qualifying_text_ai_density":
+        ranked = sorted(
+            enumerate(targets),
+            key=lambda pair: (
+                pair[0] in used,
+                not bool(pair[1].get("paragraph_excerpt")),
+                _looks_truncated(pair[1].get("target_text", "")),
+                -len((pair[1].get("paragraph_excerpt") or pair[1].get("target_text") or "").split()),
+            ),
+        )
+        for idx, target in ranked:
+            if idx not in used:
+                used.add(idx)
+                if target.get("paragraph_excerpt"):
+                    return {
+                        **target,
+                        "target_text": target["paragraph_excerpt"],
+                        "where": target.get("where") or "High-density paragraph",
+                    }
+                return target
+        if ranked:
+            _, target = ranked[0]
+            if target.get("paragraph_excerpt"):
+                return {
+                    **target,
+                    "target_text": target["paragraph_excerpt"],
+                    "where": target.get("where") or "High-density paragraph",
+                }
+            return target
     for idx, target in enumerate(targets):
         if idx not in used and _component_matches_target(component, target):
             used.add(idx)

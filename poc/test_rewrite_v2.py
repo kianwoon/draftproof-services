@@ -809,6 +809,18 @@ assert_test(
     any(item["action_type"] == "rebuild_paragraph_density" for item in density_plan["marked_content_suggestions"]),
     "density driver produces marked paragraph rebuild suggestion",
 )
+density_suggestion = next(
+    item for item in density_plan["marked_content_suggestions"]
+    if item["action_type"] == "rebuild_paragraph_density"
+)
+assert_test(
+    "The learner may keep cutting" in density_suggestion["target_text"],
+    "density suggestion uses paragraph context instead of narrow sentence",
+)
+assert_test(
+    not density_suggestion["target_text"].endswith("c"),
+    "density suggestion does not quote truncated sentence fragments",
+)
 guided_report = render_rewrite_report(
     summary={
         "no_text_change": True,
