@@ -30,6 +30,7 @@ jobs:
               - 'worker/Dockerfile'
               - 'worker/requirements.txt'
               - 'worker/entrypoint.sh'
+              - 'worker/app/**'
             code:
               - 'poc/**'
 
