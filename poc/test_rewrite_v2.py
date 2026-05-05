@@ -60,6 +60,10 @@ from rewrite_pipeline import (
     _clear_stale_rollback_for_kept_ai_mitigation,
     _ai_search_fast_accept_reason,
     _review_marker_notes,
+    _ai_candidate_quality_reject_reason,
+    _source_repair_brief,
+    _ai_search_prompt,
+    _allow_ai_search_llm_after_deterministic,
 )
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
@@ -835,17 +839,60 @@ assert_test(
     "AI search keeps marked review-grounding candidates",
 )
 assert_test(
-    "In my chair: " in candidate_text or "During consultation: " in candidate_text,
+    "In practice" in candidate_text or "For this task" in candidate_text,
     "AI search process-anchor candidate adds concrete author/process anchors",
 )
 assert_test(
-    "In my chair: " in candidate_text or "During consultation: " in candidate_text,
+    "In my chair: " not in candidate_text and "During consultation: " not in candidate_text,
     "AI search process anchors preserve original sentence casing after prefix",
 )
 assert_test(
     _review_marker_notes("Sentence. [[REVIEW: Add exact source.]]"),
     "review markers are extracted for manual suggestions",
 )
+bad_anchor_candidate = " ".join(
+    f"In my chair: Sentence {i} has enough words to look like a real rewritten sentence."
+    for i in range(10)
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(bad_anchor_candidate).startswith("synthetic_anchor_overuse"),
+    "AI search rejects synthetic anchor overuse in final candidates",
+)
+assert_test(
+    _ai_candidate_quality_reject_reason("Introduction Inclusive learning design starts here."),
+    "AI search rejects merged heading text",
+)
+damaged_source = (
+    "Maintaining standards while improving access Inclusive learning design does not lower the standard. "
+    "ith only six learners, I can watch the technique more closely. "
+    "This does not simplify the work, but it clarifies the learning steps. "
+    "This does not simplify the work, but it clarifies the learning steps."
+)
+repair_brief = _source_repair_brief(damaged_source)
+assert_test(
+    "broken word fragment" in repair_brief and "repeated sentence" in repair_brief,
+    "AI search prompt identifies source damage for LLM repair",
+)
+repair_prompt = _ai_search_prompt(damaged_source, {}, "syntax_demolition")
+assert_test(
+    "Source repair requirements" in repair_prompt and "remove accidental duplicate fragments" in repair_prompt,
+    "AI search prompt tells LLM to repair damaged source text",
+)
+original_allow_env = os.environ.get("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC")
+os.environ.pop("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", None)
+assert_test(
+    _allow_ai_search_llm_after_deterministic(),
+    "AI search allows LLM fallback after failed deterministic candidates by default",
+)
+os.environ["DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC"] = "0"
+assert_test(
+    not _allow_ai_search_llm_after_deterministic(),
+    "AI search deterministic-only mode remains available by env override",
+)
+if original_allow_env is None:
+    os.environ.pop("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", None)
+else:
+    os.environ["DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC"] = original_allow_env
 
 stale_ai_summary = {
     "rollback_applied": True,

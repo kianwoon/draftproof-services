@@ -113,6 +113,17 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _allow_ai_search_llm_after_deterministic() -> bool:
+    return _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", True)
+
+
 def _ai_search_fast_accept_reason(reference_ai, candidate_ai) -> str:
     """Return an early-stop reason when a deterministic candidate is good enough."""
     if not isinstance(reference_ai, (int, float)) or not isinstance(candidate_ai, (int, float)):
@@ -160,6 +171,47 @@ def _review_marker_notes(candidate: str) -> list[str]:
     ]
 
 
+_SYNTHETIC_ANCHOR_RE = re.compile(
+    r"\b(?:In my chair|During consultation|For example|In my notes|"
+    r"During sectioning|Specifically|In my experience|During the cut|"
+    r"In practice|For this task|During the practical work|In assessment|"
+    r"When learners are cutting|During feedback):",
+    re.I,
+)
+
+
+def _ai_candidate_quality_reject_reason(candidate: str) -> str:
+    if not isinstance(candidate, str) or not candidate.strip():
+        return "empty_candidate"
+    if "[[REVIEW:" in candidate:
+        return "review_markers_not_auto_kept"
+    synthetic_anchors = _SYNTHETIC_ANCHOR_RE.findall(candidate)
+    sentence_count = max(1, len(re.findall(r"(?<=[.!?])\s+", candidate)) + 1)
+    max_anchor_count = max(3, min(8, sentence_count // 8))
+    if len(synthetic_anchors) > max_anchor_count:
+        return f"synthetic_anchor_overuse {len(synthetic_anchors)}>{max_anchor_count}"
+    lowered = candidate.lower()
+    if "ith only" in lowered:
+        return "broken_word_fragment"
+    if re.search(r"\b(?:introduction|conclusion)\s+(?:inclusive|this|the)\b", candidate, re.I):
+        return "heading_merged_into_sentence"
+
+    sentences = [
+        re.sub(r"\s+", " ", s.strip()).lower()
+        for s in re.split(r"(?<=[.!?])\s+", candidate)
+        if len(s.split()) >= 8
+    ]
+    seen = set()
+    duplicates = 0
+    for sentence in sentences:
+        if sentence in seen:
+            duplicates += 1
+        seen.add(sentence)
+    if duplicates:
+        return "duplicated_sentence_fragments"
+    return ""
+
+
 def _ai_search_signal_brief(raw_json: dict) -> str:
     badge = (raw_json or {}).get("ai_risk_badge") or {}
     ai_components = badge.get("ai_components") or {}
@@ -194,8 +246,47 @@ def _ai_search_signal_brief(raw_json: dict) -> str:
     return "\n".join(parts)
 
 
+def _source_repair_brief(source_text: str) -> str:
+    """Describe visible source damage the full-document rewrite must repair."""
+    if not isinstance(source_text, str) or not source_text.strip():
+        return ""
+    notes = []
+    lowered = source_text.lower()
+    if "ith only" in lowered:
+        notes.append(
+            "The source already contains a broken word fragment like 'ith only'. "
+            "Repair it from context instead of preserving the typo."
+        )
+    if re.search(r"\b(?:introduction|conclusion)\s+(?:inclusive|this|the)\b", source_text, re.I):
+        notes.append(
+            "Some headings appear merged into following sentences. Keep the same headings/content, "
+            "but separate merged heading text cleanly."
+        )
+
+    sentences = [
+        re.sub(r"\s+", " ", s.strip()).lower()
+        for s in re.split(r"(?<=[.!?])\s+", source_text)
+        if len(s.split()) >= 8
+    ]
+    seen = set()
+    duplicate_count = 0
+    for sentence in sentences:
+        if sentence in seen:
+            duplicate_count += 1
+        seen.add(sentence)
+    if duplicate_count:
+        notes.append(
+            f"The source appears to contain {duplicate_count} accidental repeated sentence(s). "
+            "Keep one clean version and remove duplicated fragments."
+        )
+    if not notes:
+        return ""
+    return "Source repair requirements:\n- " + "\n- ".join(notes)
+
+
 def _ai_search_prompt(source_text: str, raw_json: dict, strategy: str) -> str:
     signal_brief = _ai_search_signal_brief(raw_json)
+    repair_brief = _source_repair_brief(source_text)
     strategy_lines = {
         "syntax_demolition": [
             "Strategy: syntax demolition.",
@@ -248,7 +339,7 @@ def _ai_search_prompt(source_text: str, raw_json: dict, strategy: str) -> str:
         "Keep the same topic, stance, factual claims, numbers, names, quotes, citations, unit codes, and chronology.",
         "Do not invent new evidence, citations, sources, dates, institutions, or examples.",
         "If evidence is missing and the strategy allows marked grounding, use [[REVIEW: ...]] bracketed text instead of inventing the evidence.",
-        "Do not summarize or shorten the document. Keep length within about 85% to 115% of the source.",
+        "Do not summarize or shorten the document. Keep length within about 85% to 115% of the source, except remove accidental duplicate fragments if the source already contains prior rewrite damage.",
         "Do not leave any non-protected source sentence verbatim. Rebuild every sentence route.",
         "Change most sentence openings and vary paragraph openings. Avoid preserving the same paragraph order inside every paragraph.",
         "Avoid generic polished phrases: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident.",
@@ -256,6 +347,8 @@ def _ai_search_prompt(source_text: str, raw_json: dict, strategy: str) -> str:
     ]
     if signal_brief:
         lines.append(signal_brief)
+    if repair_brief:
+        lines.append(repair_brief)
     lines.extend([
         "SOURCE DRAFT:\n<TARGET_DOCUMENT>\n" + source_text + "\n</TARGET_DOCUMENT>",
         "Output the complete rewritten draft only.",
@@ -316,14 +409,12 @@ def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, 
         return []
 
     concrete_prefixes = [
-        "In my chair: ",
-        "During consultation: ",
-        "For example: ",
-        "In my notes: ",
-        "During sectioning: ",
-        "Specifically: ",
-        "In my experience: ",
-        "During the cut: ",
+        "In practice, ",
+        "For this task, ",
+        "During the practical work, ",
+        "In assessment, ",
+        "When learners are cutting, ",
+        "During feedback, ",
     ]
 
     def build_marked(limit: int, label: str) -> tuple[str, str]:
@@ -342,22 +433,40 @@ def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, 
             rebuilt_paragraphs.append(" ".join(rebuilt))
         return label, "\n\n".join(rebuilt_paragraphs)
 
-    def build_process_anchors(label: str, *, all_long_sentences: bool) -> tuple[str, str]:
+    def _contextualize_sentence(sentence: str, prefix: str) -> str:
+        stripped = sentence.strip()
+        if not stripped:
+            return stripped
+        if re.match(
+            r"^(?:this|it|these|they|learners|competency|demonstration|"
+            r"reasonable adjustment|inclusive learning design|the challenge|the standard)\b",
+            stripped,
+            re.I,
+        ):
+            return prefix + stripped[0].lower() + stripped[1:]
+        return prefix.rstrip(", ") + ": " + stripped
+
+    def build_process_anchors(label: str, *, limit: int) -> tuple[str, str]:
+        anchor_indexes = set(target_indexes[:limit])
         rebuilt_paragraphs = []
         flat_index = 0
         used = 0
         for paragraph in paragraph_sentences:
             rebuilt = []
+            anchored_this_paragraph = False
             for sentence in paragraph:
                 words = sentence.split()
                 has_concrete = bool(concrete_re.search(sentence))
-                should_anchor = len(words) >= 8 and (all_long_sentences or not has_concrete)
+                should_anchor = (
+                    flat_index in anchor_indexes
+                    and not anchored_this_paragraph
+                    and len(words) >= 8
+                    and not has_concrete
+                )
                 if should_anchor:
                     prefix = concrete_prefixes[used % len(concrete_prefixes)]
-                    # Keep the source sentence text byte-for-byte after the
-                    # anchor prefix so named-entity/protected-span guards do
-                    # not reject useful candidates because of case changes.
-                    rebuilt.append(prefix + sentence)
+                    rebuilt.append(_contextualize_sentence(sentence, prefix))
+                    anchored_this_paragraph = True
                     used += 1
                 else:
                     rebuilt.append(sentence)
@@ -366,8 +475,8 @@ def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, 
         return label, "\n\n".join(rebuilt_paragraphs)
 
     return [
-        build_process_anchors("deterministic_process_anchor_generic", all_long_sentences=False),
-        build_process_anchors("deterministic_process_anchor_all", all_long_sentences=True),
+        build_process_anchors("deterministic_process_anchor_generic", limit=min(4, len(target_indexes))),
+        build_process_anchors("deterministic_process_anchor_all", limit=min(8, len(target_indexes))),
         build_marked(min(4, len(target_indexes)), "deterministic_marked_grounding_light"),
         build_marked(min(8, len(target_indexes)), "deterministic_marked_grounding_strong"),
     ]
@@ -713,7 +822,7 @@ def run_rewrite_pipeline(
         progress_callback=report_progress,
     )
     if ai_search_first:
-        result.summary["rewrite_engine_mode"] = "ai_search_first_no_llm_prepass"
+        result.summary["rewrite_engine_mode"] = "ai_search_first_skip_rewrite_prepass"
         result.summary.setdefault("saved_contract_notes", []).append(
             "Skipped costly density/sentence LLM prepass because AI mitigation search is the first objective."
         )
@@ -936,6 +1045,7 @@ def run_rewrite_pipeline(
             "candidate_limit": len(deterministic_candidates) + len(strategies),
             "deterministic_candidate_count": len(deterministic_candidates),
             "llm_candidate_limit": len(strategies),
+            "llm_calls": 0,
             "selected": False,
             "candidates": [],
         }
@@ -988,6 +1098,11 @@ def run_rewrite_pipeline(
                             "It is shown as guidance, not inserted into the rewritten document."
                         ),
                     })
+                search_summary["candidates"].append(candidate_eval)
+                return
+            quality_rejection = _ai_candidate_quality_reject_reason(candidate)
+            if quality_rejection:
+                candidate_eval["reason"] = quality_rejection
                 search_summary["candidates"].append(candidate_eval)
                 return
             if len(candidate) < min_chars:
@@ -1044,7 +1159,7 @@ def run_rewrite_pipeline(
 
         deterministic_only = (
             bool(ai_search_first)
-            and os.environ.get("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", "0") != "1"
+            and not _allow_ai_search_llm_after_deterministic()
         )
         try:
             min_deterministic_scans = max(
@@ -1109,6 +1224,7 @@ def run_rewrite_pipeline(
                     }
                     try:
                         prompt = _ai_search_prompt(text, ctx.raw_json, strategy)
+                        search_summary["llm_calls"] += 1
                         response = gateway.chat(
                             prompt,
                             system=(
@@ -1202,6 +1318,13 @@ def run_rewrite_pipeline(
             })
         search_summary["seconds"] = round(time.time() - search_started, 3)
         result.summary["ai_mitigation_search"] = search_summary
+        if search_summary.get("llm_calls"):
+            result.summary["ai_search_llm_calls_used"] = search_summary["llm_calls"]
+            try:
+                prior_calls = int(result.summary.get("llm_calls_used") or 0)
+            except (TypeError, ValueError):
+                prior_calls = 0
+            result.summary["llm_calls_used"] = prior_calls + int(search_summary["llm_calls"])
         stage_timings.append({
             "stage": "ai_mitigation_search",
             "seconds": search_summary["seconds"],
