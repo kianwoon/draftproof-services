@@ -23,7 +23,7 @@ REPO_BRANCH="${GIT_REPO_BRANCH:-main}"
 
 if [ -n "${GIT_PAT}" ]; then
     # Inject PAT into URL for private repo access
-    AUTH_URL="${REPO_URL/https:\/\//https:\/\/${GIT_PAT}@}"
+    AUTH_URL=$(echo "${REPO_URL}" | sed "s|https://|https://${GIT_PAT}@|")
 else
     AUTH_URL="${REPO_URL}"
 fi
