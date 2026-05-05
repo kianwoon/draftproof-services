@@ -600,6 +600,7 @@ def run_rewrite_pipeline(
         and not saved_critical_high_regressed
     )
     regression_reasons = []
+    followup_warnings = []
     result.summary["regression_tolerances"] = {
         "ai_score": ai_regression_tolerance,
         "writing_quality_score": writing_quality_regression_tolerance,
@@ -607,7 +608,7 @@ def run_rewrite_pipeline(
     if ai_score_regressed:
         regression_reasons.append(f"AI {original_ai}->{rewritten_ai}")
     if wq_score_regressed:
-        regression_reasons.append(f"writing_quality {original_wq}->{rewritten_wq}")
+        followup_warnings.append(f"writing_quality {original_wq}->{rewritten_wq}")
     if review_burden_regressed:
         regression_reasons.append(
             f"review_burden {original_review_burden}->{rewritten_review_burden}"
@@ -662,6 +663,11 @@ def run_rewrite_pipeline(
     if saved_critical_high_regressed:
         regression_reasons.append(
             f"user_visible_critical_high_findings {saved_critical_high}->{rewritten_critical_high}"
+        )
+    if followup_warnings:
+        result.summary["writing_quality_followups"] = followup_warnings
+        result.summary.setdefault("saved_contract_notes", []).append(
+            "AI-first mitigation kept the rewrite; writing-quality regression is reported as follow-up work."
         )
     product_regressed = (
         rewritten_text != text
@@ -755,7 +761,6 @@ def run_rewrite_pipeline(
             )
             if (
                 cp_ai_regressed
-                or cp_wq_regressed
                 or cp_total > original_total
                 or cp_review_burden > original_review_burden
                 or cp_severity > original_severity

@@ -1172,6 +1172,7 @@ def _paragraph_coherence_reject_reason(
     previous_sentence: str,
     next_sentence: str,
     domain_anchor_terms: Optional[List[str]] = None,
+    paragraph_context: str = "",
 ) -> str:
     """Reject candidates that work locally but harm paragraph coherence."""
     for label, neighbor in (("previous", previous_sentence), ("next", next_sentence)):
@@ -1203,7 +1204,7 @@ def _paragraph_coherence_reject_reason(
         return f"unsupported_abstraction {orig_abstract}->{cand_abstract}"
 
     surrounding = " ".join(
-        part for part in (original_sentence, previous_sentence, next_sentence) if part
+        part for part in (original_sentence, previous_sentence, next_sentence, paragraph_context) if part
     ).lower()
     unsupported_additions = [
         r"\bonline info\b",
@@ -1544,13 +1545,25 @@ def _unsupported_new_content_words(
     """Return new content words that are not grounded in context or anchors."""
     allowed_text = surrounding_text.lower()
     anchor_set = {str(term).lower() for term in domain_anchor_terms or []}
+    def _rough_stem(value: str) -> str:
+        value = value.lower()
+        for suffix in ("ingly", "edly", "ing", "ed", "es", "s"):
+            if len(value) > len(suffix) + 3 and value.endswith(suffix):
+                return value[: -len(suffix)]
+        return value
+
+    allowed_stems = {
+        _rough_stem(word)
+        for word in re.findall(r"\b[A-Za-z][A-Za-z-]{3,}\b", allowed_text)
+    }
+    anchor_stems = {_rough_stem(term) for term in anchor_set}
     stopwords = {
         "about", "after", "again", "also", "being", "because", "before",
         "between", "could", "does", "each", "every", "from", "have", "into",
         "many", "more", "most", "need", "needs", "only", "same", "should",
         "simply", "some", "than", "that", "their", "them", "there", "these",
         "they", "this", "those", "time", "when", "where", "while", "with",
-        "without", "would", "current", "modern", "today", "now",
+        "without", "would", "current", "modern", "today", "now", "slightly",
     }
     risky_new_words = {
         "method", "methods", "practice", "practicing", "scaffolding",
@@ -1567,6 +1580,9 @@ def _unsupported_new_content_words(
         if lower in anchor_set:
             continue
         if lower in allowed_text:
+            continue
+        stem = _rough_stem(lower)
+        if stem in allowed_stems or stem in anchor_stems:
             continue
         if lower in risky_new_words or len(lower) >= 7:
             if lower not in new_words:
@@ -2316,7 +2332,7 @@ def _density_paragraph_prompt(
         "Do not add, remove, rename, shorten, or paraphrase institution names, course names, people names, or place names.",
         "Prefer concrete words already present in the paragraph or nearby domain anchors.",
         "Avoid generic academic phrasing: crucial, significant, essential, landscape, framework, technical rigor, operational obstacles, visible learning framework, digital landscape.",
-        "Also avoid formal rebuild phrasing such as embedded within, especially evident, executing, or observing a demonstration.",
+        "Also avoid formal rebuild phrasing such as embedded within, especially evident, especially true, from my experience teaching, executing, or observing a demonstration.",
         "Avoid abstract noun stacks and broad claims. Do not make the paragraph smoother if that removes specificity.",
         "Output exactly one replacement paragraph. No numbering, bullets, quotes, headings, or commentary.",
         "Target paragraph:\n<TARGET>\n" + paragraph + "\n</TARGET>",
@@ -2423,6 +2439,13 @@ def _density_repair_prompt(
                 "These protected spans must appear exactly, unchanged: "
                 + "; ".join(protected[:12])
             )
+    if re.search(r"generic_polish_increase|component_regression|unsupported_abstraction", rejection_reason or "", re.I):
+        repair_lines.extend([
+            "The failure is polish/formality, not missing facts.",
+            "Rewrite in plainer author-owned wording. Prefer short, concrete sentences.",
+            "Do not use: especially true, especially clear, embedded within, part of how, from my experience teaching, observing a demonstration, executing a controlled haircut.",
+            "Keep the classroom/process details, but remove smoother academic framing.",
+        ])
     return "\n".join(repair_lines)
 
 
@@ -2909,7 +2932,11 @@ def run_rewrite(
         if (
             density_reject_reason
             and density_candidate
-            and re.search(r"lost_named_entity|protected_span_lost|citation_lost|quote_lost", density_reject_reason)
+            and re.search(
+                r"lost_named_entity|protected_span_lost|citation_lost|quote_lost|generic_polish_increase|component_regression|unsupported_abstraction",
+                density_reject_reason,
+            )
+            and llm_calls_used < config.max_llm_calls
             and (time.monotonic() - rewrite_start_time) <= config.max_rewrite_seconds
         ):
             repair_prompt = _density_repair_prompt(
@@ -3127,12 +3154,18 @@ def run_rewrite(
     effective_auto_target_limit = max(0, config.max_auto_targets)
     guided_throttle_reason = ""
     if runtime_mitigation_plan.get("primary_mode") == "guided_revision":
+        density_is_primary = float(density_paragraph_pass.get("density_score") or 0.0) >= 70.0
         evidence_count = int(
             (runtime_mitigation_plan.get("counts") or {}).get("needs_source_or_example", 0)
             or 0
         )
         auto_count = len(plan.auto_fixable)
-        if evidence_count >= max(1, auto_count // 2):
+        if density_is_primary:
+            guided_throttle_reason = (
+                "guided_revision_primary: qualifying-text AI density dominates; "
+                f"automatic rewrite allowed up to {effective_auto_target_limit} target(s)"
+            )
+        elif evidence_count >= max(1, auto_count // 2):
             guided_cap = max(1, min(3, auto_count))
             effective_auto_target_limit = min(effective_auto_target_limit, guided_cap)
             guided_throttle_reason = (
@@ -3686,6 +3719,7 @@ def run_rewrite(
                     ctx_before,
                     ctx_after,
                     domain_anchors,
+                    original_paragraph,
                 )
                 if coherence_reason:
                     candidate_rejects.append(f"paragraph_coherence {coherence_reason}")
@@ -4236,6 +4270,49 @@ def run_rewrite(
     final_finding_count = len(final_target_findings)
     original_finding_count = len(original_target_findings)
     net_findings_fixed = original_finding_count - final_finding_count
+    target_weight_delta = original_target_weight - final_target_weight
+    ai_likelihood_delta = original_ai_likelihood - final_ai_likelihood
+    meaningful_global_improvement = (
+        net_findings_fixed >= 1
+        or target_weight_delta >= max(2.0, config.min_weighted_improvement)
+        or ai_likelihood_delta >= 0.01
+    )
+    if current_text != content and not rolled_back_for_regression and not meaningful_global_improvement:
+        rolled_back_for_regression = True
+        rollback_reason = (
+            "rewrite produced no meaningful final-scan mitigation "
+            f"(ai_delta={ai_likelihood_delta:.4f}, target_weight_delta={target_weight_delta:.1f}, "
+            f"net_findings_fixed={net_findings_fixed})"
+        )
+        floor_reasons.append(FloorReason(
+            finding_id="global_mitigation_gate",
+            reason_type="standard_phrase",
+            explanation=rollback_reason,
+        ))
+        for accepted in accepted_candidate_suggestions[:6]:
+            suggestion = dict(accepted)
+            suggestion["rejection_reason"] = "low_value_rewrite_not_kept"
+            suggestion["why_review_manually"] = (
+                "This edit passed local guards, but the final scan movement was too small to count as mitigation."
+            )
+            manual_suggestions.append(suggestion)
+        current_text = content
+        final_detect_report = orig_report
+        final_detect_results = all_detect_results
+        final_target_findings = original_target_findings
+        final_target_weight = original_target_weight
+        final_ai_likelihood = original_ai_likelihood
+        final_finding_count = original_finding_count
+        net_findings_fixed = 0
+        loop_history.append({
+            "loop": loops_used + 1,
+            "reverted": True,
+            "note": rollback_reason,
+            "original_ai_likelihood": round(original_ai_likelihood, 4),
+            "final_ai_likelihood": round(final_ai_likelihood, 4),
+            "original_target_weight": round(original_target_weight, 4),
+            "final_target_weight": round(final_target_weight, 4),
+        })
 
     # Reuse predictability results from final_detect_report instead of
     # running compute_metrics again (saves ~28s per call).

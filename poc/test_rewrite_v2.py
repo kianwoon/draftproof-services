@@ -340,9 +340,9 @@ assert_test(cfg.budget.max_changed_char_ratio == 0.15, f"default char ratio=0.15
 assert_test(cfg.budget.max_total_changed_sentence_ratio == 0.30, f"total sentence cap=0.30")
 assert_test(cfg.budget.max_total_changed_char_ratio == 0.25, f"total char cap=0.25")
 assert_test(not cfg.suggestion_only, f"suggestion_only defaults to False")
-assert_test(cfg.max_llm_calls == 6, f"default max_llm_calls=6 (got {cfg.max_llm_calls})")
-assert_test(cfg.max_auto_targets == 6, f"default max_auto_targets=6 (got {cfg.max_auto_targets})")
-assert_test(cfg.max_rewrite_seconds == 90, f"default max_rewrite_seconds=90 (got {cfg.max_rewrite_seconds})")
+assert_test(cfg.max_llm_calls == 10, f"default max_llm_calls=10 (got {cfg.max_llm_calls})")
+assert_test(cfg.max_auto_targets == 8, f"default max_auto_targets=8 (got {cfg.max_auto_targets})")
+assert_test(cfg.max_rewrite_seconds == 150, f"default max_rewrite_seconds=150 (got {cfg.max_rewrite_seconds})")
 assert_test(cfg.max_detect_loops == 0, f"default max_detect_loops=0 (got {cfg.max_detect_loops})")
 
 
@@ -678,6 +678,18 @@ new_terms_reason = _paragraph_coherence_reject_reason(
 assert_test(
     "unsupported_new_terms" in new_terms_reason,
     "paragraph coherence guard rejects clusters of unsupported new content words",
+)
+grounded_paragraph_terms_reason = _paragraph_coherence_reject_reason(
+    "Learners can then see how a small change in angle shifts the weight distribution.",
+    "A small angle adjustment changes where the weight falls in the haircut structure.",
+    "The graduated haircut structure is shown on the head chart first.",
+    "The learner checks the weight line after each section.",
+    ["learners", "angle", "weight", "haircut", "structure"],
+    "The graduated haircut structure is shown on the head chart first. Learners can then see how a small change in angle shifts the weight distribution. The learner checks the weight line after each section.",
+)
+assert_test(
+    not grounded_paragraph_terms_reason,
+    "paragraph coherence guard allows terms grounded in paragraph context",
 )
 
 pred_raw = {
@@ -1086,6 +1098,15 @@ density_repair_prompt = _density_repair_prompt(
 assert_test("Previous rejected candidate" in density_repair_prompt, "density repair prompt includes rejected candidate")
 assert_test("Box Hill Institute" in density_repair_prompt, "density repair prompt repeats lost named entity")
 assert_test("Repair only the safety failure" in density_repair_prompt, "density repair prompt limits retry scope")
+polish_repair_prompt = _density_repair_prompt(
+    density_para,
+    "This is especially true when learners move from observing a demonstration to cutting a controlled haircut themselves.",
+    "generic_polish_increase",
+    density_context,
+    density_plan,
+)
+assert_test("polish/formality" in polish_repair_prompt, "density repair prompt handles polish rejection")
+assert_test("especially true" in polish_repair_prompt, "density repair prompt forbids latest polished phrasing")
 
 bad_density_candidate = (
     "Inclusive Learning Design in Certificate III Hairdressing provides a visible learning framework in a digital landscape, "
