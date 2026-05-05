@@ -2092,21 +2092,21 @@ th {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(7, 18, 31, .94) 0%, rgba(7, 18, 31, .88) 48%, rgba(7, 18, 31, .82) 100%),
+    linear-gradient(90deg, rgba(7, 18, 31, .78) 0%, rgba(7, 18, 31, .68) 48%, rgba(7, 18, 31, .58) 100%),
     radial-gradient(circle at 86% 24%, rgba(58, 168, 118, .10), transparent 24rem);
 }
 
 .app-hero-dark .code-texture {
-  z-index: 0;
-  opacity: .42;
+  z-index: 1;
+  opacity: .68;
 }
 
 .app-hero-dark > :not(.code-texture) {
   position: relative;
-  z-index: 2;
+  z-index: 3;
 }
 
 .app-hero h1 {
