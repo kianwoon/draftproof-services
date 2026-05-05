@@ -59,6 +59,7 @@ from rewrite_pipeline import (
     _ai_search_marked_grounding_candidates,
     _clear_stale_rollback_for_kept_ai_mitigation,
     _ai_search_fast_accept_reason,
+    _review_marker_notes,
 )
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
@@ -834,8 +835,16 @@ assert_test(
     "AI search keeps marked review-grounding candidates",
 )
 assert_test(
-    "In my chair," in candidate_text or "During consultation," in candidate_text,
+    "In my chair: " in candidate_text or "During consultation: " in candidate_text,
     "AI search process-anchor candidate adds concrete author/process anchors",
+)
+assert_test(
+    "In my chair: " in candidate_text or "During consultation: " in candidate_text,
+    "AI search process anchors preserve original sentence casing after prefix",
+)
+assert_test(
+    _review_marker_notes("Sentence. [[REVIEW: Add exact source.]]"),
+    "review markers are extracted for manual suggestions",
 )
 
 stale_ai_summary = {
@@ -860,6 +869,10 @@ assert_test(
 assert_test(
     _ai_search_fast_accept_reason(58.12, 44.14),
     "AI search stops early once deterministic candidate strongly mitigates AI",
+)
+assert_test(
+    _ai_search_fast_accept_reason(57.78, 48.89),
+    "AI search accepts deterministic candidate that crosses below 50 percent",
 )
 assert_test(
     not _ai_search_fast_accept_reason(58.12, 57.88),

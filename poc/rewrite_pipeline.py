@@ -117,8 +117,8 @@ def _ai_search_fast_accept_reason(reference_ai, candidate_ai) -> str:
     """Return an early-stop reason when a deterministic candidate is good enough."""
     if not isinstance(reference_ai, (int, float)) or not isinstance(candidate_ai, (int, float)):
         return ""
-    fast_accept_ai = _float_env("DRAFTPROOF_AI_SEARCH_FAST_ACCEPT_AI", 45.0)
-    fast_accept_delta = _float_env("DRAFTPROOF_AI_SEARCH_FAST_ACCEPT_DELTA", 10.0)
+    fast_accept_ai = _float_env("DRAFTPROOF_AI_SEARCH_FAST_ACCEPT_AI", 50.0)
+    fast_accept_delta = _float_env("DRAFTPROOF_AI_SEARCH_FAST_ACCEPT_DELTA", 5.0)
     ai_first_target = _float_env("DRAFTPROOF_AI_FIRST_TARGET", 60.0)
     delta = reference_ai - candidate_ai
     if candidate_ai <= fast_accept_ai:
@@ -148,6 +148,16 @@ def _clean_full_document_candidate(output: str, original_text: str) -> str:
     paragraphs = [" ".join(p.strip().split()) for p in re.split(r"\n\s*\n", text) if p.strip()]
     text = "\n\n".join(paragraphs).strip()
     return "" if text == original_text.strip() else text
+
+
+def _review_marker_notes(candidate: str) -> list[str]:
+    if not isinstance(candidate, str):
+        return []
+    return [
+        match.strip()
+        for match in re.findall(r"\[\[REVIEW:\s*(.*?)\]\]", candidate, flags=re.I | re.S)
+        if match.strip()
+    ]
 
 
 def _ai_search_signal_brief(raw_json: dict) -> str:
@@ -306,22 +316,15 @@ def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, 
         return []
 
     concrete_prefixes = [
-        "In my chair, ",
-        "During consultation, ",
-        "For example, ",
-        "In my notes, ",
-        "During sectioning, ",
-        "Specifically, ",
-        "In my experience, ",
-        "During the cut, ",
+        "In my chair: ",
+        "During consultation: ",
+        "For example: ",
+        "In my notes: ",
+        "During sectioning: ",
+        "Specifically: ",
+        "In my experience: ",
+        "During the cut: ",
     ]
-
-    def _decapitalize(sentence: str) -> str:
-        if not sentence:
-            return sentence
-        if re.match(r"^[A-Z]{2,}\b", sentence):
-            return sentence
-        return sentence[0].lower() + sentence[1:]
 
     def build_marked(limit: int, label: str) -> tuple[str, str]:
         note_indexes = set(target_indexes[:limit])
@@ -351,7 +354,10 @@ def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, 
                 should_anchor = len(words) >= 8 and (all_long_sentences or not has_concrete)
                 if should_anchor:
                     prefix = concrete_prefixes[used % len(concrete_prefixes)]
-                    rebuilt.append(prefix + _decapitalize(sentence))
+                    # Keep the source sentence text byte-for-byte after the
+                    # anchor prefix so named-entity/protected-span guards do
+                    # not reject useful candidates because of case changes.
+                    rebuilt.append(prefix + sentence)
                     used += 1
                 else:
                     rebuilt.append(sentence)
@@ -963,6 +969,27 @@ def run_rewrite_pipeline(
                 candidate_eval["reason"] = "empty_candidate"
                 search_summary["candidates"].append(candidate_eval)
                 return
+            review_notes = _review_marker_notes(candidate)
+            if review_notes:
+                candidate_eval["reason"] = "review_markers_not_auto_kept"
+                candidate_eval["review_suggestion_count"] = len(review_notes)
+                manual = result.summary.setdefault("manual_suggestions", [])
+                for note in review_notes:
+                    if len(manual) >= 30:
+                        break
+                    manual.append({
+                        "finding_type": "ai_mitigation_review_note",
+                        "scanner_target": "ai_mitigation_search",
+                        "original_sentence": "",
+                        "suggested_sentence": f"[[REVIEW: {note}]]",
+                        "rejection_reason": "review_markers_not_auto_kept",
+                        "why_review_manually": (
+                            "This note asks the author to add real evidence or context. "
+                            "It is shown as guidance, not inserted into the rewritten document."
+                        ),
+                    })
+                search_summary["candidates"].append(candidate_eval)
+                return
             if len(candidate) < min_chars:
                 candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{min_chars}"
                 search_summary["candidates"].append(candidate_eval)
@@ -1015,13 +1042,20 @@ def run_rewrite_pipeline(
                 candidate_eval["selected_so_far"] = True
             search_summary["candidates"].append(candidate_eval)
 
+        deterministic_only = (
+            bool(ai_search_first)
+            and os.environ.get("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", "0") != "1"
+        )
         try:
             min_deterministic_scans = max(
                 1,
-                int(os.environ.get("DRAFTPROOF_AI_SEARCH_MIN_DETERMINISTIC_SCANS", "2")),
+                int(os.environ.get(
+                    "DRAFTPROOF_AI_SEARCH_MIN_DETERMINISTIC_SCANS",
+                    str(len(deterministic_candidates) or 1),
+                )),
             )
         except ValueError:
-            min_deterministic_scans = 2
+            min_deterministic_scans = len(deterministic_candidates) or 1
         early_stop_reason = ""
         for index, (strategy, candidate) in enumerate(deterministic_candidates, start=1):
             report_progress(
@@ -1044,6 +1078,10 @@ def run_rewrite_pipeline(
 
         if early_stop_reason:
             search_summary["llm_reason"] = "skipped_after_fast_deterministic_accept"
+        elif deterministic_only:
+            search_summary["llm_reason"] = "skipped_deterministic_only_ai_first"
+            if best_strategy:
+                search_summary["deterministic_only_selected_best"] = True
         elif not effective_key:
             if not search_summary.get("candidates"):
                 search_summary["reason"] = "no_llm_available"
