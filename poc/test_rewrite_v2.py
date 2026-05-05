@@ -9,6 +9,7 @@ Run:  cd poc && python test_rewrite_v2.py
 import sys
 import os
 import tempfile
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "."))
 
@@ -44,7 +45,7 @@ from rewrite.rewrite import (
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
-from rewrite_pipeline import run_rewrite_pipeline
+from rewrite_pipeline import run_rewrite_pipeline, _build_aligned_sentence_comparison
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
 
@@ -343,6 +344,7 @@ assert_test(cfg.budget.max_total_changed_char_ratio == 0.25, f"total char cap=0.
 assert_test(not cfg.suggestion_only, f"suggestion_only defaults to False")
 assert_test(cfg.max_llm_calls == 10, f"default max_llm_calls=10 (got {cfg.max_llm_calls})")
 assert_test(cfg.max_auto_targets == 8, f"default max_auto_targets=8 (got {cfg.max_auto_targets})")
+assert_test(cfg.max_density_passes == 3, f"default max_density_passes=3 (got {cfg.max_density_passes})")
 assert_test(cfg.max_rewrite_seconds == 150, f"default max_rewrite_seconds=150 (got {cfg.max_rewrite_seconds})")
 assert_test(cfg.max_detect_loops == 0, f"default max_detect_loops=0 (got {cfg.max_detect_loops})")
 
@@ -783,6 +785,22 @@ rollback_report = render_rewrite_report(
 )
 assert_test("## Attempted Rewrite" in rollback_report, "rollback report shows attempted rewrite")
 assert_test("## Manual Suggestions" in rollback_report, "rollback report keeps manual suggestions")
+
+comparison_mp = SimpleNamespace(
+    original_text="A one. B two. C three. D four.",
+    final_text="A one. B two rewritten with C three combined. D four.",
+    original_metrics=SimpleNamespace(sentence_details=[]),
+    final_metrics=SimpleNamespace(sentence_details=[]),
+)
+comparison_rows = _build_aligned_sentence_comparison(comparison_mp)
+changed_rows = [
+    row for row in comparison_rows
+    if row.get("orig_sentence") != row.get("new_sentence")
+]
+assert_test(
+    all(row.get("new_sentence") for row in changed_rows),
+    "sentence comparison groups unequal replace blocks without blank rewritten cells",
+)
 
 driver_plan = build_mitigation_plan(
     plan=None,

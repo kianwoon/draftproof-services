@@ -170,24 +170,22 @@ def _build_aligned_sentence_comparison(mp) -> list:
 
         old_block = original_sentences[i1:i2]
         new_block = final_sentences[j1:j2]
-        block_len = max(len(old_block), len(new_block))
-        for offset in range(block_len):
-            o_sent = old_block[offset] if offset < len(old_block) else ""
-            n_sent = new_block[offset] if offset < len(new_block) else ""
-            o = orig_lookup.get(o_sent, {})
-            n = final_lookup.get(n_sent, {})
-            rows.append({
-                "index": row_index,
-                "orig_tier": _detail_value(o, "label", "risk_label", default="?"),
-                "orig_risk": _detail_value(o, "risk", "predictability_risk"),
-                "orig_top10": _detail_value(o, "top10_ratio", "top_10_ratio"),
-                "orig_sentence": o_sent,
-                "new_tier": _detail_value(n, "label", "risk_label", default="?"),
-                "new_risk": _detail_value(n, "risk", "predictability_risk"),
-                "new_top10": _detail_value(n, "top10_ratio", "top_10_ratio"),
-                "new_sentence": n_sent,
-            })
-            row_index += 1
+        o_sent = " ".join(old_block).strip()
+        n_sent = " ".join(new_block).strip()
+        o = orig_lookup.get(old_block[0], {}) if old_block else {}
+        n = final_lookup.get(new_block[0], {}) if new_block else {}
+        rows.append({
+            "index": row_index,
+            "orig_tier": _detail_value(o, "label", "risk_label", default="?"),
+            "orig_risk": _detail_value(o, "risk", "predictability_risk"),
+            "orig_top10": _detail_value(o, "top10_ratio", "top_10_ratio"),
+            "orig_sentence": o_sent,
+            "new_tier": _detail_value(n, "label", "risk_label", default="?"),
+            "new_risk": _detail_value(n, "risk", "predictability_risk"),
+            "new_top10": _detail_value(n, "top10_ratio", "top_10_ratio"),
+            "new_sentence": n_sent,
+        })
+        row_index += 1
     return rows
 
 

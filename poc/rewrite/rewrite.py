@@ -2246,6 +2246,7 @@ def _select_density_paragraph(
     text: str,
     rewrite_context: Optional[Any] = None,
     mitigation_plan: Optional[Dict[str, Any]] = None,
+    excluded_regions: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[int, str, Dict[str, Any]]:
     """Pick the bounded paragraph/section region most responsible for density risk."""
     raw_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
@@ -2265,6 +2266,8 @@ def _select_density_paragraph(
     for idx, paragraph in enumerate(paragraphs):
         for region, meta in _density_region_candidates(paragraph, idx, items):
             if meta.get("word_count", 0) < 45:
+                continue
+            if _density_region_is_excluded(meta, excluded_regions or []):
                 continue
             score = float(meta.get("score") or 0.0)
             if score <= best_score:
@@ -2286,6 +2289,29 @@ def _select_density_paragraph(
         best_meta.update({"fallback": "longest_paragraph"})
         return best_idx, best_region, best_meta
     return best_idx, best_region, best_meta
+
+
+def _density_region_is_excluded(meta: Dict[str, Any], excluded_regions: List[Dict[str, Any]]) -> bool:
+    paragraph_index = meta.get("paragraph_index")
+    region_type = meta.get("region_type")
+    if paragraph_index is None:
+        return False
+    for excluded in excluded_regions:
+        if excluded.get("paragraph_index") != paragraph_index:
+            continue
+        if region_type == "sentence_window" and excluded.get("region_type") == "sentence_window":
+            start = int(meta.get("sentence_start") or 0)
+            count = int(meta.get("sentence_count") or 0)
+            end = start + count
+            ex_start = int(excluded.get("sentence_start") or 0)
+            ex_count = int(excluded.get("sentence_count") or 0)
+            ex_end = ex_start + ex_count
+            if start < ex_end and ex_start < end:
+                return True
+            continue
+        if region_type == excluded.get("region_type"):
+            return True
+    return False
 
 
 def _splice_density_candidate(
@@ -2893,6 +2919,7 @@ def run_rewrite(
         "attempted": False,
         "applied": False,
         "reason": "not_needed",
+        "attempts": [],
         "density_score": _badge_component_score(
             getattr(rewrite_context, "raw_json", None),
             "qualifying_text_ai_density",
@@ -2916,7 +2943,9 @@ def run_rewrite(
         nonlocal current_text, findings_fixed, loops_used, llm_calls_used, density_mitigation_llm_calls
 
         density_score = float(density_paragraph_pass.get("density_score") or 0.0)
-        if density_paragraph_pass.get("attempted"):
+        density_attempts = density_paragraph_pass.setdefault("attempts", [])
+        max_density_passes = max(1, int(getattr(config, "max_density_passes", 1) or 1))
+        if len(density_attempts) >= max_density_passes:
             return
         if density_score < 70.0:
             return
@@ -2926,6 +2955,15 @@ def run_rewrite(
                 "loop": loops_used + 1,
                 "phase": phase,
                 "note": "density paragraph pass skipped: no LLM available",
+                "density_score": round(density_score, 2),
+            })
+            return
+        if llm_calls_used >= config.max_llm_calls:
+            density_paragraph_pass["reason"] = f"max_llm_calls reached ({config.max_llm_calls})"
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "note": "density paragraph pass skipped: " + density_paragraph_pass["reason"],
                 "density_score": round(density_score, 2),
             })
             return
@@ -2945,6 +2983,7 @@ def run_rewrite(
             current_text,
             rewrite_context,
             runtime_mitigation_plan,
+            density_attempts,
         )
         density_paragraph_pass.update({
             "attempted": True,
@@ -3031,6 +3070,12 @@ def run_rewrite(
 
         if density_reject_reason:
             density_paragraph_pass["reason"] = density_reject_reason
+            density_attempts.append({
+                "phase": phase,
+                "applied": False,
+                "reason": density_reject_reason,
+                **density_meta,
+            })
             if density_candidate:
                 manual_item = {
                     "finding_id": "density_paragraph_rebuild",
@@ -3085,6 +3130,12 @@ def run_rewrite(
         )
         if not candidate_text:
             density_paragraph_pass["reason"] = "density_region_splice_failed"
+            density_attempts.append({
+                "phase": phase,
+                "applied": False,
+                "reason": "density_region_splice_failed",
+                **density_meta,
+            })
             return
 
         component_ok, component_reason = _component_regression_check(current_text, candidate_text)
@@ -3110,6 +3161,12 @@ def run_rewrite(
         voice_check = voice_guard.check(current_text, candidate_text)
         if not voice_check.accepted:
             density_paragraph_pass["reason"] = f"voice_eroded {voice_check.reject_reason}"
+            density_attempts.append({
+                "phase": phase,
+                "applied": False,
+                "reason": density_paragraph_pass["reason"],
+                **density_meta,
+            })
             manual_suggestions.append({
                 "finding_id": "density_paragraph_rebuild",
                 "finding_type": "qualifying_text_ai_density",
@@ -3137,6 +3194,14 @@ def run_rewrite(
         current_text = candidate_text
         findings_fixed += 1
         loops_used += 1
+        density_attempts.append({
+            "phase": phase,
+            "applied": True,
+            "reason": "accepted_locally_pending_final_full_scan",
+            "orig_length": len(density_paragraph),
+            "new_length": len(density_candidate),
+            **density_meta,
+        })
         density_paragraph_pass.update({
             "applied": True,
             "reason": "accepted_locally_pending_final_full_scan",
@@ -3182,7 +3247,11 @@ def run_rewrite(
     # Best mitigation first: if the scan says the problem is document-level
     # density, act on the strongest paragraph before spending calls on
     # sentence-level cleanup.
-    _attempt_density_paragraph_pass("before_sentence_rewrites")
+    for _density_pass_index in range(max(1, int(getattr(config, "max_density_passes", 1) or 1))):
+        before_density_calls = density_mitigation_llm_calls
+        _attempt_density_paragraph_pass("before_sentence_rewrites")
+        if density_mitigation_llm_calls == before_density_calls:
+            break
 
     def _action_group_key(action):
         finding = action.finding
@@ -4419,6 +4488,7 @@ def run_rewrite(
         "max_llm_calls": config.max_llm_calls,
         "sentence_llm_call_limit": sentence_llm_call_limit,
         "density_mitigation_llm_calls": density_mitigation_llm_calls,
+        "max_density_passes": getattr(config, "max_density_passes", 1),
         "density_mitigation_priority": "before_sentence_rewrites",
         "max_auto_targets": config.max_auto_targets,
         "effective_auto_target_limit": effective_auto_target_limit,

@@ -75,6 +75,7 @@ class RewriteConfig:
     max_rewrite_seconds: int = 150
     max_llm_calls: int = 10
     max_auto_targets: int = 8
+    max_density_passes: int = 3
     max_failed_targets: int = 4
     max_consecutive_failed_targets: int = 3
 
