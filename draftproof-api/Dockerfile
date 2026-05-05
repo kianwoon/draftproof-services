@@ -8,6 +8,8 @@ RUN npm run build
 
 # Stage 2: API
 FROM python:3.12-slim
+ARG CACHEBUST=1
+RUN echo "cache bust: ${CACHEBUST}"
 
 WORKDIR /app
 
