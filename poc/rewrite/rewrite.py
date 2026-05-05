@@ -2380,6 +2380,7 @@ def _density_paragraph_reject_reason(
     original_paragraph: str,
     candidate_paragraph: str,
     rewrite_context: Optional[Any] = None,
+    allow_polish_warning: bool = False,
 ) -> str:
     if not candidate_paragraph:
         return "empty_candidate"
@@ -2393,7 +2394,10 @@ def _density_paragraph_reject_reason(
     drift = check_semantic_drift(original_paragraph, candidate_paragraph, threshold=0.50)
     if not drift.accepted:
         return "semantic_drift " + "; ".join(drift.reasons[:3])
-    if _generic_polish_count(candidate_paragraph) > _generic_polish_count(original_paragraph):
+    if (
+        not allow_polish_warning
+        and _generic_polish_count(candidate_paragraph) > _generic_polish_count(original_paragraph)
+    ):
         return "generic_polish_increase"
     anchors = _domain_anchor_terms(rewrite_context, original_paragraph, original_paragraph, limit=12)
     orig_coverage = _term_coverage(original_paragraph, anchors)
@@ -2925,6 +2929,7 @@ def run_rewrite(
             density_paragraph,
             density_candidate,
             rewrite_context,
+            allow_polish_warning=True,
         )
         if (
             density_reject_reason
@@ -2954,6 +2959,7 @@ def run_rewrite(
                 density_paragraph,
                 repaired_candidate,
                 rewrite_context,
+                allow_polish_warning=True,
             )
             loop_history.append({
                 "loop": loops_used + 1,
@@ -3040,6 +3046,15 @@ def run_rewrite(
                 "paragraph": para_idx,
                 "note": "density paragraph component warning; AI-first final scan will decide",
                 "warning": density_paragraph_pass["component_warning"],
+            })
+        if _generic_polish_count(density_candidate) > _generic_polish_count(density_paragraph):
+            density_paragraph_pass["polish_warning"] = "generic_polish_increase"
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "paragraph": para_idx,
+                "note": "density paragraph polish warning; AI-first final scan will decide",
+                "warning": density_paragraph_pass["polish_warning"],
             })
 
         voice_check = voice_guard.check(current_text, candidate_text)
@@ -3897,6 +3912,7 @@ def run_rewrite(
                 density_paragraph,
                 density_candidate,
                 rewrite_context,
+                allow_polish_warning=True,
             )
             if density_reject_reason:
                 density_paragraph_pass["reason"] = density_reject_reason
