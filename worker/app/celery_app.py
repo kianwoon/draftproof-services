@@ -45,6 +45,10 @@ app.conf.update(
         # Single-worker setup doesn't need frequent health checks.
         # Saves ~40K Redis commands/day.
         "health_check_interval": 120,
+        # BRPOP polling interval. Default 1s = ~86K commands/day.
+        # 5s = ~17K/day. Adds up to 4s latency on task pickup — acceptable
+        # for scan/rewrite jobs that run for minutes.
+        "polling_interval": 5,
     },
     # Result TTL — results expire after 1 hour (default is 1 day).
     # Reduces Redis key count from stored task results.

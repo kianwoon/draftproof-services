@@ -57,6 +57,7 @@ from rewrite_pipeline import (
     _build_aligned_sentence_comparison,
     _ai_first_gate_status,
     _ai_search_marked_grounding_candidates,
+    _clear_stale_rollback_for_kept_ai_mitigation,
 )
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
@@ -834,6 +835,26 @@ assert_test(
 assert_test(
     "In my chair," in candidate_text or "During consultation," in candidate_text,
     "AI search process-anchor candidate adds concrete author/process anchors",
+)
+
+stale_ai_summary = {
+    "rollback_applied": True,
+    "rollback_reason": "density batch AI gate failed",
+    "attempted_final_text": "Old attempted text",
+    "detect_scan_attempted": {"ai_risk_badge": {"ai_likelihood_score": 59.73}},
+}
+_clear_stale_rollback_for_kept_ai_mitigation(
+    stale_ai_summary,
+    "AI mitigation search",
+)
+assert_test(
+    stale_ai_summary.get("rollback_applied") is False,
+    "kept AI mitigation clears stale density rollback",
+)
+assert_test(
+    "rollback_reason" not in stale_ai_summary
+    and "detect_scan_attempted" not in stale_ai_summary,
+    "kept AI mitigation removes stale attempted/original-preserved fields",
 )
 
 ai_first_report = render_rewrite_report(

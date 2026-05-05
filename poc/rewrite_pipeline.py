@@ -84,6 +84,28 @@ def _ai_first_gate_status(
     }
 
 
+def _clear_stale_rollback_for_kept_ai_mitigation(summary: dict, source: str) -> None:
+    """Clear an earlier density/sentence rollback once AI mitigation is kept."""
+    if not isinstance(summary, dict):
+        return
+    had_stale_rollback = bool(
+        summary.get("rollback_applied")
+        or summary.get("rollback_reason")
+        or summary.get("attempted_final_text")
+    )
+    summary["rollback_applied"] = False
+    summary.pop("rollback_reason", None)
+    summary.pop("attempted_final_text", None)
+    summary.pop("attempted_sentence_comparison", None)
+    summary.pop("detect_scan_attempted", None)
+    summary.pop("no_text_change", None)
+    summary.pop("no_text_change_reason", None)
+    if had_stale_rollback:
+        summary.setdefault("saved_contract_notes", []).append(
+            f"Cleared earlier rewrite rollback because {source} produced a kept AI-mitigation candidate."
+        )
+
+
 def _clean_full_document_candidate(output: str, original_text: str) -> str:
     if not output:
         return ""
@@ -1002,6 +1024,7 @@ def run_rewrite_pipeline(
                     previous_ai = rewritten_ai
                     rewritten_text = best_text
                     rewritten_report_dict = best_report
+                    attempted_report_dict = rewritten_report_dict
                     rewritten_ai = _badge_ai(rewritten_report_dict)
                     rewritten_wq = _badge_wq(rewritten_report_dict)
                     rewritten_total = _finding_total(rewritten_report_dict)
@@ -1019,8 +1042,10 @@ def run_rewrite_pipeline(
                         )
                     sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
                     ai_search_selected = True
-                    result.summary.pop("no_text_change", None)
-                    result.summary.pop("no_text_change_reason", None)
+                    _clear_stale_rollback_for_kept_ai_mitigation(
+                        result.summary,
+                        "AI mitigation search",
+                    )
                     search_summary.update({
                         "selected": True,
                         "selected_strategy": best_strategy,
@@ -1037,6 +1062,7 @@ def run_rewrite_pipeline(
             previous_ai = rewritten_ai
             rewritten_text = best_text
             rewritten_report_dict = best_report
+            attempted_report_dict = rewritten_report_dict
             rewritten_ai = _badge_ai(rewritten_report_dict)
             rewritten_wq = _badge_wq(rewritten_report_dict)
             rewritten_total = _finding_total(rewritten_report_dict)
@@ -1054,8 +1080,10 @@ def run_rewrite_pipeline(
                 )
             sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
             ai_search_selected = True
-            result.summary.pop("no_text_change", None)
-            result.summary.pop("no_text_change_reason", None)
+            _clear_stale_rollback_for_kept_ai_mitigation(
+                result.summary,
+                "deterministic AI mitigation search",
+            )
             search_summary.update({
                 "selected": True,
                 "selected_strategy": best_strategy,
@@ -1274,6 +1302,10 @@ def run_rewrite_pipeline(
             "hard_regressions": hard_regression_reasons,
         }
         if not hard_regression_reasons:
+            _clear_stale_rollback_for_kept_ai_mitigation(
+                result.summary,
+                "AI-first mitigation",
+            )
             if ai_search_selected:
                 result.summary.setdefault("saved_contract_notes", []).append(
                     "AI mitigation search kept the lowest-AI scanned candidate; "

@@ -24,7 +24,12 @@ celery_app.conf.update(
     },
     broker_transport_options={
         "visibility_timeout": CELERY_VISIBILITY_TIMEOUT_SECONDS,
+        # API is a producer only — no need for frequent health checks.
+        # Default 2s generates ~43K commands/day. 120s = ~720/day.
+        "health_check_interval": 120,
     },
+    # Don't keep result backend connection alive — API only dispatches tasks.
+    result_expires=3600,
 )
 
 # The actual task lives in worker/app/tasks.py — same broker, same serializer
