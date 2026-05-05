@@ -1,0 +1,21 @@
+{
+  "name": "DraftProof",
+  "short_name": "DraftProof",
+  "description": "Pre-submission writing integrity reviews for students, educators, and researchers.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0D1B2A",
+  "theme_color": "#0D1B2A",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

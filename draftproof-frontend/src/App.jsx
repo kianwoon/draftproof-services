@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
 import Footer from './components/Footer';
+import Seo from './components/Seo';
 import ProtectedRoute from './components/ProtectedRoute';
 import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
@@ -66,6 +67,7 @@ export default function App() {
   return (
     <AuthProvider>
       <div className="app-shell">
+        <Seo />
         <Header />
         <main className="app-main">
           <Routes>
