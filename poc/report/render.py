@@ -166,21 +166,43 @@ def _authorship_rating_from_badge(badge: dict) -> dict:
         )
     )
 
+    likely_component_alignment = (
+        ai_score >= 48
+        and (
+            _component_score(ai_components, "topk_pattern") >= 70
+            or _component_score(ai_components, "generic_assertion_risk") >= 70
+            or (
+                isinstance(writing_score, (int, float))
+                and writing_score >= 55
+                and (
+                    _component_score(writing_components, "unsupported_claim_risk") >= 70
+                    or _component_score(writing_components, "source_grounding_risk") >= 70
+                    or _component_score(writing_components, "broad_claim_risk") >= 65
+                )
+            )
+        )
+    )
+
     if ai_score >= 65 or tier == "RED" or (ai_score >= 60 and high_quality) or high_component_alignment:
         return {
-            "label": "AI-Generated Signals",
-            "short_label": "AI-Generated",
-            "summary": "High AI-style signal strength across the detect pipeline.",
+            "label": "AI-Generated / AI-Paraphrased Signals",
+            "short_label": "AI Signals",
+            "summary": "High AI-style signal strength across the detect pipeline, including patterns consistent with generated or AI-paraphrased text.",
             "confidence": (badge or {}).get("confidence") or "",
             "disclaimer": "This rating summarizes DraftProof detector signals. It is not proof of authorship.",
         }
-    if ai_score >= 48 or tier == "ORANGE":
+    if likely_component_alignment:
         return {"label": "Likely AI", "short_label": "Likely AI"}
     if ai_score >= 32 or tier == "AMBER":
         return {"label": "Possible AI-Assisted", "short_label": "Possible AI"}
-    if ai_score >= 18:
+    if ai_score >= 20:
         return {"label": "Unlikely AI", "short_label": "Unlikely AI"}
-    return {"label": "Human-Likely", "short_label": "Human"}
+    return {
+        "label": "Low AI Signal",
+        "short_label": "Low Signal",
+        "summary": "AI-style signal strength is below the level DraftProof surfaces as an authorship concern.",
+        "disclaimer": "Scores under 20% have a higher false-positive risk and should not be treated as an AI finding.",
+    }
 
 
 _TIER_BADGE = {

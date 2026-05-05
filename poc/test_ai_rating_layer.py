@@ -23,11 +23,11 @@ def assert_true(value, message):
 
 
 cases = [
-    (0.10, Tier.GREEN, "human_likely", "Human-Likely"),
+    (0.10, Tier.GREEN, "low_ai_signal", "Low AI Signal"),
     (0.24, Tier.GREEN, "unlikely_ai", "Unlikely AI"),
     (0.39, Tier.AMBER, "possible_ai_assisted", "Possible AI-Assisted"),
-    (0.55, Tier.ORANGE, "likely_ai", "Likely AI"),
-    (0.72, Tier.RED, "ai_generated_signals", "AI-Generated Signals"),
+    (0.55, Tier.ORANGE, "possible_ai_assisted", "Possible AI-Assisted"),
+    (0.72, Tier.RED, "ai_generated_signals", "AI-Generated / AI-Paraphrased Signals"),
 ]
 
 for score, tier, code, label in cases:
@@ -42,6 +42,28 @@ for score, tier, code, label in cases:
     assert_equal(rating["label"], label, f"{score} label")
     assert_equal(rating["is_verdict"], False, "rating is not a verdict")
     assert_true("not proof" in rating["disclaimer"], "rating carries authorship disclaimer")
+
+low_signal = derive_authorship_rating(
+    ai_score=0.12,
+    ai_tier=Tier.GREEN,
+    writing_quality_score=0.20,
+    writing_quality_tier=QualityTier.LOW,
+    confidence=Confidence.HIGH,
+)
+assert_true(
+    any("under 20%" in note for note in low_signal["caution_notes"]),
+    "low AI signal includes under-20 false-positive caution",
+)
+
+aligned_likely = derive_authorship_rating(
+    ai_score=0.55,
+    ai_tier=Tier.ORANGE,
+    writing_quality_score=0.56,
+    writing_quality_tier=QualityTier.REVIEW,
+    confidence=Confidence.HIGH,
+    ai_components={"topk_pattern": 0.72},
+)
+assert_equal(aligned_likely["code"], "likely_ai", "48-60 likely AI requires aligned supporting signal")
 
 verified = derive_authorship_rating(
     ai_score=0.05,
@@ -106,7 +128,7 @@ render_fallback = _authorship_rating_from_badge({
 })
 assert_equal(
     render_fallback["label"],
-    "AI-Generated Signals",
+    "AI-Generated / AI-Paraphrased Signals",
     "detect PDF renderer derives missing authorship rating from score fields",
 )
 
@@ -126,7 +148,7 @@ render_component_fallback = _authorship_rating_from_badge({
 })
 assert_equal(
     render_component_fallback["label"],
-    "AI-Generated Signals",
+    "AI-Generated / AI-Paraphrased Signals",
     "detect PDF renderer uses aligned component evidence for humaniser profile",
 )
 

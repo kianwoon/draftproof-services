@@ -59,20 +59,36 @@ function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiCompon
       (metricValue(writingComponents.broad_claim_risk) || 0) >= 70
     )
   );
+  const likelyComponentAlignment = (
+    percent >= 48 &&
+    (
+      (metricValue(aiComponents.topk_pattern) || 0) >= 70 ||
+      (metricValue(aiComponents.generic_assertion_risk) || 0) >= 70 ||
+      (
+        writingPercent != null &&
+        writingPercent >= 55 &&
+        (
+          (metricValue(writingComponents.unsupported_claim_risk) || 0) >= 70 ||
+          (metricValue(writingComponents.source_grounding_risk) || 0) >= 70 ||
+          (metricValue(writingComponents.broad_claim_risk) || 0) >= 65
+        )
+      )
+    )
+  );
 
   if (percent >= 65 || tier === 'red' || (percent >= 60 && writingPercent != null && writingPercent >= 65) || highComponentAlignment) {
-    return { label: 'AI-Generated Signals', short_label: 'AI-Generated' };
+    return { label: 'AI-Generated / AI-Paraphrased Signals', short_label: 'AI Signals' };
   }
-  if (percent >= 48 || tier === 'orange') {
+  if (likelyComponentAlignment) {
     return { label: 'Likely AI', short_label: 'Likely AI' };
   }
   if (percent >= 32 || tier === 'amber' || tier === 'moderate') {
     return { label: 'Possible AI-Assisted', short_label: 'Possible AI' };
   }
-  if (percent >= 18) {
+  if (percent >= 20) {
     return { label: 'Unlikely AI', short_label: 'Unlikely AI' };
   }
-  return { label: 'Human-Likely', short_label: 'Human' };
+  return { label: 'Low AI Signal', short_label: 'Low Signal' };
 }
 
 function formatSignedDelta(original, next) {

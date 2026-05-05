@@ -232,27 +232,42 @@ def derive_authorship_rating(
             or clamp(writing_components.get("broad_claim_risk")) >= 0.70
         )
     )
+    likely_component_alignment = (
+        ai_score >= 0.48
+        and (
+            clamp(ai_components.get("topk_pattern")) >= 0.70
+            or clamp(ai_components.get("generic_assertion_risk")) >= 0.70
+            or (
+                writing_quality_score >= 0.55
+                and (
+                    clamp(writing_components.get("unsupported_claim_risk")) >= 0.70
+                    or clamp(writing_components.get("source_grounding_risk")) >= 0.70
+                    or clamp(writing_components.get("broad_claim_risk")) >= 0.65
+                )
+            )
+        )
+    )
 
     if verified_ai_provenance:
         code = "ai_generated"
     elif ai_score >= 0.65 or ai_tier == Tier.RED or near_red_humanised_profile or high_component_alignment:
         code = "ai_generated_signals"
-    elif ai_score >= 0.48 or ai_tier == Tier.ORANGE:
+    elif likely_component_alignment:
         code = "likely_ai"
     elif ai_score >= 0.32 or ai_tier == Tier.AMBER:
         code = "possible_ai_assisted"
-    elif ai_score >= 0.18:
+    elif ai_score >= 0.20:
         code = "unlikely_ai"
     else:
-        code = "human_likely"
+        code = "low_ai_signal"
 
     definitions = {
-        "human_likely": {
-            "label": "Human-Likely",
-            "short_label": "Human",
-            "risk_level": "very_low",
-            "summary": "Very low AI-style signal strength.",
-            "recommended_action": "No AI-focused rewrite is needed unless specific findings matter to the user.",
+        "low_ai_signal": {
+            "label": "Low AI Signal",
+            "short_label": "Low Signal",
+            "risk_level": "minimal",
+            "summary": "AI-style signal strength is below the level DraftProof surfaces as an authorship concern.",
+            "recommended_action": "Do not treat this as an AI concern; review only citation, quotation, or writing-quality findings if present.",
         },
         "unlikely_ai": {
             "label": "Unlikely AI",
@@ -276,10 +291,10 @@ def derive_authorship_rating(
             "recommended_action": "Prioritize paragraph-level grounding, source links, concrete examples, and final full-scan gating.",
         },
         "ai_generated_signals": {
-            "label": "AI-Generated Signals",
-            "short_label": "AI-Generated",
+            "label": "AI-Generated / AI-Paraphrased Signals",
+            "short_label": "AI Signals",
             "risk_level": "very_high",
-            "summary": "High AI-style signal strength across the detect pipeline.",
+            "summary": "High AI-style signal strength across the detect pipeline, including patterns consistent with generated or AI-paraphrased text.",
             "recommended_action": "Preserve the original unless revision produces a clearly better final scan; use manual evidence additions first.",
         },
         "ai_generated": {
@@ -303,6 +318,8 @@ def derive_authorship_rating(
     })
 
     caution_notes = []
+    if code == "low_ai_signal":
+        caution_notes.append("Scores under 20% have a higher false-positive risk and should not be treated as an AI finding.")
     if confidence == Confidence.LOW:
         caution_notes.append("Low confidence: text length or available signals are limited.")
     if human_provenance_positive:
