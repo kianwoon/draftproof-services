@@ -602,6 +602,17 @@ assert_test(
     bool(embedded_evident_reason),
     "paragraph coherence guard rejects formal density-rebuild phrasing",
 )
+especially_clear_reason = _paragraph_coherence_reject_reason(
+    "It sits inside the way the skill is taught.",
+    "Inclusive learning design is part of how technical skills are taught, not separate from them, and this is especially clear from my experience teaching Certificate III Hairdressing.",
+    "In adult VET hairdressing training, inclusive learning design should not sit outside technical skill teaching.",
+    "Learners move from watching a demonstration to producing a controlled haircut themselves.",
+    ["inclusive learning", "technical skills", "haircut", "learners"],
+)
+assert_test(
+    bool(especially_clear_reason),
+    "paragraph coherence guard rejects especially-clear experience phrasing",
+)
 current_learning_reason = _paragraph_coherence_reject_reason(
     "In the contemporary education environment, school is no longer the only place to acquire knowledge.",
     "School remains a part of education, but many now get knowledge from other places in the current learning environment.",

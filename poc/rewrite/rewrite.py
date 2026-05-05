@@ -1240,8 +1240,11 @@ def _paragraph_coherence_reject_reason(
         r"\bhow this relationship works\b",
         r"\bembedded within\b",
         r"\bespecially evident\b",
+        r"\bespecially clear\b",
         r"\bexecut(?:e|es|ed|ing) a controlled\b",
         r"\bshift(?:s|ed|ing)? from observing\b",
+        r"\bfrom my experience teaching\b",
+        r"\bpart of how technical skills are taught\b",
     ]
     for pattern in unsupported_additions:
         match = re.search(pattern, candidate_sentence, re.I)
@@ -1610,9 +1613,12 @@ def _generic_polish_count(text: str) -> int:
         r"\bresearch backing\b",
         r"\bembedded within\b",
         r"\bespecially evident\b",
+        r"\bespecially clear\b",
         r"\bexecut(?:e|es|ed|ing)\b",
         r"\bobserv(?:e|es|ed|ing) a demonstration\b",
         r"\bshift(?:s|ed|ing)? from observing\b",
+        r"\bfrom my experience teaching\b",
+        r"\bpart of how technical skills are taught\b",
         r"\bconstructing\b.{0,60}\brequires\b",
         r"\blearners?\s+(?:frequently|often|commonly)\s+(?:fail|struggle)\b",
         r"\btoward precise\b", r"\btoward professional\b",
@@ -2999,6 +3005,33 @@ def run_rewrite(
                 candidate_text = "\n\n".join(candidate_paragraphs)
         if not candidate_text:
             density_paragraph_pass["reason"] = "density_region_splice_failed"
+            return
+
+        component_ok, component_reason = _component_regression_check(current_text, candidate_text)
+        if not component_ok:
+            density_paragraph_pass["reason"] = f"document_component_regression {component_reason}"
+            manual_suggestions.append({
+                "finding_id": "density_paragraph_rebuild",
+                "finding_type": "qualifying_text_ai_density",
+                "risk_level": "high",
+                "scanner_target": "ai_generation",
+                "sentence_id": None,
+                "paragraph_role": "unknown",
+                "original_sentence": density_paragraph,
+                "suggested_sentence": density_candidate,
+                "rejection_reason": density_paragraph_pass["reason"],
+                "why_review_manually": (
+                    "This paragraph candidate may reduce AI density, but a whole-document writing-quality "
+                    "component regressed. Review manually before using it."
+                ),
+            })
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "paragraph": para_idx,
+                "note": "density paragraph pass rejected",
+                "rejection_reason": density_paragraph_pass["reason"],
+            })
             return
 
         voice_check = voice_guard.check(current_text, candidate_text)
