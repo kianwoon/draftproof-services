@@ -6,11 +6,20 @@ CACHE_DIR="${HF_HOME}/hub"
 # Model-specific marker so switching models triggers re-download
 MODEL_MARKER="${CACHE_DIR}/.model_ready_${MODEL}"
 
+# Keep CPU inference deterministic across worker instances. Koyeb/container
+# defaults can vary; the worker preload also calls torch.set_num_threads().
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
+export TORCH_NUM_THREADS="${TORCH_NUM_THREADS:-${OMP_NUM_THREADS}}"
+
 echo "[entrypoint] ============================================"
 echo "[entrypoint] DraftProof Worker Startup"
 echo "[entrypoint] HF_HOME=${HF_HOME}"
 echo "[entrypoint] Cache dir: ${CACHE_DIR}"
 echo "[entrypoint] PREDICTABILITY_MODEL=${MODEL}"
+echo "[entrypoint] OMP_NUM_THREADS=${OMP_NUM_THREADS}"
+echo "[entrypoint] MKL_NUM_THREADS=${MKL_NUM_THREADS}"
+echo "[entrypoint] TORCH_NUM_THREADS=${TORCH_NUM_THREADS}"
 echo "[entrypoint] Marker: ${MODEL_MARKER}"
 echo "[entrypoint] ============================================"
 

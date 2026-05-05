@@ -36,6 +36,37 @@ from celery.exceptions import SoftTimeLimitExceeded
 logger = logging.getLogger(__name__)
 
 
+def _configure_torch_threads(torch) -> int | None:
+    """Apply explicit Torch CPU thread settings when configured."""
+    raw_threads = (
+        os.environ.get("TORCH_NUM_THREADS")
+        or os.environ.get("OMP_NUM_THREADS")
+        or os.environ.get("MKL_NUM_THREADS")
+    )
+    if not raw_threads:
+        return None
+    try:
+        threads = int(raw_threads)
+    except ValueError:
+        logger.warning("Invalid TORCH_NUM_THREADS/OMP_NUM_THREADS value: %r", raw_threads)
+        return None
+    if threads <= 0:
+        return None
+    try:
+        torch.set_num_threads(threads)
+    except Exception:
+        logger.warning("Failed to set torch num threads to %s", threads, exc_info=True)
+    try:
+        torch.set_num_interop_threads(max(1, min(threads, 4)))
+    except RuntimeError:
+        # PyTorch can reject this after parallel work starts. Main inference
+        # threads are still controlled by set_num_threads above.
+        pass
+    except Exception:
+        logger.warning("Failed to set torch interop threads", exc_info=True)
+    return threads
+
+
 @worker_process_init.connect
 def _preload_predictability_model(**_kwargs):
     """Warm the GPT-2 scanner inside the Celery worker child process."""
@@ -47,6 +78,7 @@ def _preload_predictability_model(**_kwargs):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         import predictability.scanner as scanner_module
 
+        requested_threads = _configure_torch_threads(torch)
         model_name = scanner_module.resolve_predictability_model_name(
             os.environ.get("PREDICTABILITY_MODEL", "gpt2-medium")
         )
@@ -67,11 +99,12 @@ def _preload_predictability_model(**_kwargs):
             mkl_available = bool(getattr(torch.backends, "mkl", None) and torch.backends.mkl.is_available())
             openmp_available = bool(getattr(torch.backends, "openmp", None) and torch.backends.openmp.is_available())
             logger.info(
-                "[preload] Torch: version=%s MKL=%s OpenMP=%s threads=%s",
+                "[preload] Torch: version=%s MKL=%s OpenMP=%s threads=%s requested_threads=%s",
                 torch.__version__,
                 mkl_available,
                 openmp_available,
                 torch.get_num_threads(),
+                requested_threads,
             )
             sample_sentences = [
                 "Students practise the sectioning pattern before they cut.",
