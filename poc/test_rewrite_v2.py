@@ -41,6 +41,7 @@ from rewrite.rewrite import (
     _density_paragraph_prompt,
     _density_paragraph_reject_reason,
     _density_entity_only_drift,
+    _density_transformation_too_small,
     _density_repair_prompt,
     _splice_density_candidate,
     run_rewrite,
@@ -1108,6 +1109,9 @@ assert_test("qualifying_text_ai_density=82.0%" in density_prompt, "density promp
 assert_test("Certificate III Hairdressing" in density_prompt, "density prompt includes domain anchors")
 assert_test("Named entities that must remain unchanged" in density_prompt, "density prompt preserves named entities")
 assert_test("digital landscape" in density_prompt, "density prompt includes anti-polish examples")
+assert_test("sentence total reconstruction" in density_prompt.lower(), "density prompt asks for total reconstruction")
+assert_test("Change at least 70% of sentence openings" in density_prompt, "density prompt requires changed sentence openings")
+assert_test("challenge, phase, setting" in density_prompt, "density prompt forbids weak polished substitutions")
 density_repair_prompt = _density_repair_prompt(
     density_para,
     "Inclusive Learning Design in Certificate III Hairdressing is taught inside the haircutting task.",
@@ -1126,6 +1130,27 @@ assert_test(
     not _density_entity_only_drift("semantic_drift number_changed: '2024'"),
     "density entity downgrade does not allow number drift",
 )
+near_copy_density_candidate = density_para.replace(
+    "should not sit outside technical skill teaching",
+    "should not be separate from technical skill teaching",
+)
+assert_test(
+    _density_transformation_too_small(density_para, near_copy_density_candidate),
+    "density transformation guard catches weak paragraph polishing",
+)
+assert_test(
+    _density_paragraph_reject_reason(density_para, near_copy_density_candidate, density_context)
+    == "density_transformation_too_small",
+    "density guard rejects weak paragraph polishing",
+)
+transformation_repair_prompt = _density_repair_prompt(
+    density_para,
+    near_copy_density_candidate,
+    "density_transformation_too_small",
+    density_context,
+    density_plan,
+)
+assert_test("sentence footprint" in transformation_repair_prompt, "density repair prompt handles weak transformation")
 polish_repair_prompt = _density_repair_prompt(
     density_para,
     "This is especially true when learners move from observing a demonstration to cutting a controlled haircut themselves.",

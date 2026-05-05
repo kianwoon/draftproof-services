@@ -2404,13 +2404,18 @@ def _density_paragraph_prompt(
         "Density paragraph mitigation pass.",
         "Rewrite exactly this one paragraph, not the whole document.",
         "Goal: reduce dense AI-style signal by changing paragraph evidence flow, not by polishing vocabulary.",
-        "Keep the same facts, scope, order of ideas, and plain author voice.",
-        "Keep roughly the same coverage and sentence count. Do not summarize, compress, or skip steps.",
+        "Use sentence total reconstruction: discard the original syntax and rebuild the paragraph from the meaning.",
+        "Keep the same facts, scope, and plain author voice, but do not keep the same sentence route or clause order.",
+        "Keep roughly the same coverage. You may split, merge, shorten, or reorder sentences when the meaning remains intact.",
+        "Change at least 70% of sentence openings and linking phrases unless they are protected headings, names, citations, or unit codes.",
+        "Prefer concrete classroom/process wording: what the learner sees, does, waits for, checks, repeats, or corrects.",
+        "If the paragraph already uses I/my, keep that natural first-person stance where useful; otherwise do not invent personal experience.",
         "Do not add citations, names, dates, research claims, examples, procedures, or facts that are not already in the paragraph.",
         "Do not add, remove, rename, shorten, or paraphrase institution names, course names, people names, or place names.",
         "Prefer concrete words already present in the paragraph or nearby domain anchors.",
         "Avoid generic academic phrasing: crucial, significant, essential, landscape, framework, technical rigor, operational obstacles, visible learning framework, digital landscape.",
         "Also avoid formal rebuild phrasing such as embedded within, especially evident, especially true, from my experience teaching, executing, or observing a demonstration.",
+        "Avoid polished substitution words that keep the same footprint: challenge, phase, setting, influence, must, requires, addresses, supports, facilitates, enables, approach, solution.",
         "Avoid abstract noun stacks and broad claims. Do not make the paragraph smoother if that removes specificity.",
         "Output exactly one replacement paragraph. No numbering, bullets, quotes, headings, or commentary.",
         "Target paragraph:\n<TARGET>\n" + paragraph + "\n</TARGET>",
@@ -2454,6 +2459,39 @@ def _clean_density_paragraph_output(output: Optional[str], original_paragraph: s
     return text
 
 
+def _density_transformation_too_small(original_paragraph: str, candidate_paragraph: str) -> bool:
+    """Detect density rewrites that only polish the same paragraph footprint."""
+    orig_tokens = _match_tokens(original_paragraph.lower())
+    cand_tokens = _match_tokens(candidate_paragraph.lower())
+    if len(orig_tokens) < 30 or len(cand_tokens) < 25:
+        return False
+
+    token_ratio = SequenceMatcher(
+        None,
+        " ".join(orig_tokens),
+        " ".join(cand_tokens),
+        autojunk=False,
+    ).ratio()
+    if token_ratio >= 0.86:
+        return True
+
+    def _starts(text: str) -> List[str]:
+        starts: List[str] = []
+        for sentence in _split_sentences(text):
+            tokens = _match_tokens(sentence.lower())
+            if len(tokens) >= 5:
+                starts.append(" ".join(tokens[:5]))
+        return starts
+
+    orig_starts = _starts(original_paragraph)
+    cand_starts = set(_starts(candidate_paragraph))
+    if len(orig_starts) >= 4 and cand_starts:
+        shared = sum(1 for start in orig_starts if start in cand_starts)
+        if shared >= max(3, int(len(orig_starts) * 0.55)):
+            return True
+    return False
+
+
 def _density_paragraph_reject_reason(
     original_paragraph: str,
     candidate_paragraph: str,
@@ -2482,6 +2520,8 @@ def _density_paragraph_reject_reason(
     cand_coverage = _term_coverage(candidate_paragraph, anchors)
     if orig_coverage >= 3 and cand_coverage < max(1, int(orig_coverage * 0.60)):
         return f"domain_anchor_loss {orig_coverage}->{cand_coverage}"
+    if _density_transformation_too_small(original_paragraph, candidate_paragraph):
+        return "density_transformation_too_small"
     return ""
 
 
@@ -2539,6 +2579,12 @@ def _density_repair_prompt(
             "Rewrite in plainer author-owned wording. Prefer short, concrete sentences.",
             "Do not use: especially true, especially clear, embedded within, part of how, from my experience teaching, observing a demonstration, executing a controlled haircut.",
             "Keep the classroom/process details, but remove smoother academic framing.",
+        ])
+    if "density_transformation_too_small" in (rejection_reason or ""):
+        repair_lines.extend([
+            "The previous candidate kept too much of the original sentence footprint.",
+            "Rebuild it again by changing sentence openings, linking phrases, clause order, and sentence boundaries while preserving facts.",
+            "Do not solve this by synonym swaps. Move concrete process details to the front of sentences where natural.",
         ])
     return "\n".join(repair_lines)
 
@@ -3041,7 +3087,7 @@ def run_rewrite(
             density_reject_reason
             and density_candidate
             and re.search(
-                r"lost_named_entity|protected_span_lost|citation_lost|quote_lost|generic_polish_increase|component_regression|unsupported_abstraction",
+                r"lost_named_entity|protected_span_lost|citation_lost|quote_lost|generic_polish_increase|component_regression|unsupported_abstraction|density_transformation_too_small",
                 density_reject_reason,
             )
             and llm_calls_used < config.max_llm_calls
