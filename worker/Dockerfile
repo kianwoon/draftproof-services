@@ -19,7 +19,9 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 ENV HF_HOME=/app/hf_cache
 ENV PREDICTABILITY_MODEL=gpt2-medium
 
-# Copy worker code only — poc/ is pulled at runtime via git
+# Copy both poc/ and worker/ — poc/ baked in as fallback
+# Runtime git pull (if GIT_PAT set) overlays latest code on top
+COPY poc/ /app/poc/
 COPY worker/ /app/worker/
 
 # Install git for runtime code pulls

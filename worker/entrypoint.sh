@@ -15,32 +15,29 @@ echo "[entrypoint] Marker: ${MODEL_MARKER}"
 echo "[entrypoint] ============================================"
 
 # ── Pull latest poc/ code at runtime ──────────────────────────────
-# The Docker image bakes in worker/ but NOT poc/.
-# poc/ is cloned from GitHub so code-only deploys skip Docker rebuild.
+# poc/ is baked into the image as fallback. If GIT_PAT is set,
+# we try to git pull the latest code on top (for fast code-only deploys).
+# If git pull fails, we fall back to the baked-in copy.
 CODE_DIR="/app/poc"
 REPO_URL="${GIT_REPO_URL:-https://github.com/kianwoon/draftproof-services.git}"
 REPO_BRANCH="${GIT_REPO_BRANCH:-main}"
 
 if [ -n "${GIT_PAT}" ]; then
-    # Inject PAT into URL for private repo access
     AUTH_URL=$(echo "${REPO_URL}" | sed "s|https://|https://${GIT_PAT}@|")
+    echo "[entrypoint] Attempting git pull for latest poc/ code..."
+    if git clone --depth 1 --branch "${REPO_BRANCH}" "${AUTH_URL}" /tmp/draftproof-repo 2>/dev/null; then
+        rm -rf "${CODE_DIR}"
+        cp -a /tmp/draftproof-repo/poc "${CODE_DIR}"
+        rm -rf /tmp/draftproof-repo
+        CODE_SHA=$(cd "${CODE_DIR}" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        echo "[entrypoint] poc/ updated via git pull. SHA: ${CODE_SHA}"
+    else
+        echo "[entrypoint] Git pull failed — using baked-in poc/ code"
+        rm -rf /tmp/draftproof-repo 2>/dev/null || true
+    fi
 else
-    AUTH_URL="${REPO_URL}"
+    echo "[entrypoint] No GIT_PAT set — using baked-in poc/ code"
 fi
-
-if [ -d "${CODE_DIR}/.git" ]; then
-    echo "[entrypoint] Pulling latest poc/ code from ${REPO_BRANCH}..."
-    cd "${CODE_DIR}" && git fetch origin "${REPO_BRANCH}" && git reset --hard "origin/${REPO_BRANCH}"
-else
-    echo "[entrypoint] Cloning poc/ code from ${REPO_URL} (${REPO_BRANCH})..."
-    rm -rf "${CODE_DIR}"
-    git clone --depth 1 --branch "${REPO_BRANCH}" "${AUTH_URL}" /tmp/draftproof-repo
-    cp -a /tmp/draftproof-repo/poc "${CODE_DIR}"
-    rm -rf /tmp/draftproof-repo
-fi
-
-CODE_SHA=$(cd "${CODE_DIR}" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-echo "[entrypoint] poc/ code at SHA: ${CODE_SHA}"
 
 # Ensure cache dir exists
 mkdir -p "${CACHE_DIR}"
