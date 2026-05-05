@@ -2539,6 +2539,12 @@ def _density_local_signal_acceptance(
         )
     if risk_delta >= 0.025 or top10_delta >= 0.045:
         return True, "", signal
+    if risk_delta >= 0.006 and top10_delta >= -0.004:
+        return True, "density_local_risk_improved", signal
+    if top10_delta >= 0.010 and risk_delta >= -0.004:
+        return True, "density_local_top10_improved", signal
+    if risk_delta >= 0.004 and top10_delta >= 0.004:
+        return True, "", signal
     return (
         False,
         f"density_local_signal_not_improved risk:{orig_risk:.4f}->{cand_risk:.4f} top10:{orig_top10:.4f}->{cand_top10:.4f}",

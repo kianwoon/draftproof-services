@@ -1186,6 +1186,29 @@ local_bad_ok, local_bad_reason, _ = _density_local_signal_acceptance(
 )
 assert_test(not local_bad_ok, "density local signal gate rejects detector-regressing paragraph")
 assert_test("density_local_signal_regressed" in local_bad_reason, "density local signal rejection is explicit")
+class SlightRiskImprovementScanner:
+    def scan_text(self, text):
+        if "candidate" in text:
+            risk, top10 = 0.3480, 0.4306
+        else:
+            risk, top10 = 0.3583, 0.4447
+        sent = SimpleNamespace(
+            predictability_risk=risk,
+            top_10_ratio=top10,
+            avg_surprisal=3.0,
+            risk_label="medium",
+            sentence=text,
+        )
+        return {"sentences": [sent]}
+
+
+slight_ok, slight_reason, slight_signal = _density_local_signal_acceptance(
+    SlightRiskImprovementScanner(),
+    "original density paragraph",
+    "candidate density paragraph",
+)
+assert_test(slight_ok, "density local signal gate accepts measurable AI-risk improvement")
+assert_test(slight_signal["risk_delta"] > 0, "density local signal keeps measurable risk delta")
 local_repair_prompt = _density_repair_prompt(
     density_para,
     "bad candidate density paragraph",
