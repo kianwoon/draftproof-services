@@ -365,10 +365,13 @@ A GPT-2 language model scores each word by how likely it was to appear next, giv
 
 To reduce predictability, BREAK expected word paths without polishing the writing:
 - Do not just swap one word for a synonym.
+- For predictability findings, use Sentence Total Reconstruction: discard the original syntax, retain only the core technical keywords and claim, then rebuild a new one-sentence route from paragraph-supported context.
+- Expand context only with words or details already present in the target, neighboring sentences, paragraph excerpt, scan anchors, or allowed additions.
 - Keep the sentence grounded in the paragraph's existing concrete detail.
 - Preserve the same author voice, including plain wording and first-person classroom reflection when present.
 - Keep the author's word level. If the source says students, use students; do not upgrade to learners. If it says make/use/help, do not upgrade to constructing/requires/facilitates.
 - Prefer nearby concrete nouns/actions over new abstract academic vocabulary.
+- Do not imitate automated humanizer style; avoid random synonym swaps, inflated phrasing, or context-destroying paraphrase.
 
 VALID CANDIDATE CONTRACT:
 - The replacement must be supported by the target sentence or neighboring paragraph text.
@@ -841,10 +844,12 @@ def _rewrite_task_instruction(finding: Finding, max_chars: int) -> str:
     if _needs_structural_rewrite(finding):
         return (
             "Use the GPT-2 signal to produce ONE structurally different sentence. "
-        "Do not solve this with synonym swaps alone. Change clause order, sentence opening, "
-        "or the context around the flagged predictable tokens while preserving the same facts. "
-        f"MUST NOT exceed {max_chars} characters. "
-        "Follow the candidate-output format below."
+            "Use Sentence Total Reconstruction: do not preserve the original syntax; "
+            "retain the core technical keywords and claim, then rebuild the sentence route from supported paragraph context. "
+            "Do not solve this with synonym swaps alone. Change clause order, sentence opening, "
+            "or the context around the flagged predictable tokens while preserving the same facts. "
+            f"MUST NOT exceed {max_chars} characters. "
+            "Follow the candidate-output format below."
         )
     return (
         "Apply a narrow in-place edit to fix the finding above. "
@@ -883,6 +888,9 @@ def _candidate_task_instruction(
         "Each candidate must be ONE sentence and must replace only the <TARGET> sentence. "
         "This is detector risk mitigation, not writing improvement. "
         "Do not include explanations. "
+        "For predictability findings, apply Sentence Total Reconstruction: wipe the original sentence syntax, "
+        "retain only core technical keywords and the same claim, then rebuild a different sentence route using supported context. "
+        "Do not preserve the original phrase links just with synonyms. "
         "Do not make the sentence more formal, broader, smoother, or more academic. "
         "Do not make the idea sound more complete than the original. "
         "Keep the original word level: do not replace 'students' with 'learners', "
@@ -1295,14 +1303,15 @@ def _signal_driven_instruction(
     if finding.finding_type in ("medium_predictability", "high_predictability"):
         return (
             "Signal instruction: This is a common-word / predictable-path sentence. "
-            "Do not make it smoother. Rebuild it around a concrete observation, condition, or action already supported by the paragraph. "
+            "Do not make it smoother. Use Sentence Total Reconstruction: discard the original syntax, keep the core technical anchors and same claim, "
+            "then rebuild around a concrete observation, condition, or action already supported by the paragraph. "
             f"Use 1-3 relevant domain anchors if natural: {anchors}. "
             "Replace broad wording such as 'theory is there', 'many of them', 'not enough', 'can be effective', or 'at the same time' with a specific situation from the context."
         )
     if finding.finding_type in ("high_topk_predictability", "low_surprisal", "low_surprisal_pattern"):
         return (
             "Signal instruction: This is a top-k predictability pattern. "
-            "Change the sentence opening and word path, not just synonyms. "
+            "Use Sentence Total Reconstruction: change the sentence opening and word path, not just synonyms. "
             f"Start from a domain object, action, constraint, or observed situation using anchors such as: {anchors}."
         )
     if finding.finding_type in ("formulaic_sentence", "generic_phrase", "generic_formulaic_language"):
@@ -1408,7 +1417,7 @@ def _plan_rewrite_operation(
         ]
     elif has_long_clause and ("predictability" in ftype or "topk" in ftype or "surprisal" in ftype):
         operation = "shorten_and_reorder"
-        objective = "Cut filler and change clause order around the predictable path."
+        objective = "Use Sentence Total Reconstruction: cut filler, retain core anchors, and rebuild clause order around the predictable path."
         shapes = [
             "shorter sentence that cuts filler",
             "clause-reordered sentence using existing words",
@@ -1416,7 +1425,7 @@ def _plan_rewrite_operation(
         ]
     elif ftype in {"high_topk_predictability", "low_surprisal", "low_surprisal_pattern"}:
         operation = "change_opening_and_token_path"
-        objective = "Change the sentence opening and route around top-k problem tokens."
+        objective = "Use Sentence Total Reconstruction to change the sentence opening and route around top-k problem tokens."
         shapes = [
             "open with a nearby concrete anchor",
             "move the target claim after the concrete context",
@@ -1424,7 +1433,7 @@ def _plan_rewrite_operation(
         ]
     elif "predictability" in ftype and predictable_spans:
         operation = "rebuild_predictable_span"
-        objective = "Change the predictable span while keeping the same claim and local vocabulary."
+        objective = "Use Sentence Total Reconstruction: discard the predictable syntax while keeping the same claim and local vocabulary."
         shapes = [
             "minimal edit around the predictable span",
             "clause-reordered edit using paragraph anchors",
@@ -1432,7 +1441,7 @@ def _plan_rewrite_operation(
         ]
     elif "predictability" in ftype and problem_tokens:
         operation = "route_around_problem_tokens"
-        objective = "Avoid the exact common token route while preserving the same meaning."
+        objective = "Use Sentence Total Reconstruction to avoid the exact common token route while preserving the same meaning."
         shapes = [
             "minimal edit around problem tokens",
             "different sentence opening using a nearby anchor",
@@ -1461,6 +1470,7 @@ def _plan_rewrite_operation(
         "No new method words unless already present nearby.",
     ]
     allowed = [
+        "For predictability findings, wipe the original syntax and rebuild from retained core anchors.",
         "Change opening, clause order, rhythm, and local word path.",
         "Reuse words from the target, neighboring sentences, paragraph excerpt, domain anchors, and allowed additions.",
         "Keep the same author voice and detail level.",
@@ -2109,12 +2119,95 @@ def _text_overlap_score(needle: str, haystack: str) -> float:
     return overlap / max(len(needle_tokens), 1)
 
 
+def _density_region_score(region: str, items: List[Dict[str, Any]]) -> Tuple[float, Dict[str, Any]]:
+    word_count = len(re.findall(r"\b\w+\b", region))
+    score = min(word_count / 85.0, 2.0)
+    meta: Dict[str, Any] = {"word_count": word_count, "matched_items": 0}
+    region_lower = region.lower()
+    for item in items:
+        item_score = 0.0
+        for value in _raw_item_text_values(item):
+            item_score = max(item_score, _text_overlap_score(value, region))
+        item_text = " ".join(str(item.get(k, "")) for k in ("finding_type", "action_type", "title", "detail"))
+        if re.search(r"density|predictab|generic|unsupported|source|ground", item_text, re.I):
+            item_score += 0.35
+        if item_score >= 0.55:
+            meta["matched_items"] += 1
+            score += min(item_score, 4.0)
+
+    generic_count = _generic_polish_count(region)
+    if generic_count:
+        score += min(generic_count * 0.5, 2.0)
+        meta["generic_polish_count"] = generic_count
+    if re.search(r"\b(?:important|significant|essential|crucial|modern|today|overall)\b", region_lower):
+        score += 0.35
+    return score, meta
+
+
+def _density_region_candidates(
+    paragraph: str,
+    paragraph_index: int,
+    items: List[Dict[str, Any]],
+    max_words: int = 220,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return bounded density rewrite regions from a paragraph or long section."""
+    word_count = len(re.findall(r"\b\w+\b", paragraph))
+    if word_count <= max_words:
+        score, meta = _density_region_score(paragraph, items)
+        meta.update({
+            "paragraph_index": paragraph_index,
+            "region_type": "paragraph",
+            "score": round(score, 3),
+        })
+        return [(paragraph, meta)]
+
+    sentences = _split_sentences(paragraph)
+    if len(sentences) < 3:
+        clipped_words = paragraph.split()[:max_words]
+        region = " ".join(clipped_words)
+        score, meta = _density_region_score(region, items)
+        meta.update({
+            "paragraph_index": paragraph_index,
+            "region_type": "word_window",
+            "score": round(score, 3),
+            "source_word_count": word_count,
+        })
+        return [(region, meta)]
+
+    candidates: List[Tuple[str, Dict[str, Any]]] = []
+    for start in range(len(sentences)):
+        window: List[str] = []
+        total_words = 0
+        for sentence in sentences[start:]:
+            sent_words = len(sentence.split())
+            if window and total_words + sent_words > max_words:
+                break
+            window.append(sentence)
+            total_words += sent_words
+            if total_words >= 120:
+                break
+        if total_words < 45:
+            continue
+        region = " ".join(window)
+        score, meta = _density_region_score(region, items)
+        meta.update({
+            "paragraph_index": paragraph_index,
+            "region_type": "sentence_window",
+            "sentence_start": start,
+            "sentence_count": len(window),
+            "score": round(score, 3),
+            "source_word_count": word_count,
+        })
+        candidates.append((region, meta))
+    return candidates
+
+
 def _select_density_paragraph(
     text: str,
     rewrite_context: Optional[Any] = None,
     mitigation_plan: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, str, Dict[str, Any]]:
-    """Pick the paragraph most likely responsible for AI-density risk."""
+    """Pick the bounded paragraph/section region most responsible for density risk."""
     raw_json = getattr(rewrite_context, "raw_json", None) if rewrite_context else None
     paragraphs = _split_paragraphs(text)
     if not paragraphs:
@@ -2128,41 +2221,31 @@ def _select_density_paragraph(
     best_idx = -1
     best_score = -1.0
     best_meta: Dict[str, Any] = {}
+    best_region = ""
     for idx, paragraph in enumerate(paragraphs):
-        word_count = len(re.findall(r"\b\w+\b", paragraph))
-        if word_count < 45:
-            continue
-        score = min(word_count / 85.0, 2.0)
-        meta: Dict[str, Any] = {"word_count": word_count, "matched_items": 0}
-        paragraph_lower = paragraph.lower()
-        for item in items:
-            item_score = 0.0
-            for value in _raw_item_text_values(item):
-                item_score = max(item_score, _text_overlap_score(value, paragraph))
-            item_text = " ".join(str(item.get(k, "")) for k in ("finding_type", "action_type", "title", "detail"))
-            if re.search(r"density|predictab|generic|unsupported|source|ground", item_text, re.I):
-                item_score += 0.35
-            if item_score >= 0.55:
-                meta["matched_items"] += 1
-                score += min(item_score, 4.0)
-
-        generic_count = _generic_polish_count(paragraph)
-        if generic_count:
-            score += min(generic_count * 0.5, 2.0)
-            meta["generic_polish_count"] = generic_count
-        if re.search(r"\b(?:important|significant|essential|crucial|modern|today|overall)\b", paragraph_lower):
-            score += 0.35
-        if score > best_score:
+        for region, meta in _density_region_candidates(paragraph, idx, items):
+            if meta.get("word_count", 0) < 45:
+                continue
+            score = float(meta.get("score") or 0.0)
+            if score <= best_score:
+                continue
             best_idx = idx
             best_score = score
             best_meta = meta
+            best_region = region
     if best_idx < 0:
         candidates = [(i, p) for i, p in enumerate(paragraphs) if len(p.split()) >= 35]
         if not candidates:
             return -1, "", {}
         best_idx, best_para = max(candidates, key=lambda pair: len(pair[1].split()))
-        return best_idx, best_para, {"fallback": "longest_paragraph", "word_count": len(best_para.split())}
-    return best_idx, paragraphs[best_idx], best_meta
+        bounded = _density_region_candidates(best_para, best_idx, items, max_words=220)
+        if bounded:
+            best_region, best_meta = bounded[0]
+        else:
+            best_region, best_meta = best_para, {"word_count": len(best_para.split())}
+        best_meta.update({"fallback": "longest_paragraph"})
+        return best_idx, best_region, best_meta
+    return best_idx, best_region, best_meta
 
 
 def _density_component_lines(raw_json: Optional[Dict[str, Any]]) -> List[str]:
@@ -2203,6 +2286,7 @@ def _density_paragraph_prompt(
         "Rewrite exactly this one paragraph, not the whole document.",
         "Goal: reduce dense AI-style signal by changing paragraph evidence flow, not by polishing vocabulary.",
         "Keep the same facts, scope, order of ideas, and plain author voice.",
+        "Keep roughly the same coverage and sentence count. Do not summarize, compress, or skip steps.",
         "Do not add citations, names, dates, research claims, examples, procedures, or facts that are not already in the paragraph.",
         "Prefer concrete words already present in the paragraph or nearby domain anchors.",
         "Avoid generic academic phrasing: crucial, significant, essential, landscape, framework, technical rigor, operational obstacles, visible learning framework, digital landscape.",
@@ -2804,13 +2888,18 @@ def run_rewrite(
             })
             return
 
-        candidate_paragraphs = _split_paragraphs(current_text)
-        if not (0 <= para_idx < len(candidate_paragraphs)):
-            density_paragraph_pass["reason"] = "paragraph_index_invalid"
+        candidate_text = ""
+        if density_paragraph in current_text:
+            candidate_text = current_text.replace(density_paragraph, density_candidate, 1)
+        else:
+            candidate_paragraphs = _split_paragraphs(current_text)
+            if 0 <= para_idx < len(candidate_paragraphs):
+                candidate_paragraphs[para_idx] = density_candidate
+                candidate_text = "\n\n".join(candidate_paragraphs)
+        if not candidate_text:
+            density_paragraph_pass["reason"] = "density_region_splice_failed"
             return
 
-        candidate_paragraphs[para_idx] = density_candidate
-        candidate_text = "\n\n".join(candidate_paragraphs)
         voice_check = voice_guard.check(current_text, candidate_text)
         if not voice_check.accepted:
             density_paragraph_pass["reason"] = f"voice_eroded {voice_check.reject_reason}"
@@ -3779,7 +3868,7 @@ def run_rewrite(
                         })
                 else:
                     density_paragraph_pass["reason"] = "paragraph_index_invalid"
-    elif density_score >= 70.0:
+    elif density_score >= 70.0 and not density_paragraph_pass.get("attempted"):
         if loop_rewrite_fn is None:
             density_paragraph_pass["reason"] = "no_llm_available"
         elif llm_calls_used >= config.max_llm_calls:

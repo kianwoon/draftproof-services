@@ -491,12 +491,16 @@ assert_test(operation["operation"] == "rebuild_predictable_span", "signals choos
 operation_lines = "\n".join(_rewrite_operation_lines(operation))
 assert_test("Operation problem tokens" in operation_lines, "operation prompt exposes problem tokens")
 assert_test("Forbidden operation moves" in operation_lines, "operation prompt exposes forbidden moves")
+assert_test("Sentence Total Reconstruction" in operation_lines, "operation prompt names total reconstruction mode")
 operation_prompt = _candidate_task_instruction(
     Finding(finding_type="medium_predictability", risk_level="medium", evidence_strength="moderate", detail="", evidence="", recommendation="", suggested_action_type=""),
     180,
     operation,
 )
 assert_test("minimal edit around the predictable span" in operation_prompt, "candidate shapes follow rewrite operation")
+assert_test("Sentence Total Reconstruction" in operation_prompt, "candidate prompt names total reconstruction mode")
+assert_test("wipe the original sentence syntax" in operation_prompt, "candidate prompt asks to discard original syntax")
+assert_test("retain only core technical keywords" in operation_prompt, "candidate prompt preserves core anchors")
 
 long_operation = _plan_rewrite_operation(
     finding=Finding(
@@ -1033,6 +1037,39 @@ bad_density_candidate = (
 assert_test(
     bool(_density_paragraph_reject_reason(density_para, bad_density_candidate, density_context)),
     "density guard rejects polished abstraction patterns",
+)
+
+long_density_text = (
+    "Opening note before the dense section.\n\n"
+    + " ".join(
+        f"Background sentence {i} keeps the earlier section moving without much scanner relevance."
+        for i in range(1, 18)
+    )
+    + " Inclusive Learning Design in Certificate III Hairdressing is important because it helps all learners succeed "
+      "in a modern learning environment. This shows that teachers should provide support and guidance while using "
+      "technology and different methods. Overall, the approach creates better outcomes for students while still "
+      "covering the required salon skills. "
+    + " ".join(
+        f"Later sentence {i} continues a different part of the essay without needing the first mitigation pass."
+        for i in range(1, 18)
+    )
+)
+long_density_idx, long_density_region, long_density_meta = _select_density_paragraph(
+    long_density_text,
+    density_context,
+    density_plan,
+)
+assert_test(
+    len(long_density_region.split()) < 230,
+    "density selector uses bounded window inside oversized paragraph",
+)
+assert_test(
+    long_density_meta.get("region_type") == "sentence_window",
+    "density selector records sentence-window region type",
+)
+assert_test(
+    "Inclusive Learning Design in Certificate III Hairdressing" in long_density_region,
+    "density window keeps scan-matched paragraph content",
 )
 
 density_first_finding = Finding(
