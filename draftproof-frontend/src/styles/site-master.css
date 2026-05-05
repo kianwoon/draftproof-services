@@ -3637,7 +3637,9 @@ th {
 /* Summary bar */
 .report-summary-bar {
   display: grid;
-  grid-template-columns: auto repeat(6, 1fr);
+  grid-template-columns: minmax(150px, 1.25fr);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(86px, 1fr);
   align-items: center;
   padding: 1.25rem 0;
   background: rgba(255, 255, 255, .88);
@@ -4360,6 +4362,9 @@ th {
   .report-hero-info h1 { font-size: clamp(2.2rem, 12vw, 3.3rem); }
   .report-summary-bar,
   .report-rewrite-summary-bar {
+    grid-template-columns: 1fr;
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
     gap: 1rem;
     padding: 1.2rem;
   }
