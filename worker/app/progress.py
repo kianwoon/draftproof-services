@@ -1,6 +1,7 @@
 """Ephemeral progress publishing for worker jobs."""
 
 import logging
+import ssl
 from datetime import datetime, timezone
 
 import redis
@@ -19,7 +20,7 @@ def _redis_client():
     if _client is None:
         kwargs = {"decode_responses": True}
         if settings.REDIS_URL.startswith("rediss://"):
-            kwargs["ssl_cert_reqs"] = None
+            kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
         _client = redis.Redis.from_url(settings.REDIS_URL, **kwargs)
     return _client
 

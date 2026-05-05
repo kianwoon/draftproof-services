@@ -589,7 +589,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
     from .config import settings as worker_settings
     import tempfile
 
-    def publish_progress(status: str, percent: int | None = None, message: str | None = None, error: str | None = None) -> None:
+    def publish_progress(
+        status: str,
+        percent: int | None = None,
+        message: str | None = None,
+        error: str | None = None,
+    ) -> None:
         publish_rewrite_progress(
             rewrite_id,
             status=status,
@@ -634,7 +639,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 error="Original report not found in R2",
                 progress_message="Original report not found",
             )
-            publish_progress("failed", 10, "Original report not found", "Original report not found in R2")
+            publish_progress(
+                "failed",
+                10,
+                "Original report not found",
+                "Original report not found in R2",
+            )
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "report not found"}
 
@@ -779,7 +789,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     error=result.get("message", "Rewrite not needed"),
                     progress_message="Rewrite not needed",
                 )
-                publish_progress("failed", 40, "Rewrite not needed", result.get("message", "Rewrite not needed"))
+                publish_progress(
+                    "failed",
+                    40,
+                    "Rewrite not needed",
+                    result.get("message", "Rewrite not needed"),
+                )
                 release_rewrite_credits(rewrite_id)
                 return {"status": "skipped"}
 
@@ -871,7 +886,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             error=f"Rewrite timed out ({timeout_minutes} min limit)",
             progress_message="Rewrite timed out",
         )
-        publish_progress("failed", None, "Rewrite timed out", f"Rewrite timed out ({timeout_minutes} min limit)")
+        publish_progress(
+            "failed",
+            None,
+            "Rewrite timed out",
+            f"Rewrite timed out ({timeout_minutes} min limit)",
+        )
         release_rewrite_credits(rewrite_id)
         return {"status": "failed", "error": "timeout"}
     except Exception as e:
