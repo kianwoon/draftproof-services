@@ -1901,8 +1901,9 @@ th {
 
 .landing-footer {
   padding: 28px clamp(24px, 4vw, 48px);
-  background: #07131F;
-  color: rgba(255, 255, 255, .44);
+  background: var(--surface-soft);
+  color: var(--muted);
+  border-top: .5px solid rgba(13, 27, 42, .08);
 }
 
 .landing-footer-inner {
@@ -1915,7 +1916,7 @@ th {
 .footer-wordmark {
   display: inline-flex;
   margin-bottom: 10px;
-  color: rgba(255, 255, 255, .72);
+  color: var(--ink);
   font-size: 14px;
   font-weight: 500;
 }
@@ -1923,7 +1924,7 @@ th {
 .landing-footer p {
   max-width: 620px;
   margin: 0;
-  color: rgba(255, 255, 255, .28);
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -1932,12 +1933,12 @@ th {
   gap: 28px;
   flex-wrap: wrap;
   justify-content: flex-end;
-  color: rgba(255, 255, 255, .36);
+  color: var(--muted);
   font-size: 13px;
 }
 
 .landing-footer a:hover {
-  color: rgba(255, 255, 255, .78);
+  color: var(--ink);
 }
 
 @media (max-width: 900px) {
@@ -2010,9 +2011,11 @@ th {
 }
 
 .app-hero-dark {
-  background: var(--navy-950);
-  color: #fff;
-  border-color: rgba(255, 255, 255, .10);
+  background: var(--surface);
+  color: var(--ink);
+  border-color: rgba(13, 27, 42, .07);
+  border-left: 3px solid var(--green);
+  border-radius: 0 16px 16px 0;
 }
 
 .app-hero h1 {
@@ -2028,23 +2031,23 @@ th {
 }
 
 .app-hero-dark h1 {
-  color: #fff;
+  color: var(--ink);
 }
 
 .app-hero-dark .eyebrow {
-  color: rgba(255, 255, 255, .35);
+  color: var(--muted);
 }
 
 .app-hero-dark p {
-  color: rgba(255, 255, 255, .62);
+  color: var(--muted);
 }
 
 .app-hero-stat {
   min-width: min(100%, 260px);
   padding: 14px;
-  border: .5px solid rgba(255, 255, 255, .12);
+  border: .5px solid rgba(58, 168, 118, .24);
   border-radius: 10px;
-  background: rgba(255, 255, 255, .06);
+  background: rgba(58, 168, 118, .10);
 }
 
 .app-hero:not(.app-hero-dark) .app-hero-stat {
@@ -2055,7 +2058,7 @@ th {
 .app-hero-stat span,
 .app-hero-stat small {
   display: block;
-  color: rgba(255, 255, 255, .42);
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -2074,12 +2077,24 @@ th {
 .app-hero-stat strong {
   display: block;
   margin-bottom: 5px;
-  color: #fff;
+  color: var(--green-dark);
   font-size: 1.35rem;
   font-weight: 600;
 }
 
 .app-hero:not(.app-hero-dark) .app-hero-stat strong {
+  color: var(--ink);
+}
+
+.app-hero-dark .btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: rgba(13, 27, 42, .20);
+}
+
+.app-hero-dark .btn-ghost:hover {
+  background: rgba(13, 27, 42, .04);
+  border-color: rgba(13, 27, 42, .32);
   color: var(--ink);
 }
 
@@ -2117,8 +2132,11 @@ th {
   margin-bottom: 24px;
   padding: 28px;
   border-radius: 16px;
-  background: var(--navy-950);
-  color: #fff;
+  background: var(--surface);
+  color: var(--ink);
+  border: .5px solid rgba(13, 27, 42, .07);
+  border-left: 3px solid var(--green);
+  border-radius: 0 16px 16px 0;
 }
 
 .dash-welcome {
@@ -2134,7 +2152,7 @@ th {
   border-radius: 50%;
   background: rgba(58, 168, 118, .15);
   border: .5px solid rgba(58, 168, 118, .30);
-  color: #fff;
+  color: var(--green-dark);
   display: grid;
   place-items: center;
   font-size: 1.35rem;
@@ -2145,23 +2163,23 @@ th {
 .dash-avatar-img {
   background: none;
   object-fit: cover;
-  border: .5px solid rgba(255, 255, 255, .25);
+  border: .5px solid rgba(13, 27, 42, .12);
 }
 
 .dash-welcome h1 {
   font-size: clamp(1.8rem, 3vw, 2.45rem);
   line-height: 1.15;
   margin: 0 0 6px;
-  color: #fff;
+  color: var(--ink);
 }
 
 .dash-welcome .eyebrow {
   margin-bottom: 8px;
-  color: rgba(255, 255, 255, .35);
+  color: var(--muted);
 }
 
 .dash-email {
-  color: rgba(255, 255, 255, .60);
+  color: var(--muted);
   margin: 0;
   font-size: 0.9rem;
   overflow-wrap: anywhere;
@@ -2173,9 +2191,9 @@ th {
   gap: 18px;
   min-width: min(100%, 320px);
   padding: 14px;
-  border: .5px solid rgba(255, 255, 255, .12);
+  border: .5px solid rgba(58, 168, 118, .24);
   border-radius: 10px;
-  background: rgba(255, 255, 255, .06);
+  background: rgba(58, 168, 118, .10);
 }
 
 .dash-hero-panel div {
@@ -2185,7 +2203,7 @@ th {
 .dash-hero-panel span {
   display: block;
   margin-bottom: 5px;
-  color: rgba(255, 255, 255, .40);
+  color: var(--muted);
   font-size: 11px;
   font-weight: 500;
   letter-spacing: .8px;
@@ -2193,7 +2211,7 @@ th {
 }
 
 .dash-hero-panel strong {
-  color: #fff;
+  color: var(--green-dark);
   font-size: 1.05rem;
   font-weight: 600;
 }
@@ -2466,11 +2484,11 @@ th {
 }
 
 .pricing-hero h1 {
-  color: #fff;
+  color: var(--ink);
 }
 
 .pricing-lead {
-  color: rgba(255, 255, 255, .62);
+  color: var(--muted);
   font-size: 1.05rem;
   margin: 0;
 }
@@ -2968,37 +2986,38 @@ th {
 
 .global-footer-wrap {
   flex-shrink: 0;
-  background: var(--navy-950);
-  color: #fff;
+  background: var(--surface-soft);
+  color: var(--muted);
   padding: 0 clamp(1.25rem, 4vw, 4rem) 2rem;
+  border-top: .5px solid rgba(13, 27, 42, .08);
 }
 
 .global-footer-wrap .site-footer {
   max-width: var(--max-w);
   margin: 0 auto;
   padding: 2.5rem 0 1rem;
-  border-top: 1px solid rgba(255, 255, 255, .1);
+  border-top: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1.25rem;
 }
 
-.global-footer-wrap .footer-brand { color: #fff; }
+.global-footer-wrap .footer-brand { color: var(--ink); }
 
 .global-footer-wrap .footer-links {
   display: flex;
   gap: 1.5rem;
   font-size: .88rem;
-  color: rgba(255, 255, 255, .7);
+  color: var(--muted);
   justify-content: center;
 }
 
-.global-footer-wrap .footer-links a:hover { color: #fff; }
+.global-footer-wrap .footer-links a:hover { color: var(--ink); }
 
 .global-footer-wrap .site-footer p {
   text-align: center;
-  color: rgba(255, 255, 255, .68);
+  color: var(--muted);
   font-size: .82rem;
   line-height: 1.5;
   max-width: 540px;
@@ -4251,12 +4270,12 @@ th {
 }
 
 .why-hero h1 {
-  color: #fff;
+  color: var(--ink);
   margin: 0 0 16px;
 }
 
 .why-hero .lead {
-  color: rgba(255, 255, 255, .62);
+  color: var(--muted);
   font-size: 1.05rem;
   line-height: 1.7;
   max-width: 760px;
@@ -4428,12 +4447,12 @@ th {
 }
 
 .legal-hero h1 {
-  color: #fff;
+  color: var(--ink);
   margin: 0 0 16px;
 }
 
 .legal-hero .lead {
-  color: rgba(255, 255, 255, .62);
+  color: var(--muted);
   font-size: 1.05rem;
   line-height: 1.7;
   max-width: 760px;
