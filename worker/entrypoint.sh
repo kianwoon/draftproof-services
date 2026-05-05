@@ -61,24 +61,7 @@ else
     touch "${MODEL_MARKER}"
 fi
 
-# Preload model into memory before Celery starts (saves ~2s per first task)
-echo "[entrypoint] Preloading ${MODEL} into memory..."
-python3 -c "
-import sys
-sys.path.insert(0, '/app')
-sys.path.insert(0, '/app/poc')
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import torch
-model = AutoModelForCausalLM.from_pretrained('${MODEL}', dtype=torch.float32)
-tokenizer = AutoTokenizer.from_pretrained('${MODEL}')
-from predictability.scanner import PredictabilityScanner
-s = PredictabilityScanner.__new__(PredictabilityScanner)
-s._model = model
-s._tokenizer = tokenizer
-s._device = 'cpu'
-PredictabilityScanner._shared = s
-print('[preload] Preloaded model stored in scanner module cache')
-"
+echo "[entrypoint] Model cache ready. Celery worker child will preload ${MODEL} before processing scans."
 
 echo "[entrypoint] Starting Celery worker..."
 cd /app/worker

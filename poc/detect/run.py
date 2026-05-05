@@ -89,15 +89,33 @@ class DetectionRunner:
         scanner_results: List[DetectResult] = []
         total_detectors = max(len(detectors), 1)
         for index, d in enumerate(detectors):
+            start_percent = 15 + int((index / total_detectors) * 60)
+            done_percent = 15 + int(((index + 1) / total_detectors) * 60)
             if progress_callback:
-                start_percent = 15 + int((index / total_detectors) * 60)
                 progress_callback(start_percent, f"Running {d.name} scanner")
+
+            detector_kwargs = kwargs
+            if progress_callback:
+                detector_kwargs = dict(kwargs)
+
+                def detector_progress(
+                    percent: int,
+                    message: str,
+                    *,
+                    _start=start_percent,
+                    _end=done_percent,
+                ) -> None:
+                    pct = max(0, min(100, int(percent)))
+                    mapped = _start + int((pct / 100) * max(_end - _start, 1))
+                    progress_callback(max(_start, min(_end, mapped)), message)
+
+                detector_kwargs["progress_callback"] = detector_progress
+
             logger.info("Running scanner: %s", d.name)
-            result = d.detect(content, **kwargs)
+            result = d.detect(content, **detector_kwargs)
             logger.info("Scanner %s done — %d findings", d.name, len(result.findings))
             scanner_results.append(result)
             if progress_callback:
-                done_percent = 15 + int(((index + 1) / total_detectors) * 60)
                 progress_callback(done_percent, f"Finished {d.name} scanner")
             # Forward predictability sentence metrics to ai_generation scanner
             if d.__class__.__name__ == "PredictabilityDetector":

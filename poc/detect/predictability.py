@@ -148,9 +148,14 @@ class PredictabilityDetector(BaseDetector):
             self._scanner = PredictabilityScanner(model_name=self._model_name)
 
     def detect(self, content: str, **kwargs) -> DetectResult:
+        progress_callback = kwargs.get("progress_callback")
+        if progress_callback:
+            progress_callback(2, "Loading predictability model")
         self._ensure_scanner()
+        if progress_callback:
+            progress_callback(8, "Preparing text for predictability scan")
         body_text = _pre_filter_body(content)
-        result = self._scanner.scan_text(body_text)
+        result = self._scanner.scan_text(body_text, progress_callback=progress_callback)
 
         word_count = len(content.split())
         sentence_count = len(result.get("sentences", []))

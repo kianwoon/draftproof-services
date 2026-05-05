@@ -5,6 +5,7 @@ import sys
 import os
 import json
 import time
+import logging
 
 # Make poc/ importable — on Koyeb: /app/poc/, locally: ../../poc/
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +30,37 @@ from .db import (
     capture_rewrite_credits,
     release_rewrite_credits,
 )
+from celery.signals import worker_process_init
 from celery.exceptions import SoftTimeLimitExceeded
+
+logger = logging.getLogger(__name__)
+
+
+@worker_process_init.connect
+def _preload_predictability_model(**_kwargs):
+    """Warm the GPT-2 scanner inside the Celery worker child process."""
+    enabled = os.environ.get("DRAFTPROOF_PRELOAD_PREDICTABILITY", "1").lower()
+    if enabled in {"0", "false", "no"}:
+        return
+    try:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        import predictability.scanner as scanner_module
+
+        model_name = os.environ.get("PREDICTABILITY_MODEL", "gpt2")
+        if scanner_module._PRELOADED_MODEL is not None:
+            return
+        logger.info("Preloading predictability model in worker child: %s", model_name)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+        model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+        model.eval()
+        scanner_module._PRELOADED_MODEL = model
+        scanner_module._PRELOADED_TOKENIZER = tokenizer
+        logger.info("Predictability model preloaded in worker child: %s", model_name)
+    except Exception:
+        logger.warning("Failed to preload predictability model in worker child", exc_info=True)
 
 
 def _truncate_debug_value(value, limit: int = 320):
@@ -486,22 +517,46 @@ def scan_document(self, job_id: str, text: str) -> dict:
             job_id, status="processing",
             progress_percent=10, progress_message="Preparing scan",
         )
+        last_scan_progress = {
+            "redis_percent": 10,
+            "redis_updated_at": time.monotonic(),
+            "db_percent": 10,
+            "db_updated_at": time.monotonic(),
+        }
 
         from poc.detect_pipeline import run_detect
         import tempfile
 
         def report_progress(percent: int, message: str) -> None:
             pct = max(0, min(99, int(percent)))
-            update_job_status(
-                job_id,
-                "processing",
-                progress_percent=pct,
-                progress_message=message,
-            )
+            now = time.monotonic()
+            if (
+                pct <= last_scan_progress["redis_percent"]
+                and pct < 97
+                and now - last_scan_progress["redis_updated_at"] < 0.5
+            ):
+                return
             publish_scan_progress(
                 job_id, status="processing",
                 progress_percent=pct, progress_message=message,
             )
+            last_scan_progress["redis_percent"] = pct
+            last_scan_progress["redis_updated_at"] = now
+
+            should_persist = (
+                pct >= 97
+                or pct - last_scan_progress["db_percent"] >= 5
+                or now - last_scan_progress["db_updated_at"] >= 10.0
+            )
+            if should_persist:
+                update_job_status(
+                    job_id,
+                    "processing",
+                    progress_percent=pct,
+                    progress_message=message,
+                )
+                last_scan_progress["db_percent"] = pct
+                last_scan_progress["db_updated_at"] = now
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_name = os.environ.get("PREDICTABILITY_MODEL", "gpt2")

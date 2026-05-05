@@ -285,11 +285,13 @@ class PredictabilityScanner:
                 })
         return shifts
 
-    def scan_text(self, text: str) -> Dict[str, Any]:
+    def scan_text(self, text: str, progress_callback=None) -> Dict[str, Any]:
         sentences = self.split_sentences(text)
         eligible = [s for s in sentences if len(str(s).split()) >= 8]
         total = len(eligible)
         logger.info("Predictability scan: %d eligible sentences (of %d total) model=%s version=%s", total, len(sentences), self.model_name, SCANNER_VERSION)
+        if progress_callback:
+            progress_callback(10, f"Checking {total} sentence{'' if total == 1 else 's'} for predictability")
         results = []
         t0 = time.monotonic()
         for i, s in enumerate(eligible):
@@ -305,6 +307,14 @@ class PredictabilityScanner:
                     "Predictability progress: %d/%d sentences (%.1f/s, %.1fs elapsed)",
                     i + 1, total, rate, elapsed,
                 )
+            if progress_callback:
+                pct = 10 + int(((i + 1) / max(total, 1)) * 85)
+                progress_callback(
+                    pct,
+                    f"Checked {i + 1}/{total} predictability sentence{'' if total == 1 else 's'}",
+                )
+        if progress_callback:
+            progress_callback(96, "Reviewing predictability patterns")
         shifts = self.detect_style_shifts(results)
 
         valid = [r for r in results if r.error is None]
