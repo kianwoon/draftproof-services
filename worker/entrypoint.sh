@@ -69,7 +69,7 @@ sys.path.insert(0, '/app')
 sys.path.insert(0, '/app/poc')
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
-model = AutoModelForCausalLM.from_pretrained('${MODEL}', torch_dtype=torch.float32)
+model = AutoModelForCausalLM.from_pretrained('${MODEL}', dtype=torch.float32)
 tokenizer = AutoTokenizer.from_pretrained('${MODEL}')
 from predictability.scanner import PredictabilityScanner
 s = PredictabilityScanner.__new__(PredictabilityScanner)
