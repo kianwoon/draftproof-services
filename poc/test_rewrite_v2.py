@@ -43,6 +43,7 @@ from rewrite.rewrite import (
     _density_entity_only_drift,
     _density_transformation_too_small,
     _density_local_signal_acceptance,
+    _select_best_density_candidate,
     _density_repair_prompt,
     _splice_density_candidate,
     run_rewrite,
@@ -1209,6 +1210,53 @@ slight_ok, slight_reason, slight_signal = _density_local_signal_acceptance(
 )
 assert_test(slight_ok, "density local signal gate accepts measurable AI-risk improvement")
 assert_test(slight_signal["risk_delta"] > 0, "density local signal keeps measurable risk delta")
+
+
+class BestDensityCandidateScanner:
+    def scan_text(self, text):
+        if "During the training room task" in text:
+            risk, top10 = 0.44, 0.48
+        elif "technical accuracy issue" in text:
+            risk, top10 = 0.72, 0.80
+        else:
+            risk, top10 = 0.68, 0.76
+        sent = SimpleNamespace(
+            predictability_risk=risk,
+            top_10_ratio=top10,
+            avg_surprisal=3.0,
+            risk_label="medium",
+            sentence=text,
+        )
+        return {"sentences": [sent]}
+
+
+best_density_original = (
+    "The learner may keep cutting in the training room while the teacher watches each step "
+    "and checks the section."
+)
+weak_density_candidate = (
+    "This technical accuracy issue is visible in the learning framework and digital landscape."
+)
+strong_density_candidate = (
+    "During the training room task, the learner cuts each section while the teacher watches "
+    "and checks each step."
+)
+best_density_text, best_density_reason, best_density_evals = _select_best_density_candidate(
+    BestDensityCandidateScanner(),
+    best_density_original,
+    [
+        ("primary", weak_density_candidate),
+        ("ai_stronger", strong_density_candidate),
+    ],
+    None,
+)
+assert_test(best_density_text == strong_density_candidate, "density selector keeps strongest AI-reducing candidate")
+assert_test(best_density_reason == "", "density selector returns no rejection for accepted best candidate")
+assert_test(len(best_density_evals) == 2, "density selector records both candidate evaluations")
+assert_test(
+    any(item["label"] == "ai_stronger" and not item["rejection_reason"] for item in best_density_evals),
+    "density selector evaluation records accepted stronger candidate",
+)
 local_repair_prompt = _density_repair_prompt(
     density_para,
     "bad candidate density paragraph",

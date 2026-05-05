@@ -2617,6 +2617,63 @@ def _density_entity_only_drift(reason: str) -> bool:
     return bool(drift_bits) and all(bit.startswith("lost_named_entity:") for bit in drift_bits)
 
 
+def _select_best_density_candidate(
+    scanner: PredictabilityScanner,
+    original_paragraph: str,
+    candidates: List[Tuple[str, str]],
+    rewrite_context: Optional[Any],
+) -> Tuple[str, str, List[Dict[str, Any]]]:
+    """Pick the candidate with the strongest local AI-signal improvement."""
+    evaluations: List[Dict[str, Any]] = []
+    fallback_text = candidates[0][1] if candidates else ""
+    fallback_reason = "empty_candidate" if not fallback_text else ""
+    best_text = ""
+    best_score: Optional[float] = None
+
+    for label, candidate in candidates:
+        reject_reason = _density_paragraph_reject_reason(
+            original_paragraph,
+            candidate,
+            rewrite_context,
+            allow_polish_warning=True,
+        )
+        entity_warning = ""
+        if reject_reason and _density_entity_only_drift(reject_reason):
+            entity_warning = reject_reason
+            reject_reason = ""
+
+        local_signal: Dict[str, Any] = {}
+        if not reject_reason:
+            local_ok, local_reason, local_signal = _density_local_signal_acceptance(
+                scanner,
+                original_paragraph,
+                candidate,
+            )
+            if not local_ok:
+                reject_reason = local_reason
+
+        risk_delta = float(local_signal.get("risk_delta") or 0.0)
+        top10_delta = float(local_signal.get("top10_delta") or 0.0)
+        score = (risk_delta * 2.0) + top10_delta
+        evaluations.append({
+            "label": label,
+            "rejection_reason": reject_reason,
+            "entity_warning": entity_warning,
+            "local_signal": local_signal,
+            "score": round(score, 4),
+            "length": len(candidate or ""),
+        })
+        if label == "primary":
+            fallback_reason = reject_reason
+        if not reject_reason and (best_score is None or score > best_score):
+            best_text = candidate
+            best_score = score
+
+    if best_text:
+        return best_text, "", evaluations
+    return fallback_text, fallback_reason, evaluations
+
+
 def _density_repair_prompt(
     original_region: str,
     previous_candidate: str,
@@ -3161,17 +3218,42 @@ def run_rewrite(
             raw_density_output,
             density_paragraph,
         )
-        density_reject_reason = _density_paragraph_reject_reason(
+        density_candidates: List[Tuple[str, str]] = [("primary", density_candidate)]
+        if (
+            density_candidate
+            and llm_calls_used < config.max_llm_calls
+            and (time.monotonic() - rewrite_start_time) <= config.max_rewrite_seconds
+        ):
+            alternate_prompt = (
+                density_prompt
+                + "\n\nGenerate a DIFFERENT replacement paragraph for the same target. "
+                + "Choose the version with the strongest local AI-risk reduction, not the smoothest prose. "
+                + "Use different sentence openings and linking phrases from your previous answer. "
+                + "Keep the same facts, protected spans, named entities, course names, numbers, and citations. "
+                + "Output exactly one replacement paragraph."
+            )
+            llm_calls_used += 1
+            density_mitigation_llm_calls += 1
+            alternate_output = loop_rewrite_fn(density_paragraph, alternate_prompt)
+            alternate_candidate = _clean_density_paragraph_output(
+                alternate_output,
+                density_paragraph,
+            )
+            if alternate_candidate and alternate_candidate != density_candidate:
+                density_candidates.append(("ai_stronger", alternate_candidate))
+
+        density_candidate, density_reject_reason, density_candidate_evaluations = _select_best_density_candidate(
+            scanner,
             density_paragraph,
-            density_candidate,
+            density_candidates,
             rewrite_context,
-            allow_polish_warning=True,
         )
+        density_paragraph_pass["candidate_evaluations"] = density_candidate_evaluations
         if (
             density_reject_reason
             and density_candidate
             and re.search(
-                r"lost_named_entity|protected_span_lost|citation_lost|quote_lost|generic_polish_increase|component_regression|unsupported_abstraction|density_transformation_too_small",
+                r"lost_named_entity|protected_span_lost|citation_lost|quote_lost|generic_polish_increase|component_regression|unsupported_abstraction|density_transformation_too_small|density_local_signal_",
                 density_reject_reason,
             )
             and llm_calls_used < config.max_llm_calls
@@ -4715,17 +4797,28 @@ def run_rewrite(
     net_findings_fixed = original_finding_count - final_finding_count
     target_weight_delta = original_target_weight - final_target_weight
     ai_likelihood_delta = original_ai_likelihood - final_ai_likelihood
-    meaningful_global_improvement = (
-        net_findings_fixed >= 1
-        or target_weight_delta >= max(2.0, config.min_weighted_improvement)
-        or ai_likelihood_delta >= 0.01
-    )
+    density_ai_primary = float(density_paragraph_pass.get("density_score") or 0.0) >= 70.0
+    if density_ai_primary:
+        meaningful_global_improvement = (
+            ai_likelihood_delta >= 0.01
+            and not density_batch_gate_failed
+        )
+    else:
+        meaningful_global_improvement = (
+            net_findings_fixed >= 1
+            or target_weight_delta >= max(2.0, config.min_weighted_improvement)
+            or ai_likelihood_delta >= 0.01
+        )
     if current_text != content and not rolled_back_for_regression and not meaningful_global_improvement:
         rolled_back_for_regression = True
         rollback_reason = (
-            "rewrite produced no meaningful final-scan mitigation "
-            f"(ai_delta={ai_likelihood_delta:.4f}, target_weight_delta={target_weight_delta:.1f}, "
-            f"net_findings_fixed={net_findings_fixed})"
+            (
+                "density batch AI gate failed; final output preserved original "
+                if density_batch_gate_failed
+                else "rewrite produced no meaningful final-scan mitigation "
+            )
+            + f"(ai_delta={ai_likelihood_delta:.4f}, target_weight_delta={target_weight_delta:.1f}, "
+            + f"net_findings_fixed={net_findings_fixed})"
         )
         floor_reasons.append(FloorReason(
             finding_id="global_mitigation_gate",
