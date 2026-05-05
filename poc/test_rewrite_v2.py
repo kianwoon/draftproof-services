@@ -765,6 +765,50 @@ assert_test(
     "marked suggestions include source bridge structure",
 )
 assert_test(driver_plan["reference_patterns"][0]["component"] == "unsupported_claim_risk", "guided reference patterns prioritize evidence drivers")
+density_plan = build_mitigation_plan(
+    plan=None,
+    raw_json={
+        "ai_risk_badge": {
+            "ai_components": {
+                "qualifying_text_ai_density": 77.78,
+                "generic_assertion_risk": 90.0,
+            },
+            "writing_components": {
+                "unsupported_claim_risk": 80.0,
+                "source_grounding_risk": 70.0,
+            },
+        },
+        "rewrite_plan": {
+            "auto_target_context": [{
+                "finding": {
+                    "finding_id": "f001",
+                    "title": "medium_predictability",
+                    "sentence_id": "s001",
+                    "evidence": "This does not reduce the complexity of the task; rather, it clarifies the pathway toward competency.",
+                    "rewrite_context": {
+                        "paragraph_id": "p001",
+                        "paragraph_excerpt": (
+                            "The learner may keep cutting, but they cannot trace whether the problem came from the diagonal parting. "
+                            "This does not reduce the complexity of the task; rather, it clarifies the pathway toward competency."
+                        ),
+                    },
+                }
+            }]
+        },
+    },
+)
+assert_test(
+    any(item["component"] == "qualifying_text_ai_density" and item["bucket"] == "paragraph_rebuild" for item in density_plan["component_drivers"]),
+    "qualifying text density becomes paragraph rebuild driver",
+)
+assert_test(
+    any(item["action_type"] == "paragraph_density_rebuild" for item in density_plan["risk_mitigation_actions"]),
+    "density driver produces paragraph rebuild action",
+)
+assert_test(
+    any(item["action_type"] == "rebuild_paragraph_density" for item in density_plan["marked_content_suggestions"]),
+    "density driver produces marked paragraph rebuild suggestion",
+)
 guided_report = render_rewrite_report(
     summary={
         "no_text_change": True,

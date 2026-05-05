@@ -149,6 +149,10 @@ def _component_items(raw_json: Dict[str, Any]) -> List[Dict[str, Any]]:
         "broad_claim_risk": ("needs_source_or_example", "Replace broad claim with context-limited wording."),
         "lived_detail_risk": ("needs_source_or_example", "Add real process detail or classroom observation supplied by the author."),
         "citation_weakness_risk": ("needs_source_or_example", "Repair citation/source linkage manually."),
+        "qualifying_text_ai_density": (
+            "paragraph_rebuild",
+            "Rebuild high-density paragraphs with author-owned evidence, process detail, and varied paragraph roles.",
+        ),
         "paragraph_uniformity_risk": ("structure_guidance", "Vary paragraph structure and length at section level."),
         "signpost_paragraph_risk": ("structure_guidance", "Reduce formulaic signposting and revise paragraph openings."),
         "topk_pattern": ("auto_rewrite", "Review sentence structure; only keep edits if the final scan improves."),
@@ -233,6 +237,8 @@ def _score_mitigation_targets(component_drivers: List[Dict[str, Any]]) -> List[D
                 action = "Narrow broad claims to the exact class, unit, method, or observation."
             else:
                 action = driver.get("mitigation") or "Add author-supplied evidence or concrete detail."
+        elif bucket == "paragraph_rebuild":
+            action = "Rebuild the densest paragraphs around concrete evidence, author process, and narrower claims."
         elif bucket == "auto_rewrite":
             action = "Retry detector-gated sentence rewrite after evidence/source gaps are reduced."
         elif bucket == "structure_guidance":
@@ -250,9 +256,10 @@ def _score_mitigation_targets(component_drivers: List[Dict[str, Any]]) -> List[D
         })
     bucket_rank = {
         "needs_source_or_example": 0,
-        "structure_guidance": 1,
-        "auto_rewrite": 2,
-        "review_only": 3,
+        "paragraph_rebuild": 1,
+        "structure_guidance": 2,
+        "auto_rewrite": 3,
+        "review_only": 4,
     }
     return sorted(
         targets,
@@ -403,6 +410,19 @@ def _risk_mitigation_action_rule(component: str, bucket: str) -> Dict[str, str]:
                 "Predictability rewrite is more effective after broad unsupported claims are narrowed."
             ),
         },
+        "qualifying_text_ai_density": {
+            "action_type": "paragraph_density_rebuild",
+            "title": "Rebuild high-density paragraphs",
+            "user_input_needed": "Author-owned evidence: a real source, classroom observation, process step, decision, limitation, or example.",
+            "safe_edit_pattern": (
+                "For each dense paragraph, replace one broad claim route with: "
+                "[SPECIFIC CONTEXT] + [AUTHOR/SOURCE EVIDENCE] + [WHY IT MATTERS] + [LIMITED CONCLUSION]."
+            ),
+            "why_it_reduces_score": (
+                "This signal rises when many qualifying long-form sentences share the same polished, weakly grounded pattern. "
+                "Paragraph rebuilding changes the evidence route, not just the wording."
+            ),
+        },
     }
     default = {
         "action_type": "review_score_driver",
@@ -505,6 +525,16 @@ def _suggestion_rule(component: str) -> Dict[str, str]:
             ),
             "why_it_helps": "Adds visible author/process presence without silently inventing a story.",
             "user_note": "Only use this if the observation really happened.",
+        },
+        "qualifying_text_ai_density": {
+            "action_type": "rebuild_paragraph_density",
+            "title": "Rebuild one high-density paragraph",
+            "suggested_addition": (
+                "Rewrite this paragraph route around [SPECIFIC CONTEXT], [AUTHOR/SOURCE EVIDENCE], "
+                "[WHY THIS DETAIL MATTERS], and [LIMITED CONCLUSION]."
+            ),
+            "why_it_helps": "Targets the document-level AI density pattern by changing paragraph evidence flow, not just sentence wording.",
+            "user_note": "Replace every bracketed item with real evidence or author knowledge before using.",
         },
     }
     return rules.get(component, {
@@ -768,7 +798,7 @@ def _marked_content_suggestions(
     suggestions: List[Dict[str, Any]] = []
     claim_targets = _claim_targets(raw_json or {}, buckets)
     used_targets: set[int] = set()
-    needs_items = buckets.get("needs_source_or_example") or []
+    needs_items = (buckets.get("needs_source_or_example") or []) + (buckets.get("paragraph_rebuild") or [])
     excerpt_by_component: Dict[str, Dict[str, Any]] = {}
     for item in needs_items:
         component = str(item.get("finding_type") or "")
@@ -780,7 +810,7 @@ def _marked_content_suggestions(
     for target in _score_mitigation_targets(component_drivers):
         component = str(target.get("component") or "")
         bucket = str(target.get("bucket") or "")
-        if bucket != "needs_source_or_example":
+        if bucket not in {"needs_source_or_example", "paragraph_rebuild"}:
             continue
         rule = _suggestion_rule(component)
         source_item = excerpt_by_component.get(component) or {}
@@ -926,6 +956,15 @@ def _reference_pattern(component: str) -> Dict[str, str] | None:
             ),
             "why": "Changing rhythm helps the prose feel edited by a person, not generated from one pattern.",
         },
+        "qualifying_text_ai_density": {
+            "focus": "Rebuild a dense paragraph",
+            "instead_of": "A paragraph made of broad polished claims with little visible evidence route.",
+            "try_pattern": (
+                "Start with [specific class/source/process detail]. Explain [what the detail shows]. "
+                "Then limit the conclusion: [careful claim tied to this context]."
+            ),
+            "why": "Dense AI-style signals are reduced by changing paragraph evidence flow, not by swapping words.",
+        },
     }
     pattern = patterns.get(component)
     if not pattern:
@@ -948,6 +987,8 @@ def _pattern_bucket(component: str) -> str:
         return "needs_source_or_example"
     if component in {"paragraph_uniformity_risk", "signpost_paragraph_risk", "burstiness_risk"}:
         return "structure_guidance"
+    if component == "qualifying_text_ai_density":
+        return "paragraph_rebuild"
     return "auto_rewrite"
 
 
@@ -992,9 +1033,10 @@ def _reference_patterns(
             break
     bucket_priority = {
         "needs_source_or_example": 0,
-        "structure_guidance": 1,
-        "auto_rewrite": 2,
-        "review_only": 3,
+        "paragraph_rebuild": 1,
+        "structure_guidance": 2,
+        "auto_rewrite": 3,
+        "review_only": 4,
     }
     return sorted(
         selected,
@@ -1013,6 +1055,7 @@ def build_mitigation_plan(
     buckets: Dict[str, List[Dict[str, Any]]] = {
         "auto_rewrite": [],
         "needs_source_or_example": [],
+        "paragraph_rebuild": [],
         "structure_guidance": [],
         "review_only": [],
         "protected": [],
@@ -1029,13 +1072,17 @@ def build_mitigation_plan(
     component_drivers = _component_items(raw_json or {})
     for driver in component_drivers:
         bucket = driver.get("bucket")
-        if bucket not in {"needs_source_or_example", "structure_guidance", "review_only"}:
+        if bucket not in {"needs_source_or_example", "paragraph_rebuild", "structure_guidance", "review_only"}:
             continue
         buckets.setdefault(bucket, []).append(_component_driver_bucket_item(driver))
     counts = Counter({key: len(value) for key, value in buckets.items()})
 
     primary_mode = "auto_rewrite"
-    if counts["needs_source_or_example"] or any(i["bucket"] == "needs_source_or_example" for i in component_drivers):
+    if (
+        counts["needs_source_or_example"]
+        or counts["paragraph_rebuild"]
+        or any(i["bucket"] in {"needs_source_or_example", "paragraph_rebuild"} for i in component_drivers)
+    ):
         primary_mode = "guided_revision"
     elif counts["structure_guidance"] or any(i["bucket"] == "structure_guidance" for i in component_drivers):
         primary_mode = "structure_revision"

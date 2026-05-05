@@ -317,10 +317,16 @@ def _build_rewrite_debug_log(
 
     def _badge_scores(scan: dict) -> dict:
         scan_badge = scan.get("ai_risk_badge") or {}
+        scan_components = scan_badge.get("ai_components") or {}
+        scan_rating = scan_badge.get("authorship_rating") or {}
         return {
             "ai_likelihood_score": scan_badge.get("ai_likelihood_score"),
             "writing_quality_score": scan_badge.get("writing_quality_score"),
             "tier": scan_badge.get("tier"),
+            "authorship_rating": scan_rating.get("label") or scan_badge.get("authorship_rating_label"),
+            "authorship_rating_code": scan_rating.get("code") or scan_badge.get("authorship_rating_code"),
+            "ai_cluster_name": scan_badge.get("ai_cluster_name"),
+            "qualifying_text_ai_density": scan_components.get("qualifying_text_ai_density"),
         }
 
     log_data = {
@@ -350,10 +356,20 @@ def _build_rewrite_debug_log(
             "ai_risk_badge": {
                 "tier": badge.get("tier"),
                 "ai_likelihood_score": badge.get("ai_likelihood_score"),
+                "authorship_rating": badge.get("authorship_rating"),
+                "authorship_rating_label": badge.get("authorship_rating_label"),
+                "authorship_rating_code": badge.get("authorship_rating_code"),
+                "ai_cluster_name": badge.get("ai_cluster_name"),
+                "ai_cluster_boost": badge.get("ai_cluster_boost"),
                 "writing_quality_score": badge.get("writing_quality_score"),
+                "writing_quality_tier": badge.get("writing_quality_tier"),
+                "review_priority": badge.get("review_priority"),
+                "confidence": badge.get("confidence"),
                 "ai_components": badge.get("ai_components"),
                 "writing_components": badge.get("writing_components"),
                 "reasons": badge.get("reasons"),
+                "guardrails": badge.get("guardrails"),
+                "schema_enriched_from_input_text": badge.get("schema_enriched_from_input_text"),
             },
         },
         "rewrite_summary": {
