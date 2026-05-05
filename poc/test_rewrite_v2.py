@@ -529,6 +529,7 @@ for bad in (
     "The chart improves technical accuracy for each learner.",
     "Students face operational obstacles during practice.",
     "This visible learning framework preserves technical rigor in the digital landscape.",
+    "Inclusive learning design is embedded within technical teaching and is especially evident when learners execute a controlled haircut.",
     "This breakdown helps students master the exact grip and tension, giving them the boost needed to perform.",
     "The Graduated haircut serves as a specific case here.",
     "Teaching it in a salon classroom presents a constant hurdle.",
@@ -589,6 +590,17 @@ relationship_observe_reason = _paragraph_coherence_reject_reason(
 assert_test(
     "unsupported_new_phrase" in relationship_observe_reason,
     "paragraph coherence guard rejects observe-relationship-works candidate",
+)
+embedded_evident_reason = _paragraph_coherence_reject_reason(
+    "It sits inside the way the skill is taught.",
+    "Inclusive learning design is embedded within how technical skills are taught, which is especially evident when learners execute a controlled haircut.",
+    "In adult VET hairdressing training, inclusive learning design should not sit outside technical skill teaching.",
+    "Learners move from watching a demonstration to producing a controlled haircut themselves.",
+    ["inclusive learning", "technical skills", "haircut", "learners"],
+)
+assert_test(
+    bool(embedded_evident_reason),
+    "paragraph coherence guard rejects formal density-rebuild phrasing",
 )
 current_learning_reason = _paragraph_coherence_reject_reason(
     "In the contemporary education environment, school is no longer the only place to acquire knowledge.",

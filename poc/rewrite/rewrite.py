@@ -1238,6 +1238,10 @@ def _paragraph_coherence_reject_reason(
         r"\breveal(?:s|ed|ing)? how this relationship works\b",
         r"\b(?:observe|notice|see) how this relationship works\b",
         r"\bhow this relationship works\b",
+        r"\bembedded within\b",
+        r"\bespecially evident\b",
+        r"\bexecut(?:e|es|ed|ing) a controlled\b",
+        r"\bshift(?:s|ed|ing)? from observing\b",
     ]
     for pattern in unsupported_additions:
         match = re.search(pattern, candidate_sentence, re.I)
@@ -1604,6 +1608,11 @@ def _generic_polish_count(text: str) -> int:
         r"\bprofessional precision\b", r"\bboost needed to perform\b",
         r"\bmaster the exact\b", r"\bpresents? a constant hurdle\b",
         r"\bresearch backing\b",
+        r"\bembedded within\b",
+        r"\bespecially evident\b",
+        r"\bexecut(?:e|es|ed|ing)\b",
+        r"\bobserv(?:e|es|ed|ing) a demonstration\b",
+        r"\bshift(?:s|ed|ing)? from observing\b",
         r"\bconstructing\b.{0,60}\brequires\b",
         r"\blearners?\s+(?:frequently|often|commonly)\s+(?:fail|struggle)\b",
         r"\btoward precise\b", r"\btoward professional\b",
@@ -1920,6 +1929,7 @@ def _component_regression_check(original: str, candidate: str) -> tuple[bool, st
             estimate_broad_claim_risk,
             estimate_generic_assertion_risk,
             estimate_lived_detail_risk,
+            estimate_unsupported_claim_risk,
         )
     except Exception:
         return True, ""
@@ -1928,6 +1938,7 @@ def _component_regression_check(original: str, candidate: str) -> tuple[bool, st
         ("broad_claim", estimate_broad_claim_risk),
         ("generic_assertion", estimate_generic_assertion_risk),
         ("lived_detail", estimate_lived_detail_risk),
+        ("unsupported_claim", estimate_unsupported_claim_risk),
     ]
     regressions = []
     for name, fn in checks:
@@ -2299,6 +2310,7 @@ def _density_paragraph_prompt(
         "Do not add, remove, rename, shorten, or paraphrase institution names, course names, people names, or place names.",
         "Prefer concrete words already present in the paragraph or nearby domain anchors.",
         "Avoid generic academic phrasing: crucial, significant, essential, landscape, framework, technical rigor, operational obstacles, visible learning framework, digital landscape.",
+        "Also avoid formal rebuild phrasing such as embedded within, especially evident, executing, or observing a demonstration.",
         "Avoid abstract noun stacks and broad claims. Do not make the paragraph smoother if that removes specificity.",
         "Output exactly one replacement paragraph. No numbering, bullets, quotes, headings, or commentary.",
         "Target paragraph:\n<TARGET>\n" + paragraph + "\n</TARGET>",
