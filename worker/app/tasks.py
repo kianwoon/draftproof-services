@@ -3,6 +3,7 @@
 import sys
 import os
 import json
+import time
 
 # Make poc/ importable — on Koyeb: /app/poc/, locally: ../../poc/
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -699,6 +700,27 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 progress_percent=40,
                 progress_message="Rewriting AI sections",
             )
+
+            last_rewrite_progress = {"percent": 39, "updated_at": 0.0}
+
+            def report_rewrite_progress(percent: int, message: str) -> None:
+                normalized_percent = max(40, min(79, int(percent)))
+                now = time.monotonic()
+                if (
+                    normalized_percent <= last_rewrite_progress["percent"]
+                    and normalized_percent < 76
+                    and now - last_rewrite_progress["updated_at"] < 2.0
+                ):
+                    return
+                update_rewrite_status(
+                    rewrite_id,
+                    "processing",
+                    progress_percent=normalized_percent,
+                    progress_message=message,
+                )
+                last_rewrite_progress["percent"] = normalized_percent
+                last_rewrite_progress["updated_at"] = now
+
             result = run_rewrite_pipeline(
                 detect_json=report_json,
                 output_dir=tmpdir,
@@ -709,6 +731,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 api_key=llm_api_key or None,
                 model=settings.LLM_MODEL or None,
                 base_url=settings.LLM_BASE_URL or None,
+                progress_callback=report_rewrite_progress,
             )
 
             if result["status"] in ("skipped", "clean"):

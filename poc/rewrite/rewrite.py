@@ -25,7 +25,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Callable
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "rewriter"))
@@ -2933,6 +2933,7 @@ def run_rewrite(
     config: Optional[RewriteConfig] = None,
     rewrite_context: Optional[Any] = None,
     ai_only: bool = True,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
 ) -> RewriteModuleResult:
     """Run rewrite in a detect→plan→rewrite→score→verify loop.
 
@@ -2946,9 +2947,18 @@ def run_rewrite(
     Citation and integrity findings are NEVER auto-rewritten.
     When ai_only=True, only ai_generation scanner findings are targeted.
     """
+    def report_progress(percent: int, message: str) -> None:
+        if not progress_callback:
+            return
+        try:
+            progress_callback(max(40, min(79, int(percent))), message)
+        except Exception:
+            logger.warning("Rewrite progress callback failed", exc_info=True)
+
     # Save unfiltered results for original metrics/scoring before narrowing targets.
     all_detect_results = detect_results
     original_ai_likelihood = _original_ai_likelihood(all_detect_results, rewrite_context)
+    report_progress(42, "Filtering rewriteable AI findings")
 
     # Filter findings before planning
     if ai_only:
@@ -2971,6 +2981,7 @@ def run_rewrite(
     # ── Step 1: Plan ──────────────────────────────────────────────
     planner = RewritePlanner()
     plan = planner.plan(detect_results)
+    report_progress(43, f"Planned {len(plan.auto_fixable)} rewrite target(s)")
 
     # Analyze voice profile before any rewriting
     voice_profile = analyze_voice(content)
@@ -3089,6 +3100,7 @@ def run_rewrite(
 
     # ── Step 2: Setup rewrite context ─────────────────────────────
     guidance = _extract_rewrite_guidance(detect_results)
+    report_progress(44, "Preparing rewrite context and guardrails")
 
     domain_terms = None
     rewrite_constraints = None
@@ -3282,6 +3294,10 @@ def run_rewrite(
             })
             return
 
+        report_progress(
+            45,
+            f"Rebuilding high-density paragraph {len(density_attempts) + 1}/{max_density_passes}",
+        )
         llm_calls_used += 1
         density_mitigation_llm_calls += 1
         density_prompt = _density_paragraph_prompt(
@@ -3386,6 +3402,7 @@ def run_rewrite(
 
         density_local_signal: Dict[str, Any] = {}
         if not density_reject_reason:
+            report_progress(47, "Checking density paragraph rewrite quality")
             local_ok, local_reason, density_local_signal = _density_local_signal_acceptance(
                 scanner,
                 density_paragraph,
@@ -3895,6 +3912,7 @@ def run_rewrite(
             grouped_by_key[key] = []
             grouped_actions.append(grouped_by_key[key])
         grouped_by_key[key].append(action)
+    report_progress(48, f"Prepared {len(grouped_actions)} sentence rewrite target(s)")
     if capped_auto_targets:
         loop_history.append({
             "loop": 0,
@@ -3907,7 +3925,8 @@ def run_rewrite(
         })
 
     risk_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-    for actions_for_sentence in grouped_actions:
+    total_rewrite_targets = max(1, len(grouped_actions))
+    for target_index, actions_for_sentence in enumerate(grouped_actions, 1):
         if (
             llm_calls_used >= sentence_llm_call_limit
             or failed_targets >= config.max_failed_targets
@@ -3958,6 +3977,11 @@ def run_rewrite(
         loops_used += 1
         f = action.finding
         companion_findings = [a.finding for a in actions_for_sentence[1:]]
+        target_progress = 49 + int(((target_index - 1) / total_rewrite_targets) * 17)
+        report_progress(
+            target_progress,
+            f"Preparing rewrite target {target_index}/{len(grouped_actions)}",
+        )
 
         # Locate the sentence in current text
         current_sentences, _ = _build_sentence_index(current_text)
@@ -4164,6 +4188,10 @@ def run_rewrite(
             "high_topk_predictability", "low_surprisal",
         )
         if is_predictability and gpt2_rewriter:
+            report_progress(
+                min(66, target_progress + 1),
+                f"Analyzing predictable tokens for target {target_index}/{len(grouped_actions)}",
+            )
             gpt2_analysis = gpt2_rewriter.analyze_sentence(original_sentence)
             if gpt2_analysis:
                 analysis_lines = ["GPT-2 predictability analysis:"]
@@ -4236,6 +4264,10 @@ def run_rewrite(
                     circuit_breaker_reason = f"max_llm_calls reached ({config.max_llm_calls})"
                     break
                 llm_calls_used += 1
+                report_progress(
+                    min(67, target_progress + 1),
+                    f"Generating candidate rewrite {target_index}/{len(grouped_actions)} with the LLM",
+                )
                 prompt = span_info + "\n\n" + _candidate_task_instruction(
                     f,
                     max_sent_chars,
@@ -4251,6 +4283,10 @@ def run_rewrite(
 
             for cand_idx, candidate_sentence in enumerate(candidates, 1):
                 candidate_rejects = []
+                report_progress(
+                    min(68, target_progress + 2),
+                    f"Checking candidate {cand_idx} for target {target_index}/{len(grouped_actions)}",
+                )
                 if len(candidate_sentence) > max_sent_chars * 2:
                     candidate_rejects.append(f"gross_length {len(candidate_sentence)}>{max_sent_chars * 2}")
                     rejected_candidates.append({
@@ -4533,6 +4569,10 @@ def run_rewrite(
                 "rejected_candidates": rejected_candidates[-8:],
                 "rejection_summary": rejection_summary,
             })
+            report_progress(
+                min(69, target_progress + 3),
+                f"No safe rewrite accepted for target {target_index}/{len(grouped_actions)}",
+            )
             continue
 
         # All guards passed - accept
@@ -4581,6 +4621,10 @@ def run_rewrite(
             "target_new_label": best_candidate_info.get("target_new_label") if best_candidate_info else None,
             "note": "applied candidate",
         })
+        report_progress(
+            min(70, target_progress + 3),
+            f"Accepted rewrite target {target_index}/{len(grouped_actions)}",
+        )
 
     # ── Density paragraph pass ───────────────────────────────────────
     # Sentence edits can reduce local top-k signals while leaving the bigger
@@ -4616,6 +4660,7 @@ def run_rewrite(
                 "density_score": round(density_score, 2),
             })
         else:
+            report_progress(69, "Rebuilding remaining high-density paragraph")
             llm_calls_used += 1
             density_prompt = _density_paragraph_prompt(
                 density_paragraph,
@@ -4678,6 +4723,7 @@ def run_rewrite(
                     "new_text": density_candidate[:240] if density_candidate else "",
                 })
             else:
+                report_progress(70, "Checking remaining density paragraph rewrite")
                 candidate_text = _splice_density_candidate(
                     current_text,
                     para_idx,
@@ -4926,12 +4972,14 @@ def run_rewrite(
     # The predictability scanner is ~25s for 100 sentences. Most sentences
     # are unchanged after rewrite, so we carry forward their original scores
     # and only re-scan the ones that actually changed.
+    report_progress(72, "Running targeted rescan on changed sentences")
     final_detect_report = _targeted_rescan(
         original_text=content,
         rewritten_text=current_text,
         all_detect_results=all_detect_results,
     )
     final_detect_results = final_detect_report.scanner_results
+    report_progress(73, "Comparing rewrite results against the original scan")
 
     # Original metrics: use unfiltered detect results (includes predictability scanner)
     # to avoid re-running predictability on the original text (saves ~29s).

@@ -224,6 +224,7 @@ def run_rewrite_pipeline(
     base_url: str = None,
     verbose: bool = False,
     ai_only: bool = True,
+    progress_callback=None,
 ) -> dict:
     """Run the full rewrite pipeline from detect JSON or raw text.
 
@@ -313,6 +314,11 @@ def run_rewrite_pipeline(
         print("No findings to rewrite. Text is clean.")
         return {"status": "clean", "message": "No findings to rewrite"}
 
+    def report_progress(percent: int, message: str) -> None:
+        if not progress_callback:
+            return
+        progress_callback(max(40, min(79, int(percent))), message)
+
     # ── Run rewrite ─────────────────────────────────────────────────
     print(f"Running rewrite pipeline...")
     print(f"  Input: {len(text)} chars, {len(ctx.detect_results)} scanner results")
@@ -340,6 +346,7 @@ def run_rewrite_pipeline(
     text = sanitize_text(text)
 
     t0 = time.time()
+    report_progress(41, "Preparing rewrite plan from scan findings")
     result: RewriteModuleResult = run_rewrite(
         content=text,
         detect_results=ctx.detect_results,
@@ -352,9 +359,11 @@ def run_rewrite_pipeline(
         output_dir=output_dir,
         rewrite_context=ctx,
         ai_only=ai_only,
+        progress_callback=report_progress,
     )
     engine_elapsed = time.time() - t0
     stage_timings = [{"stage": "rewrite_engine", "seconds": round(engine_elapsed, 3)}]
+    report_progress(74, "Building rewrite comparison")
 
     # ── Write output ────────────────────────────────────────────────
     if output_dir is None:
@@ -396,6 +405,7 @@ def run_rewrite_pipeline(
     # user-facing report and rollback decision need a product-level full scan.
     rewritten_text = result.mp_result.final_text if result.mp_result else text
     if rewritten_text == text:
+        report_progress(78, "No automatic text changes were kept")
         result.summary["no_text_change"] = True
         result.summary["no_text_change_reason"] = (
             result.mp_result.convergence_reason
@@ -408,6 +418,7 @@ def run_rewrite_pipeline(
         # The rewrite engine's targeted rescan reuses old scores for unchanged
         # sentences, which produces misleading "After" numbers. One full scan
         # here gives accurate user-facing report scores.
+        report_progress(76, "Running final scan on rewritten draft")
         scan_t0 = time.time()
         rewritten_detect_runner = DetectionRunner()
         rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
@@ -423,6 +434,7 @@ def run_rewrite_pipeline(
         rewritten_builder.set_meta(scan_time=0, original_text=rewritten_text)
         rewritten_draft_report = rewritten_builder.build()
         rewritten_report_dict = report_to_dict(rewritten_draft_report)
+        report_progress(78, "Final rewritten scan complete")
 
     def _finding_total(report_dict):
         findings = report_dict.get("findings", {})
