@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { startScanWithText, getScanStatus, buildApiEventUrl } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CodeTexture from '../components/CodeTexture';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
@@ -189,6 +190,7 @@ export default function Scan() {
     <main className="app-page scan-shell">
       <div className="container">
         <section className="app-hero app-hero-dark">
+          <CodeTexture id="scanHero" />
           <div>
             <p className="eyebrow">Pre-submission review</p>
             <h1>Scan your draft for fixable integrity signals.</h1>

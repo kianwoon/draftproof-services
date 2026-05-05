@@ -1499,6 +1499,18 @@ th {
   opacity: .46;
 }
 
+.app-hero-dark .code-texture {
+  opacity: .68;
+}
+
+.dash-hero .code-texture {
+  opacity: .60;
+}
+
+.signin-trust-panel .code-texture {
+  opacity: .72;
+}
+
 .code-texture-layer text {
   fill: rgba(255, 255, 255, .20);
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -2007,9 +2019,6 @@ th {
   .trust-bar-inner {
     gap: 10px;
   }
-  .hero-code-layer text {
-    font-size: 16px;
-  }
   .code-texture-layer text {
     font-size: 16px;
   }
@@ -2046,11 +2055,19 @@ th {
 }
 
 .app-hero-dark {
-  background: var(--surface);
-  color: var(--ink);
-  border-color: rgba(13, 27, 42, .07);
-  border-left: 3px solid var(--green);
-  border-radius: 0 16px 16px 0;
+  position: relative;
+  background: var(--navy-950);
+  color: #fff;
+  border-color: rgba(255, 255, 255, .10);
+  border-left: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.app-hero-dark > :not(.code-texture) {
+  position: relative;
+  z-index: 2;
 }
 
 .app-hero h1 {
@@ -2066,15 +2083,20 @@ th {
 }
 
 .app-hero-dark h1 {
-  color: var(--ink);
+  color: #fff;
 }
 
 .app-hero-dark .eyebrow {
-  color: var(--muted);
+  color: rgba(255, 255, 255, .38);
 }
 
 .app-hero-dark p {
-  color: var(--muted);
+  color: rgba(255, 255, 255, .62);
+}
+
+.app-hero-dark .app-hero-stat {
+  border-color: rgba(255, 255, 255, .14);
+  background: rgba(255, 255, 255, .07);
 }
 
 .app-hero-stat {
@@ -2093,7 +2115,7 @@ th {
 .app-hero-stat span,
 .app-hero-stat small {
   display: block;
-  color: var(--muted);
+  color: rgba(255, 255, 255, .48);
   font-size: 12px;
 }
 
@@ -2112,7 +2134,7 @@ th {
 .app-hero-stat strong {
   display: block;
   margin-bottom: 5px;
-  color: var(--green-dark);
+  color: #fff;
   font-size: 1.35rem;
   font-weight: 600;
 }
@@ -2123,14 +2145,14 @@ th {
 
 .app-hero-dark .btn-ghost {
   background: transparent;
-  color: var(--ink);
-  border-color: rgba(13, 27, 42, .20);
+  color: rgba(255, 255, 255, .78);
+  border-color: rgba(255, 255, 255, .25);
 }
 
 .app-hero-dark .btn-ghost:hover {
-  background: rgba(13, 27, 42, .04);
-  border-color: rgba(13, 27, 42, .32);
-  color: var(--ink);
+  background: rgba(255, 255, 255, .06);
+  border-color: rgba(255, 255, 255, .35);
+  color: #fff;
 }
 
 .page-actions-center {

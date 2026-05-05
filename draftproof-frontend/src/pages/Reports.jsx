@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { listScans, deleteScan } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CodeTexture from '../components/CodeTexture';
 
 const PAGE_SIZE = 10;
 
@@ -107,6 +108,7 @@ export default function Reports() {
     <main className="app-page reports-page-shell">
       <div className="container">
         <section className="app-hero app-hero-dark reports-hero">
+          <CodeTexture id="reportsHero" />
           <div>
             <p className="eyebrow">Report library</p>
             <h1>Your reports</h1>

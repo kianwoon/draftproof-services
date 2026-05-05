@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ErrorReload from '../components/ErrorReload';
+import CodeTexture from '../components/CodeTexture';
 
 export default function BuyTokens() {
   const [packs, setPacks] = useState([]);
@@ -45,6 +46,7 @@ export default function BuyTokens() {
     <main className="app-page">
       <div className="container">
         <section className="app-hero app-hero-dark buy-hero">
+          <CodeTexture id="buyHero" />
           <div>
             <p className="eyebrow">Tokens</p>
             <h1>Buy review credits when you need them.</h1>

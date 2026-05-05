@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import CodeTexture from '../components/CodeTexture';
 
 export default function Pricing() {
   const { user } = useAuth();
@@ -8,6 +9,7 @@ export default function Pricing() {
     <main className="pricing-shell">
       <div className="container">
         <section className="pricing-hero app-hero app-hero-dark">
+          <CodeTexture id="pricingHero" />
           <div>
           <p className="eyebrow">Pricing</p>
           <h1>Pay for the review you need.</h1>

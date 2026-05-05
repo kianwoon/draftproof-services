@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getPurchaseHistory } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
+import CodeTexture from '../components/CodeTexture';
 
 const PAGE_SIZE = 5;
 
@@ -75,6 +76,7 @@ export default function PurchaseHistory() {
     <main className="app-page history-page-shell">
       <div className="container">
         <section className="app-hero app-hero-dark reports-hero">
+          <CodeTexture id="historyHero" />
           <div>
             <p className="eyebrow">Billing</p>
             <h1>Purchase history</h1>

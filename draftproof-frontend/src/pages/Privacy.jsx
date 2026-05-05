@@ -1,9 +1,12 @@
+import CodeTexture from '../components/CodeTexture';
+
 export default function Privacy() {
   return (
     <main className="legal-shell">
       <div className="container">
 
         <section className="legal-hero app-hero app-hero-dark">
+          <CodeTexture id="privacyHero" />
           <div>
           <p className="eyebrow">Privacy Policy</p>
           <h1>How we handle your data</h1>

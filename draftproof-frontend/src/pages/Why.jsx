@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import CodeTexture from '../components/CodeTexture';
 
 export default function Why() {
   return (
@@ -7,6 +8,7 @@ export default function Why() {
 
         {/* Hero */}
         <section className="why-hero app-hero app-hero-dark">
+          <CodeTexture id="whyHero" />
           <div>
           <p className="eyebrow">Why DraftProof Exists</p>
           <h1>

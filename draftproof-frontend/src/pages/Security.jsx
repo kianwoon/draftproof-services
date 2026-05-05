@@ -1,9 +1,12 @@
+import CodeTexture from '../components/CodeTexture';
+
 export default function Security() {
   return (
     <main className="legal-shell">
       <div className="container">
 
         <section className="legal-hero app-hero app-hero-dark">
+          <CodeTexture id="securityHero" />
           <div>
           <p className="eyebrow">Security</p>
           <h1>How we protect your work</h1>
