@@ -48,6 +48,7 @@ export default function Landing() {
   return (
     <main className="landing-page">
       <section id="hero" className="landing-hero">
+        <HeroCodeField />
         <div className="section-inner landing-hero-grid">
           <div className="hero-copy">
             <p className="brand-pill">Writing integrity for education & research</p>
@@ -195,6 +196,56 @@ export default function Landing() {
         </div>
       </footer>
     </main>
+  );
+}
+
+function HeroCodeField() {
+  return (
+    <svg
+      className="hero-code-field"
+      viewBox="0 0 1440 620"
+      aria-hidden="true"
+      focusable="false"
+      preserveAspectRatio="none"
+    >
+      <defs>
+        <linearGradient id="codeFade" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0%" stopColor="#0D1B2A" stopOpacity="0" />
+          <stop offset="12%" stopColor="#0D1B2A" stopOpacity="0.95" />
+          <stop offset="78%" stopColor="#0D1B2A" stopOpacity="0.78" />
+          <stop offset="100%" stopColor="#0D1B2A" stopOpacity="0" />
+        </linearGradient>
+        <mask id="codeMask">
+          <rect width="1440" height="620" fill="url(#codeFade)" />
+        </mask>
+      </defs>
+
+      <g mask="url(#codeMask)" className="hero-code-layer">
+        <g className="code-row code-row-a">
+          <CodeLine y="78" text="0101  source.check()  1100  citation.match  0010  grounded=true  1011" />
+          <CodeLine y="174" text="claim.verify  1001  source:linked  0110  citation.add  1010  review.only" />
+          <CodeLine y="270" text="0011  evidence.fit  1110  no_verdict  0101  grounded=true  1001" />
+          <CodeLine y="366" text="source.check()  0111  claim.supported  1010  citation.gap  0001" />
+          <CodeLine y="462" text="1010  draft.review  0011  source.grounding  1101  fix.before.submit" />
+        </g>
+        <g className="code-row code-row-b">
+          <CodeLine y="126" text="grounded=true  0110  citation.match  1011  claim.verify  0010" />
+          <CodeLine y="222" text="1100  source.integrity  0001  review.signal  1010  evidence.fit" />
+          <CodeLine y="318" text="citation.gap  0101  source.check()  1110  no_ai_verdict  1001" />
+          <CodeLine y="414" text="0010  claim.supported  1011  draftproof.scan  0110  grounded" />
+          <CodeLine y="510" text="review.only  1001  fix.citation  0101  source.linked  1100" />
+        </g>
+      </g>
+    </svg>
+  );
+}
+
+function CodeLine({ y, text }) {
+  return (
+    <text x="0" y={y}>
+      <tspan>{text}</tspan>
+      <tspan dx="64">{text}</tspan>
+    </text>
   );
 }
 

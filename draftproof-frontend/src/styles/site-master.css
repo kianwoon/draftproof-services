@@ -1388,6 +1388,7 @@ th {
   html { scroll-behavior: auto; }
   .snap-shell { scroll-snap-type: none; }
   .btn { transition: none; }
+  .code-row { animation: none !important; }
 }
 
 /* ------------------------------------------------------------------
@@ -1441,19 +1442,81 @@ th {
 }
 
 .landing-hero {
+  position: relative;
   min-height: 610px;
   display: grid;
   align-items: center;
   padding: 84px clamp(24px, 4vw, 48px) 56px;
   background: var(--navy-950);
   color: #fff;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.landing-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(13, 27, 42, .98) 0%, rgba(13, 27, 42, .86) 38%, rgba(13, 27, 42, .72) 100%),
+    radial-gradient(circle at 78% 30%, rgba(58, 168, 118, .12), transparent 28rem);
 }
 
 .landing-hero-grid {
+  position: relative;
+  z-index: 2;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(360px, 540px);
   gap: clamp(48px, 9vw, 148px);
   align-items: center;
+}
+
+.hero-code-field {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: .72;
+}
+
+.hero-code-layer text {
+  fill: rgba(255, 255, 255, .18);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 18px;
+  letter-spacing: .08em;
+}
+
+.hero-code-layer .code-row-b text {
+  fill: rgba(58, 168, 118, .24);
+}
+
+.code-row {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+.code-row-a {
+  animation: codeDriftLeft 28s linear infinite;
+}
+
+.code-row-b {
+  animation: codeDriftRight 34s linear infinite;
+  opacity: .78;
+}
+
+@keyframes codeDriftLeft {
+  from { transform: translateX(0); }
+  to { transform: translateX(-360px); }
+}
+
+@keyframes codeDriftRight {
+  from { transform: translateX(-360px); }
+  to { transform: translateX(0); }
 }
 
 .brand-pill {
@@ -1910,6 +1973,9 @@ th {
   }
   .trust-bar-inner {
     gap: 10px;
+  }
+  .hero-code-layer text {
+    font-size: 16px;
   }
 }
 
