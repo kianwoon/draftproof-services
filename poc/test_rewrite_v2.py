@@ -58,6 +58,7 @@ from rewrite_pipeline import (
     _ai_first_gate_status,
     _ai_search_marked_grounding_candidates,
     _clear_stale_rollback_for_kept_ai_mitigation,
+    _ai_search_fast_accept_reason,
 )
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
@@ -355,10 +356,10 @@ assert_test(cfg.budget.max_changed_char_ratio == 0.15, f"default char ratio=0.15
 assert_test(cfg.budget.max_total_changed_sentence_ratio == 0.30, f"total sentence cap=0.30")
 assert_test(cfg.budget.max_total_changed_char_ratio == 0.25, f"total char cap=0.25")
 assert_test(not cfg.suggestion_only, f"suggestion_only defaults to False")
-assert_test(cfg.max_llm_calls == 30, f"default max_llm_calls=30 (got {cfg.max_llm_calls})")
+assert_test(cfg.max_llm_calls == 8, f"default max_llm_calls=8 (got {cfg.max_llm_calls})")
 assert_test(cfg.max_auto_targets == 8, f"default max_auto_targets=8 (got {cfg.max_auto_targets})")
-assert_test(cfg.max_density_passes == 8, f"default max_density_passes=8 (got {cfg.max_density_passes})")
-assert_test(cfg.max_rewrite_seconds == 360, f"default max_rewrite_seconds=360 (got {cfg.max_rewrite_seconds})")
+assert_test(cfg.max_density_passes == 1, f"default max_density_passes=1 (got {cfg.max_density_passes})")
+assert_test(cfg.max_rewrite_seconds == 120, f"default max_rewrite_seconds=120 (got {cfg.max_rewrite_seconds})")
 assert_test(cfg.max_detect_loops == 0, f"default max_detect_loops=0 (got {cfg.max_detect_loops})")
 
 
@@ -855,6 +856,14 @@ assert_test(
     "rollback_reason" not in stale_ai_summary
     and "detect_scan_attempted" not in stale_ai_summary,
     "kept AI mitigation removes stale attempted/original-preserved fields",
+)
+assert_test(
+    _ai_search_fast_accept_reason(58.12, 44.14),
+    "AI search stops early once deterministic candidate strongly mitigates AI",
+)
+assert_test(
+    not _ai_search_fast_accept_reason(58.12, 57.88),
+    "AI search does not stop early for tiny AI movement",
 )
 
 ai_first_report = render_rewrite_report(

@@ -5,12 +5,11 @@ import ssl
 from celery import Celery
 from app.config import CELERY_VISIBILITY_TIMEOUT_SECONDS, REDIS_URL
 
-celery_app = Celery("draftproof-api", broker=REDIS_URL, backend=REDIS_URL)
+celery_app = Celery("draftproof-api", broker=REDIS_URL, backend=None)
 
 if REDIS_URL.startswith("rediss://"):
     celery_app.conf.update(
         broker_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
-        redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
     )
 
 celery_app.conf.update(
@@ -25,11 +24,8 @@ celery_app.conf.update(
     broker_transport_options={
         "visibility_timeout": CELERY_VISIBILITY_TIMEOUT_SECONDS,
         # API is a producer only — no need for frequent health checks.
-        # Default 2s generates ~43K commands/day. 120s = ~720/day.
         "health_check_interval": 120,
     },
-    # Don't keep result backend connection alive — API only dispatches tasks.
-    result_expires=3600,
 )
 
 # The actual task lives in worker/app/tasks.py — same broker, same serializer

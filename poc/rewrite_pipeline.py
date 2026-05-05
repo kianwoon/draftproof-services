@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_from_json
-from rewrite import run_rewrite, RewriteModuleResult
+from rewrite import run_rewrite, RewriteConfig, RewriteModuleResult
 from rewrite.guards import detect_protected_spans, protected_spans_preserved, check_semantic_drift
 from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
@@ -104,6 +104,31 @@ def _clear_stale_rollback_for_kept_ai_mitigation(summary: dict, source: str) -> 
         summary.setdefault("saved_contract_notes", []).append(
             f"Cleared earlier rewrite rollback because {source} produced a kept AI-mitigation candidate."
         )
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _ai_search_fast_accept_reason(reference_ai, candidate_ai) -> str:
+    """Return an early-stop reason when a deterministic candidate is good enough."""
+    if not isinstance(reference_ai, (int, float)) or not isinstance(candidate_ai, (int, float)):
+        return ""
+    fast_accept_ai = _float_env("DRAFTPROOF_AI_SEARCH_FAST_ACCEPT_AI", 45.0)
+    fast_accept_delta = _float_env("DRAFTPROOF_AI_SEARCH_FAST_ACCEPT_DELTA", 10.0)
+    ai_first_target = _float_env("DRAFTPROOF_AI_FIRST_TARGET", 60.0)
+    delta = reference_ai - candidate_ai
+    if candidate_ai <= fast_accept_ai:
+        return f"candidate_ai<={fast_accept_ai:.2f}"
+    if delta >= fast_accept_delta and candidate_ai < ai_first_target:
+        return (
+            f"delta>={fast_accept_delta:.2f} "
+            f"and candidate_ai<{ai_first_target:.2f}"
+        )
+    return ""
 
 
 def _clean_full_document_candidate(output: str, original_text: str) -> str:
@@ -649,6 +674,21 @@ def run_rewrite_pipeline(
     # Sanitize input text before rewrite (fix mojibake from PDF/docx extraction)
     text = sanitize_text(text)
 
+    pre_rewrite_badge = (ctx.raw_json or {}).get("ai_risk_badge") or {}
+    pre_rewrite_ai = pre_rewrite_badge.get("ai_likelihood_score")
+    ai_search_first = (
+        os.environ.get("DRAFTPROOF_AI_SEARCH_FIRST", "1") != "0"
+        and isinstance(pre_rewrite_ai, (int, float))
+        and pre_rewrite_ai >= _float_env("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", 50.0)
+    )
+    rewrite_config = None
+    if ai_search_first:
+        rewrite_config = RewriteConfig(
+            max_llm_calls=0,
+            max_density_passes=0,
+            max_rewrite_seconds=30,
+        )
+
     t0 = time.time()
     report_progress(41, "Preparing rewrite plan from scan findings")
     result: RewriteModuleResult = run_rewrite(
@@ -663,8 +703,14 @@ def run_rewrite_pipeline(
         output_dir=output_dir,
         rewrite_context=ctx,
         ai_only=ai_only,
+        config=rewrite_config,
         progress_callback=report_progress,
     )
+    if ai_search_first:
+        result.summary["rewrite_engine_mode"] = "ai_search_first_no_llm_prepass"
+        result.summary.setdefault("saved_contract_notes", []).append(
+            "Skipped costly density/sentence LLM prepass because AI mitigation search is the first objective."
+        )
     engine_elapsed = time.time() - t0
     stage_timings = [{"stage": "rewrite_engine", "seconds": round(engine_elapsed, 3)}]
     report_progress(74, "Building rewrite comparison")
@@ -969,14 +1015,36 @@ def run_rewrite_pipeline(
                 candidate_eval["selected_so_far"] = True
             search_summary["candidates"].append(candidate_eval)
 
+        try:
+            min_deterministic_scans = max(
+                1,
+                int(os.environ.get("DRAFTPROOF_AI_SEARCH_MIN_DETERMINISTIC_SCANS", "2")),
+            )
+        except ValueError:
+            min_deterministic_scans = 2
+        early_stop_reason = ""
         for index, (strategy, candidate) in enumerate(deterministic_candidates, start=1):
             report_progress(
                 min(79, 76 + index),
                 f"Scanning deterministic AI mitigation candidate {index}/{len(deterministic_candidates)}",
             )
             _evaluate_ai_search_candidate(strategy, candidate, deterministic=True)
+            if index < min_deterministic_scans:
+                continue
+            early_stop_reason = _ai_search_fast_accept_reason(ai_search_reference, best_ai)
+            if early_stop_reason:
+                search_summary["early_stop"] = {
+                    "phase": "deterministic_candidates",
+                    "reason": early_stop_reason,
+                    "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                    "selected_strategy": best_strategy,
+                    "selected_ai": best_ai,
+                }
+                break
 
-        if not effective_key:
+        if early_stop_reason:
+            search_summary["llm_reason"] = "skipped_after_fast_deterministic_accept"
+        elif not effective_key:
             if not search_summary.get("candidates"):
                 search_summary["reason"] = "no_llm_available"
             else:
