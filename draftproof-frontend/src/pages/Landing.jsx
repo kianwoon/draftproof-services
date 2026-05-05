@@ -48,7 +48,7 @@ export default function Landing() {
   return (
     <main className="landing-page">
       <section id="hero" className="landing-hero">
-        <HeroCodeField />
+        <HeroCodeField idPrefix="hero" />
         <div className="section-inner landing-hero-grid">
           <div className="hero-copy">
             <p className="brand-pill">Writing integrity for education & research</p>
@@ -127,7 +127,8 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="engine" className="landing-section checks-section">
+      <section id="engine" className="landing-section checks-section code-backed-section">
+        <HeroCodeField idPrefix="engine" className="section-code-field" />
         <div className="section-inner">
           <p className="eyebrow">How It Works</p>
           <h2>Four checks. One clear report.</h2>
@@ -163,7 +164,8 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="cta" className="landing-cta">
+      <section id="cta" className="landing-cta code-backed-section">
+        <HeroCodeField idPrefix="cta" className="section-code-field" />
         <div className="section-inner">
           <p className="brand-pill">The world now produces more information than people can easily verify.</p>
           <h2>DraftProof is that review layer.</h2>
@@ -199,28 +201,31 @@ export default function Landing() {
   );
 }
 
-function HeroCodeField() {
+function HeroCodeField({ idPrefix, className = '' }) {
+  const gradientId = `${idPrefix}CodeFade`;
+  const maskId = `${idPrefix}CodeMask`;
+
   return (
     <svg
-      className="hero-code-field"
+      className={`hero-code-field ${className}`}
       viewBox="0 0 1440 620"
       aria-hidden="true"
       focusable="false"
       preserveAspectRatio="none"
     >
       <defs>
-        <linearGradient id="codeFade" x1="0" x2="1" y1="0" y2="0">
+        <linearGradient id={gradientId} x1="0" x2="1" y1="0" y2="0">
           <stop offset="0%" stopColor="#0D1B2A" stopOpacity="0" />
           <stop offset="12%" stopColor="#0D1B2A" stopOpacity="0.95" />
           <stop offset="78%" stopColor="#0D1B2A" stopOpacity="0.78" />
           <stop offset="100%" stopColor="#0D1B2A" stopOpacity="0" />
         </linearGradient>
-        <mask id="codeMask">
-          <rect width="1440" height="620" fill="url(#codeFade)" />
+        <mask id={maskId}>
+          <rect width="1440" height="620" fill={`url(#${gradientId})`} />
         </mask>
       </defs>
 
-      <g mask="url(#codeMask)" className="hero-code-layer">
+      <g mask={`url(#${maskId})`} className="hero-code-layer">
         <g className="code-row code-row-a">
           <CodeLine y="78" text="0101  source.check()  1100  citation.match  0010  grounded=true  1011" />
           <CodeLine y="174" text="claim.verify  1001  source:linked  0110  citation.add  1010  review.only" />
