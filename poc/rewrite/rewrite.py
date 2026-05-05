@@ -2372,6 +2372,42 @@ def _density_paragraph_reject_reason(
     return ""
 
 
+def _density_repair_prompt(
+    original_region: str,
+    previous_candidate: str,
+    rejection_reason: str,
+    rewrite_context: Optional[Any],
+    mitigation_plan: Optional[Dict[str, Any]],
+) -> str:
+    """Build a targeted retry prompt for near-miss paragraph candidates."""
+    base = _density_paragraph_prompt(original_region, rewrite_context, mitigation_plan)
+    lost_entities = re.findall(r"lost_named_entity: '([^']+)'", rejection_reason or "")
+    repair_lines = [
+        base,
+        "\nYour previous candidate was rejected by a hard safety guard.",
+        "Previous rejected candidate:\n<REJECTED>\n" + (previous_candidate or "") + "\n</REJECTED>",
+        "Repair only the safety failure. Do not introduce a new paragraph strategy.",
+        "Return exactly one replacement paragraph. No commentary.",
+        "Rejection reason: " + (rejection_reason or "unknown"),
+    ]
+    if lost_entities:
+        repair_lines.append(
+            "These named entities must appear exactly, unchanged: "
+            + "; ".join(lost_entities)
+        )
+    if "protected_span_lost" in (rejection_reason or ""):
+        protected = [
+            span.text or original_region[span.start_char:span.end_char]
+            for span in detect_protected_spans(original_region)
+        ]
+        if protected:
+            repair_lines.append(
+                "These protected spans must appear exactly, unchanged: "
+                + "; ".join(protected[:12])
+            )
+    return "\n".join(repair_lines)
+
+
 def _find_sentence_index(sentences: List[str], evidence: str) -> int:
     """Find which sentence contains the evidence text."""
     normalized_evidence = _normalize_sentence_match_text(evidence)
@@ -2852,6 +2888,48 @@ def run_rewrite(
             density_candidate,
             rewrite_context,
         )
+        if (
+            density_reject_reason
+            and density_candidate
+            and re.search(r"lost_named_entity|protected_span_lost|citation_lost|quote_lost", density_reject_reason)
+            and (time.monotonic() - rewrite_start_time) <= config.max_rewrite_seconds
+        ):
+            repair_prompt = _density_repair_prompt(
+                density_paragraph,
+                density_candidate,
+                density_reject_reason,
+                rewrite_context,
+                runtime_mitigation_plan,
+            )
+            llm_calls_used += 1
+            density_mitigation_llm_calls += 1
+            repaired_output = loop_rewrite_fn(density_paragraph, repair_prompt)
+            repaired_candidate = _clean_density_paragraph_output(
+                repaired_output,
+                density_paragraph,
+            )
+            repaired_reject_reason = _density_paragraph_reject_reason(
+                density_paragraph,
+                repaired_candidate,
+                rewrite_context,
+            )
+            loop_history.append({
+                "loop": loops_used + 1,
+                "phase": phase,
+                "paragraph": para_idx,
+                "note": "density paragraph repair retry",
+                "initial_rejection_reason": density_reject_reason,
+                "repair_rejection_reason": repaired_reject_reason,
+                "density_score": round(density_score, 2),
+                "new_text": repaired_candidate[:240] if repaired_candidate else "",
+            })
+            if not repaired_reject_reason:
+                density_candidate = repaired_candidate
+                density_reject_reason = ""
+            elif repaired_candidate:
+                density_candidate = repaired_candidate
+                density_reject_reason = repaired_reject_reason
+
         if density_reject_reason:
             density_paragraph_pass["reason"] = density_reject_reason
             if density_candidate:

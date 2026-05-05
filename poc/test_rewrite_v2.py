@@ -39,6 +39,7 @@ from rewrite.rewrite import (
     _select_density_paragraph,
     _density_paragraph_prompt,
     _density_paragraph_reject_reason,
+    _density_repair_prompt,
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
@@ -1052,6 +1053,16 @@ assert_test("qualifying_text_ai_density=82.0%" in density_prompt, "density promp
 assert_test("Certificate III Hairdressing" in density_prompt, "density prompt includes domain anchors")
 assert_test("Named entities that must remain unchanged" in density_prompt, "density prompt preserves named entities")
 assert_test("digital landscape" in density_prompt, "density prompt includes anti-polish examples")
+density_repair_prompt = _density_repair_prompt(
+    density_para,
+    "Inclusive Learning Design in Certificate III Hairdressing is taught inside the haircutting task.",
+    "semantic_drift lost_named_entity: 'Box Hill Institute'",
+    density_context,
+    density_plan,
+)
+assert_test("Previous rejected candidate" in density_repair_prompt, "density repair prompt includes rejected candidate")
+assert_test("Box Hill Institute" in density_repair_prompt, "density repair prompt repeats lost named entity")
+assert_test("Repair only the safety failure" in density_repair_prompt, "density repair prompt limits retry scope")
 
 bad_density_candidate = (
     "Inclusive Learning Design in Certificate III Hairdressing provides a visible learning framework in a digital landscape, "
