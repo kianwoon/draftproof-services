@@ -21,6 +21,21 @@ const SEVERITY_CONFIG = {
   info:     { color: '#3b82f6', bg: '#eff6ff', label: 'INFO' },
 };
 
+const SIGNAL_COLORS = {
+  ai_likelihood: '#9a3412',
+  grounding_risk: '#9a3412',
+  citation_grounding_risk: '#9a3412',
+  human_anchor_score: '#15803d',
+  rewrite_smoothness: '#4338ca',
+  outline_to_text_expansion: '#4338ca',
+  source_similarity: '#0369a1',
+  surface_similarity: '#0369a1',
+  section_style_variance: '#a16207',
+  predictability: '#9a3412',
+  writing_quality: '#4338ca',
+  genericity: '#4338ca',
+};
+
 function formatDate(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -266,6 +281,115 @@ function findingEvidenceSummary(issue) {
   return '';
 }
 
+function normalizeSignal(signal = {}, issue = {}) {
+  const key = signal.key || issue.signal_category || issue.category || 'scan_signal';
+  const severity = issue.severity ? SEVERITY_CONFIG[issue.severity] : null;
+  return {
+    finding_id: signal.finding_id || issue.id,
+    key,
+    label: signal.label || TRANSFORMATION_SIGNAL_LABELS[key] || key.replaceAll('_', ' '),
+    description: signal.description || findingDescription(issue) || issue.recommendation || 'Scanner signal attached to this section.',
+    score: signal.score ?? clampPercent(issue.score) ?? clampPercent(issue.top10_ratio) ?? null,
+    color: signal.color || SIGNAL_COLORS[key] || severity?.color || '#475569',
+    title: signal.title || issue.title || '',
+    tier: signal.tier || issue.severity || '',
+    actionability: signal.actionability || issue.actionability || '',
+    recommendation: signal.recommendation || issue.recommendation || '',
+  };
+}
+
+function buildSubmittedContentModel(report) {
+  const results = report?.results_json || {};
+  const intel = results.scan_intelligence || {};
+  const rawSegments = intel.document?.segments || results.highlight_segments || [];
+  const issueById = new Map((report?.issues || []).map((issue) => [String(issue.id), issue]));
+  const issuesBySentence = new Map();
+
+  (report?.issues || []).forEach((issue) => {
+    if (!issue.location) return;
+    const list = issuesBySentence.get(issue.location) || [];
+    list.push(issue);
+    issuesBySentence.set(issue.location, list);
+  });
+
+  let segments = [];
+  if (Array.isArray(rawSegments) && rawSegments.length > 0) {
+    segments = rawSegments
+      .map((segment, index) => {
+        const sentenceId = segment.sentence_id || segment.segment_id || `s${index + 1}`;
+        const directSignals = Array.isArray(segment.signals) ? segment.signals : [];
+        const fallbackSignals = issuesBySentence.get(sentenceId) || [];
+        const signals = directSignals.length
+          ? directSignals.map((signal) => normalizeSignal(signal, issueById.get(String(signal.finding_id)) || {}))
+          : fallbackSignals.map((issue) => normalizeSignal({}, issue));
+        const primarySignal = signals[0] || null;
+        return {
+          id: segment.segment_id || sentenceId,
+          sentence_id: sentenceId,
+          paragraph_id: segment.paragraph_id || 'p001',
+          start_char: segment.start_char ?? index,
+          text: segment.text || segment.sentence || '',
+          signals,
+          primarySignal,
+        };
+      })
+      .filter((segment) => segment.text);
+  } else if (results.sentence_map && typeof results.sentence_map === 'object') {
+    segments = Object.entries(results.sentence_map)
+      .map(([sentenceId, sentence], index) => {
+        const fallbackSignals = issuesBySentence.get(sentenceId) || [];
+        const signals = fallbackSignals.map((issue) => normalizeSignal({}, issue));
+        return {
+          id: sentenceId,
+          sentence_id: sentenceId,
+          paragraph_id: sentence.paragraph_id || 'p001',
+          start_char: sentence.start_char ?? index,
+          text: sentence.text || '',
+          signals,
+          primarySignal: signals[0] || null,
+        };
+      })
+      .filter((segment) => segment.text)
+      .sort((a, b) => a.start_char - b.start_char);
+  }
+
+  const paragraphs = [];
+  const paragraphMap = new Map();
+  segments.forEach((segment) => {
+    const paragraphId = segment.paragraph_id || 'p001';
+    if (!paragraphMap.has(paragraphId)) {
+      const paragraph = { id: paragraphId, segments: [] };
+      paragraphMap.set(paragraphId, paragraph);
+      paragraphs.push(paragraph);
+    }
+    paragraphMap.get(paragraphId).segments.push(segment);
+  });
+
+  paragraphs.forEach((paragraph) => {
+    paragraph.segments.sort((a, b) => a.start_char - b.start_char);
+  });
+
+  const signalMap = new Map();
+  segments.forEach((segment) => {
+    segment.signals.forEach((signal) => {
+      const current = signalMap.get(signal.key);
+      signalMap.set(signal.key, {
+        ...signal,
+        count: (current?.count || 0) + 1,
+        score: Math.max(current?.score || 0, signal.score || 0),
+      });
+    });
+  });
+  const legend = Array.from(signalMap.values()).sort((a, b) => b.count - a.count || (b.score || 0) - (a.score || 0));
+
+  return {
+    paragraphs,
+    segments,
+    legend,
+    highlightedCount: segments.filter((segment) => segment.signals.length > 0).length,
+  };
+}
+
 function formatRewriteStatus(status) {
   if (status === 'pending') return 'Queued';
   if (status === 'processing') return 'Rewriting AI sections';
@@ -355,6 +479,7 @@ export default function Report() {
   const [rewriteNotice, setRewriteNotice] = useState(null);
   const [rewriteResultSummary, setRewriteResultSummary] = useState(null);
   const [rewriteElapsedSeconds, setRewriteElapsedSeconds] = useState(0);
+  const [selectedSegmentId, setSelectedSegmentId] = useState(null);
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
   const rewriteTimerStartRef = useRef(null);
@@ -596,6 +721,12 @@ export default function Report() {
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
+  const submittedContent = buildSubmittedContentModel(report);
+  const selectedSegment = (
+    submittedContent.segments.find((segment) => segment.id === selectedSegmentId) ||
+    submittedContent.segments.find((segment) => segment.signals.length > 0) ||
+    null
+  );
 
   const hasAIFindings = report.issues.some(i =>
     i.category === 'ai_generation' ||
@@ -952,6 +1083,105 @@ export default function Report() {
               Download PDF
             </a>
           </div>
+        )}
+
+        {submittedContent.segments.length > 0 && (
+          <section className="submitted-content-review" aria-label="Submitted content with scan signals">
+            <div className="submitted-content-head">
+              <div>
+                <span className="submitted-content-kicker">Submitted Content</span>
+                <h2>Signal highlights</h2>
+              </div>
+              <div className="submitted-content-count">
+                <strong>{submittedContent.highlightedCount}</strong>
+                <span>highlighted sections</span>
+              </div>
+            </div>
+            {submittedContent.legend.length > 0 && (
+              <div className="submitted-signal-legend" aria-label="Signal color legend">
+                {submittedContent.legend.slice(0, 6).map((signal) => (
+                  <span key={signal.key} className="submitted-signal-chip" style={{ '--signal-color': signal.color }}>
+                    <i aria-hidden="true" />
+                    {signal.label}
+                    <strong>{signal.count}</strong>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="submitted-content-grid">
+              <div className="submitted-document" aria-label="Submitted document text">
+                {submittedContent.paragraphs.map((paragraph) => (
+                  <p key={paragraph.id}>
+                    {paragraph.segments.map((segment) => {
+                      const signal = segment.primarySignal;
+                      const isSelected = selectedSegment?.id === segment.id;
+                      if (!signal) {
+                        return <span key={segment.id}>{segment.text} </span>;
+                      }
+                      return (
+                        <button
+                          key={segment.id}
+                          type="button"
+                          className={`submitted-highlight${isSelected ? ' is-selected' : ''}`}
+                          style={{ '--signal-color': signal.color }}
+                          title={signal.description}
+                          onClick={() => {
+                            setSelectedSegmentId(segment.id);
+                            const linkedIndex = report.issues.findIndex((issue) => (
+                              segment.signals.some((s) => String(s.finding_id) === String(issue.id))
+                            ));
+                            if (linkedIndex >= 0) setExpandedIssue(linkedIndex);
+                          }}
+                        >
+                          {segment.text}
+                        </button>
+                      );
+                    })}
+                  </p>
+                ))}
+              </div>
+              <aside className="submitted-signal-panel" aria-label="Selected signal detail">
+                {selectedSegment?.primarySignal ? (
+                  <>
+                    <span className="submitted-panel-kicker">{selectedSegment.sentence_id}</span>
+                    <h3>{selectedSegment.primarySignal.label}</h3>
+                    <p>{selectedSegment.primarySignal.description}</p>
+                    <div className="submitted-panel-meta">
+                      {selectedSegment.primarySignal.score != null && (
+                        <span>{Math.round(selectedSegment.primarySignal.score)}% signal strength</span>
+                      )}
+                      {selectedSegment.primarySignal.tier && (
+                        <span>{selectedSegment.primarySignal.tier} priority</span>
+                      )}
+                      {selectedSegment.primarySignal.actionability && (
+                        <span>{selectedSegment.primarySignal.actionability.replaceAll('_', ' ')}</span>
+                      )}
+                    </div>
+                    {selectedSegment.signals.length > 1 && (
+                      <div className="submitted-panel-stack">
+                        <span>Also detected</span>
+                        {selectedSegment.signals.slice(1, 4).map((signal) => (
+                          <em key={`${selectedSegment.id}-${signal.key}-${signal.finding_id}`}>{signal.label}</em>
+                        ))}
+                      </div>
+                    )}
+                    {selectedSegment.primarySignal.recommendation && (
+                      <div className="submitted-panel-note">
+                        <span>Recommendation</span>
+                        <p>{selectedSegment.primarySignal.recommendation}</p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className="submitted-panel-kicker">No highlighted signal</span>
+                    <h3>Content map ready</h3>
+                    <p>The submitted text is available for review. New scans include richer signal highlights for each affected sentence.</p>
+                  </>
+                )}
+              </aside>
+            </div>
+          </section>
         )}
 
         {/* Findings list */}
