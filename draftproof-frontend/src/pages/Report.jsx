@@ -83,7 +83,8 @@ function buildTransformationSignals(features = {}) {
         value,
       };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => b.value - a.value);
 }
 
 function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiComponents = {}, writingComponents = {}) {
