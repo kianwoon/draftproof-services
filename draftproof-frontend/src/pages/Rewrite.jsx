@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson, regenerateRewriteReport } from '../api/draftproofApi';
+import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import { useAuth } from '../context/AuthContext';
 
@@ -67,25 +67,25 @@ export default function Rewrite() {
   }
 
   const handleDownload = async (fmt) => {
+    const downloadWindow = window.open('about:blank', '_blank');
+    if (downloadWindow) {
+      downloadWindow.opener = null;
+    }
+
     try {
-      if (fmt === 'pdf') {
-        const { data: regen } = await regenerateRewriteReport(rewriteId);
-        if (regen?.status === 'worker_unavailable') {
-          setError('Rewrite PDF regeneration is not available yet. Please wait for the worker deploy to finish, then try again.');
-          return;
-        }
-        if (regen?.status && regen.status !== 'completed') {
-          setError('Rewrite PDF is being regenerated. Please try the download again in a moment.');
-          return;
-        }
-      }
       const { data } = await getRewriteDownload(rewriteId, fmt);
       if (data.url) {
-        window.open(data.url, '_blank');
+        if (downloadWindow) {
+          downloadWindow.location.replace(data.url);
+        } else {
+          window.location.assign(data.url);
+        }
       } else {
+        downloadWindow?.close();
         setError('Download not available yet. Please try again in a moment.');
       }
     } catch (err) {
+      downloadWindow?.close();
       setError(err.response?.data?.detail || 'Download failed. Please try again.');
     }
   };

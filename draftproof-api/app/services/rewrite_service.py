@@ -281,6 +281,15 @@ async def regenerate_rewrite_report_assets(rewrite_id: str, user_id: str) -> dic
         }
     except CeleryTimeoutError:
         return {"status": "queued", "rewrite_id": rewrite_id, "scan_id": job_info["scan_id"]}
+    except (NotImplementedError, RuntimeError, AttributeError) as e:
+        message = str(e).lower()
+        if "result backend" not in message and "disabledbackend" not in message:
+            raise
+        logger.info(
+            "Rewrite report regeneration queued without waiting for result backend for rewrite %s",
+            rewrite_id,
+        )
+        return {"status": "queued", "rewrite_id": rewrite_id, "scan_id": job_info["scan_id"]}
 
 
 async def get_rewrite_download_url(rewrite_id: str, fmt: str, user_id: str) -> str | None:
