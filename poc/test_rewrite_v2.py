@@ -73,9 +73,12 @@ from rewrite_pipeline import (
     _ai_search_protected_loss_reason,
     _ai_search_drift_false_positive,
     _ai_search_entity_drift_scan_allowed,
+    _reconstruction_drift_scan_allowed,
     _scan_scope_summary,
     _human_shift_score,
     _authenticity_gate_status,
+    _build_reconstruction_meaning_brief,
+    _reconstruction_mitigation_prompt,
     _paragraph_component_targets,
     _paragraph_component_prompt,
     _extract_paragraph_component_candidates,
@@ -969,6 +972,151 @@ assert_test(
     not negative_shift_gate["success"]
     and negative_shift_gate["reason"] == "human_shift_score_too_low",
     "authenticity gate rejects AI drops that are outweighed by human-side regressions",
+)
+
+reconstruction_source = (
+    "Inclusive learning design in Certificate III Hairdressing needs to protect technical standards.\n\n"
+    "Learners can repeat haircut terminology but still struggle when they move from mannequin practice to live client sectioning. "
+    "According to Smith (2023), \"what students know,\" must be checked through practice. "
+    "This shows that support is important for all learners."
+)
+reconstruction_raw = {
+    "integrity_layers": {
+        "layers": {
+            "ai_authorship_risk": {"score": 68},
+            "human_contribution_signal": {"score": 27},
+            "ai_transformation_risk": {"score": 73},
+            "grounding_quality_risk": {"score": 72},
+        }
+    },
+    "findings": {
+        "high": [{
+            "title": "semantic_uniformity",
+            "evidence": "This shows that support is important for all learners.",
+            "recommendation": "Rebuild the paragraph around a concrete reasoning move.",
+        }],
+        "medium": [],
+        "low": [],
+        "critical": [],
+    },
+    "ai_mitigation": {
+        "target_segments": [{
+            "segment_id": "s002",
+            "paragraph_id": "p001",
+            "text": "This shows that support is important for all learners.",
+            "primary_signal": {"key": "generic_assertion_risk", "score": 90},
+            "lever": "specificity",
+            "bucket": "needs_author_context",
+            "action": "Change sentence route using existing paragraph context, not synonym swaps.",
+            "auto_apply": True,
+        }],
+        "component_actions": [{
+            "component": "semantic_uniformity_risk",
+            "score": 72,
+            "action": "Add sharper paragraph roles and section-specific reasoning.",
+        }]
+    },
+    "scan_intelligence": {
+        "semantic_shape": {
+            "semantic_uniformity_risk": 0.62,
+            "paragraph_role_repetition": 0.58,
+        },
+        "integrity_layers": {
+            "layers": {
+                "ai_authorship_risk": {
+                    "signals": [
+                        {"key": "generic_assertion_risk", "score": 90},
+                        {"key": "topk_pattern", "score": 87},
+                    ]
+                }
+            }
+        },
+    },
+    "rewrite_constraints": {
+        "allowed_additions": ["step-by-step process descriptions"],
+        "preserve_terms": ['"what students know,"'],
+        "do_not_add": ["new citation or reference"],
+        "rewrite_rule": "Use implied process detail only.",
+    },
+}
+meaning_brief = _build_reconstruction_meaning_brief(reconstruction_source, reconstruction_raw)
+assert_test(
+    meaning_brief["claims"]
+    and any("live client sectioning" in claim for claim in meaning_brief["claims"]),
+    "reconstruction meaning brief extracts submitted claims",
+)
+assert_test(
+    '"what students know,"' in meaning_brief["protected_facts"],
+    "reconstruction meaning brief preserves protected quoted facts",
+)
+assert_test(
+    meaning_brief["weak_grounding_zones"][0]["signal"] == "semantic_uniformity",
+    "reconstruction meaning brief carries scan weak zones",
+)
+assert_test(
+    meaning_brief["word_count_band"]["min_words"] <= meaning_brief["word_count_band"]["source_word_count"] <= meaning_brief["word_count_band"]["max_words"],
+    "reconstruction meaning brief includes 10 percent word-count band",
+)
+assert_test(
+    any(row.get("key") == "generic_assertion_risk" for row in meaning_brief["integrity_targets"])
+    and meaning_brief["target_segments"][0]["segment_id"] == "s002",
+    "reconstruction meaning brief carries integrity drivers and target segments",
+)
+assert_test(
+    "step-by-step process descriptions" in meaning_brief["allowed_existing_additions"],
+    "reconstruction meaning brief carries scanner-allowed additions",
+)
+reconstruction_prompt = _reconstruction_mitigation_prompt(
+    reconstruction_source,
+    reconstruction_raw,
+    reconstruction_raw["ai_mitigation"],
+    attempt_index=1,
+    strategy="reasoning_dense_reconstruction",
+    prior_attempts=[{"strategy": "old", "human_shift_score": -10.2, "reason": "human_shift_score_too_low"}],
+)
+assert_test(
+    "Reconstruct the draft from its meaning brief" in reconstruction_prompt,
+    "reconstruction prompt frames task as reconstruction rather than revision",
+)
+assert_test(
+    "Human Contribution >= 80" in reconstruction_prompt
+    and "Return " in reconstruction_prompt
+    and " words only" in reconstruction_prompt,
+    "reconstruction prompt targets 80 human contribution and enforces word-count band",
+)
+assert_test(
+    "Do not follow the submitted sentence order as a scaffold" in reconstruction_prompt
+    and "Use target segments as the highest-priority places" in reconstruction_prompt,
+    "reconstruction prompt treats source as evidence rather than sentence scaffold",
+)
+assert_test(
+    "Do not invent personal observations" in reconstruction_prompt
+    and "Narrow unsupported claims" in reconstruction_prompt,
+    "reconstruction prompt forbids fabricated grounding and requires narrowing unsupported claims",
+)
+assert_test(
+    "raises Human Contribution but raises AI Authorship will be rejected" in reconstruction_prompt,
+    "reconstruction prompt states Human Shift acceptance failure mode",
+)
+assert_test(
+    "human_shift=-10.2" in reconstruction_prompt,
+    "reconstruction prompt includes failed Human Shift feedback",
+)
+assert_test(
+    _reconstruction_drift_scan_allowed(
+        "The reconstruction keeps the same learner problem but changes the transition.",
+        ["lost_named_entity: 'However'"],
+        0.842,
+    ),
+    "reconstruction drift allows discourse-marker noise to proceed to scan",
+)
+assert_test(
+    not _reconstruction_drift_scan_allowed(
+        "The reconstruction drops the unit name.",
+        ["lost_named_entity: 'Certificate III'"],
+        0.90,
+    ),
+    "reconstruction drift still blocks critical entity loss",
 )
 
 ai_search_candidates = _ai_search_marked_grounding_candidates(

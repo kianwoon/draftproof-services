@@ -286,8 +286,9 @@ assert_equal(template_ai.tier, Tier.ORANGE, "template AI sample escalates to ora
 
 scan_builder = ReportBuilder().set_meta(
     original_text=(
-        "I observed the workshop and wrote rough notes about the classroom task. "
+        "In 2024, I observed the VET workshop and wrote rough notes about the Certificate III classroom task. "
         "This shows that learning is important and can improve outcomes.\n\n"
+        "Smith (2023) describes this as \"practice before confidence\". "
         "The source claims are broad and need clearer evidence."
     )
 )
@@ -309,6 +310,24 @@ scan_json = report_to_dict(scan_report)
 intel = scan_json.get("scan_intelligence", {})
 assert_equal(intel.get("schema_version"), "scan_intelligence.v1", "scan intelligence schema is present")
 assert_true(intel.get("document", {}).get("segments"), "scan intelligence includes highlightable document segments")
+preservation = intel.get("document", {}).get("preservation_inventory", {})
+anchor_texts = [a.get("text") for a in preservation.get("anchors", [])]
+assert_equal(
+    preservation.get("schema_version"),
+    "preservation_inventory.v1",
+    "scan intelligence includes preservation inventory for restructuring",
+)
+assert_true(
+    "practice before confidence" in anchor_texts
+    and "2024" in anchor_texts
+    and "VET" in anchor_texts
+    and "Certificate III" in anchor_texts,
+    "preservation inventory captures quotes, years, acronyms, and named/domain entities",
+)
+assert_true(
+    set(anchor_texts).issubset(set(scan_json.get("rewrite_constraints", {}).get("preserve_terms", []))),
+    "rewrite constraints carry scanner preservation anchors",
+)
 highlighted = [s for s in intel["document"]["segments"] if s.get("highlight", {}).get("enabled")]
 assert_true(highlighted, "scan intelligence marks finding-linked segments for highlighting")
 assert_true(

@@ -2457,6 +2457,99 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         rows.sort(key=lambda item: item["start_char"])
         return rows
 
+    def _unique_preserve(rows: list, value: str, kind: str, reason: str, priority: int) -> None:
+        value = " ".join(str(value or "").split()).strip()
+        if not value:
+            return
+        lower = value.lower()
+        if any(item.get("text", "").lower() == lower and item.get("kind") == kind for item in rows):
+            return
+        rows.append({
+            "text": value,
+            "kind": kind,
+            "reason": reason,
+            "priority": priority,
+        })
+
+    def _preservation_inventory(text: str) -> Dict[str, Any]:
+        """Extract scanner-owned anchors required for meaning-preserving regeneration."""
+        text = text or ""
+        anchors: list[dict] = []
+        for match in _re.finditer(r'"([^"\n]{2,160})"|“([^”\n]{2,160})”|‘([^’\n]{2,120})’', text):
+            quoted = next((group for group in match.groups() if group), "")
+            _unique_preserve(anchors, quoted, "quote", "quoted/source wording", 100)
+        for match in _re.finditer(
+            r"\((?:[A-Z][A-Za-z'’.-]+(?:\s+(?:&|and)\s+[A-Z][A-Za-z'’.-]+)?|[A-Z][A-Za-z'’.-]+\s+et\s+al\.)\s*,\s*(?:19|20)\d{2}[a-z]?\)",
+            text,
+        ):
+            _unique_preserve(anchors, match.group(0), "citation", "author-year citation", 100)
+        for match in _re.finditer(r"\b(?:19|20)\d{2}[a-z]?\b", text):
+            _unique_preserve(anchors, match.group(0), "year", "year/date anchor", 95)
+        for match in _re.finditer(r"\b\d+(?:\.\d+)?\s*(?:%|percent|degrees?|hours?|weeks?|months?|years?)?\b", text, _re.I):
+            _unique_preserve(anchors, match.group(0), "number", "number/measurement anchor", 90)
+        for match in _re.finditer(r"\b[A-Z]{2,}(?:[-/][A-Z0-9]{2,})*\b", text):
+            _unique_preserve(anchors, match.group(0), "acronym", "acronym or unit code", 86)
+        entity_pattern = (
+            r"\b[A-Z][A-Za-z'’.-]*"
+            r"(?:\s+(?:(?:of|for|and|&|the|in|at)\s+)?(?:[A-Z][A-Za-z'’.-]*|I{2,3}|IV|V))*"
+        )
+        stop_entities = {
+            "Today", "In", "This", "That", "The", "A", "An", "Many", "Students",
+            "Teachers", "Learners", "However", "Therefore", "Education",
+            "Access", "Another", "Assessment", "Because", "Because of", "But",
+            "But the", "In the", "Knowledge", "Not", "Now", "Schools",
+            "Technology", "They", "Used", "When",
+        }
+        for match in _re.finditer(entity_pattern, text):
+            entity = match.group(0).strip()
+            if entity in stop_entities or len(entity) < 3:
+                continue
+            words = entity.split()
+            if len(words) == 1:
+                token = words[0]
+                is_mixed_case = any(ch.islower() for ch in token) and any(ch.isupper() for ch in token[1:])
+                is_acronym_like = token.isupper() and len(token) > 1
+                if not (is_mixed_case or is_acronym_like):
+                    continue
+            if words and words[-1].lower() in {"of", "for", "and", "the", "in", "at"}:
+                continue
+            if len(words) == 1 and entity.lower() in {"teacher", "student", "learner"}:
+                continue
+            _unique_preserve(anchors, entity, "name_or_entity", "proper noun or named entity", 78)
+
+        domain_terms = []
+        for tier_name, flist in result.get("findings", {}).items():
+            for f_info in flist:
+                ev = f_info.get("evidence", {})
+                if isinstance(ev, dict):
+                    terms = ev.get("metrics", {}).get("domain_terms", [])
+                    if isinstance(terms, list):
+                        for term in terms:
+                            term = str(term or "").strip()
+                            if term and term.lower() not in {t.lower() for t in domain_terms}:
+                                domain_terms.append(term)
+                                _unique_preserve(anchors, term, "domain_term", "domain keyword from specificity layer", 70)
+
+        headings = []
+        for raw_para in _re.split(r"\n\s*\n+", text):
+            paragraph = raw_para.strip()
+            if paragraph and len(paragraph.split()) <= 12 and not _re.search(r"[.!?]$", paragraph):
+                headings.append(paragraph)
+                _unique_preserve(anchors, paragraph, "heading", "section heading", 88)
+
+        anchors.sort(key=lambda item: (-item["priority"], item["text"].lower()))
+        return {
+            "schema_version": "preservation_inventory.v1",
+            "anchors": anchors[:80],
+            "quotes": [a["text"] for a in anchors if a["kind"] == "quote"][:30],
+            "citations": [a["text"] for a in anchors if a["kind"] == "citation"][:30],
+            "years": [a["text"] for a in anchors if a["kind"] == "year"][:30],
+            "numbers": [a["text"] for a in anchors if a["kind"] == "number"][:30],
+            "names_entities": [a["text"] for a in anchors if a["kind"] == "name_or_entity"][:40],
+            "domain_terms": domain_terms[:40],
+            "headings": headings[:20],
+        }
+
     def _scan_intelligence() -> Dict[str, Any]:
         badge = report.ai_risk_badge or {}
         transformation = badge.get("transformation_classification") or {}
@@ -2467,6 +2560,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         segments = _document_segments()
         doc_findings = [_segment_signal(f) for f in document_level_findings]
         doc_findings.sort(key=lambda entry: entry.get("score", 0), reverse=True)
+        preservation_inventory = _preservation_inventory(report.original_text or "")
         return {
             "schema_version": "scan_intelligence.v1",
             "purpose": {
@@ -2479,6 +2573,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "paragraph_count": len({s.get("paragraph_id") for s in segments if s.get("paragraph_id")}),
                 "segments": segments,
                 "paragraphs": _paragraph_map(segments),
+                "preservation_inventory": preservation_inventory,
             },
             "transformation": {
                 "classification": transformation,
@@ -2560,6 +2655,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "rewrite_plan": None,
                 "rewrite_constraints": None,
                 "rewrite_edit_briefs": None,
+                "preservation_inventory": preservation_inventory,
                 "target_segment_ids": [
                     segment["segment_id"]
                     for segment in segments
@@ -2717,6 +2813,25 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             if detect_rewrite_decision else rewrite_mode == "full"
         ),
     }
+    preservation_inventory = _preservation_inventory(report.original_text or "")
+    preserved_anchor_terms = [
+        anchor["text"]
+        for anchor in preservation_inventory.get("anchors", [])
+        if anchor.get("kind") in {
+            "quote",
+            "citation",
+            "year",
+            "number",
+            "acronym",
+            "name_or_entity",
+            "domain_term",
+            "heading",
+        }
+    ]
+    for term in preserved_anchor_terms:
+        if term not in result["rewrite_constraints"]["preserve_terms"]:
+            result["rewrite_constraints"]["preserve_terms"].append(term)
+    result["rewrite_constraints"]["preservation_inventory"] = preservation_inventory
 
     if report.predictability:
         result["predictability"] = {

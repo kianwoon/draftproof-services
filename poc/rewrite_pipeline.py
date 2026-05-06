@@ -18,6 +18,7 @@ import json
 import time
 import re
 import argparse
+import math
 from difflib import SequenceMatcher
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -828,6 +829,331 @@ def _authenticity_mitigation_prompt(
     )
 
 
+def _brief_sentences(text: str, limit: int = 10) -> list[str]:
+    if not isinstance(text, str):
+        return []
+    rows = []
+    for sentence in re.findall(r"[^.!?\n]+(?:[.!?]+|$)", text):
+        cleaned = " ".join(sentence.split()).strip()
+        if len(cleaned.split()) < 6:
+            continue
+        rows.append(cleaned)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _text_word_count(text: str) -> int:
+    if not isinstance(text, str) or not text.strip():
+        return 0
+    return len(re.findall(r"\b[\w’'-]+\b", text))
+
+
+def _word_count_band(text: str, variance: float = 0.10) -> dict:
+    count = _text_word_count(text)
+    return {
+        "source_word_count": count,
+        "min_words": max(1, int(math.floor(count * (1.0 - variance)))),
+        "max_words": max(1, int(math.ceil(count * (1.0 + variance)))),
+        "variance": variance,
+    }
+
+
+def _integrity_driver_rows(raw_json: dict | None, limit: int = 14) -> list[dict]:
+    raw_json = raw_json or {}
+    rows: list[dict] = []
+    seen = set()
+    integrity_sources = [
+        raw_json.get("integrity_layers"),
+        ((raw_json.get("scan_intelligence") or {}).get("integrity_layers") or {}),
+        ((raw_json.get("ai_mitigation") or {}).get("integrity_layers") or {}),
+    ]
+    for integrity in integrity_sources:
+        layers = integrity.get("layers") if isinstance(integrity, dict) else {}
+        if not isinstance(layers, dict):
+            continue
+        for layer_key, layer in layers.items():
+            if not isinstance(layer, dict):
+                continue
+            for signal in layer.get("signals") or []:
+                if not isinstance(signal, dict):
+                    continue
+                signal_key = (layer_key, signal.get("key") or signal.get("label"))
+                if signal_key in seen:
+                    continue
+                seen.add(signal_key)
+                score = signal.get("score")
+                rows.append({
+                    "layer": layer_key,
+                    "key": signal.get("key"),
+                    "label": signal.get("label"),
+                    "score": score,
+                    "priority": float(score) if isinstance(score, (int, float)) else -1.0,
+                })
+    rows.sort(key=lambda item: item.get("priority", -1), reverse=True)
+    return [
+        {k: v for k, v in row.items() if k != "priority" and v is not None}
+        for row in rows[:limit]
+    ]
+
+
+def _target_segment_rows(raw_json: dict | None, limit: int = 16) -> list[dict]:
+    raw_json = raw_json or {}
+    ai_mitigation = raw_json.get("ai_mitigation") or {}
+    segments = ai_mitigation.get("target_segments") or []
+    rows: list[dict] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        signal = segment.get("primary_signal") or {}
+        rows.append({
+            "segment_id": segment.get("segment_id"),
+            "paragraph_id": segment.get("paragraph_id"),
+            "text": segment.get("text"),
+            "signal": signal.get("key") or signal.get("title"),
+            "score": signal.get("score"),
+            "lever": segment.get("lever"),
+            "bucket": segment.get("bucket"),
+            "action": segment.get("action"),
+            "auto_apply": segment.get("auto_apply"),
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _reconstruction_failure_feedback(prior_attempts: list[dict] | None, limit: int = 6) -> list[dict]:
+    rows: list[dict] = []
+    for item in (prior_attempts or [])[-limit:]:
+        if not isinstance(item, dict):
+            continue
+        gate = item.get("gate") if isinstance(item.get("gate"), dict) else {}
+        components = item.get("human_shift_components") or gate.get("human_shift_components") or {}
+        row = {
+            "strategy": item.get("strategy") or item.get("attempt"),
+            "reason": item.get("reason") or gate.get("reason"),
+            "human_shift_score": item.get("human_shift_score") or gate.get("human_shift_score"),
+            "human_delta": item.get("human_delta") or gate.get("human_delta"),
+            "ai_authorship_delta": item.get("ai_authorship_delta") or gate.get("ai_authorship_delta"),
+            "ai_transformation_delta": item.get("ai_transformation_delta") or gate.get("ai_transformation_delta"),
+            "failed_components": {
+                key: value
+                for key, value in components.items()
+                if isinstance(value, (int, float)) and value < 0
+            },
+        }
+        rows.append({k: v for k, v in row.items() if v not in (None, {}, [])})
+    return rows
+
+
+def _build_reconstruction_meaning_brief(source_text: str, raw_json: dict | None) -> dict:
+    """Build a conservative meaning brief for document-level reconstruction.
+
+    This is not an abstractive summary. It extracts author-supplied material
+    already present in the submitted content and scanner output so the LLM can
+    rebuild structure without inventing facts.
+    """
+    raw_json = raw_json or {}
+    paragraphs = [
+        " ".join(p.split())
+        for p in re.split(r"\n\s*\n", source_text or "")
+        if p.strip()
+    ]
+    headings = [
+        p
+        for p in paragraphs
+        if len(p.split()) <= 12 and not re.search(r"[.!?]$", p)
+    ][:12]
+    protected_spans = []
+    for span in detect_protected_spans(source_text or "")[:40]:
+        value = (source_text or "")[span.start_char:span.end_char].strip()
+        if value and value not in protected_spans:
+            protected_spans.append(value)
+
+    findings = raw_json.get("findings") or {}
+    weak_zones = []
+    for tier in ("critical", "high", "medium", "low"):
+        for item in findings.get(tier, []) or []:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("category") or item.get("scanner") or "")
+            evidence = item.get("evidence")
+            recommendation = item.get("recommendation")
+            weak_zones.append({
+                "tier": tier,
+                "signal": title,
+                "evidence": evidence if isinstance(evidence, str) else "",
+                "recommendation": recommendation if isinstance(recommendation, str) else "",
+            })
+            if len(weak_zones) >= 12:
+                break
+        if len(weak_zones) >= 12:
+            break
+
+    action_rows = []
+    for action in ((raw_json.get("ai_mitigation") or {}).get("component_actions") or [])[:10]:
+        if not isinstance(action, dict):
+            continue
+        action_rows.append({
+            "component": action.get("component"),
+            "score": action.get("score"),
+            "action": action.get("action"),
+            "user_input_needed": action.get("user_input_needed"),
+        })
+
+    scan_intelligence = raw_json.get("scan_intelligence") or {}
+    semantic = (
+        scan_intelligence.get("semantic_layer")
+        or scan_intelligence.get("semantic_shape")
+        or raw_json.get("semantic_shape")
+        or {}
+    )
+    rewrite_constraints = (
+        raw_json.get("rewrite_constraints")
+        or (((raw_json.get("ai_mitigation") or {}).get("rewrite_handoff") or {}).get("rewrite_constraints"))
+        or {}
+    )
+    preservation_inventory = (
+        rewrite_constraints.get("preservation_inventory")
+        or (((raw_json.get("scan_intelligence") or {}).get("mitigation_inputs") or {}).get("preservation_inventory"))
+        or (((raw_json.get("scan_intelligence") or {}).get("document") or {}).get("preservation_inventory"))
+        or {}
+    )
+    inventory_anchors = [
+        anchor.get("text")
+        for anchor in (preservation_inventory.get("anchors") or [])
+        if isinstance(anchor, dict) and anchor.get("text")
+    ]
+    for anchor in inventory_anchors:
+        if anchor not in protected_spans:
+            protected_spans.append(anchor)
+    word_band = _word_count_band(source_text, variance=0.10)
+    paragraph_roles = []
+    for idx, paragraph in enumerate(paragraphs[:10], start=1):
+        lower = paragraph.lower()
+        if any(marker in lower for marker in ("according to", "source", "citation", "research", "study")):
+            role = "source_or_evidence_relation"
+        elif any(marker in lower for marker in ("therefore", "this shows", "this means", "conclusion")):
+            role = "interpretation_or_conclusion"
+        elif idx == 1:
+            role = "context_or_thesis"
+        else:
+            role = "development"
+        paragraph_roles.append({
+            "index": idx,
+            "role": role,
+            "preview": paragraph[:220],
+        })
+
+    return {
+        "claims": _brief_sentences(source_text, limit=12),
+        "headings": headings,
+        "protected_facts": protected_spans[:25],
+        "preservation_inventory": preservation_inventory,
+        "word_count_band": word_band,
+        "integrity_targets": _integrity_driver_rows(raw_json, limit=14),
+        "target_segments": _target_segment_rows(raw_json, limit=18),
+        "allowed_existing_additions": rewrite_constraints.get("allowed_additions") or [],
+        "preserve_terms": rewrite_constraints.get("preserve_terms") or protected_spans[:25],
+        "do_not_add": rewrite_constraints.get("do_not_add") or [],
+        "rewrite_rule": rewrite_constraints.get("rewrite_rule"),
+        "weak_grounding_zones": weak_zones,
+        "mitigation_actions": action_rows,
+        "paragraph_roles": paragraph_roles,
+        "semantic_layer": semantic,
+        "signal_inventory": scan_intelligence.get("signal_inventory") or {},
+        "transformation_core": (scan_intelligence.get("transformation") or {}).get("core_signals") or {},
+    }
+
+
+def _reconstruction_mitigation_prompt(
+    source_text: str,
+    raw_json: dict,
+    ai_mitigation: dict | None,
+    *,
+    attempt_index: int,
+    strategy: str,
+    prior_attempts: list[dict] | None = None,
+) -> str:
+    contribution = _contribution_scores(raw_json)
+    integrity = _integrity_scores(raw_json)
+    brief = _build_reconstruction_meaning_brief(source_text, raw_json)
+    failure_feedback = _reconstruction_failure_feedback(prior_attempts)
+    compact_failure_rows = []
+    for item in failure_feedback:
+        compact_failure_rows.append(
+            "- "
+            + "; ".join(
+                part
+                for part in [
+                    f"strategy={item.get('strategy')}",
+                    f"reason={item.get('reason')}",
+                    f"human_shift={item.get('human_shift_score')}",
+                    f"ai_authorship_delta={item.get('ai_authorship_delta')}",
+                    f"human_delta={item.get('human_delta')}",
+                    f"ai_transformation_delta={item.get('ai_transformation_delta')}",
+                ]
+                if not part.endswith("=None")
+            )
+        )
+    strategy_guidance = {
+        "conservative_reconstruction": (
+            "Keep the same claim set, but rebuild paragraph routes, sentence openings, and causal bridges. "
+            "Prefer narrower claims over adding new evidence."
+        ),
+        "reasoning_dense_reconstruction": (
+            "Compress generic explanation and make each paragraph carry a clearer reasoning move: context, friction, evidence relation, implication."
+        ),
+        "domain_grounded_reconstruction": (
+            "Use domain-specific operational language already present in the draft. Do not add new workplace, class, source, or personal details."
+        ),
+    }.get(strategy, "Rebuild the document structure while preserving meaning and protected facts.")
+    return (
+        "DraftProof AI-Mitigation Reconstruction.\n"
+        "This is not sentence-level revision and not paraphrasing. Reconstruct the draft from its meaning brief.\n"
+        "Goal: produce a human-authored regeneration that moves the next scan toward Human Contribution >= 80 where the submitted evidence permits it. "
+        "If 80 is not reachable without inventing facts, maximize Human Shift Score while preserving what the submitted content conveys.\n\n"
+        f"Current scores: AI Authorship={integrity.get('ai_authorship')}, Human={contribution.get('human')}, "
+        f"AI Transformation={contribution.get('ai_transformation')}, Grounding Risk={integrity.get('grounding')}.\n"
+        f"Strategy: {strategy}. {strategy_guidance}\n\n"
+        "Regeneration brief extracted from submitted content and scan signals:\n"
+        f"{json.dumps(brief, ensure_ascii=False)[:5200]}\n\n"
+        "Previous failed attempts to correct:\n"
+        f"{json.dumps(failure_feedback, ensure_ascii=False) if failure_feedback else '- None yet.'}\n"
+        f"{chr(10).join(compact_failure_rows) if compact_failure_rows else ''}\n\n"
+        "Word-count requirement:\n"
+        f"- The submitted draft has {brief['word_count_band']['source_word_count']} words. "
+        f"Return {brief['word_count_band']['min_words']} to {brief['word_count_band']['max_words']} words only.\n\n"
+        "Regeneration blueprint:\n"
+        "- Do not follow the submitted sentence order as a scaffold. Use it as evidence for the claim set.\n"
+        "- Build a fresh paragraph route from the brief: concrete context, pressure point, evidence/source relation, author reasoning, bounded implication.\n"
+        "- Target the listed AI Authorship drivers directly: generic assertion risk, qualifying-text density, top-k predictability, and repeated sentence structure.\n"
+        "- Give adjacent paragraphs different jobs. One may start from a problem, another from a source relation, another from a limitation or consequence.\n"
+        "- Use target segments as the highest-priority places to change the route, not as sentences to lightly paraphrase.\n"
+        "- Use only allowed existing additions and implied process detail already licensed by the scan constraints.\n\n"
+        "Allowed reconstruction moves:\n"
+        "- Reorder paragraphs and claims when the meaning is preserved.\n"
+        "- Split over-smooth paragraphs and vary sentence pacing naturally.\n"
+        "- Compress broad explanatory padding into denser reasoning.\n"
+        "- Make causal links explicit when the submitted content already implies them.\n"
+        "- Replace generic academic transitions with context-specific connections.\n"
+        "- Narrow unsupported claims rather than inventing evidence.\n\n"
+        "Human Shift acceptance requirements:\n"
+        "- The next scan must not trade a Human Contribution gain for higher AI Authorship.\n"
+        "- Avoid increasing semantic uniformity, review burden, or critical/high findings.\n"
+        "- A candidate that raises Human Contribution but raises AI Authorship will be rejected.\n"
+        "- Prefer a less polished, more locally reasoned draft over a smoother academic rewrite.\n\n"
+        "Forbidden moves:\n"
+        "- Do not invent personal observations, examples, dates, statistics, sources, citations, institutions, or facts.\n"
+        "- Do not change quoted text, citations, years, names, numbers, headings, or source relations.\n"
+        "- Do not use placeholders, review brackets, comments, labels, markdown fences, or explanations.\n"
+        "- Do not preserve the original sentence order or sentence shape just to be safe; preserve meaning instead.\n\n"
+        f"Attempt {attempt_index}: return only the complete reconstructed document.\n\n"
+        "SOURCE DRAFT:\n"
+        f"<TARGET_DOCUMENT>\n{source_text.strip()}\n</TARGET_DOCUMENT>"
+    )
+
+
 def _clean_full_document_candidate(output: str, original_text: str) -> str:
     if not output:
         return ""
@@ -1237,7 +1563,8 @@ def _source_repair_drift_false_positive(candidate: str, reasons: list[str]) -> b
 _AI_SEARCH_ENTITY_NOISE = {
     "the", "this", "these", "that", "with", "when", "while", "where",
     "learners", "learner", "students", "student", "competency",
-    "introduction", "conclusion", "centre", "center",
+    "introduction", "conclusion", "however", "therefore", "because",
+    "centre", "center",
 }
 
 
@@ -1301,6 +1628,26 @@ def _ai_search_entity_drift_scan_allowed(candidate: str, reasons: list[str], sim
         if entity.lower() in candidate_l:
             continue
         if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
+            return False
+    return True
+
+
+def _reconstruction_drift_scan_allowed(candidate: str, reasons: list[str], similarity: float) -> bool:
+    """Allow reconstruction scoring when drift only reports discourse-marker noise."""
+    if not isinstance(candidate, str) or not reasons or similarity < 0.78:
+        return False
+    candidate_l = re.sub(r"\s+", " ", candidate).lower()
+    for reason in reasons:
+        match = re.match(r"lost_named_entity:\s+'([^']+)'", str(reason))
+        if not match:
+            return False
+        entity = re.sub(r"\s+", " ", match.group(1)).strip()
+        if entity.lower() in candidate_l:
+            continue
+        if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
+            return False
+        words = [word.lower() for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", entity)]
+        if not words or any(word not in _AI_SEARCH_ENTITY_NOISE for word in words):
             return False
     return True
 
@@ -2723,6 +3070,220 @@ def run_rewrite_pipeline(
                         best_candidate_eval = dict(candidate_eval)
                         candidate_eval["best_so_far"] = True
                     authenticity_summary["candidates"].append(candidate_eval)
+                reconstruction_target_human = _float_env("DRAFTPROOF_RECONSTRUCTION_TARGET_HUMAN", 80.0)
+                selected_human = (
+                    best_candidate_gate.get("candidate_human")
+                    if isinstance(best_candidate_gate, dict)
+                    else None
+                )
+                selected_human_delta = (
+                    best_candidate_gate.get("human_delta")
+                    if isinstance(best_candidate_gate, dict)
+                    else None
+                )
+                small_shift_under_target = bool(
+                    best_candidate_gate
+                    and best_candidate_gate.get("success")
+                    and isinstance(selected_human, (int, float))
+                    and selected_human < reconstruction_target_human
+                    and (
+                        not isinstance(selected_human_delta, (int, float))
+                        or selected_human_delta < _float_env("DRAFTPROOF_RECONSTRUCTION_SKIP_MIN_HUMAN_GAIN", 25.0)
+                    )
+                )
+                reconstruction_enabled = (
+                    (
+                        not (best_candidate_gate and best_candidate_gate.get("success"))
+                        or (
+                            small_shift_under_target
+                            and os.environ.get("DRAFTPROOF_RECONSTRUCTION_AFTER_SMALL_SHIFT", "1") != "0"
+                        )
+                    )
+                    and os.environ.get("DRAFTPROOF_RECONSTRUCTION_MITIGATION", "1") != "0"
+                )
+                if reconstruction_enabled:
+                    reconstruction_strategies = [
+                        "conservative_reconstruction",
+                        "reasoning_dense_reconstruction",
+                        "domain_grounded_reconstruction",
+                    ]
+                    try:
+                        reconstruction_limit = max(
+                            1,
+                            int(os.environ.get("DRAFTPROOF_RECONSTRUCTION_CANDIDATES", "2")),
+                        )
+                    except ValueError:
+                        reconstruction_limit = 2
+                    reconstruction_strategies = reconstruction_strategies[:reconstruction_limit]
+                    authenticity_summary["reconstruction"] = {
+                        "enabled": True,
+                        "candidate_limit": len(reconstruction_strategies),
+                        "strategies": reconstruction_strategies,
+                        "target_human_contribution": reconstruction_target_human,
+                        "triggered_after_small_shift": small_shift_under_target,
+                    }
+                    reconstruction_word_band = _word_count_band(source_for_mitigation, variance=0.10)
+                    authenticity_summary["reconstruction"]["word_count_band"] = reconstruction_word_band
+                    reconstruction_min_chars = max(200, int(len(source_for_mitigation) * 0.65))
+                    reconstruction_max_chars = max(reconstruction_min_chars, int(len(text) * 1.45))
+                    reconstruction_drift_threshold = _float_env(
+                        "DRAFTPROOF_RECONSTRUCTION_DRIFT_THRESHOLD",
+                        0.25,
+                    )
+                    for reconstruction_index, strategy in enumerate(reconstruction_strategies, start=1):
+                        report_progress(
+                            min(92, 84 + reconstruction_index),
+                            f"Trying reconstruction mitigation candidate {reconstruction_index}/{len(reconstruction_strategies)}",
+                        )
+                        candidate_eval = {
+                            "attempt": authenticity_candidate_limit + reconstruction_index,
+                            "strategy": strategy,
+                            "reconstruction": True,
+                            "passed_local_checks": False,
+                        }
+                        try:
+                            prompt = _reconstruction_mitigation_prompt(
+                                source_for_mitigation,
+                                ctx.raw_json,
+                                ai_mitigation_contract,
+                                attempt_index=reconstruction_index,
+                                strategy=strategy,
+                                prior_attempts=authenticity_summary.get("candidates") or [],
+                            )
+                            authenticity_summary["llm_calls"] += 1
+                            response = gateway.chat(
+                                prompt,
+                                system=(
+                                    "You are DraftProof's AI-Mitigation reconstruction engine. "
+                                    "Return only a complete fact-preserving reconstructed document."
+                                ),
+                                temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.78")),
+                                max_tokens=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_MAX_TOKENS", "6500")),
+                            )
+                            candidate = _clean_full_document_candidate(response.content, source_for_mitigation)
+                        except Exception as exc:
+                            candidate_eval["reason"] = f"llm_error {exc}"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        candidate_eval["candidate_length"] = len(candidate or "")
+                        candidate_eval["candidate_word_count"] = _text_word_count(candidate or "")
+                        if not candidate:
+                            candidate_eval["reason"] = "empty_or_unchanged_candidate"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        candidate, repair_notes = _repair_candidate_source_damage(candidate)
+                        if repair_notes:
+                            candidate_eval["source_damage_repairs"] = repair_notes
+                            candidate_eval["candidate_length"] = len(candidate or "")
+                            candidate_eval["candidate_word_count"] = _text_word_count(candidate or "")
+                        review_notes = _review_marker_notes(candidate)
+                        if review_notes:
+                            candidate_eval["reason"] = "review_markers_not_auto_kept"
+                            candidate_eval["review_suggestion_count"] = len(review_notes)
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        quality_rejection = _ai_candidate_quality_reject_reason(candidate)
+                        if quality_rejection:
+                            candidate_eval["reason"] = quality_rejection
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        candidate_words = _text_word_count(candidate)
+                        candidate_eval["candidate_word_count"] = candidate_words
+                        if candidate_words < reconstruction_word_band["min_words"]:
+                            candidate_eval["reason"] = (
+                                f"candidate_word_count_too_low "
+                                f"{candidate_words}<{reconstruction_word_band['min_words']}"
+                            )
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        if candidate_words > reconstruction_word_band["max_words"]:
+                            candidate_eval["reason"] = (
+                                f"candidate_word_count_too_high "
+                                f"{candidate_words}>{reconstruction_word_band['max_words']}"
+                            )
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        if len(candidate) < reconstruction_min_chars:
+                            candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{reconstruction_min_chars}"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        if len(candidate) > reconstruction_max_chars:
+                            candidate_eval["reason"] = f"candidate_too_long {len(candidate)}>{reconstruction_max_chars}"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        protected_loss = _ai_search_protected_loss_reason(
+                            source_for_mitigation,
+                            candidate,
+                            source_protected,
+                        )
+                        if protected_loss:
+                            candidate_eval["reason"] = "protected_span_lost " + protected_loss
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        drift = check_semantic_drift(
+                            source_for_mitigation,
+                            candidate,
+                            threshold=reconstruction_drift_threshold,
+                        )
+                        candidate_eval["drift_similarity"] = round(drift.similarity, 3)
+                        candidate_eval["drift_threshold"] = reconstruction_drift_threshold
+                        if not drift.accepted:
+                            candidate_eval["drift_reasons"] = drift.reasons[:10]
+                            if _reconstruction_drift_scan_allowed(candidate, drift.reasons, drift.similarity):
+                                candidate_eval["drift_scan_relaxed_for_reconstruction"] = True
+                                candidate_eval["drift_reasons_relaxed"] = drift.reasons[:5]
+                            else:
+                                candidate_eval["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
+                                authenticity_summary["candidates"].append(candidate_eval)
+                                continue
+                        candidate_eval["passed_local_checks"] = True
+                        try:
+                            scan_t0 = time.time()
+                            candidate_report = _full_scan_report_dict(candidate)
+                            candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
+                        except Exception as exc:
+                            candidate_eval["passed_local_checks"] = False
+                            candidate_eval["reason"] = f"candidate_scan_error {exc}"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            continue
+                        candidate_review_burden = _review_burden(candidate_report)
+                        candidate_severity = _weighted_severity(candidate_report)
+                        gate = _authenticity_gate_status(
+                            original_report_dict,
+                            candidate_report,
+                            candidate != text,
+                            original_review_burden=original_review_burden,
+                            candidate_review_burden=candidate_review_burden,
+                            original_weighted_severity=original_severity,
+                            candidate_weighted_severity=candidate_severity,
+                            min_human_gain=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_GAIN", 2.0),
+                            min_ai_transformation_drop=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_TRANSFORM_DROP", 2.0),
+                            drift_similarity=candidate_eval.get("drift_similarity"),
+                        )
+                        candidate_eval.update({
+                            "ai": _badge_ai(candidate_report),
+                            "writing_quality": _badge_wq(candidate_report),
+                            "human_contribution": gate.get("candidate_human"),
+                            "ai_transformation": gate.get("candidate_ai_transformation"),
+                            "ai_authorship": gate.get("candidate_ai_authorship"),
+                            "human_delta": gate.get("human_delta"),
+                            "ai_transformation_delta": gate.get("ai_transformation_delta"),
+                            "ai_authorship_delta": gate.get("ai_authorship_delta"),
+                            "human_shift_score": gate.get("human_shift_score"),
+                            "human_shift_components": gate.get("human_shift_components"),
+                            "findings": _finding_total(candidate_report),
+                            "review_burden": candidate_review_burden,
+                            "weighted_severity": candidate_severity,
+                            "scan_scope": _scan_scope_summary(candidate_report),
+                            "gate": gate,
+                        })
+                        if _is_better_human_shift_candidate(gate, best_candidate_gate):
+                            best_candidate_text = candidate
+                            best_candidate_report = candidate_report
+                            best_candidate_gate = gate
+                            best_candidate_eval = dict(candidate_eval)
+                            candidate_eval["best_so_far"] = True
+                        authenticity_summary["candidates"].append(candidate_eval)
                 if best_candidate_gate and best_candidate_gate.get("success") and best_candidate_report:
                     previous_ai = rewritten_ai
                     rewritten_text = best_candidate_text
@@ -2748,12 +3309,24 @@ def run_rewrite_pipeline(
                         "AI-Mitigation authenticity gate",
                     )
                     result.summary["ai_mitigation_blocked_auto_rewrite"] = False
-                    result.summary["rewrite_engine_mode"] = "ai_mitigation_authenticity_gate"
+                    result.summary["rewrite_engine_mode"] = (
+                        "ai_mitigation_reconstruction_gate"
+                        if isinstance(best_candidate_eval, dict) and best_candidate_eval.get("reconstruction")
+                        else "ai_mitigation_authenticity_gate"
+                    )
                     result.summary["outcome"] = "ai_mitigated"
                     if isinstance(best_candidate_eval, dict):
                         best_candidate_eval["selected"] = True
                     authenticity_summary.update({
                         "selected": True,
+                        "selected_strategy": (
+                            best_candidate_eval.get("strategy")
+                            if isinstance(best_candidate_eval, dict) else None
+                        ),
+                        "selected_reconstruction": bool(
+                            isinstance(best_candidate_eval, dict)
+                            and best_candidate_eval.get("reconstruction")
+                        ),
                         "previous_ai": previous_ai,
                         "selected_ai": rewritten_ai,
                         "selected_human_contribution": best_candidate_gate.get("candidate_human"),
@@ -3716,6 +4289,65 @@ def run_rewrite_pipeline(
                 else "AI-first mitigation kept the rewrite; writing quality and lower-severity changes are reported as follow-up work."
             )
         )
+    if (
+        os.environ.get("DRAFTPROOF_HUMAN_SHIFT_OVERRIDES_AI_FIRST", "1") != "0"
+        and ai_first_required
+        and not ai_first_success
+        and rewritten_text != text
+        and original_ai is not None
+        and rewritten_ai is not None
+        and rewritten_ai <= original_ai + 0.05
+    ):
+        final_shift_gate = _authenticity_gate_status(
+            original_report_dict,
+            rewritten_report_dict,
+            rewritten_text != text,
+            original_review_burden=original_review_burden,
+            candidate_review_burden=rewritten_review_burden,
+            original_weighted_severity=original_severity,
+            candidate_weighted_severity=rewritten_severity,
+            min_human_gain=_float_env("DRAFTPROOF_RECONSTRUCTION_OVERRIDE_MIN_HUMAN_GAIN", 10.0),
+            min_ai_transformation_drop=_float_env("DRAFTPROOF_RECONSTRUCTION_OVERRIDE_MIN_AI_TRANSFORM_DROP", 8.0),
+        )
+        final_shift_score = final_shift_gate.get("human_shift_score")
+        final_human_delta = final_shift_gate.get("human_delta")
+        final_transform_delta = final_shift_gate.get("ai_transformation_delta")
+        clears_override = bool(
+            isinstance(final_shift_score, (int, float))
+            and final_shift_score >= _float_env("DRAFTPROOF_RECONSTRUCTION_OVERRIDE_MIN_SHIFT", 20.0)
+            and (
+                isinstance(final_human_delta, (int, float))
+                and final_human_delta >= _float_env("DRAFTPROOF_RECONSTRUCTION_OVERRIDE_MIN_HUMAN_GAIN", 10.0)
+            )
+            and (
+                isinstance(final_transform_delta, (int, float))
+                and final_transform_delta >= _float_env("DRAFTPROOF_RECONSTRUCTION_OVERRIDE_MIN_AI_TRANSFORM_DROP", 8.0)
+            )
+            and not final_shift_gate.get("critical_high_regressed")
+            and not final_shift_gate.get("review_burden_regressed")
+            and not final_shift_gate.get("weighted_severity_regressed")
+        )
+        if clears_override:
+            removed_ai_first = [
+                reason for reason in regression_reasons
+                if str(reason).startswith("ai_first_gate_failed ")
+            ]
+            if removed_ai_first:
+                regression_reasons = [
+                    reason for reason in regression_reasons
+                    if not str(reason).startswith("ai_first_gate_failed ")
+                ]
+                result.summary["human_shift_override"] = {
+                    "kept": True,
+                    "removed_regressions": removed_ai_first,
+                    "reason": "human_shift_goal_outweighs_legacy_ai_first_min_drop",
+                    "gate": final_shift_gate,
+                    "rewritten_ai": rewritten_ai,
+                    "original_ai": original_ai,
+                }
+                result.summary.setdefault("saved_contract_notes", []).append(
+                    "Human Shift override kept the rewrite because contribution and transformation movement met the AI-Mitigation goal without severity regression."
+                )
     product_regressed = (
         rewritten_text != text
         and bool(regression_reasons)
