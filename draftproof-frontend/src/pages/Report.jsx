@@ -307,6 +307,18 @@ function buildRewriteResultSummary(rewriteReport) {
   ).length;
 
   return {
+    outcome: summary.outcome || '',
+    engine_mode: summary.rewrite_engine_mode || '',
+    gate: summary.authenticity_mitigation?.selected_gate || summary.authenticity_mitigation?.best_attempt?.gate || null,
+    ai_mitigation_selected: Boolean(summary.authenticity_mitigation?.selected || summary.ai_mitigation_search?.selected),
+    original_ai_authorship: detectScores.original_ai_authorship,
+    rewritten_ai_authorship: detectScores.rewritten_ai_authorship,
+    original_human_contribution: detectScores.original_human_contribution,
+    rewritten_human_contribution: detectScores.rewritten_human_contribution,
+    original_ai_transformation: detectScores.original_ai_transformation,
+    rewritten_ai_transformation: detectScores.rewritten_ai_transformation,
+    original_grounding_quality_risk: detectScores.original_grounding_quality_risk,
+    rewritten_grounding_quality_risk: detectScores.rewritten_grounding_quality_risk,
     original_risk: originalBadge.ai_likelihood_score ?? detectScores.original_ai ?? summary.original_risk,
     rewrite_risk: rewrittenBadge.ai_likelihood_score ?? detectScores.rewritten_ai ?? summary.final_risk,
     original_findings: originalFindings,
@@ -1006,6 +1018,76 @@ export default function Report() {
     </section>
   ) : null;
 
+  const rewriteOutcome = rewriteResultSummary?.outcome || '';
+  const rewriteOutcomeText = rewriteOutcome
+    ? rewriteOutcome.replaceAll('_', ' ')
+    : hasCompletedRewrite
+      ? 'completed'
+      : '';
+  const rewriteBandTitle = rewriteOutcome === 'ai_mitigated'
+    ? 'AI-Mitigation accepted'
+    : rewriteOutcome === 'suggestion_only'
+      ? 'Original preserved'
+      : rewriteOutcomeText || 'Rewrite complete';
+  const rewriteBandDetail = rewriteOutcome === 'ai_mitigated'
+    ? 'A candidate passed the mitigation gate and was kept.'
+    : rewriteOutcome === 'suggestion_only'
+      ? 'No candidate passed the rewrite gate; review the guidance before trying again.'
+      : rewriteResultSummary?.ai_mitigation_selected
+        ? 'A mitigation candidate was selected after scanning.'
+        : 'Rewrite finished and the result is ready to review.';
+  const rewriteCompletionBand = hasRewriteResult ? (
+    <div className={`report-rewrite-summary-bar${rewriteOutcome === 'suggestion_only' ? ' is-preserved' : ''}${rewriteOutcome === 'ai_mitigated' ? ' is-mitigated' : ''}`}>
+      <div className="rewrite-summary-icon" aria-hidden="true">
+        <span>
+          <svg width="42" height="42" viewBox="0 0 42 42" fill="none">
+            <circle cx="21" cy="21" r="15" fill="currentColor"/>
+            {rewriteOutcome === 'suggestion_only' ? (
+              <path d="M15 15l12 12M27 15L15 27" stroke="#fff" strokeWidth="3" strokeLinecap="round"/>
+            ) : (
+              <path d="M14 21.5l4.5 4.5L28.5 16" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"/>
+            )}
+          </svg>
+        </span>
+      </div>
+      <div className="rewrite-summary-main">
+        <span className="rewrite-summary-kicker">Rewrite completion</span>
+        <strong>{rewriteBandTitle}</strong>
+        <em>{rewriteBandDetail}</em>
+      </div>
+      <div className="rewrite-summary-stat">
+        <span>{formatMetricPercent(rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk, 1)}</span>
+        <small>AI authorship before</small>
+      </div>
+      <div className="rewrite-summary-stat">
+        <span>{formatMetricPercent(rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk, 1)}</span>
+        <small>AI authorship after</small>
+      </div>
+      <div className="rewrite-summary-stat">
+        <span>{formatSignedDelta(rewriteResultSummary?.original_human_contribution, rewriteResultSummary?.rewritten_human_contribution)}</span>
+        <small>Human contribution</small>
+      </div>
+      <div className="rewrite-summary-stat">
+        <span>{formatSignedDelta(rewriteResultSummary?.original_ai_transformation, rewriteResultSummary?.rewritten_ai_transformation)}</span>
+        <small>AI transformation</small>
+      </div>
+      <div className="rewrite-summary-stat">
+        <span>{formatSignedDelta(rewriteResultSummary?.original_grounding_quality_risk, rewriteResultSummary?.rewritten_grounding_quality_risk)}</span>
+        <small>Grounding risk</small>
+      </div>
+      <Link
+        to={`/rewrite/${currentRewrite.id}`}
+        className="rewrite-results-link"
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <path d="M5 2.5h5.2L13 5.3v10.2H5V2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+          <path d="M10 2.5v3h3M6.8 8.3h4M6.8 11h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+        </svg>
+        View Rewrite Result
+      </Link>
+    </div>
+  ) : null;
+
   return (
     <main className="dash-shell">
       <RewriteNoticeDialog
@@ -1106,6 +1188,8 @@ export default function Report() {
           </div>
         )}
 
+        {rewriteCompletionBand}
+
         {transformationScorecard ? (
           <section className="report-overview-card" aria-label="Report overview">
             {reportSummaryBar}
@@ -1113,49 +1197,6 @@ export default function Report() {
           </section>
         ) : (
           reportSummaryBar
-        )}
-
-        {hasRewriteResult && (
-          <div className="report-rewrite-summary-bar">
-            <div className="rewrite-summary-icon" aria-hidden="true">
-              <span>
-                <svg width="42" height="42" viewBox="0 0 42 42" fill="none">
-                  <circle cx="21" cy="21" r="15" fill="currentColor"/>
-                  <path d="M14 21.5l4.5 4.5L28.5 16" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </span>
-            </div>
-            <div className="rewrite-summary-main">
-              <span className="rewrite-summary-kicker">Rewrite complete</span>
-              <strong>AI sections rewritten</strong>
-            </div>
-            <div className="rewrite-summary-stat">
-              <span>{formatMetricPercent(rewriteResultSummary?.original_risk, 2)}</span>
-              <small>AI score before</small>
-            </div>
-            <div className="rewrite-summary-stat">
-              <span>{formatMetricPercent(rewriteResultSummary?.rewrite_risk, 2)}</span>
-              <small>AI score after</small>
-            </div>
-            <div className="rewrite-summary-stat">
-              <span>{formatSignedDelta(rewriteResultSummary?.original_findings, rewriteResultSummary?.rewritten_findings)}</span>
-              <small>Findings change</small>
-            </div>
-            <div className="rewrite-summary-stat">
-              <span>{rewriteResultSummary?.changed_sentences ?? '—'}</span>
-              <small>Sentences changed</small>
-            </div>
-            <Link
-              to={`/rewrite/${currentRewrite.id}`}
-              className="rewrite-results-link"
-            >
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-                <path d="M5 2.5h5.2L13 5.3v10.2H5V2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
-                <path d="M10 2.5v3h3M6.8 8.3h4M6.8 11h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-              </svg>
-              View Rewrite Result
-            </Link>
-          </div>
         )}
 
         {submittedContent.segments.length > 0 && (

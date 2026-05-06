@@ -3778,7 +3778,7 @@ th {
 
 .report-rewrite-summary-bar {
   display: grid;
-  grid-template-columns: auto auto repeat(4, 1fr) auto;
+  grid-template-columns: auto minmax(180px, 1.3fr) repeat(5, minmax(96px, 1fr)) auto;
   align-items: center;
   padding: 1rem 0;
   margin: 0 0 2rem;
@@ -3787,6 +3787,30 @@ th {
   background: linear-gradient(90deg, #f0fdf4 0%, #f7fffb 100%);
   box-shadow: 0 12px 30px rgba(22, 163, 74, .08);
   overflow: hidden;
+}
+
+.report-rewrite-summary-bar.is-preserved {
+  border-color: #fed7aa;
+  background: linear-gradient(90deg, #fff7ed 0%, #fffbf5 100%);
+  box-shadow: 0 12px 30px rgba(234, 88, 12, .08);
+}
+
+.report-rewrite-summary-bar.is-preserved .rewrite-summary-icon {
+  color: #ea580c;
+  background: radial-gradient(circle, rgba(234,88,12,.13) 0 36%, transparent 37% 100%);
+  border-color: rgba(234, 88, 12, .14);
+}
+
+.report-rewrite-summary-bar.is-preserved .rewrite-summary-icon span {
+  background: #ffedd5;
+}
+
+.report-rewrite-summary-bar.is-preserved .rewrite-summary-kicker {
+  color: #c2410c;
+}
+
+.report-rewrite-summary-bar.is-preserved .rewrite-summary-stat {
+  border-left-color: #fed7aa;
 }
 
 .rewrite-summary-icon {
@@ -3836,6 +3860,17 @@ th {
   font-size: .82rem;
   font-weight: 650;
   line-height: 1.25;
+}
+
+.rewrite-summary-main em {
+  color: var(--muted);
+  display: block;
+  margin-top: .28rem;
+  max-width: 320px;
+  font-size: .72rem;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .rewrite-summary-stat {
