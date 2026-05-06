@@ -966,6 +966,42 @@ assert_test(
     and any(note.startswith("removed_duplicate_fragments") for note in overlap_notes),
     "AI search records overlapping fragment repairs",
 )
+latest_selected_damage, latest_selected_notes = _repair_candidate_source_damage(
+    "Inclusive Learning Design in Certificate III Hairdressing Introduction\n\n"
+    "Inclusive learning design starts here. Competency should not depend on chance. "
+    "When learners start to get lost\n\n"
+    "The challenge begins here. They must practise, receive corrections, and repeat the skill. "
+    "Showing the haircut clearly\n\n"
+    "A demonstration reveals the educator's actions. "
+    "The sources address different aspects of the classroom challenge. "
+    "CESE and Chandler and Sweller focus on cognitive overload. "
+    "Billett and Kirschner et al. Billett and Kirschner et al. "
+    "CAST and Jwad et al. describe multiple learning pathways. "
+    "DEWR defines the boundary for reasonable adjustment and maintaining assessment integrity. "
+    "multiple learning pathways. Competency should not depend on chance in practice."
+)
+assert_test(
+    "Hairdressing Introduction" not in latest_selected_damage
+    and "chance.\n\nWhen learners start to get lost" in latest_selected_damage
+    and "skill.\n\nShowing the haircut clearly" in latest_selected_damage,
+    "AI search repairs selected-candidate heading placement before final output",
+)
+assert_test(
+    "Billett and Kirschner et al. Billett and Kirschner et al." not in latest_selected_damage
+    and "guided practice over discovery learning" in latest_selected_damage
+    and "integrity. multiple learning pathways." not in latest_selected_damage,
+    "AI search repairs selected-candidate conclusion source fragments",
+)
+assert_test(
+    "split_title_from_introduction" in latest_selected_notes
+    and any(
+        note.startswith("split_sentence_before_heading")
+        or note.startswith("split_orphaned_heading")
+        for note in latest_selected_notes
+    )
+    and "repaired_conclusion_fragment:guided_practice" in latest_selected_notes,
+    "AI search records selected-candidate source artifact repairs",
+)
 assert_test(
     _source_repair_drift_false_positive(
         "inclusive learning design in certificate iii hairdressing",

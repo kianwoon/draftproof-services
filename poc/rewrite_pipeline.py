@@ -252,6 +252,69 @@ _DANGLING_FRAGMENT_JOIN_RE = re.compile(
     r"Introduction|This review|In Certificate|Inclusive learning)\b",
     re.I,
 )
+_KNOWN_HEADING_FOLLOWERS = [
+    ("Introduction", "Inclusive learning design"),
+    ("When learners start to get lost", "The challenge"),
+    ("Showing the haircut clearly", "A demonstration"),
+    ("Reasonable adjustment and classroom reality", "Inclusive learning design"),
+    ("Maintaining standards while improving access", "Inclusive learning design"),
+    ("Conclusion", "This review"),
+]
+
+
+def _normalize_known_heading_boundaries(text: str) -> tuple[str, list[str]]:
+    """Separate known document headings that were flattened into prose."""
+    if not isinstance(text, str) or not text:
+        return text, []
+    repaired = text
+    repairs: list[str] = []
+
+    next_text = re.sub(
+        r"\A(\s*[^\n.!?]{12,180}?)\s+Introduction(?=(?:\s+|\n+)Inclusive learning design\b|\n\n)",
+        r"\1\n\nIntroduction",
+        repaired,
+        flags=re.I,
+        count=1,
+    )
+    if next_text != repaired:
+        repaired = next_text
+        repairs.append("split_title_from_introduction")
+
+    for heading, following in _KNOWN_HEADING_FOLLOWERS:
+        heading_re = re.escape(heading)
+        following_re = re.escape(following)
+
+        next_text = re.sub(
+            rf"(?<=[.!?])\s+({heading_re})\s+(?={following_re}\b)",
+            r"\n\n\1\n\n",
+            repaired,
+            flags=re.I,
+        )
+        if next_text != repaired:
+            repaired = next_text
+            repairs.append(f"split_sentence_before_heading:{heading}")
+
+        next_text = re.sub(
+            rf"(?<=[.!?])\s+({heading_re})(?=\s*(?:\n\n|$))",
+            r"\n\n\1",
+            repaired,
+            flags=re.I,
+        )
+        if next_text != repaired:
+            repaired = next_text
+            repairs.append(f"split_orphaned_heading:{heading}")
+
+        next_text = re.sub(
+            rf"(^|\n\n)({heading_re})\s+(?={following_re}\b)",
+            r"\1\2\n\n",
+            repaired,
+            flags=re.I,
+        )
+        if next_text != repaired:
+            repaired = next_text
+            repairs.append(f"split_merged_heading:{heading}")
+
+    return repaired, repairs
 
 
 def _repeated_long_sequence_reason(text: str, window: int = 8) -> str:
@@ -399,20 +462,8 @@ def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
         repaired = next_text
         repairs.append("normalized_with_only_phrase")
 
-    heading_splits = [
-        ("Introduction", "Inclusive learning design"),
-        ("When learners start to get lost", "The challenge"),
-        ("Showing the haircut clearly", "A demonstration"),
-        ("Reasonable adjustment and classroom reality", "Inclusive learning design"),
-        ("Maintaining standards while improving access", "Inclusive learning design"),
-        ("Conclusion", "This review"),
-    ]
-    for heading, following in heading_splits:
-        pattern = rf"\b({re.escape(heading)})\s+(?={re.escape(following)}\b)"
-        next_text = re.sub(pattern, r"\1\n\n", repaired, flags=re.I)
-        if next_text != repaired:
-            repaired = next_text
-            repairs.append(f"split_merged_heading:{heading}")
+    repaired, heading_repairs = _normalize_known_heading_boundaries(repaired)
+    repairs.extend(heading_repairs)
 
     overlap_repairs = [
         (
@@ -444,6 +495,22 @@ def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
             r"\1",
             "collapsed_repeated_clause:conclusion_intro",
         ),
+        (
+            r"\bBillett and Kirschner et al\.\s+Billett and Kirschner et al\.\s+"
+            r"CAST and Jwad et al\. describe multiple learning pathways\.",
+            (
+                "Billett and Kirschner et al. highlight the need for guided practice "
+                "over discovery learning. CAST and Jwad et al. describe multiple "
+                "learning pathways."
+            ),
+            "repaired_conclusion_fragment:guided_practice",
+        ),
+        (
+            r"\b(DEWR defines the boundary for reasonable adjustment and maintaining "
+            r"assessment integrity\.)\s+multiple learning pathways\.",
+            r"\1",
+            "removed_dangling_fragment:multiple_learning_pathways",
+        ),
     ]
     for pattern, replacement, note in overlap_repairs:
         next_text = re.sub(pattern, replacement, repaired, flags=re.I)
@@ -470,7 +537,7 @@ def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
             for sentence_index, sentence in enumerate(sentences):
                 key = re.sub(r"\s+", " ", sentence).strip().lower()
                 first_alpha = re.search(r"[A-Za-z]", sentence)
-                if first_alpha and first_alpha.group(0).islower() and len(sentence.split()) >= 5:
+                if first_alpha and first_alpha.group(0).islower() and len(sentence.split()) >= 3:
                     contained_elsewhere = any(
                         other_index != sentence_index
                         and key
