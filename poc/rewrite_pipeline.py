@@ -1024,18 +1024,21 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
             for b in matching_briefs
         )
         source_gap = 0 if has_citation else 1
-        score = (
+        core_ai_score = (
             len(matching_briefs) * 5.0
             + brief_score * 8.0
             + min(generic_hits / max(len(words) / 90.0, 1.0), 8.0)
-            + min(max(source_chain_score, 0.0), 8.0)
-            + min(max(polished_consequence_score, 0.0), 8.0)
-            + (1.25 if citation_count >= 2 and source_attribution_hits >= 2 else 0.0)
-            + (1.00 if source_catalogue_hits >= 3 else 0.0)
             + source_gap * 2.0
             + min(repeated_starter_count, 4) * 0.75
             - min(concrete_hits, 12) * 0.20
         )
+        structural_refinement_score = (
+            min(max(source_chain_score, 0.0), 8.0)
+            + min(max(polished_consequence_score, 0.0), 8.0)
+            + (1.25 if citation_count >= 2 and source_attribution_hits >= 2 else 0.0)
+            + (1.00 if source_catalogue_hits >= 3 else 0.0)
+        )
+        score = core_ai_score + structural_refinement_score
         if score <= 0:
             continue
         scored.append({
@@ -1060,6 +1063,8 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
                 "grounded_action_hits": grounded_action_hits,
                 "source_chain_score": round(source_chain_score, 3),
                 "polished_consequence_score": round(polished_consequence_score, 3),
+                "core_ai_score": round(core_ai_score, 3),
+                "structural_refinement_score": round(structural_refinement_score, 3),
                 "source_gap": bool(source_gap),
                 "repeated_sentence_starters": repeated_starter_count,
                 "word_count": len(words),
@@ -1078,8 +1083,33 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
                 for anchor in (b.get("domain_anchors") or [])[:6]
             ))[:16],
         })
-    scored.sort(key=lambda item: item["score"], reverse=True)
-    return scored[:max(0, limit)]
+    if limit <= 0:
+        return []
+
+    # Keep the scan-driven AI path first. Structural refinement drivers help
+    # decide additional coverage, but this search is cumulative, so allowing
+    # refinement-only targets to jump ahead can produce a weaker final AI score.
+    ranked_core = sorted(
+        scored,
+        key=lambda item: (
+            (item.get("drivers") or {}).get("core_ai_score", 0),
+            item.get("score", 0),
+        ),
+        reverse=True,
+    )
+    ranked_total = sorted(scored, key=lambda item: item.get("score", 0), reverse=True)
+    selected: list[dict] = []
+    seen_indexes: set[int] = set()
+    for pool in (ranked_core, ranked_total):
+        for item in pool:
+            item_index = int(item.get("index", -1))
+            if item_index in seen_indexes:
+                continue
+            selected.append(item)
+            seen_indexes.add(item_index)
+            if len(selected) >= limit:
+                return selected
+    return selected
 
 
 def _paragraph_component_prompt(

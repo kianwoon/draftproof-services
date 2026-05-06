@@ -1217,6 +1217,26 @@ assert_test(
     and source_catalogue_targets[0]["drivers"]["source_chain_score"] > 0,
     "paragraph component search detects source-catalogue conclusion drivers",
 )
+core_first_target_text = (
+    "Short title.\n\n"
+    "When learners pause, they may need a short moment to process what they have just practised. "
+    "This should help the educator understand the process and support learner progress. "
+    "The class keeps moving while the learner checks the guide, adjusts the comb, and practises again. "
+    "I watch the learner choose a section and compare the shape before cutting.\n\n"
+    "Research Group states that participation, implementation, independence, consistency, motivation, confidence, and assessment reliability are important (2020). "
+    "Training Office argues that participation, implementation, independence, consistency, motivation, confidence, and assessment reliability are important (2021). "
+    "Policy Team defines participation, implementation, independence, consistency, motivation, confidence, and assessment reliability as important (2022). "
+    "Access Authors describe participation, implementation, independence, consistency, motivation, confidence, and assessment reliability as important (2023). "
+    "Practice Review highlights participation, implementation, independence, consistency, motivation, confidence, and assessment reliability as important (2024)."
+)
+core_first_targets = _paragraph_component_targets(core_first_target_text, paragraph_search_json, limit=2)
+assert_test(
+    len(core_first_targets) == 2
+    and core_first_targets[0]["index"] == 1
+    and core_first_targets[1]["drivers"]["structural_refinement_score"]
+    > core_first_targets[0]["drivers"]["structural_refinement_score"],
+    "paragraph component search keeps scan-driven AI targets before refinement-only targets",
+)
 paragraph_prompt = _paragraph_component_prompt(
     paragraph_targets[0],
     paragraph_search_json,
