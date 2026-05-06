@@ -112,7 +112,9 @@ _WQ_COMPONENT_LABELS = {
 
 _TRANSFORMATION_SIGNAL_LABELS = {
     "ai_likelihood": "AI Likelihood",
+    "adjusted_ai_risk": "Adjusted AI Risk",
     "human_anchor_score": "Human Anchor",
+    "human_anchor_discount": "Human Anchor Discount",
     "rewrite_smoothness": "Rewrite Smoothness",
     "source_similarity": "Source Similarity",
     "surface_similarity": "Surface Similarity",
@@ -151,7 +153,11 @@ def _transformation_contribution_summary(features: dict, signals: list[tuple[str
         _tf_pct((features or {}).get("surface_similarity")) or 0.0,
     )
 
-    ai_likelihood = _tf_pct((features or {}).get("ai_likelihood")) or 0.0
+    ai_likelihood = (
+        _tf_pct((features or {}).get("adjusted_ai_risk"))
+        if (features or {}).get("adjusted_ai_risk") is not None
+        else _tf_pct((features or {}).get("ai_likelihood"))
+    ) or 0.0
     rewrite_smoothness = _tf_pct((features or {}).get("rewrite_smoothness")) or 0.0
     expansion = _tf_pct((features or {}).get("outline_to_text_expansion")) or 0.0
     patchwork = _tf_pct((features or {}).get("section_style_variance")) or 0.0
@@ -188,7 +194,13 @@ def _transformation_contribution_summary(features: dict, signals: list[tuple[str
     if top_drivers:
         summary += f" Main drivers: {' and '.join(top_drivers)}."
 
-    return {"hcr": hcr, "atr": atr, "summary": summary}
+    return {
+        "hcr": hcr,
+        "atr": atr,
+        "adjusted_ai_risk": round(ai_likelihood),
+        "human_anchor_discount": round(_tf_pct((features or {}).get("human_anchor_discount")) or 0.0),
+        "summary": summary,
+    }
 
 # ── Tier display config ──────────────────────────────────────────────
 
@@ -664,6 +676,8 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append("|-----------------------|------:|")
             lines.append(f"| Human Contribution Ratio (HCR) | `{contribution['hcr']}%` |")
             lines.append(f"| AI Transformation Ratio (ATR) | `{contribution['atr']}%` |")
+            lines.append(f"| Adjusted AI Risk | `{contribution['adjusted_ai_risk']}%` |")
+            lines.append(f"| Human Anchor Discount | `{contribution['human_anchor_discount']}%` |")
             lines.append("")
             lines.append(f"> **Summary:** {contribution['summary']}")
             lines.append("")

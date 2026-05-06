@@ -4016,6 +4016,26 @@ th {
   line-height: 1.45;
 }
 
+.transformation-adjustment-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-top: .7rem;
+}
+
+.transformation-adjustment-row strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: .32rem .5rem;
+  color: #334155;
+  background: #fff;
+  border: 1px solid #dbe4ea;
+  border-radius: 8px;
+  font-size: .72rem;
+  font-weight: 850;
+}
+
 .transformation-ratio-bars {
   display: grid;
   gap: .7rem;
@@ -4114,11 +4134,13 @@ th {
 }
 
 .transformation-bar-ai_likelihood,
+.transformation-bar-adjusted_ai_risk,
 .transformation-bar-citation_grounding_risk {
   background: #c2410c;
 }
 
-.transformation-bar-human_anchor_score {
+.transformation-bar-human_anchor_score,
+.transformation-bar-human_anchor_discount {
   background: #16a34a;
 }
 

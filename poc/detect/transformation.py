@@ -24,6 +24,8 @@ class TransformationFeatures:
     outline_to_text_expansion: float
     section_style_variance: float
     citation_grounding_risk: float
+    adjusted_ai_risk: float = 0.0
+    human_anchor_discount: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -112,8 +114,15 @@ def build_transformation_features(
         1.0 - clamp(layer3_input.source_grounding_strength),
     )
 
+    raw_ai_likelihood = clamp(layer3_result.ai_likelihood_score)
+    effective_human_anchor = clamp(
+        human_anchor_score * (1.0 - 0.35 * citation_grounding_risk)
+    )
+    human_anchor_discount = clamp(effective_human_anchor * 0.45)
+    adjusted_ai_risk = clamp(raw_ai_likelihood * (1.0 - human_anchor_discount))
+
     return TransformationFeatures(
-        ai_likelihood=clamp(layer3_result.ai_likelihood_score),
+        ai_likelihood=raw_ai_likelihood,
         human_anchor_score=round(human_anchor_score, 4),
         rewrite_smoothness=round(rewrite_smoothness, 4),
         source_similarity=round(source_similarity, 4),
@@ -121,6 +130,8 @@ def build_transformation_features(
         outline_to_text_expansion=round(outline_to_text_expansion, 4),
         section_style_variance=round(section_style_variance, 4),
         citation_grounding_risk=round(citation_grounding_risk, 4),
+        adjusted_ai_risk=round(adjusted_ai_risk, 4),
+        human_anchor_discount=round(human_anchor_discount, 4),
     )
 
 
@@ -132,10 +143,11 @@ def classify_transformation(features: TransformationFeatures) -> TransformationC
     """
     f = features
     evidence: list[str] = []
+    effective_ai_risk = _adjusted_ai_risk(f)
 
-    if f.human_anchor_score < 0.20 and f.ai_likelihood > 0.75:
+    if f.human_anchor_score < 0.20 and effective_ai_risk > 0.72:
         code = "fully_ai_written"
-        evidence = ["very low human anchor", "high AI likelihood"]
+        evidence = ["very low human anchor", "high adjusted AI risk"]
     elif f.human_anchor_score >= 0.50 and f.rewrite_smoothness > 0.70:
         code = "ai_cleaned_human_writing"
         evidence = ["clear human anchor", "very smooth rewrite surface"]
@@ -150,7 +162,7 @@ def classify_transformation(features: TransformationFeatures) -> TransformationC
         evidence = ["section-level style variance"]
     elif (
         f.citation_grounding_risk > 0.60
-        and f.ai_likelihood >= 0.35
+        and effective_ai_risk >= 0.30
         and f.human_anchor_score < 0.50
         and (
             f.rewrite_smoothness >= 0.35
@@ -164,14 +176,35 @@ def classify_transformation(features: TransformationFeatures) -> TransformationC
         code = "human_uncertain"
         evidence = ["no single transformation pattern dominates"]
 
+    if _human_anchor_discount(f) >= 0.15:
+        evidence.append("human anchor reduced AI certainty")
+
     confidence = _confidence_for(code, f)
+    serialized_features = {k: round(float(v), 4) for k, v in asdict(f).items()}
+    serialized_features["adjusted_ai_risk"] = round(_adjusted_ai_risk(f), 4)
+    serialized_features["human_anchor_discount"] = round(_human_anchor_discount(f), 4)
     return TransformationClassification(
         code=code,
         label=_LABELS[code],
         confidence=confidence,
         evidence=evidence,
-        features={k: round(float(v), 4) for k, v in asdict(f).items()},
+        features=serialized_features,
     )
+
+
+def _human_anchor_discount(features: TransformationFeatures) -> float:
+    if features.human_anchor_discount > 0:
+        return clamp(features.human_anchor_discount)
+    effective_human_anchor = clamp(
+        features.human_anchor_score * (1.0 - 0.35 * features.citation_grounding_risk)
+    )
+    return clamp(effective_human_anchor * 0.45)
+
+
+def _adjusted_ai_risk(features: TransformationFeatures) -> float:
+    if features.adjusted_ai_risk > 0:
+        return clamp(features.adjusted_ai_risk)
+    return clamp(features.ai_likelihood * (1.0 - _human_anchor_discount(features)))
 
 
 def _confidence_for(code: str, features: TransformationFeatures) -> str:
@@ -179,6 +212,7 @@ def _confidence_for(code: str, features: TransformationFeatures) -> str:
         return "low"
 
     values = asdict(features)
+    values["adjusted_ai_risk"] = _adjusted_ai_risk(features)
     strongest = max(float(v) for v in values.values())
     if strongest >= 0.75:
         return "high"

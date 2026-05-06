@@ -23,9 +23,11 @@ const SEVERITY_CONFIG = {
 
 const SIGNAL_COLORS = {
   ai_likelihood: '#9a3412',
+  adjusted_ai_risk: '#dc2626',
   grounding_risk: '#9a3412',
   citation_grounding_risk: '#9a3412',
   human_anchor_score: '#15803d',
+  human_anchor_discount: '#16a34a',
   rewrite_smoothness: '#4338ca',
   outline_to_text_expansion: '#4338ca',
   source_similarity: '#0369a1',
@@ -67,7 +69,9 @@ function clampPercent(value) {
 
 const TRANSFORMATION_SIGNAL_LABELS = {
   ai_likelihood: 'AI likelihood',
+  adjusted_ai_risk: 'Adjusted AI risk',
   human_anchor_score: 'Human anchor',
+  human_anchor_discount: 'Human anchor discount',
   rewrite_smoothness: 'Rewrite smoothness',
   source_similarity: 'Source similarity',
   surface_similarity: 'Surface similarity',
@@ -78,7 +82,9 @@ const TRANSFORMATION_SIGNAL_LABELS = {
 
 const TRANSFORMATION_SIGNAL_ORDER = [
   'ai_likelihood',
+  'adjusted_ai_risk',
   'human_anchor_score',
+  'human_anchor_discount',
   'rewrite_smoothness',
   'source_similarity',
   'surface_similarity',
@@ -110,7 +116,7 @@ function buildTransformationSummary(features = {}, signals = []) {
     clampPercent(features.surface_similarity) ?? 0
   );
 
-  const aiLikelihood = clampPercent(features.ai_likelihood) ?? 0;
+  const aiLikelihood = clampPercent(features.adjusted_ai_risk) ?? clampPercent(features.ai_likelihood) ?? 0;
   const rewriteSmoothness = clampPercent(features.rewrite_smoothness) ?? 0;
   const expansionPattern = clampPercent(features.outline_to_text_expansion) ?? 0;
   const patchworkVariance = clampPercent(features.section_style_variance) ?? 0;
@@ -153,6 +159,8 @@ function buildTransformationSummary(features = {}, signals = []) {
   return {
     humanContribution,
     aiTransformation,
+    adjustedAiRisk: Math.round(aiLikelihood),
+    humanAnchorDiscount: Math.round(clampPercent(features.human_anchor_discount) ?? 0),
     summary,
   };
 }
@@ -884,6 +892,10 @@ export default function Report() {
             <div className="transformation-ratio-copy">
               <span>Estimated Contribution</span>
               <p>{transformationSummary.summary}</p>
+              <div className="transformation-adjustment-row">
+                <strong>Adjusted AI risk {transformationSummary.adjustedAiRisk}%</strong>
+                <strong>Human anchor discount {transformationSummary.humanAnchorDiscount}%</strong>
+              </div>
             </div>
             <div className="transformation-ratio-bars" aria-label="Human contribution versus AI transformation estimate">
               <div className="transformation-ratio-row">

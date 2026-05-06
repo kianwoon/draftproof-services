@@ -1987,7 +1987,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     def _transformation_signal_rows(features: Dict[str, Any]) -> list:
         labels = {
             "ai_likelihood": "AI likelihood",
+            "adjusted_ai_risk": "Adjusted AI risk",
             "human_anchor_score": "Human anchor",
+            "human_anchor_discount": "Human anchor discount",
             "rewrite_smoothness": "Rewrite smoothness",
             "source_similarity": "Source similarity",
             "surface_similarity": "Surface similarity",
@@ -2008,13 +2010,18 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         return rows
 
     def _transformation_contribution(features: Dict[str, Any], signals: list) -> Dict[str, Any]:
+        adjusted_ai = (
+            _clamp01(features.get("adjusted_ai_risk"))
+            if features.get("adjusted_ai_risk") is not None
+            else _clamp01(features.get("ai_likelihood"))
+        )
         human_raw = (
             _clamp01(features.get("human_anchor_score")) * 0.55
             + (1.0 - _clamp01(features.get("citation_grounding_risk"))) * 0.25
             + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.20
         )
         ai_raw = (
-            _clamp01(features.get("ai_likelihood")) * 0.35
+            adjusted_ai * 0.35
             + _clamp01(features.get("rewrite_smoothness")) * 0.20
             + _clamp01(features.get("outline_to_text_expansion")) * 0.15
             + _clamp01(features.get("citation_grounding_risk")) * 0.15
@@ -2042,6 +2049,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         return {
             "human_contribution_ratio": hcr,
             "ai_transformation_ratio": atr,
+            "adjusted_ai_risk": _pct(adjusted_ai),
+            "human_anchor_discount": _pct(features.get("human_anchor_discount")),
             "summary": summary,
         }
 
@@ -2297,6 +2306,23 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "authorship_concern": report.authorship_concern_signals or {},
                 "document_level_signals": doc_findings,
                 "actionability_distribution": report.actionability_distribution or local_actionability_distribution,
+            },
+            "trajectory_analysis": {
+                "status": "not_available_without_revision_history",
+                "available_now": False,
+                "future_signals": [
+                    "idea_evolution",
+                    "reasoning_continuity",
+                    "semantic_drift",
+                    "revision_path",
+                    "cognitive_consistency",
+                ],
+                "required_inputs": [
+                    "draft_history",
+                    "timestamped_revisions",
+                    "author_notes_or_outline",
+                    "accepted_and_rejected_rewrite_operations",
+                ],
             },
             "mitigation_inputs": {
                 "rewrite_plan": None,

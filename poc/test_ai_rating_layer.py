@@ -440,5 +440,28 @@ assert_true(
     "ai_likelihood" in transformation_from_scan.features,
     "transformation classification exposes feature values",
 )
+assert_true(
+    "adjusted_ai_risk" in transformation_from_scan.features,
+    "transformation classification exposes human-anchor-adjusted AI risk",
+)
+assert_true(
+    transformation_from_scan.features["adjusted_ai_risk"] <= transformation_from_scan.features["ai_likelihood"],
+    "human anchor interaction does not increase adjusted AI risk",
+)
+
+anchored_ai_pattern = classify_transformation(TransformationFeatures(
+    ai_likelihood=0.78,
+    human_anchor_score=0.72,
+    rewrite_smoothness=0.45,
+    source_similarity=0.0,
+    surface_similarity=0.0,
+    outline_to_text_expansion=0.25,
+    section_style_variance=0.10,
+    citation_grounding_risk=0.20,
+))
+assert_true(
+    anchored_ai_pattern.code != "fully_ai_written",
+    "strong human anchor reduces fully-AI certainty in transformation classification",
+)
 
 print("AI rating layer tests passed")
