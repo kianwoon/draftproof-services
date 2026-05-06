@@ -97,6 +97,7 @@ from rewrite_pipeline import (
     _micro_repair_gain_efficiency,
     _micro_texture_iteration_status,
     _iterative_micro_texture_repair,
+    _generation_candidate_diagnostics,
     _build_reconstruction_meaning_brief,
     _build_regeneration_blueprint,
     _generation_context_ledger,
@@ -1501,6 +1502,46 @@ assert_test(
     and any("statistical smoothness" in item or "sentence rhythm" in item for item in authorship_diagnosis["instructions"]),
     "metric repair diagnosis targets AUTHORSHIP_TEXTURE_REPAIR before semantic human gain",
 )
+candidate_diagnostics = _generation_candidate_diagnostics([
+    {
+        "attempt": 1,
+        "strategy": "authorship_texture_repair",
+        "reconstruction": True,
+        "passed_local_checks": True,
+        "reason": "candidate_word_count_too_low 420<500",
+        "candidate_word_count": 420,
+        "staged_generation": {
+            "enabled": True,
+            "llm_calls": 3,
+            "assembled_word_count": 420,
+            "source_draft_included": False,
+            "sections": [{"heading": "Body", "actual_words": 420}],
+        },
+    },
+    {
+        "attempt": 2,
+        "strategy": "human_gain_repair",
+        "reconstruction": True,
+        "passed_local_checks": True,
+        "gate": {
+            "success": False,
+            "reason": "ai_authorship_regression",
+            "ai_authorship_regression_blocked": True,
+        },
+        "human_contribution": 50,
+        "ai_authorship": 72,
+        "human_delta": 10,
+        "ai_authorship_delta": -4,
+    },
+])
+assert_test(
+    candidate_diagnostics["candidate_count"] == 2
+    and candidate_diagnostics["reason_counts"]["candidate_word_count_too_low"] == 1
+    and candidate_diagnostics["reason_counts"]["ai_authorship_regression"] == 1
+    and candidate_diagnostics["candidates"][0]["staged_generation"]["source_draft_included"] is False
+    and candidate_diagnostics["candidates"][1]["gate_ai_authorship_regression_blocked"] is True,
+    "generation candidate diagnostics expose failed reconstruction and gate reasons without source draft text",
+)
 for name, value in major_gate_env.items():
     if value is None:
         os.environ.pop(name, None)
@@ -1628,7 +1669,7 @@ assert_test(
 )
 assert_test(
     meaning_brief["word_count_band"]["min_words"] <= meaning_brief["word_count_band"]["source_word_count"] <= meaning_brief["word_count_band"]["max_words"],
-    "reconstruction meaning brief includes 10 percent word-count band",
+    "reconstruction meaning brief includes document word-count band",
 )
 assert_test(
     any(row.get("key") == "generic_assertion_risk" for row in meaning_brief["integrity_targets"])
@@ -1826,12 +1867,29 @@ assert_test(
     "reconstruction drift allows discourse-marker noise to proceed to scan",
 )
 assert_test(
+    _reconstruction_drift_scan_allowed(
+        "Education should focus on what students know, and also on how students think.",
+        ["quote_lost: count 2"],
+        0.81,
+    ),
+    "reconstruction drift allows quote-marker noise after protected content passes",
+)
+assert_test(
     not _reconstruction_drift_scan_allowed(
         "The reconstruction drops the unit name.",
         ["lost_named_entity: 'Certificate III'"],
         0.90,
     ),
     "reconstruction drift still blocks critical entity loss",
+)
+however_drift = check_semantic_drift(
+    "However, students need support.",
+    "Students still need support.",
+    threshold=0.50,
+)
+assert_test(
+    all("However" not in reason for reason in however_drift.reasons),
+    "semantic drift does not treat However as a protected named entity",
 )
 
 ai_search_candidates = _ai_search_marked_grounding_candidates(

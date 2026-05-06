@@ -103,6 +103,11 @@ def _extract_named_entities(text: str) -> Set[str]:
         "abstract", "introduction", "conclusion", "references", "appendix",
         "background", "discussion", "method", "methods", "results",
     }
+    discourse_words = {
+        "also", "although", "because", "but", "finally", "first",
+        "furthermore", "however", "instead", "meanwhile", "moreover",
+        "second", "therefore", "thus", "when", "while",
+    }
 
     # Multi-word capitalized sequences (always proper nouns), but do not treat
     # headings joined to the first sentence across a newline as entities.
@@ -115,6 +120,8 @@ def _extract_named_entities(text: str) -> Set[str]:
     # Single capitalized words: only if NOT after sentence boundary
     for m in re.finditer(r'(?<!^)(?<![.!?]\s)\b([A-Z][a-z]{2,})\b', text):
         word = m.group(1)
+        if word.lower() in discourse_words:
+            continue
         # Check it's not a sentence start
         start = m.start()
         prefix = text[max(0, start - 3):start]

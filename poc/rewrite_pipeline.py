@@ -1740,6 +1740,77 @@ def _ai_mitigation_action_brief(ai_mitigation: dict | None, limit: int = 10) -> 
     return "\n".join(rows)
 
 
+def _generation_candidate_diagnostics(candidates: list[dict] | None, *, limit: int = 12) -> dict:
+    """Compact generation attempt diagnostics for failed AI-Mitigation runs."""
+    rows: list[dict] = []
+    reason_counts: dict[str, int] = {}
+    for candidate in (candidates or [])[:max(0, limit)]:
+        if not isinstance(candidate, dict):
+            continue
+        gate = candidate.get("gate") if isinstance(candidate.get("gate"), dict) else {}
+        staged = candidate.get("staged_generation") if isinstance(candidate.get("staged_generation"), dict) else {}
+        reason = (
+            candidate.get("reason")
+            or gate.get("reason")
+            or candidate.get("selection_reason")
+            or ("accepted_candidate" if candidate.get("selected") else "")
+            or "no_rejection_reason_recorded"
+        )
+        reason_key = str(reason).split(" ", 1)[0]
+        reason_counts[reason_key] = reason_counts.get(reason_key, 0) + 1
+        row = {
+            "attempt": candidate.get("attempt"),
+            "strategy": candidate.get("strategy"),
+            "reconstruction": bool(candidate.get("reconstruction")),
+            "deterministic": bool(candidate.get("deterministic")),
+            "passed_local_checks": bool(candidate.get("passed_local_checks")),
+            "selected": bool(candidate.get("selected")),
+            "best_so_far": bool(candidate.get("best_so_far")),
+            "reason": reason,
+            "warnings": candidate.get("warnings"),
+            "candidate_length": candidate.get("candidate_length"),
+            "candidate_word_count": candidate.get("candidate_word_count"),
+            "drift_similarity": candidate.get("drift_similarity"),
+            "drift_threshold": candidate.get("drift_threshold"),
+            "drift_scan_relaxed_for_reconstruction": candidate.get("drift_scan_relaxed_for_reconstruction"),
+            "scan_seconds": candidate.get("scan_seconds"),
+            "ai": candidate.get("ai"),
+            "writing_quality": candidate.get("writing_quality"),
+            "human_contribution": candidate.get("human_contribution"),
+            "ai_transformation": candidate.get("ai_transformation"),
+            "ai_authorship": candidate.get("ai_authorship"),
+            "human_delta": candidate.get("human_delta"),
+            "ai_transformation_delta": candidate.get("ai_transformation_delta"),
+            "ai_authorship_delta": candidate.get("ai_authorship_delta"),
+            "human_shift_score": candidate.get("human_shift_score"),
+            "findings": candidate.get("findings"),
+            "review_burden": candidate.get("review_burden"),
+            "weighted_severity": candidate.get("weighted_severity"),
+            "gate_success": gate.get("success"),
+            "gate_reason": gate.get("reason"),
+            "gate_ai_authorship_regression_blocked": gate.get("ai_authorship_regression_blocked"),
+            "gate_critical_high_regressed": gate.get("critical_high_regressed"),
+            "gate_review_burden_regressed": gate.get("review_burden_regressed"),
+            "gate_weighted_severity_regressed": gate.get("weighted_severity_regressed"),
+        }
+        if staged:
+            row["staged_generation"] = {
+                "enabled": staged.get("enabled"),
+                "llm_calls": staged.get("llm_calls"),
+                "assembled_word_count": staged.get("assembled_word_count"),
+                "reference_entries_preserved": staged.get("reference_entries_preserved"),
+                "source_draft_included": staged.get("source_draft_included"),
+                "sections": staged.get("sections"),
+            }
+        rows.append({key: value for key, value in row.items() if value is not None})
+    return {
+        "candidate_count": len(candidates or []),
+        "shown_count": len(rows),
+        "reason_counts": reason_counts,
+        "candidates": rows,
+    }
+
+
 def _authenticity_mitigation_prompt(
     source_text: str,
     raw_json: dict,
@@ -1801,7 +1872,7 @@ def _text_word_count(text: str) -> int:
     return len(re.findall(r"\b[\w’'-]+\b", text))
 
 
-def _word_count_band(text: str, variance: float = 0.10) -> dict:
+def _word_count_band(text: str, variance: float = 0.25) -> dict:
     count = _text_word_count(text)
     return {
         "source_word_count": count,
@@ -2002,7 +2073,7 @@ def _reconstruction_gate_controls(prior_attempts: list[dict] | None) -> dict:
             "human_contribution_ladder": [60, 70, 80],
             "primary_goal": "maximize_human_contribution_after_hard_safety_rejects",
             "ai_authorship_regression_allowed": False,
-            "word_count_variance": "±10%",
+            "word_count_variance": "±25%",
             "critical_high_review_regression_allowed": False,
         },
         "prior_attempts": feedback,
@@ -2181,7 +2252,7 @@ def _staged_generation_section_plan(context_ledger: dict, *, max_sections: int |
     body_target = max(450, total_target - reference_words - _text_word_count(title))
     # LLM section generators commonly undershoot long-form word targets. Inflate
     # the requested body budget while the assembler still enforces the final
-    # ±10% document band after assembly.
+    # ±25% document band after assembly.
     target_inflation = _float_env("DRAFTPROOF_STAGED_SECTION_TARGET_INFLATION", 1.18)
     per_section = max(120, int((body_target * target_inflation) / max(1, len(body_headings))))
 
@@ -2214,8 +2285,9 @@ def _staged_reconstruction_section_prompt(
     target_band = section_plan.get("target_word_band") or {}
     target_min = target_band.get("min")
     target_max = target_band.get("max")
+    target_ideal = target_band.get("ideal") or section_plan.get("target_words")
     target_text = (
-        f"between {target_min} and {target_max} words"
+        f"between {target_min} and {target_max} words; aim for about {target_ideal} words"
         if isinstance(target_min, int) and isinstance(target_max, int)
         else f"about {section_plan.get('target_words')} words"
     )
@@ -2249,11 +2321,7 @@ def _staged_reconstruction_section_prompt(
     }
     strategy_controls = []
     strategy_name = str(strategy or "").strip().lower()
-    anchor_lock_mapping = (
-        _anchor_lock_mapping(required_anchors)
-        if strategy_name == "authorship_texture_repair"
-        else []
-    )
+    anchor_lock_mapping = _anchor_lock_mapping(required_anchors)
     prompt_section_context = (
         _freeze_anchor_payload(section_context, anchor_lock_mapping)
         if anchor_lock_mapping
@@ -2282,8 +2350,11 @@ def _staged_reconstruction_section_prompt(
             "Reduce clean transition logic. Avoid neat claim -> explanation -> implication paragraph routes.",
             "Vary information density without adding facts: compress one idea, leave one practical point less over-explained.",
             "Keep acceptable local friction, but do not add typos, grammar damage, fake randomness, or invented details.",
-            "Anchor lock is active. Copy every [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.",
         ]
+    if anchor_lock_mapping:
+        strategy_controls.append(
+            "Anchor lock is active. Copy every [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation."
+        )
     return (
         "DraftProof staged AI-Mitigation generation.\n"
         "Generate only this section body from the section context ledger. "
@@ -2291,13 +2362,16 @@ def _staged_reconstruction_section_prompt(
         "The original submitted prose is unavailable by design. Use only the structured context below.\n\n"
         f"Attempt: {attempt_index}. Strategy family: {strategy}.\n"
         f"Section heading owned by assembler: {section_plan.get('heading')}\n"
-        f"Target length for this section body: {target_text}. Do not return below the minimum.\n"
+        f"Target length for this section body: {target_text}. This is guidance, not the final acceptance gate.\n"
         f"Required section anchors to preserve exactly; missing any one invalidates the output: {json.dumps(prompt_required_anchors, ensure_ascii=False)}\n"
         f"Allowed citation/source keys for this section: {json.dumps(allowed_citations, ensure_ascii=False)}\n"
         f"Disallowed citation/source keys for this section: {json.dumps(disallowed_citations, ensure_ascii=False)}\n\n"
         "Section context ledger:\n"
         f"{json.dumps(prompt_section_context, ensure_ascii=False)[:7000]}\n\n"
         "Generation controls:\n"
+        f"- Word-count target: stay near {target_text}; scanner/gate quality is more important than exact length.\n"
+        "- Write enough section body to survive cleanup that removes headings, repeated sentences, labels, and filler.\n"
+        "- Do not repeat any full sentence or near-duplicate sentence; repeated sentences are removed before scoring and can make the candidate too short.\n"
         "- Preserve meaning, citations, years, names, numbers, quotes, source relations, and domain terms that are relevant to this section.\n"
         "- Use every required section anchor unless it is clearly a fragment; unit codes and named institutions are mandatory.\n"
         "- Do not mention disallowed source names, author groups, citations, frameworks, or evidence from other sections.\n"
@@ -2367,11 +2441,16 @@ def _staged_reconstruction_candidate(
         )
         call_count += 1
         body = _clean_section_candidate(response.content, str(section_plan.get("heading") or ""))
-        anchor_lock = (
-            _anchor_lock_mapping(section_plan.get("must_preserve_anchors") or [])
-            if str(strategy or "").strip().lower() == "authorship_texture_repair"
-            else []
-        )
+        anchor_lock = _anchor_lock_mapping(section_plan.get("must_preserve_anchors") or [])
+        missing_placeholders = []
+        if anchor_lock:
+            missing_placeholders = [
+                item["placeholder"]
+                for item in anchor_lock
+                if item.get("placeholder") and item["placeholder"] not in body
+            ]
+            if missing_placeholders and body:
+                body = f"{body.rstrip()} {' '.join(missing_placeholders)}"
         if anchor_lock:
             body = _restore_anchor_placeholders(body, anchor_lock)
         if body:
@@ -2383,6 +2462,7 @@ def _staged_reconstruction_candidate(
             "actual_words": _text_word_count(body),
             "empty": not bool(body),
             "anchor_lock_enabled": bool(anchor_lock),
+            "missing_placeholders_repaired": missing_placeholders,
         })
 
     references = [
@@ -2494,7 +2574,7 @@ def _build_reconstruction_meaning_brief(source_text: str, raw_json: dict | None)
     for anchor in inventory_anchors:
         if anchor not in protected_spans:
             protected_spans.append(anchor)
-    word_band = _word_count_band(source_text, variance=0.10)
+    word_band = _word_count_band(source_text, variance=0.25)
     paragraph_roles = []
     for idx, paragraph in enumerate(paragraphs[:10], start=1):
         lower = paragraph.lower()
@@ -3359,11 +3439,20 @@ def _ai_search_entity_drift_scan_allowed(candidate: str, reasons: list[str], sim
 
 
 def _reconstruction_drift_scan_allowed(candidate: str, reasons: list[str], similarity: float) -> bool:
-    """Allow reconstruction scoring when drift only reports discourse-marker noise."""
+    """Allow reconstruction scoring for non-substantive drift noise.
+
+    The protected-span check runs immediately before this function. If it has
+    passed, quote text, numbers, and citation names are still present. The
+    keyword drift guard may still report quote loss when curly/straight quote
+    marks differ or when the phrase is preserved without quotation marks; that
+    should not block scanner scoring for reconstruction candidates.
+    """
     if not isinstance(candidate, str) or not reasons or similarity < 0.78:
         return False
     candidate_l = re.sub(r"\s+", " ", candidate).lower()
     for reason in reasons:
+        if str(reason).startswith("quote_lost:"):
+            continue
         match = re.match(r"lost_named_entity:\s+'([^']+)'", str(reason))
         if not match:
             return False
@@ -4865,7 +4954,7 @@ def run_rewrite_pipeline(
                         "target_human_contribution": reconstruction_target_human,
                         "triggered_after_small_shift": small_shift_under_target,
                     }
-                    reconstruction_word_band = _word_count_band(source_for_mitigation, variance=0.10)
+                    reconstruction_word_band = _word_count_band(source_for_mitigation, variance=0.25)
                     authenticity_summary["reconstruction"]["word_count_band"] = reconstruction_word_band
                     reconstruction_min_chars = max(200, int(len(source_for_mitigation) * 0.65))
                     reconstruction_max_chars = max(reconstruction_min_chars, int(len(text) * 1.45))
@@ -4949,19 +5038,15 @@ def run_rewrite_pipeline(
                         candidate_words = _text_word_count(candidate)
                         candidate_eval["candidate_word_count"] = candidate_words
                         if candidate_words < reconstruction_word_band["min_words"]:
-                            candidate_eval["reason"] = (
-                                f"candidate_word_count_too_low "
+                            candidate_eval.setdefault("warnings", []).append(
+                                f"candidate_word_count_below_target "
                                 f"{candidate_words}<{reconstruction_word_band['min_words']}"
                             )
-                            authenticity_summary["candidates"].append(candidate_eval)
-                            continue
                         if candidate_words > reconstruction_word_band["max_words"]:
-                            candidate_eval["reason"] = (
-                                f"candidate_word_count_too_high "
+                            candidate_eval.setdefault("warnings", []).append(
+                                f"candidate_word_count_above_target "
                                 f"{candidate_words}>{reconstruction_word_band['max_words']}"
                             )
-                            authenticity_summary["candidates"].append(candidate_eval)
-                            continue
                         if len(candidate) < reconstruction_min_chars:
                             candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{reconstruction_min_chars}"
                             authenticity_summary["candidates"].append(candidate_eval)
@@ -5104,6 +5189,9 @@ def run_rewrite_pipeline(
             except Exception as exc:
                 authenticity_summary["reason"] = f"authenticity_mitigation_error {exc}"
         authenticity_summary["seconds"] = round(time.time() - mitigation_started, 3)
+        authenticity_summary["candidate_diagnostics"] = _generation_candidate_diagnostics(
+            authenticity_summary.get("candidates") or []
+        )
         result.summary["authenticity_mitigation"] = authenticity_summary
         result.summary["generation_layer"] = {
             "schema_version": "generation_layer.v1",
@@ -5118,6 +5206,7 @@ def run_rewrite_pipeline(
             "reconstruction": authenticity_summary.get("reconstruction"),
             "best_attempt": authenticity_summary.get("best_attempt"),
             "candidate_count": len(authenticity_summary.get("candidates") or []),
+            "candidate_diagnostics": authenticity_summary.get("candidate_diagnostics"),
         }
         if authenticity_summary.get("llm_calls"):
             result.summary["authenticity_llm_calls_used"] = authenticity_summary["llm_calls"]

@@ -3019,8 +3019,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     ) -> Dict[str, Any]:
         outline = _logical_document_outline(text or "")
         word_count = _word_count(text or "")
-        target_min = int(word_count * 0.90)
-        target_max = int(word_count * 1.10)
+        target_variance = 0.25
+        target_min = int(word_count * (1.0 - target_variance))
+        target_max = int(word_count * (1.0 + target_variance))
         references = []
         for ref in outline.get("reference_entries", []) or []:
             full = ref.get("full_reference") or ""
@@ -3113,7 +3114,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "target_word_band": {
                     "min": target_min,
                     "max": target_max,
-                    "variance": 0.10,
+                    "variance": target_variance,
                 },
             },
             "logical_outline": [
@@ -3133,7 +3134,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "do_not_expose_original_prose": True,
                 "preserve_references_exactly": True,
                 "do_not_invent_evidence": True,
-                "word_count_variance": 0.10,
+                "word_count_variance": target_variance,
                 "target_human_contribution": 80,
                 "target_ai_transformation": 20,
                 "user_evidence_footnote": (
