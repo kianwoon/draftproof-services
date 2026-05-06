@@ -10,6 +10,11 @@ from detect.layer3_scoring import (
     build_layer3_input_from_text,
     derive_authorship_rating,
 )
+from detect.transformation import (
+    TransformationFeatures,
+    classify_transformation,
+    classify_transformation_from_scan,
+)
 from report.render import _authorship_rating_from_badge
 
 
@@ -314,6 +319,89 @@ assert_true(
 assert_true(
     fixture_input.qualifying_text_ai_density >= 0.65,
     "long-form generic grounded-by-domain fixture produces dense qualifying-text signal",
+)
+
+fully_ai_pattern = classify_transformation(TransformationFeatures(
+    ai_likelihood=0.82,
+    human_anchor_score=0.12,
+    rewrite_smoothness=0.55,
+    source_similarity=0.0,
+    surface_similarity=0.0,
+    outline_to_text_expansion=0.30,
+    section_style_variance=0.10,
+    citation_grounding_risk=0.40,
+))
+assert_equal(
+    fully_ai_pattern.code,
+    "fully_ai_written",
+    "transformation classifier identifies fully AI-written pattern",
+)
+assert_equal(fully_ai_pattern.is_verdict, False, "transformation classification is not a verdict")
+
+ai_cleaned_pattern = classify_transformation(TransformationFeatures(
+    ai_likelihood=0.52,
+    human_anchor_score=0.62,
+    rewrite_smoothness=0.75,
+    source_similarity=0.0,
+    surface_similarity=0.0,
+    outline_to_text_expansion=0.30,
+    section_style_variance=0.20,
+    citation_grounding_risk=0.30,
+))
+assert_equal(
+    ai_cleaned_pattern.code,
+    "ai_cleaned_human_writing",
+    "transformation classifier identifies AI-cleaned human writing pattern",
+)
+
+ai_paraphrased_pattern = classify_transformation(TransformationFeatures(
+    ai_likelihood=0.45,
+    human_anchor_score=0.35,
+    rewrite_smoothness=0.50,
+    source_similarity=0.78,
+    surface_similarity=0.18,
+    outline_to_text_expansion=0.30,
+    section_style_variance=0.20,
+    citation_grounding_risk=0.40,
+))
+assert_equal(
+    ai_paraphrased_pattern.code,
+    "ai_paraphrased",
+    "transformation classifier identifies source-level AI paraphrase pattern",
+)
+
+transformation_input = Layer3Input(
+    predictability=0.58,
+    topk_pattern=0.76,
+    generic_phrase_density=0.20,
+    burstiness_risk=0.15,
+    repeated_sentence_structure_risk=0.62,
+    generic_assertion_risk=0.84,
+    qualifying_text_ai_density=0.74,
+    broad_claim_risk=0.70,
+    lived_detail_risk=0.80,
+    citation_weakness_risk=0.50,
+    unsupported_claim_risk=0.82,
+    source_grounding_strength=0.20,
+    domain_grounding_strength=0.20,
+    signpost_paragraph_risk=0.78,
+    paragraph_progression_risk=0.78,
+    word_count=700,
+    sentence_count=35,
+    paragraph_count=7,
+)
+transformation_scored = Layer3Scorer().score(transformation_input)
+transformation_from_scan = classify_transformation_from_scan(
+    transformation_input,
+    transformation_scored,
+)
+assert_true(
+    transformation_from_scan.code in {"fully_ai_written", "ai_expanded", "ai_cited_weakly_grounded"},
+    "scan-derived transformation classifier emits a concrete transformation pattern",
+)
+assert_true(
+    "ai_likelihood" in transformation_from_scan.features,
+    "transformation classification exposes feature values",
 )
 
 print("AI rating layer tests passed")

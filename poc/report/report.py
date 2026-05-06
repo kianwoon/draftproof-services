@@ -19,6 +19,7 @@ from enum import Enum
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
+from detect.transformation import classify_transformation_from_scan
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -1291,6 +1292,11 @@ class ReportBuilder:
         )
 
         layer3 = Layer3Scorer().score(layer3_input)
+        transformation = classify_transformation_from_scan(
+            layer3_input,
+            layer3,
+            similarity_summary=self._sim_summary,
+        )
 
         ai_risk_badge = {
             # AI Generation (Phase 1)
@@ -1314,6 +1320,14 @@ class ReportBuilder:
             "reasons": layer3.reasons,
             "guardrails": layer3.guardrails,
             "red_flags": n_high + n_critical,
+            "transformation_classification": {
+                "code": transformation.code,
+                "label": transformation.label,
+                "confidence": transformation.confidence,
+                "evidence": transformation.evidence,
+                "features": transformation.features,
+                "is_verdict": transformation.is_verdict,
+            },
         }
 
         badge_ai_score = ai_risk_badge.get("ai_likelihood_score", 0.0) / 100
