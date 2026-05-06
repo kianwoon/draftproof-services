@@ -358,11 +358,17 @@ def _baseline(scan_intelligence: Dict[str, Any], badge: Dict[str, Any]) -> Dict[
     if not human and not ai:
         ai = _score(badge.get("ai_likelihood_score"))
         human = max(0, 100 - ai)
+    target_human = 80
     return {
         "human_contribution_ratio": human,
         "ai_transformation_ratio": ai,
-        "target_human_contribution_ratio": min(100, human + 10 if ai >= 40 else human + 5),
-        "target_ai_transformation_ratio": max(0, ai - 10 if ai >= 40 else ai - 5),
+        "target_human_contribution_ratio": target_human,
+        "target_ai_transformation_ratio": max(0, 100 - target_human),
+        "previous_incremental_target_human_contribution_ratio": min(
+            100,
+            human + 10 if ai >= 40 else human + 5,
+        ),
+        "target_policy": "regeneration_target_human_contribution_80",
         "summary": contribution.get("summary") or "",
     }
 

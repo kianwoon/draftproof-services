@@ -35,6 +35,10 @@ class LLMConfig:
     model: Optional[str] = None          # None → resolved from LLM_MODEL env var at runtime
     max_tokens: int = 4096
     temperature: float = 0.3
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
     max_retries: int = 3
     timeout: int = 120
     site_url: Optional[str] = None       # OpenRouter optional headers
@@ -127,6 +131,10 @@ class LLMGateway:
         logger.info(f"LLM Gateway initialized: base_url={self.base_url}, model={self.model}")
         self.max_tokens = cfg.max_tokens
         self.temperature = cfg.temperature
+        self.top_p = cfg.top_p
+        self.top_k = cfg.top_k
+        self.presence_penalty = cfg.presence_penalty
+        self.frequency_penalty = cfg.frequency_penalty
         self.max_retries = cfg.max_retries
         self.timeout = cfg.timeout
         self.site_url = cfg.site_url or os.environ.get("LLM_SITE_URL")
@@ -139,17 +147,54 @@ class LLMGateway:
 
     # --- Public API ---
 
-    def chat(self, prompt: str, *, system: Optional[str] = None, temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> LLMResponse:
+    def chat(
+        self,
+        prompt: str,
+        *,
+        system: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+    ) -> LLMResponse:
         """Send a single-turn chat completion request."""
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        return self._complete(messages, temperature=temperature, max_tokens=max_tokens)
+        return self._complete(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            top_k=top_k,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
 
-    def chat_multi(self, messages: list[dict], *, temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> LLMResponse:
+    def chat_multi(
+        self,
+        messages: list[dict],
+        *,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+    ) -> LLMResponse:
         """Send a multi-turn chat completion request with full message history."""
-        return self._complete(messages, temperature=temperature, max_tokens=max_tokens)
+        return self._complete(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            top_k=top_k,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
 
     # --- Internal ---
 
@@ -164,7 +209,17 @@ class LLMGateway:
             headers["X-OpenRouter-Title"] = self.site_name
         return headers
 
-    def _complete(self, messages: list[dict], *, temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> LLMResponse:
+    def _complete(
+        self,
+        messages: list[dict],
+        *,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+    ) -> LLMResponse:
         url = f"{self.base_url}/chat/completions"
         payload = {
             "model": self.model,
@@ -172,6 +227,22 @@ class LLMGateway:
             "max_tokens": max_tokens or self.max_tokens,
             "temperature": temperature if temperature is not None else self.temperature,
         }
+        effective_top_p = top_p if top_p is not None else self.top_p
+        effective_top_k = top_k if top_k is not None else self.top_k
+        effective_presence_penalty = (
+            presence_penalty if presence_penalty is not None else self.presence_penalty
+        )
+        effective_frequency_penalty = (
+            frequency_penalty if frequency_penalty is not None else self.frequency_penalty
+        )
+        if effective_top_p is not None:
+            payload["top_p"] = effective_top_p
+        if effective_top_k is not None:
+            payload["top_k"] = effective_top_k
+        if effective_presence_penalty is not None:
+            payload["presence_penalty"] = effective_presence_penalty
+        if effective_frequency_penalty is not None:
+            payload["frequency_penalty"] = effective_frequency_penalty
 
         headers = self._build_headers()
         prompt_chars = sum(len(m.get("content", "")) for m in messages)
@@ -246,6 +317,11 @@ class LLMGateway:
         """Extract text content from OpenAI-compatible response JSON."""
         try:
             raw = data["choices"][0]["message"]["content"]
+            if raw is None:
+                logger.warning("LLM response content was null: %s", json.dumps(data)[:500])
+                return ""
+            if not isinstance(raw, str):
+                raw = str(raw)
             normalized = LLMGateway._normalize_quotes(raw)
             return LLMGateway._fix_mojibake(normalized)
         except (KeyError, IndexError, TypeError):

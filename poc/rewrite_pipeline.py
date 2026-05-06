@@ -153,6 +153,26 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _float_env_optional(name: str) -> float | None:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_env_optional(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _load_local_env(env_path: str | None = None) -> list[str]:
     """Load simple KEY=VALUE pairs from repo .env without overriding exports."""
     if env_path is None:
@@ -197,9 +217,9 @@ def _role_model(role: str, fallback_model: str | None = None) -> str | None:
     """Resolve stage-specific LLM model names from env with legacy fallback."""
     role = (role or "").strip().lower()
     role_env = {
-        "planner": ("DRAFTPROOF_PLANNER_MODEL", "PLANNER_MODEL", "LLM_PLANNER_MODEL"),
-        "generator": ("DRAFTPROOF_GENERATOR_MODEL", "GENERATOR_MODEL", "LLM_GENERATOR_MODEL"),
-        "retry": ("DRAFTPROOF_RETRY_MODEL", "RETRY_MODEL", "LLM_RETRY_MODEL"),
+        "planner": ("DRAFTPROOF_PLANNER_MODEL", "PLANNER_MODEL", "planner_model", "LLM_PLANNER_MODEL"),
+        "generator": ("DRAFTPROOF_GENERATOR_MODEL", "GENERATOR_MODEL", "generator_model", "LLM_GENERATOR_MODEL"),
+        "retry": ("DRAFTPROOF_RETRY_MODEL", "RETRY_MODEL", "retry_model", "LLM_RETRY_MODEL"),
     }.get(role, ())
     for name in role_env:
         value = os.environ.get(name)
@@ -215,11 +235,18 @@ def _retry_model_enabled() -> bool:
     return _env_flag("DRAFTPROOF_RETRY_MODEL_ENABLED", False) or _env_flag(
         "RETRY_MODEL_ENABLED",
         False,
+    ) or _env_flag(
+        "retry_model_enabled",
+        False,
     )
 
 
 def _retry_model_max_calls() -> int:
-    raw = os.environ.get("DRAFTPROOF_RETRY_MODEL_MAX_CALLS") or os.environ.get("RETRY_MODEL_MAX_CALLS")
+    raw = (
+        os.environ.get("DRAFTPROOF_RETRY_MODEL_MAX_CALLS")
+        or os.environ.get("RETRY_MODEL_MAX_CALLS")
+        or os.environ.get("retry_model_max_calls")
+    )
     try:
         return max(0, int(raw if raw is not None else "1"))
     except ValueError:
@@ -654,11 +681,16 @@ def _human_shift_score(
 def _human_shift_rank_key(gate: dict | None) -> tuple:
     gate = gate or {}
     score = gate.get("human_shift_score")
+    candidate_human = gate.get("candidate_human")
+    ai_authorship_delta = gate.get("ai_authorship_delta")
+    stage_target = _human_gain_stage_target(candidate_human)
     return (
         1 if gate.get("success") else 0,
-        float(score) if isinstance(score, (int, float)) else -9999.0,
-        float(gate.get("ai_authorship_delta")) if isinstance(gate.get("ai_authorship_delta"), (int, float)) else -9999.0,
+        1 if not isinstance(ai_authorship_delta, (int, float)) or ai_authorship_delta >= 0 else 0,
+        1 if isinstance(candidate_human, (int, float)) and candidate_human >= stage_target else 0,
         float(gate.get("human_delta")) if isinstance(gate.get("human_delta"), (int, float)) else -9999.0,
+        float(score) if isinstance(score, (int, float)) else -9999.0,
+        float(ai_authorship_delta) if isinstance(ai_authorship_delta, (int, float)) else -9999.0,
         float(gate.get("ai_transformation_delta")) if isinstance(gate.get("ai_transformation_delta"), (int, float)) else -9999.0,
     )
 
@@ -667,6 +699,823 @@ def _is_better_human_shift_candidate(candidate_gate: dict | None, best_gate: dic
     if best_gate is None:
         return True
     return _human_shift_rank_key(candidate_gate) > _human_shift_rank_key(best_gate)
+
+
+def _anchor_lock_mapping(anchors: list[str] | tuple[str, ...] | None) -> list[dict]:
+    """Create deterministic placeholders for anchors that should not be rewritten."""
+    unique: list[str] = []
+    for raw in anchors or []:
+        value = str(raw or "").strip()
+        if len(value) < 4:
+            continue
+        if value not in unique:
+            unique.append(value)
+    unique.sort(key=len, reverse=True)
+    return [
+        {"placeholder": f"[[DP_ANCHOR_{index:03d}]]", "value": value}
+        for index, value in enumerate(unique, start=1)
+    ]
+
+
+def _freeze_anchor_text(text: str, mapping: list[dict] | None) -> str:
+    frozen = str(text or "")
+    for item in mapping or []:
+        value = str(item.get("value") or "")
+        placeholder = str(item.get("placeholder") or "")
+        if value and placeholder:
+            frozen = re.sub(re.escape(value), placeholder, frozen)
+    return frozen
+
+
+def _restore_anchor_placeholders(text: str, mapping: list[dict] | None) -> str:
+    restored = str(text or "")
+    for item in mapping or []:
+        value = str(item.get("value") or "")
+        placeholder = str(item.get("placeholder") or "")
+        if value and placeholder:
+            restored = restored.replace(placeholder, value)
+    return restored
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [
+        item.strip()
+        for item in re.split(r"(?<=[.!?])\s+", str(text or "").strip())
+        if item.strip()
+    ]
+
+
+def _freeze_anchor_payload(payload, mapping: list[dict] | None):
+    if isinstance(payload, str):
+        return _freeze_anchor_text(payload, mapping)
+    if isinstance(payload, list):
+        return [_freeze_anchor_payload(item, mapping) for item in payload]
+    if isinstance(payload, tuple):
+        return tuple(_freeze_anchor_payload(item, mapping) for item in payload)
+    if isinstance(payload, dict):
+        return {
+            key: _freeze_anchor_payload(value, mapping)
+            for key, value in payload.items()
+        }
+    return payload
+
+
+def _repair_aggression_score(original_text: str, candidate_text: str) -> dict:
+    """Estimate how invasive a repair is so texture repair stays micro-local."""
+    original_tokens = re.findall(r"\w+|[^\w\s]", str(original_text or ""))
+    candidate_tokens = re.findall(r"\w+|[^\w\s]", str(candidate_text or ""))
+    if not original_tokens and not candidate_tokens:
+        ratio = 1.0
+    else:
+        ratio = SequenceMatcher(None, original_tokens, candidate_tokens).ratio()
+    changed_tokens_ratio = round(1.0 - ratio, 3)
+    original_sentences = _split_sentences(str(original_text or ""))
+    candidate_sentences = _split_sentences(str(candidate_text or ""))
+    sentence_count_delta = abs(len(candidate_sentences) - len(original_sentences))
+    sentence_delta_ratio = round(
+        sentence_count_delta / max(1, len(original_sentences)),
+        3,
+    )
+    original_words = _text_word_count(str(original_text or ""))
+    candidate_words = _text_word_count(str(candidate_text or ""))
+    word_delta_ratio = round(
+        abs(candidate_words - original_words) / max(1, original_words),
+        3,
+    )
+    score = round(
+        changed_tokens_ratio + min(1.0, sentence_delta_ratio) * 0.5 + min(1.0, word_delta_ratio) * 0.5,
+        3,
+    )
+    return {
+        "score": score,
+        "changed_tokens_ratio": changed_tokens_ratio,
+        "sentence_delta_ratio": sentence_delta_ratio,
+        "word_delta_ratio": word_delta_ratio,
+        "original_words": original_words,
+        "candidate_words": candidate_words,
+    }
+
+
+def _sentence_texture_risk_map(text: str, raw_json: dict | None = None, limit: int = 5) -> list[dict]:
+    """Build a sentence-level repair map from scanner pointers and local texture signals."""
+    sentences = _split_sentences(text)
+    if not sentences:
+        return []
+    pointer_scores: dict[int, float] = {}
+    raw_json = raw_json or {}
+    for brief in raw_json.get("rewrite_edit_briefs") or []:
+        if not isinstance(brief, dict):
+            continue
+        index = brief.get("sentence_index")
+        if isinstance(index, int) and 0 <= index < len(sentences):
+            signal_bonus = 0.25
+            for value in (brief.get("signals") or {}).values():
+                if isinstance(value, (int, float)):
+                    signal_bonus += min(0.4, float(value) / 250.0)
+                elif isinstance(value, str) and re.search(r"predict|uniform|smooth|generic|cadence", value, re.I):
+                    signal_bonus += 0.15
+            pointer_scores[index] = max(pointer_scores.get(index, 0.0), signal_bonus)
+    for segment in ((raw_json.get("ai_mitigation") or {}).get("target_segments") or []):
+        if not isinstance(segment, dict):
+            continue
+        seg_text = str(segment.get("text") or "").strip()
+        if not seg_text:
+            continue
+        for index, sentence in enumerate(sentences):
+            if seg_text in sentence or sentence in seg_text:
+                signal = segment.get("primary_signal") or {}
+                value = signal.get("score")
+                pointer_scores[index] = max(
+                    pointer_scores.get(index, 0.0),
+                    0.35 + (min(0.4, float(value) / 250.0) if isinstance(value, (int, float)) else 0.0),
+                )
+    generic_re = re.compile(
+        r"\b(?:important|significant|crucial|essential|plays? a role|"
+        r"this (?:shows|highlights|demonstrates|emphasizes)|"
+        r"furthermore|moreover|additionally|in conclusion|overall|"
+        r"increasingly|integrat(?:e|es|ing)|supports?|enables?|enhances?)\b",
+        re.I,
+    )
+    transition_re = re.compile(r"^(?:This|These|Such|In this|Overall|Therefore|However|Additionally|Furthermore)\b")
+    rows: list[dict] = []
+    for index, sentence in enumerate(sentences):
+        words = re.findall(r"\b[\w'-]+\b", sentence)
+        length_score = min(0.25, max(0, len(words) - 22) / 120.0)
+        generic_score = min(0.35, len(generic_re.findall(sentence)) * 0.12)
+        transition_score = 0.15 if transition_re.search(sentence.strip()) else 0.0
+        score = round(pointer_scores.get(index, 0.0) + length_score + generic_score + transition_score, 3)
+        rows.append({
+            "sentence_index": index,
+            "sentence": sentence,
+            "risk": score,
+            "drivers": {
+                "scanner_pointer": round(pointer_scores.get(index, 0.0), 3),
+                "length": round(length_score, 3),
+                "generic_phrase": round(generic_score, 3),
+                "transition_cleanliness": round(transition_score, 3),
+            },
+        })
+    rows.sort(key=lambda row: row["risk"], reverse=True)
+    return rows[:max(1, limit)]
+
+
+def _micro_texture_window(
+    text: str,
+    raw_json: dict | None = None,
+    *,
+    max_sentences: int = 2,
+    exclude_sentence_indexes: set[int] | list[int] | tuple[int, ...] | None = None,
+) -> dict:
+    sentences = _split_sentences(text)
+    if not sentences:
+        return {"sentences": [], "start": 0, "end": 0, "text": "", "risk_map": []}
+    risk_map = _sentence_texture_risk_map(text, raw_json, limit=5)
+    excluded = {int(item) for item in (exclude_sentence_indexes or []) if isinstance(item, int)}
+    selected = next(
+        (
+            row for row in risk_map
+            if "\n" not in str(row.get("sentence") or "")
+            and int(row.get("sentence_index", -1)) not in excluded
+        ),
+        None,
+    )
+    if selected is None:
+        selected = next(
+            (
+                row for row in risk_map
+                if int(row.get("sentence_index", -1)) not in excluded
+            ),
+            None,
+        )
+    if selected is None:
+        return {"sentences": sentences, "start": 0, "end": 0, "text": "", "risk_map": risk_map}
+    start = int(selected.get("sentence_index", 0))
+    end = min(len(sentences), start + max(1, max_sentences))
+    return {
+        "sentences": sentences,
+        "start": start,
+        "end": end,
+        "text": " ".join(sentences[start:end]).strip(),
+        "risk_map": risk_map,
+    }
+
+
+def _splice_sentence_window(text: str, start: int, end: int, replacement: str) -> str:
+    sentences = _split_sentences(text)
+    if start < 0 or end <= start or start >= len(sentences):
+        return text
+    end = min(end, len(sentences))
+    replacement_sentences = _split_sentences(replacement)
+    if not replacement_sentences:
+        return text
+    rebuilt = sentences[:start] + replacement_sentences + sentences[end:]
+    return " ".join(rebuilt).strip()
+
+
+def _micro_texture_repair_prompt(
+    source_text: str,
+    raw_json: dict | None,
+    anchors: list[str] | None = None,
+    *,
+    max_sentences: int = 1,
+    exclude_sentence_indexes: set[int] | list[int] | tuple[int, ...] | None = None,
+) -> tuple[str, dict]:
+    """Build an operation-level prompt for one local authorship texture patch."""
+    window = _micro_texture_window(
+        source_text,
+        raw_json,
+        max_sentences=max_sentences,
+        exclude_sentence_indexes=exclude_sentence_indexes,
+    )
+    mapping = _anchor_lock_mapping(anchors or [])
+    frozen_window = _freeze_anchor_text(window.get("text") or "", mapping)
+    frozen_context = {
+        "window_start_sentence": window.get("start"),
+        "window_end_sentence": window.get("end"),
+        "risk_map": _freeze_anchor_payload(window.get("risk_map") or [], mapping),
+        "target_window": frozen_window,
+        "required_placeholders": [item["placeholder"] for item in mapping if item["placeholder"] in frozen_window],
+    }
+    prompt = (
+        "DraftProof micro-local AUTHORSHIP_TEXTURE_REPAIR.\n"
+        "Patch only the target sentence window. Do not rewrite the surrounding section.\n"
+        "Return only the replacement sentence window, not the full section.\n\n"
+        f"Repair context:\n{json.dumps(frozen_context, ensure_ascii=False)}\n\n"
+        "Allowed operations:\n"
+        "- shorten_transition\n"
+        "- reduce_explanation\n"
+        "- alter_sentence_length\n"
+        "- reduce_connector_strength\n"
+        "- slight_pacing_asymmetry\n\n"
+        "Forbidden operations:\n"
+        "- reorder_paragraph\n"
+        "- add_new_claim\n"
+        "- semantic_expansion\n"
+        "- rewrite_whole_sentence_cluster\n"
+        "- add examples, sources, dates, numbers, institutions, citations, or evidence\n"
+        "- add typos, fake randomness, or grammar damage\n\n"
+        "Hard constraints:\n"
+        "- Preserve meaning and all [[DP_ANCHOR_###]] placeholders exactly.\n"
+        "- Keep replacement within about 70% to 130% of the target window word count.\n"
+        "- Prefer less clean cadence over polished explanation.\n"
+        "- Output prose only."
+    )
+    return prompt, {
+        "schema_version": "micro_texture_repair.v1",
+        "window": window,
+        "anchor_lock": mapping,
+        "frozen_target_window": frozen_window,
+    }
+
+
+def _clean_micro_texture_candidate(output: str, repair_info: dict) -> tuple[str, str]:
+    text = _clean_section_candidate(output or "", "")
+    if not text:
+        return "", "empty_micro_texture_candidate"
+    mapping = (repair_info or {}).get("anchor_lock") or []
+    text = _restore_anchor_placeholders(text, mapping)
+    target_words = _text_word_count((repair_info or {}).get("window", {}).get("text") or "")
+    candidate_words = _text_word_count(text)
+    if target_words and candidate_words < max(3, int(target_words * 0.70)):
+        return "", f"micro_texture_candidate_too_short {candidate_words}<{int(target_words * 0.70)}"
+    if target_words and candidate_words > max(8, int(target_words * 1.30)):
+        return "", f"micro_texture_candidate_too_long {candidate_words}>{int(target_words * 1.30)}"
+    return text, ""
+
+
+def _locality_score(original_text: str, candidate_text: str) -> dict:
+    original_sentences = _split_sentences(original_text)
+    candidate_sentences = _split_sentences(candidate_text)
+    max_len = max(len(original_sentences), len(candidate_sentences), 1)
+    changed = 0
+    for index in range(max_len):
+        left = original_sentences[index] if index < len(original_sentences) else ""
+        right = candidate_sentences[index] if index < len(candidate_sentences) else ""
+        if left != right:
+            changed += 1
+    ratio = round(changed / max_len, 3)
+    return {
+        "changed_sentences": changed,
+        "total_sentences": max_len,
+        "changed_sentence_ratio": ratio,
+    }
+
+
+def _micro_repair_gain_efficiency(human_gain: float, aggression_delta: float) -> float:
+    """Measure attribution gain per unit of repair aggression."""
+    try:
+        human_gain_value = float(human_gain)
+    except (TypeError, ValueError):
+        human_gain_value = 0.0
+    try:
+        aggression_value = float(aggression_delta)
+    except (TypeError, ValueError):
+        aggression_value = 0.0
+    if aggression_value <= 0:
+        return 9999.0 if human_gain_value > 0 else 0.0
+    return round(human_gain_value / aggression_value, 3)
+
+
+def _micro_texture_iteration_status(
+    attempts: list[dict] | None = None,
+    *,
+    baseline_scan: dict | None = None,
+    previous_scan: dict | None = None,
+    current_scan: dict | None = None,
+) -> dict:
+    """Stop/go policy for iterative micro-local texture repair.
+
+    The generator may create several tiny patches, but the loop must stop
+    before many local edits add up to a disguised section rewrite.
+    """
+    attempts = attempts or []
+
+    def num(source: dict | None, key: str, default: float = 0.0) -> float:
+        if not isinstance(source, dict):
+            return default
+        value = source.get(key)
+        return float(value) if isinstance(value, (int, float)) else default
+
+    def scan_from_attempt(index: int) -> dict:
+        if not attempts:
+            return {}
+        try:
+            item = attempts[index]
+        except IndexError:
+            return {}
+        return item.get("scan_scores") or item.get("scan") or {}
+
+    if current_scan is None:
+        current_scan = scan_from_attempt(-1)
+    if previous_scan is None:
+        previous_scan = scan_from_attempt(-2) if len(attempts) >= 2 else (baseline_scan or {})
+    if baseline_scan is None:
+        baseline_scan = previous_scan or {}
+
+    cumulative_aggression = 0.0
+    max_locality_ratio = 0.0
+    latest_aggression = 0.0
+    for index, item in enumerate(attempts):
+        aggression = item.get("repair_aggression") or {}
+        if not isinstance(aggression, dict):
+            aggression = {}
+        score = num(aggression, "score", num(item, "repair_aggression_score"))
+        cumulative_aggression += max(0.0, score)
+        if index == len(attempts) - 1:
+            latest_aggression = max(0.0, score)
+        locality = item.get("locality") or {}
+        if isinstance(locality, dict):
+            max_locality_ratio = max(max_locality_ratio, num(locality, "changed_sentence_ratio"))
+
+    current_human = num(current_scan, "human")
+    previous_human = num(previous_scan, "human")
+    baseline_human = num(baseline_scan, "human", previous_human)
+    marginal_human_gain = current_human - previous_human
+    total_human_gain = current_human - baseline_human
+    ai_authorship_delta = num(current_scan, "ai_authorship") - num(previous_scan, "ai_authorship")
+    ai_transformation_delta = num(current_scan, "ai_transformation") - num(previous_scan, "ai_transformation")
+    findings_delta = num(current_scan, "findings") - num(previous_scan, "findings")
+    gain_efficiency = _micro_repair_gain_efficiency(marginal_human_gain, latest_aggression)
+
+    max_total_aggression = _float_env("DRAFTPROOF_MICRO_TEXTURE_MAX_TOTAL_AGGRESSION", 0.18)
+    max_locality = _float_env("DRAFTPROOF_TEXTURE_REPAIR_MAX_LOCALITY", 0.25)
+    min_human_gain = _float_env("DRAFTPROOF_MICRO_TEXTURE_MIN_HUMAN_GAIN", 1.0)
+    min_gain_efficiency = _float_env("DRAFTPROOF_MICRO_TEXTURE_MIN_GAIN_EFFICIENCY", 10.0)
+    max_iterations = int(_float_env("DRAFTPROOF_MICRO_TEXTURE_MAX_ITERATIONS", 5.0))
+
+    stop_reasons: list[str] = []
+    if attempts and cumulative_aggression > max_total_aggression:
+        stop_reasons.append("cumulative_aggression_budget_exhausted")
+    if attempts and max_locality_ratio > max_locality:
+        stop_reasons.append("repair_locality_high")
+    if attempts and ai_authorship_delta > 0:
+        stop_reasons.append("ai_authorship_regression")
+    if attempts and findings_delta > 0:
+        stop_reasons.append("findings_regression")
+    if attempts and marginal_human_gain < min_human_gain:
+        stop_reasons.append("diminishing_human_gain")
+    if attempts and marginal_human_gain > 0 and gain_efficiency < min_gain_efficiency:
+        stop_reasons.append("gain_efficiency_low")
+    if attempts and len(attempts) > max_iterations:
+        stop_reasons.append("max_iterations_reached")
+
+    return {
+        "continue": not stop_reasons,
+        "stop_reasons": stop_reasons,
+        "metrics": {
+            "attempt_count": len(attempts),
+            "cumulative_aggression": round(cumulative_aggression, 3),
+            "max_total_aggression": round(max_total_aggression, 3),
+            "latest_aggression": round(latest_aggression, 3),
+            "max_locality_changed_sentence_ratio": round(max_locality_ratio, 3),
+            "max_locality_limit": round(max_locality, 3),
+            "marginal_human_gain": round(marginal_human_gain, 3),
+            "total_human_gain": round(total_human_gain, 3),
+            "ai_authorship_delta": round(ai_authorship_delta, 3),
+            "ai_transformation_delta": round(ai_transformation_delta, 3),
+            "findings_delta": round(findings_delta, 3),
+            "gain_efficiency": gain_efficiency,
+            "min_human_gain": round(min_human_gain, 3),
+            "min_gain_efficiency": round(min_gain_efficiency, 3),
+            "max_iterations": max_iterations,
+        },
+    }
+
+
+def _iterative_micro_texture_repair(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    baseline_scan: dict,
+    generate_replacement,
+    scan_candidate,
+    anchors: list[str] | None = None,
+    max_attempts: int | None = None,
+) -> dict:
+    """Run iterative micro-local texture repair with deterministic stop controls.
+
+    `generate_replacement(prompt, repair_info, attempt_index)` supplies one
+    replacement window. `scan_candidate(text)` returns the scanner metrics for
+    the full candidate text. The loop accepts only patches that pass the
+    iteration policy.
+    """
+    try:
+        limit = int(max_attempts if max_attempts is not None else _float_env("DRAFTPROOF_MICRO_TEXTURE_MAX_ITERATIONS", 5.0))
+    except (TypeError, ValueError):
+        limit = 5
+    limit = max(0, limit)
+    current_text = str(source_text or "")
+    previous_scan = dict(baseline_scan or {})
+    accepted_attempts: list[dict] = []
+    rejected_attempts: list[dict] = []
+    repaired_indexes: set[int] = set()
+    stop_reason = "max_attempts_reached" if limit == 0 else ""
+
+    for attempt_index in range(1, limit + 1):
+        window = _micro_texture_window(
+            current_text,
+            raw_json,
+            max_sentences=1,
+            exclude_sentence_indexes=repaired_indexes,
+        )
+        if not window.get("text"):
+            stop_reason = "no_unrepaired_texture_window"
+            break
+        prompt, repair_info = _micro_texture_repair_prompt(
+            current_text,
+            raw_json,
+            anchors or [],
+            max_sentences=1,
+            exclude_sentence_indexes=repaired_indexes,
+        )
+        raw_replacement = generate_replacement(prompt, repair_info, attempt_index)
+        replacement, clean_reason = _clean_micro_texture_candidate(str(raw_replacement or ""), repair_info)
+        attempt = {
+            "attempt": attempt_index,
+            "window_start": window.get("start"),
+            "window_end": window.get("end"),
+            "target_window": window.get("text"),
+            "accepted": False,
+        }
+        if clean_reason:
+            attempt["reason"] = clean_reason
+            rejected_attempts.append(attempt)
+            stop_reason = clean_reason
+            break
+        candidate_text = _splice_sentence_window(
+            current_text,
+            int(window.get("start") or 0),
+            int(window.get("end") or 0),
+            replacement,
+        )
+        if candidate_text == current_text:
+            attempt["reason"] = "micro_texture_no_change"
+            rejected_attempts.append(attempt)
+            stop_reason = "micro_texture_no_change"
+            break
+        attempt.update({
+            "replacement_window": replacement,
+            "repair_aggression": _repair_aggression_score(current_text, candidate_text),
+            "locality": _locality_score(current_text, candidate_text),
+        })
+        try:
+            scan_scores = scan_candidate(candidate_text)
+        except Exception as exc:
+            attempt["reason"] = f"candidate_scan_error {exc}"
+            rejected_attempts.append(attempt)
+            stop_reason = attempt["reason"]
+            break
+        attempt["scan_scores"] = scan_scores or {}
+        iteration_status = _micro_texture_iteration_status(
+            accepted_attempts + [attempt],
+            baseline_scan=baseline_scan,
+            previous_scan=previous_scan,
+            current_scan=attempt["scan_scores"],
+        )
+        attempt["iteration_status"] = iteration_status
+        if not iteration_status.get("continue"):
+            attempt["reason"] = ",".join(iteration_status.get("stop_reasons") or []) or "iteration_policy_stop"
+            rejected_attempts.append(attempt)
+            stop_reason = attempt["reason"]
+            break
+        attempt["accepted"] = True
+        accepted_attempts.append(attempt)
+        repaired_indexes.add(int(window.get("start") or 0))
+        current_text = candidate_text
+        previous_scan = dict(attempt["scan_scores"])
+    else:
+        stop_reason = "max_attempts_reached"
+
+    final_status = _micro_texture_iteration_status(
+        accepted_attempts,
+        baseline_scan=baseline_scan,
+        previous_scan=baseline_scan if len(accepted_attempts) <= 1 else accepted_attempts[-2].get("scan_scores"),
+        current_scan=previous_scan,
+    )
+    return {
+        "text": current_text,
+        "scan_scores": previous_scan,
+        "accepted_attempts": accepted_attempts,
+        "rejected_attempts": rejected_attempts,
+        "attempt_count": len(accepted_attempts) + len(rejected_attempts),
+        "accepted_count": len(accepted_attempts),
+        "stop_reason": stop_reason,
+        "iteration_status": final_status,
+        "repaired_sentence_indexes": sorted(repaired_indexes),
+    }
+
+
+def _optimization_candidate_status(
+    candidate: dict | None,
+    *,
+    baseline: dict | None = None,
+    reject_semantic_drift: bool = True,
+) -> dict:
+    """Rank generated candidates as a multi-objective optimization problem.
+
+    This is intentionally separate from prompt compliance. A candidate can pass
+    the mechanical gate and still be a poor mitigation candidate after scan.
+    """
+    candidate = candidate or {}
+    baseline = baseline or {}
+    mechanical = candidate.get("mechanical") or candidate.get("mechanical_gate") or {}
+    scan = candidate.get("scan_scores") or {}
+    reject_reasons: list[str] = []
+    if mechanical and not mechanical.get("passed"):
+        reject_reasons.append("mechanical_gate_failed")
+    for key in ("missing", "forbidden_found", "forbidden", "generic_banned_found", "connectors"):
+        if mechanical.get(key):
+            reject_reasons.append(f"{key}_present")
+    if reject_semantic_drift and scan.get("semantic_drift"):
+        reject_reasons.append("semantic_drift")
+    if not scan:
+        reject_reasons.append("missing_scan_scores")
+
+    def num(source: dict, key: str, default: float = 0.0) -> float:
+        value = source.get(key)
+        return float(value) if isinstance(value, (int, float)) else default
+
+    human_gain = num(scan, "human") - num(baseline, "human")
+    ai_transformation_drop = num(baseline, "ai_transformation") - num(scan, "ai_transformation")
+    ai_authorship_drop = num(baseline, "ai_authorship") - num(scan, "ai_authorship")
+    ai_score_drop = num(baseline, "ai_score") - num(scan, "ai_score")
+    grounding_drop = num(baseline, "grounding") - num(scan, "grounding")
+    findings_drop = num(baseline, "findings") - num(scan, "findings")
+    generic_phrase_penalty = max(0.0, num(scan, "generic_phrase_count"))
+    if baseline and ai_authorship_drop < 0:
+        reject_reasons.append("ai_authorship_increase")
+    repair_aggression = candidate.get("repair_aggression")
+    if not isinstance(repair_aggression, dict):
+        original_text = candidate.get("original_text") or candidate.get("source_text")
+        candidate_text = candidate.get("candidate_text") or candidate.get("text")
+        repair_aggression = (
+            _repair_aggression_score(str(original_text), str(candidate_text))
+            if isinstance(original_text, str) and isinstance(candidate_text, str)
+            else {}
+        )
+    repair_aggression_score = num(repair_aggression, "score")
+    repair_aggression_limit = _float_env("DRAFTPROOF_TEXTURE_REPAIR_MAX_AGGRESSION", 0.55)
+    if repair_aggression and repair_aggression_score > repair_aggression_limit:
+        reject_reasons.append("repair_aggression_high")
+    locality = candidate.get("locality") or {}
+    if not isinstance(locality, dict) or not locality:
+        original_text = candidate.get("original_text") or candidate.get("source_text")
+        candidate_text = candidate.get("candidate_text") or candidate.get("text")
+        locality = (
+            _locality_score(str(original_text), str(candidate_text))
+            if isinstance(original_text, str) and isinstance(candidate_text, str)
+            else {}
+        )
+    locality_ratio = num(locality, "changed_sentence_ratio")
+    locality_limit = _float_env("DRAFTPROOF_TEXTURE_REPAIR_MAX_LOCALITY", 0.25)
+    if locality and locality_ratio > locality_limit:
+        reject_reasons.append("repair_locality_high")
+
+    grounding_penalty = max(0.0, -grounding_drop)
+    finding_penalty = max(0.0, -findings_drop)
+    score = (
+        human_gain * 5.0
+        + ai_authorship_drop * 2.0
+        + ai_transformation_drop * 1.5
+        + ai_score_drop * 1.0
+        - grounding_penalty * 0.5
+        - finding_penalty * 0.5
+        - generic_phrase_penalty * 2.0
+    )
+    accepted = not reject_reasons
+    stage_target = _human_gain_stage_target(num(scan, "human"))
+    rank_key = (
+        1 if accepted else 0,
+        1 if num(scan, "human") >= stage_target else 0,
+        human_gain,
+        round(score, 3),
+        ai_authorship_drop,
+        ai_transformation_drop,
+        ai_score_drop,
+        -generic_phrase_penalty,
+    )
+    return {
+        "accepted": accepted,
+        "reject_reasons": reject_reasons,
+        "score": round(score, 3),
+        "rank_key": rank_key,
+        "components": {
+            "human_gain": round(human_gain, 3),
+            "ai_transformation_drop": round(ai_transformation_drop, 3),
+            "ai_authorship_drop": round(ai_authorship_drop, 3),
+            "ai_score_drop": round(ai_score_drop, 3),
+            "grounding_drop": round(grounding_drop, 3),
+            "findings_drop": round(findings_drop, 3),
+            "grounding_penalty": round(grounding_penalty, 3),
+            "finding_penalty": round(finding_penalty, 3),
+            "generic_phrase_penalty": round(generic_phrase_penalty, 3),
+            "human_stage_target": round(stage_target, 3),
+            "repair_aggression_score": round(repair_aggression_score, 3),
+            "repair_aggression_limit": round(repair_aggression_limit, 3),
+            "locality_changed_sentence_ratio": round(locality_ratio, 3),
+            "locality_limit": round(locality_limit, 3),
+        },
+        "weights": {
+            "human_gain": 5.0,
+            "ai_authorship_drop": 2.0,
+            "ai_transformation_drop": 1.5,
+            "ai_score_drop": 1.0,
+            "grounding_penalty": -0.5,
+            "finding_penalty": -0.5,
+            "generic_phrase_penalty": -2.0,
+        },
+    }
+
+
+def _select_best_optimization_candidate(
+    candidates: list[dict] | None,
+    *,
+    baseline: dict | None = None,
+    reject_semantic_drift: bool = True,
+) -> dict:
+    rows = []
+    for index, candidate in enumerate(candidates or []):
+        status = _optimization_candidate_status(
+            candidate,
+            baseline=baseline,
+            reject_semantic_drift=reject_semantic_drift,
+        )
+        row = dict(candidate or {})
+        row["optimization_status"] = status
+        row["_candidate_index"] = index
+        rows.append(row)
+    if not rows:
+        return {
+            "selected": None,
+            "selected_index": None,
+            "accepted_count": 0,
+            "candidates": [],
+            "reason": "no_candidates",
+        }
+    rows.sort(key=lambda row: row["optimization_status"]["rank_key"], reverse=True)
+    best = rows[0]
+    accepted = [row for row in rows if row["optimization_status"]["accepted"]]
+    return {
+        "selected": best if best["optimization_status"]["accepted"] else None,
+        "selected_index": best.get("_candidate_index") if best["optimization_status"]["accepted"] else None,
+        "accepted_count": len(accepted),
+        "candidates": rows,
+        "reason": (
+            "selected_best_pareto_candidate"
+            if best["optimization_status"]["accepted"]
+            else "all_candidates_rejected"
+        ),
+    }
+
+
+def _human_gain_stage_target(human_score: float | int | None, *, final_target: float = 80.0) -> float:
+    """Return the next ladder target for controlled human-gain repair."""
+    try:
+        human = float(human_score)
+    except (TypeError, ValueError):
+        human = 0.0
+    for target in (60.0, 70.0, float(final_target)):
+        if human < target:
+            return target
+    return float(final_target)
+
+
+def _metric_repair_diagnosis(
+    scan_scores: dict | None,
+    *,
+    target_human: float = 80.0,
+    target_ai_transformation: float = 20.0,
+    target_ai_authorship: float = 45.0,
+) -> dict:
+    """Choose the next targeted repair dimension from scanner scores."""
+    scan_scores = scan_scores or {}
+
+    def num(key: str, default: float = 0.0) -> float:
+        value = scan_scores.get(key)
+        return float(value) if isinstance(value, (int, float)) else default
+
+    if scan_scores.get("semantic_drift"):
+        return {
+            "repair_type": "semantic_drift_rollback",
+            "priority": 100,
+            "reason": "semantic drift is a hard failure before score optimization",
+            "instructions": [
+                "Rollback or patch only the drifted sentence span.",
+                "Do not introduce new examples, source names, claims, or section roles.",
+                "Keep protected anchors and return closer to the section meaning inventory.",
+            ],
+        }
+
+    ai_authorship = num("ai_authorship")
+    ai_transformation = num("ai_transformation")
+    human = num("human")
+    generic_phrase_count = num("generic_phrase_count")
+    findings = num("findings")
+    gaps = {
+        "ai_authorship_gap": max(0.0, ai_authorship - target_ai_authorship),
+        "ai_transformation_gap": max(0.0, ai_transformation - target_ai_transformation),
+        "human_gap": max(0.0, target_human - human),
+        "generic_phrase_gap": max(0.0, generic_phrase_count),
+        "finding_gap": max(0.0, findings - 5.0),
+    }
+    next_human_stage = _human_gain_stage_target(human, final_target=target_human)
+    if gaps["ai_authorship_gap"] > 0:
+        return {
+            "repair_type": "authorship_texture_repair",
+            "priority": round(gaps["ai_authorship_gap"], 3),
+            "reason": "AI Authorship texture remains the blocker; semantic human cues are not enough",
+            "instructions": [
+                "Do not add human semantic cues as the main move.",
+                "Repair sentence rhythm, pacing, and predictability only; preserve claim inventory.",
+                "Break clean explanatory cadence with natural asymmetry, not random noise.",
+                "Reduce transition cleanliness and balanced claim-explanation-implication flow.",
+                "Vary information density locally: one compressed sentence, one practical sentence, one delayed connection.",
+                "Keep acceptable friction without typos, fake errors, invented examples, or new evidence.",
+            ],
+        }
+    if gaps["human_gap"] > 0:
+        return {
+            "repair_type": "human_gain_repair",
+            "priority": round(next_human_stage - human, 3),
+            "stage_target": round(next_human_stage, 3),
+            "final_target": round(target_human, 3),
+            "reason": "Human Contribution remains below the next ladder target after authorship texture is controlled",
+            "instructions": [
+                "Patch only 10-20% of sentences in this repair round.",
+                "Increase concrete anchor density using original text anchors and scanner context only.",
+                "Add safe author reasoning traces such as what I noticed, the issue is, or this made me think only where the source stance supports it.",
+                "Use mild rhythm unevenness: one short sentence, one longer causal sentence, and less balanced claim-explanation-implication flow.",
+                "Keep rough edges; do not over-clean transitions, grammar, or paragraph symmetry.",
+                "Do not invent new places, dates, numbers, people, evidence, citations, workplace events, or assessment results.",
+            ],
+        }
+    if gaps["ai_transformation_gap"] > 0:
+        return {
+            "repair_type": "ai_transformation_smoothing",
+            "priority": round(gaps["ai_transformation_gap"], 3),
+            "reason": "AI Transformation remains high, suggesting the rewrite is too smooth or rebuilt",
+            "instructions": [
+                "Reduce smoothing and restore author-owned roughness.",
+                "Keep sentence order mostly stable while changing over-clean transitions.",
+                "Remove balanced summary cadence and generic connector chains.",
+            ],
+        }
+    if generic_phrase_count > 0:
+        return {
+            "repair_type": "connector_cleanup",
+            "priority": round(generic_phrase_count, 3),
+            "reason": "Generic connector findings remain after mitigation",
+            "instructions": [
+                "Remove generic connectors without changing meaning.",
+                "Use plain transitions or no transition.",
+            ],
+        }
+    return {
+        "repair_type": "none",
+        "priority": 0,
+        "reason": "No targeted repair required by configured thresholds",
+        "instructions": [],
+    }
 
 
 def _critical_high_count(report_dict: dict | None) -> int:
@@ -756,7 +1605,7 @@ def _authenticity_gate_status(
         and candidate_human >= major_human_threshold
         and human_delta >= major_human_gain
     )
-    ai_authorship_regression_blocked = ai_authorship_regressed and not major_human_breakthrough
+    ai_authorship_regression_blocked = ai_authorship_regressed
     target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
     strong_accept_min_human_gain = _float_env("DRAFTPROOF_AUTHENTICITY_STRONG_ACCEPT_MIN_HUMAN_GAIN", 20.0)
     strong_accept_min_transform_drop = _float_env("DRAFTPROOF_AUTHENTICITY_STRONG_ACCEPT_MIN_AI_TRANSFORM_DROP", 20.0)
@@ -1036,6 +1885,7 @@ def _reconstruction_failure_feedback(prior_attempts: list[dict] | None, limit: i
             "strategy": item.get("strategy") or item.get("attempt"),
             "reason": item.get("reason") or gate.get("reason"),
             "human_shift_score": item.get("human_shift_score") or gate.get("human_shift_score"),
+            "candidate_human": item.get("candidate_human") or item.get("human_contribution") or gate.get("candidate_human"),
             "human_delta": item.get("human_delta") or gate.get("human_delta"),
             "ai_authorship_delta": item.get("ai_authorship_delta") or gate.get("ai_authorship_delta"),
             "ai_transformation_delta": item.get("ai_transformation_delta") or gate.get("ai_transformation_delta"),
@@ -1047,6 +1897,514 @@ def _reconstruction_failure_feedback(prior_attempts: list[dict] | None, limit: i
         }
         rows.append({k: v for k, v in row.items() if v not in (None, {}, [])})
     return rows
+
+
+def _reconstruction_gate_controls(prior_attempts: list[dict] | None) -> dict:
+    """Convert scanner/gate failures into generation controls for the next candidate."""
+    feedback = _reconstruction_failure_feedback(prior_attempts, limit=8)
+    controls: list[str] = []
+    blocker_counts: dict[str, int] = {}
+
+    def add(key: str, instruction: str) -> None:
+        blocker_counts[key] = blocker_counts.get(key, 0) + 1
+        if instruction not in controls:
+            controls.append(instruction)
+
+    for item in feedback:
+        reason = str(item.get("reason") or "")
+        failed_components = item.get("failed_components") or {}
+        candidate_human = item.get("candidate_human") or item.get("human_contribution")
+        if isinstance(candidate_human, (int, float)):
+            next_stage = _human_gain_stage_target(candidate_human)
+            if candidate_human < next_stage:
+                add(
+                    "human_gain_repair",
+                    (
+                        f"HUMAN_GAIN_REPAIR: raise Human Contribution toward the next ladder target "
+                        f"({int(next_stage)}) by patching only 10-20% of sentences with existing anchors, "
+                        "safe author reasoning traces, uneven rhythm, and less balanced paragraph flow."
+                    ),
+                )
+        if "human_contribution_gain" in failed_components or (
+            isinstance(item.get("human_delta"), (int, float)) and item.get("human_delta") < 0
+        ):
+            add(
+                "human_contribution_regressed",
+                "Do not replace author-owned classroom reasoning with smoother academic explanation; keep or increase first-person operational judgement, process detail, and local constraint language.",
+            )
+        if "ai_transformation_reduction" in failed_components or (
+            isinstance(item.get("ai_transformation_delta"), (int, float))
+            and item.get("ai_transformation_delta") < 0
+        ):
+            add(
+                "ai_transformation_regressed",
+                "Avoid outline-to-essay expansion, symmetrical paragraph routes, and polished summary cadence; use uneven paragraph jobs with concrete haircutting decisions.",
+            )
+        if "ai_authorship_reduction" in failed_components or (
+            isinstance(item.get("ai_authorship_delta"), (int, float))
+            and item.get("ai_authorship_delta") < 0
+        ):
+            add(
+                "authorship_texture_repair",
+                "AUTHORSHIP_TEXTURE_REPAIR: do not add more human details yet; reduce statistical smoothness through rhythm variance, less transition cleanliness, asymmetric sentence pacing, and uneven information density without changing meaning.",
+            )
+        if "grounding_risk_reduction" in failed_components:
+            add(
+                "grounding_regressed",
+                "Preserve every source-to-claim relation and citation role; do not generalise cited claims or move sources into broad unsupported summaries.",
+            )
+        if "rewrite_smoothness_reduction" in failed_components:
+            add(
+                "smoothness_regressed",
+                "Stop polishing. Prefer direct workshop-language reasoning over balanced academic sentences.",
+            )
+        if "weighted_severity_penalty" in failed_components or "weighted_severity" in reason:
+            add(
+                "severity_regressed",
+                "Do not introduce new high/medium findings; keep protected anchors and source coverage intact before changing style.",
+            )
+        if "protected_span_lost" in reason or "number_lost" in reason:
+            add(
+                "protected_anchor_lost",
+                "Copy protected anchors exactly: citations, years, page ranges, unit codes, named institutions, quotes, and reference details must remain present.",
+            )
+        if "quote_lost" in reason:
+            add(
+                "quote_lost",
+                "Do not omit or paraphrase quoted/source wording; preserve quoted material exactly where it appears in the submitted content.",
+            )
+        if "candidate_word_count_too_low" in reason:
+            add(
+                "word_count_low",
+                "Add length only through source-licensed reasoning, process explanation, and local constraints from the submitted draft; do not add generic filler.",
+            )
+        if "candidate_word_count_too_high" in reason:
+            add(
+                "word_count_high",
+                "Compress generic explanation while keeping protected anchors and source relations.",
+            )
+        if "semantic_drift" in reason:
+            add(
+                "semantic_drift",
+                "Keep the same claim inventory and evidence relationships; restructure route and rhythm without dropping entities, quotes, citations, or source roles.",
+            )
+
+    if not controls:
+        controls.append(
+            "No scored failure yet. Use the scanner baseline directly: raise Human Contribution toward 80 while preserving protected anchors and avoiding AI Authorship regression."
+        )
+
+    return {
+        "schema_version": "scanner_gate_feedback.v1",
+        "purpose": "Use scanner/gate failures as control signals for the next generation attempt.",
+        "acceptance_target": {
+            "human_contribution_min": 80,
+            "human_contribution_ladder": [60, 70, 80],
+            "primary_goal": "maximize_human_contribution_after_hard_safety_rejects",
+            "ai_authorship_regression_allowed": False,
+            "word_count_variance": "±10%",
+            "critical_high_review_regression_allowed": False,
+        },
+        "prior_attempts": feedback,
+        "blocker_counts": blocker_counts,
+        "next_candidate_controls": controls[:10],
+    }
+
+
+def _generation_context_ledger(brief: dict, blueprint: dict) -> dict:
+    """Build generation input from scanner-derived context, not the source prose."""
+    paragraph_plans = []
+    for plan in (blueprint or {}).get("paragraph_plans") or []:
+        if not isinstance(plan, dict):
+            continue
+        paragraph_plans.append({
+            key: value
+            for key, value in plan.items()
+            if key not in {"source_preview"}
+        })
+    target_segments = []
+    for segment in (brief or {}).get("target_segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        target_segments.append({
+            key: value
+            for key, value in segment.items()
+            if key not in {"text"}
+        })
+    return {
+        "schema_version": "generation_context_ledger.v1",
+        "purpose": "Regenerate from scanner-derived meaning, anchors, roles, and signals without using the submitted prose as a scaffold.",
+        "claim_inventory": (brief or {}).get("claims") or [],
+        "headings": (brief or {}).get("headings") or [],
+        "protected_facts": (brief or {}).get("protected_facts") or [],
+        "preservation_inventory": (brief or {}).get("preservation_inventory") or {},
+        "word_count_band": (brief or {}).get("word_count_band") or {},
+        "paragraph_roles": (brief or {}).get("paragraph_roles") or [],
+        "paragraph_plans": paragraph_plans,
+        "global_driver_targets": (blueprint or {}).get("global_driver_targets") or [],
+        "industry_baseline_focus": (blueprint or {}).get("industry_baseline_focus") or {},
+        "integrity_targets": (brief or {}).get("integrity_targets") or [],
+        "target_segment_signals": target_segments,
+        "allowed_existing_additions": (brief or {}).get("allowed_existing_additions") or [],
+        "preserve_terms": (brief or {}).get("preserve_terms") or [],
+        "do_not_add": (brief or {}).get("do_not_add") or [],
+        "human_contribution_contract": (brief or {}).get("human_contribution_contract") or {},
+        "reference_entries": (brief or {}).get("reference_entries") or [],
+        "generation_handoff": (brief or {}).get("generation_handoff") or {},
+    }
+
+
+def _reference_entries_from_text(text: str, limit: int = 60) -> list[str]:
+    """Extract bibliography entries as preservation context, not prose substrate."""
+    if not isinstance(text, str) or not text.strip():
+        return []
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if re.match(r"^\s*(?:references|reference list|bibliography|works cited)\s*$", line, re.I):
+            start = index + 1
+            break
+    if start is None:
+        return []
+
+    entries: list[str] = []
+    current = ""
+    for raw_line in lines[start:]:
+        line = raw_line.strip()
+        if not line:
+            if current:
+                entries.append(current.strip())
+                current = ""
+            continue
+        if re.match(r"^[A-Z][A-Za-z0-9 ,/&-]{2,70}$", line) and not re.search(r"\(\d{4}\)|https?://|doi\.", line, re.I):
+            break
+        starts_entry = bool(re.search(r"\(\d{4}\)|\(\s*n\.d\.\s*\)|https?://|doi\.", line, re.I))
+        if current and starts_entry:
+            entries.append(current.strip())
+            current = line
+        else:
+            current = f"{current} {line}".strip() if current else line
+        if len(entries) >= limit:
+            break
+    if current and len(entries) < limit:
+        entries.append(current.strip())
+    return entries[:limit]
+
+
+def _staged_generation_section_plan(context_ledger: dict, *, max_sections: int | None = None) -> list[dict]:
+    """Create bounded section plans so the LLM never receives the full document."""
+    if max_sections is None:
+        try:
+            max_sections = int(os.environ.get("DRAFTPROOF_STAGED_REGENERATION_SECTIONS", "6"))
+        except ValueError:
+            max_sections = 6
+    max_sections = max(1, max_sections)
+    handoff = (context_ledger or {}).get("generation_handoff") or {}
+    handoff_units = [
+        unit for unit in handoff.get("section_generation_units") or []
+        if isinstance(unit, dict) and unit.get("heading")
+    ]
+    if handoff_units:
+        title = ((handoff.get("document_profile") or {}).get("title") or "").strip()
+        selected_units = handoff_units[:max_sections]
+        if len(handoff_units) > max_sections:
+            conclusion = next(
+                (
+                    unit for unit in reversed(handoff_units)
+                    if re.search(r"\bconclusion\b|closing|final", str(unit.get("heading") or ""), re.I)
+                ),
+                None,
+            )
+            if conclusion and conclusion not in selected_units:
+                selected_units = selected_units[:max(0, max_sections - 1)] + [conclusion]
+        return [
+            {
+                "section_index": index,
+                "section_id": unit.get("section_id"),
+                "title": title,
+                "heading": unit.get("heading"),
+                "target_words": ((unit.get("target_words") or {}).get("ideal") or (unit.get("target_words") or {}).get("max") or 180),
+                "target_word_band": unit.get("target_words") or {},
+                "must_preserve_anchors": unit.get("must_preserve_anchors") or [],
+                "citation_keys_used": unit.get("citation_keys_used") or [],
+                "claim_inventory_slice": unit.get("meaning_inventory") or [],
+                "target_signal_slice": unit.get("detector_risks_to_reduce") or [],
+                "paragraph_plan_slice": [{
+                    "section_id": unit.get("section_id"),
+                    "role": unit.get("role"),
+                    "citation_keys_used": unit.get("citation_keys_used") or [],
+                    "must_preserve_anchors": unit.get("must_preserve_anchors") or [],
+                    "generation_instruction": unit.get("generation_instruction") or {},
+                }],
+            }
+            for index, unit in enumerate(selected_units, start=1)
+        ]
+    headings = [
+        str(item).strip()
+        for item in (context_ledger or {}).get("headings") or []
+        if str(item).strip() and not re.match(r"^(?:references|reference list|bibliography|works cited)$", str(item).strip(), re.I)
+    ]
+    if not headings:
+        roles = (context_ledger or {}).get("paragraph_roles") or []
+        headings = [
+            str(row.get("role") or f"Section {idx}").replace("_", " ").title()
+            for idx, row in enumerate(roles[:max_sections], start=1)
+            if isinstance(row, dict)
+        ] or ["Context", "Main Reasoning", "Conclusion"]
+
+    title = headings[0] if len(headings) > 1 else ""
+    body_headings_all = headings[1:] if title else headings
+    body_headings = body_headings_all[:max_sections]
+    if len(body_headings_all) > max_sections:
+        conclusion = next(
+            (
+                heading
+                for heading in reversed(body_headings_all)
+                if re.search(r"\bconclusion\b|closing|final", heading, re.I)
+            ),
+            "",
+        )
+        if conclusion and conclusion not in body_headings:
+            body_headings = body_headings[:max(0, max_sections - 1)] + [conclusion]
+    claims = [
+        str(item).strip()
+        for item in (context_ledger or {}).get("claim_inventory") or []
+        if str(item).strip()
+    ]
+    target_segments = (context_ledger or {}).get("target_segment_signals") or []
+    paragraph_plans = (context_ledger or {}).get("paragraph_plans") or []
+    word_band = (context_ledger or {}).get("word_count_band") or {}
+    reference_words = _text_word_count("\n".join((context_ledger or {}).get("reference_entries") or []))
+    total_target = int((word_band.get("min_words") or 0) + (word_band.get("max_words") or 0)) // 2
+    if total_target <= 0:
+        total_target = max(900, len(claims) * 55)
+    body_target = max(450, total_target - reference_words - _text_word_count(title))
+    # LLM section generators commonly undershoot long-form word targets. Inflate
+    # the requested body budget while the assembler still enforces the final
+    # ±10% document band after assembly.
+    target_inflation = _float_env("DRAFTPROOF_STAGED_SECTION_TARGET_INFLATION", 1.18)
+    per_section = max(120, int((body_target * target_inflation) / max(1, len(body_headings))))
+
+    plans: list[dict] = []
+    claim_window = max(2, math.ceil(len(claims) / max(1, len(body_headings))))
+    segment_window = max(1, math.ceil(len(target_segments) / max(1, len(body_headings)))) if target_segments else 1
+    for index, heading in enumerate(body_headings, start=1):
+        claim_start = (index - 1) * claim_window
+        segment_start = (index - 1) * segment_window
+        plans.append({
+            "section_index": index,
+            "title": title,
+            "heading": heading,
+            "target_words": per_section,
+            "claim_inventory_slice": claims[claim_start:claim_start + claim_window],
+            "target_signal_slice": target_segments[segment_start:segment_start + segment_window],
+            "paragraph_plan_slice": paragraph_plans[max(0, index - 1):index + 2],
+        })
+    return plans
+
+
+def _staged_reconstruction_section_prompt(
+    context_ledger: dict,
+    gate_controls: dict,
+    section_plan: dict,
+    *,
+    strategy: str,
+    attempt_index: int,
+) -> str:
+    target_band = section_plan.get("target_word_band") or {}
+    target_min = target_band.get("min")
+    target_max = target_band.get("max")
+    target_text = (
+        f"between {target_min} and {target_max} words"
+        if isinstance(target_min, int) and isinstance(target_max, int)
+        else f"about {section_plan.get('target_words')} words"
+    )
+    required_anchors = section_plan.get("must_preserve_anchors") or []
+    allowed_citations = section_plan.get("citation_keys_used") or []
+    handoff = (context_ledger or {}).get("generation_handoff") or {}
+    all_reference_labels = []
+    for ref in handoff.get("reference_register") or []:
+        if not isinstance(ref, dict):
+            continue
+        label = str(ref.get("citation_key") or "").strip()
+        if label and label not in all_reference_labels:
+            all_reference_labels.append(label)
+    disallowed_citations = [
+        label for label in all_reference_labels
+        if label not in allowed_citations
+    ][:20]
+    preserve_context = {
+        "protected_facts": (context_ledger or {}).get("protected_facts") or [],
+        "preservation_inventory": (context_ledger or {}).get("preservation_inventory") or {},
+        "preserve_terms": (context_ledger or {}).get("preserve_terms") or [],
+        "do_not_add": (context_ledger or {}).get("do_not_add") or [],
+        "industry_baseline_focus": (context_ledger or {}).get("industry_baseline_focus") or {},
+        "human_contribution_contract": (context_ledger or {}).get("human_contribution_contract") or {},
+    }
+    section_context = {
+        "schema_version": "section_generation_context.v1",
+        "section": section_plan,
+        "preserve_context": preserve_context,
+        "scanner_gate_feedback": gate_controls,
+    }
+    strategy_controls = []
+    strategy_name = str(strategy or "").strip().lower()
+    anchor_lock_mapping = (
+        _anchor_lock_mapping(required_anchors)
+        if strategy_name == "authorship_texture_repair"
+        else []
+    )
+    prompt_section_context = (
+        _freeze_anchor_payload(section_context, anchor_lock_mapping)
+        if anchor_lock_mapping
+        else section_context
+    )
+    prompt_required_anchors = (
+        [item["placeholder"] for item in anchor_lock_mapping]
+        if anchor_lock_mapping
+        else required_anchors
+    )
+    if strategy_name == "human_gain_repair":
+        strategy_controls = [
+            "HUMAN_GAIN_REPAIR is active.",
+            "Patch the section through controlled human-anchor amplification, not broad rewriting.",
+            "Use only existing anchors, section-local context, and safe lived-observation phrasing licensed by the source stance.",
+            "Do not invent new concrete details. If a concrete detail is not in required anchors or context ledger, leave it out.",
+            "Prefer one small reasoning trace and one workshop/process anchor over generic academic expansion.",
+            "Keep mild unevenness and rough edges; do not make every sentence equally polished.",
+        ]
+    elif strategy_name == "authorship_texture_repair":
+        strategy_controls = [
+            "AUTHORSHIP_TEXTURE_REPAIR is active.",
+            "Do not add more semantic human anchors as the main move; fix authorship texture.",
+            "Preserve the same meaning points and required anchors while changing cadence and pacing.",
+            "Use natural asymmetry: one short sentence, one longer practical sentence, and one delayed connection.",
+            "Reduce clean transition logic. Avoid neat claim -> explanation -> implication paragraph routes.",
+            "Vary information density without adding facts: compress one idea, leave one practical point less over-explained.",
+            "Keep acceptable local friction, but do not add typos, grammar damage, fake randomness, or invented details.",
+            "Anchor lock is active. Copy every [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.",
+        ]
+    return (
+        "DraftProof staged AI-Mitigation generation.\n"
+        "Generate only this section body from the section context ledger. "
+        "Do not output the section heading, references, labels, comments, markdown fences, or explanation.\n"
+        "The original submitted prose is unavailable by design. Use only the structured context below.\n\n"
+        f"Attempt: {attempt_index}. Strategy family: {strategy}.\n"
+        f"Section heading owned by assembler: {section_plan.get('heading')}\n"
+        f"Target length for this section body: {target_text}. Do not return below the minimum.\n"
+        f"Required section anchors to preserve exactly; missing any one invalidates the output: {json.dumps(prompt_required_anchors, ensure_ascii=False)}\n"
+        f"Allowed citation/source keys for this section: {json.dumps(allowed_citations, ensure_ascii=False)}\n"
+        f"Disallowed citation/source keys for this section: {json.dumps(disallowed_citations, ensure_ascii=False)}\n\n"
+        "Section context ledger:\n"
+        f"{json.dumps(prompt_section_context, ensure_ascii=False)[:7000]}\n\n"
+        "Generation controls:\n"
+        "- Preserve meaning, citations, years, names, numbers, quotes, source relations, and domain terms that are relevant to this section.\n"
+        "- Use every required section anchor unless it is clearly a fragment; unit codes and named institutions are mandatory.\n"
+        "- Do not mention disallowed source names, author groups, citations, frameworks, or evidence from other sections.\n"
+        "- If allowed citation/source keys is empty, do not mention any source author, cited study, framework, or reference name.\n"
+        "- Do not add new evidence, personal events, workplace observations, institutions, dates, statistics, sources, or citations.\n"
+        "- Do not make a polished template essay paragraph. Use local reasoning, uneven sentence lengths, and section-specific causal links.\n"
+        "- If the section context is thin, expand only by connecting the provided meaning points and anchors; do not invent facts.\n"
+        + ("".join(f"- {item}\n" for item in strategy_controls) if strategy_controls else "")
+        + "- Return prose only."
+    )
+
+
+def _clean_section_candidate(output: str, heading: str) -> str:
+    if not output:
+        return ""
+    text = output.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+    text = re.sub(r"^(?:section|body|draft|answer)\s*:\s*", "", text, flags=re.I).strip()
+    if heading:
+        text = re.sub(rf"^\s*{re.escape(str(heading).strip())}\s*", "", text, flags=re.I).strip()
+    text = re.sub(r"(?im)^\s*(?:references|reference list|bibliography|works cited)\s*$.*", "", text, flags=re.S).strip()
+    paragraphs = [" ".join(p.strip().split()) for p in re.split(r"\n\s*\n", text) if p.strip()]
+    return "\n\n".join(paragraphs).strip()
+
+
+def _staged_reconstruction_candidate(
+    gateway: LLMGateway,
+    source_text: str,
+    raw_json: dict,
+    *,
+    attempt_index: int,
+    strategy: str,
+    prior_attempts: list[dict] | None = None,
+) -> tuple[str, dict]:
+    """Generate a candidate through section prompts and deterministic assembly."""
+    brief = _build_reconstruction_meaning_brief(source_text, raw_json)
+    blueprint = _build_regeneration_blueprint(source_text, raw_json, strategy)
+    context_ledger = _generation_context_ledger(brief, blueprint)
+    gate_controls = _reconstruction_gate_controls(prior_attempts)
+    section_plans = _staged_generation_section_plan(context_ledger)
+    title = section_plans[0].get("title") if section_plans else ""
+    parts: list[str] = [str(title).strip()] if title else []
+    section_results: list[dict] = []
+    call_count = 0
+    for section_plan in section_plans:
+        prompt = _staged_reconstruction_section_prompt(
+            context_ledger,
+            gate_controls,
+            section_plan,
+            strategy=strategy,
+            attempt_index=attempt_index,
+        )
+        response = gateway.chat(
+            prompt,
+            system=(
+                "You are DraftProof's staged AI-Mitigation section generator. "
+                "Return only bounded section prose from the structured context ledger."
+            ),
+            temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.78")),
+            max_tokens=int(os.environ.get("DRAFTPROOF_STAGED_SECTION_MAX_TOKENS", "1800")),
+            top_p=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_P"),
+            top_k=_int_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_K"),
+            presence_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_PRESENCE_PENALTY"),
+            frequency_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_FREQUENCY_PENALTY"),
+        )
+        call_count += 1
+        body = _clean_section_candidate(response.content, str(section_plan.get("heading") or ""))
+        anchor_lock = (
+            _anchor_lock_mapping(section_plan.get("must_preserve_anchors") or [])
+            if str(strategy or "").strip().lower() == "authorship_texture_repair"
+            else []
+        )
+        if anchor_lock:
+            body = _restore_anchor_placeholders(body, anchor_lock)
+        if body:
+            parts.append(str(section_plan.get("heading") or "").strip())
+            parts.append(body)
+        section_results.append({
+            "heading": section_plan.get("heading"),
+            "target_words": section_plan.get("target_words"),
+            "actual_words": _text_word_count(body),
+            "empty": not bool(body),
+            "anchor_lock_enabled": bool(anchor_lock),
+        })
+
+    references = [
+        str(item).strip()
+        for item in context_ledger.get("reference_entries") or []
+        if str(item).strip()
+    ]
+    if references:
+        parts.append("References")
+        parts.extend(references)
+    candidate = "\n\n".join(part for part in parts if str(part).strip()).strip()
+    metadata = {
+        "schema_version": "staged_reconstruction.v1",
+        "enabled": True,
+        "llm_calls": call_count,
+        "sections": section_results,
+        "assembled_word_count": _text_word_count(candidate),
+        "reference_entries_preserved": len(references),
+        "source_draft_included": False,
+        "context_ledger_schema": context_ledger.get("schema_version"),
+    }
+    return _clean_full_document_candidate(candidate, source_text), metadata
 
 
 def _build_reconstruction_meaning_brief(source_text: str, raw_json: dict | None) -> dict:
@@ -1105,6 +2463,12 @@ def _build_reconstruction_meaning_brief(source_text: str, raw_json: dict | None)
         })
 
     scan_intelligence = raw_json.get("scan_intelligence") or {}
+    generation_handoff = (
+        scan_intelligence.get("generation_handoff")
+        or ((scan_intelligence.get("mitigation_inputs") or {}).get("generation_handoff"))
+        or raw_json.get("generation_handoff")
+        or {}
+    )
     semantic = (
         scan_intelligence.get("semantic_layer")
         or scan_intelligence.get("semantic_shape")
@@ -1147,11 +2511,67 @@ def _build_reconstruction_meaning_brief(source_text: str, raw_json: dict | None)
             "role": role,
             "preview": paragraph[:220],
         })
+    if generation_handoff:
+        handoff_units = generation_handoff.get("section_generation_units") or []
+        handoff_outline = generation_handoff.get("logical_outline") or []
+        handoff_refs = [
+            ref.get("full_reference")
+            for ref in generation_handoff.get("reference_register") or []
+            if isinstance(ref, dict) and ref.get("full_reference")
+        ]
+        handoff_headings = [
+            row.get("heading")
+            for row in handoff_outline
+            if isinstance(row, dict) and row.get("heading")
+        ]
+        handoff_protected = []
+        anchor_register = generation_handoff.get("anchor_register") or {}
+        for value in anchor_register.values():
+            if isinstance(value, list):
+                handoff_protected.extend(str(item) for item in value if item)
+        handoff_roles = [
+            {
+                "index": idx,
+                "section_id": unit.get("section_id"),
+                "role": unit.get("role"),
+                "heading": unit.get("heading"),
+                "target_words": unit.get("target_words"),
+            }
+            for idx, unit in enumerate(handoff_units[:12], start=1)
+            if isinstance(unit, dict)
+        ]
+        handoff_claims = [
+            {
+                "section_id": unit.get("section_id"),
+                "heading": unit.get("heading"),
+                "meaning_inventory": unit.get("meaning_inventory") or [],
+                "citation_keys_used": unit.get("citation_keys_used") or [],
+            }
+            for unit in handoff_units[:12]
+            if isinstance(unit, dict)
+        ]
+        if handoff_headings:
+            headings = handoff_headings
+        if handoff_refs:
+            reference_entries = handoff_refs
+        else:
+            reference_entries = _reference_entries_from_text(source_text)
+        if handoff_protected:
+            for value in handoff_protected:
+                if value not in protected_spans:
+                    protected_spans.append(value)
+        if handoff_roles:
+            paragraph_roles = handoff_roles
+    else:
+        reference_entries = _reference_entries_from_text(source_text)
+        handoff_claims = []
 
     return {
-        "claims": _brief_sentences(source_text, limit=12),
+        "claims": handoff_claims or _brief_sentences(source_text, limit=36),
         "headings": headings,
         "protected_facts": protected_spans[:25],
+        "reference_entries": reference_entries,
+        "generation_handoff": generation_handoff,
         "preservation_inventory": preservation_inventory,
         "human_contribution_contract": (
             scan_intelligence.get("human_contribution_contract")
@@ -1359,7 +2779,10 @@ def _reconstruction_mitigation_prompt(
     integrity = _integrity_scores(raw_json)
     brief = _build_reconstruction_meaning_brief(source_text, raw_json)
     blueprint = _build_regeneration_blueprint(source_text, raw_json, strategy)
+    context_ledger = _generation_context_ledger(brief, blueprint)
     failure_feedback = _reconstruction_failure_feedback(prior_attempts)
+    gate_controls = _reconstruction_gate_controls(prior_attempts)
+    include_source_draft = _env_flag("DRAFTPROOF_RECONSTRUCTION_INCLUDE_SOURCE_DRAFT", False)
     compact_failure_rows = []
     for item in failure_feedback:
         compact_failure_rows.append(
@@ -1391,25 +2814,29 @@ def _reconstruction_mitigation_prompt(
     }.get(strategy, "Rebuild the document structure while preserving meaning and protected facts.")
     return (
         "DraftProof AI-Mitigation Reconstruction.\n"
-        "This is not sentence-level revision and not paraphrasing. Reconstruct the draft from its meaning brief.\n"
+        "This is not sentence-level revision, not paraphrasing, and not modification of the submitted prose. "
+        "Generate a new document from the scanner context ledger.\n"
         "Goal: produce a human-authored regeneration that moves the next scan toward Human Contribution >= 80 where the submitted evidence permits it. "
         "If 80 is not reachable without inventing facts, maximize Human Shift Score while preserving what the submitted content conveys.\n\n"
         f"Current scores: AI Authorship={integrity.get('ai_authorship')}, Human={contribution.get('human')}, "
         f"AI Transformation={contribution.get('ai_transformation')}, Grounding Risk={integrity.get('grounding')}.\n"
         f"Strategy: {strategy}. {strategy_guidance}\n\n"
-        "Regeneration brief extracted from submitted content and scan signals:\n"
-        f"{json.dumps(brief, ensure_ascii=False)[:5200]}\n\n"
-        "Scanner-derived regeneration blueprint to follow before writing prose:\n"
-        f"{json.dumps(blueprint, ensure_ascii=False)[:5200]}\n\n"
+        "Scanner context ledger for generation. This is the generation input; do not ask for or reconstruct from the original prose order:\n"
+        f"{json.dumps(context_ledger, ensure_ascii=False)[:9000]}\n\n"
+        "Scanner-derived regeneration blueprint to follow before writing prose. Source previews have been removed so you do not scaffold from submitted sentences:\n"
+        f"{json.dumps({k: v for k, v in blueprint.items() if k != 'paragraph_plans'}, ensure_ascii=False)[:2600]}\n\n"
         "Previous failed attempts to correct:\n"
         f"{json.dumps(failure_feedback, ensure_ascii=False) if failure_feedback else '- None yet.'}\n"
         f"{chr(10).join(compact_failure_rows) if compact_failure_rows else ''}\n\n"
+        "Scanner/gate feedback controls for this attempt:\n"
+        f"{json.dumps(gate_controls, ensure_ascii=False)[:4200]}\n\n"
         "Word-count requirement:\n"
         f"- The submitted draft has {brief['word_count_band']['source_word_count']} words. "
         f"Return {brief['word_count_band']['min_words']} to {brief['word_count_band']['max_words']} words only.\n\n"
         "Regeneration blueprint:\n"
-        "- Follow the scanner-derived blueprint above. It is the plan; the source draft is only evidence.\n"
-        "- Do not follow the submitted sentence order as a scaffold. Use it as evidence for the claim set.\n"
+        "- Follow the scanner-derived context ledger and blueprint above. They are the plan.\n"
+        "- Follow the scanner/gate feedback controls above. They override generic writing preferences for this attempt.\n"
+        "- Do not follow the submitted sentence order as a scaffold. The submitted prose is not the generation substrate.\n"
         "- Build a fresh paragraph route from the blueprint: concrete context, pressure point, evidence/source relation, author reasoning, bounded implication.\n"
         "- Target the industry-baseline AI Authorship drivers directly: token predictability, burstiness regularity, discourse regularity, semantic uniformity, template phrase signal, and rewrite smoothness.\n"
         "- Increase industry-baseline suppressors through real authorship friction: causal reasoning, local constraint awareness, domain cognition, and natural paragraph variance. Do not use typo/noise tricks.\n"
@@ -1438,9 +2865,13 @@ def _reconstruction_mitigation_prompt(
         "- Do not change quoted text, citations, years, names, numbers, headings, or source relations.\n"
         "- Do not use placeholders, review brackets, comments, labels, markdown fences, or explanations.\n"
         "- Do not preserve the original sentence order or sentence shape just to be safe; preserve meaning instead.\n\n"
-        f"Attempt {attempt_index}: return only the complete reconstructed document.\n\n"
-        "SOURCE DRAFT:\n"
-        f"<TARGET_DOCUMENT>\n{source_text.strip()}\n</TARGET_DOCUMENT>"
+        f"Attempt {attempt_index}: return only the complete regenerated document."
+        + (
+            "\n\nSOURCE DRAFT DEBUG FALLBACK:\n"
+            f"<TARGET_DOCUMENT>\n{source_text.strip()}\n</TARGET_DOCUMENT>"
+            if include_source_draft
+            else ""
+        )
     )
 
 
@@ -1592,7 +3023,11 @@ def _repeated_long_sequence_reason(text: str, window: int = 8) -> str:
     return ""
 
 
-def _ai_candidate_quality_reject_reason(candidate: str) -> str:
+def _ai_candidate_quality_reject_reason(
+    candidate: str,
+    *,
+    allow_repeated_long_sequence: bool = False,
+) -> str:
     if not isinstance(candidate, str) or not candidate.strip():
         return "empty_candidate"
     if "[[REVIEW:" in candidate:
@@ -1609,9 +3044,10 @@ def _ai_candidate_quality_reject_reason(candidate: str) -> str:
         return "heading_merged_into_sentence"
     if _DANGLING_FRAGMENT_JOIN_RE.search(candidate):
         return "dangling_sentence_fragment_join"
-    repeated = _repeated_long_sequence_reason(candidate)
-    if repeated:
-        return repeated
+    if not allow_repeated_long_sequence:
+        repeated = _repeated_long_sequence_reason(candidate)
+        if repeated:
+            return repeated
 
     sentences = [
         re.sub(r"\s+", " ", s.strip()).lower()
@@ -3112,11 +4548,13 @@ def run_rewrite_pipeline(
         mitigation_started = time.time()
         try:
             authenticity_candidate_limit = max(
-                1,
+                0,
                 int(os.environ.get("DRAFTPROOF_AUTHENTICITY_CANDIDATES", "2")),
             )
         except ValueError:
-            authenticity_candidate_limit = 2
+            authenticity_candidate_limit = 0
+        if _env_flag("DRAFTPROOF_REGENERATION_FIRST", True):
+            authenticity_candidate_limit = 0
         authenticity_summary = {
             "enabled": True,
             "selected": False,
@@ -3399,6 +4837,8 @@ def run_rewrite_pipeline(
                 )
                 if reconstruction_enabled:
                     reconstruction_strategies = [
+                        "authorship_texture_repair",
+                        "human_gain_repair",
                         "evidence_first_rebuild",
                         "problem_observation_rebuild",
                         "claim_narrowing_rebuild",
@@ -3407,13 +4847,16 @@ def run_rewrite_pipeline(
                         "reasoning_dense_reconstruction",
                         "domain_grounded_reconstruction",
                     ]
+                    reconstruction_limit_raw = os.environ.get("DRAFTPROOF_RECONSTRUCTION_CANDIDATES")
                     try:
                         reconstruction_limit = max(
                             1,
-                            int(os.environ.get("DRAFTPROOF_RECONSTRUCTION_CANDIDATES", "2")),
+                            int(reconstruction_limit_raw or "2"),
                         )
                     except ValueError:
-                        reconstruction_limit = 2
+                        reconstruction_limit = 4
+                    if _env_flag("DRAFTPROOF_REGENERATION_FIRST", True) and reconstruction_limit_raw is None:
+                        reconstruction_limit = max(reconstruction_limit, 4)
                     reconstruction_strategies = reconstruction_strategies[:reconstruction_limit]
                     authenticity_summary["reconstruction"] = {
                         "enabled": True,
@@ -3443,25 +4886,37 @@ def run_rewrite_pipeline(
                             "model": generator_model,
                         }
                         try:
-                            prompt = _reconstruction_mitigation_prompt(
-                                source_for_mitigation,
-                                ctx.raw_json,
-                                ai_mitigation_contract,
-                                attempt_index=reconstruction_index,
-                                strategy=strategy,
-                                prior_attempts=authenticity_summary.get("candidates") or [],
-                            )
-                            authenticity_summary["llm_calls"] += 1
-                            response = gateway.chat(
-                                prompt,
-                                system=(
-                                    "You are DraftProof's AI-Mitigation reconstruction engine. "
-                                    "Return only a complete fact-preserving reconstructed document."
-                                ),
-                                temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.78")),
-                                max_tokens=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_MAX_TOKENS", "6500")),
-                            )
-                            candidate = _clean_full_document_candidate(response.content, source_for_mitigation)
+                            if _env_flag("DRAFTPROOF_STAGED_REGENERATION", True):
+                                candidate, staged_info = _staged_reconstruction_candidate(
+                                    gateway,
+                                    source_for_mitigation,
+                                    ctx.raw_json,
+                                    attempt_index=reconstruction_index,
+                                    strategy=strategy,
+                                    prior_attempts=authenticity_summary.get("candidates") or [],
+                                )
+                                candidate_eval["staged_generation"] = staged_info
+                                authenticity_summary["llm_calls"] += int(staged_info.get("llm_calls") or 0)
+                            else:
+                                prompt = _reconstruction_mitigation_prompt(
+                                    source_for_mitigation,
+                                    ctx.raw_json,
+                                    ai_mitigation_contract,
+                                    attempt_index=reconstruction_index,
+                                    strategy=strategy,
+                                    prior_attempts=authenticity_summary.get("candidates") or [],
+                                )
+                                authenticity_summary["llm_calls"] += 1
+                                response = gateway.chat(
+                                    prompt,
+                                    system=(
+                                        "You are DraftProof's AI-Mitigation reconstruction engine. "
+                                        "Return only a complete fact-preserving reconstructed document."
+                                    ),
+                                    temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.78")),
+                                    max_tokens=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_MAX_TOKENS", "6500")),
+                                )
+                                candidate = _clean_full_document_candidate(response.content, source_for_mitigation)
                         except Exception as exc:
                             candidate_eval["reason"] = f"llm_error {exc}"
                             authenticity_summary["candidates"].append(candidate_eval)
@@ -3483,7 +4938,10 @@ def run_rewrite_pipeline(
                             candidate_eval["review_suggestion_count"] = len(review_notes)
                             authenticity_summary["candidates"].append(candidate_eval)
                             continue
-                        quality_rejection = _ai_candidate_quality_reject_reason(candidate)
+                        quality_rejection = _ai_candidate_quality_reject_reason(
+                            candidate,
+                            allow_repeated_long_sequence=True,
+                        )
                         if quality_rejection:
                             candidate_eval["reason"] = quality_rejection
                             authenticity_summary["candidates"].append(candidate_eval)
@@ -3647,6 +5105,20 @@ def run_rewrite_pipeline(
                 authenticity_summary["reason"] = f"authenticity_mitigation_error {exc}"
         authenticity_summary["seconds"] = round(time.time() - mitigation_started, 3)
         result.summary["authenticity_mitigation"] = authenticity_summary
+        result.summary["generation_layer"] = {
+            "schema_version": "generation_layer.v1",
+            "mode": "regeneration_first" if _env_flag("DRAFTPROOF_REGENERATION_FIRST", True) else "authenticity_then_reconstruction",
+            "goal": "Human Contribution >= 80",
+            "selected": bool(authenticity_summary.get("selected")),
+            "selected_strategy": authenticity_summary.get("selected_strategy"),
+            "selected_reconstruction": authenticity_summary.get("selected_reconstruction"),
+            "selection_reason": authenticity_summary.get("selection_reason") or authenticity_summary.get("reason"),
+            "llm_calls": authenticity_summary.get("llm_calls"),
+            "model_roles": authenticity_summary.get("model_roles"),
+            "reconstruction": authenticity_summary.get("reconstruction"),
+            "best_attempt": authenticity_summary.get("best_attempt"),
+            "candidate_count": len(authenticity_summary.get("candidates") or []),
+        }
         if authenticity_summary.get("llm_calls"):
             result.summary["authenticity_llm_calls_used"] = authenticity_summary["llm_calls"]
             try:
@@ -3677,6 +5149,32 @@ def run_rewrite_pipeline(
     # and keep the one with the lowest measured AI likelihood.
     ai_search_reference = saved_ai if saved_ai is not None else original_ai
     ai_search_enabled = os.environ.get("DRAFTPROOF_AI_MITIGATION_SEARCH", "1") != "0"
+    generation_first_active = _env_flag("DRAFTPROOF_REGENERATION_FIRST", True)
+    ai_search_after_generation_failure = _env_flag(
+        "DRAFTPROOF_AI_SEARCH_AFTER_GENERATION_FAILURE",
+        False,
+    )
+    if (
+        generation_first_active
+        and authenticity_enabled
+        and not authenticity_mitigation_selected
+        and not ai_search_after_generation_failure
+    ):
+        ai_search_enabled = False
+        result.summary["ai_mitigation_search"] = {
+            "enabled": False,
+            "reason": "skipped_after_generation_layer_no_target_candidate",
+            "generation_layer_required": True,
+            "generation_layer_selected": False,
+            "generation_layer_summary": result.summary.get("authenticity_mitigation"),
+        }
+        stage_timings.append({
+            "stage": "ai_mitigation_search",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+        })
     ai_search_blocked_by_author_gaps = (
         ai_mitigation_needs_author
         and os.environ.get("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS") != "1"

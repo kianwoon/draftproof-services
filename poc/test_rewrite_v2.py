@@ -9,6 +9,7 @@ Run:  cd poc && python test_rewrite_v2.py
 import sys
 import os
 import re
+import json
 import tempfile
 from types import SimpleNamespace
 
@@ -77,9 +78,32 @@ from rewrite_pipeline import (
     _scan_scope_summary,
     _human_shift_score,
     _authenticity_gate_status,
+    _optimization_candidate_status,
+    _select_best_optimization_candidate,
+    _metric_repair_diagnosis,
+    _human_gain_stage_target,
+    _is_better_human_shift_candidate,
+    _anchor_lock_mapping,
+    _freeze_anchor_text,
+    _restore_anchor_placeholders,
+    _freeze_anchor_payload,
+    _repair_aggression_score,
+    _sentence_texture_risk_map,
+    _micro_texture_window,
+    _splice_sentence_window,
+    _locality_score,
+    _micro_texture_repair_prompt,
+    _clean_micro_texture_candidate,
+    _micro_repair_gain_efficiency,
+    _micro_texture_iteration_status,
+    _iterative_micro_texture_repair,
     _build_reconstruction_meaning_brief,
     _build_regeneration_blueprint,
+    _generation_context_ledger,
     _reconstruction_mitigation_prompt,
+    _reference_entries_from_text,
+    _staged_generation_section_plan,
+    _staged_reconstruction_section_prompt,
     _llm_role_config,
     _retry_model_enabled,
     _paragraph_component_targets,
@@ -1006,7 +1030,7 @@ assert_test(
     not ai_authorship_regression_gate["success"]
     and ai_authorship_regression_gate["reason"] == "ai_authorship_regressed"
     and ai_authorship_regression_gate["ai_authorship_regression_blocked"],
-    "authenticity gate rejects Human gains that worsen AI Authorship before major threshold",
+    "authenticity gate rejects Human gains that worsen AI Authorship",
 )
 major_breakthrough_gate = _authenticity_gate_status(
     shift_original,
@@ -1026,9 +1050,456 @@ major_breakthrough_gate = _authenticity_gate_status(
     candidate_weighted_severity=4,
 )
 assert_test(
-    major_breakthrough_gate["success"]
-    and major_breakthrough_gate["major_human_breakthrough"],
-    "authenticity gate allows AI Authorship regression only after major Human threshold breakthrough",
+    not major_breakthrough_gate["success"]
+    and major_breakthrough_gate["major_human_breakthrough"]
+    and major_breakthrough_gate["ai_authorship_regression_blocked"],
+    "authenticity gate hard-rejects AI Authorship regression even after major Human breakthrough",
+)
+section_baseline_scores = {
+    "ai_score": 64.0,
+    "human": 33,
+    "ai_transformation": 67,
+    "ai_authorship": 64,
+    "grounding": 72,
+    "findings": 11,
+}
+drifty_candidate = {
+    "strategy": "anchor_dense_compressed",
+    "mechanical": {"passed": True},
+    "scan_scores": {
+        "ai_score": 51.79,
+        "human": 52,
+        "ai_transformation": 48,
+        "ai_authorship": 52,
+        "grounding": 56,
+        "findings": 8,
+        "semantic_drift": True,
+        "generic_phrase_count": 1,
+    },
+}
+stable_candidate = {
+    "strategy": "recommended_two_pass",
+    "mechanical": {"passed": True},
+    "scan_scores": {
+        "ai_score": 57.78,
+        "human": 53,
+        "ai_transformation": 47,
+        "ai_authorship": 58,
+        "grounding": 56,
+        "findings": 9,
+        "semantic_drift": False,
+        "generic_phrase_count": 1,
+    },
+}
+invalid_candidate = {
+    "strategy": "missing_anchor",
+    "mechanical": {"passed": False, "missing": ["SHBHCUT006"]},
+    "scan_scores": {
+        "ai_score": 40,
+        "human": 70,
+        "ai_transformation": 30,
+        "ai_authorship": 40,
+        "grounding": 40,
+        "findings": 3,
+        "semantic_drift": False,
+        "generic_phrase_count": 0,
+    },
+}
+drifty_status = _optimization_candidate_status(
+    drifty_candidate,
+    baseline=section_baseline_scores,
+)
+assert_test(
+    not drifty_status["accepted"]
+    and "semantic_drift" in drifty_status["reject_reasons"],
+    "optimization selector rejects strong AI reduction when semantic drift appears",
+)
+selection = _select_best_optimization_candidate(
+    [invalid_candidate, drifty_candidate, stable_candidate],
+    baseline=section_baseline_scores,
+)
+assert_test(
+    selection["selected"]
+    and selection["selected"]["strategy"] == "recommended_two_pass"
+    and selection["accepted_count"] == 1,
+    "optimization selector chooses best Pareto-valid candidate after hard rejects",
+)
+assert_test(
+    selection["selected"]["optimization_status"]["components"]["human_gain"] == 20,
+    "optimization selector records candidate score components",
+)
+high_ai_drop_candidate = {
+    "strategy": "ai_score_drop_but_low_human",
+    "mechanical": {"passed": True},
+    "scan_scores": {
+        "ai_score": 45,
+        "human": 55,
+        "ai_transformation": 45,
+        "ai_authorship": 45,
+        "grounding": 56,
+        "findings": 8,
+        "semantic_drift": False,
+        "generic_phrase_count": 0,
+    },
+}
+high_human_candidate = {
+    "strategy": "human_gain_repair",
+    "mechanical": {"passed": True},
+    "scan_scores": {
+        "ai_score": 57,
+        "human": 63,
+        "ai_transformation": 37,
+        "ai_authorship": 55,
+        "grounding": 58,
+        "findings": 8,
+        "semantic_drift": False,
+        "generic_phrase_count": 0,
+    },
+}
+authorship_regression_candidate = {
+    "strategy": "semantic_human_gain_but_authorship_regressed",
+    "mechanical": {"passed": True},
+    "scan_scores": {
+        "ai_score": 62,
+        "human": 70,
+        "ai_transformation": 30,
+        "ai_authorship": 70,
+        "grounding": 58,
+        "findings": 8,
+        "semantic_drift": False,
+        "generic_phrase_count": 0,
+    },
+}
+human_first_selection = _select_best_optimization_candidate(
+    [authorship_regression_candidate, high_ai_drop_candidate, high_human_candidate],
+    baseline=section_baseline_scores,
+)
+assert_test(
+    human_first_selection["selected"]
+    and human_first_selection["selected"]["strategy"] == "human_gain_repair",
+    "optimization selector prioritizes human-stage gain over lower AI score when both are drift-safe",
+)
+authorship_regression_status = _optimization_candidate_status(
+    authorship_regression_candidate,
+    baseline=section_baseline_scores,
+)
+assert_test(
+    not authorship_regression_status["accepted"]
+    and "ai_authorship_increase" in authorship_regression_status["reject_reasons"],
+    "optimization selector hard-rejects Human gain when AI Authorship increases",
+)
+anchor_mapping = _anchor_lock_mapping(["SHBHCUT002", "SHBHCUT003", "III", "SHBHCUT002"])
+frozen_anchor_text = _freeze_anchor_text(
+    "Keep SHBHCUT002 and SHBHCUT003 unchanged. Certificate III remains readable.",
+    anchor_mapping,
+)
+assert_test(
+    "[[DP_ANCHOR_001]]" in frozen_anchor_text
+    and "SHBHCUT002" not in frozen_anchor_text
+    and "Certificate III" in frozen_anchor_text,
+    "anchor lock freezes long protected anchors without freezing short ambiguous anchors",
+)
+assert_test(
+    _restore_anchor_placeholders(frozen_anchor_text, anchor_mapping)
+    == "Keep SHBHCUT002 and SHBHCUT003 unchanged. Certificate III remains readable.",
+    "anchor lock restores placeholders exactly after texture repair",
+)
+frozen_payload = _freeze_anchor_payload(
+    {"anchors": ["SHBHCUT002"], "body": "SHBHCUT003 appears in context."},
+    anchor_mapping,
+)
+assert_test(
+    json.dumps(frozen_payload).count("SHBHCUT") == 0,
+    "anchor lock freezes nested section context payloads",
+)
+low_aggression = _repair_aggression_score(
+    "Learners name the seven cutting steps. The guide can still disappear in their hands.",
+    "Learners name the seven cutting steps. Still, the guide can disappear in their hands.",
+)
+high_aggression = _repair_aggression_score(
+    "Learners name the seven cutting steps. The guide can still disappear in their hands.",
+    "Inclusive education improves confidence through structured support and reflective practice.",
+)
+assert_test(
+    low_aggression["score"] < high_aggression["score"],
+    "repair aggression score separates micro-local texture edits from broad rewrites",
+)
+texture_map_text = (
+    "Learners name the seven cutting steps. "
+    "Furthermore, this important approach supports effective skill development in a significant way. "
+    "The guide can still disappear in their hands."
+)
+texture_map = _sentence_texture_risk_map(
+    texture_map_text,
+    {"rewrite_edit_briefs": [{"sentence_index": 1, "signals": {"finding_type": "medium_predictability"}}]},
+)
+assert_test(
+    texture_map[0]["sentence_index"] == 1
+    and texture_map[0]["risk"] > texture_map[-1]["risk"],
+    "sentence texture risk map prioritizes scanner-pointed smooth/generic sentence",
+)
+texture_window = _micro_texture_window(
+    texture_map_text,
+    {"rewrite_edit_briefs": [{"sentence_index": 1, "signals": {"finding_type": "medium_predictability"}}]},
+    max_sentences=1,
+)
+assert_test(
+    texture_window["start"] == 1
+    and texture_window["end"] <= 3
+    and "Furthermore" in texture_window["text"],
+    "micro texture window limits repair to top-risk one or two sentences",
+)
+heading_window = _micro_texture_window(
+    "Title\n\nIntroduction\n\nSmooth heading sentence should not be touched. Furthermore, this important sentence is too polished. Local action remains.",
+    {"rewrite_edit_briefs": [{"sentence_index": 0, "signals": {"finding_type": "medium_predictability"}}]},
+    max_sentences=1,
+)
+assert_test(
+    heading_window["start"] != 0
+    and "Furthermore" in heading_window["text"],
+    "micro texture window skips title/heading-contaminated sentence chunks",
+)
+spliced_texture = _splice_sentence_window(
+    texture_map_text,
+    texture_window["start"],
+    texture_window["end"],
+    "That part matters less on paper than it does at the mannequin.",
+)
+assert_test(
+    spliced_texture.startswith("Learners name the seven cutting steps.")
+    and spliced_texture.endswith("The guide can still disappear in their hands.")
+    and "Furthermore" not in spliced_texture,
+    "micro texture splice changes only the selected sentence window",
+)
+locality = _locality_score(texture_map_text, spliced_texture)
+assert_test(
+    locality["changed_sentence_ratio"] <= 0.25 or locality["changed_sentences"] == 1,
+    "locality score measures changed sentence footprint for micro repairs",
+)
+micro_prompt, micro_info = _micro_texture_repair_prompt(
+    texture_map_text,
+    {"rewrite_edit_briefs": [{"sentence_index": 1, "signals": {"finding_type": "medium_predictability"}}]},
+    ["SHBHCUT002"],
+    max_sentences=1,
+)
+assert_test(
+    "Patch only the target sentence window" in micro_prompt
+    and "Return only the replacement sentence window" in micro_prompt
+    and "reorder_paragraph" in micro_prompt
+    and "target_window" in micro_prompt,
+    "micro texture repair prompt is operation-level, not section-level",
+)
+clean_micro, clean_micro_reason = _clean_micro_texture_candidate(
+    "That part matters less on paper than it does at the mannequin.",
+    micro_info,
+)
+assert_test(
+    clean_micro
+    and not clean_micro_reason,
+    "micro texture candidate cleaner accepts bounded replacement window",
+)
+aggressive_status = _optimization_candidate_status(
+    {
+        "strategy": "authorship_texture_repair",
+        "mechanical": {"passed": True},
+        "original_text": "Learners name the seven cutting steps. The guide can still disappear in their hands.",
+        "candidate_text": "Inclusive education improves confidence through structured support and reflective practice.",
+        "scan_scores": {
+            "ai_score": 52,
+            "human": 50,
+            "ai_transformation": 50,
+            "ai_authorship": 50,
+            "grounding": 58,
+            "findings": 8,
+            "semantic_drift": False,
+            "generic_phrase_count": 0,
+        },
+    },
+    baseline=section_baseline_scores,
+)
+assert_test(
+    not aggressive_status["accepted"]
+    and "repair_aggression_high" in aggressive_status["reject_reasons"]
+    and "repair_locality_high" in aggressive_status["reject_reasons"],
+    "optimization selector hard-rejects over-aggressive and non-local texture repair",
+)
+micro_policy_env_names = [
+    "DRAFTPROOF_MICRO_TEXTURE_MAX_TOTAL_AGGRESSION",
+    "DRAFTPROOF_MICRO_TEXTURE_MIN_HUMAN_GAIN",
+    "DRAFTPROOF_MICRO_TEXTURE_MIN_GAIN_EFFICIENCY",
+    "DRAFTPROOF_MICRO_TEXTURE_MAX_ITERATIONS",
+    "DRAFTPROOF_TEXTURE_REPAIR_MAX_LOCALITY",
+]
+micro_policy_env = {name: os.environ.get(name) for name in micro_policy_env_names}
+os.environ["DRAFTPROOF_MICRO_TEXTURE_MAX_TOTAL_AGGRESSION"] = "0.18"
+os.environ["DRAFTPROOF_MICRO_TEXTURE_MIN_HUMAN_GAIN"] = "1"
+os.environ["DRAFTPROOF_MICRO_TEXTURE_MIN_GAIN_EFFICIENCY"] = "10"
+os.environ["DRAFTPROOF_MICRO_TEXTURE_MAX_ITERATIONS"] = "5"
+os.environ["DRAFTPROOF_TEXTURE_REPAIR_MAX_LOCALITY"] = "0.25"
+micro_baseline_scan = {"human": 40, "ai_transformation": 60, "ai_authorship": 50, "findings": 6}
+micro_attempts = [
+    {
+        "repair_aggression": {"score": 0.034},
+        "locality": {"changed_sentence_ratio": 0.091},
+        "scan_scores": {"human": 46, "ai_transformation": 54, "ai_authorship": 50, "findings": 6},
+    }
+]
+micro_status = _micro_texture_iteration_status(
+    micro_attempts,
+    baseline_scan=micro_baseline_scan,
+)
+assert_test(
+    micro_status["continue"]
+    and micro_status["metrics"]["cumulative_aggression"] == 0.034
+    and micro_status["metrics"]["gain_efficiency"] > 170,
+    "micro texture iteration policy accepts high-efficiency low-aggression human gain",
+)
+budget_status = _micro_texture_iteration_status(
+    micro_attempts + [
+        {
+            "repair_aggression": {"score": 0.151},
+            "locality": {"changed_sentence_ratio": 0.18},
+            "scan_scores": {"human": 49, "ai_transformation": 51, "ai_authorship": 50, "findings": 6},
+        }
+    ],
+    baseline_scan=micro_baseline_scan,
+)
+assert_test(
+    not budget_status["continue"]
+    and "cumulative_aggression_budget_exhausted" in budget_status["stop_reasons"],
+    "micro texture iteration policy stops when cumulative aggression budget is exhausted",
+)
+authorship_stop = _micro_texture_iteration_status(
+    micro_attempts + [
+        {
+            "repair_aggression": {"score": 0.02},
+            "locality": {"changed_sentence_ratio": 0.12},
+            "scan_scores": {"human": 48, "ai_transformation": 52, "ai_authorship": 51, "findings": 6},
+        }
+    ],
+    baseline_scan=micro_baseline_scan,
+)
+assert_test(
+    not authorship_stop["continue"]
+    and "ai_authorship_regression" in authorship_stop["stop_reasons"],
+    "micro texture iteration policy stops on AI Authorship regression",
+)
+findings_stop = _micro_texture_iteration_status(
+    micro_attempts + [
+        {
+            "repair_aggression": {"score": 0.02},
+            "locality": {"changed_sentence_ratio": 0.12},
+            "scan_scores": {"human": 48, "ai_transformation": 52, "ai_authorship": 50, "findings": 7},
+        }
+    ],
+    baseline_scan=micro_baseline_scan,
+)
+assert_test(
+    not findings_stop["continue"]
+    and "findings_regression" in findings_stop["stop_reasons"],
+    "micro texture iteration policy stops when scanner findings increase",
+)
+diminishing_stop = _micro_texture_iteration_status(
+    micro_attempts + [
+        {
+            "repair_aggression": {"score": 0.05},
+            "locality": {"changed_sentence_ratio": 0.12},
+            "scan_scores": {"human": 46.2, "ai_transformation": 53.8, "ai_authorship": 50, "findings": 6},
+        }
+    ],
+    baseline_scan=micro_baseline_scan,
+)
+assert_test(
+    not diminishing_stop["continue"]
+    and "diminishing_human_gain" in diminishing_stop["stop_reasons"]
+    and _micro_repair_gain_efficiency(6, 0.034) > _micro_repair_gain_efficiency(0.2, 0.05),
+    "micro texture iteration policy detects diminishing marginal gain efficiency",
+)
+os.environ["DRAFTPROOF_MICRO_TEXTURE_MAX_TOTAL_AGGRESSION"] = "1.0"
+iterative_source = (
+    "Learners name the seven cutting steps. "
+    "Furthermore, this important approach supports effective skill development in a significant way. "
+    "Additionally, this important process supports effective technical progress in a significant way. "
+    "The guide can still disappear in their hands."
+)
+iterative_raw = {
+    "rewrite_edit_briefs": [
+        {"sentence_index": 1, "signals": {"finding_type": "medium_predictability"}},
+        {"sentence_index": 2, "signals": {"finding_type": "medium_predictability"}},
+    ]
+}
+iterative_scans = [
+    {"human": 46, "ai_transformation": 54, "ai_authorship": 50, "findings": 6},
+    {"human": 49, "ai_transformation": 51, "ai_authorship": 50, "findings": 6},
+]
+
+def _test_micro_generate(_prompt, repair_info, _attempt_index):
+    target = (repair_info.get("window") or {}).get("text") or ""
+    if target.startswith("Furthermore"):
+        return "That part matters less on paper than it does at the mannequin."
+    return "It still gets messy when the hands have to follow the guide."
+
+def _test_micro_scan(_candidate_text):
+    return iterative_scans.pop(0)
+
+iterative_loop = _iterative_micro_texture_repair(
+    iterative_source,
+    iterative_raw,
+    baseline_scan=micro_baseline_scan,
+    generate_replacement=_test_micro_generate,
+    scan_candidate=_test_micro_scan,
+    max_attempts=2,
+)
+assert_test(
+    iterative_loop["accepted_count"] == 2
+    and iterative_loop["scan_scores"]["human"] == 49
+    and iterative_loop["repaired_sentence_indexes"] == [1, 2]
+    and "Furthermore" not in iterative_loop["text"]
+    and "Additionally" not in iterative_loop["text"],
+    "iterative micro texture loop repairs separate high-risk windows under policy control",
+)
+for name, value in micro_policy_env.items():
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
+assert_test(
+    _human_gain_stage_target(53) == 60
+    and _human_gain_stage_target(63) == 70
+    and _human_gain_stage_target(73) == 80,
+    "human gain repair uses 60/70/80 threshold ladder",
+)
+assert_test(
+    not _is_better_human_shift_candidate(
+        {"success": False, "candidate_human": 63, "human_delta": 30, "human_shift_score": 50, "ai_authorship_delta": -1, "ai_transformation_delta": 12},
+        {"success": False, "candidate_human": 55, "human_delta": 22, "human_shift_score": 70, "ai_authorship_delta": 15, "ai_transformation_delta": 22},
+    ),
+    "live pipeline best-attempt ranking does not prefer human gain when AI Authorship regresses",
+)
+drift_diagnosis = _metric_repair_diagnosis({
+    "human": 52,
+    "ai_transformation": 48,
+    "ai_authorship": 52,
+    "semantic_drift": True,
+})
+assert_test(
+    drift_diagnosis["repair_type"] == "semantic_drift_rollback",
+    "metric repair diagnosis prioritizes drift rollback over score gains",
+)
+authorship_diagnosis = _metric_repair_diagnosis({
+    "human": 53,
+    "ai_transformation": 47,
+    "ai_authorship": 58,
+    "ai_score": 57.78,
+    "grounding": 56,
+    "findings": 9,
+    "semantic_drift": False,
+    "generic_phrase_count": 1,
+})
+assert_test(
+    authorship_diagnosis["repair_type"] == "authorship_texture_repair"
+    and any("statistical smoothness" in item or "sentence rhythm" in item for item in authorship_diagnosis["instructions"]),
+    "metric repair diagnosis targets AUTHORSHIP_TEXTURE_REPAIR before semantic human gain",
 )
 for name, value in major_gate_env.items():
     if value is None:
@@ -1207,11 +1678,25 @@ reconstruction_prompt = _reconstruction_mitigation_prompt(
     reconstruction_raw["ai_mitigation"],
     attempt_index=1,
     strategy="reasoning_dense_reconstruction",
-    prior_attempts=[{"strategy": "old", "human_shift_score": -10.2, "reason": "human_shift_score_too_low"}],
+    prior_attempts=[{
+        "strategy": "old",
+        "human_shift_score": -10.2,
+        "reason": "human_shift_score_too_low",
+        "candidate_human": 53,
+        "human_delta": -16,
+        "ai_authorship_delta": -3,
+        "ai_transformation_delta": -16,
+        "human_shift_components": {
+            "human_contribution_gain": -16,
+            "ai_authorship_reduction": -3,
+            "grounding_risk_reduction": -35,
+        },
+    }],
 )
 assert_test(
-    "Reconstruct the draft from its meaning brief" in reconstruction_prompt,
-    "reconstruction prompt frames task as reconstruction rather than revision",
+    "Generate a new document from the scanner context ledger" in reconstruction_prompt
+    and "not modification of the submitted prose" in reconstruction_prompt,
+    "reconstruction prompt frames task as regeneration rather than modifying submitted content",
 )
 assert_test(
     "Human Contribution >= 80" in reconstruction_prompt
@@ -1227,8 +1712,9 @@ assert_test(
 )
 assert_test(
     "Do not follow the submitted sentence order as a scaffold" in reconstruction_prompt
-    and "Use target segments as the highest-priority places" in reconstruction_prompt,
-    "reconstruction prompt treats source as evidence rather than sentence scaffold",
+    and "generation_context_ledger.v1" in reconstruction_prompt
+    and "SOURCE DRAFT" not in reconstruction_prompt,
+    "reconstruction prompt uses scanner context ledger instead of source draft scaffold",
 )
 assert_test(
     "Scanner-derived regeneration blueprint" in reconstruction_prompt
@@ -1247,6 +1733,89 @@ assert_test(
 assert_test(
     "human_shift=-10.2" in reconstruction_prompt,
     "reconstruction prompt includes failed Human Shift feedback",
+)
+assert_test(
+    "scanner_gate_feedback.v1" in reconstruction_prompt
+    and "Preserve every source-to-claim relation" in reconstruction_prompt
+    and "AUTHORSHIP_TEXTURE_REPAIR" in reconstruction_prompt
+    and "Do not replace author-owned classroom reasoning" in reconstruction_prompt,
+    "reconstruction prompt converts scanner/gate failures into next-generation controls",
+)
+assert_test(
+    "HUMAN_GAIN_REPAIR" in reconstruction_prompt
+    and "human_contribution_ladder" in reconstruction_prompt,
+    "reconstruction prompt carries human gain repair controls and threshold ladder",
+)
+assert_test(
+    "reduce statistical smoothness through rhythm variance" in reconstruction_prompt,
+    "reconstruction prompt carries authorship texture repair controls",
+)
+reference_source = reconstruction_source + "\n\nReferences\n\nSmith, A. (2023). Inclusive assessment in vocational education. https://example.test/smith\n\nTAFE Victoria. (2024). Reasonable adjustment guide."
+reference_entries = _reference_entries_from_text(reference_source)
+assert_test(
+    len(reference_entries) == 2
+    and "Smith, A. (2023)" in reference_entries[0]
+    and "TAFE Victoria. (2024)" in reference_entries[1],
+    "reference extraction preserves bibliography entries as context ledger data",
+)
+staged_brief = _build_reconstruction_meaning_brief(reference_source, reconstruction_raw)
+staged_blueprint = _build_regeneration_blueprint(reference_source, reconstruction_raw, "reasoning_dense_reconstruction")
+staged_ledger = _generation_context_ledger(staged_brief, staged_blueprint)
+section_plans = _staged_generation_section_plan(staged_ledger, max_sections=3)
+assert_test(
+    section_plans
+    and "source_preview" not in json.dumps(section_plans)
+    and "References" not in [row.get("heading") for row in section_plans],
+    "staged section plan excludes source previews and reference heading from LLM-owned sections",
+)
+section_prompt = _staged_reconstruction_section_prompt(
+    staged_ledger,
+    {"schema_version": "scanner_gate_feedback.v1", "next_candidate_controls": ["raise Human Contribution"]},
+    section_plans[0],
+    strategy="reasoning_dense_reconstruction",
+    attempt_index=1,
+)
+assert_test(
+    "section_generation_context.v1" in section_prompt
+    and "original submitted prose is unavailable by design" in section_prompt
+    and "Do not output the section heading" in section_prompt
+    and "SOURCE DRAFT" not in section_prompt,
+    "staged section prompt generates from bounded context without source draft exposure",
+)
+human_gain_section_prompt = _staged_reconstruction_section_prompt(
+    staged_ledger,
+    {"schema_version": "scanner_gate_feedback.v1", "next_candidate_controls": ["HUMAN_GAIN_REPAIR"]},
+    section_plans[0],
+    strategy="human_gain_repair",
+    attempt_index=1,
+)
+assert_test(
+    "HUMAN_GAIN_REPAIR is active" in human_gain_section_prompt
+    and "Do not invent new concrete details" in human_gain_section_prompt,
+    "staged section prompt activates bounded human gain repair controls",
+)
+authorship_texture_section_prompt = _staged_reconstruction_section_prompt(
+    staged_ledger,
+    {"schema_version": "scanner_gate_feedback.v1", "next_candidate_controls": ["AUTHORSHIP_TEXTURE_REPAIR"]},
+    {
+        **section_plans[0],
+        "must_preserve_anchors": ["SHBHCUT002", "SHBHCUT003", "III"],
+        "claim_inventory_slice": ["SHBHCUT002 and SHBHCUT003 must stay exact."],
+    },
+    strategy="authorship_texture_repair",
+    attempt_index=1,
+)
+assert_test(
+    "AUTHORSHIP_TEXTURE_REPAIR is active" in authorship_texture_section_prompt
+    and "Do not add more semantic human anchors" in authorship_texture_section_prompt
+    and "fake randomness" in authorship_texture_section_prompt,
+    "staged section prompt activates authorship texture repair controls",
+)
+assert_test(
+    "[[DP_ANCHOR_" in authorship_texture_section_prompt
+    and "SHBHCUT002" not in authorship_texture_section_prompt
+    and "Anchor lock is active" in authorship_texture_section_prompt,
+    "staged authorship texture prompt freezes anchors into immutable placeholders",
 )
 assert_test(
     _reconstruction_drift_scan_allowed(
@@ -1325,6 +1894,14 @@ assert_test(
         "With only six learners in my current HBB26 intake, smaller class sizes let me observe technique closely."
     ).startswith("repeated_long_sequence"),
     "AI search rejects repeated long text sequences inside candidates",
+)
+assert_test(
+    not _ai_candidate_quality_reject_reason(
+        "With only six learners in my current HBB26 intake, smaller class sizes let me observe technique closely. "
+        "The lesson returns to six learners in my current HBB26 intake when assessment pressure changes the support pattern.",
+        allow_repeated_long_sequence=True,
+    ),
+    "reconstruction candidates can proceed to scan with repeated preserved source sequences",
 )
 assert_test(
     not _ai_candidate_quality_reject_reason(
@@ -1727,6 +2304,11 @@ model_env_names = [
     "RETRY_MODEL",
     "RETRY_MODEL_ENABLED",
     "RETRY_MODEL_MAX_CALLS",
+    "planner_model",
+    "generator_model",
+    "retry_model",
+    "retry_model_enabled",
+    "retry_model_max_calls",
 ]
 saved_model_env = {name: os.environ.get(name) for name in model_env_names}
 for name in model_env_names:
@@ -1754,6 +2336,25 @@ assert_test(
     roles_enabled["retry_model_enabled"] is True
     and roles_enabled["retry_model_max_calls"] == 2,
     "retry model kill switch enables bounded retry-model calls",
+)
+os.environ.pop("DRAFTPROOF_PLANNER_MODEL", None)
+os.environ.pop("DRAFTPROOF_GENERATOR_MODEL", None)
+os.environ.pop("DRAFTPROOF_RETRY_MODEL", None)
+os.environ.pop("DRAFTPROOF_RETRY_MODEL_ENABLED", None)
+os.environ.pop("DRAFTPROOF_RETRY_MODEL_MAX_CALLS", None)
+os.environ["planner_model"] = "openai/gpt-4.1-mini"
+os.environ["generator_model"] = "openai/gpt-5-mini"
+os.environ["retry_model"] = "openai/gpt-5.2"
+os.environ["retry_model_enabled"] = "1"
+os.environ["retry_model_max_calls"] = "3"
+roles_lowercase = _llm_role_config("fallback-model")
+assert_test(
+    roles_lowercase["planner_model"] == "openai/gpt-4.1-mini"
+    and roles_lowercase["generator_model"] == "openai/gpt-5-mini"
+    and roles_lowercase["retry_model"] == "openai/gpt-5.2"
+    and roles_lowercase["retry_model_enabled"] is True
+    and roles_lowercase["retry_model_max_calls"] == 3,
+    "LLM role config accepts lowercase Koyeb model env names",
 )
 for name, value in saved_model_env.items():
     if value is None:

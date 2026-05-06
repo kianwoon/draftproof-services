@@ -685,6 +685,7 @@ def _build_rewrite_debug_log(
             "findings_skipped": summary.get("findings_skipped"),
             "circuit_breaker_reason": summary.get("circuit_breaker_reason"),
             "ai_mitigation_search": summary.get("ai_mitigation_search"),
+            "generation_layer": summary.get("generation_layer"),
             "authenticity_mitigation": summary.get("authenticity_mitigation"),
             "authenticity_llm_calls_used": summary.get("authenticity_llm_calls_used"),
             "educational_mitigation_rewrite": summary.get("educational_mitigation_rewrite"),

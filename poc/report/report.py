@@ -2728,7 +2728,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             _unique_preserve(anchors, match.group(0), "year", "year/date anchor", 95)
         for match in _re.finditer(r"\b\d+(?:\.\d+)?\s*(?:%|percent|degrees?|hours?|weeks?|months?|years?)?\b", text, _re.I):
             _unique_preserve(anchors, match.group(0), "number", "number/measurement anchor", 90)
-        for match in _re.finditer(r"\b[A-Z]{2,}(?:[-/][A-Z0-9]{2,})*\b", text):
+        for match in _re.finditer(r"\b[A-Z]{2,}[A-Z0-9]*(?:[-/][A-Z0-9]{2,})*\b", text):
             _unique_preserve(anchors, match.group(0), "acronym", "acronym or unit code", 86)
         entity_pattern = (
             r"\b[A-Z][A-Za-z'’.-]*"
@@ -2743,6 +2743,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         }
         for match in _re.finditer(entity_pattern, text):
             entity = match.group(0).strip()
+            entity = _re.sub(r"^(?:At|By|In|For|With|From|This|The)\s+", "", entity).strip()
             if entity in stop_entities or len(entity) < 3:
                 continue
             words = entity.split()
@@ -2772,11 +2773,10 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                                 _unique_preserve(anchors, term, "domain_term", "domain keyword from specificity layer", 70)
 
         headings = []
-        for raw_para in _re.split(r"\n\s*\n+", text):
-            paragraph = raw_para.strip()
-            if paragraph and len(paragraph.split()) <= 12 and not _re.search(r"[.!?]$", paragraph):
-                headings.append(paragraph)
-                _unique_preserve(anchors, paragraph, "heading", "section heading", 88)
+        for heading in _logical_document_outline(text).get("headings", []):
+            if heading not in headings:
+                headings.append(heading)
+                _unique_preserve(anchors, heading, "heading", "section heading", 88)
 
         anchors.sort(key=lambda item: (-item["priority"], item["text"].lower()))
         return {
@@ -2789,6 +2789,359 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "names_entities": [a["text"] for a in anchors if a["kind"] == "name_or_entity"][:40],
             "domain_terms": domain_terms[:40],
             "headings": headings[:20],
+        }
+
+    def _word_count(text: str) -> int:
+        return len(_re.findall(r"[A-Za-z0-9']+", text or ""))
+
+    def _logical_document_outline(text: str) -> Dict[str, Any]:
+        """Parse title, line-level headings, body sections, and references.
+
+        Scan must own this because generation is based on structure and context,
+        not direct modification of submitted prose.
+        """
+        text = text or ""
+        lines = text.splitlines()
+        nonempty = [(idx, line.strip()) for idx, line in enumerate(lines) if line.strip()]
+        if not nonempty:
+            return {"title": "", "headings": [], "sections": [], "reference_entries": []}
+
+        title = nonempty[0][1]
+        ref_start_line = None
+        for idx, line in nonempty:
+            if _re.match(r"^(?:references|reference list|bibliography|works cited)$", line, _re.I):
+                ref_start_line = idx
+                break
+
+        def char_pos_for_line(line_index: int) -> int:
+            if line_index <= 0:
+                return 0
+            return sum(len(line) + 1 for line in lines[:line_index])
+
+        def is_heading(line: str, *, first_line: bool = False) -> bool:
+            if first_line:
+                return False
+            if _re.match(r"^(?:references|reference list|bibliography|works cited)$", line, _re.I):
+                return True
+            words = line.split()
+            if not words or len(words) > 12:
+                return False
+            if _re.search(r"[.!?;:]$", line):
+                return False
+            if _re.search(r"\(\d{4}\)|https?://|doi\.", line, _re.I):
+                return False
+            starts_like_heading = line[0].isupper()
+            has_lowercase_words = any(any(ch.islower() for ch in word) for word in words)
+            return starts_like_heading and has_lowercase_words
+
+        sections: list[dict] = []
+        current: dict | None = None
+        body_end_line = ref_start_line if ref_start_line is not None else len(lines)
+        for idx, raw_line in enumerate(lines[:body_end_line]):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if idx == nonempty[0][0]:
+                continue
+            if is_heading(line):
+                if current:
+                    current["end_char"] = max(current["start_char"], char_pos_for_line(idx) - 1)
+                    current["text"] = "\n".join(current.pop("_lines")).strip()
+                    current["word_count"] = _word_count(current["text"])
+                    sections.append(current)
+                current = {
+                    "section_id": f"sec_{len(sections) + 1:03d}",
+                    "heading": line,
+                    "start_char": char_pos_for_line(idx),
+                    "_lines": [],
+                }
+                continue
+            if current is None:
+                current = {
+                    "section_id": f"sec_{len(sections) + 1:03d}",
+                    "heading": "Main Body",
+                    "start_char": char_pos_for_line(idx),
+                    "_lines": [],
+                }
+            current["_lines"].append(line)
+        if current:
+            current["end_char"] = max(
+                current["start_char"],
+                char_pos_for_line(body_end_line) - 1 if body_end_line <= len(lines) else len(text),
+            )
+            current["text"] = "\n".join(current.pop("_lines")).strip()
+            current["word_count"] = _word_count(current["text"])
+            sections.append(current)
+
+        reference_entries: list[dict] = []
+        if ref_start_line is not None:
+            current_ref = ""
+            for raw_line in lines[ref_start_line + 1:]:
+                line = raw_line.strip()
+                if not line:
+                    if current_ref:
+                        reference_entries.append({"reference_id": f"ref_{len(reference_entries) + 1:03d}", "full_reference": current_ref.strip()})
+                        current_ref = ""
+                    continue
+                starts_entry = bool(_re.search(r"\(\d{4}\)|\(\s*n\.d\.\s*\)|https?://|doi\.", line, _re.I))
+                if current_ref and starts_entry:
+                    reference_entries.append({"reference_id": f"ref_{len(reference_entries) + 1:03d}", "full_reference": current_ref.strip()})
+                    current_ref = line
+                else:
+                    current_ref = f"{current_ref} {line}".strip() if current_ref else line
+            if current_ref:
+                reference_entries.append({"reference_id": f"ref_{len(reference_entries) + 1:03d}", "full_reference": current_ref.strip()})
+
+        return {
+            "title": title,
+            "headings": [section.get("heading") for section in sections if section.get("heading")],
+            "sections": sections,
+            "reference_entries": reference_entries,
+        }
+
+    def _citation_keys(text: str) -> list[str]:
+        keys = []
+        for match in _re.finditer(r"\(([A-Z][^)]+?,\s*(?:19|20)\d{2}[a-z]?)\)", text or ""):
+            key = " ".join(match.group(1).split())
+            if key not in keys:
+                keys.append(key)
+        narrative_pattern = (
+            r"\b([A-Z][A-Za-z'’.-]+"
+            r"(?:\s+(?:and|&)\s+[A-Z][A-Za-z'’.-]+)?"
+            r"(?:\s+et\s+al\.)?)\s*\(((?:19|20)\d{2}[a-z]?)\)"
+        )
+        for match in _re.finditer(narrative_pattern, text or ""):
+            key = f"{' '.join(match.group(1).split())}, {match.group(2)}"
+            if key not in keys:
+                keys.append(key)
+        return keys[:12]
+
+    def _section_role(heading: str, index: int, total: int) -> str:
+        lower = (heading or "").lower()
+        if "intro" in lower:
+            return "context_and_thesis"
+        if "lost" in lower or "challenge" in lower:
+            return "problem_and_causal_explanation"
+        if "show" in lower or "demonstrat" in lower:
+            return "instructional_design_and_support"
+        if "adjustment" in lower or "classroom" in lower:
+            return "reasonable_adjustment_and_constraints"
+        if "standard" in lower or "access" in lower:
+            return "standards_access_and_author_judgement"
+        if "conclusion" in lower or index == total:
+            return "synthesis_and_closure"
+        return "development"
+
+    def _anchor_register_from_inventory(preservation_inventory: Dict[str, Any]) -> Dict[str, Any]:
+        anchors = preservation_inventory or {}
+        unit_codes = []
+        institutions = []
+        cohort_terms = []
+        for item in anchors.get("anchors", []) or []:
+            text_value = item.get("text") if isinstance(item, dict) else ""
+            if not text_value:
+                continue
+            if _re.match(r"^[A-Z]{2,}[A-Z0-9/-]*$", text_value):
+                if text_value not in unit_codes:
+                    unit_codes.append(text_value)
+            if _re.search(r"\b(?:Institute|University|Department|Government|CAST|CESE|UNESCO|TAFE)\b", text_value):
+                if text_value not in institutions:
+                    institutions.append(text_value)
+            if _re.match(r"^[A-Z]{2,}\d{2,}$", text_value):
+                cohort_terms.append(text_value)
+        return {
+            "institutions": institutions[:20],
+            "unit_codes": unit_codes[:30],
+            "cohort_terms": cohort_terms[:20],
+            "technical_terms": anchors.get("domain_terms") or [],
+            "numbers": anchors.get("numbers") or [],
+            "years": anchors.get("years") or [],
+            "citations": anchors.get("citations") or [],
+            "names_entities": anchors.get("names_entities") or [],
+        }
+
+    def _meaning_inventory_for_section(section_text: str, preservation_inventory: Dict[str, Any]) -> list[dict]:
+        stop_words = {
+            "about", "after", "again", "also", "because", "before", "being", "between",
+            "class", "could", "does", "from", "have", "into", "more", "must", "need",
+            "only", "should", "some", "than", "that", "their", "there", "these", "this",
+            "through", "when", "where", "while", "with", "without", "learners", "learner",
+            "training", "teaching", "practice", "practical",
+        }
+        preserve_terms = []
+        for key in ("domain_terms", "names_entities", "citations", "years", "numbers"):
+            preserve_terms.extend((preservation_inventory or {}).get(key) or [])
+        sentences = [
+            sentence.strip()
+            for sentence in _re.split(r"(?<=[.!?])\s+", section_text or "")
+            if sentence.strip()
+        ]
+        rows = []
+        for index, sentence in enumerate(sentences[:10], start=1):
+            anchors = [
+                term for term in preserve_terms
+                if term and term in sentence
+            ][:10]
+            keywords = []
+            for token in _re.findall(r"[A-Za-z][A-Za-z'-]{3,}", sentence):
+                lower = token.lower()
+                if lower in stop_words:
+                    continue
+                if lower not in {k.lower() for k in keywords}:
+                    keywords.append(token)
+                if len(keywords) >= 10:
+                    break
+            lower_sentence = sentence.lower()
+            if any(word in lower_sentence for word in ("i see", "i notice", "i usually", "i do not", "i have seen", "i may", "i want")):
+                claim_type = "author_observation"
+            elif any(word in lower_sentence for word in ("source", "states", "argue", "explain", "describe", "defines")):
+                claim_type = "source_relation"
+            elif any(word in lower_sentence for word in ("because", "therefore", "so", "which means", "this means", "if")):
+                claim_type = "causal_reasoning"
+            else:
+                claim_type = "context_or_development"
+            rows.append({
+                "point_id": f"mp_{index:03d}",
+                "claim_type": claim_type,
+                "keywords": keywords,
+                "anchors": anchors,
+                "citation_keys": _citation_keys(sentence),
+                "author_stance": "first_person_observation" if claim_type == "author_observation" else "",
+            })
+        return rows
+
+    def _generation_handoff(
+        text: str,
+        segments: list,
+        preservation_inventory: Dict[str, Any],
+        human_contract: Dict[str, Any],
+        industry_baseline: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        outline = _logical_document_outline(text or "")
+        word_count = _word_count(text or "")
+        target_min = int(word_count * 0.90)
+        target_max = int(word_count * 1.10)
+        references = []
+        for ref in outline.get("reference_entries", []) or []:
+            full = ref.get("full_reference") or ""
+            year_match = _re.search(r"\((?:19|20)\d{2}[a-z]?\)", full)
+            author = full.split(".")[0].strip() if full else ""
+            citation_key = f"{author} {year_match.group(0)}" if author and year_match else author
+            references.append({
+                "reference_id": ref.get("reference_id"),
+                "citation_key": citation_key,
+                "full_reference": full,
+                "preserve_exactly": True,
+            })
+
+        body_word_count = sum(section.get("word_count", 0) for section in outline.get("sections", []) or []) or max(1, word_count)
+        section_units = []
+        total_sections = len(outline.get("sections", []) or [])
+        for index, section in enumerate(outline.get("sections", []) or [], start=1):
+            section_text = section.get("text") or ""
+            section_words = section.get("word_count") or 0
+            proportional_min = max(80, int(target_min * (section_words / max(1, body_word_count))))
+            proportional_max = max(proportional_min + 20, int(target_max * (section_words / max(1, body_word_count))))
+            section_signals = []
+            start = section.get("start_char", 0)
+            end = section.get("end_char", start)
+            for segment in segments or []:
+                if segment.get("start_char", 0) <= end and segment.get("end_char", 0) >= start:
+                    for signal in segment.get("signals", []) or []:
+                        key = signal.get("key")
+                        if key and key not in {s.get("key") for s in section_signals}:
+                            section_signals.append({
+                                "key": key,
+                                "label": signal.get("label"),
+                                "score": signal.get("score"),
+                                "rewrite_permission": signal.get("rewrite_permission"),
+                            })
+            section_units.append({
+                "section_id": section.get("section_id"),
+                "heading": section.get("heading"),
+                "role": _section_role(section.get("heading", ""), index, total_sections),
+                "source_span": {
+                    "start_char": start,
+                    "end_char": end,
+                    "source_text_exposed_to_generator": False,
+                },
+                "current_word_count": section_words,
+                "target_words": {
+                    "min": proportional_min,
+                    "max": proportional_max,
+                    "ideal": max(proportional_min, int((proportional_min + proportional_max) / 2)),
+                },
+                "meaning_inventory": _meaning_inventory_for_section(section_text, preservation_inventory),
+                "citation_keys_used": _citation_keys(section_text),
+                "must_preserve_anchors": [
+                    anchor.get("text")
+                    for anchor in (preservation_inventory.get("anchors") or [])
+                    if isinstance(anchor, dict)
+                    and anchor.get("text")
+                    and anchor.get("text") in section_text
+                    and not (anchor.get("kind") == "number" and _re.match(r"^\d$", str(anchor.get("text") or "")))
+                    and not (
+                        anchor.get("kind") == "name_or_entity"
+                        and (
+                            len(str(anchor.get("text") or "").split()) > 6
+                            or _re.match(r"^(?:At|By|In|For|With|From|This|The)\b", str(anchor.get("text") or ""))
+                        )
+                    )
+                ][:25],
+                "detector_risks_to_reduce": section_signals[:8],
+                "generation_instruction": {
+                    "generate_new_section": True,
+                    "do_not_copy_sentence_order": True,
+                    "do_not_add_new_evidence": True,
+                    "preserve_meaning_not_sentence_order": True,
+                },
+            })
+
+        return {
+            "schema_version": "generation_handoff.v1",
+            "source_policy": {
+                "expose_original_prose_to_generator": False,
+                "generation_mode": "context_regeneration",
+                "preserve_meaning_not_sentence_order": True,
+            },
+            "document_profile": {
+                "title": outline.get("title") or "",
+                "document_type": "reflective_or_analytical_submission",
+                "word_count": word_count,
+                "body_word_count": body_word_count,
+                "reference_count": len(references),
+                "target_word_band": {
+                    "min": target_min,
+                    "max": target_max,
+                    "variance": 0.10,
+                },
+            },
+            "logical_outline": [
+                {
+                    "section_id": unit.get("section_id"),
+                    "heading": unit.get("heading"),
+                    "role": unit.get("role"),
+                    "current_word_count": unit.get("current_word_count"),
+                    "target_words": unit.get("target_words"),
+                }
+                for unit in section_units
+            ],
+            "anchor_register": _anchor_register_from_inventory(preservation_inventory),
+            "reference_register": references,
+            "section_generation_units": section_units,
+            "generation_constraints": {
+                "do_not_expose_original_prose": True,
+                "preserve_references_exactly": True,
+                "do_not_invent_evidence": True,
+                "word_count_variance": 0.10,
+                "target_human_contribution": 80,
+                "target_ai_transformation": 20,
+                "user_evidence_footnote": (
+                    ((human_contract or {}).get("generation_readiness") or {}).get("user_evidence_footnote")
+                    or "Keep ready real notes, sources, observations, or process evidence that support the claims if review is needed."
+                ),
+            },
+            "industry_baseline_focus": (industry_baseline or {}).get("rewrite_gate_objectives") or {},
         }
 
     def _count_pattern(text: str, pattern: str) -> int:
@@ -3017,6 +3370,13 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             integrity_layers,
             human_contract,
         )
+        generation_handoff = _generation_handoff(
+            report.original_text or "",
+            segments,
+            preservation_inventory,
+            human_contract,
+            industry_baseline,
+        )
         return {
             "schema_version": "scan_intelligence.v1",
             "purpose": {
@@ -3040,6 +3400,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "integrity_layers": integrity_layers,
             "industry_baseline": industry_baseline,
             "human_contribution_contract": human_contract,
+            "generation_handoff": generation_handoff,
             "calibration": {
                 "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
                 "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
@@ -3116,6 +3477,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "preservation_inventory": preservation_inventory,
                 "human_contribution_contract": human_contract,
                 "industry_baseline": industry_baseline,
+                "generation_handoff": generation_handoff,
                 "target_segment_ids": [
                     segment["segment_id"]
                     for segment in segments
@@ -3423,6 +3785,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         ai_mitigation["industry_baseline"] = industry_baseline
     result["ai_mitigation"] = ai_mitigation
     result["industry_baseline"] = industry_baseline
+    result["generation_handoff"] = scan_intelligence.get("generation_handoff") or {}
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 

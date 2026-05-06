@@ -2,6 +2,7 @@
 """Focused tests for the user-facing authorship rating layer."""
 
 import os
+from pathlib import Path
 
 from detect.layer3_scoring import (
     Confidence,
@@ -390,6 +391,26 @@ assert_true(
     "semantic_layer" in intel and "paraphrase_transformation_risk" in intel["semantic_layer"],
     "scan intelligence exposes semantic/paraphrase layer for mitigation",
 )
+generation_handoff = intel.get("generation_handoff", {})
+assert_equal(
+    generation_handoff.get("schema_version"),
+    "generation_handoff.v1",
+    "scan intelligence includes generation handoff for context regeneration",
+)
+assert_true(
+    generation_handoff.get("source_policy", {}).get("expose_original_prose_to_generator") is False,
+    "generation handoff forbids original prose exposure to generator",
+)
+assert_equal(
+    intel.get("mitigation_inputs", {}).get("generation_handoff"),
+    generation_handoff,
+    "mitigation inputs mirror generation handoff for rewrite",
+)
+assert_equal(
+    scan_json.get("generation_handoff"),
+    generation_handoff,
+    "scan JSON exposes top-level generation handoff",
+)
 integrity_layers = scan_json.get("integrity_layers", {})
 assert_equal(
     integrity_layers.get("schema_version"),
@@ -521,6 +542,16 @@ assert_equal(
     "High AI / well-grounded profile routes to AI authorship mitigation instead of author-input blocking",
 )
 assert_equal(
+    well_grounded_ai_plan.get("baseline", {}).get("target_human_contribution_ratio"),
+    80,
+    "AI mitigation baseline targets Human Contribution 80 instead of incremental movement",
+)
+assert_equal(
+    well_grounded_ai_plan.get("baseline", {}).get("target_ai_transformation_ratio"),
+    20,
+    "AI mitigation baseline pairs Human 80 with AI Transformation 20 target",
+)
+assert_equal(
     well_grounded_ai_plan.get("readiness", {}).get("requires_user_input"),
     False,
     "well-grounded AI authorship mitigation does not require author evidence before candidate generation",
@@ -564,6 +595,56 @@ assert_true(
     "scan intelligence semantic layer exposes model provenance",
 )
 assert_equal(template_ai.authorship_rating["code"], "ai_generated_signals", "template AI sample rates as AI-generated signals")
+
+sample_text_path = Path(__file__).resolve().parents[1] / "test_content.txt"
+if not sample_text_path.exists():
+    sample_text_path = Path(__file__).resolve().parents[2] / "test_content.txt"
+sample_text = sample_text_path.read_text()
+sample_builder = ReportBuilder().set_meta(original_text=sample_text)
+sample_json = report_to_dict(sample_builder.build())
+sample_handoff = sample_json.get("generation_handoff", {})
+sample_outline = sample_handoff.get("logical_outline", [])
+sample_headings = [row.get("heading") for row in sample_outline]
+assert_equal(
+    sample_handoff.get("schema_version"),
+    "generation_handoff.v1",
+    "sample scan exposes generation handoff",
+)
+assert_true(
+    "Introduction" in sample_headings
+    and "When learners start to get lost" in sample_headings
+    and "Showing the haircut clearly" in sample_headings
+    and "Reasonable adjustment and classroom reality" in sample_headings
+    and "Maintaining standards while improving access" in sample_headings
+    and "Conclusion" in sample_headings,
+    "sample generation handoff detects logical headings from single-line section structure",
+)
+assert_equal(
+    len(sample_handoff.get("reference_register", [])),
+    7,
+    "sample generation handoff preserves seven reference entries",
+)
+assert_true(
+    len(sample_handoff.get("section_generation_units", [])) == 6
+    and all(
+        unit.get("source_span", {}).get("source_text_exposed_to_generator") is False
+        for unit in sample_handoff.get("section_generation_units", [])
+    ),
+    "sample generation handoff creates one no-source-exposure generation unit per body section",
+)
+intro_unit = sample_handoff.get("section_generation_units", [])[0]
+assert_true(
+    intro_unit.get("meaning_inventory")
+    and "SHBHCUT006" in intro_unit.get("must_preserve_anchors", [])
+    and intro_unit.get("target_words", {}).get("min", 0) > 0,
+    "sample generation unit carries meaning inventory, anchors, and word budget",
+)
+assert_true(
+    sample_handoff.get("document_profile", {}).get("target_word_band", {}).get("min")
+    <= sample_handoff.get("document_profile", {}).get("word_count", 0)
+    <= sample_handoff.get("document_profile", {}).get("target_word_band", {}).get("max"),
+    "sample generation handoff includes 10 percent document word-count band",
+)
 
 fixture_paragraph = (
     "Inclusive learning design sits inside practical hairdressing training. "
