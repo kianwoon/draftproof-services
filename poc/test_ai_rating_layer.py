@@ -315,6 +315,14 @@ assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],
     "legacy-friendly highlight segment alias mirrors scan intelligence segments",
 )
+assert_true(
+    "calibration" in intel and "calibrated_ai_risk" in intel["calibration"],
+    "scan intelligence exposes calibration layer for mitigation",
+)
+assert_true(
+    "semantic_layer" in intel and "paraphrase_transformation_risk" in intel["semantic_layer"],
+    "scan intelligence exposes semantic/paraphrase layer for mitigation",
+)
 mitigation = scan_json.get("ai_mitigation", {})
 assert_equal(mitigation.get("schema_version"), "ai_mitigation.v1", "AI mitigation schema is present")
 assert_equal(mitigation.get("philosophy"), "authenticity_mitigation", "AI mitigation uses authenticity strategy")
@@ -460,8 +468,20 @@ assert_true(
     "transformation classification exposes human-anchor-adjusted AI risk",
 )
 assert_true(
+    "calibrated_ai_risk" in transformation_from_scan.features,
+    "transformation classification exposes calibrated institutional AI risk",
+)
+assert_true(
+    "semantic_uniformity_risk" in transformation_from_scan.features,
+    "transformation classification exposes semantic-shape proxy signal",
+)
+assert_true(
     transformation_from_scan.features["adjusted_ai_risk"] <= transformation_from_scan.features["ai_likelihood"],
     "human anchor interaction does not increase adjusted AI risk",
+)
+assert_true(
+    transformation_from_scan.features["calibrated_ai_risk"] <= transformation_from_scan.features["adjusted_ai_risk"],
+    "calibration layer does not increase adjusted AI risk",
 )
 
 anchored_ai_pattern = classify_transformation(TransformationFeatures(
@@ -477,6 +497,10 @@ anchored_ai_pattern = classify_transformation(TransformationFeatures(
 assert_true(
     anchored_ai_pattern.code != "fully_ai_written",
     "strong human anchor reduces fully-AI certainty in transformation classification",
+)
+assert_true(
+    anchored_ai_pattern.features["reporting_suppression"] >= 0,
+    "classification exposes reporting suppression for policy calibration",
 )
 
 print("AI rating layer tests passed")

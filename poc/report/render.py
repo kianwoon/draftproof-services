@@ -113,14 +113,21 @@ _WQ_COMPONENT_LABELS = {
 _TRANSFORMATION_SIGNAL_LABELS = {
     "ai_likelihood": "AI Likelihood",
     "adjusted_ai_risk": "Adjusted AI Risk",
+    "calibrated_ai_risk": "Calibrated AI Risk",
     "human_anchor_score": "Human Anchor",
     "human_anchor_discount": "Human Anchor Discount",
     "rewrite_smoothness": "Rewrite Smoothness",
+    "semantic_uniformity_risk": "Semantic Uniformity",
+    "discourse_regularity_risk": "Discourse Regularity",
     "source_similarity": "Source Similarity",
     "surface_similarity": "Surface Similarity",
+    "paraphrase_transformation_risk": "Paraphrase Transformation",
     "outline_to_text_expansion": "Expansion Pattern",
     "section_style_variance": "Patchwork Variance",
     "citation_grounding_risk": "Grounding Risk",
+    "signal_agreement_score": "Signal Agreement",
+    "calibration_confidence": "Calibration Confidence",
+    "reporting_suppression": "Reporting Suppression",
 }
 
 
@@ -154,9 +161,13 @@ def _transformation_contribution_summary(features: dict, signals: list[tuple[str
     )
 
     ai_likelihood = (
-        _tf_pct((features or {}).get("adjusted_ai_risk"))
-        if (features or {}).get("adjusted_ai_risk") is not None
-        else _tf_pct((features or {}).get("ai_likelihood"))
+        _tf_pct((features or {}).get("calibrated_ai_risk"))
+        if (features or {}).get("calibrated_ai_risk") is not None
+        else (
+            _tf_pct((features or {}).get("adjusted_ai_risk"))
+            if (features or {}).get("adjusted_ai_risk") is not None
+            else _tf_pct((features or {}).get("ai_likelihood"))
+        )
     ) or 0.0
     rewrite_smoothness = _tf_pct((features or {}).get("rewrite_smoothness")) or 0.0
     expansion = _tf_pct((features or {}).get("outline_to_text_expansion")) or 0.0
@@ -197,8 +208,11 @@ def _transformation_contribution_summary(features: dict, signals: list[tuple[str
     return {
         "hcr": hcr,
         "atr": atr,
-        "adjusted_ai_risk": round(ai_likelihood),
+        "adjusted_ai_risk": round(_tf_pct((features or {}).get("adjusted_ai_risk")) or 0.0),
+        "calibrated_ai_risk": round(ai_likelihood),
         "human_anchor_discount": round(_tf_pct((features or {}).get("human_anchor_discount")) or 0.0),
+        "calibration_confidence": round(_tf_pct((features or {}).get("calibration_confidence")) or 0.0),
+        "reporting_suppression": round(_tf_pct((features or {}).get("reporting_suppression")) or 0.0),
         "summary": summary,
     }
 
@@ -677,7 +691,10 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append(f"| Human Contribution Ratio (HCR) | `{contribution['hcr']}%` |")
             lines.append(f"| AI Transformation Ratio (ATR) | `{contribution['atr']}%` |")
             lines.append(f"| Adjusted AI Risk | `{contribution['adjusted_ai_risk']}%` |")
+            lines.append(f"| Calibrated AI Risk | `{contribution['calibrated_ai_risk']}%` |")
             lines.append(f"| Human Anchor Discount | `{contribution['human_anchor_discount']}%` |")
+            lines.append(f"| Calibration Confidence | `{contribution['calibration_confidence']}%` |")
+            lines.append(f"| Reporting Suppression | `{contribution['reporting_suppression']}%` |")
             lines.append("")
             lines.append(f"> **Summary:** {contribution['summary']}")
             lines.append("")

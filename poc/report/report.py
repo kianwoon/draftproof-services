@@ -1988,14 +1988,21 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         labels = {
             "ai_likelihood": "AI likelihood",
             "adjusted_ai_risk": "Adjusted AI risk",
+            "calibrated_ai_risk": "Calibrated AI risk",
             "human_anchor_score": "Human anchor",
             "human_anchor_discount": "Human anchor discount",
             "rewrite_smoothness": "Rewrite smoothness",
+            "semantic_uniformity_risk": "Semantic uniformity",
+            "discourse_regularity_risk": "Discourse regularity",
             "source_similarity": "Source similarity",
             "surface_similarity": "Surface similarity",
+            "paraphrase_transformation_risk": "Paraphrase transformation",
             "outline_to_text_expansion": "Expansion pattern",
             "section_style_variance": "Patchwork variance",
             "citation_grounding_risk": "Grounding risk",
+            "signal_agreement_score": "Signal agreement",
+            "calibration_confidence": "Calibration confidence",
+            "reporting_suppression": "Reporting suppression",
         }
         rows = []
         for key, label in labels.items():
@@ -2010,10 +2017,14 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         return rows
 
     def _transformation_contribution(features: Dict[str, Any], signals: list) -> Dict[str, Any]:
-        adjusted_ai = (
-            _clamp01(features.get("adjusted_ai_risk"))
-            if features.get("adjusted_ai_risk") is not None
-            else _clamp01(features.get("ai_likelihood"))
+        calibrated_ai = (
+            _clamp01(features.get("calibrated_ai_risk"))
+            if features.get("calibrated_ai_risk") is not None
+            else (
+                _clamp01(features.get("adjusted_ai_risk"))
+                if features.get("adjusted_ai_risk") is not None
+                else _clamp01(features.get("ai_likelihood"))
+            )
         )
         human_raw = (
             _clamp01(features.get("human_anchor_score")) * 0.55
@@ -2021,7 +2032,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.20
         )
         ai_raw = (
-            adjusted_ai * 0.35
+            calibrated_ai * 0.35
             + _clamp01(features.get("rewrite_smoothness")) * 0.20
             + _clamp01(features.get("outline_to_text_expansion")) * 0.15
             + _clamp01(features.get("citation_grounding_risk")) * 0.15
@@ -2049,8 +2060,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         return {
             "human_contribution_ratio": hcr,
             "ai_transformation_ratio": atr,
-            "adjusted_ai_risk": _pct(adjusted_ai),
+            "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
+            "calibrated_ai_risk": _pct(calibrated_ai),
             "human_anchor_discount": _pct(features.get("human_anchor_discount")),
+            "calibration_confidence": _pct(features.get("calibration_confidence")),
+            "reporting_suppression": _pct(features.get("reporting_suppression")),
             "summary": summary,
         }
 
@@ -2299,6 +2313,24 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "contribution": contribution,
                 "core_signals": transformation_signals,
                 "strongest_signals": transformation_signals[:3],
+            },
+            "calibration": {
+                "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
+                "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
+                "calibrated_ai_risk": _pct(features.get("calibrated_ai_risk")),
+                "human_anchor_discount": _pct(features.get("human_anchor_discount")),
+                "signal_agreement_score": _pct(features.get("signal_agreement_score")),
+                "calibration_confidence": _pct(features.get("calibration_confidence")),
+                "reporting_suppression": _pct(features.get("reporting_suppression")),
+                "policy": "Conservative reporting: human anchors and low-confidence coverage suppress AI certainty before report interpretation.",
+            },
+            "semantic_layer": {
+                "status": "heuristic_proxy_ready",
+                "semantic_uniformity_risk": _pct(features.get("semantic_uniformity_risk")),
+                "discourse_regularity_risk": _pct(features.get("discourse_regularity_risk")),
+                "paraphrase_transformation_risk": _pct(features.get("paraphrase_transformation_risk")),
+                "embedding_model_attached": False,
+                "next_upgrade": "Attach paragraph/sentence embedding features for latent style uniformity, semantic drift, and discourse smoothness.",
             },
             "signal_inventory": {
                 "ai_components": badge.get("ai_components") or {},

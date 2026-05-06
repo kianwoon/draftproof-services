@@ -4135,6 +4135,7 @@ th {
 
 .transformation-bar-ai_likelihood,
 .transformation-bar-adjusted_ai_risk,
+.transformation-bar-calibrated_ai_risk,
 .transformation-bar-citation_grounding_risk {
   background: #c2410c;
 }
@@ -4145,17 +4146,32 @@ th {
 }
 
 .transformation-bar-rewrite_smoothness,
-.transformation-bar-outline_to_text_expansion {
+.transformation-bar-outline_to_text_expansion,
+.transformation-bar-discourse_regularity_risk {
   background: #4f46e5;
 }
 
 .transformation-bar-source_similarity,
-.transformation-bar-surface_similarity {
+.transformation-bar-surface_similarity,
+.transformation-bar-paraphrase_transformation_risk {
   background: #0891b2;
+}
+
+.transformation-bar-semantic_uniformity_risk {
+  background: #7c3aed;
 }
 
 .transformation-bar-section_style_variance {
   background: #2563eb;
+}
+
+.transformation-bar-signal_agreement_score,
+.transformation-bar-calibration_confidence {
+  background: #0f766e;
+}
+
+.transformation-bar-reporting_suppression {
+  background: #64748b;
 }
 
 .transformation-evidence {

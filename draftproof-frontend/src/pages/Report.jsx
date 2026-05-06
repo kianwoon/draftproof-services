@@ -24,14 +24,18 @@ const SEVERITY_CONFIG = {
 const SIGNAL_COLORS = {
   ai_likelihood: '#9a3412',
   adjusted_ai_risk: '#dc2626',
+  calibrated_ai_risk: '#b91c1c',
   grounding_risk: '#9a3412',
   citation_grounding_risk: '#9a3412',
   human_anchor_score: '#15803d',
   human_anchor_discount: '#16a34a',
   rewrite_smoothness: '#4338ca',
+  semantic_uniformity_risk: '#7c3aed',
+  discourse_regularity_risk: '#4f46e5',
   outline_to_text_expansion: '#4338ca',
   source_similarity: '#0369a1',
   surface_similarity: '#0369a1',
+  paraphrase_transformation_risk: '#0e7490',
   section_style_variance: '#2563eb',
   predictability: '#9a3412',
   writing_quality: '#4338ca',
@@ -70,27 +74,41 @@ function clampPercent(value) {
 const TRANSFORMATION_SIGNAL_LABELS = {
   ai_likelihood: 'AI likelihood',
   adjusted_ai_risk: 'Adjusted AI risk',
+  calibrated_ai_risk: 'Calibrated AI risk',
   human_anchor_score: 'Human anchor',
   human_anchor_discount: 'Human anchor discount',
   rewrite_smoothness: 'Rewrite smoothness',
+  semantic_uniformity_risk: 'Semantic uniformity',
+  discourse_regularity_risk: 'Discourse regularity',
   source_similarity: 'Source similarity',
   surface_similarity: 'Surface similarity',
+  paraphrase_transformation_risk: 'Paraphrase transformation',
   outline_to_text_expansion: 'Expansion pattern',
   section_style_variance: 'Patchwork variance',
   citation_grounding_risk: 'Grounding risk',
+  signal_agreement_score: 'Signal agreement',
+  calibration_confidence: 'Calibration confidence',
+  reporting_suppression: 'Reporting suppression',
 };
 
 const TRANSFORMATION_SIGNAL_ORDER = [
   'ai_likelihood',
   'adjusted_ai_risk',
+  'calibrated_ai_risk',
   'human_anchor_score',
   'human_anchor_discount',
   'rewrite_smoothness',
+  'semantic_uniformity_risk',
+  'discourse_regularity_risk',
   'source_similarity',
   'surface_similarity',
+  'paraphrase_transformation_risk',
   'outline_to_text_expansion',
   'section_style_variance',
   'citation_grounding_risk',
+  'signal_agreement_score',
+  'calibration_confidence',
+  'reporting_suppression',
 ];
 
 function buildTransformationSignals(features = {}) {
@@ -116,7 +134,7 @@ function buildTransformationSummary(features = {}, signals = []) {
     clampPercent(features.surface_similarity) ?? 0
   );
 
-  const aiLikelihood = clampPercent(features.adjusted_ai_risk) ?? clampPercent(features.ai_likelihood) ?? 0;
+  const aiLikelihood = clampPercent(features.calibrated_ai_risk) ?? clampPercent(features.adjusted_ai_risk) ?? clampPercent(features.ai_likelihood) ?? 0;
   const rewriteSmoothness = clampPercent(features.rewrite_smoothness) ?? 0;
   const expansionPattern = clampPercent(features.outline_to_text_expansion) ?? 0;
   const patchworkVariance = clampPercent(features.section_style_variance) ?? 0;
@@ -160,7 +178,10 @@ function buildTransformationSummary(features = {}, signals = []) {
     humanContribution,
     aiTransformation,
     adjustedAiRisk: Math.round(aiLikelihood),
+    rawAdjustedAiRisk: Math.round(clampPercent(features.adjusted_ai_risk) ?? aiLikelihood),
     humanAnchorDiscount: Math.round(clampPercent(features.human_anchor_discount) ?? 0),
+    calibrationConfidence: Math.round(clampPercent(features.calibration_confidence) ?? 0),
+    reportingSuppression: Math.round(clampPercent(features.reporting_suppression) ?? 0),
     summary,
   };
 }
@@ -893,8 +914,10 @@ export default function Report() {
               <span>Estimated Contribution</span>
               <p>{transformationSummary.summary}</p>
               <div className="transformation-adjustment-row">
-                <strong>Adjusted AI risk {transformationSummary.adjustedAiRisk}%</strong>
+                <strong>Calibrated AI risk {transformationSummary.adjustedAiRisk}%</strong>
                 <strong>Human anchor discount {transformationSummary.humanAnchorDiscount}%</strong>
+                <strong>Calibration confidence {transformationSummary.calibrationConfidence}%</strong>
+                <strong>Reporting suppression {transformationSummary.reportingSuppression}%</strong>
               </div>
             </div>
             <div className="transformation-ratio-bars" aria-label="Human contribution versus AI transformation estimate">

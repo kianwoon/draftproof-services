@@ -26,6 +26,13 @@ class TransformationFeatures:
     citation_grounding_risk: float
     adjusted_ai_risk: float = 0.0
     human_anchor_discount: float = 0.0
+    semantic_uniformity_risk: float = 0.0
+    discourse_regularity_risk: float = 0.0
+    paraphrase_transformation_risk: float = 0.0
+    signal_agreement_score: float = 0.0
+    calibration_confidence: float = 0.0
+    calibrated_ai_risk: float = 0.0
+    reporting_suppression: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -114,12 +121,54 @@ def build_transformation_features(
         1.0 - clamp(layer3_input.source_grounding_strength),
     )
 
+    semantic_uniformity_risk = clamp(
+        0.40 * clamp(layer3_input.paragraph_topic_uniformity_risk)
+        + 0.25 * clamp(layer3_input.generic_assertion_risk)
+        + 0.20 * clamp(layer3_input.qualifying_text_ai_density)
+        + 0.15 * clamp(layer3_input.intra_paragraph_parallelism_risk)
+    )
+
+    discourse_regularity_risk = clamp(
+        0.30 * clamp(layer3_input.paragraph_progression_risk)
+        + 0.25 * clamp(layer3_input.paragraph_uniformity_risk)
+        + 0.18 * clamp(layer3_input.signpost_paragraph_risk)
+        + 0.15 * clamp(layer3_input.repeated_starter_risk)
+        + 0.12 * clamp(layer3_input.formulaic_conclusion_risk)
+    )
+
+    paraphrase_transformation_risk = clamp(
+        source_similarity
+        * (1.0 - surface_similarity)
+        * (0.65 + 0.35 * rewrite_smoothness)
+    )
+
     raw_ai_likelihood = clamp(layer3_result.ai_likelihood_score)
     effective_human_anchor = clamp(
         human_anchor_score * (1.0 - 0.35 * citation_grounding_risk)
     )
     human_anchor_discount = clamp(effective_human_anchor * 0.45)
     adjusted_ai_risk = clamp(raw_ai_likelihood * (1.0 - human_anchor_discount))
+    signal_agreement_score = _signal_agreement(
+        adjusted_ai_risk,
+        rewrite_smoothness,
+        outline_to_text_expansion,
+        citation_grounding_risk,
+        semantic_uniformity_risk,
+        discourse_regularity_risk,
+        paraphrase_transformation_risk,
+    )
+    calibration_confidence = _calibration_confidence(
+        word_count=layer3_input.word_count,
+        sentence_count=layer3_input.sentence_count,
+        signal_agreement_score=signal_agreement_score,
+        human_anchor_discount=human_anchor_discount,
+    )
+    calibrated_ai_risk = clamp(
+        adjusted_ai_risk
+        * (0.72 + 0.28 * signal_agreement_score)
+        * (0.70 + 0.30 * calibration_confidence)
+    )
+    reporting_suppression = clamp(1.0 - calibration_confidence)
 
     return TransformationFeatures(
         ai_likelihood=raw_ai_likelihood,
@@ -132,6 +181,13 @@ def build_transformation_features(
         citation_grounding_risk=round(citation_grounding_risk, 4),
         adjusted_ai_risk=round(adjusted_ai_risk, 4),
         human_anchor_discount=round(human_anchor_discount, 4),
+        semantic_uniformity_risk=round(semantic_uniformity_risk, 4),
+        discourse_regularity_risk=round(discourse_regularity_risk, 4),
+        paraphrase_transformation_risk=round(paraphrase_transformation_risk, 4),
+        signal_agreement_score=round(signal_agreement_score, 4),
+        calibration_confidence=round(calibration_confidence, 4),
+        calibrated_ai_risk=round(calibrated_ai_risk, 4),
+        reporting_suppression=round(reporting_suppression, 4),
     )
 
 
@@ -144,17 +200,21 @@ def classify_transformation(features: TransformationFeatures) -> TransformationC
     f = features
     evidence: list[str] = []
     effective_ai_risk = _adjusted_ai_risk(f)
+    calibrated_ai_risk = _calibrated_ai_risk(f)
 
-    if f.human_anchor_score < 0.20 and effective_ai_risk > 0.72:
+    if f.human_anchor_score < 0.20 and effective_ai_risk > 0.72 and calibrated_ai_risk >= 0.55:
         code = "fully_ai_written"
-        evidence = ["very low human anchor", "high adjusted AI risk"]
+        evidence = ["very low human anchor", "high calibrated AI risk"]
     elif f.human_anchor_score >= 0.50 and f.rewrite_smoothness > 0.70:
         code = "ai_cleaned_human_writing"
         evidence = ["clear human anchor", "very smooth rewrite surface"]
-    elif f.source_similarity > 0.60 and f.surface_similarity < 0.30:
+    elif (
+        f.paraphrase_transformation_risk > 0.45
+        or (f.source_similarity > 0.60 and f.surface_similarity < 0.30)
+    ):
         code = "ai_paraphrased"
         evidence = ["high meaning overlap with source", "low surface overlap"]
-    elif f.outline_to_text_expansion > 0.70:
+    elif f.outline_to_text_expansion > 0.70 and f.discourse_regularity_risk >= 0.35:
         code = "ai_expanded"
         evidence = ["outline-to-text expansion pattern", "thin new grounding"]
     elif f.section_style_variance > 0.60:
@@ -178,11 +238,17 @@ def classify_transformation(features: TransformationFeatures) -> TransformationC
 
     if _human_anchor_discount(f) >= 0.15:
         evidence.append("human anchor reduced AI certainty")
+    if f.semantic_uniformity_risk >= 0.45:
+        evidence.append("semantic uniformity signal")
+    if f.calibration_confidence and f.calibration_confidence < 0.45:
+        evidence.append("institutional reporting threshold suppressed")
 
     confidence = _confidence_for(code, f)
     serialized_features = {k: round(float(v), 4) for k, v in asdict(f).items()}
     serialized_features["adjusted_ai_risk"] = round(_adjusted_ai_risk(f), 4)
     serialized_features["human_anchor_discount"] = round(_human_anchor_discount(f), 4)
+    serialized_features["calibrated_ai_risk"] = round(_calibrated_ai_risk(f), 4)
+    serialized_features["reporting_suppression"] = round(_reporting_suppression(f), 4)
     return TransformationClassification(
         code=code,
         label=_LABELS[code],
@@ -207,13 +273,76 @@ def _adjusted_ai_risk(features: TransformationFeatures) -> float:
     return clamp(features.ai_likelihood * (1.0 - _human_anchor_discount(features)))
 
 
+def _signal_agreement(*signals: float) -> float:
+    values = [clamp(signal) for signal in signals]
+    if not values:
+        return 0.0
+    active = sum(1 for value in values if value >= 0.35)
+    strong = sum(1 for value in values if value >= 0.60)
+    return clamp((active / len(values)) * 0.70 + (strong / len(values)) * 0.30)
+
+
+def _coverage_score(word_count: int, sentence_count: int) -> float:
+    if word_count >= 700 and sentence_count >= 25:
+        return 0.95
+    if word_count >= 350 and sentence_count >= 12:
+        return 0.75
+    if word_count >= 150 and sentence_count >= 6:
+        return 0.55
+    return 0.30
+
+
+def _calibration_confidence(
+    *,
+    word_count: int,
+    sentence_count: int,
+    signal_agreement_score: float,
+    human_anchor_discount: float,
+) -> float:
+    coverage = _coverage_score(word_count, sentence_count)
+    confidence = (
+        0.50 * coverage
+        + 0.35 * clamp(signal_agreement_score)
+        + 0.15 * (1.0 - clamp(human_anchor_discount))
+    )
+    return clamp(confidence)
+
+
+def _calibrated_ai_risk(features: TransformationFeatures) -> float:
+    if features.calibrated_ai_risk > 0:
+        return clamp(features.calibrated_ai_risk)
+    adjusted = _adjusted_ai_risk(features)
+    agreement = features.signal_agreement_score or _signal_agreement(
+        adjusted,
+        features.rewrite_smoothness,
+        features.outline_to_text_expansion,
+        features.citation_grounding_risk,
+        features.semantic_uniformity_risk,
+        features.discourse_regularity_risk,
+        features.paraphrase_transformation_risk,
+    )
+    confidence = features.calibration_confidence or 0.65
+    return clamp(adjusted * (0.72 + 0.28 * agreement) * (0.70 + 0.30 * confidence))
+
+
+def _reporting_suppression(features: TransformationFeatures) -> float:
+    if features.reporting_suppression > 0:
+        return clamp(features.reporting_suppression)
+    if features.calibration_confidence > 0:
+        return clamp(1.0 - features.calibration_confidence)
+    return 0.0
+
+
 def _confidence_for(code: str, features: TransformationFeatures) -> str:
     if code == "human_uncertain":
         return "low"
 
     values = asdict(features)
     values["adjusted_ai_risk"] = _adjusted_ai_risk(features)
+    values["calibrated_ai_risk"] = _calibrated_ai_risk(features)
     strongest = max(float(v) for v in values.values())
+    if features.calibration_confidence and features.calibration_confidence < 0.45:
+        return "low"
     if strongest >= 0.75:
         return "high"
     if strongest >= 0.55:
