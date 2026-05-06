@@ -30,9 +30,9 @@ jobs:
               - 'worker/Dockerfile'
               - 'worker/requirements.txt'
               - 'worker/entrypoint.sh'
-              - 'worker/app/**'
             code:
               - 'poc/**'
+              - 'worker/app/**'
 
   # ── Fast path: code-only changes (poc/ edits) ───────────────
   # Skips Docker rebuild. Just triggers Koyeb redeploy;

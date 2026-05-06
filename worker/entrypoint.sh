@@ -43,9 +43,11 @@ if [ -n "${GIT_PAT}" ]; then
     if git clone --depth 1 --branch "${REPO_BRANCH}" "${AUTH_URL}" /tmp/draftproof-repo 2>/dev/null; then
         rm -rf "${CODE_DIR}"
         cp -a /tmp/draftproof-repo/poc "${CODE_DIR}"
+        # Also overlay latest worker/app/ code (fast code deploys without Docker rebuild)
+        cp -a /tmp/draftproof-repo/worker/app /app/worker/app
         rm -rf /tmp/draftproof-repo
         CODE_SHA=$(cd "${CODE_DIR}" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-        echo "[entrypoint] poc/ updated via git pull. SHA: ${CODE_SHA}"
+        echo "[entrypoint] poc/ and worker/app/ updated via git pull. SHA: ${CODE_SHA}"
     else
         echo "[entrypoint] Git pull failed — using baked-in poc/ code"
         rm -rf /tmp/draftproof-repo 2>/dev/null || true
