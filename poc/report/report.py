@@ -1972,6 +1972,355 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 else "No medium auto-fixable findings. Signals are review-only."
             )
 
+    def _clamp01(value: Any) -> float:
+        try:
+            numeric = float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        if numeric > 1.0:
+            numeric = numeric / 100.0
+        return max(0.0, min(1.0, numeric))
+
+    def _pct(value: Any) -> int:
+        return int(round(_clamp01(value) * 100))
+
+    def _transformation_signal_rows(features: Dict[str, Any]) -> list:
+        labels = {
+            "ai_likelihood": "AI likelihood",
+            "human_anchor_score": "Human anchor",
+            "rewrite_smoothness": "Rewrite smoothness",
+            "source_similarity": "Source similarity",
+            "surface_similarity": "Surface similarity",
+            "outline_to_text_expansion": "Expansion pattern",
+            "section_style_variance": "Patchwork variance",
+            "citation_grounding_risk": "Grounding risk",
+        }
+        rows = []
+        for key, label in labels.items():
+            if key in (features or {}):
+                rows.append({
+                    "key": key,
+                    "label": label,
+                    "score": _pct(features.get(key)),
+                    "raw_score": round(_clamp01(features.get(key)), 4),
+                })
+        rows.sort(key=lambda item: item["score"], reverse=True)
+        return rows
+
+    def _transformation_contribution(features: Dict[str, Any], signals: list) -> Dict[str, Any]:
+        human_raw = (
+            _clamp01(features.get("human_anchor_score")) * 0.55
+            + (1.0 - _clamp01(features.get("citation_grounding_risk"))) * 0.25
+            + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.20
+        )
+        ai_raw = (
+            _clamp01(features.get("ai_likelihood")) * 0.35
+            + _clamp01(features.get("rewrite_smoothness")) * 0.20
+            + _clamp01(features.get("outline_to_text_expansion")) * 0.15
+            + _clamp01(features.get("citation_grounding_risk")) * 0.15
+            + _clamp01(features.get("section_style_variance")) * 0.10
+            + _clamp01(features.get("source_similarity")) * 0.05
+        )
+        total = human_raw + ai_raw
+        if total <= 0:
+            hcr = 50
+            atr = 50
+        else:
+            hcr = int(round((human_raw / total) * 100))
+            atr = max(0, min(100, 100 - hcr))
+
+        top_drivers = [row["label"].lower() for row in signals[:2] if row.get("score", 0) > 0]
+        if atr >= 70:
+            summary = "AI transformation signals dominate the scan profile."
+        elif hcr >= 70:
+            summary = "Human anchoring dominates, with limited AI transformation signal."
+        else:
+            summary = "Mixed authorship pattern: human anchoring and AI transformation signals are both visible."
+        if top_drivers:
+            summary += " Main drivers: " + " and ".join(top_drivers) + "."
+
+        return {
+            "human_contribution_ratio": hcr,
+            "ai_transformation_ratio": atr,
+            "summary": summary,
+        }
+
+    def _fallback_sentence_segments(text: str) -> list:
+        if not text:
+            return []
+        segments = []
+        sentence_no = 0
+        paragraph_no = 0
+        paragraph_pattern = _re.compile(r"\S(?:.*\S)?", _re.DOTALL)
+        search_from = 0
+        for raw_para in _re.split(r"\n\s*\n+", text):
+            paragraph = raw_para.strip()
+            if not paragraph:
+                search_from += len(raw_para)
+                continue
+            match = paragraph_pattern.search(raw_para)
+            paragraph_start = text.find(paragraph, search_from)
+            if paragraph_start < 0:
+                paragraph_start = search_from + (match.start() if match else 0)
+            paragraph_no += 1
+            local_cursor = 0
+            sentence_matches = list(_re.finditer(r"[^.!?\n]+(?:[.!?]+|$)", paragraph))
+            if not sentence_matches:
+                sentence_matches = [{"text": paragraph, "start": 0}]
+            for m in sentence_matches:
+                sentence = (m["text"] if isinstance(m, dict) else m.group(0)).strip()
+                if not sentence:
+                    continue
+                offset = paragraph.find(sentence, local_cursor)
+                if offset < 0:
+                    offset = m["start"] if isinstance(m, dict) else m.start()
+                start_char = paragraph_start + offset
+                end_char = start_char + len(sentence)
+                sentence_no += 1
+                segments.append({
+                    "sentence_id": f"s{sentence_no:03d}",
+                    "paragraph_id": f"p{paragraph_no:03d}",
+                    "sentence_index": sentence_no - 1,
+                    "start_char": start_char,
+                    "end_char": end_char,
+                    "sentence": sentence,
+                })
+                local_cursor = offset + len(sentence)
+            search_from = paragraph_start + len(paragraph)
+        return segments
+
+    def _source_segments() -> list:
+        if pred_sentences:
+            return [
+                {
+                    "sentence_id": s.get("sentence_id", f"s{i + 1:03d}"),
+                    "paragraph_id": s.get("paragraph_id") or "p001",
+                    "sentence_index": i,
+                    "start_char": s.get("start_char", 0),
+                    "end_char": s.get("end_char", 0),
+                    "sentence": s.get("sentence", ""),
+                    "predictability": {
+                        "score": s.get("risk"),
+                        "risk_label": s.get("risk_label"),
+                        "top10_ratio": s.get("top10_ratio"),
+                        "top50_ratio": s.get("top50_ratio"),
+                        "avg_surprisal": s.get("avg_surprisal"),
+                        "top_predicted_tokens": s.get("top_predicted_tokens", []),
+                        "predictable_token_spans": s.get("predictable_token_spans", []),
+                    },
+                }
+                for i, s in enumerate(pred_sentences)
+            ]
+        return _fallback_sentence_segments(report.original_text or "")
+
+    def _signal_descriptor(f: Finding) -> Dict[str, str]:
+        title = (f.title or "").lower()
+        category = (f.category or "").lower()
+        if "ground" in title or "citation" in title or category == "citation":
+            return {
+                "key": "grounding_risk",
+                "label": "Grounding risk",
+                "description": "Claim or citation support needs review.",
+                "color": "#9a3412",
+            }
+        if "specificity" in title:
+            return {
+                "key": "human_anchor_score",
+                "label": "Human anchor",
+                "description": "The section may need more concrete human context.",
+                "color": "#15803d",
+            }
+        if "similarity" in title or "paraphrase" in title or category == "similarity":
+            return {
+                "key": "source_similarity",
+                "label": "Source similarity",
+                "description": "Meaning may be too close to source material.",
+                "color": "#0369a1",
+            }
+        if "style_shift" in title or "variance" in title:
+            return {
+                "key": "section_style_variance",
+                "label": "Patchwork variance",
+                "description": "Style differs from nearby writing.",
+                "color": "#a16207",
+            }
+        if "predictability" in title or "topk" in title or "surprisal" in title:
+            return {
+                "key": "ai_likelihood",
+                "label": "AI likelihood",
+                "description": "Statistical predictability is elevated.",
+                "color": "#9a3412",
+            }
+        if "generic" in title or "smooth" in title:
+            return {
+                "key": "rewrite_smoothness",
+                "label": "Rewrite smoothness",
+                "description": "Language appears polished but generic.",
+                "color": "#4338ca",
+            }
+        return {
+            "key": f.signal_category or category or "scan_signal",
+            "label": (f.signal_category or f.category or "Scan signal").replace("_", " ").title(),
+            "description": f.detail[:160] if f.detail else "Scanner finding attached to this span.",
+            "color": "#475569",
+        }
+
+    def _finding_score(f: Finding) -> int:
+        if f.metadata:
+            for key in ("score", "risk", "ai_likelihood", "top10_ratio"):
+                if key in f.metadata:
+                    return _pct(f.metadata.get(key))
+        tier_scores = {"critical": 95, "high": 80, "medium": 55, "low": 25, "clean": 0}
+        return tier_scores.get((f.tier.value if f.tier else "").lower(), 0)
+
+    findings_by_sentence = {}
+    document_level_findings = []
+    for finding in all_findings:
+        if finding.sentence_id:
+            findings_by_sentence.setdefault(finding.sentence_id, []).append(finding)
+        else:
+            document_level_findings.append(finding)
+
+    def _segment_signal(f: Finding) -> Dict[str, Any]:
+        descriptor = _signal_descriptor(f)
+        bucket = _determine_actionability(f, all_findings)
+        return {
+            "finding_id": f.finding_id,
+            "key": descriptor["key"],
+            "label": descriptor["label"],
+            "description": descriptor["description"],
+            "color": descriptor["color"],
+            "category": f.category,
+            "scanner": f.scanner,
+            "title": f.title,
+            "tier": f.tier.value if f.tier else "",
+            "score": _finding_score(f),
+            "actionability": bucket,
+            "rewrite_permission": _rewrite_permission(f, bucket),
+            "recommendation": f.recommendation,
+        }
+
+    def _document_segments() -> list:
+        segments = []
+        for item in _source_segments():
+            sid = item.get("sentence_id")
+            signals = [_segment_signal(f) for f in findings_by_sentence.get(sid, [])]
+            signals.sort(key=lambda entry: entry.get("score", 0), reverse=True)
+            primary = signals[0] if signals else None
+            segment = {
+                "segment_id": sid,
+                "type": "sentence",
+                "sentence_id": sid,
+                "paragraph_id": item.get("paragraph_id") or "",
+                "sentence_index": item.get("sentence_index"),
+                "start_char": item.get("start_char", 0),
+                "end_char": item.get("end_char", 0),
+                "text": item.get("sentence", ""),
+                "signals": signals,
+                "primary_signal": primary,
+                "highlight": {
+                    "enabled": bool(primary),
+                    "color": primary.get("color") if primary else None,
+                    "label": primary.get("label") if primary else None,
+                    "tooltip": primary.get("description") if primary else None,
+                },
+                "predictability": item.get("predictability", {}),
+            }
+            segments.append(segment)
+        return segments
+
+    def _paragraph_map(segments: list) -> list:
+        paragraphs = {}
+        for segment in segments:
+            pid = segment.get("paragraph_id") or "p001"
+            entry = paragraphs.setdefault(pid, {
+                "paragraph_id": pid,
+                "sentence_ids": [],
+                "start_char": segment.get("start_char", 0),
+                "end_char": segment.get("end_char", 0),
+                "finding_count": 0,
+                "signals": {},
+            })
+            entry["sentence_ids"].append(segment.get("sentence_id"))
+            entry["start_char"] = min(entry["start_char"], segment.get("start_char", entry["start_char"]))
+            entry["end_char"] = max(entry["end_char"], segment.get("end_char", entry["end_char"]))
+            entry["finding_count"] += len(segment.get("signals") or [])
+            for signal in segment.get("signals") or []:
+                key = signal["key"]
+                current = entry["signals"].get(key)
+                if not current or signal.get("score", 0) > current.get("score", 0):
+                    entry["signals"][key] = {
+                        "key": key,
+                        "label": signal["label"],
+                        "score": signal.get("score", 0),
+                        "color": signal.get("color"),
+                    }
+        rows = []
+        for entry in paragraphs.values():
+            signals = sorted(entry.pop("signals").values(), key=lambda item: item["score"], reverse=True)
+            entry["top_signals"] = signals[:3]
+            rows.append(entry)
+        rows.sort(key=lambda item: item["start_char"])
+        return rows
+
+    def _scan_intelligence() -> Dict[str, Any]:
+        badge = report.ai_risk_badge or {}
+        transformation = badge.get("transformation_classification") or {}
+        features = transformation.get("features") or {}
+        transformation_signals = _transformation_signal_rows(features)
+        contribution = _transformation_contribution(features, transformation_signals)
+        segments = _document_segments()
+        doc_findings = [_segment_signal(f) for f in document_level_findings]
+        doc_findings.sort(key=lambda entry: entry.get("score", 0), reverse=True)
+        return {
+            "schema_version": "scan_intelligence.v1",
+            "purpose": {
+                "reader_report": "Explain the scan through transformation pattern, core signals, and highlighted source spans.",
+                "mitigation_pipeline": "Provide stable span ids, risk signals, permissions, and preservation constraints for downstream rewrite planning.",
+            },
+            "document": {
+                "word_count": len(report.original_text.split()) if report.original_text else 0,
+                "sentence_count": len(segments),
+                "paragraph_count": len({s.get("paragraph_id") for s in segments if s.get("paragraph_id")}),
+                "segments": segments,
+                "paragraphs": _paragraph_map(segments),
+            },
+            "transformation": {
+                "classification": transformation,
+                "contribution": contribution,
+                "core_signals": transformation_signals,
+                "strongest_signals": transformation_signals[:3],
+            },
+            "signal_inventory": {
+                "ai_components": badge.get("ai_components") or {},
+                "writing_components": badge.get("writing_components") or {},
+                "authorship_concern": report.authorship_concern_signals or {},
+                "document_level_signals": doc_findings,
+                "actionability_distribution": report.actionability_distribution or local_actionability_distribution,
+            },
+            "mitigation_inputs": {
+                "rewrite_plan": None,
+                "rewrite_constraints": None,
+                "rewrite_edit_briefs": None,
+                "target_segment_ids": [
+                    segment["segment_id"]
+                    for segment in segments
+                    if any(sig.get("rewrite_permission") == "auto" for sig in segment.get("signals", []))
+                ],
+                "manual_review_segment_ids": [
+                    segment["segment_id"]
+                    for segment in segments
+                    if any(sig.get("rewrite_permission") == "manual" for sig in segment.get("signals", []))
+                ],
+            },
+            "guardrails": {
+                "is_authorship_verdict": False,
+                "preserve_original_text": True,
+                "requires_user_confirmation_for_manual_signals": True,
+                "badge_guardrails": badge.get("guardrails") or [],
+            },
+        }
+
     result: Dict[str, Any] = {
         "raw_overall_tier": report.raw_overall_tier,
         "adjusted_overall_tier": report.adjusted_overall_tier,
@@ -2197,6 +2546,13 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "detect_ai_likelihood": report.rewrite.detect_ai_likelihood,
             "detect_writing_quality": report.rewrite.detect_writing_quality,
         }
+
+    scan_intelligence = _scan_intelligence()
+    scan_intelligence["mitigation_inputs"]["rewrite_plan"] = result.get("rewrite_plan")
+    scan_intelligence["mitigation_inputs"]["rewrite_constraints"] = result.get("rewrite_constraints")
+    scan_intelligence["mitigation_inputs"]["rewrite_edit_briefs"] = result.get("rewrite_edit_briefs")
+    result["scan_intelligence"] = scan_intelligence
+    result["highlight_segments"] = scan_intelligence["document"]["segments"]
 
     result["scan_time_seconds"] = report.scan_time_seconds
     if report.generated_at:

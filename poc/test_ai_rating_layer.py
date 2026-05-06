@@ -15,6 +15,7 @@ from detect.transformation import (
     classify_transformation,
     classify_transformation_from_scan,
 )
+from report.report import Finding, ReportBuilder, Tier as ReportTier, report_to_dict
 from report.render import _authorship_rating_from_badge
 
 
@@ -278,6 +279,42 @@ template_ai = Layer3Scorer().score(
 assert_equal(template_ai.ai_cluster_name, "template_ai_style", "education AI sample triggers template AI cluster")
 assert_true(template_ai.ai_likelihood_score >= 0.58, "template AI cluster floors the AI score above possible-AI band")
 assert_equal(template_ai.tier, Tier.ORANGE, "template AI sample escalates to orange tier")
+
+scan_builder = ReportBuilder().set_meta(
+    original_text=(
+        "I observed the workshop and wrote rough notes about the classroom task. "
+        "This shows that learning is important and can improve outcomes.\n\n"
+        "The source claims are broad and need clearer evidence."
+    )
+)
+scan_builder._findings.append(Finding(
+    tier=ReportTier.MEDIUM,
+    category="predictability",
+    scanner="predictability",
+    title="medium_predictability",
+    detail="Sentence scored 52% predictability.",
+    evidence="This shows that learning is important and can improve outcomes.",
+    recommendation="Rewrite with concrete classroom detail.",
+    metadata={"score": 0.52, "actionability": "auto_fixable"},
+    finding_id="f_test_predictability",
+    sentence_id="s002",
+    signal_category="predictability",
+))
+scan_report = scan_builder.build()
+scan_json = report_to_dict(scan_report)
+intel = scan_json.get("scan_intelligence", {})
+assert_equal(intel.get("schema_version"), "scan_intelligence.v1", "scan intelligence schema is present")
+assert_true(intel.get("document", {}).get("segments"), "scan intelligence includes highlightable document segments")
+highlighted = [s for s in intel["document"]["segments"] if s.get("highlight", {}).get("enabled")]
+assert_true(highlighted, "scan intelligence marks finding-linked segments for highlighting")
+assert_true(
+    intel.get("transformation", {}).get("core_signals"),
+    "scan intelligence carries transformation core signals for mitigation",
+)
+assert_true(
+    scan_json.get("highlight_segments") == intel["document"]["segments"],
+    "legacy-friendly highlight segment alias mirrors scan intelligence segments",
+)
 assert_equal(template_ai.authorship_rating["code"], "ai_generated_signals", "template AI sample rates as AI-generated signals")
 
 fixture_paragraph = (
