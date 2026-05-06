@@ -294,11 +294,20 @@ function countRewriteFindings(findings) {
   }, 0);
 }
 
+function getRewritePayloadSummary(rewriteReport) {
+  return rewriteReport?.summary || rewriteReport?.rewrite_summary || rewriteReport || {};
+}
+
+function getRewrittenDetectScan(rewriteReport) {
+  const summary = getRewritePayloadSummary(rewriteReport);
+  return summary.detect_scan_rewritten || rewriteReport?.detect_scan_rewritten || null;
+}
+
 function buildRewriteResultSummary(rewriteReport) {
-  const summary = rewriteReport?.summary || rewriteReport?.rewrite_summary || {};
+  const summary = getRewritePayloadSummary(rewriteReport);
   const detectScores = summary.detect_scores || {};
   const originalScan = summary.detect_scan_original_saved || summary.detect_scan_original || {};
-  const rewrittenScan = summary.detect_scan_rewritten || {};
+  const rewrittenScan = getRewrittenDetectScan(rewriteReport) || {};
   const originalBadge = originalScan.ai_risk_badge || {};
   const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
   const originalFindings = countRewriteFindings(originalScan.findings) ?? detectScores.original_findings;
@@ -550,6 +559,7 @@ export default function Report() {
   const [rewriteSseUnavailable, setRewriteSseUnavailable] = useState(false);
   const [rewriteNotice, setRewriteNotice] = useState(null);
   const [rewriteResultSummary, setRewriteResultSummary] = useState(null);
+  const [rewriteResultReport, setRewriteResultReport] = useState(null);
   const [rewriteElapsedSeconds, setRewriteElapsedSeconds] = useState(0);
   const [selectedSegmentId, setSelectedSegmentId] = useState(null);
   const rewritePollRef = useRef(null);
@@ -710,6 +720,7 @@ export default function Report() {
     const completedRewrite = rewriteJob?.status === 'completed' ? rewriteJob : report?.rewrite;
     if (!completedRewrite?.id || completedRewrite.status !== 'completed') {
       setRewriteResultSummary(null);
+      setRewriteResultReport(null);
       return undefined;
     }
 
@@ -717,10 +728,14 @@ export default function Report() {
     getRewriteReport(completedRewrite.id)
       .then(({ data }) => {
         if (cancelled) return;
+        setRewriteResultReport(data);
         setRewriteResultSummary(buildRewriteResultSummary(data));
       })
       .catch(() => {
-        if (!cancelled) setRewriteResultSummary(null);
+        if (!cancelled) {
+          setRewriteResultReport(null);
+          setRewriteResultSummary(null);
+        }
       });
 
     return () => {
@@ -783,6 +798,18 @@ export default function Report() {
   const transformationSummary = transformation
     ? buildTransformationSummary(transformation.features, transformationSignals)
     : null;
+  const rewrittenScan = getRewrittenDetectScan(rewriteResultReport) || {};
+  const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
+  const rewrittenTransformation = rewrittenBadge.transformation_classification || null;
+  const rewrittenTransformationSignalMetadata = rewrittenScan.scan_intelligence?.transformation?.core_signals || [];
+  const rewrittenTransformationSignals = buildTransformationSignals(
+    rewrittenTransformation?.features,
+    rewrittenTransformationSignalMetadata
+  );
+  const rewrittenTransformationSummary = rewrittenTransformation
+    ? buildTransformationSummary(rewrittenTransformation.features, rewrittenTransformationSignals)
+    : null;
+  const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? null;
   const authorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
     badge.tier || report.tier,
@@ -811,6 +838,11 @@ export default function Report() {
   const rewriteInProgress = isRewriteActive(currentRewrite?.status);
   const hasCompletedRewrite = currentRewrite?.status === 'completed';
   const hasRewriteResult = hasCompletedRewrite && Boolean(currentRewrite?.id);
+  const hasRewriteSignalComparison = Boolean(
+    hasRewriteResult &&
+    rewrittenTransformation &&
+    rewrittenTransformationSignals.length > 0
+  );
   const canStartRewrite = hasAIFindings && !hasRewriteResult;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
@@ -925,6 +957,74 @@ export default function Report() {
     </div>
   );
 
+  const renderTransformationDetails = (variant, pattern, summary, signals, variantAiScore) => (
+    <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
+      <div className="transformation-detail-head">
+        <div>
+          <span>{variant === 'rewritten' ? 'Rewritten Scan' : 'Original Scan'}</span>
+          <strong>{pattern?.label || 'Pattern analysis'}</strong>
+        </div>
+        <em>{formatMetricPercent(variantAiScore, 1)}</em>
+      </div>
+      {summary && (
+        <div className="transformation-ratio-summary">
+          <div className="transformation-ratio-copy">
+            <span>Estimated Contribution</span>
+            <p>{summary.summary}</p>
+            <div className="transformation-adjustment-row">
+              <strong>Calibrated AI risk {summary.adjustedAiRisk}%</strong>
+              <strong>Human anchor discount {summary.humanAnchorDiscount}%</strong>
+              <strong>Calibration confidence {summary.calibrationConfidence}%</strong>
+              <strong>Reporting suppression {summary.reportingSuppression}%</strong>
+            </div>
+          </div>
+          <div className="transformation-ratio-bars" aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} human contribution versus AI transformation estimate`}>
+            <div className="transformation-ratio-row">
+              <span>Human Contribution</span>
+              <strong>{summary.humanContribution}%</strong>
+              <div className="transformation-ratio-track">
+                <div className="transformation-ratio-fill is-human" style={{ width: `${summary.humanContribution}%` }} />
+              </div>
+            </div>
+            <div className="transformation-ratio-row">
+              <span>AI Transformation</span>
+              <strong>{summary.aiTransformation}%</strong>
+              <div className="transformation-ratio-track">
+                <div className="transformation-ratio-fill is-ai" style={{ width: `${summary.aiTransformation}%` }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="transformation-chart-head">
+        <span>Core Signals</span>
+      </div>
+      <div className="transformation-bars">
+        {signals.map((signal) => (
+          <div
+            key={`${variant}-${signal.key}`}
+            className="transformation-bar-row"
+            data-tooltip={signal.description}
+            tabIndex={0}
+            aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.label}: ${signal.value.toFixed(0)}%. ${signal.description}`}
+            title={signal.description}
+          >
+            <div className="transformation-bar-label">
+              <span>{signal.label}</span>
+              <strong>{signal.value.toFixed(0)}%</strong>
+            </div>
+            <div className="transformation-bar-track" aria-hidden="true">
+              <div
+                className={`transformation-bar-fill transformation-bar-${signal.key}`}
+                style={{ width: `${signal.value}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   const transformationScorecard = transformation && transformationSignals.length > 0 ? (
     <section className="transformation-scorecard" aria-label="Transformation pattern scorecard">
       <div className="transformation-header">
@@ -937,10 +1037,13 @@ export default function Report() {
           </div>
           <div>
             <span className="transformation-kicker">Transformation Pattern</span>
-            <h2>{transformation.label || 'Pattern analysis'}</h2>
+            <h2>{hasRewriteSignalComparison ? 'Original vs rewritten pattern' : transformation.label || 'Pattern analysis'}</h2>
             <div className="transformation-meta-row">
               {transformation.confidence && (
                 <span className="transformation-pill">{transformation.confidence} confidence</span>
+              )}
+              {hasRewriteSignalComparison && (
+                <span className="transformation-pill">rewrite comparison</span>
               )}
               <span className="transformation-pill">not a verdict</span>
             </div>
@@ -948,66 +1051,22 @@ export default function Report() {
         </div>
         <div className="transformation-ai-score">
           <span>AI Score</span>
-          <strong>{formatMetricPercent(aiScore, 1)}</strong>
+          <strong>
+            {hasRewriteSignalComparison
+              ? `${formatMetricPercent(aiScore, 1)} -> ${formatMetricPercent(rewrittenAiScore, 1)}`
+              : formatMetricPercent(aiScore, 1)}
+          </strong>
         </div>
       </div>
       <div className="transformation-chart">
-        {transformationSummary && (
-          <div className="transformation-ratio-summary">
-            <div className="transformation-ratio-copy">
-              <span>Estimated Contribution</span>
-              <p>{transformationSummary.summary}</p>
-              <div className="transformation-adjustment-row">
-                <strong>Calibrated AI risk {transformationSummary.adjustedAiRisk}%</strong>
-                <strong>Human anchor discount {transformationSummary.humanAnchorDiscount}%</strong>
-                <strong>Calibration confidence {transformationSummary.calibrationConfidence}%</strong>
-                <strong>Reporting suppression {transformationSummary.reportingSuppression}%</strong>
-              </div>
-            </div>
-            <div className="transformation-ratio-bars" aria-label="Human contribution versus AI transformation estimate">
-              <div className="transformation-ratio-row">
-                <span>Human Contribution</span>
-                <strong>{transformationSummary.humanContribution}%</strong>
-                <div className="transformation-ratio-track">
-                  <div className="transformation-ratio-fill is-human" style={{ width: `${transformationSummary.humanContribution}%` }} />
-                </div>
-              </div>
-              <div className="transformation-ratio-row">
-                <span>AI Transformation</span>
-                <strong>{transformationSummary.aiTransformation}%</strong>
-                <div className="transformation-ratio-track">
-                  <div className="transformation-ratio-fill is-ai" style={{ width: `${transformationSummary.aiTransformation}%` }} />
-                </div>
-              </div>
-            </div>
+        {hasRewriteSignalComparison ? (
+          <div className="transformation-comparison-grid">
+            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, aiScore)}
+            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, rewrittenAiScore)}
           </div>
+        ) : (
+          renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, aiScore)
         )}
-        <div className="transformation-chart-head">
-          <span>Core Signals</span>
-        </div>
-        <div className="transformation-bars">
-          {transformationSignals.map((signal) => (
-            <div
-              key={signal.key}
-              className="transformation-bar-row"
-              data-tooltip={signal.description}
-              tabIndex={0}
-              aria-label={`${signal.label}: ${signal.value.toFixed(0)}%. ${signal.description}`}
-              title={signal.description}
-            >
-              <div className="transformation-bar-label">
-                <span>{signal.label}</span>
-                <strong>{signal.value.toFixed(0)}%</strong>
-              </div>
-              <div className="transformation-bar-track" aria-hidden="true">
-                <div
-                  className={`transformation-bar-fill transformation-bar-${signal.key}`}
-                  style={{ width: `${signal.value}%` }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
         {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
           <div className="transformation-evidence">
             {transformation.evidence.slice(0, 3).map((item) => (
