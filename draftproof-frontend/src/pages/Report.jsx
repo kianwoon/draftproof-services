@@ -671,6 +671,137 @@ export default function Report() {
     }
   };
 
+  const reportSummaryBar = (
+    <div className="report-summary-bar">
+      <div className="report-stat report-risk-stat" style={{ background: tier.bg }}>
+        <span className="report-risk-icon" style={{ color: tier.color }} aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d={tier.icon} />
+            <circle cx="12" cy="12" r="10" />
+          </svg>
+        </span>
+        <span className="report-risk-copy">
+          <span className="report-risk-value" style={{ color: tier.color }}>{tier.label}</span>
+          <span className="report-stat-label">Risk Tier</span>
+        </span>
+      </div>
+      <div className="report-stat">
+        <span className="report-stat-value">{report.issues.length}</span>
+        <span className="report-stat-label">Total Findings</span>
+      </div>
+      {authorshipRatingLabel && (
+        <div className="report-stat">
+          <span className="report-stat-value" style={{ color: tier.color }} title={authorshipRatingFullLabel || authorshipRatingLabel}>
+            {authorshipRatingLabel}
+          </span>
+          <span className="report-stat-label">Authorship Rating</span>
+        </div>
+      )}
+      {aiScore != null && (
+        <div className="report-stat">
+          <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(aiScore, 2)}</span>
+          <span className="report-stat-label">AI Score</span>
+        </div>
+      )}
+      {writingScore != null && (
+        <div className="report-stat">
+          <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 2)}</span>
+          <span className="report-stat-label">Writing Score</span>
+        </div>
+      )}
+      {Object.entries(issueCounts).filter(([, v]) => v > 0).map(([sev, count]) => {
+        const sc = SEVERITY_CONFIG[sev];
+        return (
+          <div key={sev} className="report-stat">
+            <span className="report-stat-value" style={{ color: sc.color }}>{count}</span>
+            <span className="report-stat-label">{sc.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const transformationScorecard = transformation && transformationSignals.length > 0 ? (
+    <section className="transformation-scorecard" aria-label="Transformation pattern scorecard">
+      <div className="transformation-header">
+        <div className="transformation-summary">
+          <div className="transformation-icon" aria-hidden="true">
+            <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+              <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
+              <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <div>
+            <span className="transformation-kicker">Transformation Pattern</span>
+            <h2>{transformation.label || 'Pattern analysis'}</h2>
+            <div className="transformation-meta-row">
+              {transformation.confidence && (
+                <span className="transformation-pill">{transformation.confidence} confidence</span>
+              )}
+              <span className="transformation-pill">not a verdict</span>
+            </div>
+          </div>
+        </div>
+        <div className="transformation-ai-score">
+          <span>AI Score</span>
+          <strong>{formatMetricPercent(aiScore, 1)}</strong>
+        </div>
+      </div>
+      <div className="transformation-chart">
+        {transformationSummary && (
+          <div className="transformation-ratio-summary">
+            <div className="transformation-ratio-copy">
+              <span>Estimated Contribution</span>
+              <p>{transformationSummary.summary}</p>
+            </div>
+            <div className="transformation-ratio-bars" aria-label="Human contribution versus AI transformation estimate">
+              <div className="transformation-ratio-row">
+                <span>Human Contribution</span>
+                <strong>{transformationSummary.humanContribution}%</strong>
+                <div className="transformation-ratio-track">
+                  <div className="transformation-ratio-fill is-human" style={{ width: `${transformationSummary.humanContribution}%` }} />
+                </div>
+              </div>
+              <div className="transformation-ratio-row">
+                <span>AI Transformation</span>
+                <strong>{transformationSummary.aiTransformation}%</strong>
+                <div className="transformation-ratio-track">
+                  <div className="transformation-ratio-fill is-ai" style={{ width: `${transformationSummary.aiTransformation}%` }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="transformation-chart-head">
+          <span>Core Signals</span>
+        </div>
+        <div className="transformation-bars">
+          {transformationSignals.map((signal) => (
+            <div key={signal.key} className="transformation-bar-row">
+              <div className="transformation-bar-label">
+                <span>{signal.label}</span>
+                <strong>{signal.value.toFixed(0)}%</strong>
+              </div>
+              <div className="transformation-bar-track" aria-hidden="true">
+                <div
+                  className={`transformation-bar-fill transformation-bar-${signal.key}`}
+                  style={{ width: `${signal.value}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
+          <div className="transformation-evidence">
+            {transformation.evidence.slice(0, 3).map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  ) : null;
+
   return (
     <main className="dash-shell">
       <RewriteNoticeDialog
@@ -759,134 +890,13 @@ export default function Report() {
           </div>
         )}
 
-        {/* Summary bar */}
-        <div className="report-summary-bar">
-          <div className="report-stat report-risk-stat" style={{ background: tier.bg }}>
-            <span className="report-risk-icon" style={{ color: tier.color }} aria-hidden="true">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d={tier.icon} />
-              <circle cx="12" cy="12" r="10" />
-            </svg>
-          </span>
-          <span className="report-risk-copy">
-            <span className="report-risk-value" style={{ color: tier.color }}>{tier.label}</span>
-            <span className="report-stat-label">Risk Tier</span>
-          </span>
-        </div>
-        <div className="report-stat">
-          <span className="report-stat-value">{report.issues.length}</span>
-          <span className="report-stat-label">Total Findings</span>
-        </div>
-        {authorshipRatingLabel && (
-          <div className="report-stat">
-            <span className="report-stat-value" style={{ color: tier.color }} title={authorshipRatingFullLabel || authorshipRatingLabel}>
-              {authorshipRatingLabel}
-            </span>
-            <span className="report-stat-label">Authorship Rating</span>
-          </div>
-        )}
-        {aiScore != null && (
-          <div className="report-stat">
-            <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(aiScore, 2)}</span>
-            <span className="report-stat-label">AI Score</span>
-          </div>
-        )}
-        {writingScore != null && (
-          <div className="report-stat">
-            <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 2)}</span>
-            <span className="report-stat-label">Writing Score</span>
-          </div>
-        )}
-        {Object.entries(issueCounts).filter(([, v]) => v > 0).map(([sev, count]) => {
-          const sc = SEVERITY_CONFIG[sev];
-          return (
-            <div key={sev} className="report-stat">
-              <span className="report-stat-value" style={{ color: sc.color }}>{count}</span>
-              <span className="report-stat-label">{sc.label}</span>
-            </div>
-          );
-        })}
-        </div>
-
-        {transformation && transformationSignals.length > 0 && (
-          <section className="transformation-scorecard" aria-label="Transformation pattern scorecard">
-            <div className="transformation-header">
-              <div className="transformation-summary">
-                <div className="transformation-icon" aria-hidden="true">
-                  <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
-                    <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
-                    <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </div>
-                <div>
-                  <span className="transformation-kicker">Transformation Pattern</span>
-                  <h2>{transformation.label || 'Pattern analysis'}</h2>
-                  <div className="transformation-meta-row">
-                    {transformation.confidence && (
-                      <span className="transformation-pill">{transformation.confidence} confidence</span>
-                    )}
-                    <span className="transformation-pill">not a verdict</span>
-                  </div>
-                </div>
-              </div>
-              <div className="transformation-ai-score">
-                <span>AI Score</span>
-                <strong>{formatMetricPercent(aiScore, 1)}</strong>
-              </div>
-            </div>
-            <div className="transformation-chart">
-              {transformationSummary && (
-                <div className="transformation-ratio-summary">
-                  <div className="transformation-ratio-copy">
-                    <span>Estimated Contribution</span>
-                    <p>{transformationSummary.summary}</p>
-                  </div>
-                  <div className="transformation-ratio-bars" aria-label="Human contribution versus AI transformation estimate">
-                    <div className="transformation-ratio-row">
-                      <span>Human Contribution</span>
-                      <strong>{transformationSummary.humanContribution}%</strong>
-                      <div className="transformation-ratio-track">
-                        <div className="transformation-ratio-fill is-human" style={{ width: `${transformationSummary.humanContribution}%` }} />
-                      </div>
-                    </div>
-                    <div className="transformation-ratio-row">
-                      <span>AI Transformation</span>
-                      <strong>{transformationSummary.aiTransformation}%</strong>
-                      <div className="transformation-ratio-track">
-                        <div className="transformation-ratio-fill is-ai" style={{ width: `${transformationSummary.aiTransformation}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div className="transformation-chart-head">
-                <span>Core Signals</span>
-              </div>
-              <div className="transformation-bars">
-                {transformationSignals.map((signal) => (
-                  <div key={signal.key} className="transformation-bar-row">
-                    <div className="transformation-bar-label">
-                      <span>{signal.label}</span>
-                      <strong>{signal.value.toFixed(0)}%</strong>
-                    </div>
-                    <div className="transformation-bar-track" aria-hidden="true">
-                      <div
-                        className={`transformation-bar-fill transformation-bar-${signal.key}`}
-                        style={{ width: `${signal.value}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
-                <div className="transformation-evidence">
-                  {transformation.evidence.slice(0, 3).map((item) => (
-                    <span key={item}>{item}</span>
-                  ))}
-                </div>
-              )}
-            </div>
+        {transformationScorecard ? (
+          <section className="report-overview-card" aria-label="Report overview">
+            {reportSummaryBar}
+            {transformationScorecard}
           </section>
+        ) : (
+          reportSummaryBar
         )}
 
         {hasRewriteResult && (

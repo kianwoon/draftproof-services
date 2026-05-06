@@ -3729,6 +3729,32 @@ th {
   margin-top: .7rem;
 }
 
+.report-overview-card {
+  margin: 0 0 2.5rem;
+  border: 1px solid #d8e1ea;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, .08);
+  overflow: hidden;
+}
+
+.report-overview-card .report-summary-bar {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid #e2e8f0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.report-overview-card .transformation-scorecard {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
 .report-rewrite-summary-bar {
   display: grid;
   grid-template-columns: auto auto repeat(4, 1fr) auto;
