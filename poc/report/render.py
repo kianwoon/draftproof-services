@@ -620,6 +620,35 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
                     label, desc = _AI_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
                     lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
 
+        lines.append("")
+        lines.append("### Integrity Layer Split")
+        lines.append("")
+        lines.append("- **Policy**: Grounding weakness is reported as writing-integrity risk, not direct evidence of AI authorship.")
+        wq_components_for_split = badge.get("writing_components", {}) or {}
+        grounding_score = (
+            _tf_pct(wq_components_for_split.get("source_grounding_risk") or 0) * 0.30
+            + _tf_pct(wq_components_for_split.get("citation_weakness_risk") or 0) * 0.25
+            + _tf_pct(wq_components_for_split.get("unsupported_claim_risk") or 0) * 0.20
+            + _tf_pct(wq_components_for_split.get("broad_claim_risk") or 0) * 0.15
+            + _tf_pct(wq_components_for_split.get("lived_detail_risk") or 0) * 0.10
+        )
+        transformation_for_split = badge.get("transformation_classification") or {}
+        contribution_for_split = _transformation_contribution_summary(
+            transformation_for_split.get("features") or {},
+            _transformation_signals(transformation_for_split.get("features") or {}),
+        )
+        ai_band = "High AI" if ai_score >= 50 else "Low AI"
+        grounding_band = "Weakly grounded" if grounding_score >= 50 else "Well grounded"
+        lines.append("")
+        lines.append("| Layer | Score | Meaning |")
+        lines.append("|-------|------:|---------|")
+        lines.append(f"| AI Authorship Risk | `{ai_score:.1f}%` | Token, rhythm, discourse, and template-like authorship signals |")
+        lines.append(f"| AI Transformation Risk | `{contribution_for_split['atr']}%` | Rewrite/paraphrase/expansion pattern signals |")
+        lines.append(f"| Grounding Quality Risk | `{grounding_score:.1f}%` | Citation, evidence, unsupported claim, and specificity signals |")
+        lines.append(f"| Human Contribution Signal | `{contribution_for_split['hcr']}%` | Human anchoring and author-owned reasoning signals |")
+        lines.append("")
+        lines.append(f"**Combined Interpretation:** {ai_band} / {grounding_band}")
+
         # ── Writing Quality Risk ──
         wq_tier = badge.get("writing_quality_tier", "LOW")
         wq_score = badge.get("writing_quality_score", 0)

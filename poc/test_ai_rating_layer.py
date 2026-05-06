@@ -340,9 +340,41 @@ assert_true(
     "semantic_layer" in intel and "paraphrase_transformation_risk" in intel["semantic_layer"],
     "scan intelligence exposes semantic/paraphrase layer for mitigation",
 )
+integrity_layers = scan_json.get("integrity_layers", {})
+assert_equal(
+    integrity_layers.get("schema_version"),
+    "integrity_layers.v1",
+    "scan JSON exposes separated integrity layer contract",
+)
+assert_true(
+    integrity_layers.get("policy", {}).get("grounding_is_not_ai_authorship"),
+    "integrity layers state grounding is not direct AI authorship evidence",
+)
+assert_true(
+    "ai_authorship_risk" in integrity_layers.get("layers", {}),
+    "integrity layers include AI authorship risk",
+)
+assert_true(
+    "grounding_quality_risk" in integrity_layers.get("layers", {}),
+    "integrity layers include separate grounding quality risk",
+)
+assert_true(
+    "source_grounding_risk" in integrity_layers["layers"]["ai_authorship_risk"].get("excludes", []),
+    "AI authorship layer explicitly excludes grounding quality signals",
+)
+assert_equal(
+    intel.get("integrity_layers"),
+    integrity_layers,
+    "scan intelligence mirrors separated integrity layer contract",
+)
 mitigation = scan_json.get("ai_mitigation", {})
 assert_equal(mitigation.get("schema_version"), "ai_mitigation.v1", "AI mitigation schema is present")
 assert_equal(mitigation.get("philosophy"), "authenticity_mitigation", "AI mitigation uses authenticity strategy")
+assert_equal(
+    mitigation.get("integrity_layers", {}).get("schema_version"),
+    "integrity_layers.v1",
+    "AI mitigation handoff carries integrity layer split",
+)
 assert_true(
     "typo injection" in mitigation.get("objective", {}).get("avoid", []),
     "AI mitigation rejects shallow evasion tactics",

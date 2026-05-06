@@ -422,14 +422,18 @@ def build_ai_mitigation_plan(
         "schema_version": "ai_mitigation.v1",
         "philosophy": "authenticity_mitigation",
         "objective": {
-            "reduce": "detectable AI transformation signals",
+            "reduce": "detectable AI authorship and AI transformation signals",
             "increase": [
-                "human grounding",
-                "specificity",
                 "cognitive authenticity",
                 "reasoning continuity",
-                "contextual anchoring",
                 "natural variance",
+                "contextual anchoring already present in the draft",
+            ],
+            "separate_guidance": [
+                "grounding quality",
+                "citation support",
+                "source-to-claim links",
+                "author-owned evidence additions",
             ],
             "avoid": [
                 "typo injection",
@@ -438,6 +442,7 @@ def build_ai_mitigation_plan(
                 "unsupported detail generation",
             ],
         },
+        "integrity_layers": (scan_intelligence or {}).get("integrity_layers") or {},
         "baseline": _baseline(scan_intelligence, badge),
         "primary_mode": mode,
         "readiness": {

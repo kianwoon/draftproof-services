@@ -403,6 +403,25 @@ def _contribution_scores(report_dict: dict | None) -> dict:
     """Extract the Human Contribution / AI Transformation product scores."""
     if not isinstance(report_dict, dict):
         return {"human": None, "ai_transformation": None}
+    integrity = (
+        report_dict.get("integrity_layers")
+        or ((report_dict.get("scan_intelligence") or {}).get("integrity_layers") or {})
+    )
+    layers = integrity.get("layers") if isinstance(integrity, dict) else {}
+    if isinstance(layers, dict):
+        human_layer = layers.get("human_contribution_signal") or {}
+        transform_layer = layers.get("ai_transformation_risk") or {}
+        human_score = human_layer.get("score")
+        transform_score = transform_layer.get("score")
+        if isinstance(human_score, (int, float)) or isinstance(transform_score, (int, float)):
+            if not isinstance(human_score, (int, float)) and isinstance(transform_score, (int, float)):
+                human_score = 100.0 - float(transform_score)
+            if not isinstance(transform_score, (int, float)) and isinstance(human_score, (int, float)):
+                transform_score = 100.0 - float(human_score)
+            return {
+                "human": float(human_score),
+                "ai_transformation": float(transform_score),
+            }
     contribution = (
         ((report_dict.get("scan_intelligence") or {}).get("transformation") or {})
         .get("contribution")

@@ -542,6 +542,10 @@ def _build_rewrite_debug_log(
                     "authorship_rating_code": badge.get("authorship_rating_code"),
                 },
             },
+            "integrity_layers": (
+                report_json.get("integrity_layers")
+                or ((report_json.get("scan_intelligence") or {}).get("integrity_layers"))
+            ),
             "ai_mitigation": report_json.get("ai_mitigation"),
             "scan_intelligence_mitigation_schema": (
                 ((report_json.get("scan_intelligence") or {}).get("mitigation_inputs") or {})

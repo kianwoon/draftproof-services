@@ -2113,6 +2113,132 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "summary": summary,
         }
 
+    def _risk_label(score: int, *, high: int = 65, medium: int = 40) -> str:
+        if score >= high:
+            return "high"
+        if score >= medium:
+            return "medium"
+        return "low"
+
+    def _top_components(components: Dict[str, Any], *, limit: int = 4) -> list:
+        rows = []
+        for key, value in (components or {}).items():
+            if key in {"source_grounding_strength", "domain_grounding_strength", "grounding_credit"}:
+                continue
+            score = _pct(value)
+            if score <= 0:
+                continue
+            rows.append({"key": key, "score": score})
+        rows.sort(key=lambda item: item["score"], reverse=True)
+        return rows[:limit]
+
+    def _grounding_quality_score(writing_components: Dict[str, Any]) -> int:
+        components = writing_components or {}
+        weighted = (
+            _clamp01(components.get("source_grounding_risk")) * 0.30
+            + _clamp01(components.get("citation_weakness_risk")) * 0.25
+            + _clamp01(components.get("unsupported_claim_risk")) * 0.20
+            + _clamp01(components.get("broad_claim_risk")) * 0.15
+            + _clamp01(components.get("lived_detail_risk")) * 0.10
+        )
+        return _pct(weighted)
+
+    def _combined_integrity_label(ai_score: int, grounding_score: int) -> Dict[str, str]:
+        ai_band = "High AI" if ai_score >= 50 else "Low AI"
+        grounding_band = "Weakly grounded" if grounding_score >= 50 else "Well grounded"
+        code = f"{ai_band.lower().replace(' ', '_')}_{grounding_band.lower().replace(' ', '_')}"
+        summaries = {
+            "high_ai_weakly_grounded": "Machine-like authorship signals are visible and grounding quality also needs review.",
+            "high_ai_well_grounded": "Machine-like authorship signals are visible, but grounding quality is not the main issue.",
+            "low_ai_weakly_grounded": "AI authorship signal is limited; the main concern is grounding or evidence quality.",
+            "low_ai_well_grounded": "AI authorship and grounding risk are both limited in the current scan.",
+        }
+        return {
+            "code": code,
+            "label": f"{ai_band} / {grounding_band}",
+            "summary": summaries.get(code, ""),
+        }
+
+    def _integrity_layers(
+        badge: Dict[str, Any],
+        transformation: Dict[str, Any],
+        contribution: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        features = (transformation or {}).get("features") or {}
+        ai_components = (badge or {}).get("ai_components") or {}
+        writing_components = (badge or {}).get("writing_components") or {}
+        ai_authorship_score = _pct((badge or {}).get("ai_likelihood_score"))
+        grounding_score = _grounding_quality_score(writing_components)
+        ai_transformation_score = int(contribution.get("ai_transformation_ratio") or _pct(features.get("calibrated_ai_risk")))
+        human_score = int(contribution.get("human_contribution_ratio") or _pct(features.get("human_anchor_score")))
+        interpretation = _combined_integrity_label(ai_authorship_score, grounding_score)
+        return {
+            "schema_version": "integrity_layers.v1",
+            "policy": {
+                "grounding_is_not_ai_authorship": True,
+                "summary": "Grounding weakness is reported as writing-integrity risk, not direct evidence of AI authorship.",
+            },
+            "layers": {
+                "ai_authorship_risk": {
+                    "score": ai_authorship_score,
+                    "tier": (badge or {}).get("tier"),
+                    "label": _risk_label(ai_authorship_score),
+                    "source": "mechanical/statistical authorship signals",
+                    "signals": _top_components(ai_components),
+                    "excludes": [
+                        "source_grounding_risk",
+                        "citation_weakness_risk",
+                        "unsupported_claim_risk",
+                    ],
+                },
+                "ai_transformation_risk": {
+                    "score": ai_transformation_score,
+                    "label": _risk_label(ai_transformation_score),
+                    "classification": {
+                        "code": (transformation or {}).get("code"),
+                        "label": (transformation or {}).get("label"),
+                        "confidence": (transformation or {}).get("confidence"),
+                    },
+                    "signals": [
+                        row for row in _transformation_signal_rows(features)
+                        if row.get("family") != "grounding"
+                    ][:5],
+                },
+                "grounding_quality_risk": {
+                    "score": grounding_score,
+                    "label": _risk_label(grounding_score),
+                    "source": "citation, evidence, specificity, and support signals",
+                    "signals": _top_components({
+                        key: value
+                        for key, value in writing_components.items()
+                        if key in {
+                            "source_grounding_risk",
+                            "citation_weakness_risk",
+                            "unsupported_claim_risk",
+                            "broad_claim_risk",
+                            "lived_detail_risk",
+                        }
+                    }),
+                },
+                "human_contribution_signal": {
+                    "score": human_score,
+                    "label": "strong" if human_score >= 65 else "mixed" if human_score >= 40 else "limited",
+                    "source": "human anchoring, local reasoning, unevenness, and transformation balance",
+                    "signals": [
+                        row for row in _transformation_signal_rows(features)
+                        if row.get("family") == "human_anchor"
+                    ][:4],
+                },
+            },
+            "combined_interpretation": interpretation,
+            "recommended_use": {
+                "ai_authorship_risk": "Use for AI-pattern review and mitigation gating.",
+                "ai_transformation_risk": "Use to decide whether the text looks AI-rewritten, expanded, or paraphrased.",
+                "grounding_quality_risk": "Use for source, evidence, and academic-quality feedback.",
+                "human_contribution_signal": "Use to judge whether author-owned thinking is still visible.",
+            },
+        }
+
     def _fallback_sentence_segments(text: str) -> list:
         if not text:
             return []
@@ -2337,6 +2463,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         features = transformation.get("features") or {}
         transformation_signals = _transformation_signal_rows(features)
         contribution = _transformation_contribution(features, transformation_signals)
+        integrity_layers = _integrity_layers(badge, transformation, contribution)
         segments = _document_segments()
         doc_findings = [_segment_signal(f) for f in document_level_findings]
         doc_findings.sort(key=lambda entry: entry.get("score", 0), reverse=True)
@@ -2359,6 +2486,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "core_signals": transformation_signals,
                 "strongest_signals": transformation_signals[:3],
             },
+            "integrity_layers": integrity_layers,
             "calibration": {
                 "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
                 "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
@@ -2477,6 +2605,16 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "total_signal_count": len(report.authorship_concern_signals or {}),
         },
         "ai_risk_badge": report.ai_risk_badge,
+        "integrity_layers": _integrity_layers(
+            report.ai_risk_badge or {},
+            ((report.ai_risk_badge or {}).get("transformation_classification") or {}),
+            _transformation_contribution(
+                (((report.ai_risk_badge or {}).get("transformation_classification") or {}).get("features") or {}),
+                _transformation_signal_rows(
+                    (((report.ai_risk_badge or {}).get("transformation_classification") or {}).get("features") or {})
+                ),
+            ),
+        ),
         "document_context": {
             "word_count": len(report.original_text.split()) if report.original_text else 0,
             "sentence_count": len(report.predictability.sentences) if report.predictability else 0,
