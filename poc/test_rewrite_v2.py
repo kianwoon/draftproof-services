@@ -1652,6 +1652,15 @@ assert_test(
     guided_summary.get("ai_mitigation_search", {}).get("llm_calls") == 0,
     "author-evidence gate prevents AI search LLM calls",
 )
+educational_rewrite = guided_summary.get("educational_mitigation_rewrite") or {}
+assert_test(
+    educational_rewrite.get("draft_text") and "[[ADD VERIFIED DETAIL:" in educational_rewrite.get("draft_text"),
+    "guided mitigation produces educational marked rewrite content",
+)
+assert_test(
+    educational_rewrite.get("auto_apply") is False,
+    "educational mitigation rewrite is not auto-applied",
+)
 
 
 # ════════════════════════════════════════════════════════════════════════

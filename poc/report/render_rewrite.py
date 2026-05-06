@@ -547,6 +547,28 @@ def render_rewrite_report(
                 )
             lines.append("")
 
+    educational = summary.get("educational_mitigation_rewrite") or {}
+    if educational.get("draft_text"):
+        lines.append("## Educational Mitigation Draft")
+        lines.append("")
+        lines.append(
+            "This is a learning scaffold, not the accepted final output. Replace every bracketed marker with verified author evidence, source detail, or concrete context before using it."
+        )
+        lines.append("")
+        lines.append("```text")
+        lines.append(str(educational.get("draft_text", "")).strip())
+        lines.append("```")
+        lines.append("")
+        changes = educational.get("changes") or []
+        if changes:
+            lines.append("| # | Signal | What To Supply |")
+            lines.append("|---|--------|----------------|")
+            for item in changes[:8]:
+                component = str(item.get("component", "")).replace("_", " ")
+                needed = str(item.get("user_input_needed") or "Verified author/source detail").replace("|", "·")
+                lines.append(f"| {item.get('index', '')} | {component} | {needed} |")
+            lines.append("")
+
         lines.append("## Revision Brief")
         lines.append("")
         counts = mitigation.get("counts") or {}

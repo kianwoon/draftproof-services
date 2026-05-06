@@ -278,6 +278,127 @@ def _manual_summary_from_ai_mitigation(ai_mitigation: dict | None, limit: int = 
     return rows
 
 
+_EDUCATIONAL_COMPONENT_NOTES = {
+    "generic_assertion_risk": "make this broad claim specific to your class, unit, task, or source",
+    "unsupported_claim_risk": "add the evidence for this claim, or soften the claim if evidence is limited",
+    "source_grounding_risk": "name the source and explain how it supports this sentence",
+    "citation_weakness_risk": "attach the correct citation and explain the cited evidence",
+    "broad_claim_risk": "limit this claim to the exact learner group, task, or condition",
+    "lived_detail_risk": "add a real class, client, workplace, or process detail",
+    "qualifying_text_ai_density": "rebuild this paragraph around context, evidence, your reasoning, and a limited conclusion",
+}
+
+
+def _educational_sentence_note(sentence: str, ai_mitigation: dict | None, used_components: set[str]) -> dict | None:
+    actions = [
+        action
+        for action in ((ai_mitigation or {}).get("component_actions") or [])
+        if isinstance(action, dict) and not action.get("auto_apply")
+    ]
+    if not actions:
+        return None
+    text = sentence.lower()
+    preferred = []
+    if any(marker in text for marker in ("this shows", "this means", "important", "improve", "support", "helps")):
+        preferred.extend(["generic_assertion_risk", "unsupported_claim_risk", "broad_claim_risk"])
+    if any(marker in text for marker in ("according to", "source", "citation", "research", "study")):
+        preferred.extend(["source_grounding_risk", "citation_weakness_risk"])
+    if any(marker in text for marker in ("i ", "my ", "observed", "class", "workshop", "client", "learner")):
+        preferred.append("lived_detail_risk")
+
+    by_component = {str(action.get("component") or ""): action for action in actions}
+    selected = None
+    for component in preferred:
+        if component in by_component and component not in used_components:
+            selected = by_component[component]
+            break
+    if selected is None:
+        for action in actions:
+            component = str(action.get("component") or "")
+            if component and component not in used_components:
+                selected = action
+                break
+    if selected is None:
+        selected = actions[0]
+
+    component = str(selected.get("component") or "reviewed_context")
+    used_components.add(component)
+    note = _EDUCATIONAL_COMPONENT_NOTES.get(
+        component,
+        selected.get("action") or "add verified author context before using this sentence",
+    )
+    return {
+        "component": component,
+        "note": note,
+        "user_input_needed": selected.get("user_input_needed"),
+        "priority": selected.get("priority"),
+    }
+
+
+def _build_educational_mitigation_rewrite(
+    text: str,
+    ai_mitigation: dict | None,
+    *,
+    max_marked_sentences: int = 8,
+) -> dict:
+    """Create a marked learning draft for user-led AI mitigation.
+
+    This is intentionally not an accepted rewrite. It shows the shape of the
+    rewrite and marks every missing fact/source/detail so the user can replace
+    placeholders with real author-owned evidence.
+    """
+    if not isinstance(text, str) or not text.strip() or not isinstance(ai_mitigation, dict):
+        return {}
+
+    sentence_re = re.compile(r"[^.!?\n]+(?:[.!?]+|$)")
+    parts = []
+    changes = []
+    cursor = 0
+    marked = 0
+    used_components: set[str] = set()
+    for match in sentence_re.finditer(text):
+        sentence = match.group(0)
+        parts.append(text[cursor:match.start()])
+        replacement = sentence
+        if marked < max_marked_sentences and len(sentence.split()) >= 8:
+            note = _educational_sentence_note(sentence, ai_mitigation, used_components)
+            if note:
+                insert = f" [[ADD VERIFIED DETAIL: {note['note']}]]"
+                stripped = sentence.rstrip()
+                terminal = ""
+                if stripped and stripped[-1] in ".!?":
+                    terminal = stripped[-1]
+                    stripped = stripped[:-1].rstrip()
+                replacement = f"{stripped}{insert}{terminal}"
+                changes.append({
+                    "index": len(changes) + 1,
+                    "component": note["component"],
+                    "original_sentence": sentence.strip(),
+                    "rewritten_sentence": replacement.strip(),
+                    "user_input_needed": note.get("user_input_needed"),
+                    "priority": note.get("priority"),
+                })
+                marked += 1
+        parts.append(replacement)
+        cursor = match.end()
+    parts.append(text[cursor:])
+    draft = "".join(parts)
+    if not changes:
+        return {}
+    return {
+        "kind": "educational_marked_rewrite",
+        "auto_apply": False,
+        "status": "requires_author_completion",
+        "draft_text": draft,
+        "changes": changes,
+        "instructions": [
+            "Replace every [[ADD VERIFIED DETAIL: ...]] marker with a real source, example, observation, limitation, or author explanation.",
+            "Delete any marker you cannot truthfully support, and narrow the surrounding claim instead.",
+            "Run the scan again only after all bracketed markers have been resolved.",
+        ],
+    }
+
+
 def _clean_full_document_candidate(output: str, original_text: str) -> str:
     if not output:
         return ""
@@ -1649,6 +1770,9 @@ def run_rewrite_pipeline(
     if ai_mitigation_needs_author:
         result.summary["ai_mitigation_blocked_auto_rewrite"] = True
         result.summary["outcome"] = "suggestion_only"
+        educational_rewrite = _build_educational_mitigation_rewrite(text, ai_mitigation_contract)
+        if educational_rewrite:
+            result.summary["educational_mitigation_rewrite"] = educational_rewrite
         suggestions = result.summary.setdefault("manual_suggestions", [])
         existing_keys = {
             (
