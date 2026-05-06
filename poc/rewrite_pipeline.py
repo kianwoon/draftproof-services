@@ -4615,11 +4615,12 @@ def run_rewrite_pipeline(
     pre_rewrite_ai = pre_rewrite_badge.get("ai_likelihood_score")
     ai_mitigation_contract = _ensure_ai_mitigation_contract(ctx.raw_json)
     ai_mitigation_needs_author = _ai_mitigation_requires_user_input(ai_mitigation_contract)
+    allow_auto_with_author_gaps = _env_flag("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS", True)
     ai_search_first = (
         os.environ.get("DRAFTPROOF_AI_SEARCH_FIRST", "1") != "0"
         and isinstance(pre_rewrite_ai, (int, float))
         and pre_rewrite_ai >= _float_env("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", 50.0)
-        and not ai_mitigation_needs_author
+        and (not ai_mitigation_needs_author or allow_auto_with_author_gaps)
     )
     rewrite_config = None
     if ai_search_first:
@@ -4628,7 +4629,7 @@ def run_rewrite_pipeline(
             max_density_passes=0,
             max_rewrite_seconds=30,
         )
-    elif ai_mitigation_needs_author and os.environ.get("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS") != "1":
+    elif ai_mitigation_needs_author and not allow_auto_with_author_gaps:
         rewrite_config = RewriteConfig(
             max_llm_calls=0,
             max_density_passes=0,
@@ -4684,7 +4685,7 @@ def run_rewrite_pipeline(
         result.summary.setdefault("saved_contract_notes", []).append(
             "Skipped costly density/sentence LLM prepass because AI mitigation search is the first objective."
         )
-    elif ai_mitigation_needs_author and os.environ.get("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS") != "1":
+    elif ai_mitigation_needs_author and not allow_auto_with_author_gaps:
         result.summary["rewrite_engine_mode"] = "guided_authenticity_requires_author_input"
         result.summary.setdefault("saved_contract_notes", []).append(
             "Skipped automatic sentence/density rewrite because AI-Mitigation requires author-supplied grounding."
@@ -4795,13 +4796,11 @@ def run_rewrite_pipeline(
         builder.set_meta(scan_time=0, original_text=scan_text)
         return report_to_dict(builder.build())
 
-    # The saved scan is the user-visible contract and is already available.
-    # Do not rescan the original by default: on longer drafts it doubles final
-    # verification time and can make the report disagree with the scan the user
-    # just reviewed. A fresh-original baseline can still be enabled for
-    # diagnostics with DRAFTPROOF_FRESH_ORIGINAL_BASELINE=1.
+    # Rewrite candidate scans must be compared against a baseline produced by
+    # the same scanner codepath. Otherwise a saved scan from an earlier scanner
+    # phase can make a valid mitigation candidate look like a regression.
     original_report_dict = ctx.raw_json
-    if rewritten_text != text and os.environ.get("DRAFTPROOF_FRESH_ORIGINAL_BASELINE") == "1":
+    if _env_flag("DRAFTPROOF_FRESH_ORIGINAL_BASELINE", True):
         scan_t0 = time.time()
         original_report_dict = _full_scan_report_dict(text)
         stage_timings.append({
@@ -6201,7 +6200,7 @@ def run_rewrite_pipeline(
     # Dedicated AI-score search. This is separate from local sentence rewrite:
     # generate multiple full-document candidates, scan every valid candidate,
     # and keep the one with the lowest measured AI likelihood.
-    ai_search_reference = saved_ai if saved_ai is not None else original_ai
+    ai_search_reference = original_ai if original_ai is not None else saved_ai
     ai_search_enabled = os.environ.get("DRAFTPROOF_AI_MITIGATION_SEARCH", "1") != "0"
     generation_first_active = _env_flag("DRAFTPROOF_REGENERATION_FIRST", True)
     ai_search_after_generation_failure = _env_flag(
@@ -6236,7 +6235,7 @@ def run_rewrite_pipeline(
         })
     ai_search_blocked_by_author_gaps = (
         ai_mitigation_needs_author
-        and os.environ.get("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS") != "1"
+        and not allow_auto_with_author_gaps
         and not authenticity_mitigation_selected
     )
     if (
@@ -6419,6 +6418,8 @@ def run_rewrite_pipeline(
             candidate_wq = _badge_wq(candidate_report)
             candidate_review_burden = _review_burden(candidate_report)
             candidate_weighted_severity = _weighted_severity(candidate_report)
+            candidate_contribution = _contribution_scores(candidate_report)
+            candidate_integrity = _integrity_scores(candidate_report)
             human_shift = _human_shift_score(
                 original_report_dict,
                 candidate_report,
@@ -6433,6 +6434,10 @@ def run_rewrite_pipeline(
                     if isinstance(candidate_ai, (int, float)) else None
                 ),
                 "writing_quality": candidate_wq,
+                "human_contribution": candidate_contribution.get("human"),
+                "ai_transformation": candidate_contribution.get("ai_transformation"),
+                "ai_authorship": candidate_integrity.get("ai_authorship"),
+                "grounding_quality_risk": candidate_integrity.get("grounding"),
                 "findings": _finding_total(candidate_report),
                 "review_burden": candidate_review_burden,
                 "weighted_severity": candidate_weighted_severity,
@@ -6448,6 +6453,40 @@ def run_rewrite_pipeline(
                 target=ai_first_target,
                 required_min_ai=ai_first_required_min_ai,
             )
+            authenticity_status = _authenticity_gate_status(
+                original_report_dict,
+                candidate_report,
+                candidate != text,
+                original_review_burden=original_review_burden,
+                candidate_review_burden=candidate_review_burden,
+                original_weighted_severity=original_severity,
+                candidate_weighted_severity=candidate_weighted_severity,
+                min_human_gain=_float_env("DRAFTPROOF_AI_SEARCH_MIN_HUMAN_GAIN", 1.0),
+                min_ai_transformation_drop=_float_env(
+                    "DRAFTPROOF_AI_SEARCH_MIN_AI_TRANSFORM_DROP",
+                    1.0,
+                ),
+                drift_similarity=candidate_eval.get("drift_similarity"),
+            )
+            incremental_authenticity_selectable = bool(
+                _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_INCREMENTAL_AUTHENTICITY", True)
+                and authenticity_status.get("candidate_progress")
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("critical_high_regressed")
+                and not authenticity_status.get("review_burden_regressed")
+                and not authenticity_status.get("weighted_severity_regressed")
+            )
+            if (
+                not selection_status.get("selectable")
+                and incremental_authenticity_selectable
+            ):
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "reason": "accepted_incremental_authenticity_progress",
+                    "authenticity_incremental": True,
+                })
+            selection_status["authenticity_gate"] = authenticity_status
             selection_status["human_shift_score"] = human_shift.get("score")
             selection_status["human_shift_components"] = human_shift.get("components")
             candidate_eval["selection_status"] = selection_status
@@ -7101,7 +7140,7 @@ def run_rewrite_pipeline(
             result.summary.setdefault("saved_contract_notes", []).append(
                 "AI-Mitigation authenticity gate kept the rewrite because the contribution score moved toward Human without review-burden or severity regression."
             )
-    ai_first_reference = saved_ai if saved_ai is not None else original_ai
+    ai_first_reference = original_ai if original_ai is not None else saved_ai
     ai_first_gate = _ai_first_gate_status(
         ai_first_reference,
         rewritten_ai,
@@ -7113,7 +7152,19 @@ def run_rewrite_pipeline(
     ai_first_delta = ai_first_gate["delta"]
     ai_first_success = ai_first_gate["success"]
     ai_first_required = ai_first_gate["required"]
-    if ai_first_required and not ai_first_success and not authenticity_mitigation_selected:
+    ai_search_selected_by_authenticity = bool(
+        ai_search_selected
+        and (
+            ((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
+            .get("authenticity_incremental")
+        )
+    )
+    if (
+        ai_first_required
+        and not ai_first_success
+        and not authenticity_mitigation_selected
+        and not ai_search_selected_by_authenticity
+    ):
         delta_text = f"{ai_first_delta:.2f}" if isinstance(ai_first_delta, (int, float)) else "unknown"
         regression_reasons.append(
             f"ai_first_gate_failed {ai_first_reference}->{rewritten_ai} "
