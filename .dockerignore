@@ -14,3 +14,9 @@ draftproof-frontend/node_modules
 .claude
 .vscode
 .idea
+
+# Local scan/rewrite artifacts
+/report*.json
+/report*.pdf
+/rewrite*.pdf
+/sample.json

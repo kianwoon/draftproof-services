@@ -8,6 +8,7 @@ Run:  cd poc && python test_rewrite_v2.py
 
 import sys
 import os
+import re
 import tempfile
 from types import SimpleNamespace
 
@@ -59,11 +60,25 @@ from rewrite_pipeline import (
     _ai_search_marked_grounding_candidates,
     _clear_stale_rollback_for_kept_ai_mitigation,
     _ai_search_fast_accept_reason,
+    _ai_search_candidate_selection_status,
     _review_marker_notes,
     _ai_candidate_quality_reject_reason,
     _source_repair_brief,
     _ai_search_prompt,
+    _ai_search_feedback_prompt,
     _allow_ai_search_llm_after_deterministic,
+    _load_local_env,
+    _repair_candidate_source_damage,
+    _source_repair_drift_false_positive,
+    _ai_search_protected_loss_reason,
+    _ai_search_drift_false_positive,
+    _ai_search_entity_drift_scan_allowed,
+    _scan_scope_summary,
+    _paragraph_component_targets,
+    _paragraph_component_prompt,
+    _extract_paragraph_component_candidates,
+    _clean_paragraph_component_candidate,
+    _splice_paragraph,
 )
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
@@ -815,6 +830,18 @@ assert_test(
     cross_ai_gate["required"] and cross_ai_gate["success"],
     "AI-first gate accepts crossing below 60 percent",
 )
+tiny_search_status = _ai_search_candidate_selection_status(57.78, 57.72, True)
+assert_test(
+    tiny_search_status["improved"]
+    and not tiny_search_status["selectable"]
+    and tiny_search_status["reason"] == "best_candidate_below_required_ai_drop",
+    "AI search tracks tiny score drops without selecting them as mitigation success",
+)
+meaningful_search_status = _ai_search_candidate_selection_status(57.78, 52.50, True)
+assert_test(
+    meaningful_search_status["selectable"],
+    "AI search selects candidates only after the required AI drop is met",
+)
 
 ai_search_candidates = _ai_search_marked_grounding_candidates(
     "The system needs a practical method for training. "
@@ -862,6 +889,21 @@ assert_test(
     _ai_candidate_quality_reject_reason("Introduction Inclusive learning design starts here."),
     "AI search rejects merged heading text",
 )
+assert_test(
+    _ai_candidate_quality_reject_reason(
+        "I encourage open discussion so learners can With only six learners in my current HBB26 intake, smaller classes help. "
+        "The rest of the document continues normally with enough words to form a candidate."
+    ) == "dangling_sentence_fragment_join",
+    "AI search rejects dangling sentence-fragment joins",
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(
+        "With only six learners in my current HBB26 intake, smaller class sizes let me observe technique closely. "
+        "The lesson continues with another sentence about practice and assessment. "
+        "With only six learners in my current HBB26 intake, smaller class sizes let me observe technique closely."
+    ).startswith("repeated_long_sequence"),
+    "AI search rejects repeated long text sequences inside candidates",
+)
 damaged_source = (
     "Maintaining standards while improving access Inclusive learning design does not lower the standard. "
     "ith only six learners, I can watch the technique more closely. "
@@ -878,6 +920,282 @@ assert_test(
     "Source repair requirements" in repair_prompt and "remove accidental duplicate fragments" in repair_prompt,
     "AI search prompt tells LLM to repair damaged source text",
 )
+repaired_candidate, repair_notes = _repair_candidate_source_damage(
+    "Introduction Inclusive learning design starts here. "
+    "ith only six learners, I can observe closely. "
+    "This does not simplify the work, but it clarifies the learning steps. "
+    "This does not simplify the work, but it clarifies the learning steps. "
+    "Conclusion This review ends here."
+)
+assert_test(
+    not re.search(r"\bith only\b", repaired_candidate, re.I)
+    and "Introduction Inclusive" not in repaired_candidate
+    and "Conclusion This" not in repaired_candidate,
+    "AI search repairs inherited source damage before candidate gates",
+)
+assert_test(
+    "fixed_broken_with_fragment" in repair_notes
+    and "normalized_with_only_phrase" in repair_notes
+    and any(note.startswith("split_merged_heading") for note in repair_notes),
+    "AI search records source damage repairs on candidates",
+)
+assert_test(
+    "removed_duplicate_sentences:1" in repair_notes
+    and repaired_candidate.count("This does not simplify the work") == 1,
+    "AI search removes repeated exact sentences before candidate gates",
+)
+overlap_damaged, overlap_notes = _repair_candidate_source_damage(
+    "With only six learners in my current HBB26 intake, smaller class sizes let me observe technique. "
+    "I encourage open discussion so learners can With only six learners in my current HBB26 intake, smaller class sizes let me observe technique. "
+    "I encourage open discussion so learners can describe how they perceive the haircut shape. "
+    "describe how they perceive the haircut shape. "
+    "Learners gain confidence when their ideas are acknowledged. "
+    "A competent learner can explain the steps, identify the guide, check balance, adjust Learners gain confidence when their ideas are acknowledged. "
+    "A competent learner can explain the steps, identify the guide, check balance, adjust projection, and apply the technique to real clients. "
+    "projection, and apply the technique to real clients."
+)
+assert_test(
+    "learners can With only" not in overlap_damaged
+    and "adjust Learners gain" not in overlap_damaged
+    and not re.search(r"(?<!can )describe how they perceive", overlap_damaged)
+    and overlap_damaged.count("projection, and apply") == 1,
+    "AI search repairs overlapping fragment damage before quality gates",
+)
+assert_test(
+    any(note.startswith("removed_dangling_prefix") for note in overlap_notes)
+    and any(note.startswith("removed_duplicate_fragments") for note in overlap_notes),
+    "AI search records overlapping fragment repairs",
+)
+assert_test(
+    _source_repair_drift_false_positive(
+        "inclusive learning design in certificate iii hairdressing",
+        ["lost_named_entity: 'Inclusive Learning Design'"],
+    ),
+    "AI search relaxes capitalization-only named entity drift after source repair",
+)
+assert_test(
+    _source_repair_drift_false_positive(
+        "Inclusive learning design in Certificate III Hairdressing.",
+        ["lost_named_entity: 'Hairdressing Introduction Inclusive'"],
+    ),
+    "AI search relaxes merged-heading named entity drift after source repair",
+)
+assert_test(
+    not _source_repair_drift_false_positive(
+        "Inclusive learning design.",
+        ["citation_lost: '(CESE, 2017)'"],
+    ),
+    "AI search does not relax citation drift after source repair",
+)
+protected_original = (
+    "CESE (2017) explains the issue. "
+    "He discusses practice-based knowledge (pp. 149-150). "
+    "A learner may say “I don’t know”."
+)
+protected_candidate = (
+    "CESE (2017) explains the issue differently. "
+    "He discusses practice-based knowledge (pp. 149-150). "
+    "A learner may say \"I don't know\"."
+)
+assert_test(
+    not _ai_search_protected_loss_reason(
+        protected_original,
+        protected_candidate,
+        detect_protected_spans(protected_original),
+    ),
+    "AI search protected check allows quote and citation punctuation normalization",
+)
+assert_test(
+    _ai_search_protected_loss_reason(
+        protected_original,
+        protected_candidate.replace("2017", "2018", 1),
+        detect_protected_spans(protected_original),
+    ).startswith("number_lost"),
+    "AI search protected check still rejects lost numeric protected spans",
+)
+assert_test(
+    _ai_search_drift_false_positive(
+        "Inclusive Certificate III Hairdressing content with learners and the centre citation retained.",
+        [
+            "lost_named_entity: 'Hairdressing Introduction Inclusive'",
+            "lost_named_entity: 'With'",
+            "lost_named_entity: 'Learners'",
+            "lost_named_entity: 'The Centre'",
+        ],
+        0.95,
+    ),
+    "AI search relaxes high-similarity entity noise from merged headings and sentence starts",
+)
+assert_test(
+    not _ai_search_drift_false_positive(
+        "Certificate III Hairdressing content.",
+        ["lost_named_entity: 'Box Hill Institute'"],
+        0.95,
+    ),
+    "AI search does not relax missing real named entities",
+)
+assert_test(
+    not _ai_search_drift_false_positive(
+        "Certificate III Hairdressing content with learners.",
+        ["lost_named_entity: 'Learners'"],
+        0.70,
+    ),
+    "AI search does not relax low-similarity drift",
+)
+assert_test(
+    _ai_search_entity_drift_scan_allowed(
+        "The learner content keeps DEWR (2026), CESE (2017), and the haircutting claims.",
+        [
+            "lost_named_entity: 'With'",
+            "lost_named_entity: 'The Centre'",
+            "lost_named_entity: 'Competency'",
+        ],
+        0.95,
+    ),
+    "AI search can score high-similarity candidates with non-critical entity-only drift",
+)
+assert_test(
+    not _ai_search_entity_drift_scan_allowed(
+        "Certificate III Hairdressing content.",
+        ["lost_named_entity: 'Box Hill Institute'"],
+        0.95,
+    ),
+    "AI search still blocks scoring candidates that lose critical entities",
+)
+feedback_prompt = _ai_search_feedback_prompt(
+    "Original source text.",
+    {"ai_risk_badge": {"ai_components": {"generic_assertion_risk": 90.0}}},
+    {
+        "reference_ai": 57.78,
+        "candidates": [
+            {
+                "strategy": "deterministic_process_anchor_generic",
+                "ai": 57.83,
+                "ai_delta_vs_reference": -0.05,
+                "writing_quality": 47.18,
+                "findings": 54,
+            },
+            {
+                "strategy": "syntax_demolition",
+                "reason": "semantic_drift lost_named_entity: 'With'",
+                "drift_reasons": ["lost_named_entity: 'With'"],
+            },
+        ],
+    },
+    1,
+)
+assert_test(
+    "Reference AI score: 57.78" in feedback_prompt
+    and "Target AI score" in feedback_prompt
+    and "AI=57.83" in feedback_prompt
+    and "generic_assertion_risk=90.00%" in feedback_prompt
+    and "semantic_drift" in feedback_prompt,
+    "AI search feedback prompt gives LLM actual scores and rejection reasons",
+)
+paragraph_search_text = (
+    "Short title.\n\n"
+    "Learners should understand the process because this is important for competency. "
+    "This can support learning and helps students improve. "
+    "When learners pause, they may need a short moment to process what they have just practised. "
+    "The process should also help learners become more confident and capable in assessment. "
+    "This means the educator needs to provide guidance that supports learning and improves outcomes. "
+    "These claims sound broad unless the paragraph connects them to the learner's actual cutting task.\n\n"
+    "CESE (2017) explains working memory limits in practical learning."
+)
+paragraph_search_json = {
+    "ai_risk_badge": {
+        "ai_components": {
+            "generic_assertion_risk": 90.0,
+            "qualifying_text_ai_density": 70.0,
+        }
+    },
+    "rewrite_edit_briefs": [
+        {
+            "target_sentence": (
+                "When learners pause, they may need a short moment to process what they have just practised."
+            ),
+            "signals": {
+                "score": 0.50,
+                "predictable_token_spans": ["they may", "to process"],
+            },
+            "domain_anchors": ["learners", "pause", "practised"],
+        }
+    ],
+}
+paragraph_targets = _paragraph_component_targets(paragraph_search_text, paragraph_search_json, limit=2)
+assert_test(
+    paragraph_targets
+    and paragraph_targets[0]["index"] == 1
+    and paragraph_targets[0]["drivers"]["rewrite_brief_count"] == 1,
+    "paragraph component search ranks paragraph-level AI drivers",
+)
+paragraph_prompt = _paragraph_component_prompt(
+    paragraph_targets[0],
+    paragraph_search_json,
+    1,
+    reference_ai=57.78,
+    required_ai_drop=5.0,
+    target_ai_score=52.78,
+    candidate_count=3,
+)
+assert_test(
+    "TARGET PARAGRAPH" in paragraph_prompt
+    and "generic_assertion_risk=90.00%" in paragraph_prompt
+    and "target AI<=52.78" in paragraph_prompt
+    and "Return exactly 3 alternative replacement paragraphs" in paragraph_prompt,
+    "paragraph component prompt passes score drivers and scoped rewrite instruction",
+)
+extracted_paragraph_candidates = _extract_paragraph_component_candidates(
+    "<CANDIDATE_1>\nFirst replacement paragraph.\n</CANDIDATE_1>\n"
+    "<CANDIDATE_2>\nSecond replacement paragraph.\n</CANDIDATE_2>\n"
+    "<CANDIDATE_3>\nThird replacement paragraph.\n</CANDIDATE_3>",
+    3,
+)
+assert_test(
+    extracted_paragraph_candidates == [
+        "First replacement paragraph.",
+        "Second replacement paragraph.",
+        "Third replacement paragraph.",
+    ],
+    "paragraph component parser extracts batched tagged candidates",
+)
+clean_paragraph, clean_reason = _clean_paragraph_component_candidate(
+    "In practice, learners pause after the cut and compare the guide before the next section. "
+    "The educator can ask them to point to the line they followed, name the section they just cut, "
+    "and decide whether the next subsection should be smaller before they continue. "
+    "That check ties the learning claim to a visible cutting decision instead of leaving it as a broad statement about improvement.",
+    paragraph_targets[0]["paragraph"],
+)
+assert_test(
+    clean_paragraph and not clean_reason,
+    "paragraph component cleaner accepts a replacement paragraph",
+)
+spliced = _splice_paragraph(paragraph_search_text, paragraph_targets[0]["index"], clean_paragraph)
+assert_test(
+    clean_paragraph in spliced
+    and "Short title." in spliced
+    and "CESE (2017)" in spliced,
+    "paragraph component splice patches only the target paragraph into full text",
+)
+scope_summary = _scan_scope_summary({
+    "predictability": {
+        "sentences": [{"sentence": "one"}, {"sentence": "two"}],
+        "all_sentences": [{"sentence": "one"}, {"sentence": "two"}],
+        "score_derivation": {
+            "included_sentence_count": 2,
+            "raw_mean": 0.34851,
+        },
+    }
+})
+assert_test(
+    scope_summary == {
+        "predictability_scored_sentences": 2,
+        "predictability_total_sentences": 2,
+        "predictability_included_sentence_count": 2,
+        "predictability_raw_mean": 0.3485,
+    },
+    "AI search records predictability scan scope for scored candidates",
+)
 original_allow_env = os.environ.get("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC")
 os.environ.pop("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", None)
 assert_test(
@@ -893,6 +1211,41 @@ if original_allow_env is None:
     os.environ.pop("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", None)
 else:
     os.environ["DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC"] = original_allow_env
+with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as env_file:
+    env_file.write("OPENROUTER_API_KEY=test-key-from-file\n")
+    env_file.write("LLM_MODEL=test-model-from-file\n")
+    env_file.write("# ignored comment\n")
+    env_path = env_file.name
+original_key_env = os.environ.get("OPENROUTER_API_KEY")
+original_model_env = os.environ.get("LLM_MODEL")
+os.environ.pop("OPENROUTER_API_KEY", None)
+os.environ.pop("LLM_MODEL", None)
+loaded_env_keys = _load_local_env(env_path)
+assert_test(
+    os.environ.get("OPENROUTER_API_KEY") == "test-key-from-file"
+    and os.environ.get("LLM_MODEL") == "test-model-from-file"
+    and "OPENROUTER_API_KEY" in loaded_env_keys,
+    "rewrite pipeline loads local .env keys when shell export is missing",
+)
+os.environ["OPENROUTER_API_KEY"] = "already-exported"
+loaded_again = _load_local_env(env_path)
+assert_test(
+    os.environ.get("OPENROUTER_API_KEY") == "already-exported"
+    and "OPENROUTER_API_KEY" not in loaded_again,
+    "rewrite pipeline .env loader does not override exported keys",
+)
+if original_key_env is None:
+    os.environ.pop("OPENROUTER_API_KEY", None)
+else:
+    os.environ["OPENROUTER_API_KEY"] = original_key_env
+if original_model_env is None:
+    os.environ.pop("LLM_MODEL", None)
+else:
+    os.environ["LLM_MODEL"] = original_model_env
+try:
+    os.unlink(env_path)
+except OSError:
+    pass
 
 stale_ai_summary = {
     "rollback_applied": True,
