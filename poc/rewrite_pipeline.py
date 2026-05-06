@@ -919,6 +919,7 @@ def _micro_texture_repair_prompt(
     *,
     max_sentences: int = 1,
     exclude_sentence_indexes: set[int] | list[int] | tuple[int, ...] | None = None,
+    mode: str = "authorship_texture_repair",
 ) -> tuple[str, dict]:
     """Build an operation-level prompt for one local authorship texture patch."""
     window = _micro_texture_window(
@@ -936,17 +937,45 @@ def _micro_texture_repair_prompt(
         "target_window": frozen_window,
         "required_placeholders": [item["placeholder"] for item in mapping if item["placeholder"] in frozen_window],
     }
+    mode_name = str(mode or "authorship_texture_repair").strip().lower()
+    if mode_name == "authorship_suppression_repair":
+        objective = (
+            "DraftProof micro-local AUTHORSHIP_SUPPRESSION_REPAIR.\n"
+            "Objective: reduce AI Authorship first. Human Contribution is only a bonus.\n"
+            "Patch only the target sentence window. Do not improve the whole section.\n"
+        )
+        allowed = (
+            "- shorten_over_complete_explanation\n"
+            "- break_repeated_sentence_cadence\n"
+            "- remove_neat_claim_explain_conclude_flow\n"
+            "- reduce_polished_transition\n"
+            "- leave one clear point slightly less over-explained\n"
+        )
+        forbidden_extra = (
+            "- adding anchors\n"
+            "- adding first-person\n"
+            "- expanding explanations\n"
+            "- improving clarity by smoothing every link\n"
+        )
+    else:
+        objective = (
+            "DraftProof micro-local AUTHORSHIP_TEXTURE_REPAIR.\n"
+            "Patch only the target sentence window. Do not rewrite the surrounding section.\n"
+        )
+        allowed = (
+            "- shorten_transition\n"
+            "- reduce_explanation\n"
+            "- alter_sentence_length\n"
+            "- reduce_connector_strength\n"
+            "- slight_pacing_asymmetry\n"
+        )
+        forbidden_extra = ""
     prompt = (
-        "DraftProof micro-local AUTHORSHIP_TEXTURE_REPAIR.\n"
-        "Patch only the target sentence window. Do not rewrite the surrounding section.\n"
+        objective +
         "Return only the replacement sentence window, not the full section.\n\n"
         f"Repair context:\n{json.dumps(frozen_context, ensure_ascii=False)}\n\n"
         "Allowed operations:\n"
-        "- shorten_transition\n"
-        "- reduce_explanation\n"
-        "- alter_sentence_length\n"
-        "- reduce_connector_strength\n"
-        "- slight_pacing_asymmetry\n\n"
+        f"{allowed}\n"
         "Forbidden operations:\n"
         "- reorder_paragraph\n"
         "- add_new_claim\n"
@@ -954,10 +983,11 @@ def _micro_texture_repair_prompt(
         "- rewrite_whole_sentence_cluster\n"
         "- add examples, sources, dates, numbers, institutions, citations, or evidence\n"
         "- add typos, fake randomness, or grammar damage\n\n"
+        f"{forbidden_extra}"
         "Hard constraints:\n"
         "- Preserve meaning and all [[DP_ANCHOR_###]] placeholders exactly.\n"
         "- Keep replacement within about 70% to 130% of the target window word count.\n"
-        "- Prefer less clean cadence over polished explanation.\n"
+        "- Prefer lower authorship regularity over polished explanation.\n"
         "- Output prose only."
     )
     return prompt, {
@@ -981,6 +1011,145 @@ def _clean_micro_texture_candidate(output: str, repair_info: dict) -> tuple[str,
     if target_words and candidate_words > max(8, int(target_words * 1.30)):
         return "", f"micro_texture_candidate_too_long {candidate_words}>{int(target_words * 1.30)}"
     return text, ""
+
+
+_MASKED_REPAIR_GENERIC_RE = re.compile(
+    r"\b(?:Furthermore|Moreover|Additionally|In conclusion|Overall|Therefore|However|"
+    r"It is important to note that|This highlights|This shows|This demonstrates|"
+    r"plays? a crucial role|significant impact|important|crucial|essential)\b",
+    re.I,
+)
+
+
+def _masked_span_repair_prompt(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    exclude_sentence_indexes: set[int] | list[int] | tuple[int, ...] | None = None,
+) -> tuple[str, dict]:
+    """Mask only a high-risk local span so generation cannot rewrite the section."""
+    window = _micro_texture_window(
+        source_text,
+        raw_json,
+        max_sentences=1,
+        exclude_sentence_indexes=exclude_sentence_indexes,
+    )
+    sentence = str(window.get("text") or "")
+    if not sentence:
+        return "", {"reason": "no_mask_window", "window": window}
+
+    mask_start = mask_end = -1
+    mask_text = ""
+    match = _MASKED_REPAIR_GENERIC_RE.search(sentence)
+    if match:
+        mask_start, mask_end = match.span()
+        mask_text = match.group(0)
+    if mask_start < 0:
+        for brief in (raw_json or {}).get("rewrite_edit_briefs") or []:
+            if not isinstance(brief, dict) or brief.get("sentence_index") != window.get("start"):
+                continue
+            for token in brief.get("problem_tokens") or []:
+                token_text = str(token or "").strip()
+                if len(token_text) < 4:
+                    continue
+                pos = sentence.lower().find(token_text.lower())
+                if pos >= 0:
+                    mask_start, mask_end = pos, pos + len(token_text)
+                    mask_text = sentence[pos:mask_end]
+                    break
+            if mask_start >= 0:
+                break
+    if mask_start < 0:
+        words = list(re.finditer(r"\b[\w'-]+\b", sentence))
+        if not words:
+            return "", {"reason": "no_maskable_span", "window": window}
+        # Last resort: mask a short opening phrase, not the whole sentence.
+        first = words[0]
+        last = words[min(2, len(words) - 1)]
+        mask_start, mask_end = first.start(), last.end()
+        mask_text = sentence[mask_start:mask_end]
+
+    masked_sentence = f"{sentence[:mask_start]}[[MASK]]{sentence[mask_end:]}"
+    prompt = (
+        "DraftProof partial masked regeneration.\n"
+        "Replace only [[MASK]] in the sentence. Do not rewrite any other words.\n"
+        "Objective: reduce AI Authorship texture without semantic expansion.\n\n"
+        f"Masked sentence: {masked_sentence}\n"
+        f"Original masked span: {mask_text}\n\n"
+        "Rules:\n"
+        "- Return only the replacement text for [[MASK]].\n"
+        "- Replacement may be empty if deleting the span reads naturally.\n"
+        "- Use at most 8 words.\n"
+        "- Do not add claims, evidence, examples, citations, numbers, names, first-person, or explanation.\n"
+        "- Prefer plain wording or no connector over polished academic phrasing."
+    )
+    return prompt, {
+        "schema_version": "masked_span_repair.v1",
+        "window": window,
+        "sentence": sentence,
+        "masked_sentence": masked_sentence,
+        "mask_text": mask_text,
+        "mask_start": mask_start,
+        "mask_end": mask_end,
+    }
+
+
+def _clean_masked_span_replacement(output: str) -> str:
+    text = _clean_section_candidate(output or "", "")
+    text = re.sub(r"\[\[/?MASK\]\]", "", text, flags=re.I).strip()
+    text = text.strip("\"'` ")
+    words = re.findall(r"\b[\w'-]+\b", text)
+    if len(words) > 8:
+        return " ".join(words[:8])
+    return text
+
+
+def _deterministic_masked_span_replacements(mask_text: str) -> list[str]:
+    """Return safe local replacements before spending an LLM call.
+
+    These are intentionally tiny span-level alternatives, not sentence rewrites.
+    The scanner still decides whether any candidate is kept.
+    """
+    key = re.sub(r"\s+", " ", str(mask_text or "").strip()).lower()
+    replacements = {
+        "important": ["vital", "needed", "useful"],
+        "this is a": ["A"],
+        "this has created": ["This creates", "It creates"],
+        "this can encourage": ["This may lead to", "It can lead to"],
+        "this makes assessment": ["Assessment becomes"],
+        "in other words": ["Put simply", "Simply"],
+        "today's education": ["The education"],
+        "today’s education": ["The education"],
+        "students received knowledge": ["Students learned"],
+        "a student with": ["One student with"],
+    }.get(key, [])
+    unique: list[str] = []
+    for item in replacements:
+        clean = _clean_masked_span_replacement(item)
+        if clean not in unique:
+            unique.append(clean)
+    return unique
+
+
+def _apply_masked_span_replacement(source_text: str, repair_info: dict, replacement: str) -> str:
+    sentence = str((repair_info or {}).get("sentence") or "")
+    start = int((repair_info or {}).get("mask_start") or 0)
+    end = int((repair_info or {}).get("mask_end") or 0)
+    if not sentence or end < start:
+        return source_text
+    replacement = str(replacement or "").strip()
+    repaired_sentence = f"{sentence[:start]}{replacement}{sentence[end:]}"
+    repaired_sentence = re.sub(r"\s+([,.;:!?])", r"\1", repaired_sentence)
+    repaired_sentence = re.sub(r"\s{2,}", " ", repaired_sentence).strip()
+    if sentence and sentence in str(source_text or ""):
+        return str(source_text or "").replace(sentence, repaired_sentence, 1)
+    window = (repair_info or {}).get("window") or {}
+    return _splice_sentence_window(
+        source_text,
+        int(window.get("start") or 0),
+        int(window.get("end") or 0),
+        repaired_sentence,
+    )
 
 
 def _locality_score(original_text: str, candidate_text: str) -> dict:
@@ -1625,6 +1794,16 @@ def _authenticity_gate_status(
         weighted_severity_delta=candidate_weighted_severity - original_weighted_severity,
     )
     human_shift_score = human_shift.get("score")
+    authorship_cost_per_human_gain = (
+        round(max(0.0, -float(ai_authorship_delta)) / max(float(human_delta), 1.0), 3)
+        if isinstance(ai_authorship_delta, (int, float)) and isinstance(human_delta, (int, float))
+        else None
+    )
+    human_gain_with_authorship_regression = bool(
+        isinstance(human_delta, (int, float))
+        and human_delta > 0
+        and ai_authorship_regressed
+    )
     min_human_shift_score = _float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_SHIFT_SCORE", 3.0)
     clears_human_shift_score = bool(
         isinstance(human_shift_score, (int, float))
@@ -1664,10 +1843,10 @@ def _authenticity_gate_status(
         reason = "accepted"
     elif not text_changed:
         reason = "unchanged_candidate"
-    elif not (clears_human_shift_score or positive_human_shift):
-        reason = "human_shift_score_too_low"
     elif ai_authorship_regression_blocked:
         reason = "ai_authorship_regressed"
+    elif not (clears_human_shift_score or positive_human_shift):
+        reason = "human_shift_score_too_low"
     elif critical_high_regressed:
         reason = "critical_high_regressed"
     elif review_regressed:
@@ -1692,6 +1871,13 @@ def _authenticity_gate_status(
         "ai_authorship_regressed": ai_authorship_regressed,
         "ai_authorship_regression_blocked": ai_authorship_regression_blocked,
         "ai_authorship_regression_tolerance": ai_authorship_regression_tolerance,
+        "human_gain_with_authorship_regression": human_gain_with_authorship_regression,
+        "false_positive_improvement": human_gain_with_authorship_regression,
+        "false_positive_improvement_reason": (
+            "human_gain_with_authorship_regression"
+            if human_gain_with_authorship_regression
+            else ""
+        ),
         "major_human_breakthrough": major_human_breakthrough,
         "target_human": target_human,
         "crosses_target_human": crosses_target_human,
@@ -1704,6 +1890,7 @@ def _authenticity_gate_status(
         "crosses_human_side": crosses_human_side,
         "human_shift_score": human_shift_score,
         "human_shift_components": human_shift.get("components"),
+        "authorship_cost_per_human_gain": authorship_cost_per_human_gain,
         "human_shift_weights": human_shift.get("weights"),
         "min_human_shift_score": min_human_shift_score,
         "clears_human_shift_score": clears_human_shift_score,
@@ -1783,12 +1970,16 @@ def _generation_candidate_diagnostics(candidates: list[dict] | None, *, limit: i
             "ai_transformation_delta": candidate.get("ai_transformation_delta"),
             "ai_authorship_delta": candidate.get("ai_authorship_delta"),
             "human_shift_score": candidate.get("human_shift_score"),
+            "authorship_cost_per_human_gain": candidate.get("authorship_cost_per_human_gain"),
             "findings": candidate.get("findings"),
             "review_burden": candidate.get("review_burden"),
             "weighted_severity": candidate.get("weighted_severity"),
             "gate_success": gate.get("success"),
             "gate_reason": gate.get("reason"),
             "gate_ai_authorship_regression_blocked": gate.get("ai_authorship_regression_blocked"),
+            "gate_human_gain_with_authorship_regression": gate.get("human_gain_with_authorship_regression"),
+            "gate_false_positive_improvement": gate.get("false_positive_improvement"),
+            "gate_false_positive_improvement_reason": gate.get("false_positive_improvement_reason"),
             "gate_critical_high_regressed": gate.get("critical_high_regressed"),
             "gate_review_burden_regressed": gate.get("review_burden_regressed"),
             "gate_weighted_severity_regressed": gate.get("weighted_severity_regressed"),
@@ -2332,7 +2523,18 @@ def _staged_reconstruction_section_prompt(
         if anchor_lock_mapping
         else required_anchors
     )
-    if strategy_name == "human_gain_repair":
+    if strategy_name == "plain_student_voice_rebuild":
+        strategy_controls = [
+            "PLAIN_STUDENT_VOICE_REBUILD is active.",
+            "Write like a real student draft, not like a polished model answer.",
+            "Use simple vocabulary and direct sentences. Repeating ordinary words is acceptable.",
+            "Do not upgrade the essay into academic style. Do not add sophisticated connectors or balanced paragraph architecture.",
+            "Keep some uneven development: one idea may be short, another may be a little over-explained, and not every link needs a transition.",
+            "Avoid phrases such as rapidly evolving, crucial role, significant impact, furthermore, moreover, additionally, this highlights, and in conclusion.",
+            "Do not add new facts, citations, examples, dates, institutions, or personal events.",
+            "Preserve the same meaning and required anchors.",
+        ]
+    elif strategy_name == "human_gain_repair":
         strategy_controls = [
             "HUMAN_GAIN_REPAIR is active.",
             "Patch the section through controlled human-anchor amplification, not broad rewriting.",
@@ -2340,6 +2542,17 @@ def _staged_reconstruction_section_prompt(
             "Do not invent new concrete details. If a concrete detail is not in required anchors or context ledger, leave it out.",
             "Prefer one small reasoning trace and one workshop/process anchor over generic academic expansion.",
             "Keep mild unevenness and rough edges; do not make every sentence equally polished.",
+        ]
+    elif strategy_name == "authorship_distribution_repair":
+        strategy_controls = [
+            "AUTHORSHIP_DISTRIBUTION_REPAIR is active.",
+            "Primary target is lower AI Authorship, not prettier prose and not more explanation.",
+            "Avoid the polished essay route. Do not write claim -> explanation -> implication repeatedly.",
+            "Use distributional texture: one compressed sentence, one slightly longer causal sentence, one plain restart, and one under-explained but clear practical point.",
+            "Break clean transition chains. Use plain moves such as 'But', 'So', 'The issue is', or no transition when the link is obvious.",
+            "Reduce semantic uniformity by giving adjacent sentences different jobs: observation, limitation, consequence, then a narrow judgement.",
+            "Do not add new facts, examples, dates, institutions, personal events, citations, or evidence.",
+            "Do not add random errors, slang, typos, or artificial noise.",
         ]
     elif strategy_name == "authorship_texture_repair":
         strategy_controls = [
@@ -2350,6 +2563,15 @@ def _staged_reconstruction_section_prompt(
             "Reduce clean transition logic. Avoid neat claim -> explanation -> implication paragraph routes.",
             "Vary information density without adding facts: compress one idea, leave one practical point less over-explained.",
             "Keep acceptable local friction, but do not add typos, grammar damage, fake randomness, or invented details.",
+        ]
+    elif strategy_name in {"low_smoothness_rebuild", "asymmetric_paragraph_route"}:
+        strategy_controls = [
+            "LOW_SMOOTHNESS_AUTHORSHIP_REPAIR is active.",
+            "Keep meaning and anchors, but lower clean explanatory cadence.",
+            "Prefer uneven paragraph movement over balanced academic flow.",
+            "Use fewer connector phrases. Let some sentences sit next to each other without over-explaining the link.",
+            "Compress generic claims instead of expanding them.",
+            "Do not add fabricated grounding or decorative personal detail.",
         ]
     if anchor_lock_mapping:
         strategy_controls.append(
@@ -2695,6 +2917,20 @@ def _build_regeneration_blueprint(source_text: str, raw_json: dict | None, strat
         target_by_paragraph.setdefault(pid, []).append(segment)
 
     family_shapes = {
+        "plain_student_voice_rebuild": [
+            "simple_claim",
+            "plain_problem",
+            "short_reason",
+            "example_from_existing_context",
+            "limited_point",
+        ],
+        "authorship_distribution_repair": [
+            "plain_limit",
+            "offbeat_reasoning",
+            "short_restart",
+            "source_or_anchor_afterthought",
+            "bounded_point",
+        ],
         "evidence_first_rebuild": [
             "source_or_anchor_first",
             "problem_pressure",
@@ -3447,7 +3683,11 @@ def _reconstruction_drift_scan_allowed(candidate: str, reasons: list[str], simil
     marks differ or when the phrase is preserved without quotation marks; that
     should not block scanner scoring for reconstruction candidates.
     """
-    if not isinstance(candidate, str) or not reasons or similarity < 0.78:
+    if not isinstance(candidate, str) or not reasons:
+        return False
+    if all(str(reason).startswith("quote_lost:") for reason in reasons):
+        return similarity >= 0.70
+    if similarity < 0.78:
         return False
     candidate_l = re.sub(r"\s+", " ", candidate).lower()
     for reason in reasons:
@@ -4680,6 +4920,8 @@ def run_rewrite_pipeline(
             best_candidate_report = None
             best_candidate_gate = None
             best_candidate_eval = None
+            masked_span_selected = False
+            masked_optimizer_ran = False
             if source_repairs and source_for_mitigation.strip() != text.strip():
                 candidate_eval = {
                     "attempt": 0,
@@ -4769,6 +5011,309 @@ def run_rewrite_pipeline(
                     max_tokens=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_MAX_TOKENS", "6500")),
                     temperature=float(os.environ.get("DRAFTPROOF_AUTHENTICITY_TEMPERATURE", "0.7")),
                 ))
+                if _env_flag("DRAFTPROOF_MASKED_SPAN_OPTIMIZER", True):
+                    masked_optimizer_ran = True
+                    masked_limit = int(_float_env("DRAFTPROOF_MASKED_SPAN_CANDIDATES", 3.0))
+                    masked_limit = max(0, masked_limit)
+                    masked_baseline_report = original_report_dict
+                    if _env_flag("DRAFTPROOF_MASKED_SPAN_FRESH_BASELINE", True):
+                        try:
+                            scan_t0 = time.time()
+                            masked_baseline_report = _full_scan_report_dict(source_for_mitigation)
+                            stage_timings.append({
+                                "stage": "masked_span_fresh_baseline_scan",
+                                "seconds": round(time.time() - scan_t0, 3),
+                            })
+                        except Exception as exc:
+                            authenticity_summary.setdefault("masked_span_baseline_warning", str(exc))
+                            masked_baseline_report = original_report_dict
+                    masked_baseline_integrity = _integrity_scores(masked_baseline_report)
+                    masked_baseline_review_burden = _review_burden(masked_baseline_report)
+                    masked_baseline_severity = _weighted_severity(masked_baseline_report)
+                    masked_baseline_findings = _finding_total(masked_baseline_report)
+                    authenticity_summary["masked_span_baseline"] = {
+                        "mode": (
+                            "fresh_original_scan"
+                            if masked_baseline_report is not original_report_dict
+                            else result.summary.get("comparison_baseline", "saved_original_scan")
+                        ),
+                        "saved_ai": original_ai,
+                        "baseline_ai": _badge_ai(masked_baseline_report),
+                        "saved_findings": original_total,
+                        "baseline_findings": masked_baseline_findings,
+                        "saved_ai_authorship": integrity_original.get("ai_authorship"),
+                        "baseline_ai_authorship": masked_baseline_integrity.get("ai_authorship"),
+                    }
+                    current_masked_text = source_for_mitigation
+                    current_masked_report = masked_baseline_report
+                    current_masked_ai = _badge_ai(masked_baseline_report)
+                    current_masked_human = _contribution_scores(masked_baseline_report).get("human")
+                    current_masked_transform = _contribution_scores(masked_baseline_report).get("ai_transformation")
+                    current_masked_authorship = masked_baseline_integrity.get("ai_authorship")
+                    current_masked_findings = masked_baseline_findings
+                    masked_excluded: set[int] = set()
+                    masked_attempts: list[dict] = []
+                    for masked_index in range(1, masked_limit + 1):
+                        report_progress(
+                            min(88, 76 + masked_index),
+                            f"Trying masked-span mitigation {masked_index}/{masked_limit}",
+                        )
+                        prompt, repair_info = _masked_span_repair_prompt(
+                            current_masked_text,
+                            ctx.raw_json,
+                            exclude_sentence_indexes=masked_excluded,
+                        )
+                        window = repair_info.get("window") if isinstance(repair_info, dict) else {}
+                        sentence_index = window.get("start") if isinstance(window, dict) else None
+                        candidate_eval = {
+                            "attempt": f"masked.{masked_index}",
+                            "strategy": "masked_span_repair",
+                            "masked_span_repair": True,
+                            "passed_local_checks": False,
+                            "model": generator_model,
+                            "sentence_index": sentence_index,
+                            "mask_text": repair_info.get("mask_text") if isinstance(repair_info, dict) else None,
+                            "masked_sentence": repair_info.get("masked_sentence") if isinstance(repair_info, dict) else None,
+                        }
+                        if not prompt or sentence_index is None:
+                            candidate_eval["reason"] = repair_info.get("reason") if isinstance(repair_info, dict) else "no_mask_prompt"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            break
+                        replacements = _deterministic_masked_span_replacements(
+                            repair_info.get("mask_text") if isinstance(repair_info, dict) else ""
+                        )
+                        if _env_flag("DRAFTPROOF_MASKED_SPAN_LLM_FALLBACK", False):
+                            try:
+                                authenticity_summary["llm_calls"] += 1
+                                response = gateway.chat(
+                                    prompt,
+                                    system="Return only replacement text for [[MASK]].",
+                                    temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.45")),
+                                    max_tokens=int(os.environ.get("DRAFTPROOF_MASKED_SPAN_MAX_TOKENS", "1000")),
+                                    top_p=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_P"),
+                                    top_k=_int_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_K"),
+                                    presence_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_PRESENCE_PENALTY"),
+                                    frequency_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_FREQUENCY_PENALTY"),
+                                )
+                                llm_replacement = _clean_masked_span_replacement(response.content or "")
+                                if llm_replacement and llm_replacement not in replacements:
+                                    replacements.append(llm_replacement)
+                            except Exception as exc:
+                                candidate_eval.setdefault("replacement_errors", []).append(f"llm_error {exc}")
+                        if not replacements:
+                            candidate_eval["reason"] = "no_mask_replacement_candidates"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            masked_excluded.add(int(sentence_index))
+                            continue
+                        candidate_eval["replacement_candidates"] = replacements
+                        accepted_eval = None
+                        rejected_replacement_evals: list[dict] = []
+                        for replacement_index, replacement in enumerate(replacements, start=1):
+                            candidate_eval_try = dict(candidate_eval)
+                            candidate_eval_try["replacement_index"] = replacement_index
+                            candidate_eval_try["replacement"] = replacement
+                            candidate = _apply_masked_span_replacement(current_masked_text, repair_info, replacement)
+                            candidate_eval_try["candidate_length"] = len(candidate or "")
+                            candidate_eval_try["candidate_word_count"] = _text_word_count(candidate or "")
+                            if not candidate or candidate == current_masked_text:
+                                candidate_eval_try["reason"] = "empty_or_unchanged_candidate"
+                                rejected_replacement_evals.append(candidate_eval_try)
+                                continue
+                            candidate_eval_try["repair_aggression"] = _repair_aggression_score(current_masked_text, candidate)
+                            candidate_eval_try["locality"] = _locality_score(current_masked_text, candidate)
+                            protected_loss = _ai_search_protected_loss_reason(
+                                source_for_mitigation,
+                                candidate,
+                                source_protected,
+                            )
+                            if protected_loss:
+                                candidate_eval_try["reason"] = "protected_span_lost " + protected_loss
+                                rejected_replacement_evals.append(candidate_eval_try)
+                                continue
+                            drift = check_semantic_drift(source_for_mitigation, candidate, threshold=0.15)
+                            candidate_eval_try["drift_similarity"] = round(drift.similarity, 3)
+                            if not drift.accepted:
+                                candidate_eval_try["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
+                                candidate_eval_try["drift_reasons"] = drift.reasons[:10]
+                                rejected_replacement_evals.append(candidate_eval_try)
+                                continue
+                            candidate_eval_try["passed_local_checks"] = True
+                            try:
+                                scan_t0 = time.time()
+                                candidate_report = _full_scan_report_dict(candidate)
+                                candidate_eval_try["scan_seconds"] = round(time.time() - scan_t0, 3)
+                            except Exception as exc:
+                                candidate_eval_try["passed_local_checks"] = False
+                                candidate_eval_try["reason"] = f"candidate_scan_error {exc}"
+                                rejected_replacement_evals.append(candidate_eval_try)
+                                continue
+                            candidate_review_burden = _review_burden(candidate_report)
+                            candidate_severity = _weighted_severity(candidate_report)
+                            gate = _authenticity_gate_status(
+                                masked_baseline_report,
+                                candidate_report,
+                                candidate != text,
+                                original_review_burden=masked_baseline_review_burden,
+                                candidate_review_burden=candidate_review_burden,
+                                original_weighted_severity=masked_baseline_severity,
+                                candidate_weighted_severity=candidate_severity,
+                                min_human_gain=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_GAIN", 2.0),
+                                min_ai_transformation_drop=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_TRANSFORM_DROP", 2.0),
+                                drift_similarity=candidate_eval_try.get("drift_similarity"),
+                            )
+                            candidate_ai = _badge_ai(candidate_report)
+                            candidate_human = gate.get("candidate_human")
+                            candidate_transform = gate.get("candidate_ai_transformation")
+                            candidate_authorship = gate.get("candidate_ai_authorship")
+                            candidate_findings = _finding_total(candidate_report)
+                            candidate_eval_try.update({
+                                "ai": candidate_ai,
+                                "writing_quality": _badge_wq(candidate_report),
+                                "human_contribution": candidate_human,
+                                "ai_transformation": candidate_transform,
+                                "ai_authorship": candidate_authorship,
+                                "human_delta": gate.get("human_delta"),
+                                "ai_transformation_delta": gate.get("ai_transformation_delta"),
+                                "ai_authorship_delta": gate.get("ai_authorship_delta"),
+                                "human_shift_score": gate.get("human_shift_score"),
+                                "human_shift_components": gate.get("human_shift_components"),
+                                "authorship_cost_per_human_gain": gate.get("authorship_cost_per_human_gain"),
+                                "findings": candidate_findings,
+                                "review_burden": candidate_review_burden,
+                                "weighted_severity": candidate_severity,
+                                "scan_scope": _scan_scope_summary(candidate_report),
+                                "gate": gate,
+                            })
+                            fresh_authorship_capped = bool(
+                                isinstance(candidate_authorship, (int, float))
+                                and isinstance(masked_baseline_integrity.get("ai_authorship"), (int, float))
+                                and candidate_authorship <= masked_baseline_integrity.get("ai_authorship")
+                            )
+                            saved_authorship_capped = bool(
+                                not isinstance(integrity_original.get("ai_authorship"), (int, float))
+                                or (
+                                    isinstance(candidate_authorship, (int, float))
+                                    and candidate_authorship <= integrity_original.get("ai_authorship")
+                                )
+                            )
+                            authorship_capped = bool(fresh_authorship_capped and saved_authorship_capped)
+                            baseline_findings_non_regression = candidate_findings <= current_masked_findings
+                            saved_findings_non_regression = candidate_findings <= original_total
+                            findings_non_regression = bool(
+                                baseline_findings_non_regression
+                                and saved_findings_non_regression
+                            )
+                            movement = bool(
+                                (
+                                    isinstance(candidate_human, (int, float))
+                                    and isinstance(current_masked_human, (int, float))
+                                    and candidate_human > current_masked_human
+                                )
+                                or (
+                                    isinstance(candidate_transform, (int, float))
+                                    and isinstance(current_masked_transform, (int, float))
+                                    and candidate_transform < current_masked_transform
+                                )
+                                or candidate_findings < current_masked_findings
+                                or (
+                                    isinstance(candidate_ai, (int, float))
+                                    and isinstance(current_masked_ai, (int, float))
+                                    and candidate_ai < current_masked_ai
+                                )
+                            )
+                            masked_accept = bool(
+                                authorship_capped
+                                and findings_non_regression
+                                and movement
+                                and not gate.get("critical_high_regressed")
+                            )
+                            candidate_eval_try["masked_accept"] = masked_accept
+                            candidate_eval_try["masked_acceptance"] = {
+                                "authorship_capped": authorship_capped,
+                                "fresh_authorship_capped": fresh_authorship_capped,
+                                "saved_authorship_capped": saved_authorship_capped,
+                                "findings_non_regression": findings_non_regression,
+                                "baseline_findings_non_regression": baseline_findings_non_regression,
+                                "saved_findings_non_regression": saved_findings_non_regression,
+                                "movement": movement,
+                            }
+                            if masked_accept:
+                                accepted_eval = candidate_eval_try
+                                accepted_eval["_candidate_text"] = candidate
+                                accepted_eval["_candidate_report"] = candidate_report
+                                break
+                            candidate_eval_try["reason"] = "authorship_cap_or_no_masked_gain"
+                            rejected_replacement_evals.append(candidate_eval_try)
+                        for rejected_eval in rejected_replacement_evals:
+                            authenticity_summary["candidates"].append(rejected_eval)
+                        if accepted_eval is None:
+                            masked_excluded.add(int(sentence_index))
+                            continue
+                        candidate_eval = accepted_eval
+                        candidate = candidate_eval.pop("_candidate_text")
+                        candidate_report = candidate_eval.pop("_candidate_report")
+                        candidate_ai = candidate_eval.get("ai")
+                        candidate_human = candidate_eval.get("human_contribution")
+                        candidate_transform = candidate_eval.get("ai_transformation")
+                        candidate_authorship = candidate_eval.get("ai_authorship")
+                        candidate_findings = candidate_eval.get("findings")
+                        candidate_eval["selected"] = True
+                        masked_attempts.append(candidate_eval)
+                        current_masked_text = candidate
+                        current_masked_report = candidate_report
+                        current_masked_ai = candidate_ai
+                        current_masked_human = candidate_human
+                        current_masked_transform = candidate_transform
+                        current_masked_authorship = candidate_authorship
+                        current_masked_findings = candidate_findings
+                        masked_span_selected = True
+                        authenticity_summary["candidates"].append(candidate_eval)
+                        masked_excluded.add(int(sentence_index))
+                    authenticity_summary["masked_span_optimizer"] = {
+                        "enabled": True,
+                        "candidate_limit": masked_limit,
+                        "accepted_count": len(masked_attempts),
+                        "selected": masked_span_selected,
+                        "accepted_attempts": [
+                            {
+                                "attempt": item.get("attempt"),
+                                "sentence_index": item.get("sentence_index"),
+                                "mask_text": item.get("mask_text"),
+                                "replacement": item.get("replacement"),
+                                "ai": item.get("ai"),
+                                "human_contribution": item.get("human_contribution"),
+                                "ai_transformation": item.get("ai_transformation"),
+                                "ai_authorship": item.get("ai_authorship"),
+                                "findings": item.get("findings"),
+                            }
+                            for item in masked_attempts
+                        ],
+                    }
+                    if masked_span_selected:
+                        masked_gate = _authenticity_gate_status(
+                            masked_baseline_report,
+                            current_masked_report,
+                            current_masked_text != text,
+                            original_review_burden=masked_baseline_review_burden,
+                            candidate_review_burden=_review_burden(current_masked_report),
+                            original_weighted_severity=masked_baseline_severity,
+                            candidate_weighted_severity=_weighted_severity(current_masked_report),
+                            min_human_gain=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_GAIN", 2.0),
+                            min_ai_transformation_drop=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_TRANSFORM_DROP", 2.0),
+                        )
+                        best_candidate_text = current_masked_text
+                        best_candidate_report = current_masked_report
+                        best_candidate_gate = masked_gate
+                        best_candidate_eval = {
+                            "strategy": "masked_span_optimizer",
+                            "masked_span_repair": True,
+                            "accepted_count": len(masked_attempts),
+                            "gate": masked_gate,
+                        }
+                        authenticity_summary["best_attempt"] = best_candidate_eval
+                        if _env_flag("DRAFTPROOF_MASKED_SPAN_SKIP_REGEN_ON_GAIN", True):
+                            authenticity_summary["skip_broad_generation_reason"] = "masked_span_authorship_capped_gain"
+                            authenticity_candidate_limit = 0
                 for attempt_index in range(1, authenticity_candidate_limit + 1):
                     report_progress(
                         min(89, 78 + attempt_index),
@@ -4923,16 +5468,22 @@ def run_rewrite_pipeline(
                         )
                     )
                     and os.environ.get("DRAFTPROOF_RECONSTRUCTION_MITIGATION", "1") != "0"
+                    and not (
+                        masked_optimizer_ran
+                        and _env_flag("DRAFTPROOF_MASKED_SPAN_SKIP_BROAD_REGEN", True)
+                    )
                 )
                 if reconstruction_enabled:
                     reconstruction_strategies = [
+                        "plain_student_voice_rebuild",
+                        "authorship_distribution_repair",
+                        "low_smoothness_rebuild",
+                        "asymmetric_paragraph_route",
+                        "claim_narrowing_rebuild",
                         "authorship_texture_repair",
                         "human_gain_repair",
                         "evidence_first_rebuild",
                         "problem_observation_rebuild",
-                        "claim_narrowing_rebuild",
-                        "asymmetric_paragraph_route",
-                        "low_smoothness_rebuild",
                         "reasoning_dense_reconstruction",
                         "domain_grounded_reconstruction",
                     ]
@@ -4962,6 +5513,8 @@ def run_rewrite_pipeline(
                         "DRAFTPROOF_RECONSTRUCTION_DRIFT_THRESHOLD",
                         0.25,
                     )
+                    post_texture_calls = 0
+                    post_texture_limit = int(_float_env("DRAFTPROOF_POST_GENERATION_TEXTURE_REPAIR_MAX_CALLS", 1.0))
                     for reconstruction_index, strategy in enumerate(reconstruction_strategies, start=1):
                         report_progress(
                             min(92, 84 + reconstruction_index),
@@ -5115,6 +5668,7 @@ def run_rewrite_pipeline(
                             "ai_authorship_delta": gate.get("ai_authorship_delta"),
                             "human_shift_score": gate.get("human_shift_score"),
                             "human_shift_components": gate.get("human_shift_components"),
+                            "authorship_cost_per_human_gain": gate.get("authorship_cost_per_human_gain"),
                             "findings": _finding_total(candidate_report),
                             "review_burden": candidate_review_burden,
                             "weighted_severity": candidate_severity,
@@ -5128,7 +5682,156 @@ def run_rewrite_pipeline(
                             best_candidate_eval = dict(candidate_eval)
                             candidate_eval["best_so_far"] = True
                         authenticity_summary["candidates"].append(candidate_eval)
-                if best_candidate_gate and best_candidate_gate.get("success") and best_candidate_report:
+                        if (
+                            _env_flag("DRAFTPROOF_POST_GENERATION_TEXTURE_REPAIR", True)
+                            and gate.get("ai_authorship_regressed")
+                            and post_texture_calls < post_texture_limit
+                        ):
+                            post_texture_calls += 1
+                            repaired_eval = {
+                                "attempt": f"{candidate_eval.get('attempt')}.texture",
+                                "strategy": f"{strategy}+post_generation_texture_repair",
+                                "reconstruction": True,
+                                "post_generation_texture_repair": True,
+                                "parent_attempt": candidate_eval.get("attempt"),
+                                "passed_local_checks": False,
+                                "model": generator_model,
+                            }
+                            anchor_values = [
+                                source_for_mitigation[span.start_char:span.end_char].strip()
+                                for span in source_protected[:40]
+                                if source_for_mitigation[span.start_char:span.end_char].strip()
+                            ]
+                            try:
+                                repair_prompt, repair_info = _micro_texture_repair_prompt(
+                                    candidate,
+                                    candidate_report,
+                                    anchors=anchor_values,
+                                    max_sentences=1,
+                                    mode="authorship_suppression_repair",
+                                )
+                                repair_response = gateway.chat(
+                                    repair_prompt,
+                                    system=(
+                                        "You are DraftProof's micro-local authorship texture repairer. "
+                                        "Return only the replacement sentence window."
+                                    ),
+                                    temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.45")),
+                                    max_tokens=int(os.environ.get("DRAFTPROOF_MICRO_TEXTURE_MAX_TOKENS", "1200")),
+                                    top_p=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_P"),
+                                    top_k=_int_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_K"),
+                                    presence_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_PRESENCE_PENALTY"),
+                                    frequency_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_FREQUENCY_PENALTY"),
+                                )
+                                replacement, clean_reason = _clean_micro_texture_candidate(
+                                    repair_response.content,
+                                    repair_info,
+                                )
+                                repaired_eval["repair_window"] = {
+                                    "start": (repair_info.get("window") or {}).get("start"),
+                                    "end": (repair_info.get("window") or {}).get("end"),
+                                }
+                                if clean_reason:
+                                    repaired_eval["reason"] = clean_reason
+                                    authenticity_summary["candidates"].append(repaired_eval)
+                                    continue
+                                repaired_candidate = _splice_sentence_window(
+                                    candidate,
+                                    int((repair_info.get("window") or {}).get("start") or 0),
+                                    int((repair_info.get("window") or {}).get("end") or 0),
+                                    replacement,
+                                )
+                                repaired_eval["candidate_length"] = len(repaired_candidate or "")
+                                repaired_eval["candidate_word_count"] = _text_word_count(repaired_candidate or "")
+                                repaired_eval["repair_aggression"] = _repair_aggression_score(candidate, repaired_candidate)
+                                repaired_eval["locality"] = _locality_score(candidate, repaired_candidate)
+                                if repaired_candidate == candidate:
+                                    repaired_eval["reason"] = "post_texture_no_change"
+                                    authenticity_summary["candidates"].append(repaired_eval)
+                                    continue
+                                protected_loss = _ai_search_protected_loss_reason(
+                                    source_for_mitigation,
+                                    repaired_candidate,
+                                    source_protected,
+                                )
+                                if protected_loss:
+                                    repaired_eval["reason"] = "protected_span_lost " + protected_loss
+                                    authenticity_summary["candidates"].append(repaired_eval)
+                                    continue
+                                drift = check_semantic_drift(
+                                    source_for_mitigation,
+                                    repaired_candidate,
+                                    threshold=reconstruction_drift_threshold,
+                                )
+                                repaired_eval["drift_similarity"] = round(drift.similarity, 3)
+                                repaired_eval["drift_threshold"] = reconstruction_drift_threshold
+                                if not drift.accepted:
+                                    repaired_eval["drift_reasons"] = drift.reasons[:10]
+                                    if _reconstruction_drift_scan_allowed(repaired_candidate, drift.reasons, drift.similarity):
+                                        repaired_eval["drift_scan_relaxed_for_reconstruction"] = True
+                                        repaired_eval["drift_reasons_relaxed"] = drift.reasons[:5]
+                                    else:
+                                        repaired_eval["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
+                                        authenticity_summary["candidates"].append(repaired_eval)
+                                        continue
+                                repaired_eval["passed_local_checks"] = True
+                                scan_t0 = time.time()
+                                repaired_report = _full_scan_report_dict(repaired_candidate)
+                                repaired_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
+                                repaired_review_burden = _review_burden(repaired_report)
+                                repaired_severity = _weighted_severity(repaired_report)
+                                repaired_gate = _authenticity_gate_status(
+                                    original_report_dict,
+                                    repaired_report,
+                                    repaired_candidate != text,
+                                    original_review_burden=original_review_burden,
+                                    candidate_review_burden=repaired_review_burden,
+                                    original_weighted_severity=original_severity,
+                                    candidate_weighted_severity=repaired_severity,
+                                    min_human_gain=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_GAIN", 2.0),
+                                    min_ai_transformation_drop=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_TRANSFORM_DROP", 2.0),
+                                    drift_similarity=repaired_eval.get("drift_similarity"),
+                                )
+                                repaired_eval.update({
+                                    "ai": _badge_ai(repaired_report),
+                                    "writing_quality": _badge_wq(repaired_report),
+                                    "human_contribution": repaired_gate.get("candidate_human"),
+                                    "ai_transformation": repaired_gate.get("candidate_ai_transformation"),
+                                    "ai_authorship": repaired_gate.get("candidate_ai_authorship"),
+                                    "human_delta": repaired_gate.get("human_delta"),
+                                    "ai_transformation_delta": repaired_gate.get("ai_transformation_delta"),
+                                    "ai_authorship_delta": repaired_gate.get("ai_authorship_delta"),
+                                    "human_shift_score": repaired_gate.get("human_shift_score"),
+                                    "human_shift_components": repaired_gate.get("human_shift_components"),
+                                    "authorship_cost_per_human_gain": repaired_gate.get("authorship_cost_per_human_gain"),
+                                    "findings": _finding_total(repaired_report),
+                                    "review_burden": repaired_review_burden,
+                                    "weighted_severity": repaired_severity,
+                                    "scan_scope": _scan_scope_summary(repaired_report),
+                                    "gate": repaired_gate,
+                                })
+                                if _is_better_human_shift_candidate(repaired_gate, best_candidate_gate):
+                                    best_candidate_text = repaired_candidate
+                                    best_candidate_report = repaired_report
+                                    best_candidate_gate = repaired_gate
+                                    best_candidate_eval = dict(repaired_eval)
+                                    repaired_eval["best_so_far"] = True
+                                authenticity_summary["candidates"].append(repaired_eval)
+                            except Exception as exc:
+                                repaired_eval["reason"] = f"post_texture_repair_error {exc}"
+                                authenticity_summary["candidates"].append(repaired_eval)
+                if (
+                    best_candidate_gate
+                    and best_candidate_report
+                    and (
+                        best_candidate_gate.get("success")
+                        or (
+                            masked_span_selected
+                            and isinstance(best_candidate_eval, dict)
+                            and best_candidate_eval.get("masked_span_repair")
+                        )
+                    )
+                ):
                     previous_ai = rewritten_ai
                     rewritten_text = best_candidate_text
                     rewritten_report_dict = best_candidate_report
@@ -5143,7 +5846,9 @@ def run_rewrite_pipeline(
                         result.mp_result.final_text = rewritten_text
                         result.mp_result.converged = True
                         result.mp_result.convergence_reason = (
-                            "Selected AI-Mitigation authenticity candidate"
+                            "Selected authorship-capped masked-span AI-Mitigation candidate"
+                            if isinstance(best_candidate_eval, dict) and best_candidate_eval.get("masked_span_repair")
+                            else "Selected AI-Mitigation authenticity candidate"
                         )
                     sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
                     authenticity_mitigation_selected = True
@@ -5154,9 +5859,13 @@ def run_rewrite_pipeline(
                     )
                     result.summary["ai_mitigation_blocked_auto_rewrite"] = False
                     result.summary["rewrite_engine_mode"] = (
-                        "ai_mitigation_reconstruction_gate"
-                        if isinstance(best_candidate_eval, dict) and best_candidate_eval.get("reconstruction")
-                        else "ai_mitigation_authenticity_gate"
+                        "ai_mitigation_masked_span_gate"
+                        if isinstance(best_candidate_eval, dict) and best_candidate_eval.get("masked_span_repair")
+                        else (
+                            "ai_mitigation_reconstruction_gate"
+                            if isinstance(best_candidate_eval, dict) and best_candidate_eval.get("reconstruction")
+                            else "ai_mitigation_authenticity_gate"
+                        )
                     )
                     result.summary["outcome"] = "ai_mitigated"
                     if isinstance(best_candidate_eval, dict):
@@ -5170,6 +5879,10 @@ def run_rewrite_pipeline(
                         "selected_reconstruction": bool(
                             isinstance(best_candidate_eval, dict)
                             and best_candidate_eval.get("reconstruction")
+                        ),
+                        "selected_masked_span_repair": bool(
+                            isinstance(best_candidate_eval, dict)
+                            and best_candidate_eval.get("masked_span_repair")
                         ),
                         "previous_ai": previous_ai,
                         "selected_ai": rewritten_ai,
@@ -5200,9 +5913,13 @@ def run_rewrite_pipeline(
             "selected": bool(authenticity_summary.get("selected")),
             "selected_strategy": authenticity_summary.get("selected_strategy"),
             "selected_reconstruction": authenticity_summary.get("selected_reconstruction"),
+            "selected_masked_span_repair": authenticity_summary.get("selected_masked_span_repair"),
             "selection_reason": authenticity_summary.get("selection_reason") or authenticity_summary.get("reason"),
             "llm_calls": authenticity_summary.get("llm_calls"),
             "model_roles": authenticity_summary.get("model_roles"),
+            "masked_span_optimizer": authenticity_summary.get("masked_span_optimizer"),
+            "masked_span_baseline": authenticity_summary.get("masked_span_baseline"),
+            "skip_broad_generation_reason": authenticity_summary.get("skip_broad_generation_reason"),
             "reconstruction": authenticity_summary.get("reconstruction"),
             "best_attempt": authenticity_summary.get("best_attempt"),
             "candidate_count": len(authenticity_summary.get("candidates") or []),

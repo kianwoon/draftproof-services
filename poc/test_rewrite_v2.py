@@ -94,6 +94,9 @@ from rewrite_pipeline import (
     _locality_score,
     _micro_texture_repair_prompt,
     _clean_micro_texture_candidate,
+    _masked_span_repair_prompt,
+    _clean_masked_span_replacement,
+    _apply_masked_span_replacement,
     _micro_repair_gain_efficiency,
     _micro_texture_iteration_status,
     _iterative_micro_texture_repair,
@@ -1011,7 +1014,7 @@ os.environ["DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD"] = "80"
 os.environ["DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_GAIN"] = "10"
 ai_authorship_regressing_candidate = make_shift_report(
     ai_authorship=62,
-    human=65,
+    human=72,
     ai_transformation=35,
     grounding=20,
     human_anchor=85,
@@ -1030,8 +1033,10 @@ ai_authorship_regression_gate = _authenticity_gate_status(
 assert_test(
     not ai_authorship_regression_gate["success"]
     and ai_authorship_regression_gate["reason"] == "ai_authorship_regressed"
-    and ai_authorship_regression_gate["ai_authorship_regression_blocked"],
-    "authenticity gate rejects Human gains that worsen AI Authorship",
+    and ai_authorship_regression_gate["ai_authorship_regression_blocked"]
+    and ai_authorship_regression_gate["human_gain_with_authorship_regression"]
+    and ai_authorship_regression_gate["false_positive_improvement"],
+    "authenticity gate labels Human gains that worsen AI Authorship as false-positive improvement",
 )
 major_breakthrough_gate = _authenticity_gate_status(
     shift_original,
@@ -1298,6 +1303,39 @@ assert_test(
     clean_micro
     and not clean_micro_reason,
     "micro texture candidate cleaner accepts bounded replacement window",
+)
+masked_prompt, masked_info = _masked_span_repair_prompt(
+    "Furthermore, this important approach supports effective skill development. Local action remains.",
+    {
+        "rewrite_edit_briefs": [{
+            "sentence_index": 0,
+            "problem_tokens": ["Furthermore"],
+            "signals": {"generic": "generic connector"},
+        }]
+    },
+)
+masked_replacement = _clean_masked_span_replacement("But")
+masked_text = _apply_masked_span_replacement(
+    "Furthermore, this important approach supports effective skill development. Local action remains.",
+    masked_info,
+    masked_replacement,
+)
+masked_paragraph_text = _apply_masked_span_replacement(
+    "Furthermore, this important approach supports effective skill development.\n\nLocal action remains.",
+    masked_info,
+    masked_replacement,
+)
+assert_test(
+    "[[MASK]]" in masked_prompt
+    and masked_info["mask_text"].lower() == "furthermore"
+    and masked_text.startswith("But, this important approach")
+    and "Local action remains." in masked_text,
+    "masked span repair masks only the high-risk span and preserves surrounding text",
+)
+assert_test(
+    masked_paragraph_text.startswith("But, this important approach")
+    and "\n\nLocal action remains." in masked_paragraph_text,
+    "masked span repair preserves paragraph breaks when patching an exact sentence",
 )
 aggressive_status = _optimization_candidate_status(
     {
@@ -1858,6 +1896,23 @@ assert_test(
     and "Anchor lock is active" in authorship_texture_section_prompt,
     "staged authorship texture prompt freezes anchors into immutable placeholders",
 )
+authorship_distribution_section_prompt = _staged_reconstruction_section_prompt(
+    staged_ledger,
+    {"schema_version": "scanner_gate_feedback.v1", "next_candidate_controls": []},
+    {
+        **section_plans[0],
+        "must_preserve_anchors": ["SHBHCUT002"],
+        "claim_inventory_slice": ["Keep the same meaning while changing distributional texture."],
+    },
+    strategy="authorship_distribution_repair",
+    attempt_index=1,
+)
+assert_test(
+    "AUTHORSHIP_DISTRIBUTION_REPAIR is active" in authorship_distribution_section_prompt
+    and "lower AI Authorship" in authorship_distribution_section_prompt
+    and "Do not add random errors" in authorship_distribution_section_prompt,
+    "staged section prompt activates authorship distribution repair controls",
+)
 assert_test(
     _reconstruction_drift_scan_allowed(
         "The reconstruction keeps the same learner problem but changes the transition.",
@@ -1870,9 +1925,9 @@ assert_test(
     _reconstruction_drift_scan_allowed(
         "Education should focus on what students know, and also on how students think.",
         ["quote_lost: count 2"],
-        0.81,
+        0.72,
     ),
-    "reconstruction drift allows quote-marker noise after protected content passes",
+    "reconstruction drift allows quote-marker noise after protected content passes at moderate similarity",
 )
 assert_test(
     not _reconstruction_drift_scan_allowed(
