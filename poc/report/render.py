@@ -10,6 +10,8 @@ Produces a structured report with:
 
 from typing import Optional
 
+from detect.transformation import TRANSFORMATION_SIGNAL_METADATA, transformation_signal_metadata
+
 from .report import DraftReport, Tier, TIER_ICON, report_to_dict
 
 # ── Scanner & Signal legend codes ──────────────────────────────────────
@@ -110,27 +112,6 @@ _WQ_COMPONENT_LABELS = {
     "grounding_credit": ("Grounding Credit", "Bonus credit applied when strong sources or domain knowledge are present"),
 }
 
-_TRANSFORMATION_SIGNAL_LABELS = {
-    "ai_likelihood": "AI Likelihood",
-    "adjusted_ai_risk": "Adjusted AI Risk",
-    "calibrated_ai_risk": "Calibrated AI Risk",
-    "human_anchor_score": "Human Anchor",
-    "human_anchor_discount": "Human Anchor Discount",
-    "rewrite_smoothness": "Rewrite Smoothness",
-    "semantic_uniformity_risk": "Semantic Uniformity",
-    "discourse_regularity_risk": "Discourse Regularity",
-    "source_similarity": "Source Similarity",
-    "surface_similarity": "Surface Similarity",
-    "paraphrase_transformation_risk": "Paraphrase Transformation",
-    "outline_to_text_expansion": "Expansion Pattern",
-    "section_style_variance": "Patchwork Variance",
-    "citation_grounding_risk": "Grounding Risk",
-    "signal_agreement_score": "Signal Agreement",
-    "calibration_confidence": "Calibration Confidence",
-    "reporting_suppression": "Reporting Suppression",
-}
-
-
 def _tf_pct(value) -> float | None:
     if value is None:
         return None
@@ -143,16 +124,22 @@ def _tf_pct(value) -> float | None:
     return max(0.0, min(100.0, number))
 
 
-def _transformation_signals(features: dict) -> list[tuple[str, float]]:
+def _transformation_signals(features: dict) -> list[dict]:
     rows = []
-    for key, label in _TRANSFORMATION_SIGNAL_LABELS.items():
+    for key in TRANSFORMATION_SIGNAL_METADATA:
         value = _tf_pct((features or {}).get(key))
         if value is not None:
-            rows.append((label, value))
-    return sorted(rows, key=lambda row: row[1], reverse=True)
+            meta = transformation_signal_metadata(key)
+            rows.append({
+                "key": key,
+                "label": meta["label"],
+                "description": meta["description"],
+                "score": value,
+            })
+    return sorted(rows, key=lambda row: row["score"], reverse=True)
 
 
-def _transformation_contribution_summary(features: dict, signals: list[tuple[str, float]]) -> dict:
+def _transformation_contribution_summary(features: dict, signals: list[dict]) -> dict:
     human_anchor = _tf_pct((features or {}).get("human_anchor_score")) or 0.0
     grounding_quality = 100.0 - (_tf_pct((features or {}).get("citation_grounding_risk")) or 0.0)
     semantic_originality = 100.0 - max(
@@ -189,9 +176,9 @@ def _transformation_contribution_summary(features: dict, signals: list[tuple[str
     atr = 100 - hcr
 
     top_drivers = [
-        label.lower()
-        for label, _ in signals
-        if label != "Human Anchor"
+        row["label"].lower()
+        for row in signals
+        if row.get("key") != "human_anchor_score"
     ][:2]
 
     if atr >= 70:
@@ -698,10 +685,10 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append("")
             lines.append(f"> **Summary:** {contribution['summary']}")
             lines.append("")
-            lines.append("| Core Signal | Score |")
-            lines.append("|-------------|------:|")
-            for label, value in transformation_rows:
-                lines.append(f"| {label} | `{value:.0f}%` |")
+            lines.append("| Core Signal | Score | What It Means |")
+            lines.append("|-------------|------:|---------------|")
+            for row in transformation_rows:
+                lines.append(f"| {row['label']} | `{row['score']:.0f}%` | {row['description']} |")
             evidence = transformation.get("evidence") or []
             if evidence:
                 lines.append("")

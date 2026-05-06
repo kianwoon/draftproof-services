@@ -19,7 +19,11 @@ from enum import Enum
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
-from detect.transformation import classify_transformation_from_scan
+from detect.transformation import (
+    TRANSFORMATION_SIGNAL_METADATA,
+    classify_transformation_from_scan,
+    transformation_signal_metadata,
+)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -2041,31 +2045,16 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         return int(round(_clamp01(value) * 100))
 
     def _transformation_signal_rows(features: Dict[str, Any]) -> list:
-        labels = {
-            "ai_likelihood": "AI likelihood",
-            "adjusted_ai_risk": "Adjusted AI risk",
-            "calibrated_ai_risk": "Calibrated AI risk",
-            "human_anchor_score": "Human anchor",
-            "human_anchor_discount": "Human anchor discount",
-            "rewrite_smoothness": "Rewrite smoothness",
-            "semantic_uniformity_risk": "Semantic uniformity",
-            "discourse_regularity_risk": "Discourse regularity",
-            "source_similarity": "Source similarity",
-            "surface_similarity": "Surface similarity",
-            "paraphrase_transformation_risk": "Paraphrase transformation",
-            "outline_to_text_expansion": "Expansion pattern",
-            "section_style_variance": "Patchwork variance",
-            "citation_grounding_risk": "Grounding risk",
-            "signal_agreement_score": "Signal agreement",
-            "calibration_confidence": "Calibration confidence",
-            "reporting_suppression": "Reporting suppression",
-        }
         rows = []
-        for key, label in labels.items():
+        for key in TRANSFORMATION_SIGNAL_METADATA:
             if key in (features or {}):
+                meta = transformation_signal_metadata(key)
                 rows.append({
                     "key": key,
-                    "label": label,
+                    "label": meta["label"],
+                    "description": meta["description"],
+                    "family": meta["family"],
+                    "higher_score_means": meta["higher_score_means"],
                     "score": _pct(features.get(key)),
                     "raw_score": round(_clamp01(features.get(key)), 4),
                 })

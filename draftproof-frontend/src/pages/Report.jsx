@@ -131,15 +131,24 @@ const TRANSFORMATION_SIGNAL_ORDER = [
   'reporting_suppression',
 ];
 
-function buildTransformationSignals(features = {}) {
+function buildTransformationSignals(features = {}, suppliedSignals = []) {
+  const suppliedByKey = new Map(
+    (Array.isArray(suppliedSignals) ? suppliedSignals : [])
+      .filter((signal) => signal?.key)
+      .map((signal) => [signal.key, signal])
+  );
+
   return TRANSFORMATION_SIGNAL_ORDER
     .map((key) => {
-      const value = clampPercent(features[key]);
+      const supplied = suppliedByKey.get(key);
+      const value = clampPercent(supplied?.score ?? features[key]);
       if (value == null) return null;
       return {
         key,
-        label: TRANSFORMATION_SIGNAL_LABELS[key] || key.replaceAll('_', ' '),
-        description: TRANSFORMATION_SIGNAL_DESCRIPTIONS[key] || 'Scanner signal used to interpret the transformation pattern.',
+        label: supplied?.label || TRANSFORMATION_SIGNAL_LABELS[key] || key.replaceAll('_', ' '),
+        description: supplied?.description || TRANSFORMATION_SIGNAL_DESCRIPTIONS[key] || 'Scanner signal used to interpret the transformation pattern.',
+        family: supplied?.family,
+        higherScoreMeans: supplied?.higher_score_means,
         value,
       };
     })
@@ -756,7 +765,8 @@ export default function Report() {
   const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
   const transformation = badge.transformation_classification || null;
-  const transformationSignals = buildTransformationSignals(transformation?.features);
+  const transformationSignalMetadata = report.scan_intelligence?.transformation?.core_signals || [];
+  const transformationSignals = buildTransformationSignals(transformation?.features, transformationSignalMetadata);
   const transformationSummary = transformation
     ? buildTransformationSummary(transformation.features, transformationSignals)
     : null;

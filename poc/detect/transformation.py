@@ -55,6 +55,122 @@ _LABELS = {
     "human_uncertain": "Human / uncertain pattern",
 }
 
+TRANSFORMATION_SIGNAL_METADATA: dict[str, dict[str, str]] = {
+    "ai_likelihood": {
+        "label": "AI likelihood",
+        "description": "Statistical AI-style signal based on predictability, token concentration, generic phrasing, and sentence regularity.",
+        "family": "statistical",
+        "higher_score_means": "Text shape is more consistent with Transformer-style generation.",
+    },
+    "adjusted_ai_risk": {
+        "label": "Adjusted AI risk",
+        "description": "AI likelihood after reducing certainty for strong human anchoring and calibration checks.",
+        "family": "calibration",
+        "higher_score_means": "AI-style evidence remains visible after human-anchor suppression.",
+    },
+    "calibrated_ai_risk": {
+        "label": "Calibrated AI risk",
+        "description": "Final calibrated authorship risk after thresholding, signal agreement, and reporting safeguards.",
+        "family": "calibration",
+        "higher_score_means": "The report has stronger defensible AI-risk evidence after conservative calibration.",
+    },
+    "human_anchor_score": {
+        "label": "Human anchor",
+        "description": "Strength of concrete lived experience, local context, operational memory, and specific human reasoning.",
+        "family": "human_anchor",
+        "higher_score_means": "The writing contains stronger human-context evidence that should reduce AI certainty.",
+    },
+    "human_anchor_discount": {
+        "label": "Human anchor discount",
+        "description": "How much strong human anchoring reduces AI certainty in the calibrated risk model.",
+        "family": "human_anchor",
+        "higher_score_means": "Human-anchor evidence is suppressing more of the raw AI likelihood.",
+    },
+    "rewrite_smoothness": {
+        "label": "Rewrite smoothness",
+        "description": "Likelihood that a human draft was polished into cleaner, more even AI-assisted prose.",
+        "family": "rewrite",
+        "higher_score_means": "The writing looks more uniformly polished than the underlying ideas or evidence.",
+    },
+    "semantic_uniformity_risk": {
+        "label": "Semantic uniformity",
+        "description": "Embedding-based signal for overly even paragraph meaning or low semantic shape variation.",
+        "family": "semantic_embedding",
+        "higher_score_means": "Paragraph meanings are unusually uniform or mechanically similar.",
+    },
+    "discourse_regularity_risk": {
+        "label": "Discourse regularity",
+        "description": "Embedding-based signal for unusually regular paragraph progression and smooth discourse flow.",
+        "family": "semantic_embedding",
+        "higher_score_means": "Idea progression is unusually smooth or regular across adjacent paragraphs.",
+    },
+    "source_similarity": {
+        "label": "Source similarity",
+        "description": "Meaning-level closeness to source material, useful for detecting paraphrased source content.",
+        "family": "source_similarity",
+        "higher_score_means": "Submitted meaning remains close to a known source.",
+    },
+    "surface_similarity": {
+        "label": "Surface similarity",
+        "description": "Wording-level closeness to source material after direct text comparison.",
+        "family": "source_similarity",
+        "higher_score_means": "Submitted wording remains close to a known source.",
+    },
+    "paraphrase_transformation_risk": {
+        "label": "Paraphrase transformation",
+        "description": "Risk that source meaning was retained while wording and sentence structure were heavily changed.",
+        "family": "paraphrase",
+        "higher_score_means": "The source meaning appears preserved while surface wording diverges.",
+    },
+    "outline_to_text_expansion": {
+        "label": "Expansion pattern",
+        "description": "Risk that short notes or an outline were expanded into longer prose with limited new evidence.",
+        "family": "expansion",
+        "higher_score_means": "The document shows more signs of outline-to-essay expansion.",
+    },
+    "section_style_variance": {
+        "label": "Patchwork variance",
+        "description": "Section-level style shifts that can suggest stitched writing from different chunks or passes.",
+        "family": "patchwork",
+        "higher_score_means": "Sections differ more strongly in style, density, or vocabulary.",
+    },
+    "citation_grounding_risk": {
+        "label": "Grounding risk",
+        "description": "Claims, citations, or academic statements that appear weakly supported by evidence.",
+        "family": "grounding",
+        "higher_score_means": "More claims need source checking or stronger evidence.",
+    },
+    "signal_agreement_score": {
+        "label": "Signal agreement",
+        "description": "How strongly separate scanner layers agree with each other instead of firing in isolation.",
+        "family": "calibration",
+        "higher_score_means": "More independent scanner layers point in the same direction.",
+    },
+    "calibration_confidence": {
+        "label": "Calibration confidence",
+        "description": "Confidence that available signals are strong enough and sufficiently aligned for reporting.",
+        "family": "calibration",
+        "higher_score_means": "The system has more confidence in the calibrated scan interpretation.",
+    },
+    "reporting_suppression": {
+        "label": "Reporting suppression",
+        "description": "Amount of risk held back because the evidence is uncertain, limited, or not institutionally defensible.",
+        "family": "calibration",
+        "higher_score_means": "More raw risk was suppressed before presenting the report.",
+    },
+}
+
+
+def transformation_signal_metadata(key: str) -> dict[str, str]:
+    """Return stable reader/mitigation metadata for a transformation signal."""
+    meta = TRANSFORMATION_SIGNAL_METADATA.get(key, {})
+    return {
+        "label": meta.get("label") or key.replace("_", " "),
+        "description": meta.get("description") or "Scanner signal used to interpret the transformation pattern.",
+        "family": meta.get("family") or "scanner",
+        "higher_score_means": meta.get("higher_score_means") or "The signal is stronger in the scan profile.",
+    }
+
 
 def _similarity_features(similarity_summary: Optional[Any]) -> tuple[float, float]:
     """Return semantic/source similarity and lexical/surface similarity."""

@@ -19,7 +19,7 @@ from detect.transformation import (
 )
 from report.report import Finding, ReportBuilder, Tier as ReportTier, report_to_dict
 from detect.semantic_shape import SemanticShapeDetector
-from report.render import _authorship_rating_from_badge
+from report.render import _authorship_rating_from_badge, render_markdown
 
 
 def assert_equal(actual, expected, message):
@@ -313,6 +313,20 @@ assert_true(highlighted, "scan intelligence marks finding-linked segments for hi
 assert_true(
     intel.get("transformation", {}).get("core_signals"),
     "scan intelligence carries transformation core signals for mitigation",
+)
+core_signal = intel["transformation"]["core_signals"][0]
+assert_true(
+    core_signal.get("description") and core_signal.get("higher_score_means"),
+    "scan intelligence core signals include reader and mitigation descriptions",
+)
+assert_true(
+    core_signal.get("family"),
+    "scan intelligence core signals include signal family metadata",
+)
+scan_markdown = render_markdown(scan_report)
+assert_true(
+    "| Core Signal | Score | What It Means |" in scan_markdown,
+    "PDF markdown includes transformation signal descriptions",
 )
 assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],
