@@ -63,6 +63,30 @@ COMPONENT_RULES: Dict[str, Dict[str, str]] = {
         "action": "Rebuild dense paragraphs around context, evidence, author reasoning, and a limited conclusion.",
         "user_input": "author-owned evidence or source-backed paragraph route",
     },
+    "semantic_uniformity_risk": {
+        "lever": "cognitive_authenticity",
+        "bucket": "paragraph_rebuild",
+        "action": "Add sharper paragraph roles and section-specific reasoning so the meaning does not stay too evenly shaped.",
+        "user_input": "which paragraphs should carry evidence, author reasoning, contrast, limitation, or conclusion",
+    },
+    "discourse_regularity_risk": {
+        "lever": "natural_variance",
+        "bucket": "structure_revision",
+        "action": "Vary the discourse route so paragraphs do not advance with the same smooth explanatory pattern.",
+        "user_input": "author choice on where to add contrast, a pause, a concrete example, or a limitation",
+    },
+    "semantic_drift_risk": {
+        "lever": "reasoning_continuity",
+        "bucket": "structure_revision",
+        "action": "Add bridging reasoning where adjacent ideas jump too far apart.",
+        "user_input": "the missing connection between adjacent claims, examples, or source ideas",
+    },
+    "paraphrase_transformation_risk": {
+        "lever": "source_grounding",
+        "bucket": "manual_source_revision",
+        "action": "Compare meaning against source material and add author interpretation rather than only changed wording.",
+        "user_input": "source text, citation, and the author's own interpretation",
+    },
     "paragraph_uniformity_risk": {
         "lever": "natural_variance",
         "bucket": "structure_revision",
@@ -124,6 +148,13 @@ SIGNAL_RULES: Dict[str, Dict[str, str]] = {
         "action": "Review whether the section shift reflects real draft history or an unsupported rewrite jump.",
         "user_input": "draft history or author explanation of the section's reasoning path",
     },
+    "semantic_uniformity": COMPONENT_RULES["semantic_uniformity_risk"],
+    "semantic_uniformity_risk": COMPONENT_RULES["semantic_uniformity_risk"],
+    "discourse_regularity": COMPONENT_RULES["discourse_regularity_risk"],
+    "discourse_regularity_risk": COMPONENT_RULES["discourse_regularity_risk"],
+    "semantic_drift": COMPONENT_RULES["semantic_drift_risk"],
+    "semantic_drift_risk": COMPONENT_RULES["semantic_drift_risk"],
+    "paraphrase_transformation_risk": COMPONENT_RULES["paraphrase_transformation_risk"],
 }
 
 
@@ -208,9 +239,46 @@ def _component_actions(badge: Dict[str, Any]) -> List[Dict[str, Any]]:
     )
 
 
+def _semantic_layer_actions(scan_intelligence: Dict[str, Any]) -> List[Dict[str, Any]]:
+    semantic = ((scan_intelligence or {}).get("semantic_layer") or {})
+    actions: List[Dict[str, Any]] = []
+    for component in (
+        "semantic_uniformity_risk",
+        "discourse_regularity_risk",
+        "semantic_drift_risk",
+        "paraphrase_transformation_risk",
+    ):
+        score = _score(semantic.get(component))
+        if score < 35:
+            continue
+        rule = _rule_for_component(component)
+        bucket = rule["bucket"]
+        target = _target_score(score, bucket)
+        actions.append({
+            "component": component,
+            "lever": rule["lever"],
+            "bucket": bucket,
+            "current_score": score,
+            "target_score": target,
+            "reduction_needed": max(0, score - target),
+            "priority": _priority(score, bucket),
+            "action": rule["action"],
+            "user_input_needed": rule["user_input"],
+            "auto_apply": False,
+            "source": "semantic_layer",
+        })
+    return actions
+
+
 def _signal_rule(signal: Dict[str, Any]) -> Dict[str, str]:
     key = str(signal.get("key") or "")
     title = str(signal.get("title") or "").lower()
+    if "semantic_drift" in title or key == "semantic_drift":
+        return COMPONENT_RULES["semantic_drift_risk"]
+    if "semantic_uniformity" in title or key == "semantic_uniformity":
+        return COMPONENT_RULES["semantic_uniformity_risk"]
+    if "discourse_regularity" in title or key == "discourse_regularity":
+        return COMPONENT_RULES["discourse_regularity_risk"]
     if "ground" in title or "citation" in title:
         return SIGNAL_RULES["grounding_risk"]
     if "specificity" in title:
@@ -341,7 +409,7 @@ def build_ai_mitigation_plan(
 ) -> Dict[str, Any]:
     """Build the AI-Mitigation phase contract from scan output."""
     badge = ai_risk_badge or {}
-    actions = _component_actions(badge)
+    actions = _component_actions(badge) + _semantic_layer_actions(scan_intelligence)
     targets = _target_segments(scan_intelligence)
     mode = _primary_mode(actions, targets)
     counts = _counts(actions, targets)
