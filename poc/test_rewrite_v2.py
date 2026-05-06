@@ -1099,10 +1099,14 @@ assert_test(
     "AI search still blocks scoring candidates that lose critical entities",
 )
 feedback_prompt = _ai_search_feedback_prompt(
-    "Original source text.",
+    (
+        'Original source text with "I don\'t know" and The Australian Government '
+        "Department of Employment and Workplace Relations (DEWR, 2026)."
+    ),
     {"ai_risk_badge": {"ai_components": {"generic_assertion_risk": 90.0}}},
     {
         "reference_ai": 57.78,
+        "strong_target_ai_score": 45.78,
         "candidates": [
             {
                 "strategy": "deterministic_process_anchor_generic",
@@ -1123,6 +1127,11 @@ feedback_prompt = _ai_search_feedback_prompt(
 assert_test(
     "Reference AI score: 57.78" in feedback_prompt
     and "Target AI score" in feedback_prompt
+    and "Stronger target AI score: 45.78" in feedback_prompt
+    and "strongest reachable target" in feedback_prompt
+    and "Protected spans that must remain" in feedback_prompt
+    and '"I don\'t know"' in feedback_prompt
+    and "The Australian Government Department of Employment and Workplace Relations" in feedback_prompt
     and "AI=57.83" in feedback_prompt
     and "generic_assertion_risk=90.00%" in feedback_prompt
     and "semantic_drift" in feedback_prompt,
@@ -1255,6 +1264,37 @@ assert_test(
     and "polished consequence summaries" in paragraph_prompt
     and "Return exactly 3 alternative replacement paragraphs" in paragraph_prompt,
     "paragraph component prompt passes score drivers and scoped rewrite instruction",
+)
+protected_paragraph_text = (
+    'Some learners say "I don\'t know" and wait for help. '
+    "The Australian Government Department of Employment and Workplace Relations (DEWR, 2026) "
+    "explains the boundary for adjustment while the educator keeps the haircut standard."
+)
+protected_paragraph_target = {
+    "index": 1,
+    "paragraph": protected_paragraph_text,
+    "drivers": {"source_chain_score": 3.0},
+    "target_sentences": [],
+    "problem_spans": [],
+    "domain_anchors": ["learners", "adjustment", "haircut standard"],
+}
+protected_paragraph_prompt = _paragraph_component_prompt(
+    protected_paragraph_target,
+    paragraph_search_json,
+    1,
+    reference_ai=57.78,
+    required_ai_drop=5.0,
+    target_ai_score=52.78,
+    candidate_count=2,
+)
+assert_test(
+    "Protected spans that must remain" in protected_paragraph_prompt
+    and '"I don\'t know"' in protected_paragraph_prompt
+    and "The Australian Government Department of Employment and Workplace Relations" in protected_paragraph_prompt
+    and "\n- In the\n" not in protected_paragraph_prompt
+    and "\n- Tools and\n" not in protected_paragraph_prompt
+    and "rejected before scoring" in protected_paragraph_prompt,
+    "paragraph component prompt lists protected spans and source anchors",
 )
 extracted_paragraph_candidates = _extract_paragraph_component_candidates(
     "<CANDIDATE_1>\nFirst replacement paragraph.\n</CANDIDATE_1>\n"

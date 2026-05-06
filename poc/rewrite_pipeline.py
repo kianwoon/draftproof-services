@@ -441,6 +441,64 @@ def _source_repair_brief(source_text: str) -> str:
     return "Source repair requirements:\n- " + "\n- ".join(notes)
 
 
+_NAME_ANCHOR_RE = re.compile(
+    r"\b(?:The\s+)?[A-Z][A-Za-z0-9&.-]*"
+    r"(?:\s+(?:[A-Z][A-Za-z0-9&.-]*|of|and|for|the|in|to|et|al\.)){1,10}"
+)
+
+
+def _protected_anchor_brief(text: str, *, limit: int = 28) -> str:
+    """List dynamic facts/anchors that LLM candidates must not drop."""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+
+    protected: list[str] = []
+    for span in detect_protected_spans(text):
+        value = str(span.text or "").strip()
+        if value and value not in protected:
+            protected.append(value)
+
+    name_anchors: list[str] = []
+    connector_words = {"and", "or", "of", "the", "in", "to", "for", "et", "al."}
+    for match in _NAME_ANCHOR_RE.finditer(text):
+        value = re.sub(r"\s+", " ", match.group()).strip(" ,.;:")
+        words = value.split()
+        if len(words) < 2:
+            continue
+        lower_words = [word.lower().strip(".,") for word in words]
+        if lower_words[-1] in connector_words:
+            continue
+        if (
+            len(words) == 2
+            and lower_words[0] in connector_words
+            and not re.search(r"\d|[A-Z]{2,}", words[1])
+        ):
+            continue
+        if value.lower() in {
+            "this means",
+            "this review",
+            "this approach",
+            "this waiting",
+        }:
+            continue
+        if value not in name_anchors:
+            name_anchors.append(value)
+
+    lines: list[str] = []
+    if protected:
+        lines.append("Protected spans that must remain in every candidate:")
+        lines.extend(f"- {item}" for item in protected[:limit])
+    if name_anchors:
+        lines.append("Source/name anchors that must not be omitted or shortened:")
+        lines.extend(f"- {item}" for item in name_anchors[:limit])
+    if lines:
+        lines.append(
+            "A candidate that loses these quotes, citations, numbers, unit codes, "
+            "source names, or institution names is rejected before scoring."
+        )
+    return "\n".join(lines)
+
+
 def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
     """Repair obvious inherited source corruption before candidate gates."""
     if not isinstance(candidate, str) or not candidate:
@@ -721,6 +779,7 @@ def _ai_search_prompt(
 ) -> str:
     signal_brief = _ai_search_signal_brief(raw_json)
     repair_brief = _source_repair_brief(source_text)
+    protected_brief = _protected_anchor_brief(source_text, limit=40)
     strategy_lines = {
         "syntax_demolition": [
             "Strategy: syntax demolition.",
@@ -800,6 +859,8 @@ def _ai_search_prompt(
         lines.append(signal_brief)
     if repair_brief:
         lines.append(repair_brief)
+    if protected_brief:
+        lines.append(protected_brief)
     lines.extend([
         "SOURCE DRAFT:\n<TARGET_DOCUMENT>\n" + source_text + "\n</TARGET_DOCUMENT>",
         "Output the complete rewritten draft only.",
@@ -817,9 +878,11 @@ def _ai_search_feedback_prompt(
     """Build a score-aware retry prompt from actual candidate outcomes."""
     signal_brief = _ai_search_signal_brief(raw_json)
     repair_brief = _source_repair_brief(source_text)
+    protected_brief = _protected_anchor_brief(source_text, limit=40)
     reference_ai = search_summary.get("reference_ai")
     required_drop = search_summary.get("required_ai_drop")
     target_score = search_summary.get("target_ai_score")
+    strong_target_score = search_summary.get("strong_target_ai_score")
     best_attempt = search_summary.get("best_attempt") or {}
     candidate_lines = []
     for item in (search_summary.get("candidates") or [])[-10:]:
@@ -846,11 +909,13 @@ def _ai_search_feedback_prompt(
 
     return (
         "DraftProof already tried candidate rewrites and rescanned what passed local checks.\n"
-        f"Reference AI score: {reference_ai}. Required drop: {required_drop}. Target AI score: {target_score}.\n"
-        "Your task is to beat the required target, not to polish and not to make a tiny reduction.\n"
+        f"Reference AI score: {reference_ai}. Required drop: {required_drop}. Target AI score: {target_score}. "
+        f"Stronger target AI score: {strong_target_score}.\n"
+        "Your task is to beat the strongest reachable target, not to polish and not to make a tiny reduction.\n"
         f"Current best attempt: {best_attempt or '[none]'}\n\n"
         f"{signal_brief}\n\n"
         f"{repair_brief}\n\n"
+        f"{protected_brief}\n\n"
         "Candidate scoreboard from the actual detector:\n"
         f"{scoreboard}\n\n"
         "What the next attempt must do:\n"
@@ -1100,6 +1165,7 @@ def _paragraph_component_prompt(
     signal_brief = _ai_search_signal_brief(raw_json)
     drivers = target.get("drivers") or {}
     candidate_count = max(1, int(candidate_count or 1))
+    protected_brief = _protected_anchor_brief(target.get("paragraph") or "", limit=24)
     return (
         "DraftProof paragraph-component AI mitigation.\n"
         "Rewrite only the target paragraph.\n"
@@ -1115,6 +1181,7 @@ def _paragraph_component_prompt(
         + "\n".join(f"- {s}" for s in (target.get("problem_spans") or [])[:10])
         + "\nDomain anchors already present nearby:\n"
         + ", ".join(str(a) for a in (target.get("domain_anchors") or [])[:16])
+        + ("\n\n" + protected_brief if protected_brief else "")
         + "\n\nPrevious paragraph context:\n"
         f"{target.get('previous_paragraph') or '[none]'}\n\n"
         "TARGET PARAGRAPH:\n"
@@ -1123,6 +1190,7 @@ def _paragraph_component_prompt(
         f"{target.get('next_paragraph') or '[none]'}\n\n"
         "Rewrite rules:\n"
         "- Preserve all citations, years, numbers, names, unit codes, and source references.\n"
+        "- Preserve every listed protected span and source/name anchor. You may move them, but do not paraphrase or delete them.\n"
         "- Do not invent new evidence, sources, people, institutions, or events.\n"
         "- Break generic assertion flow: avoid broad claims unless tied to the local haircutting/classroom process.\n"
         "- If the paragraph is source-heavy, do not stack citations into a smooth literature-summary chain.\n"
@@ -1575,42 +1643,16 @@ def run_rewrite_pipeline(
     elif text:
         # Run detect first, then parse
         from detect_pipeline import run_detect
-        detect_result = run_detect(text, output_dir or "test_output", verbose=verbose)
-        report = detect_result["report"]
-
-        from detect.base import DetectResult
-        by_scanner = {}
-        for tier_findings in report.findings_by_tier.values():
-            for f in tier_findings:
-                by_scanner.setdefault(f.scanner, []).append(f)
-
-        detect_results = []
-        for scanner, findings in by_scanner.items():
-            # Preserve raw data from report JSON for scanners that have it
-            scanner_raw = None
-            if scanner == "predictability":
-                pred = detect_json.get("predictability", {})
-                # Use all_sentences (full text + scores) if available,
-                # otherwise fall back to the predictability block
-                all_sents = pred.get("all_sentences")
-                if all_sents:
-                    scanner_raw = {"sentences": all_sents}
-                else:
-                    scanner_raw = pred if pred else None
-            detect_results.append(DetectResult(
-                scanner=scanner,
-                overall_risk=0.5,
-                confidence="medium",
-                confidence_reason="from detect pipeline",
-                risk_distribution={},
-                findings=findings,
-                policy_message="",
-                raw=scanner_raw,
-            ))
-        ctx = DetectJSONContext(
-            detect_results=detect_results,
-            input_text=text,
+        detect_result = run_detect(
+            text,
+            output_dir or "test_output",
+            verbose=verbose,
+            model_name=os.environ.get("PREDICTABILITY_MODEL") or None,
         )
+        with open(detect_result["json_path"], "r", encoding="utf-8") as fh:
+            generated_detect_json = json.load(fh)
+        ctx = DetectJSONParser.parse_dict(generated_detect_json)
+        text = ctx.input_text or text
 
     if not text or not text.strip():
         raise ValueError("Empty input text")
@@ -1934,6 +1976,10 @@ def run_rewrite_pipeline(
             "selected": False,
             "candidates": [],
         }
+        ai_search_strong_drop = _float_env("DRAFTPROOF_AI_SEARCH_STRONG_DROP", 12.0)
+        ai_search_strong_target = round(max(0.0, ai_search_reference - ai_search_strong_drop), 2)
+        search_summary["strong_ai_drop"] = ai_search_strong_drop
+        search_summary["strong_target_ai_score"] = ai_search_strong_target
         if search_source_repairs:
             search_summary["source_repairs"] = search_source_repairs
         effective_key = (
@@ -1954,6 +2000,13 @@ def run_rewrite_pipeline(
 
         def _best_ai_search_selectable() -> bool:
             return bool(best_strategy and best_selection_status.get("selectable"))
+
+        def _best_ai_search_strong_enough() -> bool:
+            return (
+                _best_ai_search_selectable()
+                and isinstance(best_ai, (int, float))
+                and best_ai <= ai_search_strong_target
+            )
 
         def _record_best_attempt() -> None:
             if not best_strategy:
@@ -2085,7 +2138,8 @@ def run_rewrite_pipeline(
             )
             candidate_eval["selection_status"] = selection_status
             score_to_beat = min(best_ai, ai_search_reference)
-            if isinstance(candidate_ai, (int, float)) and candidate_ai < score_to_beat - 0.05:
+            best_epsilon = _float_env("DRAFTPROOF_AI_SEARCH_BEST_EPSILON", 0.005)
+            if isinstance(candidate_ai, (int, float)) and candidate_ai < score_to_beat - best_epsilon:
                 best_ai = candidate_ai
                 best_text = candidate
                 best_report = candidate_report
@@ -2331,14 +2385,22 @@ def run_rewrite_pipeline(
 
                     _evaluate_ai_search_candidate(strategy, candidate, deterministic=False)
 
-                if not _best_ai_search_selectable():
+                feedback_after_selectable = os.environ.get(
+                    "DRAFTPROOF_AI_SEARCH_FEEDBACK_AFTER_SELECTABLE",
+                    "1",
+                ) != "0"
+                feedback_needed = (
+                    not _best_ai_search_selectable()
+                    or (feedback_after_selectable and not _best_ai_search_strong_enough())
+                )
+                if feedback_needed:
                     try:
                         feedback_limit = max(
                             0,
-                            int(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_CANDIDATES", "2")),
+                            int(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_CANDIDATES", "4")),
                         )
                     except ValueError:
-                        feedback_limit = 2
+                        feedback_limit = 4
                     if feedback_limit:
                         search_summary["score_feedback_loop"] = {
                             "enabled": True,
@@ -2346,8 +2408,13 @@ def run_rewrite_pipeline(
                             "reason": (
                                 "no_selectable_candidate"
                                 if not best_strategy
-                                else "best_candidate_below_required_ai_drop"
+                                else (
+                                    "best_candidate_below_required_ai_drop"
+                                    if not _best_ai_search_selectable()
+                                    else "selected_candidate_above_strong_target"
+                                )
                             ),
+                            "strong_target_ai_score": ai_search_strong_target,
                         }
                     for feedback_index in range(1, feedback_limit + 1):
                         report_progress(
@@ -2360,7 +2427,7 @@ def run_rewrite_pipeline(
                         }
                         try:
                             prompt = _ai_search_feedback_prompt(
-                                search_source_text,
+                                best_text if _best_ai_search_selectable() else search_source_text,
                                 ctx.raw_json,
                                 search_summary,
                                 feedback_index,
@@ -2385,7 +2452,7 @@ def run_rewrite_pipeline(
                             candidate,
                             deterministic=False,
                         )
-                        if _best_ai_search_selectable():
+                        if _best_ai_search_strong_enough():
                             break
 
                 if _best_ai_search_selectable():
