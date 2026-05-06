@@ -751,28 +751,33 @@ export default function Report() {
 
         {transformation && transformationSignals.length > 0 && (
           <section className="transformation-scorecard" aria-label="Transformation pattern scorecard">
-            <div className="transformation-summary">
-              <div className="transformation-icon" aria-hidden="true">
-                <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
-                  <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
-                  <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </div>
-              <div>
-                <span className="transformation-kicker">Transformation Pattern</span>
-                <h2>{transformation.label || 'Pattern analysis'}</h2>
-                <div className="transformation-meta-row">
-                  {transformation.confidence && (
-                    <span className="transformation-pill">{transformation.confidence} confidence</span>
-                  )}
-                  <span className="transformation-pill">not a verdict</span>
+            <div className="transformation-header">
+              <div className="transformation-summary">
+                <div className="transformation-icon" aria-hidden="true">
+                  <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+                    <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
+                    <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
                 </div>
+                <div>
+                  <span className="transformation-kicker">Transformation Pattern</span>
+                  <h2>{transformation.label || 'Pattern analysis'}</h2>
+                  <div className="transformation-meta-row">
+                    {transformation.confidence && (
+                      <span className="transformation-pill">{transformation.confidence} confidence</span>
+                    )}
+                    <span className="transformation-pill">not a verdict</span>
+                  </div>
+                </div>
+              </div>
+              <div className="transformation-ai-score">
+                <span>AI Score</span>
+                <strong>{formatMetricPercent(aiScore, 1)}</strong>
               </div>
             </div>
             <div className="transformation-chart">
               <div className="transformation-chart-head">
                 <span>Core Signals</span>
-                <strong>{formatMetricPercent(aiScore, 1)}</strong>
               </div>
               <div className="transformation-bars">
                 {transformationSignals.map((signal) => (

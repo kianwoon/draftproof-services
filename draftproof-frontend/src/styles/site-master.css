@@ -3834,27 +3834,29 @@ th {
 }
 
 .transformation-scorecard {
-  display: grid;
-  grid-template-columns: minmax(260px, .82fr) minmax(360px, 1.18fr);
-  gap: 1rem;
-  align-items: stretch;
+  display: block;
   margin: -1rem 0 2rem;
-}
-
-.transformation-summary,
-.transformation-chart {
-  min-width: 0;
   border: 1px solid #d8e1ea;
+  border-radius: 16px;
   background: rgba(255, 255, 255, .92);
   box-shadow: 0 16px 34px rgba(15, 23, 42, .07);
+  overflow: hidden;
+}
+
+.transformation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.15rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .transformation-summary {
   display: flex;
   gap: 1rem;
   align-items: flex-start;
-  padding: 1.2rem;
-  border-radius: 16px;
+  min-width: 0;
 }
 
 .transformation-icon {
@@ -3881,9 +3883,33 @@ th {
 .transformation-summary h2 {
   margin: .35rem 0 .8rem;
   color: var(--navy-950);
-  font-size: clamp(1.05rem, 2vw, 1.4rem);
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
   font-weight: 850;
   line-height: 1.15;
+}
+
+.transformation-ai-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex: 0 0 auto;
+  min-width: 90px;
+}
+
+.transformation-ai-score span {
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.transformation-ai-score strong {
+  margin-top: .35rem;
+  color: #b45309;
+  font-size: 1.35rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .transformation-meta-row {
@@ -3907,8 +3933,7 @@ th {
 }
 
 .transformation-chart {
-  padding: 1rem;
-  border-radius: 16px;
+  padding: 1rem 1.15rem 1.15rem;
 }
 
 .transformation-chart-head {
@@ -3916,8 +3941,7 @@ th {
   align-items: baseline;
   justify-content: space-between;
   gap: 1rem;
-  padding-bottom: .85rem;
-  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: .4rem;
 }
 
 .transformation-chart-head span {
@@ -3926,16 +3950,10 @@ th {
   font-weight: 850;
 }
 
-.transformation-chart-head strong {
-  color: #b45309;
-  font-size: .95rem;
-  font-weight: 900;
-}
-
 .transformation-bars {
   display: grid;
   gap: .72rem;
-  padding-top: .9rem;
+  padding-top: .55rem;
 }
 
 .transformation-bar-row {
@@ -4579,12 +4597,17 @@ th {
     width: 100%;
   }
   .transformation-scorecard {
-    grid-template-columns: 1fr;
     margin-top: -1rem;
   }
-  .transformation-summary,
+  .transformation-header {
+    flex-direction: column;
+    padding: 1rem;
+  }
   .transformation-chart {
     padding: 1rem;
+  }
+  .transformation-ai-score {
+    align-items: flex-start;
   }
   .transformation-icon {
     width: 48px;
