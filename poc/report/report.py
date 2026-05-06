@@ -2577,6 +2577,16 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     scan_intelligence["mitigation_inputs"]["rewrite_plan"] = result.get("rewrite_plan")
     scan_intelligence["mitigation_inputs"]["rewrite_constraints"] = result.get("rewrite_constraints")
     scan_intelligence["mitigation_inputs"]["rewrite_edit_briefs"] = result.get("rewrite_edit_briefs")
+    from detect.mitigation import build_ai_mitigation_plan
+    ai_mitigation = build_ai_mitigation_plan(
+        scan_intelligence=scan_intelligence,
+        ai_risk_badge=report.ai_risk_badge or {},
+        rewrite_plan=result.get("rewrite_plan"),
+        rewrite_constraints=result.get("rewrite_constraints"),
+        rewrite_edit_briefs=result.get("rewrite_edit_briefs"),
+    )
+    scan_intelligence["mitigation_inputs"]["ai_mitigation_plan"] = ai_mitigation
+    result["ai_mitigation"] = ai_mitigation
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 

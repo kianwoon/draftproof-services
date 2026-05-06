@@ -315,6 +315,21 @@ assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],
     "legacy-friendly highlight segment alias mirrors scan intelligence segments",
 )
+mitigation = scan_json.get("ai_mitigation", {})
+assert_equal(mitigation.get("schema_version"), "ai_mitigation.v1", "AI mitigation schema is present")
+assert_equal(mitigation.get("philosophy"), "authenticity_mitigation", "AI mitigation uses authenticity strategy")
+assert_true(
+    "typo injection" in mitigation.get("objective", {}).get("avoid", []),
+    "AI mitigation rejects shallow evasion tactics",
+)
+assert_true(
+    mitigation.get("target_segments"),
+    "AI mitigation carries target segments from scan intelligence",
+)
+assert_true(
+    scan_json.get("scan_intelligence", {}).get("mitigation_inputs", {}).get("ai_mitigation_plan") == mitigation,
+    "scan intelligence mirrors AI mitigation handoff",
+)
 assert_equal(template_ai.authorship_rating["code"], "ai_generated_signals", "template AI sample rates as AI-generated signals")
 
 fixture_paragraph = (

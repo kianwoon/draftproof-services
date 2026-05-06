@@ -18,6 +18,7 @@ from .profiles import DomainProfile, resolve_profile, auto_detect_domain, list_a
 from .thresholds import ThresholdConfig
 from .utils import split_sentences
 from .scoring import SignalScores, calculate_authorship_concern, extract_signals
+from .mitigation import build_ai_mitigation_plan
 
 __all__ = [
     "BaseDetector",
@@ -45,4 +46,5 @@ __all__ = [
     "SignalScores",
     "calculate_authorship_concern",
     "extract_signals",
+    "build_ai_mitigation_plan",
 ]
