@@ -3592,6 +3592,15 @@ th {
   flex-shrink: 0;
 }
 
+.report-hero-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
+.download-pdf-btn,
 .rewrite-btn,
 .rewrite-results-link {
   display: inline-flex;
@@ -3609,6 +3618,18 @@ th {
   line-height: 1;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.download-pdf-btn {
+  color: #047857;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+
+.download-pdf-btn:hover {
+  color: #065f46;
+  background: #d1fae5;
+  border-color: #6ee7b7;
 }
 
 .rewrite-btn {
@@ -4135,14 +4156,6 @@ th {
   border-radius: 8px;
   font-size: .72rem;
   font-weight: 750;
-}
-
-/* Downloads */
-.report-downloads {
-  display: flex;
-  gap: .8rem;
-  margin-bottom: 2rem;
-  flex-wrap: wrap;
 }
 
 /* Submitted content signal map */
@@ -4881,6 +4894,14 @@ th {
   .reports-table { min-width: 780px; }
   .report-hero { flex-direction: column; align-items: flex-start; }
   .report-hero-title-row { align-items: flex-start; }
+  .report-hero-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .download-pdf-btn,
+  .rewrite-btn {
+    flex: 1 1 180px;
+  }
   .report-doc-icon { width: 58px; height: 58px; flex-basis: 58px; border-radius: 14px; }
   .report-doc-icon svg { width: 34px; height: 34px; }
   .report-hero-info h1 { font-size: clamp(2.2rem, 12vw, 3.3rem); }
