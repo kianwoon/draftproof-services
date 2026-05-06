@@ -110,6 +110,86 @@ _WQ_COMPONENT_LABELS = {
     "grounding_credit": ("Grounding Credit", "Bonus credit applied when strong sources or domain knowledge are present"),
 }
 
+_TRANSFORMATION_SIGNAL_LABELS = {
+    "ai_likelihood": "AI Likelihood",
+    "human_anchor_score": "Human Anchor",
+    "rewrite_smoothness": "Rewrite Smoothness",
+    "source_similarity": "Source Similarity",
+    "surface_similarity": "Surface Similarity",
+    "outline_to_text_expansion": "Expansion Pattern",
+    "section_style_variance": "Patchwork Variance",
+    "citation_grounding_risk": "Grounding Risk",
+}
+
+
+def _tf_pct(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if abs(number) <= 1:
+        number *= 100
+    return max(0.0, min(100.0, number))
+
+
+def _transformation_signals(features: dict) -> list[tuple[str, float]]:
+    rows = []
+    for key, label in _TRANSFORMATION_SIGNAL_LABELS.items():
+        value = _tf_pct((features or {}).get(key))
+        if value is not None:
+            rows.append((label, value))
+    return sorted(rows, key=lambda row: row[1], reverse=True)
+
+
+def _transformation_contribution_summary(features: dict, signals: list[tuple[str, float]]) -> dict:
+    human_anchor = _tf_pct((features or {}).get("human_anchor_score")) or 0.0
+    grounding_quality = 100.0 - (_tf_pct((features or {}).get("citation_grounding_risk")) or 0.0)
+    semantic_originality = 100.0 - max(
+        _tf_pct((features or {}).get("source_similarity")) or 0.0,
+        _tf_pct((features or {}).get("surface_similarity")) or 0.0,
+    )
+
+    ai_likelihood = _tf_pct((features or {}).get("ai_likelihood")) or 0.0
+    rewrite_smoothness = _tf_pct((features or {}).get("rewrite_smoothness")) or 0.0
+    expansion = _tf_pct((features or {}).get("outline_to_text_expansion")) or 0.0
+    patchwork = _tf_pct((features or {}).get("section_style_variance")) or 0.0
+    grounding_risk = _tf_pct((features or {}).get("citation_grounding_risk")) or 0.0
+    source_similarity = _tf_pct((features or {}).get("source_similarity")) or 0.0
+
+    human_raw = human_anchor * 0.55 + grounding_quality * 0.25 + semantic_originality * 0.20
+    ai_raw = (
+        ai_likelihood * 0.35
+        + rewrite_smoothness * 0.20
+        + expansion * 0.15
+        + grounding_risk * 0.15
+        + patchwork * 0.10
+        + source_similarity * 0.05
+    )
+    total = max(human_raw + ai_raw, 1.0)
+    hcr = round((human_raw / total) * 100)
+    atr = 100 - hcr
+
+    top_drivers = [
+        label.lower()
+        for label, _ in signals
+        if label != "Human Anchor"
+    ][:2]
+
+    if atr >= 70:
+        summary = "AI transformation dominates this scan pattern."
+    elif atr >= 55:
+        summary = "AI transformation signals are stronger than the human anchor."
+    elif hcr >= 65:
+        summary = "Human contribution remains the stronger signal."
+    else:
+        summary = "Mixed authorship pattern: human anchoring and AI transformation signals are both visible."
+    if top_drivers:
+        summary += f" Main drivers: {' and '.join(top_drivers)}."
+
+    return {"hcr": hcr, "atr": atr, "summary": summary}
+
 # ── Tier display config ──────────────────────────────────────────────
 
 _BADGE_TIER_LABELS = {
@@ -562,6 +642,40 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
                 for comp_name, comp_val in non_zero.items():
                     label, desc = _WQ_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
                     lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
+
+        transformation = badge.get("transformation_classification") or {}
+        transformation_features = transformation.get("features") or {}
+        transformation_rows = _transformation_signals(transformation_features)
+        if transformation and transformation_rows:
+            contribution = _transformation_contribution_summary(
+                transformation_features,
+                transformation_rows,
+            )
+            lines.append("")
+            lines.append("### Transformation Pattern")
+            lines.append("")
+            if transformation.get("label"):
+                lines.append(f"- **Pattern**: **{transformation.get('label')}**")
+            if transformation.get("confidence"):
+                lines.append(f"- **Pattern Confidence**: `{str(transformation.get('confidence')).title()}`")
+            lines.append("- **Important**: This is a transformation-pattern estimate, not an authorship verdict.")
+            lines.append("")
+            lines.append("| Contribution Estimate | Ratio |")
+            lines.append("|-----------------------|------:|")
+            lines.append(f"| Human Contribution Ratio (HCR) | `{contribution['hcr']}%` |")
+            lines.append(f"| AI Transformation Ratio (ATR) | `{contribution['atr']}%` |")
+            lines.append("")
+            lines.append(f"> **Summary:** {contribution['summary']}")
+            lines.append("")
+            lines.append("| Core Signal | Score |")
+            lines.append("|-------------|------:|")
+            for label, value in transformation_rows:
+                lines.append(f"| {label} | `{value:.0f}%` |")
+            evidence = transformation.get("evidence") or []
+            if evidence:
+                lines.append("")
+                lines.append(f"**Evidence Drivers:** {', '.join(str(item) for item in evidence[:3])}")
+            lines.append("")
 
         # ── Combined Recommendation ──
         review_priority = badge.get("review_priority", "")
