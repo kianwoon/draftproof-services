@@ -759,8 +759,33 @@ def _normalize_known_heading_boundaries(text: str) -> tuple[str, list[str]]:
     return repaired, repairs
 
 
+def _strip_reference_like_lines_for_quality(text: str) -> str:
+    """Remove bibliography/reference lines before repetition quality checks."""
+    if not isinstance(text, str) or not text:
+        return ""
+    kept = []
+    in_reference_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if re.match(r"^(?:references|reference list|bibliography)\s*$", line, re.I):
+            in_reference_section = True
+            continue
+        if in_reference_section:
+            # Keep prose if a later section heading starts, otherwise ignore
+            # the reference block. Long publisher names repeat naturally there.
+            if re.match(r"^[A-Z][A-Za-z0-9 ,/&-]{2,70}$", line) and not re.search(r"\(\d{4}\)|https?://", line):
+                in_reference_section = False
+            else:
+                continue
+        if re.search(r"https?://|doi\.org|\(\d{4}\)", line, re.I) and len(line.split()) >= 8:
+            continue
+        kept.append(raw_line)
+    return "\n".join(kept)
+
+
 def _repeated_long_sequence_reason(text: str, window: int = 8) -> str:
-    tokens = re.findall(r"[A-Za-z0-9']+", str(text or "").lower())
+    body_text = _strip_reference_like_lines_for_quality(text)
+    tokens = re.findall(r"[A-Za-z0-9']+", str(body_text or "").lower())
     if len(tokens) < window * 3:
         return ""
     seen: dict[tuple[str, ...], int] = {}

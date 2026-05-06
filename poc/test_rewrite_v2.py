@@ -904,6 +904,17 @@ assert_test(
     ).startswith("repeated_long_sequence"),
     "AI search rejects repeated long text sequences inside candidates",
 )
+assert_test(
+    not _ai_candidate_quality_reject_reason(
+        "The body paragraph explains the learner's cutting task without repeating itself.\n\n"
+        "References\n\n"
+        "Australian Government Department of Employment and Workplace Relations. (2023). "
+        "Training package materials. https://example.edu/source-one\n"
+        "Australian Government Department of Employment and Workplace Relations. (2024). "
+        "Training package update. https://example.edu/source-two"
+    ),
+    "AI search allows repeated publisher names inside reference lists",
+)
 damaged_source = (
     "Maintaining standards while improving access Inclusive learning design does not lower the standard. "
     "ith only six learners, I can watch the technique more closely. "
