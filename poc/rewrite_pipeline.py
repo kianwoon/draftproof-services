@@ -781,6 +781,8 @@ def _ai_search_prompt(
         "- High top-k predictability: rebuild clause order, split/merge sentence routes, and use less expected verbs while preserving meaning.",
         "- Source/citation gaps: narrow or qualify the claim unless the source already exists in the draft.",
         "- Source-heavy assisted prose: when citation density and attribution-chain density are high, break the chain into source point, observed context, and practice decision.",
+        "- Polished consequence prose: when abstract lists and modal consequence claims are dense, convert the summary into a concrete sequence of actions, waits, checks, or decisions.",
+        "- Source-catalogue conclusions: when a closing paragraph lists authors one by one, compress the source catalogue and close around learner action and assessment consequences.",
         "- Repeated starters/rhythm: vary openings naturally without mechanical prefixes.",
         "Hard constraints:",
         "Keep the same topic, stance, factual claims, numbers, names, quotes, citations, unit codes, and chronology.",
@@ -791,6 +793,7 @@ def _ai_search_prompt(
         "Change most sentence openings and vary paragraph openings. Avoid preserving the same paragraph order inside every paragraph.",
         "Avoid generic polished phrases: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident.",
         "Avoid assisted-sounding source synthesis: long citation-summary chains, repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.",
+        "Avoid polished consequence summaries: abstract lists, broad confidence/quality/outcome claims, and neat source catalogues that do not show what happens in the work.",
         "Use concrete wording, varied sentence routes, and paragraph-level reconstruction.",
     ]
     if signal_brief:
@@ -859,6 +862,8 @@ def _ai_search_feedback_prompt(
         "- Rebuild paragraph flow where needed: start from classroom/salon action, learner behavior, or source relation before broad claims.\n"
         "- For source-heavy blocks, avoid citation-summary chains; alternate source point, observed context, and practice decision.\n"
         "- Avoid assisted-sounding source synthesis patterns: repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.\n"
+        "- For polished consequence blocks, replace abstract outcome lists with concrete waits, checks, decisions, or next actions.\n"
+        "- For source-catalogue conclusions, stop listing authors one by one and close around the learner action the sources justify.\n"
         "- Do not add fake facts. If evidence is missing, narrow the claim instead of inventing support.\n"
         "- Avoid mechanical anchor prefixes and visible review markers in the final document.\n"
         "- Repair inherited source damage: broken words, merged headings, and duplicate sentence fragments.\n"
@@ -911,6 +916,50 @@ _GROUNDED_ACTION_RE = re.compile(
     r"draft(?:s|ed|ing)?|practice|practise|feedback|example|case)\b",
     re.I,
 )
+_MODAL_CONSEQUENCE_RE = re.compile(
+    r"\b(?:can|could|may|might|will|would|should|must)\s+"
+    r"(?:lower|raise|increase|reduce|improve|support|strengthen|"
+    r"affect|influence|create|produce|lead|result|ensure|allow|"
+    r"enable|require|help|maintain|uphold|replace)\b",
+    re.I,
+)
+_EVALUATIVE_BRIDGE_RE = re.compile(
+    r"\b(?:matters?|challenge|important|vital|critical|central|"
+    r"support(?:s|ed)?|confidence|motivation|quality|standard(?:s)?|"
+    r"expectation(?:s)?|result(?:s)?|outcome(?:s)?|complexity|"
+    r"visibility|certainty|correlat(?:e|es|ed|ing)|validat(?:e|es|ed|ing)|"
+    r"promot(?:e|es|ed|ing)|clarif(?:y|ies|ied)|transparent|"
+    r"professional|commercial|direct|indirect)\b",
+    re.I,
+)
+_SOURCE_CATALOGUE_SENTENCE_RE = re.compile(
+    r"^\s*(?:[A-Z][A-Za-z&.-]+(?:\s+(?:and|&|et|al\.|[A-Z][A-Za-z&.-]+))*"
+    r"(?:\s+et\s+al\.)?)\s+"
+    r"(?:state(?:s|d)?|show(?:s|ed)?|argue(?:s|d)?|suggest(?:s|ed)?|"
+    r"define(?:s|d)?|clarif(?:y|ies|ied)|explain(?:s|ed)?|"
+    r"note(?:s|d)?|observe(?:s|d)?|discuss(?:es|ed)?|focus(?:es|ed)?\s+on|"
+    r"highlight(?:s|ed)?|describe(?:s|d)?|identify|identifies|outline(?:s|d)?|"
+    r"recommend(?:s|ed)?)\b",
+    re.I,
+)
+
+
+def _abstract_list_hits(paragraph: str) -> int:
+    hits = 0
+    for sentence in re.split(r"(?<=[.!?])\s+", str(paragraph or "")):
+        abstract_items = _ABSTRACT_NOUN_RE.findall(sentence)
+        comma_count = sentence.count(",")
+        if comma_count >= 2 and len(set(word.lower() for word in abstract_items)) >= 2:
+            hits += 1
+    return hits
+
+
+def _source_catalogue_hits(paragraph: str) -> int:
+    hits = 0
+    for sentence in re.split(r"(?<=[.!?])\s+", str(paragraph or "")):
+        if _SOURCE_CATALOGUE_SENTENCE_RE.search(sentence):
+            hits += 1
+    return hits
 
 
 def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> list[dict]:
@@ -948,12 +997,24 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
         source_attribution_hits = len(_SOURCE_ATTRIBUTION_RE.findall(paragraph))
         abstract_noun_hits = len(_ABSTRACT_NOUN_RE.findall(paragraph))
         grounded_action_hits = len(_GROUNDED_ACTION_RE.findall(paragraph))
+        modal_consequence_hits = len(_MODAL_CONSEQUENCE_RE.findall(paragraph))
+        evaluative_bridge_hits = len(_EVALUATIVE_BRIDGE_RE.findall(paragraph))
+        abstract_list_hits = _abstract_list_hits(paragraph)
+        source_catalogue_hits = _source_catalogue_hits(paragraph)
         abstract_noun_density = round(abstract_noun_hits / max(len(words) / 100.0, 1.0), 3)
         source_chain_score = (
             max(0, citation_count - 1) * 1.15
             + min(source_attribution_hits, 8) * 0.65
+            + min(source_catalogue_hits, 6) * 0.95
             + min(abstract_noun_density, 8.0) * 0.35
             - min(grounded_action_hits, 16) * 0.10
+        )
+        polished_consequence_score = (
+            min(modal_consequence_hits, 6) * 0.75
+            + min(evaluative_bridge_hits / max(len(words) / 90.0, 1.0), 8.0) * 0.35
+            + min(abstract_list_hits, 4) * 1.10
+            + min(abstract_noun_density, 8.0) * 0.25
+            - min(grounded_action_hits, 16) * 0.08
         )
         starters = _paragraph_sentence_starters(paragraph)
         repeated_starter_count = len(starters) - len(set(starters))
@@ -968,7 +1029,9 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
             + brief_score * 8.0
             + min(generic_hits / max(len(words) / 90.0, 1.0), 8.0)
             + min(max(source_chain_score, 0.0), 8.0)
+            + min(max(polished_consequence_score, 0.0), 8.0)
             + (1.25 if citation_count >= 2 and source_attribution_hits >= 2 else 0.0)
+            + (1.00 if source_catalogue_hits >= 3 else 0.0)
             + source_gap * 2.0
             + min(repeated_starter_count, 4) * 0.75
             - min(concrete_hits, 12) * 0.20
@@ -988,10 +1051,15 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
                 "concrete_anchor_hits": concrete_hits,
                 "citation_count": citation_count,
                 "source_attribution_hits": source_attribution_hits,
+                "source_catalogue_hits": source_catalogue_hits,
                 "abstract_noun_hits": abstract_noun_hits,
                 "abstract_noun_density": abstract_noun_density,
+                "abstract_list_hits": abstract_list_hits,
+                "modal_consequence_hits": modal_consequence_hits,
+                "evaluative_bridge_hits": evaluative_bridge_hits,
                 "grounded_action_hits": grounded_action_hits,
                 "source_chain_score": round(source_chain_score, 3),
+                "polished_consequence_score": round(polished_consequence_score, 3),
                 "source_gap": bool(source_gap),
                 "repeated_sentence_starters": repeated_starter_count,
                 "word_count": len(words),
@@ -1055,6 +1123,8 @@ def _paragraph_component_prompt(
         "- If the paragraph is source-heavy, do not stack citations into a smooth literature-summary chain.\n"
         "- Rebuild source-heavy parts as: source point, observed context, and the practical decision this changes.\n"
         "- Prefer local action or direct observation over attribution-heavy openers when the source is already cited.\n"
+        "- If the paragraph compresses consequences into abstract lists, turn one list item into a concrete classroom action or decision.\n"
+        "- If the paragraph is a conclusion that catalogues sources one by one, stop listing authors and close around what learners must do next.\n"
         "- Start from concrete action, learner behavior, source relation, or assessment consequence before broad explanation.\n"
         "- Change paragraph architecture: reorder claim/example/source relation where meaning allows.\n"
         "- Convert generic claims into specific process observations using only anchors already present nearby.\n"
@@ -1063,6 +1133,7 @@ def _paragraph_component_prompt(
         "- Keep author voice and first-person classroom observation where it already exists.\n"
         "- Remove duplicate fragments if present inside the target paragraph.\n"
         "- Avoid assisted-sounding synthesis patterns: repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.\n"
+        "- Avoid polished consequence summaries where every sentence explains importance, confidence, quality, standards, outcomes, or support without a concrete step.\n"
         f"- Batch attempt {attempt_index}: make each option materially different from generic rephrasing.\n\n"
         f"Return exactly {candidate_count} alternative replacement paragraphs using this exact format:\n"
         "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"

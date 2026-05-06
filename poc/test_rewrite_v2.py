@@ -1147,6 +1147,25 @@ source_synthesis_search_text = (
     "The paragraph then continues through adjustment, participation, reliability, independence, and assessment consistency without returning to what the learner actually does.\n\n"
     "In the salon classroom, I watch learners lose the guide when projection changes."
 )
+polished_consequence_text = (
+    "Short title.\n\n"
+    "Individual correction remains necessary because the trainer can detect small process errors that learners miss. "
+    "Time creates pressure. "
+    "While one learner receives help, others wait with equipment in hand and no clear next step. "
+    "This waiting can reduce motivation, confidence, practice quality, and assessment consistency. "
+    "Peer checks and tools may provide support, but they cannot replace direct feedback from the trainer.\n\n"
+    "The next paragraph describes a learner checking the guide on a mannequin."
+)
+source_catalogue_conclusion_text = (
+    "Short title.\n\n"
+    "Conclusion\n\n"
+    "Learners must combine several procedures before assessment. "
+    "Research Group states that cognitive pressure changes how learners manage the task. "
+    "Training Authors argue that unsupported discovery is risky for novice learners. "
+    "Access Framework describes multiple ways to support participation. "
+    "Policy Office defines the boundary for reasonable adjustment. "
+    "Competency depends on structured practice and professional standards."
+)
 paragraph_search_json = {
     "ai_risk_badge": {
         "ai_components": {
@@ -1183,6 +1202,21 @@ assert_test(
     and source_synthesis_targets[0]["drivers"]["citation_count"] >= 2,
     "paragraph component search detects structural source-synthesis drivers",
 )
+polished_consequence_targets = _paragraph_component_targets(polished_consequence_text, paragraph_search_json, limit=2)
+assert_test(
+    polished_consequence_targets
+    and polished_consequence_targets[0]["drivers"]["polished_consequence_score"] > 0
+    and polished_consequence_targets[0]["drivers"]["abstract_list_hits"] >= 1
+    and polished_consequence_targets[0]["drivers"]["modal_consequence_hits"] >= 1,
+    "paragraph component search detects polished consequence-summary drivers",
+)
+source_catalogue_targets = _paragraph_component_targets(source_catalogue_conclusion_text, paragraph_search_json, limit=2)
+assert_test(
+    source_catalogue_targets
+    and source_catalogue_targets[0]["drivers"]["source_catalogue_hits"] >= 3
+    and source_catalogue_targets[0]["drivers"]["source_chain_score"] > 0,
+    "paragraph component search detects source-catalogue conclusion drivers",
+)
 paragraph_prompt = _paragraph_component_prompt(
     paragraph_targets[0],
     paragraph_search_json,
@@ -1198,6 +1232,8 @@ assert_test(
     and "target AI<=52.78" in paragraph_prompt
     and "source-heavy parts" in paragraph_prompt
     and "attribution clauses, abstract noun stacking" in paragraph_prompt
+    and "conclusion that catalogues sources one by one" in paragraph_prompt
+    and "polished consequence summaries" in paragraph_prompt
     and "Return exactly 3 alternative replacement paragraphs" in paragraph_prompt,
     "paragraph component prompt passes score drivers and scoped rewrite instruction",
 )
