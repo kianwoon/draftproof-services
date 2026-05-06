@@ -2788,61 +2788,69 @@ guided_pipeline_text = (
     "This shows that learning is important and can improve outcomes for learners. "
     "When learners pause, they may need a short moment to process what they have just practised. "
 ) * 6
-guided_pipeline = run_rewrite_pipeline(
-    detect_json={
-        "input_text": guided_pipeline_text,
-        "ai_risk_badge": {
-            "ai_likelihood_score": 57.78,
-            "writing_quality_score": 54.12,
-            "ai_components": {
-                "topk_pattern": 67.7,
-                "generic_assertion_risk": 90.0,
-                "qualifying_text_ai_density": 69.88,
+_previous_ai_search = os.environ.get("DRAFTPROOF_AI_MITIGATION_SEARCH")
+os.environ["DRAFTPROOF_AI_MITIGATION_SEARCH"] = "0"
+try:
+    guided_pipeline = run_rewrite_pipeline(
+        detect_json={
+            "input_text": guided_pipeline_text,
+            "ai_risk_badge": {
+                "ai_likelihood_score": 57.78,
+                "writing_quality_score": 54.12,
+                "ai_components": {
+                    "topk_pattern": 67.7,
+                    "generic_assertion_risk": 90.0,
+                    "qualifying_text_ai_density": 69.88,
+                },
+                "writing_components": {
+                    "unsupported_claim_risk": 70.0,
+                    "source_grounding_risk": 70.0,
+                },
             },
-            "writing_components": {
-                "unsupported_claim_risk": 70.0,
-                "source_grounding_risk": 70.0,
+            "rewrite_decision": {"run_rewrite": True, "mode": "targeted"},
+            "rewrite_plan": {
+                "mode": "targeted",
+                "overall_action": "predictability_revision",
+                "auto_fixable": [{"finding_id": "f001"}],
+            },
+            "findings": {
+                "critical": [],
+                "high": [],
+                "medium": [{
+                    "finding_id": "f001",
+                    "category": "predictability",
+                    "scanner": "predictability",
+                    "title": "medium_predictability",
+                    "adjusted_risk": "medium",
+                    "actionability": "auto_fixable",
+                    "sentence_id": "s002",
+                    "evidence": "This shows that learning is important and can improve outcomes for learners.",
+                    "recommendation": "Rewrite with concrete classroom detail.",
+                    "score": 0.52,
+                }],
+                "low": [],
             },
         },
-        "rewrite_decision": {"run_rewrite": True, "mode": "targeted"},
-        "rewrite_plan": {
-            "mode": "targeted",
-            "overall_action": "predictability_revision",
-            "auto_fixable": [{"finding_id": "f001"}],
-        },
-        "findings": {
-            "critical": [],
-            "high": [],
-            "medium": [{
-                "finding_id": "f001",
-                "category": "predictability",
-                "scanner": "predictability",
-                "title": "medium_predictability",
-                "adjusted_risk": "medium",
-                "actionability": "auto_fixable",
-                "sentence_id": "s002",
-                "evidence": "This shows that learning is important and can improve outcomes for learners.",
-                "recommendation": "Rewrite with concrete classroom detail.",
-                "score": 0.52,
-            }],
-            "low": [],
-        },
-    },
-    output_dir=tempfile.mkdtemp(prefix="draftproof-test-guided-"),
-    api_key=None,
-)
+        output_dir=tempfile.mkdtemp(prefix="draftproof-test-guided-"),
+        api_key=None,
+    )
+finally:
+    if _previous_ai_search is None:
+        os.environ.pop("DRAFTPROOF_AI_MITIGATION_SEARCH", None)
+    else:
+        os.environ["DRAFTPROOF_AI_MITIGATION_SEARCH"] = _previous_ai_search
 guided_summary = guided_pipeline["result"].summary
 assert_test(
-    guided_summary.get("rewrite_engine_mode") == "guided_authenticity_requires_author_input",
-    "pipeline blocks automatic rewrite when AI-Mitigation requires author input",
+    guided_summary.get("ai_mitigation_blocked_auto_rewrite") is False,
+    "pipeline does not block automatic mitigation for author-evidence gaps by default",
 )
 assert_test(
-    guided_summary.get("ai_mitigation_search", {}).get("reason") == "requires_author_input",
-    "pipeline skips AI mitigation search for author-evidence gaps",
+    guided_summary.get("ai_mitigation_search", {}).get("reason") != "requires_author_input",
+    "pipeline no longer labels author-evidence gaps as an AI search blocker",
 )
 assert_test(
-    guided_summary.get("ai_mitigation_search", {}).get("llm_calls") == 0,
-    "author-evidence gate prevents AI search LLM calls",
+    guided_summary.get("ai_mitigation_search", {}).get("enabled") is False,
+    "test disables AI search while preserving guidance output",
 )
 educational_rewrite = guided_summary.get("educational_mitigation_rewrite") or {}
 assert_test(

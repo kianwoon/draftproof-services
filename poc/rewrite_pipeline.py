@@ -3378,6 +3378,15 @@ def _ai_candidate_quality_reject_reason(
     synthetic_anchors = _SYNTHETIC_ANCHOR_RE.findall(candidate)
     sentence_count = max(1, len(re.findall(r"(?<=[.!?])\s+", candidate)) + 1)
     max_anchor_count = max(3, min(8, sentence_count // 8))
+    for artifact in (
+        "For this task:",
+        "During the practical work:",
+        "During feedback:",
+        "When learners are cutting:",
+        "In assessment:",
+    ):
+        if re.search(r"\b" + re.escape(artifact), candidate, re.I):
+            return f"synthetic_anchor_artifact:{artifact}"
     if len(synthetic_anchors) > max_anchor_count:
         return f"synthetic_anchor_overuse {len(synthetic_anchors)}>{max_anchor_count}"
     lowered = candidate.lower()
@@ -4656,8 +4665,9 @@ def run_rewrite_pipeline(
     result.summary["llm_model_roles"] = llm_roles
     result.summary["ai_mitigation"] = ai_mitigation_contract
     if ai_mitigation_needs_author:
-        result.summary["ai_mitigation_blocked_auto_rewrite"] = True
-        result.summary["outcome"] = "suggestion_only"
+        result.summary["ai_mitigation_blocked_auto_rewrite"] = not allow_auto_with_author_gaps
+        if not allow_auto_with_author_gaps:
+            result.summary["outcome"] = "suggestion_only"
         educational_rewrite = _build_educational_mitigation_rewrite(text, ai_mitigation_contract)
         if educational_rewrite:
             result.summary["educational_mitigation_rewrite"] = educational_rewrite
