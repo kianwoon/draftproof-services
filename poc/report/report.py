@@ -2142,7 +2142,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "key": "section_style_variance",
                 "label": "Patchwork variance",
                 "description": "Style differs from nearby writing.",
-                "color": "#a16207",
+                "color": "#2563eb",
             }
         if "predictability" in title or "topk" in title or "surprisal" in title:
             return {

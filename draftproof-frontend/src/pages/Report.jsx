@@ -290,7 +290,7 @@ function normalizeSignal(signal = {}, issue = {}) {
     label: signal.label || TRANSFORMATION_SIGNAL_LABELS[key] || key.replaceAll('_', ' '),
     description: signal.description || findingDescription(issue) || issue.recommendation || 'Scanner signal attached to this section.',
     score: signal.score ?? clampPercent(issue.score) ?? clampPercent(issue.top10_ratio) ?? null,
-    color: signal.color || SIGNAL_COLORS[key] || severity?.color || '#475569',
+    color: SIGNAL_COLORS[key] || signal.color || severity?.color || '#475569',
     title: signal.title || issue.title || '',
     tier: signal.tier || issue.severity || '',
     actionability: signal.actionability || issue.actionability || '',
