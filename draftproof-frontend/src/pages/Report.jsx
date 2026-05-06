@@ -91,6 +91,26 @@ const TRANSFORMATION_SIGNAL_LABELS = {
   reporting_suppression: 'Reporting suppression',
 };
 
+const TRANSFORMATION_SIGNAL_DESCRIPTIONS = {
+  ai_likelihood: 'Statistical AI-style signal based on predictability, token concentration, generic phrasing, and sentence regularity.',
+  adjusted_ai_risk: 'AI likelihood after reducing certainty for strong human anchoring and calibration checks.',
+  calibrated_ai_risk: 'Final calibrated authorship risk after thresholding, signal agreement, and reporting safeguards.',
+  human_anchor_score: 'Strength of concrete lived experience, local context, operational memory, and specific human reasoning.',
+  human_anchor_discount: 'How much strong human anchoring reduces AI certainty in the calibrated risk model.',
+  rewrite_smoothness: 'Likelihood that a human draft was polished into cleaner, more even AI-assisted prose.',
+  semantic_uniformity_risk: 'Embedding-based signal for overly even paragraph meaning or low semantic shape variation.',
+  discourse_regularity_risk: 'Embedding-based signal for unusually regular paragraph progression and smooth discourse flow.',
+  source_similarity: 'Meaning-level closeness to source material, useful for detecting paraphrased source content.',
+  surface_similarity: 'Wording-level closeness to source material after direct text comparison.',
+  paraphrase_transformation_risk: 'Risk that source meaning was retained while wording and sentence structure were heavily changed.',
+  outline_to_text_expansion: 'Risk that short notes or an outline were expanded into longer prose with limited new evidence.',
+  section_style_variance: 'Section-level style shifts that can suggest stitched writing from different chunks or passes.',
+  citation_grounding_risk: 'Claims, citations, or academic statements that appear weakly supported by evidence.',
+  signal_agreement_score: 'How strongly separate scanner layers agree with each other instead of firing in isolation.',
+  calibration_confidence: 'Confidence that available signals are strong enough and sufficiently aligned for reporting.',
+  reporting_suppression: 'Amount of risk held back because the evidence is uncertain, limited, or not institutionally defensible.',
+};
+
 const TRANSFORMATION_SIGNAL_ORDER = [
   'ai_likelihood',
   'adjusted_ai_risk',
@@ -119,6 +139,7 @@ function buildTransformationSignals(features = {}) {
       return {
         key,
         label: TRANSFORMATION_SIGNAL_LABELS[key] || key.replaceAll('_', ' '),
+        description: TRANSFORMATION_SIGNAL_DESCRIPTIONS[key] || 'Scanner signal used to interpret the transformation pattern.',
         value,
       };
     })
@@ -943,7 +964,14 @@ export default function Report() {
         </div>
         <div className="transformation-bars">
           {transformationSignals.map((signal) => (
-            <div key={signal.key} className="transformation-bar-row">
+            <div
+              key={signal.key}
+              className="transformation-bar-row"
+              data-tooltip={signal.description}
+              tabIndex={0}
+              aria-label={`${signal.label}: ${signal.value.toFixed(0)}%. ${signal.description}`}
+              title={signal.description}
+            >
               <div className="transformation-bar-label">
                 <span>{signal.label}</span>
                 <strong>{signal.value.toFixed(0)}%</strong>
