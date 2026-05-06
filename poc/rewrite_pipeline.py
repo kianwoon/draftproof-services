@@ -448,6 +448,29 @@ def _contribution_scores(report_dict: dict | None) -> dict:
     return {"human": human, "ai_transformation": ai_transformation}
 
 
+def _integrity_scores(report_dict: dict | None) -> dict:
+    if not isinstance(report_dict, dict):
+        return {"ai_authorship": None, "grounding": None}
+    integrity = (
+        report_dict.get("integrity_layers")
+        or ((report_dict.get("scan_intelligence") or {}).get("integrity_layers") or {})
+    )
+    layers = integrity.get("layers") if isinstance(integrity, dict) else {}
+    if not isinstance(layers, dict):
+        return {"ai_authorship": None, "grounding": None}
+
+    def _score(layer_name: str):
+        value = (layers.get(layer_name) or {}).get("score")
+        return float(value) if isinstance(value, (int, float)) else None
+
+    return {
+        "ai_authorship": _score("ai_authorship_risk"),
+        "ai_transformation": _score("ai_transformation_risk"),
+        "grounding": _score("grounding_quality_risk"),
+        "human": _score("human_contribution_signal"),
+    }
+
+
 def _critical_high_count(report_dict: dict | None) -> int:
     findings = (report_dict or {}).get("findings", {}) if isinstance(report_dict, dict) else {}
     return len(findings.get("critical", [])) + len(findings.get("high", []))
@@ -467,10 +490,14 @@ def _authenticity_gate_status(
 ) -> dict:
     original = _contribution_scores(original_report)
     candidate = _contribution_scores(candidate_report)
+    original_integrity = _integrity_scores(original_report)
+    candidate_integrity = _integrity_scores(candidate_report)
     original_human = original.get("human")
     candidate_human = candidate.get("human")
     original_ai_transform = original.get("ai_transformation")
     candidate_ai_transform = candidate.get("ai_transformation")
+    original_ai_authorship = original_integrity.get("ai_authorship")
+    candidate_ai_authorship = candidate_integrity.get("ai_authorship")
     human_delta = (
         candidate_human - original_human
         if isinstance(original_human, (int, float)) and isinstance(candidate_human, (int, float))
@@ -481,6 +508,14 @@ def _authenticity_gate_status(
         if (
             isinstance(original_ai_transform, (int, float))
             and isinstance(candidate_ai_transform, (int, float))
+        )
+        else None
+    )
+    ai_authorship_delta = (
+        original_ai_authorship - candidate_ai_authorship
+        if (
+            isinstance(original_ai_authorship, (int, float))
+            and isinstance(candidate_ai_authorship, (int, float))
         )
         else None
     )
@@ -502,12 +537,16 @@ def _authenticity_gate_status(
         )
         or crosses_human_side
     )
+    reduces_ai_authorship = bool(
+        isinstance(ai_authorship_delta, (int, float))
+        and ai_authorship_delta >= _float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_AUTHORSHIP_DROP", 2.0)
+    )
     critical_high_regressed = _critical_high_count(candidate_report) > _critical_high_count(original_report)
     review_regressed = candidate_review_burden > original_review_burden
     severity_regressed = candidate_weighted_severity > original_weighted_severity
     success = bool(
         text_changed
-        and moves_toward_human
+        and (moves_toward_human or reduces_ai_authorship)
         and not critical_high_regressed
         and not review_regressed
         and not severity_regressed
@@ -517,8 +556,8 @@ def _authenticity_gate_status(
         reason = "accepted"
     elif not text_changed:
         reason = "unchanged_candidate"
-    elif not moves_toward_human:
-        reason = "contribution_not_moved_toward_human"
+    elif not (moves_toward_human or reduces_ai_authorship):
+        reason = "authorship_or_contribution_not_improved"
     elif critical_high_regressed:
         reason = "critical_high_regressed"
     elif review_regressed:
@@ -534,6 +573,10 @@ def _authenticity_gate_status(
         "original_ai_transformation": original_ai_transform,
         "candidate_ai_transformation": candidate_ai_transform,
         "ai_transformation_delta": ai_transform_delta,
+        "original_ai_authorship": original_ai_authorship,
+        "candidate_ai_authorship": candidate_ai_authorship,
+        "ai_authorship_delta": ai_authorship_delta,
+        "reduces_ai_authorship": reduces_ai_authorship,
         "crosses_human_side": crosses_human_side,
         "min_human_gain": min_human_gain,
         "min_ai_transformation_drop": min_ai_transformation_drop,
@@ -2184,6 +2227,10 @@ def run_rewrite_pipeline(
         "rewritten_ai": rewritten_ai,
         "original_writing_quality": original_wq,
         "rewritten_writing_quality": rewritten_wq,
+        "original_ai_authorship": _integrity_scores(original_report_dict).get("ai_authorship"),
+        "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+        "original_grounding_quality_risk": _integrity_scores(original_report_dict).get("grounding"),
+        "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
         "original_human_contribution": _contribution_scores(original_report_dict).get("human"),
         "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
         "original_ai_transformation": _contribution_scores(original_report_dict).get("ai_transformation"),
@@ -2200,6 +2247,14 @@ def run_rewrite_pipeline(
     ai_first_required_min_ai = float(os.environ.get("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", "50.0"))
     ai_search_selected = False
     authenticity_mitigation_selected = False
+    integrity_original = _integrity_scores(original_report_dict)
+    ai_authorship_mitigation_needed = bool(
+        isinstance(integrity_original.get("ai_authorship"), (int, float))
+        and integrity_original.get("ai_authorship") >= _float_env(
+            "DRAFTPROOF_AUTHENTICITY_MIN_AI_AUTHORSHIP",
+            50.0,
+        )
+    )
 
     # Guided authenticity mitigation. This path handles the exact case the
     # scanner now identifies: the draft needs human-side movement, but the
@@ -2207,7 +2262,7 @@ def run_rewrite_pipeline(
     # candidates, rescans them locally, then accepts only measurable movement
     # toward Human Contribution.
     authenticity_enabled = (
-        ai_mitigation_needs_author
+        (ai_mitigation_needs_author or ai_authorship_mitigation_needed)
         and os.environ.get("DRAFTPROOF_AUTHENTICITY_MITIGATION", "1") != "0"
     )
     if authenticity_enabled:
@@ -2229,6 +2284,8 @@ def run_rewrite_pipeline(
                 "writing_quality": original_wq,
                 "human_contribution": _contribution_scores(original_report_dict).get("human"),
                 "ai_transformation": _contribution_scores(original_report_dict).get("ai_transformation"),
+                "ai_authorship": integrity_original.get("ai_authorship"),
+                "grounding_quality": integrity_original.get("grounding"),
                 "review_burden": original_review_burden,
                 "weighted_severity": original_severity,
             },
@@ -2311,8 +2368,10 @@ def run_rewrite_pipeline(
                                 "writing_quality": _badge_wq(candidate_report),
                                 "human_contribution": gate.get("candidate_human"),
                                 "ai_transformation": gate.get("candidate_ai_transformation"),
+                                "ai_authorship": gate.get("candidate_ai_authorship"),
                                 "human_delta": gate.get("human_delta"),
                                 "ai_transformation_delta": gate.get("ai_transformation_delta"),
+                                "ai_authorship_delta": gate.get("ai_authorship_delta"),
                                 "findings": _finding_total(candidate_report),
                                 "review_burden": candidate_review_burden,
                                 "weighted_severity": candidate_severity,
@@ -2440,8 +2499,10 @@ def run_rewrite_pipeline(
                         "writing_quality": _badge_wq(candidate_report),
                         "human_contribution": gate.get("candidate_human"),
                         "ai_transformation": gate.get("candidate_ai_transformation"),
+                        "ai_authorship": gate.get("candidate_ai_authorship"),
                         "human_delta": gate.get("human_delta"),
                         "ai_transformation_delta": gate.get("ai_transformation_delta"),
+                        "ai_authorship_delta": gate.get("ai_authorship_delta"),
                         "findings": _finding_total(candidate_report),
                         "review_burden": candidate_review_burden,
                         "weighted_severity": candidate_severity,
@@ -2502,6 +2563,7 @@ def run_rewrite_pipeline(
                         "selected_ai": rewritten_ai,
                         "selected_human_contribution": best_candidate_gate.get("candidate_human"),
                         "selected_ai_transformation": best_candidate_gate.get("candidate_ai_transformation"),
+                        "selected_ai_authorship": best_candidate_gate.get("candidate_ai_authorship"),
                         "selected_gate": best_candidate_gate,
                     })
                 elif best_candidate_eval:
@@ -2530,6 +2592,8 @@ def run_rewrite_pipeline(
         result.summary["detect_scores"].update({
             "rewritten_ai": rewritten_ai,
             "rewritten_writing_quality": rewritten_wq,
+            "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+            "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
             "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
             "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
             "rewritten_findings": rewritten_total,
@@ -3151,6 +3215,8 @@ def run_rewrite_pipeline(
         result.summary["detect_scores"].update({
             "rewritten_ai": rewritten_ai,
             "rewritten_writing_quality": rewritten_wq,
+            "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+            "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
             "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
             "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
             "rewritten_findings": rewritten_total,
@@ -3571,6 +3637,10 @@ def run_rewrite_pipeline(
             result.summary["detect_scores"].update({
                 "rewritten_ai": _badge_ai(rewritten_report_dict),
                 "rewritten_writing_quality": _badge_wq(rewritten_report_dict),
+                "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
                 "rewritten_findings": _finding_total(rewritten_report_dict),
                 "rewritten_review_burden": _review_burden(rewritten_report_dict),
                 "rewritten_weighted_severity": _weighted_severity(rewritten_report_dict),

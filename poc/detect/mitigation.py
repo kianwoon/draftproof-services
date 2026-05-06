@@ -367,7 +367,24 @@ def _baseline(scan_intelligence: Dict[str, Any], badge: Dict[str, Any]) -> Dict[
     }
 
 
-def _primary_mode(actions: List[Dict[str, Any]], targets: List[Dict[str, Any]]) -> str:
+def _integrity_scores(scan_intelligence: Dict[str, Any]) -> Dict[str, int]:
+    layers = (((scan_intelligence or {}).get("integrity_layers") or {}).get("layers") or {})
+    return {
+        "ai_authorship": _score((layers.get("ai_authorship_risk") or {}).get("score")),
+        "ai_transformation": _score((layers.get("ai_transformation_risk") or {}).get("score")),
+        "grounding": _score((layers.get("grounding_quality_risk") or {}).get("score")),
+        "human": _score((layers.get("human_contribution_signal") or {}).get("score")),
+    }
+
+
+def _primary_mode(
+    actions: List[Dict[str, Any]],
+    targets: List[Dict[str, Any]],
+    scan_intelligence: Dict[str, Any] | None = None,
+) -> str:
+    integrity = _integrity_scores(scan_intelligence or {})
+    if integrity["ai_authorship"] >= 50 and integrity["grounding"] < 50:
+        return "ai_authorship_mitigation"
     buckets = [a["bucket"] for a in actions] + [t["bucket"] for t in targets]
     if any(b in buckets for b in ("needs_author_evidence", "needs_author_context")):
         return "guided_authenticity_revision"
@@ -411,7 +428,7 @@ def build_ai_mitigation_plan(
     badge = ai_risk_badge or {}
     actions = _component_actions(badge) + _semantic_layer_actions(scan_intelligence)
     targets = _target_segments(scan_intelligence)
-    mode = _primary_mode(actions, targets)
+    mode = _primary_mode(actions, targets, scan_intelligence)
     counts = _counts(actions, targets)
     auto_target_ids = [
         target["segment_id"]
@@ -446,7 +463,9 @@ def build_ai_mitigation_plan(
         "baseline": _baseline(scan_intelligence, badge),
         "primary_mode": mode,
         "readiness": {
-            "auto_rewrite_allowed": bool(auto_target_ids) and mode == "targeted_ai_signal_rewrite",
+            "auto_rewrite_allowed": (
+                bool(auto_target_ids) and mode == "targeted_ai_signal_rewrite"
+            ) or mode == "ai_authorship_mitigation",
             "auto_target_segment_ids": auto_target_ids,
             "requires_user_input": mode in {
                 "guided_authenticity_revision",

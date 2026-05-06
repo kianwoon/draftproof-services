@@ -17,6 +17,7 @@ from detect.transformation import (
     classify_transformation,
     classify_transformation_from_scan,
 )
+from detect.mitigation import build_ai_mitigation_plan
 from report.report import Finding, ReportBuilder, Tier as ReportTier, report_to_dict
 from detect.semantic_shape import SemanticShapeDetector
 from report.render import _authorship_rating_from_badge, render_markdown
@@ -374,6 +375,48 @@ assert_equal(
     mitigation.get("integrity_layers", {}).get("schema_version"),
     "integrity_layers.v1",
     "AI mitigation handoff carries integrity layer split",
+)
+well_grounded_ai_plan = build_ai_mitigation_plan(
+    scan_intelligence={
+        "integrity_layers": {
+            "schema_version": "integrity_layers.v1",
+            "layers": {
+                "ai_authorship_risk": {"score": 59},
+                "ai_transformation_risk": {"score": 36},
+                "grounding_quality_risk": {"score": 23},
+                "human_contribution_signal": {"score": 64},
+            },
+        },
+        "transformation": {
+            "contribution": {
+                "human_contribution_ratio": 64,
+                "ai_transformation_ratio": 36,
+            },
+        },
+    },
+    ai_risk_badge={
+        "ai_likelihood_score": 59.39,
+        "ai_components": {
+            "generic_assertion_risk": 90,
+            "topk_pattern": 67.78,
+            "qualifying_text_ai_density": 51.8,
+        },
+        "writing_components": {
+            "source_grounding_risk": 25,
+            "unsupported_claim_risk": 20,
+            "broad_claim_risk": 35,
+        },
+    },
+)
+assert_equal(
+    well_grounded_ai_plan.get("primary_mode"),
+    "ai_authorship_mitigation",
+    "High AI / well-grounded profile routes to AI authorship mitigation instead of author-input blocking",
+)
+assert_equal(
+    well_grounded_ai_plan.get("readiness", {}).get("requires_user_input"),
+    False,
+    "well-grounded AI authorship mitigation does not require author evidence before candidate generation",
 )
 assert_true(
     "typo injection" in mitigation.get("objective", {}).get("avoid", []),
