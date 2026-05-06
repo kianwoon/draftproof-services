@@ -74,6 +74,8 @@ from rewrite_pipeline import (
     _ai_search_drift_false_positive,
     _ai_search_entity_drift_scan_allowed,
     _scan_scope_summary,
+    _human_shift_score,
+    _authenticity_gate_status,
     _paragraph_component_targets,
     _paragraph_component_prompt,
     _extract_paragraph_component_candidates,
@@ -841,6 +843,132 @@ meaningful_search_status = _ai_search_candidate_selection_status(57.78, 52.50, T
 assert_test(
     meaningful_search_status["selectable"],
     "AI search selects candidates only after the required AI drop is met",
+)
+
+def make_shift_report(
+    *,
+    ai_authorship,
+    human,
+    ai_transformation,
+    grounding,
+    human_anchor,
+    smoothness,
+    semantic_uniformity,
+    high_count=0,
+):
+    return {
+        "integrity_layers": {
+            "layers": {
+                "ai_authorship_risk": {"score": ai_authorship},
+                "human_contribution_signal": {"score": human},
+                "ai_transformation_risk": {"score": ai_transformation},
+                "grounding_quality_risk": {"score": grounding},
+            }
+        },
+        "ai_risk_badge": {
+            "transformation_classification": {
+                "features": {
+                    "human_anchor_score": human_anchor / 100,
+                    "rewrite_smoothness": smoothness / 100,
+                    "semantic_uniformity_risk": semantic_uniformity / 100,
+                }
+            }
+        },
+        "findings": {
+            "critical": [],
+            "high": [{"finding_id": f"h{i}"} for i in range(high_count)],
+            "medium": [],
+            "low": [],
+        },
+    }
+
+shift_original = make_shift_report(
+    ai_authorship=59,
+    human=67,
+    ai_transformation=33,
+    grounding=25,
+    human_anchor=61,
+    smoothness=46,
+    semantic_uniformity=46,
+)
+shift_candidate = make_shift_report(
+    ai_authorship=48,
+    human=68,
+    ai_transformation=32,
+    grounding=23,
+    human_anchor=64,
+    smoothness=42,
+    semantic_uniformity=40,
+)
+shift_regression = make_shift_report(
+    ai_authorship=47,
+    human=65,
+    ai_transformation=35,
+    grounding=45,
+    human_anchor=58,
+    smoothness=60,
+    semantic_uniformity=60,
+)
+positive_shift = _human_shift_score(shift_original, shift_candidate, drift_similarity=0.97)
+negative_shift = _human_shift_score(shift_original, shift_regression, drift_similarity=0.97)
+assert_test(
+    positive_shift["score"] > 15,
+    "Human Shift Score rewards AI-authorship reduction plus human-side signal movement",
+)
+assert_test(
+    negative_shift["score"] < positive_shift["score"],
+    "Human Shift Score penalizes grounding, smoothness, and semantic-uniformity regression",
+)
+authenticity_gate = _authenticity_gate_status(
+    shift_original,
+    shift_candidate,
+    True,
+    original_review_burden=2,
+    candidate_review_burden=2,
+    original_weighted_severity=4,
+    candidate_weighted_severity=4,
+)
+assert_test(
+    authenticity_gate["success"]
+    and authenticity_gate["human_shift_score"] == positive_shift["score"],
+    "authenticity gate exposes Human Shift Score and accepts positive mitigation movement",
+)
+authenticity_regression_gate = _authenticity_gate_status(
+    shift_original,
+    make_shift_report(
+        ai_authorship=48,
+        human=68,
+        ai_transformation=32,
+        grounding=23,
+        human_anchor=64,
+        smoothness=42,
+        semantic_uniformity=40,
+        high_count=1,
+    ),
+    True,
+    original_review_burden=2,
+    candidate_review_burden=2,
+    original_weighted_severity=4,
+    candidate_weighted_severity=4,
+)
+assert_test(
+    not authenticity_regression_gate["success"]
+    and authenticity_regression_gate["reason"] == "critical_high_regressed",
+    "authenticity gate still rejects candidates that add critical/high findings",
+)
+negative_shift_gate = _authenticity_gate_status(
+    shift_original,
+    shift_regression,
+    True,
+    original_review_burden=2,
+    candidate_review_burden=2,
+    original_weighted_severity=4,
+    candidate_weighted_severity=4,
+)
+assert_test(
+    not negative_shift_gate["success"]
+    and negative_shift_gate["reason"] == "human_shift_score_too_low",
+    "authenticity gate rejects AI drops that are outweighed by human-side regressions",
 )
 
 ai_search_candidates = _ai_search_marked_grounding_candidates(

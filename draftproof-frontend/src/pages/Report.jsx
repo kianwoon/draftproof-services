@@ -286,6 +286,13 @@ function formatSignedDelta(original, next) {
   return rounded;
 }
 
+function formatPlainScore(value, digits = 1) {
+  if (value == null) return '—';
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) return '—';
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(digits);
+}
+
 function countRewriteFindings(findings) {
   if (!findings || typeof findings !== 'object') return null;
   return ['critical', 'high', 'medium', 'low', 'info'].reduce((total, tier) => {
@@ -329,6 +336,8 @@ function buildRewriteResultSummary(rewriteReport) {
     rewritten_ai_transformation: detectScores.rewritten_ai_transformation,
     original_grounding_quality_risk: detectScores.original_grounding_quality_risk,
     rewritten_grounding_quality_risk: detectScores.rewritten_grounding_quality_risk,
+    human_shift_score: detectScores.human_shift_score ?? summary.authenticity_mitigation?.selected_human_shift_score ?? summary.ai_mitigation_search?.selected_human_shift_score,
+    human_shift_components: detectScores.human_shift_components ?? summary.authenticity_mitigation?.selected_human_shift_components ?? summary.ai_mitigation_search?.selected_human_shift_components,
     original_risk: originalBadge.ai_likelihood_score ?? detectScores.original_ai ?? summary.original_risk,
     rewrite_risk: rewrittenBadge.ai_likelihood_score ?? detectScores.rewritten_ai ?? summary.final_risk,
     original_findings: originalFindings,
@@ -1122,6 +1131,10 @@ export default function Report() {
       <div className="rewrite-summary-stat">
         <span>{formatMetricPercent(rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk, 1)}</span>
         <small>Rewrite AI authorship after</small>
+      </div>
+      <div className="rewrite-summary-stat">
+        <span>{formatPlainScore(rewriteResultSummary?.human_shift_score, 1)}</span>
+        <small>Human Shift Score</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatSignedDelta(rewriteResultSummary?.original_human_contribution, rewriteResultSummary?.rewritten_human_contribution)}</span>

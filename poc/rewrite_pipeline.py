@@ -471,6 +471,158 @@ def _integrity_scores(report_dict: dict | None) -> dict:
     }
 
 
+def _transformation_features(report_dict: dict | None) -> dict:
+    if not isinstance(report_dict, dict):
+        return {}
+    badge = report_dict.get("ai_risk_badge") or {}
+    transform = badge.get("transformation_classification") or {}
+    features = transform.get("features")
+    return features if isinstance(features, dict) else {}
+
+
+def _feature_percent(report_dict: dict | None, key: str):
+    value = _transformation_features(report_dict).get(key)
+    if not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value * 100.0 if abs(value) <= 1.0 else value
+
+
+def _human_shift_score(
+    original_report: dict,
+    candidate_report: dict,
+    *,
+    drift_similarity: float | None = None,
+    review_burden_delta: int = 0,
+    weighted_severity_delta: int = 0,
+) -> dict:
+    """Score how strongly a candidate moves toward authentic human contribution.
+
+    Positive components reward real mitigation movement. Penalties protect
+    meaning, grounding, and review burden so candidate ranking cannot chase a
+    lower AI score by making the document worse.
+    """
+    original = _contribution_scores(original_report)
+    candidate = _contribution_scores(candidate_report)
+    original_integrity = _integrity_scores(original_report)
+    candidate_integrity = _integrity_scores(candidate_report)
+
+    def _delta(original_value, candidate_value, *, direction: str = "increase"):
+        if not isinstance(original_value, (int, float)) or not isinstance(candidate_value, (int, float)):
+            return 0.0
+        if direction == "decrease":
+            return float(original_value) - float(candidate_value)
+        return float(candidate_value) - float(original_value)
+
+    ai_authorship_reduction = _delta(
+        original_integrity.get("ai_authorship"),
+        candidate_integrity.get("ai_authorship"),
+        direction="decrease",
+    )
+    human_contribution_gain = _delta(original.get("human"), candidate.get("human"))
+    ai_transformation_reduction = _delta(
+        original.get("ai_transformation"),
+        candidate.get("ai_transformation"),
+        direction="decrease",
+    )
+    human_anchor_gain = _delta(
+        _feature_percent(original_report, "human_anchor_score"),
+        _feature_percent(candidate_report, "human_anchor_score"),
+    )
+    grounding_risk_reduction = _delta(
+        original_integrity.get("grounding"),
+        candidate_integrity.get("grounding"),
+        direction="decrease",
+    )
+    rewrite_smoothness_reduction = _delta(
+        _feature_percent(original_report, "rewrite_smoothness"),
+        _feature_percent(candidate_report, "rewrite_smoothness"),
+        direction="decrease",
+    )
+    semantic_uniformity_reduction = _delta(
+        _feature_percent(original_report, "semantic_uniformity_risk"),
+        _feature_percent(candidate_report, "semantic_uniformity_risk"),
+        direction="decrease",
+    )
+
+    grounding_regression_penalty = max(0.0, -grounding_risk_reduction) * 1.5
+    smoothness_regression_penalty = max(0.0, -rewrite_smoothness_reduction) * 0.8
+    semantic_uniformity_regression_penalty = max(0.0, -semantic_uniformity_reduction) * 0.8
+    review_burden_penalty = max(0, int(review_burden_delta or 0)) * 3.0
+    weighted_severity_penalty = max(0, int(weighted_severity_delta or 0)) * 1.5
+    meaning_drift_penalty = 0.0
+    if isinstance(drift_similarity, (int, float)):
+        meaning_drift_penalty = max(0.0, 0.94 - float(drift_similarity)) * 25.0
+
+    components = {
+        "ai_authorship_reduction": round(ai_authorship_reduction, 3),
+        "human_contribution_gain": round(human_contribution_gain, 3),
+        "ai_transformation_reduction": round(ai_transformation_reduction, 3),
+        "human_anchor_gain": round(human_anchor_gain, 3),
+        "grounding_risk_reduction": round(grounding_risk_reduction, 3),
+        "rewrite_smoothness_reduction": round(rewrite_smoothness_reduction, 3),
+        "semantic_uniformity_reduction": round(semantic_uniformity_reduction, 3),
+        "grounding_regression_penalty": round(grounding_regression_penalty, 3),
+        "meaning_drift_penalty": round(meaning_drift_penalty, 3),
+        "rewrite_smoothness_regression_penalty": round(smoothness_regression_penalty, 3),
+        "semantic_uniformity_regression_penalty": round(semantic_uniformity_regression_penalty, 3),
+        "review_burden_penalty": round(review_burden_penalty, 3),
+        "weighted_severity_penalty": round(weighted_severity_penalty, 3),
+    }
+    score = (
+        ai_authorship_reduction * 1.0
+        + human_contribution_gain * 1.4
+        + ai_transformation_reduction * 1.2
+        + human_anchor_gain * 0.7
+        + max(0.0, grounding_risk_reduction) * 0.35
+        + max(0.0, rewrite_smoothness_reduction) * 0.35
+        + max(0.0, semantic_uniformity_reduction) * 0.35
+        - grounding_regression_penalty
+        - meaning_drift_penalty
+        - smoothness_regression_penalty
+        - semantic_uniformity_regression_penalty
+        - review_burden_penalty
+        - weighted_severity_penalty
+    )
+    return {
+        "score": round(score, 3),
+        "components": components,
+        "weights": {
+            "ai_authorship_reduction": 1.0,
+            "human_contribution_gain": 1.4,
+            "ai_transformation_reduction": 1.2,
+            "human_anchor_gain": 0.7,
+            "grounding_risk_reduction": 0.35,
+            "rewrite_smoothness_reduction": 0.35,
+            "semantic_uniformity_reduction": 0.35,
+            "grounding_regression_penalty": -1.5,
+            "meaning_drift_penalty": -1.0,
+            "rewrite_smoothness_regression_penalty": -1.0,
+            "semantic_uniformity_regression_penalty": -1.0,
+            "review_burden_penalty": -1.0,
+            "weighted_severity_penalty": -1.0,
+        },
+    }
+
+
+def _human_shift_rank_key(gate: dict | None) -> tuple:
+    gate = gate or {}
+    score = gate.get("human_shift_score")
+    return (
+        1 if gate.get("success") else 0,
+        float(score) if isinstance(score, (int, float)) else -9999.0,
+        float(gate.get("ai_authorship_delta")) if isinstance(gate.get("ai_authorship_delta"), (int, float)) else -9999.0,
+        float(gate.get("human_delta")) if isinstance(gate.get("human_delta"), (int, float)) else -9999.0,
+        float(gate.get("ai_transformation_delta")) if isinstance(gate.get("ai_transformation_delta"), (int, float)) else -9999.0,
+    )
+
+
+def _is_better_human_shift_candidate(candidate_gate: dict | None, best_gate: dict | None) -> bool:
+    if best_gate is None:
+        return True
+    return _human_shift_rank_key(candidate_gate) > _human_shift_rank_key(best_gate)
+
+
 def _critical_high_count(report_dict: dict | None) -> int:
     findings = (report_dict or {}).get("findings", {}) if isinstance(report_dict, dict) else {}
     return len(findings.get("critical", [])) + len(findings.get("high", []))
@@ -487,6 +639,7 @@ def _authenticity_gate_status(
     candidate_weighted_severity: int,
     min_human_gain: float = 2.0,
     min_ai_transformation_drop: float = 2.0,
+    drift_similarity: float | None = None,
 ) -> dict:
     original = _contribution_scores(original_report)
     candidate = _contribution_scores(candidate_report)
@@ -544,9 +697,27 @@ def _authenticity_gate_status(
     critical_high_regressed = _critical_high_count(candidate_report) > _critical_high_count(original_report)
     review_regressed = candidate_review_burden > original_review_burden
     severity_regressed = candidate_weighted_severity > original_weighted_severity
+    human_shift = _human_shift_score(
+        original_report,
+        candidate_report,
+        drift_similarity=drift_similarity,
+        review_burden_delta=candidate_review_burden - original_review_burden,
+        weighted_severity_delta=candidate_weighted_severity - original_weighted_severity,
+    )
+    human_shift_score = human_shift.get("score")
+    min_human_shift_score = _float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_SHIFT_SCORE", 3.0)
+    clears_human_shift_score = bool(
+        isinstance(human_shift_score, (int, float))
+        and human_shift_score >= min_human_shift_score
+    )
+    positive_human_shift = bool(
+        isinstance(human_shift_score, (int, float))
+        and human_shift_score > 0
+        and (moves_toward_human or reduces_ai_authorship)
+    )
     success = bool(
         text_changed
-        and (moves_toward_human or reduces_ai_authorship)
+        and (clears_human_shift_score or positive_human_shift)
         and not critical_high_regressed
         and not review_regressed
         and not severity_regressed
@@ -556,8 +727,8 @@ def _authenticity_gate_status(
         reason = "accepted"
     elif not text_changed:
         reason = "unchanged_candidate"
-    elif not (moves_toward_human or reduces_ai_authorship):
-        reason = "authorship_or_contribution_not_improved"
+    elif not (clears_human_shift_score or positive_human_shift):
+        reason = "human_shift_score_too_low"
     elif critical_high_regressed:
         reason = "critical_high_regressed"
     elif review_regressed:
@@ -578,6 +749,12 @@ def _authenticity_gate_status(
         "ai_authorship_delta": ai_authorship_delta,
         "reduces_ai_authorship": reduces_ai_authorship,
         "crosses_human_side": crosses_human_side,
+        "human_shift_score": human_shift_score,
+        "human_shift_components": human_shift.get("components"),
+        "human_shift_weights": human_shift.get("weights"),
+        "min_human_shift_score": min_human_shift_score,
+        "clears_human_shift_score": clears_human_shift_score,
+        "positive_human_shift": positive_human_shift,
         "min_human_gain": min_human_gain,
         "min_ai_transformation_drop": min_ai_transformation_drop,
         "critical_high_regressed": critical_high_regressed,
@@ -2387,6 +2564,7 @@ def run_rewrite_pipeline(
                                 candidate_weighted_severity=candidate_severity,
                                 min_human_gain=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_GAIN", 2.0),
                                 min_ai_transformation_drop=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_TRANSFORM_DROP", 2.0),
+                                drift_similarity=candidate_eval.get("drift_similarity"),
                             )
                             candidate_eval.update({
                                 "ai": _badge_ai(candidate_report),
@@ -2397,19 +2575,20 @@ def run_rewrite_pipeline(
                                 "human_delta": gate.get("human_delta"),
                                 "ai_transformation_delta": gate.get("ai_transformation_delta"),
                                 "ai_authorship_delta": gate.get("ai_authorship_delta"),
+                                "human_shift_score": gate.get("human_shift_score"),
+                                "human_shift_components": gate.get("human_shift_components"),
                                 "findings": _finding_total(candidate_report),
                                 "review_burden": candidate_review_burden,
                                 "weighted_severity": candidate_severity,
                                 "scan_scope": _scan_scope_summary(candidate_report),
                                 "gate": gate,
                             })
-                            if gate.get("success"):
+                            if _is_better_human_shift_candidate(gate, best_candidate_gate):
                                 best_candidate_text = source_for_mitigation
                                 best_candidate_report = candidate_report
                                 best_candidate_gate = gate
                                 best_candidate_eval = dict(candidate_eval)
-                                candidate_eval["selected"] = True
-                                authenticity_candidate_limit = 0
+                                candidate_eval["best_so_far"] = True
                             authenticity_summary["candidates"].append(candidate_eval)
             try:
                 gateway = LLMGateway(LLMConfig(
@@ -2518,6 +2697,7 @@ def run_rewrite_pipeline(
                         candidate_weighted_severity=candidate_severity,
                         min_human_gain=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_GAIN", 2.0),
                         min_ai_transformation_drop=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_TRANSFORM_DROP", 2.0),
+                        drift_similarity=candidate_eval.get("drift_similarity"),
                     )
                     candidate_eval.update({
                         "ai": _badge_ai(candidate_report),
@@ -2528,32 +2708,20 @@ def run_rewrite_pipeline(
                         "human_delta": gate.get("human_delta"),
                         "ai_transformation_delta": gate.get("ai_transformation_delta"),
                         "ai_authorship_delta": gate.get("ai_authorship_delta"),
+                        "human_shift_score": gate.get("human_shift_score"),
+                        "human_shift_components": gate.get("human_shift_components"),
                         "findings": _finding_total(candidate_report),
                         "review_burden": candidate_review_burden,
                         "weighted_severity": candidate_severity,
                         "scan_scope": _scan_scope_summary(candidate_report),
                         "gate": gate,
                     })
-                    if gate.get("success"):
+                    if _is_better_human_shift_candidate(gate, best_candidate_gate):
                         best_candidate_text = candidate
                         best_candidate_report = candidate_report
                         best_candidate_gate = gate
                         best_candidate_eval = dict(candidate_eval)
-                        candidate_eval["selected"] = True
-                        authenticity_summary["candidates"].append(candidate_eval)
-                        break
-                    if (
-                        best_candidate_gate is None
-                        or (
-                            isinstance(gate.get("human_delta"), (int, float))
-                            and isinstance(best_candidate_gate.get("human_delta"), (int, float))
-                            and gate.get("human_delta") > best_candidate_gate.get("human_delta")
-                        )
-                    ):
-                        best_candidate_text = candidate
-                        best_candidate_report = candidate_report
-                        best_candidate_gate = gate
-                        best_candidate_eval = dict(candidate_eval)
+                        candidate_eval["best_so_far"] = True
                     authenticity_summary["candidates"].append(candidate_eval)
                 if best_candidate_gate and best_candidate_gate.get("success") and best_candidate_report:
                     previous_ai = rewritten_ai
@@ -2582,6 +2750,8 @@ def run_rewrite_pipeline(
                     result.summary["ai_mitigation_blocked_auto_rewrite"] = False
                     result.summary["rewrite_engine_mode"] = "ai_mitigation_authenticity_gate"
                     result.summary["outcome"] = "ai_mitigated"
+                    if isinstance(best_candidate_eval, dict):
+                        best_candidate_eval["selected"] = True
                     authenticity_summary.update({
                         "selected": True,
                         "previous_ai": previous_ai,
@@ -2589,6 +2759,8 @@ def run_rewrite_pipeline(
                         "selected_human_contribution": best_candidate_gate.get("candidate_human"),
                         "selected_ai_transformation": best_candidate_gate.get("candidate_ai_transformation"),
                         "selected_ai_authorship": best_candidate_gate.get("candidate_ai_authorship"),
+                        "selected_human_shift_score": best_candidate_gate.get("human_shift_score"),
+                        "selected_human_shift_components": best_candidate_gate.get("human_shift_components"),
                         "selected_gate": best_candidate_gate,
                     })
                 elif best_candidate_eval:
@@ -2697,6 +2869,7 @@ def run_rewrite_pipeline(
         best_semantic_review_required = False
         best_drift_reasons: list[str] = []
         best_selection_status: dict = {}
+        best_human_shift_rank: tuple = (-1, -9999.0, -9999.0)
 
         def _best_ai_search_selectable() -> bool:
             return bool(best_strategy and best_selection_status.get("selectable"))
@@ -2711,6 +2884,8 @@ def run_rewrite_pipeline(
                     round(ai_search_reference - best_ai, 3)
                     if isinstance(best_ai, (int, float)) else None
                 ),
+                "human_shift_score": best_selection_status.get("human_shift_score"),
+                "human_shift_components": best_selection_status.get("human_shift_components"),
                 "selection_status": best_selection_status,
             }
 
@@ -2723,6 +2898,7 @@ def run_rewrite_pipeline(
         ) -> None:
             nonlocal best_text, best_report, best_ai, best_strategy
             nonlocal best_semantic_review_required, best_drift_reasons, best_selection_status
+            nonlocal best_human_shift_rank
             candidate_eval = {
                 "strategy": strategy,
                 "deterministic": deterministic,
@@ -2809,6 +2985,15 @@ def run_rewrite_pipeline(
 
             candidate_ai = _badge_ai(candidate_report)
             candidate_wq = _badge_wq(candidate_report)
+            candidate_review_burden = _review_burden(candidate_report)
+            candidate_weighted_severity = _weighted_severity(candidate_report)
+            human_shift = _human_shift_score(
+                original_report_dict,
+                candidate_report,
+                drift_similarity=candidate_eval.get("drift_similarity"),
+                review_burden_delta=candidate_review_burden - original_review_burden,
+                weighted_severity_delta=candidate_weighted_severity - original_severity,
+            )
             candidate_eval.update({
                 "ai": candidate_ai,
                 "ai_delta_vs_reference": (
@@ -2817,8 +3002,10 @@ def run_rewrite_pipeline(
                 ),
                 "writing_quality": candidate_wq,
                 "findings": _finding_total(candidate_report),
-                "review_burden": _review_burden(candidate_report),
-                "weighted_severity": _weighted_severity(candidate_report),
+                "review_burden": candidate_review_burden,
+                "weighted_severity": candidate_weighted_severity,
+                "human_shift_score": human_shift.get("score"),
+                "human_shift_components": human_shift.get("components"),
                 "scan_scope": _scan_scope_summary(candidate_report),
             })
             selection_status = _ai_search_candidate_selection_status(
@@ -2829,9 +3016,21 @@ def run_rewrite_pipeline(
                 target=ai_first_target,
                 required_min_ai=ai_first_required_min_ai,
             )
+            selection_status["human_shift_score"] = human_shift.get("score")
+            selection_status["human_shift_components"] = human_shift.get("components")
             candidate_eval["selection_status"] = selection_status
-            score_to_beat = min(best_ai, ai_search_reference)
-            if isinstance(candidate_ai, (int, float)) and candidate_ai < score_to_beat - 0.05:
+            ai_delta = (
+                ai_search_reference - candidate_ai
+                if isinstance(ai_search_reference, (int, float)) and isinstance(candidate_ai, (int, float))
+                else -9999.0
+            )
+            human_shift_score = human_shift.get("score")
+            candidate_rank = (
+                1 if selection_status.get("selectable") else 0,
+                float(human_shift_score) if isinstance(human_shift_score, (int, float)) else -9999.0,
+                float(ai_delta) if isinstance(ai_delta, (int, float)) else -9999.0,
+            )
+            if candidate_rank > best_human_shift_rank:
                 best_ai = candidate_ai
                 best_text = candidate
                 best_report = candidate_report
@@ -2839,6 +3038,7 @@ def run_rewrite_pipeline(
                 best_semantic_review_required = bool(candidate_eval.get("semantic_review_required"))
                 best_drift_reasons = list(candidate_eval.get("drift_reasons") or [])
                 best_selection_status = selection_status
+                best_human_shift_rank = candidate_rank
                 candidate_eval["best_so_far"] = True
                 candidate_eval["selectable_so_far"] = bool(selection_status.get("selectable"))
                 _record_best_attempt()
@@ -3169,6 +3369,8 @@ def run_rewrite_pipeline(
                             round(ai_search_reference - rewritten_ai, 3)
                             if isinstance(rewritten_ai, (int, float)) else None
                         ),
+                        "selected_human_shift_score": best_selection_status.get("human_shift_score"),
+                        "selected_human_shift_components": best_selection_status.get("human_shift_components"),
                         "selected_semantic_review_required": best_semantic_review_required,
                         "selected_drift_reasons": best_drift_reasons[:10],
                         "selection_status": best_selection_status,
@@ -3210,6 +3412,8 @@ def run_rewrite_pipeline(
                     round(ai_search_reference - rewritten_ai, 3)
                     if isinstance(rewritten_ai, (int, float)) else None
                 ),
+                "selected_human_shift_score": best_selection_status.get("human_shift_score"),
+                "selected_human_shift_components": best_selection_status.get("human_shift_components"),
                 "selected_semantic_review_required": best_semantic_review_required,
                 "selected_drift_reasons": best_drift_reasons[:10],
                 "selection_status": best_selection_status,
@@ -3737,6 +3941,17 @@ def run_rewrite_pipeline(
         result.summary["detect_scores"]["rollback_reason"] = reason
         sentence_comparison = []
         rewritten_report_dict = original_report_dict
+
+    final_human_shift = _human_shift_score(
+        original_report_dict,
+        rewritten_report_dict,
+        review_burden_delta=_review_burden(rewritten_report_dict) - original_review_burden,
+        weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
+    )
+    result.summary.setdefault("detect_scores", {}).update({
+        "human_shift_score": final_human_shift.get("score"),
+        "human_shift_components": final_human_shift.get("components"),
+    })
 
     # Extract only the fields needed for comparison (not full report dicts)
     def _extract_scan_summary(report_dict):
