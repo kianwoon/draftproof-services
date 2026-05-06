@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str = "draftproof-reports"
     R2_PUBLIC_URL: str = ""
     PREDICTABILITY_MODEL: str = "gpt2"
+    SEMANTIC_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     LLM_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
     LLM_MODEL: str = ""

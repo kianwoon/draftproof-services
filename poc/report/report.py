@@ -89,6 +89,21 @@ class SimilaritySummary:
 
 
 @dataclass
+class SemanticShapeSummary:
+    model_name: str
+    embedding_model_attached: bool
+    sentence_count: int
+    paragraph_count: int
+    adjacent_similarity_mean: float
+    adjacent_similarity_std: float
+    paragraph_similarity_mean: float
+    paragraph_similarity_std: float
+    semantic_uniformity_risk: float
+    discourse_regularity_risk: float
+    semantic_drift_risk: float
+
+
+@dataclass
 class CitationSummary:
     citation_style: str
     in_text_count: int
@@ -161,6 +176,7 @@ class DraftReport:
 
     predictability: Optional[PredictabilitySummary] = None
     similarity: Optional[SimilaritySummary] = None
+    semantic_shape: Optional[SemanticShapeSummary] = None
     citation: Optional[CitationSummary] = None
     rewrite: Optional[RewriteSummary] = None
     manual_actions: List[Dict[str, str]] = None
@@ -295,6 +311,7 @@ class ReportBuilder:
         self._findings: List[Finding] = []
         self._pred_summary: Optional[PredictabilitySummary] = None
         self._sim_summary: Optional[SimilaritySummary] = None
+        self._semantic_summary: Optional[SemanticShapeSummary] = None
         self._cite_summary: Optional[CitationSummary] = None
         self._rewrite_summary: Optional[RewriteSummary] = None
         self._original_text = ""
@@ -364,6 +381,8 @@ class ReportBuilder:
             self._build_predictability_summary(result)
         elif scanner == "similarity":
             self._build_similarity_summary(result)
+        elif scanner == "semantic_shape":
+            self._build_semantic_shape_summary(result)
         elif scanner == "citation":
             self._build_citation_summary(result)
 
@@ -652,6 +671,30 @@ class ReportBuilder:
             overall_risk=risk_str,
             risk_distribution=result.risk_distribution,
             matches=matches,
+        )
+
+    def _build_semantic_shape_summary(self, result: "DetectResult"):
+        raw = result.raw
+        if raw is None:
+            return
+
+        def get(name: str, default=0.0):
+            if isinstance(raw, dict):
+                return raw.get(name, default)
+            return getattr(raw, name, default)
+
+        self._semantic_summary = SemanticShapeSummary(
+            model_name=get("model_name", result.model_name or "unknown"),
+            embedding_model_attached=bool(get("embedding_model_attached", False)),
+            sentence_count=int(get("sentence_count", 0) or 0),
+            paragraph_count=int(get("paragraph_count", 0) or 0),
+            adjacent_similarity_mean=float(get("adjacent_similarity_mean", 0.0) or 0.0),
+            adjacent_similarity_std=float(get("adjacent_similarity_std", 0.0) or 0.0),
+            paragraph_similarity_mean=float(get("paragraph_similarity_mean", 0.0) or 0.0),
+            paragraph_similarity_std=float(get("paragraph_similarity_std", 0.0) or 0.0),
+            semantic_uniformity_risk=float(get("semantic_uniformity_risk", 0.0) or 0.0),
+            discourse_regularity_risk=float(get("discourse_regularity_risk", 0.0) or 0.0),
+            semantic_drift_risk=float(get("semantic_drift_risk", 0.0) or 0.0),
         )
 
     def _build_citation_summary(self, result: "DetectResult"):
@@ -1287,6 +1330,18 @@ class ReportBuilder:
                 0.30 if not (self._cite_summary and self._cite_summary.bib_entry_count > 0) else 1.0,
             ),
             domain_grounding_strength=min(dg_idx, 0.30),
+            semantic_uniformity_risk=(
+                self._semantic_summary.semantic_uniformity_risk
+                if self._semantic_summary else None
+            ),
+            discourse_regularity_risk=(
+                self._semantic_summary.discourse_regularity_risk
+                if self._semantic_summary else None
+            ),
+            semantic_drift_risk=(
+                self._semantic_summary.semantic_drift_risk
+                if self._semantic_summary else None
+            ),
             human_provenance_positive=False,
             verified_ai_provenance=False,
         )
@@ -1360,6 +1415,7 @@ class ReportBuilder:
             findings_by_tier=findings_by_tier,
             predictability=self._pred_summary,
             similarity=self._sim_summary,
+            semantic_shape=self._semantic_summary,
             citation=self._cite_summary,
             rewrite=self._rewrite_summary,
             scan_time_seconds=self._scan_time,
@@ -2325,12 +2381,39 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "policy": "Conservative reporting: human anchors and low-confidence coverage suppress AI certainty before report interpretation.",
             },
             "semantic_layer": {
-                "status": "heuristic_proxy_ready",
+                "status": (
+                    "embedding_analysis_ready"
+                    if report.semantic_shape and report.semantic_shape.embedding_model_attached
+                    else "hashed_vector_fallback_ready"
+                    if report.semantic_shape
+                    else "heuristic_proxy_ready"
+                ),
                 "semantic_uniformity_risk": _pct(features.get("semantic_uniformity_risk")),
                 "discourse_regularity_risk": _pct(features.get("discourse_regularity_risk")),
+                "semantic_drift_risk": (
+                    _pct(report.semantic_shape.semantic_drift_risk)
+                    if report.semantic_shape else 0
+                ),
                 "paraphrase_transformation_risk": _pct(features.get("paraphrase_transformation_risk")),
-                "embedding_model_attached": False,
-                "next_upgrade": "Attach paragraph/sentence embedding features for latent style uniformity, semantic drift, and discourse smoothness.",
+                "embedding_model_attached": bool(report.semantic_shape and report.semantic_shape.embedding_model_attached),
+                "model_name": report.semantic_shape.model_name if report.semantic_shape else "not_attached",
+                "adjacent_similarity_mean": (
+                    round(report.semantic_shape.adjacent_similarity_mean, 4)
+                    if report.semantic_shape else 0.0
+                ),
+                "adjacent_similarity_std": (
+                    round(report.semantic_shape.adjacent_similarity_std, 4)
+                    if report.semantic_shape else 0.0
+                ),
+                "paragraph_similarity_mean": (
+                    round(report.semantic_shape.paragraph_similarity_mean, 4)
+                    if report.semantic_shape else 0.0
+                ),
+                "paragraph_similarity_std": (
+                    round(report.semantic_shape.paragraph_similarity_std, 4)
+                    if report.semantic_shape else 0.0
+                ),
+                "next_upgrade": "Use sentence-transformer embeddings in production and add source-aware semantic comparison where source material is available.",
             },
             "signal_inventory": {
                 "ai_components": badge.get("ai_components") or {},
@@ -2578,6 +2661,21 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "overall_risk": report.similarity.overall_risk,
             "risk_distribution": report.similarity.risk_distribution,
             "matches": report.similarity.matches,
+        }
+
+    if report.semantic_shape:
+        result["semantic_shape"] = {
+            "model_name": report.semantic_shape.model_name,
+            "embedding_model_attached": report.semantic_shape.embedding_model_attached,
+            "sentence_count": report.semantic_shape.sentence_count,
+            "paragraph_count": report.semantic_shape.paragraph_count,
+            "adjacent_similarity_mean": report.semantic_shape.adjacent_similarity_mean,
+            "adjacent_similarity_std": report.semantic_shape.adjacent_similarity_std,
+            "paragraph_similarity_mean": report.semantic_shape.paragraph_similarity_mean,
+            "paragraph_similarity_std": report.semantic_shape.paragraph_similarity_std,
+            "semantic_uniformity_risk": report.semantic_shape.semantic_uniformity_risk,
+            "discourse_regularity_risk": report.semantic_shape.discourse_regularity_risk,
+            "semantic_drift_risk": report.semantic_shape.semantic_drift_risk,
         }
 
     if report.citation:

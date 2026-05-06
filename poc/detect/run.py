@@ -20,6 +20,7 @@ from .predictability import PredictabilityDetector
 from .similarity import SimilarityDetector
 from .citation import CitationDetector
 from .ai_generation import AIGenerationSignalDetector
+from .semantic_shape import SemanticShapeDetector
 from .postprocess import PostProcessor, PostProcessConfig
 from .profiles import DomainProfile, resolve_profile
 from .thresholds import ThresholdConfig
@@ -202,6 +203,9 @@ class DetectionRunner:
                 model_name=kwargs.get("predictability_model", "gpt2")
             ),
             "ai_generation": lambda: AIGenerationSignalDetector(),
+            "semantic_shape": lambda: SemanticShapeDetector(
+                embedding_model=kwargs.get("semantic_embedding_model", "all-MiniLM-L6-v2")
+            ),
             "similarity": lambda: SimilarityDetector(),
             "citation": lambda: CitationDetector(
                 auto_extract_bibliography=kwargs.get("auto_extract_bibliography", True)
@@ -220,6 +224,9 @@ class DetectionRunner:
                 model_name=kwargs.get("predictability_model", "gpt2")
             ),
             AIGenerationSignalDetector(),
+            SemanticShapeDetector(
+                embedding_model=kwargs.get("semantic_embedding_model", "all-MiniLM-L6-v2")
+            ),
         ]
         if kwargs.get("source_sentences"):
             detectors.append(SimilarityDetector())

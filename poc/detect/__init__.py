@@ -3,6 +3,7 @@
 from .base import BaseDetector, DetectResult, Finding, DetectionReport, RewriteDecision
 from .predictability import PredictabilityDetector
 from .ai_generation import AIGenerationSignalDetector
+from .semantic_shape import SemanticShapeDetector
 from .similarity import SimilarityDetector
 from .citation import CitationDetector
 from .postprocess import (
@@ -28,6 +29,7 @@ __all__ = [
     "RewriteDecision",
     "PredictabilityDetector",
     "AIGenerationSignalDetector",
+    "SemanticShapeDetector",
     "SimilarityDetector",
     "CitationDetector",
     "DetectionRunner",

@@ -8,5 +8,6 @@ weasyprint>=60
 markdown>=3.5
 transformers>=4.30
 torch>=2.0
+sentence-transformers>=2.2
 anthropic>=0.30
 requests>=2.31

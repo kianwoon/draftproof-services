@@ -2,9 +2,13 @@
 set -e
 
 MODEL="${PREDICTABILITY_MODEL:-gpt2}"
+SEMANTIC_MODEL="${SEMANTIC_EMBEDDING_MODEL:-all-MiniLM-L6-v2}"
 CACHE_DIR="${HF_HOME}/hub"
+SAFE_MODEL="${MODEL//\//_}"
+SAFE_SEMANTIC_MODEL="${SEMANTIC_MODEL//\//_}"
 # Model-specific marker so switching models triggers re-download
-MODEL_MARKER="${CACHE_DIR}/.model_ready_${MODEL}"
+MODEL_MARKER="${CACHE_DIR}/.model_ready_${SAFE_MODEL}"
+SEMANTIC_MARKER="${CACHE_DIR}/.semantic_model_ready_${SAFE_SEMANTIC_MODEL}"
 
 # Keep CPU inference deterministic across worker instances. Koyeb/container
 # defaults can vary; the worker preload also calls torch.set_num_threads().
@@ -17,10 +21,12 @@ echo "[entrypoint] DraftProof Worker Startup"
 echo "[entrypoint] HF_HOME=${HF_HOME}"
 echo "[entrypoint] Cache dir: ${CACHE_DIR}"
 echo "[entrypoint] PREDICTABILITY_MODEL=${MODEL}"
+echo "[entrypoint] SEMANTIC_EMBEDDING_MODEL=${SEMANTIC_MODEL}"
 echo "[entrypoint] OMP_NUM_THREADS=${OMP_NUM_THREADS}"
 echo "[entrypoint] MKL_NUM_THREADS=${MKL_NUM_THREADS}"
 echo "[entrypoint] TORCH_NUM_THREADS=${TORCH_NUM_THREADS}"
 echo "[entrypoint] Marker: ${MODEL_MARKER}"
+echo "[entrypoint] Semantic marker: ${SEMANTIC_MARKER}"
 echo "[entrypoint] ============================================"
 
 # ── Pull latest poc/ code at runtime ──────────────────────────────
@@ -70,7 +76,17 @@ else
     touch "${MODEL_MARKER}"
 fi
 
-echo "[entrypoint] Model cache ready. Celery worker child will preload ${MODEL} before processing scans."
+if [ -f "${SEMANTIC_MARKER}" ]; then
+    echo "[entrypoint] Semantic model ${SEMANTIC_MODEL} already cached on volume, skipping download"
+else
+    echo "[entrypoint] Downloading semantic model ${SEMANTIC_MODEL} to volume (first run)..."
+    python3 -c "from sentence_transformers import SentenceTransformer; \
+        SentenceTransformer('${SEMANTIC_MODEL}', cache_folder='${HF_HOME}')"
+    echo "[entrypoint] Semantic model ${SEMANTIC_MODEL} cached and marker set"
+    touch "${SEMANTIC_MARKER}"
+fi
+
+echo "[entrypoint] Model cache ready. Celery worker child will preload ${MODEL} and ${SEMANTIC_MODEL} before processing scans."
 
 echo "[entrypoint] Starting Celery worker..."
 cd /app/worker

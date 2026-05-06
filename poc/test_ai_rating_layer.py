@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Focused tests for the user-facing authorship rating layer."""
 
+import os
+
 from detect.layer3_scoring import (
     Confidence,
     Layer3Input,
@@ -16,6 +18,7 @@ from detect.transformation import (
     classify_transformation_from_scan,
 )
 from report.report import Finding, ReportBuilder, Tier as ReportTier, report_to_dict
+from detect.semantic_shape import SemanticShapeDetector
 from report.render import _authorship_rating_from_badge
 
 
@@ -337,6 +340,32 @@ assert_true(
 assert_true(
     scan_json.get("scan_intelligence", {}).get("mitigation_inputs", {}).get("ai_mitigation_plan") == mitigation,
     "scan intelligence mirrors AI mitigation handoff",
+)
+os.environ["DRAFTPROOF_DISABLE_EMBEDDINGS"] = "1"
+semantic_text = (
+    "The learner needs clear modelling before practice begins. "
+    "The learner needs clear feedback before confidence improves. "
+    "The learner needs clear repetition before the skill becomes stable. "
+    "The trainer explains the task in a steady sequence. "
+    "The trainer repeats the reason for each step. "
+    "The trainer closes the activity with the same reflective structure."
+)
+semantic_result = SemanticShapeDetector().detect(semantic_text)
+assert_equal(semantic_result.scanner, "semantic_shape", "semantic shape detector runs as a scan layer")
+assert_true(
+    semantic_result.raw.embedding_model_attached is False,
+    "semantic shape detector exposes fallback mode when embeddings are disabled",
+)
+semantic_builder = ReportBuilder().set_meta(original_text=semantic_text)
+semantic_builder.add_detection(semantic_result)
+semantic_json = report_to_dict(semantic_builder.build())
+assert_true(
+    "semantic_shape" in semantic_json,
+    "report JSON serializes semantic shape summary",
+)
+assert_true(
+    semantic_json["scan_intelligence"]["semantic_layer"]["model_name"],
+    "scan intelligence semantic layer exposes model provenance",
 )
 assert_equal(template_ai.authorship_rating["code"], "ai_generated_signals", "template AI sample rates as AI-generated signals")
 

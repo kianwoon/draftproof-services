@@ -1379,6 +1379,9 @@ def build_layer3_input_from_text(
     unsupported_claim_risk: Optional[float] = None,
     source_grounding_strength: Optional[float] = None,
     domain_grounding_strength: Optional[float] = None,
+    semantic_uniformity_risk: Optional[float] = None,
+    discourse_regularity_risk: Optional[float] = None,
+    semantic_drift_risk: Optional[float] = None,
     human_provenance_positive: bool = False,
     verified_ai_provenance: bool = False,
     domain_lived_detail_patterns: Optional[list[str]] = None,
@@ -1429,17 +1432,23 @@ def build_layer3_input_from_text(
         source_grounding_strength=source_grounding_strength,
         domain_grounding_strength=domain_grounding_strength,
 
-        paragraph_progression_risk=formulaic_progression,
+        paragraph_progression_risk=max(
+            formulaic_progression,
+            clamp(discourse_regularity_risk),
+        ),
         paragraph_uniformity_risk=estimate_paragraph_uniformity_risk(text),
         repeated_starter_risk=estimate_repeated_starter_risk(text),
         formulaic_conclusion_risk=estimate_formulaic_conclusion_risk(text),
         signpost_paragraph_risk=estimate_signpost_paragraph_risk(text),
         balanced_hedging_risk=estimate_balanced_hedging_risk(text),
         intra_paragraph_parallelism_risk=estimate_intra_paragraph_parallelism_risk(text),
-        paragraph_topic_uniformity_risk=estimate_paragraph_topic_uniformity_risk(text),
+        paragraph_topic_uniformity_risk=max(
+            estimate_paragraph_topic_uniformity_risk(text),
+            clamp(semantic_uniformity_risk),
+        ),
 
         # In a production codebase, rename this field to balanced_framing_risk.
-        style_shift_risk=balanced_framing,
+        style_shift_risk=max(balanced_framing, clamp(semantic_drift_risk) * 0.65),
 
         human_provenance_positive=human_provenance_positive,
         verified_ai_provenance=verified_ai_provenance,

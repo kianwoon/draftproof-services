@@ -68,11 +68,25 @@ def _configure_torch_threads(torch) -> int | None:
 
 
 @worker_process_init.connect
-def _preload_predictability_model(**_kwargs):
-    """Warm the GPT-2 scanner inside the Celery worker child process."""
+def _preload_scan_models(**_kwargs):
+    """Warm scan models inside the Celery worker child process."""
     enabled = os.environ.get("DRAFTPROOF_PRELOAD_PREDICTABILITY", "1").lower()
-    if enabled in {"0", "false", "no"}:
-        return
+    if enabled not in {"0", "false", "no"}:
+        try:
+            _preload_predictability_model()
+        except Exception:
+            logger.warning("Failed to preload predictability model in worker child", exc_info=True)
+
+    semantic_enabled = os.environ.get("DRAFTPROOF_PRELOAD_SEMANTIC", "1").lower()
+    if semantic_enabled not in {"0", "false", "no"}:
+        try:
+            _preload_semantic_model()
+        except Exception:
+            logger.warning("Failed to preload semantic embedding model in worker child", exc_info=True)
+
+
+def _preload_predictability_model():
+    """Warm the GPT-2 scanner inside the Celery worker child process."""
     try:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -140,7 +154,43 @@ def _preload_predictability_model(**_kwargs):
             logger.warning("[preload] Benchmark failed", exc_info=True)
         logger.info("Predictability model preloaded in worker child: %s", model_name)
     except Exception:
-        logger.warning("Failed to preload predictability model in worker child", exc_info=True)
+        raise
+
+
+def _preload_semantic_model():
+    """Warm the sentence embedding scanner inside the Celery worker child process."""
+    from sentence_transformers import SentenceTransformer
+    import detect.semantic_shape as semantic_module
+
+    model_name = semantic_module.resolve_semantic_embedding_model_name(
+        os.environ.get("SEMANTIC_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    )
+    if semantic_module._PRELOADED_EMBEDDER is not None:
+        return
+    logger.info("Preloading semantic embedding model in worker child: %s", model_name)
+    embedder = SentenceTransformer(
+        model_name,
+        cache_folder=os.environ.get("HF_HOME"),
+        local_files_only=True,
+    )
+    sample_sentences = [
+        "Students practise the sectioning pattern before they cut.",
+        "The stylist checks the guide length against the previous section.",
+        "The lesson needs a visible process, not only a final result.",
+        "Learners need to connect the angle, tension, and design line.",
+    ]
+    bench_t0 = time.monotonic()
+    embedder.encode(sample_sentences, convert_to_numpy=True, normalize_embeddings=True)
+    bench_ms = (time.monotonic() - bench_t0) * 1000
+    semantic_module._PRELOADED_EMBEDDER = embedder
+    semantic_module._PRELOADED_MODEL_NAME = model_name
+    logger.info(
+        "[preload] Semantic benchmark: %d sentences, total=%.0fms, avg=%.1fms/sent",
+        len(sample_sentences),
+        bench_ms,
+        bench_ms / max(len(sample_sentences), 1),
+    )
+    logger.info("Semantic embedding model preloaded in worker child: %s", model_name)
 
 
 def _truncate_debug_value(value, limit: int = 320):

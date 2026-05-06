@@ -147,6 +147,9 @@ _SIGNAL_CATEGORY_MAP = {
     "missing_citation": "writing_quality",
     "broken_citation": "writing_quality",
     "similarity_overlap": "authorship_risk",
+    "semantic_uniformity": "authorship_risk",
+    "discourse_regularity": "authorship_risk",
+    "semantic_drift": "authorship_risk",
 }
 
 
