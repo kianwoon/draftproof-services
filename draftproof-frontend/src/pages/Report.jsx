@@ -87,6 +87,61 @@ function buildTransformationSignals(features = {}) {
     .sort((a, b) => b.value - a.value);
 }
 
+function buildTransformationSummary(features = {}, signals = []) {
+  const humanAnchor = clampPercent(features.human_anchor_score) ?? 0;
+  const groundingQuality = 100 - (clampPercent(features.citation_grounding_risk) ?? 0);
+  const semanticOriginality = 100 - Math.max(
+    clampPercent(features.source_similarity) ?? 0,
+    clampPercent(features.surface_similarity) ?? 0
+  );
+
+  const aiLikelihood = clampPercent(features.ai_likelihood) ?? 0;
+  const rewriteSmoothness = clampPercent(features.rewrite_smoothness) ?? 0;
+  const expansionPattern = clampPercent(features.outline_to_text_expansion) ?? 0;
+  const patchworkVariance = clampPercent(features.section_style_variance) ?? 0;
+  const groundingRisk = clampPercent(features.citation_grounding_risk) ?? 0;
+  const sourceSimilarity = clampPercent(features.source_similarity) ?? 0;
+
+  const humanRaw = (
+    humanAnchor * 0.55 +
+    groundingQuality * 0.25 +
+    semanticOriginality * 0.20
+  );
+  const aiRaw = (
+    aiLikelihood * 0.35 +
+    rewriteSmoothness * 0.20 +
+    expansionPattern * 0.15 +
+    groundingRisk * 0.15 +
+    patchworkVariance * 0.10 +
+    sourceSimilarity * 0.05
+  );
+  const total = Math.max(humanRaw + aiRaw, 1);
+  const humanContribution = Math.round((humanRaw / total) * 100);
+  const aiTransformation = 100 - humanContribution;
+  const topSignals = signals
+    .filter((signal) => signal.key !== 'human_anchor_score')
+    .slice(0, 2)
+    .map((signal) => signal.label.toLowerCase());
+
+  let summary = 'Mixed authorship pattern: human anchoring and AI transformation signals are both visible.';
+  if (aiTransformation >= 70) {
+    summary = 'AI transformation dominates this scan pattern.';
+  } else if (aiTransformation >= 55) {
+    summary = 'AI transformation signals are stronger than the human anchor.';
+  } else if (humanContribution >= 65) {
+    summary = 'Human contribution remains the stronger signal.';
+  }
+  if (topSignals.length) {
+    summary += ` Main drivers: ${topSignals.join(' and ')}.`;
+  }
+
+  return {
+    humanContribution,
+    aiTransformation,
+    summary,
+  };
+}
+
 function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiComponents = {}, writingComponents = {}) {
   if (score == null || Number.isNaN(Number(score))) return null;
   const percent = metricValue(score);
@@ -527,6 +582,9 @@ export default function Report() {
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
   const transformation = badge.transformation_classification || null;
   const transformationSignals = buildTransformationSignals(transformation?.features);
+  const transformationSummary = transformation
+    ? buildTransformationSummary(transformation.features, transformationSignals)
+    : null;
   const authorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
     badge.tier || report.tier,
@@ -777,6 +835,30 @@ export default function Report() {
               </div>
             </div>
             <div className="transformation-chart">
+              {transformationSummary && (
+                <div className="transformation-ratio-summary">
+                  <div className="transformation-ratio-copy">
+                    <span>Estimated Contribution</span>
+                    <p>{transformationSummary.summary}</p>
+                  </div>
+                  <div className="transformation-ratio-bars" aria-label="Human contribution versus AI transformation estimate">
+                    <div className="transformation-ratio-row">
+                      <span>Human Contribution</span>
+                      <strong>{transformationSummary.humanContribution}%</strong>
+                      <div className="transformation-ratio-track">
+                        <div className="transformation-ratio-fill is-human" style={{ width: `${transformationSummary.humanContribution}%` }} />
+                      </div>
+                    </div>
+                    <div className="transformation-ratio-row">
+                      <span>AI Transformation</span>
+                      <strong>{transformationSummary.aiTransformation}%</strong>
+                      <div className="transformation-ratio-track">
+                        <div className="transformation-ratio-fill is-ai" style={{ width: `${transformationSummary.aiTransformation}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="transformation-chart-head">
                 <span>Core Signals</span>
               </div>
