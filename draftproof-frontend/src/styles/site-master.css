@@ -3881,7 +3881,7 @@ th {
   min-height: 58px;
   padding: .5rem .75rem;
   border-left: 1px solid #bbf7d0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .rewrite-summary-stat span {
@@ -3897,9 +3897,11 @@ th {
   margin-top: .65rem;
   font-size: .72rem;
   font-weight: 800;
-  letter-spacing: .04em;
+  letter-spacing: 0;
   line-height: 1.25;
   text-transform: uppercase;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .report-rewrite-summary-bar .rewrite-results-link {

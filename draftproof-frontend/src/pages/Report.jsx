@@ -281,8 +281,9 @@ function formatSignedDelta(original, next) {
   if (original == null || next == null) return '—';
   const delta = Number(next) - Number(original);
   if (Number.isNaN(delta)) return '—';
-  if (delta > 0) return `+${delta}`;
-  return `${delta}`;
+  const rounded = Number.isInteger(delta) ? String(delta) : delta.toFixed(1);
+  if (delta > 0) return `+${rounded}`;
+  return rounded;
 }
 
 function countRewriteFindings(findings) {
@@ -1057,23 +1058,23 @@ export default function Report() {
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatMetricPercent(rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk, 1)}</span>
-        <small>AI authorship before</small>
+        <small>Rewrite AI authorship before</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatMetricPercent(rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk, 1)}</span>
-        <small>AI authorship after</small>
+        <small>Rewrite AI authorship after</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatSignedDelta(rewriteResultSummary?.original_human_contribution, rewriteResultSummary?.rewritten_human_contribution)}</span>
-        <small>Human contribution</small>
+        <small>Rewrite human contribution</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatSignedDelta(rewriteResultSummary?.original_ai_transformation, rewriteResultSummary?.rewritten_ai_transformation)}</span>
-        <small>AI transformation</small>
+        <small>Rewrite AI transformation</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatSignedDelta(rewriteResultSummary?.original_grounding_quality_risk, rewriteResultSummary?.rewritten_grounding_quality_risk)}</span>
-        <small>Grounding risk</small>
+        <small>Rewrite grounding risk</small>
       </div>
       <Link
         to={`/rewrite/${currentRewrite.id}`}
