@@ -44,6 +44,48 @@ function metricValue(value) {
   return Math.abs(number) <= 1 ? number * 100 : number;
 }
 
+function clampPercent(value) {
+  const percent = metricValue(value);
+  if (percent == null) return null;
+  return Math.max(0, Math.min(100, percent));
+}
+
+const TRANSFORMATION_SIGNAL_LABELS = {
+  ai_likelihood: 'AI likelihood',
+  human_anchor_score: 'Human anchor',
+  rewrite_smoothness: 'Rewrite smoothness',
+  source_similarity: 'Source similarity',
+  surface_similarity: 'Surface similarity',
+  outline_to_text_expansion: 'Expansion pattern',
+  section_style_variance: 'Patchwork variance',
+  citation_grounding_risk: 'Grounding risk',
+};
+
+const TRANSFORMATION_SIGNAL_ORDER = [
+  'ai_likelihood',
+  'human_anchor_score',
+  'rewrite_smoothness',
+  'source_similarity',
+  'surface_similarity',
+  'outline_to_text_expansion',
+  'section_style_variance',
+  'citation_grounding_risk',
+];
+
+function buildTransformationSignals(features = {}) {
+  return TRANSFORMATION_SIGNAL_ORDER
+    .map((key) => {
+      const value = clampPercent(features[key]);
+      if (value == null) return null;
+      return {
+        key,
+        label: TRANSFORMATION_SIGNAL_LABELS[key] || key.replaceAll('_', ' '),
+        value,
+      };
+    })
+    .filter(Boolean);
+}
+
 function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiComponents = {}, writingComponents = {}) {
   if (score == null || Number.isNaN(Number(score))) return null;
   const percent = metricValue(score);
@@ -482,6 +524,8 @@ export default function Report() {
   const badge = report.ai_risk_badge || {};
   const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
+  const transformation = badge.transformation_classification || null;
+  const transformationSignals = buildTransformationSignals(transformation?.features);
   const authorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
     badge.tier || report.tier,
@@ -704,6 +748,58 @@ export default function Report() {
           );
         })}
         </div>
+
+        {transformation && transformationSignals.length > 0 && (
+          <section className="transformation-scorecard" aria-label="Transformation pattern scorecard">
+            <div className="transformation-summary">
+              <div className="transformation-icon" aria-hidden="true">
+                <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+                  <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
+                  <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <div>
+                <span className="transformation-kicker">Transformation Pattern</span>
+                <h2>{transformation.label || 'Pattern analysis'}</h2>
+                <div className="transformation-meta-row">
+                  {transformation.confidence && (
+                    <span className="transformation-pill">{transformation.confidence} confidence</span>
+                  )}
+                  <span className="transformation-pill">not a verdict</span>
+                </div>
+              </div>
+            </div>
+            <div className="transformation-chart">
+              <div className="transformation-chart-head">
+                <span>Core Signals</span>
+                <strong>{formatMetricPercent(aiScore, 1)}</strong>
+              </div>
+              <div className="transformation-bars">
+                {transformationSignals.map((signal) => (
+                  <div key={signal.key} className="transformation-bar-row">
+                    <div className="transformation-bar-label">
+                      <span>{signal.label}</span>
+                      <strong>{signal.value.toFixed(0)}%</strong>
+                    </div>
+                    <div className="transformation-bar-track" aria-hidden="true">
+                      <div
+                        className={`transformation-bar-fill transformation-bar-${signal.key}`}
+                        style={{ width: `${signal.value}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
+                <div className="transformation-evidence">
+                  {transformation.evidence.slice(0, 3).map((item) => (
+                    <span key={item}>{item}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {hasRewriteResult && (
           <div className="report-rewrite-summary-bar">
