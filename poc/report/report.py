@@ -2239,6 +2239,247 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             },
         }
 
+    def _industry_component_score(*values: Any) -> int:
+        for value in values:
+            if value is not None:
+                return _pct(value)
+        return 0
+
+    def _industry_baseline(
+        badge: Dict[str, Any],
+        transformation: Dict[str, Any],
+        contribution: Dict[str, Any],
+        integrity_layers: Dict[str, Any],
+        human_contract: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Turnitin-style calibration contract for authorship-vs-grounding separation.
+
+        This is an engineering baseline, not a claim about a vendor's private
+        implementation. The purpose is to expose the classes of signals the
+        rewrite gate should optimize against.
+        """
+        features = (transformation or {}).get("features") or {}
+        ai_components = (badge or {}).get("ai_components") or {}
+        writing_components = (badge or {}).get("writing_components") or {}
+        layers = (integrity_layers or {}).get("layers") or {}
+        ai_authorship_layer = layers.get("ai_authorship_risk") or {}
+        human_layer = layers.get("human_contribution_signal") or {}
+        grounding_layer = layers.get("grounding_quality_risk") or {}
+        ai_transform_layer = layers.get("ai_transformation_risk") or {}
+        subsignals = {
+            item.get("key"): item
+            for item in (human_contract or {}).get("subsignals", [])
+            if isinstance(item, dict) and item.get("key")
+        }
+
+        def subscore(key: str) -> int:
+            return _industry_component_score((subsignals.get(key) or {}).get("score"))
+
+        positive_authorship = [
+            {
+                "key": "human_anchor",
+                "score": _industry_component_score(features.get("human_anchor_score"), human_layer.get("score")),
+                "weight": -0.18,
+                "meaning": "Concrete author-owned context suppresses AI certainty.",
+            },
+            {
+                "key": "authorship_friction",
+                "score": max(subscore("local_constraint_awareness"), subscore("causal_reasoning")),
+                "weight": -0.12,
+                "meaning": "Bounded judgment, causal reasoning, and tradeoffs create human-side friction.",
+            },
+            {
+                "key": "local_irregularity",
+                "score": max(0, 100 - _industry_component_score(features.get("paragraph_uniformity_risk"))),
+                "weight": -0.08,
+                "meaning": "Natural paragraph asymmetry suppresses template certainty.",
+            },
+            {
+                "key": "domain_cognition",
+                "score": subscore("domain_cognition"),
+                "weight": -0.07,
+                "meaning": "Operational domain reasoning is positive authorship evidence.",
+            },
+        ]
+        positive_authorship.sort(key=lambda row: row["score"], reverse=True)
+
+        authorship_components = [
+            {
+                "key": "token_predictability",
+                "score": _industry_component_score(
+                    ai_components.get("topk_pattern"),
+                    ai_components.get("token_predictability"),
+                    features.get("ai_likelihood"),
+                    badge.get("ai_likelihood_score"),
+                ),
+                "weight": 0.28,
+                "meaning": "Next-token regularity and low-surprise token paths.",
+            },
+            {
+                "key": "burstiness_regularization",
+                "score": _industry_component_score(
+                    ai_components.get("low_burstiness"),
+                    features.get("paragraph_uniformity_risk"),
+                    features.get("section_style_variance"),
+                ),
+                "weight": 0.16,
+                "meaning": "Even sentence length, pacing, and paragraph rhythm.",
+            },
+            {
+                "key": "discourse_shape_regularization",
+                "score": _industry_component_score(features.get("discourse_regularity_risk")),
+                "weight": 0.14,
+                "meaning": "Managed intro-development-conclusion flow and repeated paragraph jobs.",
+            },
+            {
+                "key": "semantic_uniformity",
+                "score": _industry_component_score(features.get("semantic_uniformity_risk")),
+                "weight": 0.14,
+                "meaning": "Stable meaning-flow with limited local drift or pressure.",
+            },
+            {
+                "key": "template_phrase_signal",
+                "score": _industry_component_score(
+                    ai_components.get("generic_assertion_risk"),
+                    ai_components.get("qualifying_text_density"),
+                    features.get("outline_to_text_expansion"),
+                ),
+                "weight": 0.13,
+                "meaning": "Generic academic phrase/template behavior.",
+            },
+            {
+                "key": "rewrite_smoothness",
+                "score": _industry_component_score(features.get("rewrite_smoothness")),
+                "weight": 0.10,
+                "meaning": "Over-polished prose with low local reasoning texture.",
+            },
+            {
+                "key": "surface_or_source_similarity",
+                "score": _industry_component_score(
+                    features.get("surface_similarity"),
+                    features.get("source_similarity"),
+                    features.get("paraphrase_transformation_risk"),
+                ),
+                "weight": 0.05,
+                "meaning": "Close surface or paraphrase relation where source material is available.",
+            },
+        ]
+        authorship_components.sort(key=lambda row: row["score"], reverse=True)
+
+        human_components = [
+            {
+                "key": "lived_process_detail",
+                "score": subscore("lived_process_detail"),
+                "meaning": "Concrete process, action, and observation detail from the submitted context.",
+            },
+            {
+                "key": "domain_cognition",
+                "score": subscore("domain_cognition"),
+                "meaning": "Domain-specific operational relationships rather than glossary terms.",
+            },
+            {
+                "key": "causal_reasoning",
+                "score": subscore("causal_reasoning"),
+                "meaning": "Cause, consequence, condition, and limitation links.",
+            },
+            {
+                "key": "source_claim_ownership",
+                "score": subscore("source_claim_ownership"),
+                "meaning": "Author explains what a source or anchor does for the claim.",
+            },
+            {
+                "key": "local_constraint_awareness",
+                "score": subscore("local_constraint_awareness"),
+                "meaning": "Judgment, limitation, and tradeoff language.",
+            },
+            {
+                "key": "natural_variance",
+                "score": subscore("natural_variance"),
+                "meaning": "Uneven paragraph purpose and non-template rhythm.",
+            },
+        ]
+
+        grounding_components = [
+            {
+                "key": "source_grounding_risk",
+                "score": _industry_component_score(writing_components.get("source_grounding_risk")),
+                "meaning": "Claims may need clearer source relation or evidence support.",
+            },
+            {
+                "key": "citation_weakness_risk",
+                "score": _industry_component_score(writing_components.get("citation_weakness_risk")),
+                "meaning": "Citation formatting, coverage, or source linkage may be weak.",
+            },
+            {
+                "key": "unsupported_claim_risk",
+                "score": _industry_component_score(writing_components.get("unsupported_claim_risk")),
+                "meaning": "Claims may be broader than the submitted support.",
+            },
+            {
+                "key": "broad_claim_risk",
+                "score": _industry_component_score(writing_components.get("broad_claim_risk")),
+                "meaning": "Claims may need narrowing to the actual context.",
+            },
+        ]
+        grounding_components.sort(key=lambda row: row["score"], reverse=True)
+
+        return {
+            "schema_version": "industry_baseline.v1",
+            "baseline": "Turnitin-style market-leader approximation",
+            "disclaimer": "Engineering approximation from observable detector behavior; not a vendor claim.",
+            "policy": {
+                "grounding_is_not_ai_authorship": True,
+                "weak_grounding_can_be_human": True,
+                "human_noise_is_not_typo_injection": True,
+                "positive_human_signal_is_not_inverse_ai_only": True,
+            },
+            "score_formula": {
+                "ai_authorship_risk": "token_predictability + burstiness_regularization + discourse_shape_regularization + semantic_uniformity + template_phrase_signal + rewrite_smoothness + similarity - human_anchor - authorship_friction - local_irregularity",
+                "grounding_quality_risk": "source_grounding + citation_weakness + unsupported_claim + broad_claim",
+                "human_contribution_signal": "lived_process_detail + domain_cognition + causal_reasoning + source_claim_ownership + local_constraint_awareness + natural_variance",
+            },
+            "layers": {
+                "ai_authorship_risk": {
+                    "score": _industry_component_score(ai_authorship_layer.get("score")),
+                    "label": ai_authorship_layer.get("label"),
+                    "positive_components": authorship_components,
+                    "suppressors": positive_authorship,
+                    "excludes": [
+                        "source_grounding_risk",
+                        "citation_weakness_risk",
+                        "unsupported_claim_risk",
+                        "broad_claim_risk",
+                    ],
+                    "mitigation_target": "Reduce statistical/template regularity while increasing meaningful authorship friction.",
+                },
+                "ai_transformation_risk": {
+                    "score": _industry_component_score(ai_transform_layer.get("score")),
+                    "label": ai_transform_layer.get("label"),
+                    "driver_source": "scanner transformation features",
+                    "mitigation_target": "Reduce rewrite-smoothness, expansion, paraphrase, and semantic-uniformity signals.",
+                },
+                "human_contribution_signal": {
+                    "score": _industry_component_score(human_layer.get("score")),
+                    "label": human_layer.get("label"),
+                    "components": human_components,
+                    "mitigation_target": "Increase grounded reasoning continuity and local domain cognition without fabricating new facts.",
+                },
+                "grounding_quality_risk": {
+                    "score": _industry_component_score(grounding_layer.get("score")),
+                    "label": grounding_layer.get("label"),
+                    "components": grounding_components,
+                    "separate_from_ai_authorship": True,
+                    "mitigation_target": "Narrow unsupported claims or ask user to prepare evidence; do not count weakness as AI authorship.",
+                },
+            },
+            "rewrite_gate_objectives": {
+                "primary": "Human Contribution >= 80",
+                "secondary": "AI Authorship must not regress unless major human breakthrough is achieved.",
+                "quality_guard": "No critical/high/review-burden/severity regression.",
+                "word_count_guard": "Regenerated content must remain within the submitted word-count band.",
+            },
+        }
+
     def _fallback_sentence_segments(text: str) -> list:
         if not text:
             return []
@@ -2550,17 +2791,232 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "headings": headings[:20],
         }
 
+    def _count_pattern(text: str, pattern: str) -> int:
+        return len(_re.findall(pattern, text or "", flags=_re.I))
+
+    def _human_contribution_contract(
+        text: str,
+        segments: list,
+        paragraph_rows: list,
+        integrity_layers: Dict[str, Any],
+        features: Dict[str, Any],
+        writing_components: Dict[str, Any],
+        preservation_inventory: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Explain what is missing for Human Contribution and how rewrite can target it."""
+        text = text or ""
+        layers = (integrity_layers.get("layers") or {}) if isinstance(integrity_layers, dict) else {}
+        current_human = _pct((layers.get("human_contribution_signal") or {}).get("score"))
+        ai_transformation = _pct((layers.get("ai_transformation_risk") or {}).get("score"))
+        ai_authorship = _pct((layers.get("ai_authorship_risk") or {}).get("score"))
+        grounding = _pct((layers.get("grounding_quality_risk") or {}).get("score"))
+        domain_terms = (preservation_inventory or {}).get("domain_terms") or []
+        hard_anchors = (preservation_inventory or {}).get("anchors") or []
+        process_markers = _count_pattern(
+            text,
+            r"\b(?:when|while|before|after|during|step|process|practice|feedback|observe|adjust|compare|check|try|repeat)\b",
+        )
+        causal_markers = _count_pattern(
+            text,
+            r"\b(?:because|therefore|so|which means|this means|as a result|leads to|depends on|if|unless)\b",
+        )
+        judgment_markers = _count_pattern(
+            text,
+            r"\b(?:I think|I notice|I see|I do not|I usually|may|might|can|cannot|should|needs?|risk|limit|tension|challenge)\b",
+        )
+        source_markers = _count_pattern(text, r"\b(?:according to|states|argues|explains|shows|describes|source|citation)\b|\([A-Z][^)]+,\s*(?:19|20)\d{2}")
+        paragraph_count = max(1, len(paragraph_rows or []))
+        word_count = max(1, len(text.split()))
+
+        def score(name: str, value: float, evidence: str, action: str) -> Dict[str, Any]:
+            value = max(0, min(100, int(round(value))))
+            return {
+                "key": name,
+                "score": value,
+                "label": "strong" if value >= 70 else "mixed" if value >= 45 else "weak",
+                "evidence": evidence,
+                "rewrite_lever": action,
+            }
+
+        subsignals = [
+            score(
+                "lived_process_detail",
+                100 - _pct(writing_components.get("lived_detail_risk")),
+                f"{process_markers} process/practice markers",
+                "Add concrete process reasoning already implied by the draft; do not invent personal events.",
+            ),
+            score(
+                "domain_cognition",
+                min(100, len(domain_terms) * 4 + len(hard_anchors) * 2),
+                f"{len(domain_terms)} domain terms and {len(hard_anchors)} preserved anchors",
+                "Keep domain terms and use them to explain relationships, not as a glossary list.",
+            ),
+            score(
+                "causal_reasoning",
+                min(100, causal_markers * 12),
+                f"{causal_markers} causal or conditional markers",
+                "Make cause-effect links explicit where the submitted claims already imply them.",
+            ),
+            score(
+                "source_claim_ownership",
+                100 - _pct(writing_components.get("source_grounding_risk")),
+                f"{source_markers} source-relation markers",
+                "Connect source ideas to claims in the author's own reasoning, or narrow unsupported claims.",
+            ),
+            score(
+                "local_constraint_awareness",
+                min(100, judgment_markers * 8),
+                f"{judgment_markers} judgement, limitation, or constraint markers",
+                "Add bounded judgement, limitation, or tradeoff language from the submitted context.",
+            ),
+            score(
+                "natural_variance",
+                100 - max(
+                    _pct(features.get("paragraph_uniformity_risk")),
+                    _pct(features.get("discourse_regularity_risk")),
+                    _pct(features.get("semantic_uniformity_risk")),
+                ),
+                "paragraph/discourse/semantic uniformity risks inverted",
+                "Vary paragraph jobs and sentence route; avoid the same claim-explain-summary pattern.",
+            ),
+        ]
+
+        weak_keys = [item["key"] for item in subsignals if item["score"] < 45]
+        medium_keys = [item["key"] for item in subsignals if 45 <= item["score"] < 70]
+        auto_gain_potential = min(35, len(weak_keys) * 6 + len(medium_keys) * 3)
+        assume_author_evidence = os.environ.get(
+            "DRAFTPROOF_ASSUME_AUTHOR_EVIDENCE",
+            "1",
+        ).strip().lower() not in {"0", "false", "no", "off"}
+        evidence_gap_penalty = 0 if assume_author_evidence else 12 if grounding >= 65 else 5 if grounding >= 45 else 0
+        implicit_evidence_gain = (
+            min(35, 18 + len(weak_keys) * 4)
+            if assume_author_evidence
+            else 0
+        )
+        auto_reachable = max(
+            current_human,
+            min(100, current_human + auto_gain_potential + implicit_evidence_gain - evidence_gap_penalty),
+        )
+        with_author_input = min(
+            100,
+            max(auto_reachable, current_human + auto_gain_potential + implicit_evidence_gain + 25),
+        )
+
+        paragraph_levers = []
+        for paragraph in (paragraph_rows or [])[:12]:
+            top_signals = paragraph.get("top_signals") or []
+            pid = paragraph.get("paragraph_id")
+            if top_signals:
+                primary = top_signals[0]
+                signal_key = primary.get("key")
+            else:
+                primary = {}
+                signal_key = "human_anchor"
+            if signal_key in {"ai_likelihood", "rewrite_smoothness"}:
+                lever = "Change sentence route and paragraph role; avoid generic transitions."
+            elif signal_key in {"grounding_risk", "source_similarity"}:
+                lever = "Narrow the claim or add source-to-claim reasoning from existing source relations."
+            elif signal_key == "human_anchor_score":
+                lever = "Add concrete process, constraint, or judgement already implied by the paragraph."
+            else:
+                lever = "Assign a clearer paragraph job and add local reasoning continuity."
+            paragraph_levers.append({
+                "paragraph_id": pid,
+                "sentence_ids": paragraph.get("sentence_ids") or [],
+                "current_top_signals": top_signals[:3],
+                "recommended_role": (
+                    "source_to_claim_reasoning"
+                    if signal_key in {"grounding_risk", "source_similarity"}
+                    else "process_or_constraint_reasoning"
+                    if signal_key == "human_anchor_score"
+                    else "asymmetric_reasoning_route"
+                ),
+                "rewrite_lever": lever,
+            })
+
+        readiness = {
+            "auto_regeneration_possible": auto_reachable > current_human + 5,
+            "target_human_contribution": 80,
+            "estimated_auto_reachable_human_contribution": int(round(auto_reachable)),
+            "estimated_with_author_input_human_contribution": int(round(with_author_input)),
+            "assume_author_evidence_from_submission": assume_author_evidence,
+            "requires_author_input_for_80": (auto_reachable < 80 and not assume_author_evidence),
+            "user_evidence_footnote": (
+                "DraftProof can reconstruct from the submitted write-up, but you should keep ready any real notes, sources, examples, observations, or process evidence that support the claims if review is needed."
+            ),
+            "reason": (
+                "Human Contribution can be targeted through implicit author-evidence reconstruction from submitted claims; do not invent new facts."
+                if assume_author_evidence
+                else "Human Contribution above 80 likely needs real author evidence or source-specific grounding."
+                if auto_reachable < 80
+                else "Scanner signals suggest automatic regeneration may reach the target without new facts."
+            ),
+        }
+        return {
+            "schema_version": "human_contribution_contract.v1",
+            "current_human_contribution": current_human,
+            "target_human_contribution": 80,
+            "current_ai_transformation": ai_transformation,
+            "current_ai_authorship": ai_authorship,
+            "current_grounding_risk": grounding,
+            "subsignals": subsignals,
+            "weak_subsignals": weak_keys,
+            "medium_subsignals": medium_keys,
+            "paragraph_levers": paragraph_levers,
+            "generation_readiness": readiness,
+            "safe_generation_levers": [
+                item["rewrite_lever"] for item in subsignals if item["score"] < 70
+            ][:8],
+            "blocked_or_author_needed_levers": [
+                "new personal observation",
+                "new citation or source evidence",
+                "new named institution, date, statistic, or example",
+            ] if (auto_reachable < 80 and not assume_author_evidence) else [],
+            "assumption_policy": {
+                "mode": (
+                    "implicit_author_evidence"
+                    if assume_author_evidence
+                    else "explicit_evidence_required"
+                ),
+                "summary": (
+                    "Treat submitted claims as author-owned context for reconstruction when evidence is not separately uploaded. "
+                    "Generation may strengthen reasoning and narrow claims, but must not invent citations, dates, names, statistics, or new events."
+                    if assume_author_evidence
+                    else "Do not assume missing evidence exists outside the submission."
+                ),
+            },
+        }
+
     def _scan_intelligence() -> Dict[str, Any]:
         badge = report.ai_risk_badge or {}
         transformation = badge.get("transformation_classification") or {}
         features = transformation.get("features") or {}
+        writing_components = badge.get("writing_components") or {}
         transformation_signals = _transformation_signal_rows(features)
         contribution = _transformation_contribution(features, transformation_signals)
         integrity_layers = _integrity_layers(badge, transformation, contribution)
         segments = _document_segments()
+        paragraph_rows = _paragraph_map(segments)
         doc_findings = [_segment_signal(f) for f in document_level_findings]
         doc_findings.sort(key=lambda entry: entry.get("score", 0), reverse=True)
         preservation_inventory = _preservation_inventory(report.original_text or "")
+        human_contract = _human_contribution_contract(
+            report.original_text or "",
+            segments,
+            paragraph_rows,
+            integrity_layers,
+            features,
+            writing_components,
+            preservation_inventory,
+        )
+        industry_baseline = _industry_baseline(
+            badge,
+            transformation,
+            contribution,
+            integrity_layers,
+            human_contract,
+        )
         return {
             "schema_version": "scan_intelligence.v1",
             "purpose": {
@@ -2572,7 +3028,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "sentence_count": len(segments),
                 "paragraph_count": len({s.get("paragraph_id") for s in segments if s.get("paragraph_id")}),
                 "segments": segments,
-                "paragraphs": _paragraph_map(segments),
+                "paragraphs": paragraph_rows,
                 "preservation_inventory": preservation_inventory,
             },
             "transformation": {
@@ -2582,6 +3038,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "strongest_signals": transformation_signals[:3],
             },
             "integrity_layers": integrity_layers,
+            "industry_baseline": industry_baseline,
+            "human_contribution_contract": human_contract,
             "calibration": {
                 "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
                 "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
@@ -2656,6 +3114,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "rewrite_constraints": None,
                 "rewrite_edit_briefs": None,
                 "preservation_inventory": preservation_inventory,
+                "human_contribution_contract": human_contract,
+                "industry_baseline": industry_baseline,
                 "target_segment_ids": [
                     segment["segment_id"]
                     for segment in segments
@@ -2958,7 +3418,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         rewrite_edit_briefs=result.get("rewrite_edit_briefs"),
     )
     scan_intelligence["mitigation_inputs"]["ai_mitigation_plan"] = ai_mitigation
+    industry_baseline = scan_intelligence.get("industry_baseline") or {}
+    if isinstance(ai_mitigation, dict):
+        ai_mitigation["industry_baseline"] = industry_baseline
     result["ai_mitigation"] = ai_mitigation
+    result["industry_baseline"] = industry_baseline
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 

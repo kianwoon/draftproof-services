@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
     LLM_MODEL: str = ""
+    DRAFTPROOF_PLANNER_MODEL: str = ""
+    DRAFTPROOF_GENERATOR_MODEL: str = ""
+    DRAFTPROOF_RETRY_MODEL: str = ""
+    DRAFTPROOF_RETRY_MODEL_ENABLED: bool = False
+    DRAFTPROOF_RETRY_MODEL_MAX_CALLS: int = 1
     LLM_BASE_URL: str = ""
     SCAN_SOFT_TIME_LIMIT_SECONDS: int = 300
     SCAN_TIME_LIMIT_SECONDS: int = 330

@@ -78,7 +78,10 @@ from rewrite_pipeline import (
     _human_shift_score,
     _authenticity_gate_status,
     _build_reconstruction_meaning_brief,
+    _build_regeneration_blueprint,
     _reconstruction_mitigation_prompt,
+    _llm_role_config,
+    _retry_model_enabled,
     _paragraph_component_targets,
     _paragraph_component_prompt,
     _extract_paragraph_component_candidates,
@@ -932,9 +935,11 @@ authenticity_gate = _authenticity_gate_status(
     candidate_weighted_severity=4,
 )
 assert_test(
-    authenticity_gate["success"]
+    not authenticity_gate["success"]
+    and authenticity_gate["candidate_progress"]
+    and authenticity_gate["reason"] == "candidate_progress_below_target"
     and authenticity_gate["human_shift_score"] == positive_shift["score"],
-    "authenticity gate exposes Human Shift Score and accepts positive mitigation movement",
+    "target-aware authenticity gate records positive movement as candidate progress below target",
 )
 authenticity_regression_gate = _authenticity_gate_status(
     shift_original,
@@ -973,6 +978,63 @@ assert_test(
     and negative_shift_gate["reason"] == "human_shift_score_too_low",
     "authenticity gate rejects AI drops that are outweighed by human-side regressions",
 )
+major_gate_env = {
+    "DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD": os.environ.get("DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD"),
+    "DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_GAIN": os.environ.get("DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_GAIN"),
+}
+os.environ["DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD"] = "80"
+os.environ["DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_GAIN"] = "10"
+ai_authorship_regressing_candidate = make_shift_report(
+    ai_authorship=62,
+    human=65,
+    ai_transformation=35,
+    grounding=20,
+    human_anchor=85,
+    smoothness=20,
+    semantic_uniformity=20,
+)
+ai_authorship_regression_gate = _authenticity_gate_status(
+    shift_original,
+    ai_authorship_regressing_candidate,
+    True,
+    original_review_burden=2,
+    candidate_review_burden=2,
+    original_weighted_severity=4,
+    candidate_weighted_severity=4,
+)
+assert_test(
+    not ai_authorship_regression_gate["success"]
+    and ai_authorship_regression_gate["reason"] == "ai_authorship_regressed"
+    and ai_authorship_regression_gate["ai_authorship_regression_blocked"],
+    "authenticity gate rejects Human gains that worsen AI Authorship before major threshold",
+)
+major_breakthrough_gate = _authenticity_gate_status(
+    shift_original,
+    make_shift_report(
+        ai_authorship=61,
+        human=82,
+        ai_transformation=18,
+        grounding=25,
+        human_anchor=85,
+        smoothness=30,
+        semantic_uniformity=25,
+    ),
+    True,
+    original_review_burden=2,
+    candidate_review_burden=2,
+    original_weighted_severity=4,
+    candidate_weighted_severity=4,
+)
+assert_test(
+    major_breakthrough_gate["success"]
+    and major_breakthrough_gate["major_human_breakthrough"],
+    "authenticity gate allows AI Authorship regression only after major Human threshold breakthrough",
+)
+for name, value in major_gate_env.items():
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
 
 reconstruction_source = (
     "Inclusive learning design in Certificate III Hairdressing needs to protect technical standards.\n\n"
@@ -1021,6 +1083,20 @@ reconstruction_raw = {
             "semantic_uniformity_risk": 0.62,
             "paragraph_role_repetition": 0.58,
         },
+        "human_contribution_contract": {
+            "schema_version": "human_contribution_contract.v1",
+            "weak_subsignals": ["causal_reasoning", "source_claim_ownership"],
+            "generation_readiness": {
+                "target_human_contribution": 80,
+                "estimated_auto_reachable_human_contribution": 58,
+                "requires_author_input_for_80": True,
+            },
+            "paragraph_levers": [{
+                "paragraph_id": "p001",
+                "recommended_role": "source_to_claim_reasoning",
+                "rewrite_lever": "Connect source idea to the learner sectioning problem.",
+            }],
+        },
         "integrity_layers": {
             "layers": {
                 "ai_authorship_risk": {
@@ -1030,6 +1106,32 @@ reconstruction_raw = {
                     ]
                 }
             }
+        },
+        "industry_baseline": {
+            "schema_version": "industry_baseline.v1",
+            "policy": {
+                "grounding_is_not_ai_authorship": True,
+                "human_noise_is_not_typo_injection": True,
+            },
+            "layers": {
+                "ai_authorship_risk": {
+                    "positive_components": [
+                        {"key": "token_predictability", "score": 88},
+                        {"key": "semantic_uniformity", "score": 62},
+                    ],
+                    "suppressors": [
+                        {"key": "authorship_friction", "score": 21},
+                        {"key": "domain_cognition", "score": 48},
+                    ],
+                    "excludes": ["source_grounding_risk"],
+                },
+                "human_contribution_signal": {
+                    "components": [
+                        {"key": "causal_reasoning", "score": 20},
+                        {"key": "local_constraint_awareness", "score": 32},
+                    ]
+                },
+            },
         },
     },
     "rewrite_constraints": {
@@ -1066,6 +1168,39 @@ assert_test(
     "step-by-step process descriptions" in meaning_brief["allowed_existing_additions"],
     "reconstruction meaning brief carries scanner-allowed additions",
 )
+assert_test(
+    meaning_brief["human_contribution_contract"]["schema_version"] == "human_contribution_contract.v1",
+    "reconstruction meaning brief carries scanner human contribution contract",
+)
+assert_test(
+    meaning_brief["industry_baseline"]["schema_version"] == "industry_baseline.v1"
+    and meaning_brief["industry_baseline"]["policy"]["grounding_is_not_ai_authorship"],
+    "reconstruction meaning brief carries industry baseline contract",
+)
+regeneration_blueprint = _build_regeneration_blueprint(
+    reconstruction_source,
+    reconstruction_raw,
+    "claim_narrowing_rebuild",
+)
+assert_test(
+    regeneration_blueprint["schema_version"] == "regeneration_blueprint.v1"
+    and regeneration_blueprint["strategy_family"] == "claim_narrowing_rebuild",
+    "regeneration blueprint records strategy family",
+)
+assert_test(
+    regeneration_blueprint["paragraph_plans"]
+    and regeneration_blueprint["paragraph_plans"][0]["role"] == "narrow_claim",
+    "regeneration blueprint creates paragraph-level roles",
+)
+assert_test(
+    "generic_assertion_risk" in regeneration_blueprint["global_driver_targets"],
+    "regeneration blueprint targets scanner drivers",
+)
+assert_test(
+    "token_predictability" in regeneration_blueprint["industry_baseline_focus"]["ai_authorship_positive_components"]
+    and "authorship_friction" in regeneration_blueprint["industry_baseline_focus"]["authorship_suppressors"],
+    "regeneration blueprint carries industry-baseline authorship drivers and suppressors",
+)
 reconstruction_prompt = _reconstruction_mitigation_prompt(
     reconstruction_source,
     reconstruction_raw,
@@ -1085,9 +1220,20 @@ assert_test(
     "reconstruction prompt targets 80 human contribution and enforces word-count band",
 )
 assert_test(
+    "industry-baseline AI Authorship drivers" in reconstruction_prompt
+    and "Do not use typo/noise tricks" in reconstruction_prompt
+    and "Treat grounding quality as separate from AI authorship" in reconstruction_prompt,
+    "reconstruction prompt follows industry-baseline mitigation policy",
+)
+assert_test(
     "Do not follow the submitted sentence order as a scaffold" in reconstruction_prompt
     and "Use target segments as the highest-priority places" in reconstruction_prompt,
     "reconstruction prompt treats source as evidence rather than sentence scaffold",
+)
+assert_test(
+    "Scanner-derived regeneration blueprint" in reconstruction_prompt
+    and "candidate must use the 'reasoning_dense_reconstruction' family" in reconstruction_prompt,
+    "reconstruction prompt includes staged blueprint and candidate family",
 )
 assert_test(
     "Do not invent personal observations" in reconstruction_prompt
@@ -1569,6 +1715,51 @@ try:
     os.unlink(env_path)
 except OSError:
     pass
+
+model_env_names = [
+    "DRAFTPROOF_PLANNER_MODEL",
+    "DRAFTPROOF_GENERATOR_MODEL",
+    "DRAFTPROOF_RETRY_MODEL",
+    "DRAFTPROOF_RETRY_MODEL_ENABLED",
+    "DRAFTPROOF_RETRY_MODEL_MAX_CALLS",
+    "PLANNER_MODEL",
+    "GENERATOR_MODEL",
+    "RETRY_MODEL",
+    "RETRY_MODEL_ENABLED",
+    "RETRY_MODEL_MAX_CALLS",
+]
+saved_model_env = {name: os.environ.get(name) for name in model_env_names}
+for name in model_env_names:
+    os.environ.pop(name, None)
+os.environ["DRAFTPROOF_PLANNER_MODEL"] = "openai/gpt-4.1-mini"
+os.environ["DRAFTPROOF_GENERATOR_MODEL"] = "openai/gpt-5-mini"
+os.environ["DRAFTPROOF_RETRY_MODEL"] = "openai/gpt-5.2"
+roles_disabled = _llm_role_config("fallback-model")
+assert_test(
+    roles_disabled["planner_model"] == "openai/gpt-4.1-mini"
+    and roles_disabled["generator_model"] == "openai/gpt-5-mini"
+    and roles_disabled["retry_model"] == "openai/gpt-5.2"
+    and roles_disabled["retry_model_enabled"] is False
+    and roles_disabled["retry_model_max_calls"] == 0,
+    "LLM role config resolves planner/generator/retry models with retry kill switch off by default",
+)
+assert_test(
+    not _retry_model_enabled(),
+    "retry model kill switch defaults off",
+)
+os.environ["DRAFTPROOF_RETRY_MODEL_ENABLED"] = "1"
+os.environ["DRAFTPROOF_RETRY_MODEL_MAX_CALLS"] = "2"
+roles_enabled = _llm_role_config("fallback-model")
+assert_test(
+    roles_enabled["retry_model_enabled"] is True
+    and roles_enabled["retry_model_max_calls"] == 2,
+    "retry model kill switch enables bounded retry-model calls",
+)
+for name, value in saved_model_env.items():
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
 
 stale_ai_summary = {
     "rollback_applied": True,

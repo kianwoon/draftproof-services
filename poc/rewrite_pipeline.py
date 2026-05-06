@@ -193,6 +193,51 @@ def _allow_ai_search_llm_after_deterministic() -> bool:
     return _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", True)
 
 
+def _role_model(role: str, fallback_model: str | None = None) -> str | None:
+    """Resolve stage-specific LLM model names from env with legacy fallback."""
+    role = (role or "").strip().lower()
+    role_env = {
+        "planner": ("DRAFTPROOF_PLANNER_MODEL", "PLANNER_MODEL", "LLM_PLANNER_MODEL"),
+        "generator": ("DRAFTPROOF_GENERATOR_MODEL", "GENERATOR_MODEL", "LLM_GENERATOR_MODEL"),
+        "retry": ("DRAFTPROOF_RETRY_MODEL", "RETRY_MODEL", "LLM_RETRY_MODEL"),
+    }.get(role, ())
+    for name in role_env:
+        value = os.environ.get(name)
+        if value and str(value).strip():
+            return str(value).strip()
+    if role == "retry":
+        return _role_model("generator", fallback_model)
+    return fallback_model or os.environ.get("LLM_MODEL")
+
+
+def _retry_model_enabled() -> bool:
+    """Kill switch for expensive retry-model escalation."""
+    return _env_flag("DRAFTPROOF_RETRY_MODEL_ENABLED", False) or _env_flag(
+        "RETRY_MODEL_ENABLED",
+        False,
+    )
+
+
+def _retry_model_max_calls() -> int:
+    raw = os.environ.get("DRAFTPROOF_RETRY_MODEL_MAX_CALLS") or os.environ.get("RETRY_MODEL_MAX_CALLS")
+    try:
+        return max(0, int(raw if raw is not None else "1"))
+    except ValueError:
+        return 1
+
+
+def _llm_role_config(fallback_model: str | None = None) -> dict:
+    retry_enabled = _retry_model_enabled()
+    retry_model = _role_model("retry", fallback_model)
+    return {
+        "planner_model": _role_model("planner", fallback_model),
+        "generator_model": _role_model("generator", fallback_model),
+        "retry_model": retry_model,
+        "retry_model_enabled": retry_enabled,
+        "retry_model_max_calls": _retry_model_max_calls() if retry_enabled else 0,
+    }
+
+
 def _ai_search_fast_accept_reason(reference_ai, candidate_ai) -> str:
     """Return an early-stop reason when a deterministic candidate is good enough."""
     if not isinstance(reference_ai, (int, float)) or not isinstance(candidate_ai, (int, float)):
@@ -695,6 +740,31 @@ def _authenticity_gate_status(
         isinstance(ai_authorship_delta, (int, float))
         and ai_authorship_delta >= _float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_AUTHORSHIP_DROP", 2.0)
     )
+    ai_authorship_regression_tolerance = _float_env(
+        "DRAFTPROOF_AUTHENTICITY_AI_AUTHORSHIP_REGRESSION_TOLERANCE",
+        0.0,
+    )
+    ai_authorship_regressed = bool(
+        isinstance(ai_authorship_delta, (int, float))
+        and ai_authorship_delta < -ai_authorship_regression_tolerance
+    )
+    major_human_threshold = _float_env("DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD", 80.0)
+    major_human_gain = _float_env("DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_GAIN", 50.0)
+    major_human_breakthrough = bool(
+        isinstance(candidate_human, (int, float))
+        and isinstance(human_delta, (int, float))
+        and candidate_human >= major_human_threshold
+        and human_delta >= major_human_gain
+    )
+    ai_authorship_regression_blocked = ai_authorship_regressed and not major_human_breakthrough
+    target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    strong_accept_min_human_gain = _float_env("DRAFTPROOF_AUTHENTICITY_STRONG_ACCEPT_MIN_HUMAN_GAIN", 20.0)
+    strong_accept_min_transform_drop = _float_env("DRAFTPROOF_AUTHENTICITY_STRONG_ACCEPT_MIN_AI_TRANSFORM_DROP", 20.0)
+    strong_accept_min_shift = _float_env("DRAFTPROOF_AUTHENTICITY_STRONG_ACCEPT_MIN_SHIFT", 45.0)
+    crosses_target_human = bool(
+        isinstance(candidate_human, (int, float))
+        and candidate_human >= target_human
+    )
     critical_high_regressed = _critical_high_count(candidate_report) > _critical_high_count(original_report)
     review_regressed = candidate_review_burden > original_review_burden
     severity_regressed = candidate_weighted_severity > original_weighted_severity
@@ -716,12 +786,29 @@ def _authenticity_gate_status(
         and human_shift_score > 0
         and (moves_toward_human or reduces_ai_authorship)
     )
-    success = bool(
+    strong_below_target_accept = bool(
+        isinstance(candidate_human, (int, float))
+        and candidate_human < target_human
+        and isinstance(human_delta, (int, float))
+        and human_delta >= strong_accept_min_human_gain
+        and isinstance(ai_transform_delta, (int, float))
+        and ai_transform_delta >= strong_accept_min_transform_drop
+        and isinstance(human_shift_score, (int, float))
+        and human_shift_score >= strong_accept_min_shift
+        and not ai_authorship_regressed
+    )
+    target_accept = crosses_target_human or strong_below_target_accept
+    candidate_progress = bool(
         text_changed
         and (clears_human_shift_score or positive_human_shift)
+        and not ai_authorship_regression_blocked
         and not critical_high_regressed
         and not review_regressed
         and not severity_regressed
+    )
+    success = bool(
+        candidate_progress
+        and target_accept
     )
     reason = ""
     if success:
@@ -730,12 +817,16 @@ def _authenticity_gate_status(
         reason = "unchanged_candidate"
     elif not (clears_human_shift_score or positive_human_shift):
         reason = "human_shift_score_too_low"
+    elif ai_authorship_regression_blocked:
+        reason = "ai_authorship_regressed"
     elif critical_high_regressed:
         reason = "critical_high_regressed"
     elif review_regressed:
         reason = "review_burden_regressed"
     elif severity_regressed:
         reason = "weighted_severity_regressed"
+    elif candidate_progress:
+        reason = "candidate_progress_below_target"
     return {
         "success": success,
         "reason": reason,
@@ -749,6 +840,18 @@ def _authenticity_gate_status(
         "candidate_ai_authorship": candidate_ai_authorship,
         "ai_authorship_delta": ai_authorship_delta,
         "reduces_ai_authorship": reduces_ai_authorship,
+        "ai_authorship_regressed": ai_authorship_regressed,
+        "ai_authorship_regression_blocked": ai_authorship_regression_blocked,
+        "ai_authorship_regression_tolerance": ai_authorship_regression_tolerance,
+        "major_human_breakthrough": major_human_breakthrough,
+        "target_human": target_human,
+        "crosses_target_human": crosses_target_human,
+        "strong_below_target_accept": strong_below_target_accept,
+        "strong_accept_min_human_gain": strong_accept_min_human_gain,
+        "strong_accept_min_ai_transform_drop": strong_accept_min_transform_drop,
+        "strong_accept_min_shift": strong_accept_min_shift,
+        "target_accept": target_accept,
+        "candidate_progress": candidate_progress,
         "crosses_human_side": crosses_human_side,
         "human_shift_score": human_shift_score,
         "human_shift_components": human_shift.get("components"),
@@ -1050,6 +1153,18 @@ def _build_reconstruction_meaning_brief(source_text: str, raw_json: dict | None)
         "headings": headings,
         "protected_facts": protected_spans[:25],
         "preservation_inventory": preservation_inventory,
+        "human_contribution_contract": (
+            scan_intelligence.get("human_contribution_contract")
+            or ((scan_intelligence.get("mitigation_inputs") or {}).get("human_contribution_contract"))
+            or {}
+        ),
+        "industry_baseline": (
+            scan_intelligence.get("industry_baseline")
+            or ((scan_intelligence.get("mitigation_inputs") or {}).get("industry_baseline"))
+            or raw_json.get("industry_baseline")
+            or ((raw_json.get("ai_mitigation") or {}).get("industry_baseline"))
+            or {}
+        ),
         "word_count_band": word_band,
         "integrity_targets": _integrity_driver_rows(raw_json, limit=14),
         "target_segments": _target_segment_rows(raw_json, limit=18),
@@ -1066,6 +1181,171 @@ def _build_reconstruction_meaning_brief(source_text: str, raw_json: dict | None)
     }
 
 
+def _build_regeneration_blueprint(source_text: str, raw_json: dict | None, strategy: str) -> dict:
+    """Build a scanner-derived generation plan before prose generation."""
+    brief = _build_reconstruction_meaning_brief(source_text, raw_json)
+    paragraphs = [
+        " ".join(p.split())
+        for p in re.split(r"\n\s*\n", source_text or "")
+        if p.strip()
+    ]
+    target_by_paragraph: dict[str, list[dict]] = {}
+    for segment in brief.get("target_segments") or []:
+        pid = segment.get("paragraph_id") or "p001"
+        target_by_paragraph.setdefault(pid, []).append(segment)
+
+    family_shapes = {
+        "evidence_first_rebuild": [
+            "source_or_anchor_first",
+            "problem_pressure",
+            "author_reasoning",
+            "bounded_implication",
+        ],
+        "problem_observation_rebuild": [
+            "problem_pressure",
+            "specific_context",
+            "reasoning_check",
+            "limited_conclusion",
+        ],
+        "claim_narrowing_rebuild": [
+            "narrow_claim",
+            "existing_anchor",
+            "qualification",
+            "bounded_implication",
+        ],
+        "asymmetric_paragraph_route": [
+            "short_context",
+            "long_reasoning",
+            "source_relation",
+            "brief_counterpressure",
+            "plain_conclusion",
+        ],
+        "low_smoothness_rebuild": [
+            "direct_claim",
+            "pause_or_limit",
+            "specific_consequence",
+            "plain_reasoning",
+        ],
+        "conservative_reconstruction": [
+            "context",
+            "pressure_point",
+            "evidence_relation",
+            "bounded_implication",
+        ],
+        "reasoning_dense_reconstruction": [
+            "context",
+            "friction",
+            "evidence_relation",
+            "author_reasoning",
+            "implication",
+        ],
+        "domain_grounded_reconstruction": [
+            "domain_context",
+            "operational_detail",
+            "judgement_or_limit",
+            "bounded_implication",
+        ],
+    }
+    route = family_shapes.get(strategy, family_shapes["asymmetric_paragraph_route"])
+    paragraph_count = max(3, len(paragraphs))
+    paragraph_plans = []
+    for idx, paragraph in enumerate(paragraphs, start=1):
+        pid = f"p{idx:03d}"
+        role = route[(idx - 1) % len(route)]
+        targets = target_by_paragraph.get(pid, [])
+        plan = {
+            "paragraph_id": pid,
+            "role": role,
+            "source_preview": paragraph[:180],
+            "claim_source": "preserve paragraph meaning; do not preserve sentence order",
+            "target_segments": targets[:4],
+            "must_reduce": [
+                target.get("signal") or target.get("lever")
+                for target in targets[:4]
+                if target.get("signal") or target.get("lever")
+            ],
+            "rhythm": (
+                "mix one short plain sentence with one longer causal sentence"
+                if idx % 2
+                else "avoid balanced list cadence; use one direct limitation or contrast"
+            ),
+            "grounding_move": (
+                "narrow broad claims to the submitted context"
+                if targets
+                else "add only reasoning already implied by adjacent claims"
+            ),
+        }
+        paragraph_plans.append(plan)
+
+    driver_keys = [
+        item.get("key")
+        for item in brief.get("integrity_targets") or []
+        if item.get("key")
+    ]
+    return {
+        "schema_version": "regeneration_blueprint.v1",
+        "strategy_family": strategy,
+        "target_human_contribution": 80,
+        "word_count_band": brief.get("word_count_band"),
+        "paragraph_count": paragraph_count,
+        "paragraph_plans": paragraph_plans[:12],
+        "global_driver_targets": driver_keys[:10],
+        "industry_baseline_focus": {
+            "ai_authorship_positive_components": [
+                row.get("key")
+                for row in (
+                    ((brief.get("industry_baseline") or {}).get("layers") or {})
+                    .get("ai_authorship_risk", {})
+                    .get("positive_components", [])
+                )[:6]
+                if isinstance(row, dict) and row.get("key")
+            ],
+            "human_contribution_components": [
+                row.get("key")
+                for row in (
+                    ((brief.get("industry_baseline") or {}).get("layers") or {})
+                    .get("human_contribution_signal", {})
+                    .get("components", [])
+                )
+                if isinstance(row, dict) and row.get("key")
+            ],
+            "authorship_suppressors": [
+                row.get("key")
+                for row in (
+                    ((brief.get("industry_baseline") or {}).get("layers") or {})
+                    .get("ai_authorship_risk", {})
+                    .get("suppressors", [])
+                )
+                if isinstance(row, dict) and row.get("key")
+            ],
+            "policy": (brief.get("industry_baseline") or {}).get("policy") or {},
+        },
+        "hard_preserve": {
+            "quotes": (brief.get("preservation_inventory") or {}).get("quotes") or [],
+            "citations": (brief.get("preservation_inventory") or {}).get("citations") or [],
+            "years": (brief.get("preservation_inventory") or {}).get("years") or [],
+            "numbers": (brief.get("preservation_inventory") or {}).get("numbers") or [],
+            "names_entities": (brief.get("preservation_inventory") or {}).get("names_entities") or [],
+            "domain_terms": (brief.get("preservation_inventory") or {}).get("domain_terms") or [],
+        },
+        "anti_patterns_to_avoid": [
+            "intro-balanced-explanation-conclusion essay shape",
+            "Furthermore/Moreover/In conclusion connector chain",
+            "same-length paragraphs",
+            "claim followed by generic explanation",
+            "smooth motivational summary",
+            "broad education/technology statements without local narrowing",
+        ],
+        "candidate_family_requirements": [
+            "do not use the original sentence order as scaffold",
+            "assign a different reasoning job to adjacent paragraphs",
+            "make at least two broad claims narrower instead of more polished",
+            "preserve anchors exactly where required",
+            "stay inside the word-count band",
+        ],
+    }
+
+
 def _reconstruction_mitigation_prompt(
     source_text: str,
     raw_json: dict,
@@ -1078,6 +1358,7 @@ def _reconstruction_mitigation_prompt(
     contribution = _contribution_scores(raw_json)
     integrity = _integrity_scores(raw_json)
     brief = _build_reconstruction_meaning_brief(source_text, raw_json)
+    blueprint = _build_regeneration_blueprint(source_text, raw_json, strategy)
     failure_feedback = _reconstruction_failure_feedback(prior_attempts)
     compact_failure_rows = []
     for item in failure_feedback:
@@ -1118,6 +1399,8 @@ def _reconstruction_mitigation_prompt(
         f"Strategy: {strategy}. {strategy_guidance}\n\n"
         "Regeneration brief extracted from submitted content and scan signals:\n"
         f"{json.dumps(brief, ensure_ascii=False)[:5200]}\n\n"
+        "Scanner-derived regeneration blueprint to follow before writing prose:\n"
+        f"{json.dumps(blueprint, ensure_ascii=False)[:5200]}\n\n"
         "Previous failed attempts to correct:\n"
         f"{json.dumps(failure_feedback, ensure_ascii=False) if failure_feedback else '- None yet.'}\n"
         f"{chr(10).join(compact_failure_rows) if compact_failure_rows else ''}\n\n"
@@ -1125,12 +1408,19 @@ def _reconstruction_mitigation_prompt(
         f"- The submitted draft has {brief['word_count_band']['source_word_count']} words. "
         f"Return {brief['word_count_band']['min_words']} to {brief['word_count_band']['max_words']} words only.\n\n"
         "Regeneration blueprint:\n"
+        "- Follow the scanner-derived blueprint above. It is the plan; the source draft is only evidence.\n"
         "- Do not follow the submitted sentence order as a scaffold. Use it as evidence for the claim set.\n"
-        "- Build a fresh paragraph route from the brief: concrete context, pressure point, evidence/source relation, author reasoning, bounded implication.\n"
-        "- Target the listed AI Authorship drivers directly: generic assertion risk, qualifying-text density, top-k predictability, and repeated sentence structure.\n"
+        "- Build a fresh paragraph route from the blueprint: concrete context, pressure point, evidence/source relation, author reasoning, bounded implication.\n"
+        "- Target the industry-baseline AI Authorship drivers directly: token predictability, burstiness regularity, discourse regularity, semantic uniformity, template phrase signal, and rewrite smoothness.\n"
+        "- Increase industry-baseline suppressors through real authorship friction: causal reasoning, local constraint awareness, domain cognition, and natural paragraph variance. Do not use typo/noise tricks.\n"
+        "- Treat grounding quality as separate from AI authorship. Narrow unsupported claims or preserve source relations; never invent citations, dates, names, statistics, or evidence.\n"
         "- Give adjacent paragraphs different jobs. One may start from a problem, another from a source relation, another from a limitation or consequence.\n"
         "- Use target segments as the highest-priority places to change the route, not as sentences to lightly paraphrase.\n"
         "- Use only allowed existing additions and implied process detail already licensed by the scan constraints.\n\n"
+        "Candidate-family instruction:\n"
+        f"- This candidate must use the '{strategy}' family. It must be structurally different from other families, not a temperature variant.\n"
+        "- Make the prose less template-like by changing paragraph purpose, not by adding odd wording.\n"
+        "- Do not make the draft smoother. Smoothness without local reasoning is a failure.\n\n"
         "Allowed reconstruction moves:\n"
         "- Reorder paragraphs and claims when the meaning is preserved.\n"
         "- Split over-smooth paragraphs and vary sentence pacing naturally.\n"
@@ -2423,6 +2713,9 @@ def run_rewrite_pipeline(
     Returns dict with paths and summary.
     """
     _load_local_env()
+    llm_roles = _llm_role_config(model)
+    generator_model = llm_roles.get("generator_model") or model
+    retry_model = llm_roles.get("retry_model") or generator_model
 
     # ── Parse input ────────────────────────────────────────────────
     ctx: DetectJSONContext = None
@@ -2556,7 +2849,7 @@ def run_rewrite_pipeline(
         content=text,
         detect_results=ctx.detect_results,
         api_key=api_key,
-        model=model,
+        model=generator_model,
         base_url=base_url,
         max_passes=max_passes,
         target_top10=target_top10,
@@ -2567,6 +2860,7 @@ def run_rewrite_pipeline(
         config=rewrite_config,
         progress_callback=report_progress,
     )
+    result.summary["llm_model_roles"] = llm_roles
     result.summary["ai_mitigation"] = ai_mitigation_contract
     if ai_mitigation_needs_author:
         result.summary["ai_mitigation_blocked_auto_rewrite"] = True
@@ -2828,6 +3122,7 @@ def run_rewrite_pipeline(
             "selected": False,
             "candidate_limit": authenticity_candidate_limit,
             "llm_calls": 0,
+            "model_roles": llm_roles,
             "reference": {
                 "ai": original_ai,
                 "writing_quality": original_wq,
@@ -2940,7 +3235,7 @@ def run_rewrite_pipeline(
             try:
                 gateway = LLMGateway(LLMConfig(
                     api_key=effective_key,
-                    model=model or os.environ.get("LLM_MODEL"),
+                    model=generator_model,
                     base_url=base_url,
                     timeout=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_TIMEOUT", "120")),
                     max_retries=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_RETRIES", "1")),
@@ -2955,6 +3250,7 @@ def run_rewrite_pipeline(
                     candidate_eval = {
                         "attempt": attempt_index,
                         "passed_local_checks": False,
+                        "model": generator_model,
                     }
                     try:
                         prompt = _authenticity_mitigation_prompt(
@@ -3103,7 +3399,11 @@ def run_rewrite_pipeline(
                 )
                 if reconstruction_enabled:
                     reconstruction_strategies = [
-                        "conservative_reconstruction",
+                        "evidence_first_rebuild",
+                        "problem_observation_rebuild",
+                        "claim_narrowing_rebuild",
+                        "asymmetric_paragraph_route",
+                        "low_smoothness_rebuild",
                         "reasoning_dense_reconstruction",
                         "domain_grounded_reconstruction",
                     ]
@@ -3140,6 +3440,7 @@ def run_rewrite_pipeline(
                             "strategy": strategy,
                             "reconstruction": True,
                             "passed_local_checks": False,
+                            "model": generator_model,
                         }
                         try:
                             prompt = _reconstruction_mitigation_prompt(
@@ -3424,6 +3725,7 @@ def run_rewrite_pipeline(
             "llm_calls": 0,
             "selected": False,
             "candidates": [],
+            "model_roles": llm_roles,
         }
         if search_source_repairs:
             search_summary["source_repairs"] = search_source_repairs
@@ -3666,7 +3968,7 @@ def run_rewrite_pipeline(
             try:
                 gateway = LLMGateway(LLMConfig(
                     api_key=effective_key,
-                    model=model or os.environ.get("LLM_MODEL"),
+                    model=generator_model,
                     base_url=base_url,
                     timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
                     max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
@@ -3858,16 +4160,41 @@ def run_rewrite_pipeline(
                         )
                     except ValueError:
                         feedback_limit = 2
+                    retry_enabled = bool(llm_roles.get("retry_model_enabled"))
+                    retry_budget = int(llm_roles.get("retry_model_max_calls") or 0)
+                    if not retry_enabled:
+                        search_summary["score_feedback_loop"] = {
+                            "enabled": False,
+                            "candidate_limit": 0,
+                            "reason": "retry_model_disabled_by_kill_switch",
+                            "retry_model": retry_model,
+                        }
+                        feedback_limit = 0
+                    else:
+                        feedback_limit = min(feedback_limit, retry_budget)
                     if feedback_limit:
                         search_summary["score_feedback_loop"] = {
                             "enabled": True,
                             "candidate_limit": feedback_limit,
+                            "retry_model": retry_model,
+                            "retry_model_max_calls": retry_budget,
                             "reason": (
                                 "no_selectable_candidate"
                                 if not best_strategy
                                 else "best_candidate_below_required_ai_drop"
                             ),
                         }
+                    retry_gateway = None
+                    if feedback_limit:
+                        retry_gateway = LLMGateway(LLMConfig(
+                            api_key=effective_key,
+                            model=retry_model,
+                            base_url=base_url,
+                            timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
+                            max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
+                            max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
+                            temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_TEMPERATURE", "0.8")),
+                        ))
                     for feedback_index in range(1, feedback_limit + 1):
                         report_progress(
                             min(89, 80 + feedback_index),
@@ -3876,6 +4203,7 @@ def run_rewrite_pipeline(
                         candidate_eval = {
                             "strategy": f"score_feedback_{feedback_index}",
                             "passed_local_checks": False,
+                            "retry_model": retry_model,
                         }
                         try:
                             prompt = _ai_search_feedback_prompt(
@@ -3885,7 +4213,7 @@ def run_rewrite_pipeline(
                                 feedback_index,
                             )
                             search_summary["llm_calls"] += 1
-                            response = gateway.chat(
+                            response = retry_gateway.chat(
                                 prompt,
                                 system=(
                                     "You are DraftProof's score-feedback rewrite engine. "
@@ -4312,6 +4640,8 @@ def run_rewrite_pipeline(
         final_shift_score = final_shift_gate.get("human_shift_score")
         final_human_delta = final_shift_gate.get("human_delta")
         final_transform_delta = final_shift_gate.get("ai_transformation_delta")
+        final_ai_authorship_regressed = bool(final_shift_gate.get("ai_authorship_regressed"))
+        final_major_human_breakthrough = bool(final_shift_gate.get("major_human_breakthrough"))
         clears_override = bool(
             isinstance(final_shift_score, (int, float))
             and final_shift_score >= _float_env("DRAFTPROOF_RECONSTRUCTION_OVERRIDE_MIN_SHIFT", 20.0)
@@ -4323,6 +4653,7 @@ def run_rewrite_pipeline(
                 isinstance(final_transform_delta, (int, float))
                 and final_transform_delta >= _float_env("DRAFTPROOF_RECONSTRUCTION_OVERRIDE_MIN_AI_TRANSFORM_DROP", 8.0)
             )
+            and (not final_ai_authorship_regressed or final_major_human_breakthrough)
             and not final_shift_gate.get("critical_high_regressed")
             and not final_shift_gate.get("review_burden_regressed")
             and not final_shift_gate.get("weighted_severity_regressed")

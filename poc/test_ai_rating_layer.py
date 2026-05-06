@@ -328,6 +328,36 @@ assert_true(
     set(anchor_texts).issubset(set(scan_json.get("rewrite_constraints", {}).get("preserve_terms", []))),
     "rewrite constraints carry scanner preservation anchors",
 )
+human_contract = intel.get("human_contribution_contract", {})
+assert_equal(
+    human_contract.get("schema_version"),
+    "human_contribution_contract.v1",
+    "scan intelligence includes human contribution contract",
+)
+assert_true(
+    human_contract.get("subsignals")
+    and any(s.get("key") == "causal_reasoning" for s in human_contract.get("subsignals", [])),
+    "human contribution contract decomposes human-side signals",
+)
+assert_true(
+    human_contract.get("paragraph_levers")
+    and human_contract.get("generation_readiness", {}).get("target_human_contribution") == 80,
+    "human contribution contract exposes paragraph levers and target readiness",
+)
+assert_true(
+    human_contract.get("generation_readiness", {}).get("assume_author_evidence_from_submission") is True
+    and human_contract.get("assumption_policy", {}).get("mode") == "implicit_author_evidence",
+    "human contribution contract assumes author evidence from submitted claims by default",
+)
+assert_true(
+    "keep ready" in human_contract.get("generation_readiness", {}).get("user_evidence_footnote", ""),
+    "human contribution contract leaves evidence-preparation footnote for users",
+)
+assert_equal(
+    intel.get("mitigation_inputs", {}).get("human_contribution_contract"),
+    human_contract,
+    "mitigation inputs mirror human contribution contract for rewrite",
+)
 highlighted = [s for s in intel["document"]["segments"] if s.get("highlight", {}).get("enabled")]
 assert_true(highlighted, "scan intelligence marks finding-linked segments for highlighting")
 assert_true(
@@ -387,6 +417,59 @@ assert_equal(
     integrity_layers,
     "scan intelligence mirrors separated integrity layer contract",
 )
+industry = scan_json.get("industry_baseline", {})
+assert_equal(
+    industry.get("schema_version"),
+    "industry_baseline.v1",
+    "scan JSON exposes Turnitin-style industry baseline contract",
+)
+assert_equal(
+    intel.get("industry_baseline"),
+    industry,
+    "scan intelligence mirrors industry baseline contract",
+)
+assert_true(
+    industry.get("policy", {}).get("grounding_is_not_ai_authorship")
+    and industry.get("policy", {}).get("weak_grounding_can_be_human"),
+    "industry baseline separates grounding quality from AI authorship",
+)
+ai_baseline = industry.get("layers", {}).get("ai_authorship_risk", {})
+ai_component_keys = [
+    row.get("key")
+    for row in ai_baseline.get("positive_components", [])
+    if isinstance(row, dict)
+]
+ai_suppressor_keys = [
+    row.get("key")
+    for row in ai_baseline.get("suppressors", [])
+    if isinstance(row, dict)
+]
+assert_true(
+    "token_predictability" in ai_component_keys
+    and "semantic_uniformity" in ai_component_keys
+    and "authorship_friction" in ai_suppressor_keys,
+    "industry baseline models AI score as machine-like components minus human suppressors",
+)
+assert_true(
+    "source_grounding_risk" in ai_baseline.get("excludes", []),
+    "industry baseline excludes grounding signals from AI authorship",
+)
+human_baseline_keys = [
+    row.get("key")
+    for row in industry.get("layers", {}).get("human_contribution_signal", {}).get("components", [])
+    if isinstance(row, dict)
+]
+assert_true(
+    "causal_reasoning" in human_baseline_keys
+    and "local_constraint_awareness" in human_baseline_keys
+    and industry.get("rewrite_gate_objectives", {}).get("primary") == "Human Contribution >= 80",
+    "industry baseline defines positive human contribution targets for gate/rewrite",
+)
+assert_equal(
+    intel.get("mitigation_inputs", {}).get("industry_baseline"),
+    industry,
+    "mitigation inputs mirror industry baseline for rewrite",
+)
 mitigation = scan_json.get("ai_mitigation", {})
 assert_equal(mitigation.get("schema_version"), "ai_mitigation.v1", "AI mitigation schema is present")
 assert_equal(mitigation.get("philosophy"), "authenticity_mitigation", "AI mitigation uses authenticity strategy")
@@ -394,6 +477,11 @@ assert_equal(
     mitigation.get("integrity_layers", {}).get("schema_version"),
     "integrity_layers.v1",
     "AI mitigation handoff carries integrity layer split",
+)
+assert_equal(
+    mitigation.get("industry_baseline"),
+    industry,
+    "AI mitigation handoff carries industry baseline split",
 )
 well_grounded_ai_plan = build_ai_mitigation_plan(
     scan_intelligence={
