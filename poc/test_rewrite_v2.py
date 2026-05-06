@@ -1138,6 +1138,15 @@ paragraph_search_text = (
     "These claims sound broad unless the paragraph connects them to the learner's actual cutting task.\n\n"
     "CESE (2017) explains working memory limits in practical learning."
 )
+source_synthesis_search_text = (
+    "Short title.\n\n"
+    "One theory explains the practical difficulty. "
+    "A research report (2020) states that new learners have limited capacity when a task has many moving parts. "
+    "Another study (2021) suggests that presentation format changes the pressure on attention. "
+    "A policy document (2022) defines participation, independence, assessment consistency, and implementation responsibility in formal terms. "
+    "The paragraph then continues through adjustment, participation, reliability, independence, and assessment consistency without returning to what the learner actually does.\n\n"
+    "In the salon classroom, I watch learners lose the guide when projection changes."
+)
 paragraph_search_json = {
     "ai_risk_badge": {
         "ai_components": {
@@ -1165,6 +1174,15 @@ assert_test(
     and paragraph_targets[0]["drivers"]["rewrite_brief_count"] == 1,
     "paragraph component search ranks paragraph-level AI drivers",
 )
+source_synthesis_targets = _paragraph_component_targets(source_synthesis_search_text, paragraph_search_json, limit=2)
+assert_test(
+    source_synthesis_targets
+    and source_synthesis_targets[0]["drivers"]["source_attribution_hits"] >= 3
+    and source_synthesis_targets[0]["drivers"]["source_chain_score"] > 0
+    and source_synthesis_targets[0]["drivers"]["abstract_noun_density"] > 0
+    and source_synthesis_targets[0]["drivers"]["citation_count"] >= 2,
+    "paragraph component search detects structural source-synthesis drivers",
+)
 paragraph_prompt = _paragraph_component_prompt(
     paragraph_targets[0],
     paragraph_search_json,
@@ -1178,6 +1196,8 @@ assert_test(
     "TARGET PARAGRAPH" in paragraph_prompt
     and "generic_assertion_risk=90.00%" in paragraph_prompt
     and "target AI<=52.78" in paragraph_prompt
+    and "source-heavy parts" in paragraph_prompt
+    and "attribution clauses, abstract noun stacking" in paragraph_prompt
     and "Return exactly 3 alternative replacement paragraphs" in paragraph_prompt,
     "paragraph component prompt passes score drivers and scoped rewrite instruction",
 )

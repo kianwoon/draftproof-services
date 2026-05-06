@@ -780,6 +780,7 @@ def _ai_search_prompt(
         "- High qualifying AI density: change paragraph architecture, not just words; vary where claims, examples, and source relations appear.",
         "- High top-k predictability: rebuild clause order, split/merge sentence routes, and use less expected verbs while preserving meaning.",
         "- Source/citation gaps: narrow or qualify the claim unless the source already exists in the draft.",
+        "- Source-heavy assisted prose: when citation density and attribution-chain density are high, break the chain into source point, observed context, and practice decision.",
         "- Repeated starters/rhythm: vary openings naturally without mechanical prefixes.",
         "Hard constraints:",
         "Keep the same topic, stance, factual claims, numbers, names, quotes, citations, unit codes, and chronology.",
@@ -789,6 +790,7 @@ def _ai_search_prompt(
         "Do not leave any non-protected source sentence verbatim. Rebuild every sentence route.",
         "Change most sentence openings and vary paragraph openings. Avoid preserving the same paragraph order inside every paragraph.",
         "Avoid generic polished phrases: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident.",
+        "Avoid assisted-sounding source synthesis: long citation-summary chains, repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.",
         "Use concrete wording, varied sentence routes, and paragraph-level reconstruction.",
     ]
     if signal_brief:
@@ -855,6 +857,8 @@ def _ai_search_feedback_prompt(
         "- If earlier candidates only changed wording, change paragraph structure and claim order this time.\n"
         "- Rewrite the highest-driver paragraphs more aggressively while preserving all protected facts.\n"
         "- Rebuild paragraph flow where needed: start from classroom/salon action, learner behavior, or source relation before broad claims.\n"
+        "- For source-heavy blocks, avoid citation-summary chains; alternate source point, observed context, and practice decision.\n"
+        "- Avoid assisted-sounding source synthesis patterns: repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.\n"
         "- Do not add fake facts. If evidence is missing, narrow the claim instead of inventing support.\n"
         "- Avoid mechanical anchor prefixes and visible review markers in the final document.\n"
         "- Repair inherited source damage: broken words, merged headings, and duplicate sentence fragments.\n"
@@ -880,6 +884,33 @@ def _paragraph_sentence_starters(paragraph: str) -> list[str]:
         if words:
             starters.append(words[0].lower())
     return starters
+
+
+_SOURCE_ATTRIBUTION_RE = re.compile(
+    r"\b(?:according to|state(?:s|d)?|show(?:s|ed)?|argue(?:s|d)?|"
+    r"suggest(?:s|ed)?|define(?:s|d)?|clarif(?:y|ies|ied)|"
+    r"explain(?:s|ed)?|note(?:s|d)?|observe(?:s|d)?|discuss(?:es|ed)?|"
+    r"focus(?:es|ed)? on|highlight(?:s|ed)?|describe(?:s|d)?|"
+    r"indicate(?:s|d)?|demonstrate(?:s|d)?|report(?:s|ed)?)\b",
+    re.I,
+)
+_ABSTRACT_NOUN_RE = re.compile(
+    r"\b[A-Za-z][A-Za-z-]{4,}(?:tion|sion|ment|ity|ence|ance|ship|ism|"
+    r"ness|ability|ibility|ivity|ology|isation|ization)\b",
+    re.I,
+)
+_GROUNDED_ACTION_RE = re.compile(
+    r"\b(?:I|my|we|our|me|us|when|where|while|before|after|during|"
+    r"ask(?:s|ed|ing)?|watch(?:es|ed|ing)?|notice(?:s|d)?|observe(?:s|d|ing)?|"
+    r"compare(?:s|d|ing)?|check(?:s|ed|ing)?|adjust(?:s|ed|ing)?|"
+    r"repeat(?:s|ed|ing)?|try|tries|tried|use(?:s|d|ing)?|"
+    r"show(?:s|ed|ing)?|work(?:s|ed|ing)?|make(?:s|made|ing)?|"
+    r"hold(?:s|ing)?|move(?:s|d|ing)?|test(?:s|ed|ing)?|"
+    r"review(?:s|ed|ing)?|record(?:s|ed|ing)?|choose(?:s|ing)?|"
+    r"explain(?:s|ed|ing)?|talk(?:s|ed|ing)?|write(?:s|wrote|writing)?|"
+    r"draft(?:s|ed|ing)?|practice|practise|feedback|example|case)\b",
+    re.I,
+)
 
 
 def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> list[dict]:
@@ -913,9 +944,20 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
                 matching_briefs.append(brief)
         generic_hits = len(generic_re.findall(paragraph))
         concrete_hits = len(concrete_re.findall(paragraph))
+        citation_count = len(re.findall(r"\([^)]*\b(?:19|20)\d{2}\b[^)]*\)", paragraph))
+        source_attribution_hits = len(_SOURCE_ATTRIBUTION_RE.findall(paragraph))
+        abstract_noun_hits = len(_ABSTRACT_NOUN_RE.findall(paragraph))
+        grounded_action_hits = len(_GROUNDED_ACTION_RE.findall(paragraph))
+        abstract_noun_density = round(abstract_noun_hits / max(len(words) / 100.0, 1.0), 3)
+        source_chain_score = (
+            max(0, citation_count - 1) * 1.15
+            + min(source_attribution_hits, 8) * 0.65
+            + min(abstract_noun_density, 8.0) * 0.35
+            - min(grounded_action_hits, 16) * 0.10
+        )
         starters = _paragraph_sentence_starters(paragraph)
         repeated_starter_count = len(starters) - len(set(starters))
-        has_citation = bool(re.search(r"\(\s*[A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}", paragraph))
+        has_citation = bool(citation_count)
         brief_score = sum(
             float(((b.get("signals") or {}).get("score") or 0.0) or 0.0)
             for b in matching_briefs
@@ -925,6 +967,8 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
             len(matching_briefs) * 5.0
             + brief_score * 8.0
             + min(generic_hits / max(len(words) / 90.0, 1.0), 8.0)
+            + min(max(source_chain_score, 0.0), 8.0)
+            + (1.25 if citation_count >= 2 and source_attribution_hits >= 2 else 0.0)
             + source_gap * 2.0
             + min(repeated_starter_count, 4) * 0.75
             - min(concrete_hits, 12) * 0.20
@@ -942,6 +986,12 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
                 "predictability_score_sum": round(brief_score, 4),
                 "generic_assertion_hits": generic_hits,
                 "concrete_anchor_hits": concrete_hits,
+                "citation_count": citation_count,
+                "source_attribution_hits": source_attribution_hits,
+                "abstract_noun_hits": abstract_noun_hits,
+                "abstract_noun_density": abstract_noun_density,
+                "grounded_action_hits": grounded_action_hits,
+                "source_chain_score": round(source_chain_score, 3),
                 "source_gap": bool(source_gap),
                 "repeated_sentence_starters": repeated_starter_count,
                 "word_count": len(words),
@@ -1002,6 +1052,9 @@ def _paragraph_component_prompt(
         "- Preserve all citations, years, numbers, names, unit codes, and source references.\n"
         "- Do not invent new evidence, sources, people, institutions, or events.\n"
         "- Break generic assertion flow: avoid broad claims unless tied to the local haircutting/classroom process.\n"
+        "- If the paragraph is source-heavy, do not stack citations into a smooth literature-summary chain.\n"
+        "- Rebuild source-heavy parts as: source point, observed context, and the practical decision this changes.\n"
+        "- Prefer local action or direct observation over attribution-heavy openers when the source is already cited.\n"
         "- Start from concrete action, learner behavior, source relation, or assessment consequence before broad explanation.\n"
         "- Change paragraph architecture: reorder claim/example/source relation where meaning allows.\n"
         "- Convert generic claims into specific process observations using only anchors already present nearby.\n"
@@ -1009,6 +1062,7 @@ def _paragraph_component_prompt(
         "- Change sentence openings and sentence routes. Do not polish with academic filler.\n"
         "- Keep author voice and first-person classroom observation where it already exists.\n"
         "- Remove duplicate fragments if present inside the target paragraph.\n"
+        "- Avoid assisted-sounding synthesis patterns: repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.\n"
         f"- Batch attempt {attempt_index}: make each option materially different from generic rephrasing.\n\n"
         f"Return exactly {candidate_count} alternative replacement paragraphs using this exact format:\n"
         "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
