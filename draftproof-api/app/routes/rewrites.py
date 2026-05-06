@@ -106,7 +106,7 @@ async def stream_rewrite_events(
                 events = await progress_stream.read_rewrite_progress(
                     rewrite_id,
                     last_stream_id,
-                    block_ms=1000,
+                    block_ms=3000,
                     count=10,
                 )
                 if events is None:

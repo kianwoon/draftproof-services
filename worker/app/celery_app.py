@@ -9,7 +9,7 @@ from .config import settings
 app = Celery(
     "draftproof",
     broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    backend=None,
     include=["app.tasks"],
 )
 
@@ -17,7 +17,6 @@ app = Celery(
 if settings.REDIS_URL.startswith("rediss://"):
     app.conf.update(
         broker_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
-        redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
     )
 
 app.conf.update(
@@ -54,7 +53,4 @@ app.conf.update(
         # for scan/rewrite jobs that run for minutes.
         "polling_interval": 5,
     },
-    # Result TTL — results expire after 1 hour (default is 1 day).
-    # Reduces Redis key count from stored task results.
-    result_expires=3600,
 )
