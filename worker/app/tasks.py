@@ -36,6 +36,110 @@ from celery.exceptions import SoftTimeLimitExceeded
 logger = logging.getLogger(__name__)
 
 
+def _pct_score(value) -> int:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if abs(number) <= 1:
+        number *= 100
+    return max(0, min(100, int(round(number))))
+
+
+def _integrity_risk_label(score: int) -> str:
+    if score >= 65:
+        return "high"
+    if score >= 40:
+        return "medium"
+    return "low"
+
+
+def _debug_grounding_quality_score(writing_components: dict | None) -> int:
+    components = writing_components or {}
+    weighted = (
+        _pct_score(components.get("source_grounding_risk")) * 0.30
+        + _pct_score(components.get("citation_weakness_risk")) * 0.25
+        + _pct_score(components.get("unsupported_claim_risk")) * 0.20
+        + _pct_score(components.get("broad_claim_risk")) * 0.15
+        + _pct_score(components.get("lived_detail_risk")) * 0.10
+    )
+    return int(round(weighted))
+
+
+def _debug_integrity_layers(report_json: dict | None, badge: dict | None) -> dict | None:
+    if not isinstance(report_json, dict):
+        return None
+    existing = (
+        report_json.get("integrity_layers")
+        or ((report_json.get("scan_intelligence") or {}).get("integrity_layers"))
+    )
+    if existing:
+        return existing
+    badge = badge or report_json.get("ai_risk_badge") or {}
+    if not isinstance(badge, dict):
+        return None
+    ai_score = _pct_score(badge.get("ai_likelihood_score"))
+    writing_components = badge.get("writing_components") or {}
+    grounding_score = _debug_grounding_quality_score(writing_components)
+    transformation = badge.get("transformation_classification") or {}
+    contribution = (
+        (((report_json.get("scan_intelligence") or {}).get("transformation") or {}).get("contribution"))
+        or {}
+    )
+    ai_transformation = _pct_score(
+        contribution.get("ai_transformation_ratio")
+        if contribution.get("ai_transformation_ratio") is not None
+        else ((transformation.get("features") or {}).get("calibrated_ai_risk"))
+    )
+    human = _pct_score(
+        contribution.get("human_contribution_ratio")
+        if contribution.get("human_contribution_ratio") is not None
+        else 100 - ai_transformation
+    )
+    ai_band = "High AI" if ai_score >= 50 else "Low AI"
+    grounding_band = "Weakly grounded" if grounding_score >= 50 else "Well grounded"
+    return {
+        "schema_version": "integrity_layers.v1",
+        "policy": {
+            "grounding_is_not_ai_authorship": True,
+            "summary": "Grounding weakness is reported as writing-integrity risk, not direct evidence of AI authorship.",
+            "backfilled_for_debug": True,
+        },
+        "layers": {
+            "ai_authorship_risk": {
+                "score": ai_score,
+                "tier": badge.get("tier"),
+                "label": _integrity_risk_label(ai_score),
+                "excludes": [
+                    "source_grounding_risk",
+                    "citation_weakness_risk",
+                    "unsupported_claim_risk",
+                ],
+            },
+            "ai_transformation_risk": {
+                "score": ai_transformation,
+                "label": _integrity_risk_label(ai_transformation),
+                "classification": {
+                    "code": transformation.get("code"),
+                    "label": transformation.get("label"),
+                    "confidence": transformation.get("confidence"),
+                },
+            },
+            "grounding_quality_risk": {
+                "score": grounding_score,
+                "label": _integrity_risk_label(grounding_score),
+            },
+            "human_contribution_signal": {
+                "score": human,
+                "label": "strong" if human >= 65 else "mixed" if human >= 40 else "limited",
+            },
+        },
+        "combined_interpretation": {
+            "label": f"{ai_band} / {grounding_band}",
+        },
+    }
+
+
 def _configure_torch_threads(torch) -> int | None:
     """Apply explicit Torch CPU thread settings when configured."""
     raw_threads = (
@@ -542,10 +646,7 @@ def _build_rewrite_debug_log(
                     "authorship_rating_code": badge.get("authorship_rating_code"),
                 },
             },
-            "integrity_layers": (
-                report_json.get("integrity_layers")
-                or ((report_json.get("scan_intelligence") or {}).get("integrity_layers"))
-            ),
+            "integrity_layers": _debug_integrity_layers(report_json, effective_badge),
             "ai_mitigation": report_json.get("ai_mitigation"),
             "scan_intelligence_mitigation_schema": (
                 ((report_json.get("scan_intelligence") or {}).get("mitigation_inputs") or {})
@@ -584,6 +685,8 @@ def _build_rewrite_debug_log(
             "findings_skipped": summary.get("findings_skipped"),
             "circuit_breaker_reason": summary.get("circuit_breaker_reason"),
             "ai_mitigation_search": summary.get("ai_mitigation_search"),
+            "authenticity_mitigation": summary.get("authenticity_mitigation"),
+            "authenticity_llm_calls_used": summary.get("authenticity_llm_calls_used"),
             "educational_mitigation_rewrite": summary.get("educational_mitigation_rewrite"),
             "stage_timings": summary.get("stage_timings"),
             "comparison_baseline": summary.get("comparison_baseline"),
