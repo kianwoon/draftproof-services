@@ -4112,7 +4112,7 @@ th {
 }
 
 .transformation-bar-section_style_variance {
-  background: #b45309;
+  background: #2563eb;
 }
 
 .transformation-evidence {
@@ -4218,9 +4218,9 @@ th {
   gap: .42rem;
   min-height: 28px;
   padding: .35rem .55rem;
-  color: #334155;
-  background: #fff;
-  border: 1px solid #dbe4ea;
+  color: color-mix(in srgb, var(--signal-color) 70%, #172033);
+  background: color-mix(in srgb, var(--signal-color) 9%, white);
+  border: 1px solid color-mix(in srgb, var(--signal-color) 35%, #dbe4ea);
   border-radius: 8px;
   font-size: .74rem;
   font-weight: 800;
@@ -4240,8 +4240,8 @@ th {
   min-width: 1.3rem;
   height: 1.3rem;
   padding: 0 .28rem;
-  color: var(--signal-color);
-  background: color-mix(in srgb, var(--signal-color) 10%, white);
+  color: #fff;
+  background: var(--signal-color);
   border-radius: 999px;
   font-size: .68rem;
 }

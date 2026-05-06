@@ -30,7 +30,7 @@ const SIGNAL_COLORS = {
   outline_to_text_expansion: '#4338ca',
   source_similarity: '#0369a1',
   surface_similarity: '#0369a1',
-  section_style_variance: '#a16207',
+  section_style_variance: '#2563eb',
   predictability: '#9a3412',
   writing_quality: '#4338ca',
   genericity: '#4338ca',
@@ -1125,6 +1125,8 @@ export default function Report() {
                           className={`submitted-highlight${isSelected ? ' is-selected' : ''}`}
                           style={{ '--signal-color': signal.color }}
                           title={signal.description}
+                          onMouseEnter={() => setSelectedSegmentId(segment.id)}
+                          onFocus={() => setSelectedSegmentId(segment.id)}
                           onClick={() => {
                             setSelectedSegmentId(segment.id);
                             const linkedIndex = report.issues.findIndex((issue) => (
