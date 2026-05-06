@@ -441,64 +441,6 @@ def _source_repair_brief(source_text: str) -> str:
     return "Source repair requirements:\n- " + "\n- ".join(notes)
 
 
-_NAME_ANCHOR_RE = re.compile(
-    r"\b(?:The\s+)?[A-Z][A-Za-z0-9&.-]*"
-    r"(?:\s+(?:[A-Z][A-Za-z0-9&.-]*|of|and|for|the|in|to|et|al\.)){1,10}"
-)
-
-
-def _protected_anchor_brief(text: str, *, limit: int = 28) -> str:
-    """List dynamic facts/anchors that LLM candidates must not drop."""
-    if not isinstance(text, str) or not text.strip():
-        return ""
-
-    protected: list[str] = []
-    for span in detect_protected_spans(text):
-        value = str(span.text or "").strip()
-        if value and value not in protected:
-            protected.append(value)
-
-    name_anchors: list[str] = []
-    connector_words = {"and", "or", "of", "the", "in", "to", "for", "et", "al."}
-    for match in _NAME_ANCHOR_RE.finditer(text):
-        value = re.sub(r"\s+", " ", match.group()).strip(" ,.;:")
-        words = value.split()
-        if len(words) < 2:
-            continue
-        lower_words = [word.lower().strip(".,") for word in words]
-        if lower_words[-1] in connector_words:
-            continue
-        if (
-            len(words) == 2
-            and lower_words[0] in connector_words
-            and not re.search(r"\d|[A-Z]{2,}", words[1])
-        ):
-            continue
-        if value.lower() in {
-            "this means",
-            "this review",
-            "this approach",
-            "this waiting",
-        }:
-            continue
-        if value not in name_anchors:
-            name_anchors.append(value)
-
-    lines: list[str] = []
-    if protected:
-        lines.append("Protected spans that must remain in every candidate:")
-        lines.extend(f"- {item}" for item in protected[:limit])
-    if name_anchors:
-        lines.append("Source/name anchors that must not be omitted or shortened:")
-        lines.extend(f"- {item}" for item in name_anchors[:limit])
-    if lines:
-        lines.append(
-            "A candidate that loses these quotes, citations, numbers, unit codes, "
-            "source names, or institution names is rejected before scoring."
-        )
-    return "\n".join(lines)
-
-
 def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
     """Repair obvious inherited source corruption before candidate gates."""
     if not isinstance(candidate, str) or not candidate:
@@ -779,7 +721,6 @@ def _ai_search_prompt(
 ) -> str:
     signal_brief = _ai_search_signal_brief(raw_json)
     repair_brief = _source_repair_brief(source_text)
-    protected_brief = _protected_anchor_brief(source_text, limit=40)
     strategy_lines = {
         "syntax_demolition": [
             "Strategy: syntax demolition.",
@@ -839,9 +780,6 @@ def _ai_search_prompt(
         "- High qualifying AI density: change paragraph architecture, not just words; vary where claims, examples, and source relations appear.",
         "- High top-k predictability: rebuild clause order, split/merge sentence routes, and use less expected verbs while preserving meaning.",
         "- Source/citation gaps: narrow or qualify the claim unless the source already exists in the draft.",
-        "- Source-heavy assisted prose: when citation density and attribution-chain density are high, break the chain into source point, observed context, and practice decision.",
-        "- Polished consequence prose: when abstract lists and modal consequence claims are dense, convert the summary into a concrete sequence of actions, waits, checks, or decisions.",
-        "- Source-catalogue conclusions: when a closing paragraph lists authors one by one, compress the source catalogue and close around learner action and assessment consequences.",
         "- Repeated starters/rhythm: vary openings naturally without mechanical prefixes.",
         "Hard constraints:",
         "Keep the same topic, stance, factual claims, numbers, names, quotes, citations, unit codes, and chronology.",
@@ -851,16 +789,12 @@ def _ai_search_prompt(
         "Do not leave any non-protected source sentence verbatim. Rebuild every sentence route.",
         "Change most sentence openings and vary paragraph openings. Avoid preserving the same paragraph order inside every paragraph.",
         "Avoid generic polished phrases: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident.",
-        "Avoid assisted-sounding source synthesis: long citation-summary chains, repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.",
-        "Avoid polished consequence summaries: abstract lists, broad confidence/quality/outcome claims, and neat source catalogues that do not show what happens in the work.",
         "Use concrete wording, varied sentence routes, and paragraph-level reconstruction.",
     ]
     if signal_brief:
         lines.append(signal_brief)
     if repair_brief:
         lines.append(repair_brief)
-    if protected_brief:
-        lines.append(protected_brief)
     lines.extend([
         "SOURCE DRAFT:\n<TARGET_DOCUMENT>\n" + source_text + "\n</TARGET_DOCUMENT>",
         "Output the complete rewritten draft only.",
@@ -878,11 +812,9 @@ def _ai_search_feedback_prompt(
     """Build a score-aware retry prompt from actual candidate outcomes."""
     signal_brief = _ai_search_signal_brief(raw_json)
     repair_brief = _source_repair_brief(source_text)
-    protected_brief = _protected_anchor_brief(source_text, limit=40)
     reference_ai = search_summary.get("reference_ai")
     required_drop = search_summary.get("required_ai_drop")
     target_score = search_summary.get("target_ai_score")
-    strong_target_score = search_summary.get("strong_target_ai_score")
     best_attempt = search_summary.get("best_attempt") or {}
     candidate_lines = []
     for item in (search_summary.get("candidates") or [])[-10:]:
@@ -909,13 +841,11 @@ def _ai_search_feedback_prompt(
 
     return (
         "DraftProof already tried candidate rewrites and rescanned what passed local checks.\n"
-        f"Reference AI score: {reference_ai}. Required drop: {required_drop}. Target AI score: {target_score}. "
-        f"Stronger target AI score: {strong_target_score}.\n"
-        "Your task is to beat the strongest reachable target, not to polish and not to make a tiny reduction.\n"
+        f"Reference AI score: {reference_ai}. Required drop: {required_drop}. Target AI score: {target_score}.\n"
+        "Your task is to beat the required target, not to polish and not to make a tiny reduction.\n"
         f"Current best attempt: {best_attempt or '[none]'}\n\n"
         f"{signal_brief}\n\n"
         f"{repair_brief}\n\n"
-        f"{protected_brief}\n\n"
         "Candidate scoreboard from the actual detector:\n"
         f"{scoreboard}\n\n"
         "What the next attempt must do:\n"
@@ -925,10 +855,6 @@ def _ai_search_feedback_prompt(
         "- If earlier candidates only changed wording, change paragraph structure and claim order this time.\n"
         "- Rewrite the highest-driver paragraphs more aggressively while preserving all protected facts.\n"
         "- Rebuild paragraph flow where needed: start from classroom/salon action, learner behavior, or source relation before broad claims.\n"
-        "- For source-heavy blocks, avoid citation-summary chains; alternate source point, observed context, and practice decision.\n"
-        "- Avoid assisted-sounding source synthesis patterns: repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.\n"
-        "- For polished consequence blocks, replace abstract outcome lists with concrete waits, checks, decisions, or next actions.\n"
-        "- For source-catalogue conclusions, stop listing authors one by one and close around the learner action the sources justify.\n"
         "- Do not add fake facts. If evidence is missing, narrow the claim instead of inventing support.\n"
         "- Avoid mechanical anchor prefixes and visible review markers in the final document.\n"
         "- Repair inherited source damage: broken words, merged headings, and duplicate sentence fragments.\n"
@@ -954,77 +880,6 @@ def _paragraph_sentence_starters(paragraph: str) -> list[str]:
         if words:
             starters.append(words[0].lower())
     return starters
-
-
-_SOURCE_ATTRIBUTION_RE = re.compile(
-    r"\b(?:according to|state(?:s|d)?|show(?:s|ed)?|argue(?:s|d)?|"
-    r"suggest(?:s|ed)?|define(?:s|d)?|clarif(?:y|ies|ied)|"
-    r"explain(?:s|ed)?|note(?:s|d)?|observe(?:s|d)?|discuss(?:es|ed)?|"
-    r"focus(?:es|ed)? on|highlight(?:s|ed)?|describe(?:s|d)?|"
-    r"indicate(?:s|d)?|demonstrate(?:s|d)?|report(?:s|ed)?)\b",
-    re.I,
-)
-_ABSTRACT_NOUN_RE = re.compile(
-    r"\b[A-Za-z][A-Za-z-]{4,}(?:tion|sion|ment|ity|ence|ance|ship|ism|"
-    r"ness|ability|ibility|ivity|ology|isation|ization)\b",
-    re.I,
-)
-_GROUNDED_ACTION_RE = re.compile(
-    r"\b(?:I|my|we|our|me|us|when|where|while|before|after|during|"
-    r"ask(?:s|ed|ing)?|watch(?:es|ed|ing)?|notice(?:s|d)?|observe(?:s|d|ing)?|"
-    r"compare(?:s|d|ing)?|check(?:s|ed|ing)?|adjust(?:s|ed|ing)?|"
-    r"repeat(?:s|ed|ing)?|try|tries|tried|use(?:s|d|ing)?|"
-    r"show(?:s|ed|ing)?|work(?:s|ed|ing)?|make(?:s|made|ing)?|"
-    r"hold(?:s|ing)?|move(?:s|d|ing)?|test(?:s|ed|ing)?|"
-    r"review(?:s|ed|ing)?|record(?:s|ed|ing)?|choose(?:s|ing)?|"
-    r"explain(?:s|ed|ing)?|talk(?:s|ed|ing)?|write(?:s|wrote|writing)?|"
-    r"draft(?:s|ed|ing)?|practice|practise|feedback|example|case)\b",
-    re.I,
-)
-_MODAL_CONSEQUENCE_RE = re.compile(
-    r"\b(?:can|could|may|might|will|would|should|must)\s+"
-    r"(?:lower|raise|increase|reduce|improve|support|strengthen|"
-    r"affect|influence|create|produce|lead|result|ensure|allow|"
-    r"enable|require|help|maintain|uphold|replace)\b",
-    re.I,
-)
-_EVALUATIVE_BRIDGE_RE = re.compile(
-    r"\b(?:matters?|challenge|important|vital|critical|central|"
-    r"support(?:s|ed)?|confidence|motivation|quality|standard(?:s)?|"
-    r"expectation(?:s)?|result(?:s)?|outcome(?:s)?|complexity|"
-    r"visibility|certainty|correlat(?:e|es|ed|ing)|validat(?:e|es|ed|ing)|"
-    r"promot(?:e|es|ed|ing)|clarif(?:y|ies|ied)|transparent|"
-    r"professional|commercial|direct|indirect)\b",
-    re.I,
-)
-_SOURCE_CATALOGUE_SENTENCE_RE = re.compile(
-    r"^\s*(?:[A-Z][A-Za-z&.-]+(?:\s+(?:and|&|et|al\.|[A-Z][A-Za-z&.-]+))*"
-    r"(?:\s+et\s+al\.)?)\s+"
-    r"(?:state(?:s|d)?|show(?:s|ed)?|argue(?:s|d)?|suggest(?:s|ed)?|"
-    r"define(?:s|d)?|clarif(?:y|ies|ied)|explain(?:s|ed)?|"
-    r"note(?:s|d)?|observe(?:s|d)?|discuss(?:es|ed)?|focus(?:es|ed)?\s+on|"
-    r"highlight(?:s|ed)?|describe(?:s|d)?|identify|identifies|outline(?:s|d)?|"
-    r"recommend(?:s|ed)?)\b",
-    re.I,
-)
-
-
-def _abstract_list_hits(paragraph: str) -> int:
-    hits = 0
-    for sentence in re.split(r"(?<=[.!?])\s+", str(paragraph or "")):
-        abstract_items = _ABSTRACT_NOUN_RE.findall(sentence)
-        comma_count = sentence.count(",")
-        if comma_count >= 2 and len(set(word.lower() for word in abstract_items)) >= 2:
-            hits += 1
-    return hits
-
-
-def _source_catalogue_hits(paragraph: str) -> int:
-    hits = 0
-    for sentence in re.split(r"(?<=[.!?])\s+", str(paragraph or "")):
-        if _SOURCE_CATALOGUE_SENTENCE_RE.search(sentence):
-            hits += 1
-    return hits
 
 
 def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> list[dict]:
@@ -1058,38 +913,15 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
                 matching_briefs.append(brief)
         generic_hits = len(generic_re.findall(paragraph))
         concrete_hits = len(concrete_re.findall(paragraph))
-        citation_count = len(re.findall(r"\([^)]*\b(?:19|20)\d{2}\b[^)]*\)", paragraph))
-        source_attribution_hits = len(_SOURCE_ATTRIBUTION_RE.findall(paragraph))
-        abstract_noun_hits = len(_ABSTRACT_NOUN_RE.findall(paragraph))
-        grounded_action_hits = len(_GROUNDED_ACTION_RE.findall(paragraph))
-        modal_consequence_hits = len(_MODAL_CONSEQUENCE_RE.findall(paragraph))
-        evaluative_bridge_hits = len(_EVALUATIVE_BRIDGE_RE.findall(paragraph))
-        abstract_list_hits = _abstract_list_hits(paragraph)
-        source_catalogue_hits = _source_catalogue_hits(paragraph)
-        abstract_noun_density = round(abstract_noun_hits / max(len(words) / 100.0, 1.0), 3)
-        source_chain_score = (
-            max(0, citation_count - 1) * 1.15
-            + min(source_attribution_hits, 8) * 0.65
-            + min(source_catalogue_hits, 6) * 0.95
-            + min(abstract_noun_density, 8.0) * 0.35
-            - min(grounded_action_hits, 16) * 0.10
-        )
-        polished_consequence_score = (
-            min(modal_consequence_hits, 6) * 0.75
-            + min(evaluative_bridge_hits / max(len(words) / 90.0, 1.0), 8.0) * 0.35
-            + min(abstract_list_hits, 4) * 1.10
-            + min(abstract_noun_density, 8.0) * 0.25
-            - min(grounded_action_hits, 16) * 0.08
-        )
         starters = _paragraph_sentence_starters(paragraph)
         repeated_starter_count = len(starters) - len(set(starters))
-        has_citation = bool(citation_count)
+        has_citation = bool(re.search(r"\(\s*[A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}", paragraph))
         brief_score = sum(
             float(((b.get("signals") or {}).get("score") or 0.0) or 0.0)
             for b in matching_briefs
         )
         source_gap = 0 if has_citation else 1
-        core_ai_score = (
+        score = (
             len(matching_briefs) * 5.0
             + brief_score * 8.0
             + min(generic_hits / max(len(words) / 90.0, 1.0), 8.0)
@@ -1097,13 +929,6 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
             + min(repeated_starter_count, 4) * 0.75
             - min(concrete_hits, 12) * 0.20
         )
-        structural_refinement_score = (
-            min(max(source_chain_score, 0.0), 8.0)
-            + min(max(polished_consequence_score, 0.0), 8.0)
-            + (1.25 if citation_count >= 2 and source_attribution_hits >= 2 else 0.0)
-            + (1.00 if source_catalogue_hits >= 3 else 0.0)
-        )
-        score = core_ai_score + structural_refinement_score
         if score <= 0:
             continue
         scored.append({
@@ -1117,19 +942,6 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
                 "predictability_score_sum": round(brief_score, 4),
                 "generic_assertion_hits": generic_hits,
                 "concrete_anchor_hits": concrete_hits,
-                "citation_count": citation_count,
-                "source_attribution_hits": source_attribution_hits,
-                "source_catalogue_hits": source_catalogue_hits,
-                "abstract_noun_hits": abstract_noun_hits,
-                "abstract_noun_density": abstract_noun_density,
-                "abstract_list_hits": abstract_list_hits,
-                "modal_consequence_hits": modal_consequence_hits,
-                "evaluative_bridge_hits": evaluative_bridge_hits,
-                "grounded_action_hits": grounded_action_hits,
-                "source_chain_score": round(source_chain_score, 3),
-                "polished_consequence_score": round(polished_consequence_score, 3),
-                "core_ai_score": round(core_ai_score, 3),
-                "structural_refinement_score": round(structural_refinement_score, 3),
                 "source_gap": bool(source_gap),
                 "repeated_sentence_starters": repeated_starter_count,
                 "word_count": len(words),
@@ -1165,7 +977,6 @@ def _paragraph_component_prompt(
     signal_brief = _ai_search_signal_brief(raw_json)
     drivers = target.get("drivers") or {}
     candidate_count = max(1, int(candidate_count or 1))
-    protected_brief = _protected_anchor_brief(target.get("paragraph") or "", limit=24)
     return (
         "DraftProof paragraph-component AI mitigation.\n"
         "Rewrite only the target paragraph.\n"
@@ -1181,7 +992,6 @@ def _paragraph_component_prompt(
         + "\n".join(f"- {s}" for s in (target.get("problem_spans") or [])[:10])
         + "\nDomain anchors already present nearby:\n"
         + ", ".join(str(a) for a in (target.get("domain_anchors") or [])[:16])
-        + ("\n\n" + protected_brief if protected_brief else "")
         + "\n\nPrevious paragraph context:\n"
         f"{target.get('previous_paragraph') or '[none]'}\n\n"
         "TARGET PARAGRAPH:\n"
@@ -1190,14 +1000,8 @@ def _paragraph_component_prompt(
         f"{target.get('next_paragraph') or '[none]'}\n\n"
         "Rewrite rules:\n"
         "- Preserve all citations, years, numbers, names, unit codes, and source references.\n"
-        "- Preserve every listed protected span and source/name anchor. You may move them, but do not paraphrase or delete them.\n"
         "- Do not invent new evidence, sources, people, institutions, or events.\n"
         "- Break generic assertion flow: avoid broad claims unless tied to the local haircutting/classroom process.\n"
-        "- If the paragraph is source-heavy, do not stack citations into a smooth literature-summary chain.\n"
-        "- Rebuild source-heavy parts as: source point, observed context, and the practical decision this changes.\n"
-        "- Prefer local action or direct observation over attribution-heavy openers when the source is already cited.\n"
-        "- If the paragraph compresses consequences into abstract lists, turn one list item into a concrete classroom action or decision.\n"
-        "- If the paragraph is a conclusion that catalogues sources one by one, stop listing authors and close around what learners must do next.\n"
         "- Start from concrete action, learner behavior, source relation, or assessment consequence before broad explanation.\n"
         "- Change paragraph architecture: reorder claim/example/source relation where meaning allows.\n"
         "- Convert generic claims into specific process observations using only anchors already present nearby.\n"
@@ -1205,8 +1009,6 @@ def _paragraph_component_prompt(
         "- Change sentence openings and sentence routes. Do not polish with academic filler.\n"
         "- Keep author voice and first-person classroom observation where it already exists.\n"
         "- Remove duplicate fragments if present inside the target paragraph.\n"
-        "- Avoid assisted-sounding synthesis patterns: repeated attribution clauses, abstract noun stacking, and smooth claim-to-claim transitions without local action.\n"
-        "- Avoid polished consequence summaries where every sentence explains importance, confidence, quality, standards, outcomes, or support without a concrete step.\n"
         f"- Batch attempt {attempt_index}: make each option materially different from generic rephrasing.\n\n"
         f"Return exactly {candidate_count} alternative replacement paragraphs using this exact format:\n"
         "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
@@ -1643,16 +1445,42 @@ def run_rewrite_pipeline(
     elif text:
         # Run detect first, then parse
         from detect_pipeline import run_detect
-        detect_result = run_detect(
-            text,
-            output_dir or "test_output",
-            verbose=verbose,
-            model_name=os.environ.get("PREDICTABILITY_MODEL") or None,
+        detect_result = run_detect(text, output_dir or "test_output", verbose=verbose)
+        report = detect_result["report"]
+
+        from detect.base import DetectResult
+        by_scanner = {}
+        for tier_findings in report.findings_by_tier.values():
+            for f in tier_findings:
+                by_scanner.setdefault(f.scanner, []).append(f)
+
+        detect_results = []
+        for scanner, findings in by_scanner.items():
+            # Preserve raw data from report JSON for scanners that have it
+            scanner_raw = None
+            if scanner == "predictability":
+                pred = detect_json.get("predictability", {})
+                # Use all_sentences (full text + scores) if available,
+                # otherwise fall back to the predictability block
+                all_sents = pred.get("all_sentences")
+                if all_sents:
+                    scanner_raw = {"sentences": all_sents}
+                else:
+                    scanner_raw = pred if pred else None
+            detect_results.append(DetectResult(
+                scanner=scanner,
+                overall_risk=0.5,
+                confidence="medium",
+                confidence_reason="from detect pipeline",
+                risk_distribution={},
+                findings=findings,
+                policy_message="",
+                raw=scanner_raw,
+            ))
+        ctx = DetectJSONContext(
+            detect_results=detect_results,
+            input_text=text,
         )
-        with open(detect_result["json_path"], "r", encoding="utf-8") as fh:
-            generated_detect_json = json.load(fh)
-        ctx = DetectJSONParser.parse_dict(generated_detect_json)
-        text = ctx.input_text or text
 
     if not text or not text.strip():
         raise ValueError("Empty input text")
@@ -1976,10 +1804,6 @@ def run_rewrite_pipeline(
             "selected": False,
             "candidates": [],
         }
-        ai_search_strong_drop = _float_env("DRAFTPROOF_AI_SEARCH_STRONG_DROP", 12.0)
-        ai_search_strong_target = round(max(0.0, ai_search_reference - ai_search_strong_drop), 2)
-        search_summary["strong_ai_drop"] = ai_search_strong_drop
-        search_summary["strong_target_ai_score"] = ai_search_strong_target
         if search_source_repairs:
             search_summary["source_repairs"] = search_source_repairs
         effective_key = (
@@ -2000,13 +1824,6 @@ def run_rewrite_pipeline(
 
         def _best_ai_search_selectable() -> bool:
             return bool(best_strategy and best_selection_status.get("selectable"))
-
-        def _best_ai_search_strong_enough() -> bool:
-            return (
-                _best_ai_search_selectable()
-                and isinstance(best_ai, (int, float))
-                and best_ai <= ai_search_strong_target
-            )
 
         def _record_best_attempt() -> None:
             if not best_strategy:
@@ -2138,8 +1955,7 @@ def run_rewrite_pipeline(
             )
             candidate_eval["selection_status"] = selection_status
             score_to_beat = min(best_ai, ai_search_reference)
-            best_epsilon = _float_env("DRAFTPROOF_AI_SEARCH_BEST_EPSILON", 0.005)
-            if isinstance(candidate_ai, (int, float)) and candidate_ai < score_to_beat - best_epsilon:
+            if isinstance(candidate_ai, (int, float)) and candidate_ai < score_to_beat - 0.05:
                 best_ai = candidate_ai
                 best_text = candidate
                 best_report = candidate_report
@@ -2385,22 +2201,14 @@ def run_rewrite_pipeline(
 
                     _evaluate_ai_search_candidate(strategy, candidate, deterministic=False)
 
-                feedback_after_selectable = os.environ.get(
-                    "DRAFTPROOF_AI_SEARCH_FEEDBACK_AFTER_SELECTABLE",
-                    "1",
-                ) != "0"
-                feedback_needed = (
-                    not _best_ai_search_selectable()
-                    or (feedback_after_selectable and not _best_ai_search_strong_enough())
-                )
-                if feedback_needed:
+                if not _best_ai_search_selectable():
                     try:
                         feedback_limit = max(
                             0,
-                            int(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_CANDIDATES", "4")),
+                            int(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_CANDIDATES", "2")),
                         )
                     except ValueError:
-                        feedback_limit = 4
+                        feedback_limit = 2
                     if feedback_limit:
                         search_summary["score_feedback_loop"] = {
                             "enabled": True,
@@ -2408,13 +2216,8 @@ def run_rewrite_pipeline(
                             "reason": (
                                 "no_selectable_candidate"
                                 if not best_strategy
-                                else (
-                                    "best_candidate_below_required_ai_drop"
-                                    if not _best_ai_search_selectable()
-                                    else "selected_candidate_above_strong_target"
-                                )
+                                else "best_candidate_below_required_ai_drop"
                             ),
-                            "strong_target_ai_score": ai_search_strong_target,
                         }
                     for feedback_index in range(1, feedback_limit + 1):
                         report_progress(
@@ -2427,7 +2230,7 @@ def run_rewrite_pipeline(
                         }
                         try:
                             prompt = _ai_search_feedback_prompt(
-                                best_text if _best_ai_search_selectable() else search_source_text,
+                                search_source_text,
                                 ctx.raw_json,
                                 search_summary,
                                 feedback_index,
@@ -2452,7 +2255,7 @@ def run_rewrite_pipeline(
                             candidate,
                             deterministic=False,
                         )
-                        if _best_ai_search_strong_enough():
+                        if _best_ai_search_selectable():
                             break
 
                 if _best_ai_search_selectable():

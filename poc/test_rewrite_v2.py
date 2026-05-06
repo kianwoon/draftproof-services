@@ -1099,14 +1099,10 @@ assert_test(
     "AI search still blocks scoring candidates that lose critical entities",
 )
 feedback_prompt = _ai_search_feedback_prompt(
-    (
-        'Original source text with "I don\'t know" and The Australian Government '
-        "Department of Employment and Workplace Relations (DEWR, 2026)."
-    ),
+    "Original source text.",
     {"ai_risk_badge": {"ai_components": {"generic_assertion_risk": 90.0}}},
     {
         "reference_ai": 57.78,
-        "strong_target_ai_score": 45.78,
         "candidates": [
             {
                 "strategy": "deterministic_process_anchor_generic",
@@ -1127,11 +1123,6 @@ feedback_prompt = _ai_search_feedback_prompt(
 assert_test(
     "Reference AI score: 57.78" in feedback_prompt
     and "Target AI score" in feedback_prompt
-    and "Stronger target AI score: 45.78" in feedback_prompt
-    and "strongest reachable target" in feedback_prompt
-    and "Protected spans that must remain" in feedback_prompt
-    and '"I don\'t know"' in feedback_prompt
-    and "The Australian Government Department of Employment and Workplace Relations" in feedback_prompt
     and "AI=57.83" in feedback_prompt
     and "generic_assertion_risk=90.00%" in feedback_prompt
     and "semantic_drift" in feedback_prompt,
@@ -1146,34 +1137,6 @@ paragraph_search_text = (
     "This means the educator needs to provide guidance that supports learning and improves outcomes. "
     "These claims sound broad unless the paragraph connects them to the learner's actual cutting task.\n\n"
     "CESE (2017) explains working memory limits in practical learning."
-)
-source_synthesis_search_text = (
-    "Short title.\n\n"
-    "One theory explains the practical difficulty. "
-    "A research report (2020) states that new learners have limited capacity when a task has many moving parts. "
-    "Another study (2021) suggests that presentation format changes the pressure on attention. "
-    "A policy document (2022) defines participation, independence, assessment consistency, and implementation responsibility in formal terms. "
-    "The paragraph then continues through adjustment, participation, reliability, independence, and assessment consistency without returning to what the learner actually does.\n\n"
-    "In the salon classroom, I watch learners lose the guide when projection changes."
-)
-polished_consequence_text = (
-    "Short title.\n\n"
-    "Individual correction remains necessary because the trainer can detect small process errors that learners miss. "
-    "Time creates pressure. "
-    "While one learner receives help, others wait with equipment in hand and no clear next step. "
-    "This waiting can reduce motivation, confidence, practice quality, and assessment consistency. "
-    "Peer checks and tools may provide support, but they cannot replace direct feedback from the trainer.\n\n"
-    "The next paragraph describes a learner checking the guide on a mannequin."
-)
-source_catalogue_conclusion_text = (
-    "Short title.\n\n"
-    "Conclusion\n\n"
-    "Learners must combine several procedures before assessment. "
-    "Research Group states that cognitive pressure changes how learners manage the task. "
-    "Training Authors argue that unsupported discovery is risky for novice learners. "
-    "Access Framework describes multiple ways to support participation. "
-    "Policy Office defines the boundary for reasonable adjustment. "
-    "Competency depends on structured practice and professional standards."
 )
 paragraph_search_json = {
     "ai_risk_badge": {
@@ -1202,49 +1165,6 @@ assert_test(
     and paragraph_targets[0]["drivers"]["rewrite_brief_count"] == 1,
     "paragraph component search ranks paragraph-level AI drivers",
 )
-source_synthesis_targets = _paragraph_component_targets(source_synthesis_search_text, paragraph_search_json, limit=2)
-assert_test(
-    source_synthesis_targets
-    and source_synthesis_targets[0]["drivers"]["source_attribution_hits"] >= 3
-    and source_synthesis_targets[0]["drivers"]["source_chain_score"] > 0
-    and source_synthesis_targets[0]["drivers"]["abstract_noun_density"] > 0
-    and source_synthesis_targets[0]["drivers"]["citation_count"] >= 2,
-    "paragraph component search detects structural source-synthesis drivers",
-)
-polished_consequence_targets = _paragraph_component_targets(polished_consequence_text, paragraph_search_json, limit=2)
-assert_test(
-    polished_consequence_targets
-    and polished_consequence_targets[0]["drivers"]["polished_consequence_score"] > 0
-    and polished_consequence_targets[0]["drivers"]["abstract_list_hits"] >= 1
-    and polished_consequence_targets[0]["drivers"]["modal_consequence_hits"] >= 1,
-    "paragraph component search detects polished consequence-summary drivers",
-)
-source_catalogue_targets = _paragraph_component_targets(source_catalogue_conclusion_text, paragraph_search_json, limit=2)
-assert_test(
-    source_catalogue_targets
-    and source_catalogue_targets[0]["drivers"]["source_catalogue_hits"] >= 3
-    and source_catalogue_targets[0]["drivers"]["source_chain_score"] > 0,
-    "paragraph component search detects source-catalogue conclusion drivers",
-)
-refinement_order_text = (
-    "Short title.\n\n"
-    "When learners pause, they may need a short moment to process what they have just practised. "
-    "This should help the educator understand the process and support learner progress. "
-    "The class keeps moving while the learner checks the guide, adjusts the comb, and practises again. "
-    "I watch the learner choose a section and compare the shape before cutting.\n\n"
-    "Research Group states that participation, implementation, independence, consistency, motivation, confidence, and assessment reliability are important (2020). "
-    "Training Office argues that participation, implementation, independence, consistency, motivation, confidence, and assessment reliability are important (2021). "
-    "Policy Team defines participation, implementation, independence, consistency, motivation, confidence, and assessment reliability as important (2022). "
-    "Access Authors describe participation, implementation, independence, consistency, motivation, confidence, and assessment reliability as important (2023). "
-    "Practice Review highlights participation, implementation, independence, consistency, motivation, confidence, and assessment reliability as important (2024)."
-)
-refinement_order_targets = _paragraph_component_targets(refinement_order_text, paragraph_search_json, limit=2)
-assert_test(
-    len(refinement_order_targets) == 2
-    and refinement_order_targets[0]["score"] >= refinement_order_targets[1]["score"]
-    and refinement_order_targets[0]["drivers"]["structural_refinement_score"] > 0,
-    "paragraph component search preserves total-score ordering for cumulative search",
-)
 paragraph_prompt = _paragraph_component_prompt(
     paragraph_targets[0],
     paragraph_search_json,
@@ -1258,43 +1178,8 @@ assert_test(
     "TARGET PARAGRAPH" in paragraph_prompt
     and "generic_assertion_risk=90.00%" in paragraph_prompt
     and "target AI<=52.78" in paragraph_prompt
-    and "source-heavy parts" in paragraph_prompt
-    and "attribution clauses, abstract noun stacking" in paragraph_prompt
-    and "conclusion that catalogues sources one by one" in paragraph_prompt
-    and "polished consequence summaries" in paragraph_prompt
     and "Return exactly 3 alternative replacement paragraphs" in paragraph_prompt,
     "paragraph component prompt passes score drivers and scoped rewrite instruction",
-)
-protected_paragraph_text = (
-    'Some learners say "I don\'t know" and wait for help. '
-    "The Australian Government Department of Employment and Workplace Relations (DEWR, 2026) "
-    "explains the boundary for adjustment while the educator keeps the haircut standard."
-)
-protected_paragraph_target = {
-    "index": 1,
-    "paragraph": protected_paragraph_text,
-    "drivers": {"source_chain_score": 3.0},
-    "target_sentences": [],
-    "problem_spans": [],
-    "domain_anchors": ["learners", "adjustment", "haircut standard"],
-}
-protected_paragraph_prompt = _paragraph_component_prompt(
-    protected_paragraph_target,
-    paragraph_search_json,
-    1,
-    reference_ai=57.78,
-    required_ai_drop=5.0,
-    target_ai_score=52.78,
-    candidate_count=2,
-)
-assert_test(
-    "Protected spans that must remain" in protected_paragraph_prompt
-    and '"I don\'t know"' in protected_paragraph_prompt
-    and "The Australian Government Department of Employment and Workplace Relations" in protected_paragraph_prompt
-    and "\n- In the\n" not in protected_paragraph_prompt
-    and "\n- Tools and\n" not in protected_paragraph_prompt
-    and "rejected before scoring" in protected_paragraph_prompt,
-    "paragraph component prompt lists protected spans and source anchors",
 )
 extracted_paragraph_candidates = _extract_paragraph_component_candidates(
     "<CANDIDATE_1>\nFirst replacement paragraph.\n</CANDIDATE_1>\n"
