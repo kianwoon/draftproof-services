@@ -492,10 +492,19 @@ def _build_rewrite_debug_log(
                     "authorship_rating_code": badge.get("authorship_rating_code"),
                 },
             },
+            "ai_mitigation": report_json.get("ai_mitigation"),
+            "scan_intelligence_mitigation_schema": (
+                ((report_json.get("scan_intelligence") or {}).get("mitigation_inputs") or {})
+                .get("ai_mitigation_plan", {})
+                .get("schema_version")
+            ),
         },
         "rewrite_summary": {
             "outcome": summary.get("outcome"),
+            "ai_mitigation": summary.get("ai_mitigation"),
+            "ai_mitigation_blocked_auto_rewrite": summary.get("ai_mitigation_blocked_auto_rewrite"),
             "rewrite_runtime_version": summary.get("rewrite_runtime_version"),
+            "rewrite_engine_mode": summary.get("rewrite_engine_mode"),
             "rewrite_effective_config": summary.get("rewrite_effective_config"),
             "mitigation_primary_mode_at_runtime": summary.get("mitigation_primary_mode_at_runtime"),
             "guided_revision_throttle": summary.get("guided_revision_throttle"),

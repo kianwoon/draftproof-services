@@ -1591,6 +1591,68 @@ pipeline_no_change = run_rewrite_pipeline(
 )
 assert_test(pipeline_no_change["status"] == "clean", "pipeline skips when no rewrite is needed")
 
+guided_pipeline_text = (
+    "Inclusive learning design in adult VET hairdressing training is part of teaching technical skills. "
+    "This shows that learning is important and can improve outcomes for learners. "
+    "When learners pause, they may need a short moment to process what they have just practised. "
+) * 6
+guided_pipeline = run_rewrite_pipeline(
+    detect_json={
+        "input_text": guided_pipeline_text,
+        "ai_risk_badge": {
+            "ai_likelihood_score": 57.78,
+            "writing_quality_score": 54.12,
+            "ai_components": {
+                "topk_pattern": 67.7,
+                "generic_assertion_risk": 90.0,
+                "qualifying_text_ai_density": 69.88,
+            },
+            "writing_components": {
+                "unsupported_claim_risk": 70.0,
+                "source_grounding_risk": 70.0,
+            },
+        },
+        "rewrite_decision": {"run_rewrite": True, "mode": "targeted"},
+        "rewrite_plan": {
+            "mode": "targeted",
+            "overall_action": "predictability_revision",
+            "auto_fixable": [{"finding_id": "f001"}],
+        },
+        "findings": {
+            "critical": [],
+            "high": [],
+            "medium": [{
+                "finding_id": "f001",
+                "category": "predictability",
+                "scanner": "predictability",
+                "title": "medium_predictability",
+                "adjusted_risk": "medium",
+                "actionability": "auto_fixable",
+                "sentence_id": "s002",
+                "evidence": "This shows that learning is important and can improve outcomes for learners.",
+                "recommendation": "Rewrite with concrete classroom detail.",
+                "score": 0.52,
+            }],
+            "low": [],
+        },
+    },
+    output_dir=tempfile.mkdtemp(prefix="draftproof-test-guided-"),
+    api_key=None,
+)
+guided_summary = guided_pipeline["result"].summary
+assert_test(
+    guided_summary.get("rewrite_engine_mode") == "guided_authenticity_requires_author_input",
+    "pipeline blocks automatic rewrite when AI-Mitigation requires author input",
+)
+assert_test(
+    guided_summary.get("ai_mitigation_search", {}).get("reason") == "requires_author_input",
+    "pipeline skips AI mitigation search for author-evidence gaps",
+)
+assert_test(
+    guided_summary.get("ai_mitigation_search", {}).get("llm_calls") == 0,
+    "author-evidence gate prevents AI search LLM calls",
+)
+
 
 # ════════════════════════════════════════════════════════════════════════
 print(f"\n{'=' * 70}")

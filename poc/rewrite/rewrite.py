@@ -67,6 +67,7 @@ from rewrite.scorer import (
 )
 from rewrite.voice import VoiceGuard, VoiceProfile, analyze_voice
 from rewrite.mitigation import build_mitigation_plan
+from detect.mitigation import build_ai_mitigation_plan
 from llm.gateway import LLMGateway, LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -5773,6 +5774,14 @@ def get_rewrite_summary_v2(
             for a in plan.review_only
         ]
         summary["mitigation_plan"] = build_mitigation_plan(plan, raw_json)
+        if isinstance(raw_json, dict):
+            summary["ai_mitigation"] = raw_json.get("ai_mitigation") or build_ai_mitigation_plan(
+                scan_intelligence=raw_json.get("scan_intelligence") or {},
+                ai_risk_badge=raw_json.get("ai_risk_badge") or {},
+                rewrite_plan=raw_json.get("rewrite_plan") or {},
+                rewrite_constraints=raw_json.get("rewrite_constraints") or {},
+                rewrite_edit_briefs=raw_json.get("rewrite_edit_briefs") or [],
+            )
 
     if mp_result:
         summary.update({

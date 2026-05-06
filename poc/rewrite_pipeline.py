@@ -32,6 +32,7 @@ from detect.run import DetectionRunner
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
 from report.report import ReportBuilder, report_to_dict
 from llm.gateway import LLMGateway, LLMConfig
+from detect.mitigation import build_ai_mitigation_plan
 
 
 def _metric_decimal(value, default=0.0):
@@ -207,6 +208,74 @@ def _ai_search_fast_accept_reason(reference_ai, candidate_ai) -> str:
             f"and candidate_ai<{ai_first_target:.2f}"
         )
     return ""
+
+
+def _ensure_ai_mitigation_contract(report_json: dict | None) -> dict:
+    """Backfill ai_mitigation.v1 for older scan JSONs.
+
+    Fresh scans already include this contract. Older saved scans can still run
+    rewrite, so the rewrite phase must synthesize the same decision surface
+    from available scan intelligence and badge components.
+    """
+    if not isinstance(report_json, dict):
+        return {}
+    existing = report_json.get("ai_mitigation")
+    if isinstance(existing, dict) and existing.get("schema_version") == "ai_mitigation.v1":
+        return existing
+    scan_intelligence = report_json.get("scan_intelligence") or {}
+    plan = build_ai_mitigation_plan(
+        scan_intelligence=scan_intelligence,
+        ai_risk_badge=report_json.get("ai_risk_badge") or {},
+        rewrite_plan=report_json.get("rewrite_plan") or {},
+        rewrite_constraints=report_json.get("rewrite_constraints") or {},
+        rewrite_edit_briefs=report_json.get("rewrite_edit_briefs") or [],
+    )
+    report_json["ai_mitigation"] = plan
+    if isinstance(scan_intelligence, dict):
+        mitigation_inputs = scan_intelligence.setdefault("mitigation_inputs", {})
+        mitigation_inputs["ai_mitigation_plan"] = plan
+    return plan
+
+
+def _ai_mitigation_requires_user_input(ai_mitigation: dict | None) -> bool:
+    if not isinstance(ai_mitigation, dict):
+        return False
+    readiness = ai_mitigation.get("readiness") or {}
+    if readiness.get("requires_user_input"):
+        return True
+    return ai_mitigation.get("primary_mode") in {
+        "guided_authenticity_revision",
+        "paragraph_authenticity_rebuild",
+        "structure_revision",
+    }
+
+
+def _manual_summary_from_ai_mitigation(ai_mitigation: dict | None, limit: int = 12) -> list[dict]:
+    if not isinstance(ai_mitigation, dict):
+        return []
+    rows = []
+    for action in ai_mitigation.get("component_actions") or []:
+        if not isinstance(action, dict):
+            continue
+        if action.get("auto_apply"):
+            continue
+        rows.append({
+            "finding_type": "ai_mitigation_guided_action",
+            "scanner_target": "ai_mitigation",
+            "component": action.get("component"),
+            "original_sentence": "",
+            "suggested_sentence": action.get("action") or "",
+            "rejection_reason": "requires_author_input",
+            "why_review_manually": (
+                "This mitigation target needs real author evidence, source context, "
+                "or a concrete detail. DraftProof will not invent it automatically."
+            ),
+            "user_input_needed": action.get("user_input_needed"),
+            "priority": action.get("priority"),
+        })
+        if len(rows) >= limit:
+            break
+    return rows
 
 
 def _clean_full_document_candidate(output: str, original_text: str) -> str:
@@ -1487,6 +1556,7 @@ def run_rewrite_pipeline(
 
     if isinstance(getattr(ctx, "raw_json", None), dict):
         ctx.raw_json = _enrich_report_authorship_schema(ctx.raw_json)
+        _ensure_ai_mitigation_contract(ctx.raw_json)
 
     # ── Check rewrite decision from detect ──────────────────────────
     if ctx.rewrite_decision and not ctx.rewrite_decision.get("run_rewrite", True):
@@ -1536,13 +1606,22 @@ def run_rewrite_pipeline(
 
     pre_rewrite_badge = (ctx.raw_json or {}).get("ai_risk_badge") or {}
     pre_rewrite_ai = pre_rewrite_badge.get("ai_likelihood_score")
+    ai_mitigation_contract = _ensure_ai_mitigation_contract(ctx.raw_json)
+    ai_mitigation_needs_author = _ai_mitigation_requires_user_input(ai_mitigation_contract)
     ai_search_first = (
         os.environ.get("DRAFTPROOF_AI_SEARCH_FIRST", "1") != "0"
         and isinstance(pre_rewrite_ai, (int, float))
         and pre_rewrite_ai >= _float_env("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", 50.0)
+        and not ai_mitigation_needs_author
     )
     rewrite_config = None
     if ai_search_first:
+        rewrite_config = RewriteConfig(
+            max_llm_calls=0,
+            max_density_passes=0,
+            max_rewrite_seconds=30,
+        )
+    elif ai_mitigation_needs_author and os.environ.get("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS") != "1":
         rewrite_config = RewriteConfig(
             max_llm_calls=0,
             max_density_passes=0,
@@ -1566,10 +1645,38 @@ def run_rewrite_pipeline(
         config=rewrite_config,
         progress_callback=report_progress,
     )
+    result.summary["ai_mitigation"] = ai_mitigation_contract
+    if ai_mitigation_needs_author:
+        result.summary["ai_mitigation_blocked_auto_rewrite"] = True
+        result.summary["outcome"] = "suggestion_only"
+        suggestions = result.summary.setdefault("manual_suggestions", [])
+        existing_keys = {
+            (
+                item.get("component"),
+                item.get("suggested_sentence"),
+                item.get("user_input_needed"),
+            )
+            for item in suggestions
+            if isinstance(item, dict)
+        }
+        for suggestion in _manual_summary_from_ai_mitigation(ai_mitigation_contract):
+            key = (
+                suggestion.get("component"),
+                suggestion.get("suggested_sentence"),
+                suggestion.get("user_input_needed"),
+            )
+            if key not in existing_keys:
+                suggestions.append(suggestion)
+                existing_keys.add(key)
     if ai_search_first:
         result.summary["rewrite_engine_mode"] = "ai_search_first_skip_rewrite_prepass"
         result.summary.setdefault("saved_contract_notes", []).append(
             "Skipped costly density/sentence LLM prepass because AI mitigation search is the first objective."
+        )
+    elif ai_mitigation_needs_author and os.environ.get("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS") != "1":
+        result.summary["rewrite_engine_mode"] = "guided_authenticity_requires_author_input"
+        result.summary.setdefault("saved_contract_notes", []).append(
+            "Skipped automatic sentence/density rewrite because AI-Mitigation requires author-supplied grounding."
         )
     engine_elapsed = time.time() - t0
     stage_timings = [{"stage": "rewrite_engine", "seconds": round(engine_elapsed, 3)}]
@@ -1761,8 +1868,13 @@ def run_rewrite_pipeline(
     # and keep the one with the lowest measured AI likelihood.
     ai_search_reference = saved_ai if saved_ai is not None else original_ai
     ai_search_enabled = os.environ.get("DRAFTPROOF_AI_MITIGATION_SEARCH", "1") != "0"
+    ai_search_blocked_by_author_gaps = (
+        ai_mitigation_needs_author
+        and os.environ.get("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS") != "1"
+    )
     if (
         ai_search_enabled
+        and not ai_search_blocked_by_author_gaps
         and isinstance(ai_search_reference, (int, float))
         and ai_search_reference >= ai_first_required_min_ai
     ):
@@ -2367,6 +2479,24 @@ def run_rewrite_pipeline(
             "rewritten_findings": rewritten_total,
             "rewritten_review_burden": rewritten_review_burden,
             "rewritten_weighted_severity": rewritten_severity,
+        })
+    elif ai_search_blocked_by_author_gaps:
+        result.summary["ai_mitigation_search"] = {
+            "enabled": False,
+            "selected": False,
+            "reason": "requires_author_input",
+            "reference_ai": ai_search_reference,
+            "starting_ai": rewritten_ai,
+            "candidate_limit": 0,
+            "llm_calls": 0,
+            "candidates": [],
+        }
+        stage_timings.append({
+            "stage": "ai_mitigation_search",
+            "seconds": 0,
+            "candidates": 0,
+            "selected": False,
+            "skipped_reason": "requires_author_input",
         })
 
     ai_regression_tolerance = 0.25
