@@ -1015,6 +1015,7 @@ def _clean_micro_texture_candidate(output: str, repair_info: dict) -> tuple[str,
 
 _MASKED_REPAIR_GENERIC_RE = re.compile(
     r"\b(?:Furthermore|Moreover|Additionally|In conclusion|Overall|Therefore|However|"
+    r"In the past|This shift has made|The real challenge is|"
     r"It is important to note that|This highlights|This shows|This demonstrates|"
     r"plays? a crucial role|significant impact|important|crucial|essential)\b",
     re.I,
@@ -1113,6 +1114,9 @@ def _deterministic_masked_span_replacements(mask_text: str) -> list[str]:
     key = re.sub(r"\s+", " ", str(mask_text or "").strip()).lower()
     replacements = {
         "important": ["vital", "needed", "useful"],
+        "in the past": ["Earlier"],
+        "this shift has made": ["That shift makes"],
+        "the real challenge is": ["The harder part is"],
         "this is a": ["A"],
         "this has created": ["This creates", "It creates"],
         "this can encourage": ["This may lead to", "It can lead to"],
@@ -1129,6 +1133,29 @@ def _deterministic_masked_span_replacements(mask_text: str) -> list[str]:
         if clean not in unique:
             unique.append(clean)
     return unique
+
+
+def _deterministic_sentence_route_bundle(source_text: str) -> tuple[str, list[dict]]:
+    """Apply a small set of safe sentence-route edits as one candidate.
+
+    These are not synonym swaps. They target common scanner-visible discourse
+    routes while preserving the surrounding claim and all anchors.
+    """
+    text = str(source_text or "")
+    edits = [
+        ("In the past", "Earlier"),
+        ("This shift has made", "That shift makes"),
+        ("The real challenge is", "The harder part is"),
+    ]
+    applied: list[dict] = []
+    candidate = text
+    for old, new in edits:
+        pattern = re.compile(r"\b" + re.escape(old) + r"\b", re.I)
+        if not pattern.search(candidate):
+            continue
+        candidate = pattern.sub(new, candidate, count=1)
+        applied.append({"mask_text": old, "replacement": new})
+    return candidate, applied
 
 
 def _apply_masked_span_replacement(source_text: str, repair_info: dict, replacement: str) -> str:
@@ -5053,6 +5080,204 @@ def run_rewrite_pipeline(
                     current_masked_findings = masked_baseline_findings
                     masked_excluded: set[int] = set()
                     masked_attempts: list[dict] = []
+                    route_bundle_candidate, route_bundle_edits = _deterministic_sentence_route_bundle(
+                        current_masked_text
+                    )
+                    if route_bundle_edits and route_bundle_candidate != current_masked_text:
+                        candidate_eval_try = {
+                            "attempt": "route_bundle.1",
+                            "strategy": "deterministic_sentence_route_bundle",
+                            "masked_span_repair": True,
+                            "deterministic": True,
+                            "passed_local_checks": False,
+                            "route_bundle_edits": route_bundle_edits,
+                            "candidate_length": len(route_bundle_candidate or ""),
+                            "candidate_word_count": _text_word_count(route_bundle_candidate or ""),
+                        }
+                        candidate_eval_try["repair_aggression"] = _repair_aggression_score(
+                            current_masked_text,
+                            route_bundle_candidate,
+                        )
+                        candidate_eval_try["locality"] = _locality_score(
+                            current_masked_text,
+                            route_bundle_candidate,
+                        )
+                        protected_loss = _ai_search_protected_loss_reason(
+                            source_for_mitigation,
+                            route_bundle_candidate,
+                            source_protected,
+                        )
+                        drift = (
+                            None
+                            if protected_loss
+                            else check_semantic_drift(source_for_mitigation, route_bundle_candidate, threshold=0.15)
+                        )
+                        if protected_loss:
+                            candidate_eval_try["reason"] = "protected_span_lost " + protected_loss
+                        elif drift and not drift.accepted:
+                            candidate_eval_try["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
+                            candidate_eval_try["drift_reasons"] = drift.reasons[:10]
+                        else:
+                            if drift:
+                                candidate_eval_try["drift_similarity"] = round(drift.similarity, 3)
+                            candidate_eval_try["passed_local_checks"] = True
+                            try:
+                                scan_t0 = time.time()
+                                candidate_report = _full_scan_report_dict(route_bundle_candidate)
+                                candidate_eval_try["scan_seconds"] = round(time.time() - scan_t0, 3)
+                            except Exception as exc:
+                                candidate_report = None
+                                candidate_eval_try["passed_local_checks"] = False
+                                candidate_eval_try["reason"] = f"candidate_scan_error {exc}"
+                            if candidate_report:
+                                candidate_review_burden = _review_burden(candidate_report)
+                                candidate_severity = _weighted_severity(candidate_report)
+                                gate = _authenticity_gate_status(
+                                    masked_baseline_report,
+                                    candidate_report,
+                                    route_bundle_candidate != text,
+                                    original_review_burden=masked_baseline_review_burden,
+                                    candidate_review_burden=candidate_review_burden,
+                                    original_weighted_severity=masked_baseline_severity,
+                                    candidate_weighted_severity=candidate_severity,
+                                    min_human_gain=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_GAIN", 2.0),
+                                    min_ai_transformation_drop=_float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_TRANSFORM_DROP", 2.0),
+                                    drift_similarity=candidate_eval_try.get("drift_similarity"),
+                                )
+                                candidate_ai = _badge_ai(candidate_report)
+                                candidate_human = gate.get("candidate_human")
+                                candidate_transform = gate.get("candidate_ai_transformation")
+                                candidate_authorship = gate.get("candidate_ai_authorship")
+                                candidate_findings = _finding_total(candidate_report)
+                                candidate_critical_high = (
+                                    len(candidate_report.get("findings", {}).get("critical", []))
+                                    + len(candidate_report.get("findings", {}).get("high", []))
+                                )
+                                candidate_eval_try.update({
+                                    "ai": candidate_ai,
+                                    "writing_quality": _badge_wq(candidate_report),
+                                    "human_contribution": candidate_human,
+                                    "ai_transformation": candidate_transform,
+                                    "ai_authorship": candidate_authorship,
+                                    "human_delta": gate.get("human_delta"),
+                                    "ai_transformation_delta": gate.get("ai_transformation_delta"),
+                                    "ai_authorship_delta": gate.get("ai_authorship_delta"),
+                                    "human_shift_score": gate.get("human_shift_score"),
+                                    "human_shift_components": gate.get("human_shift_components"),
+                                    "authorship_cost_per_human_gain": gate.get("authorship_cost_per_human_gain"),
+                                    "findings": candidate_findings,
+                                    "review_burden": candidate_review_burden,
+                                    "weighted_severity": candidate_severity,
+                                    "scan_scope": _scan_scope_summary(candidate_report),
+                                    "gate": gate,
+                                })
+                                fresh_authorship_capped = bool(
+                                    isinstance(candidate_authorship, (int, float))
+                                    and isinstance(masked_baseline_integrity.get("ai_authorship"), (int, float))
+                                    and candidate_authorship <= masked_baseline_integrity.get("ai_authorship")
+                                )
+                                saved_authorship_capped = bool(
+                                    not isinstance(integrity_original.get("ai_authorship"), (int, float))
+                                    or (
+                                        isinstance(candidate_authorship, (int, float))
+                                        and candidate_authorship <= integrity_original.get("ai_authorship")
+                                    )
+                                )
+                                findings_non_regression = bool(
+                                    candidate_findings <= current_masked_findings
+                                    and candidate_findings <= original_total
+                                )
+                                review_non_regression = bool(
+                                    candidate_review_burden <= masked_baseline_review_burden
+                                    and candidate_review_burden <= original_review_burden
+                                )
+                                severity_non_regression = bool(
+                                    candidate_severity <= masked_baseline_severity
+                                    and candidate_severity <= original_severity
+                                )
+                                critical_high_non_regression = bool(
+                                    candidate_critical_high <= saved_critical_high
+                                )
+                                movement = bool(
+                                    (
+                                        isinstance(candidate_human, (int, float))
+                                        and isinstance(current_masked_human, (int, float))
+                                        and candidate_human > current_masked_human
+                                    )
+                                    or (
+                                        isinstance(candidate_transform, (int, float))
+                                        and isinstance(current_masked_transform, (int, float))
+                                        and candidate_transform < current_masked_transform
+                                    )
+                                    or candidate_findings < current_masked_findings
+                                    or (
+                                        isinstance(candidate_ai, (int, float))
+                                        and isinstance(current_masked_ai, (int, float))
+                                        and candidate_ai < current_masked_ai
+                                    )
+                                )
+                                breakthrough_tradeoff = bool(
+                                    _env_flag("DRAFTPROOF_AUTHENTICITY_BREAKTHROUGH_TRADEOFF", True)
+                                    and isinstance(candidate_ai, (int, float))
+                                    and isinstance(original_ai, (int, float))
+                                    and candidate_ai <= original_ai - 10.0
+                                    and isinstance(candidate_authorship, (int, float))
+                                    and isinstance(integrity_original.get("ai_authorship"), (int, float))
+                                    and candidate_authorship <= integrity_original.get("ai_authorship") - 10.0
+                                    and candidate_findings <= original_total
+                                )
+                                masked_accept = bool(
+                                    fresh_authorship_capped
+                                    and saved_authorship_capped
+                                    and findings_non_regression
+                                    and (
+                                        (
+                                            review_non_regression
+                                            and severity_non_regression
+                                            and critical_high_non_regression
+                                        )
+                                        or breakthrough_tradeoff
+                                    )
+                                    and movement
+                                    and (
+                                        not gate.get("critical_high_regressed")
+                                        or breakthrough_tradeoff
+                                    )
+                                    and (
+                                        not gate.get("review_burden_regressed")
+                                        or breakthrough_tradeoff
+                                    )
+                                    and (
+                                        not gate.get("weighted_severity_regressed")
+                                        or breakthrough_tradeoff
+                                    )
+                                )
+                                candidate_eval_try["masked_accept"] = masked_accept
+                                candidate_eval_try["masked_acceptance"] = {
+                                    "authorship_capped": bool(fresh_authorship_capped and saved_authorship_capped),
+                                    "fresh_authorship_capped": fresh_authorship_capped,
+                                    "saved_authorship_capped": saved_authorship_capped,
+                                    "findings_non_regression": findings_non_regression,
+                                    "review_non_regression": review_non_regression,
+                                    "severity_non_regression": severity_non_regression,
+                                    "critical_high_non_regression": critical_high_non_regression,
+                                    "breakthrough_tradeoff": breakthrough_tradeoff,
+                                    "movement": movement,
+                                }
+                                if masked_accept:
+                                    candidate_eval_try["selected"] = True
+                                    masked_attempts.append(candidate_eval_try)
+                                    current_masked_text = route_bundle_candidate
+                                    current_masked_report = candidate_report
+                                    current_masked_ai = candidate_ai
+                                    current_masked_human = candidate_human
+                                    current_masked_transform = candidate_transform
+                                    current_masked_authorship = candidate_authorship
+                                    current_masked_findings = candidate_findings
+                                    masked_span_selected = True
+                                else:
+                                    candidate_eval_try["reason"] = "authorship_cap_or_no_masked_gain"
+                        authenticity_summary["candidates"].append(candidate_eval_try)
                     for masked_index in range(1, masked_limit + 1):
                         report_progress(
                             min(88, 76 + masked_index),
@@ -5166,6 +5391,10 @@ def run_rewrite_pipeline(
                             candidate_transform = gate.get("candidate_ai_transformation")
                             candidate_authorship = gate.get("candidate_ai_authorship")
                             candidate_findings = _finding_total(candidate_report)
+                            candidate_critical_high = (
+                                len(candidate_report.get("findings", {}).get("critical", []))
+                                + len(candidate_report.get("findings", {}).get("high", []))
+                            )
                             candidate_eval_try.update({
                                 "ai": candidate_ai,
                                 "writing_quality": _badge_wq(candidate_report),
@@ -5203,6 +5432,17 @@ def run_rewrite_pipeline(
                                 baseline_findings_non_regression
                                 and saved_findings_non_regression
                             )
+                            review_non_regression = bool(
+                                candidate_review_burden <= masked_baseline_review_burden
+                                and candidate_review_burden <= original_review_burden
+                            )
+                            severity_non_regression = bool(
+                                candidate_severity <= masked_baseline_severity
+                                and candidate_severity <= original_severity
+                            )
+                            critical_high_non_regression = bool(
+                                candidate_critical_high <= saved_critical_high
+                            )
                             movement = bool(
                                 (
                                     isinstance(candidate_human, (int, float))
@@ -5224,8 +5464,13 @@ def run_rewrite_pipeline(
                             masked_accept = bool(
                                 authorship_capped
                                 and findings_non_regression
+                                and review_non_regression
+                                and severity_non_regression
+                                and critical_high_non_regression
                                 and movement
                                 and not gate.get("critical_high_regressed")
+                                and not gate.get("review_burden_regressed")
+                                and not gate.get("weighted_severity_regressed")
                             )
                             candidate_eval_try["masked_accept"] = masked_accept
                             candidate_eval_try["masked_acceptance"] = {
@@ -5235,6 +5480,9 @@ def run_rewrite_pipeline(
                                 "findings_non_regression": findings_non_regression,
                                 "baseline_findings_non_regression": baseline_findings_non_regression,
                                 "saved_findings_non_regression": saved_findings_non_regression,
+                                "review_non_regression": review_non_regression,
+                                "severity_non_regression": severity_non_regression,
+                                "critical_high_non_regression": critical_high_non_regression,
                                 "movement": movement,
                             }
                             if masked_accept:
@@ -5963,15 +6211,19 @@ def run_rewrite_pipeline(
     if (
         generation_first_active
         and authenticity_enabled
-        and not authenticity_mitigation_selected
         and not ai_search_after_generation_failure
     ):
         ai_search_enabled = False
+        reason = (
+            "skipped_after_generation_layer_selected"
+            if authenticity_mitigation_selected
+            else "skipped_after_generation_layer_no_target_candidate"
+        )
         result.summary["ai_mitigation_search"] = {
             "enabled": False,
-            "reason": "skipped_after_generation_layer_no_target_candidate",
+            "reason": reason,
             "generation_layer_required": True,
-            "generation_layer_selected": False,
+            "generation_layer_selected": bool(authenticity_mitigation_selected),
             "generation_layer_summary": result.summary.get("authenticity_mitigation"),
         }
         stage_timings.append({
@@ -5980,6 +6232,7 @@ def run_rewrite_pipeline(
             "candidates": 0,
             "selected": False,
             "skipped": True,
+            "skipped_reason": reason,
         })
     ai_search_blocked_by_author_gaps = (
         ai_mitigation_needs_author
@@ -6810,6 +7063,17 @@ def run_rewrite_pipeline(
             f"user_visible_critical_high_findings {saved_critical_high}->{rewritten_critical_high}"
         )
     if authenticity_mitigation_selected:
+        authenticity_breakthrough_tradeoff = bool(
+            _env_flag("DRAFTPROOF_AUTHENTICITY_BREAKTHROUGH_TRADEOFF", True)
+            and isinstance(original_ai, (int, float))
+            and isinstance(rewritten_ai, (int, float))
+            and rewritten_ai <= original_ai - 10.0
+            and isinstance(_integrity_scores(original_report_dict).get("ai_authorship"), (int, float))
+            and isinstance(_integrity_scores(rewritten_report_dict).get("ai_authorship"), (int, float))
+            and _integrity_scores(rewritten_report_dict).get("ai_authorship")
+            <= _integrity_scores(original_report_dict).get("ai_authorship") - 10.0
+            and rewritten_total <= original_total
+        )
         hard_regression_reasons = []
         soft_regression_reasons = []
         for reason in regression_reasons:
@@ -6818,7 +7082,7 @@ def run_rewrite_pipeline(
                 "critical_high_findings ",
                 "weighted_severity ",
                 "user_visible_critical_high_findings ",
-            )):
+            )) and not authenticity_breakthrough_tradeoff:
                 hard_regression_reasons.append(reason)
             else:
                 soft_regression_reasons.append(reason)
@@ -6828,6 +7092,9 @@ def run_rewrite_pipeline(
             )
         regression_reasons = hard_regression_reasons
         result.summary.setdefault("authenticity_mitigation", {})["kept"] = not hard_regression_reasons
+        result.summary.setdefault("authenticity_mitigation", {})[
+            "breakthrough_tradeoff"
+        ] = authenticity_breakthrough_tradeoff
         result.summary.setdefault("authenticity_mitigation", {})["hard_regressions"] = hard_regression_reasons
         result.summary.setdefault("authenticity_mitigation", {})["soft_followups"] = soft_regression_reasons
         if not hard_regression_reasons:
