@@ -1217,7 +1217,7 @@ assert_test(
     and source_catalogue_targets[0]["drivers"]["source_chain_score"] > 0,
     "paragraph component search detects source-catalogue conclusion drivers",
 )
-core_first_target_text = (
+refinement_order_text = (
     "Short title.\n\n"
     "When learners pause, they may need a short moment to process what they have just practised. "
     "This should help the educator understand the process and support learner progress. "
@@ -1229,13 +1229,12 @@ core_first_target_text = (
     "Access Authors describe participation, implementation, independence, consistency, motivation, confidence, and assessment reliability as important (2023). "
     "Practice Review highlights participation, implementation, independence, consistency, motivation, confidence, and assessment reliability as important (2024)."
 )
-core_first_targets = _paragraph_component_targets(core_first_target_text, paragraph_search_json, limit=2)
+refinement_order_targets = _paragraph_component_targets(refinement_order_text, paragraph_search_json, limit=2)
 assert_test(
-    len(core_first_targets) == 2
-    and core_first_targets[0]["index"] == 1
-    and core_first_targets[1]["drivers"]["structural_refinement_score"]
-    > core_first_targets[0]["drivers"]["structural_refinement_score"],
-    "paragraph component search keeps scan-driven AI targets before refinement-only targets",
+    len(refinement_order_targets) == 2
+    and refinement_order_targets[0]["score"] >= refinement_order_targets[1]["score"]
+    and refinement_order_targets[0]["drivers"]["structural_refinement_score"] > 0,
+    "paragraph component search preserves total-score ordering for cumulative search",
 )
 paragraph_prompt = _paragraph_component_prompt(
     paragraph_targets[0],

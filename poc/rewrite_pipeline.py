@@ -1083,33 +1083,8 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
                 for anchor in (b.get("domain_anchors") or [])[:6]
             ))[:16],
         })
-    if limit <= 0:
-        return []
-
-    # Keep the scan-driven AI path first. Structural refinement drivers help
-    # decide additional coverage, but this search is cumulative, so allowing
-    # refinement-only targets to jump ahead can produce a weaker final AI score.
-    ranked_core = sorted(
-        scored,
-        key=lambda item: (
-            (item.get("drivers") or {}).get("core_ai_score", 0),
-            item.get("score", 0),
-        ),
-        reverse=True,
-    )
-    ranked_total = sorted(scored, key=lambda item: item.get("score", 0), reverse=True)
-    selected: list[dict] = []
-    seen_indexes: set[int] = set()
-    for pool in (ranked_core, ranked_total):
-        for item in pool:
-            item_index = int(item.get("index", -1))
-            if item_index in seen_indexes:
-                continue
-            selected.append(item)
-            seen_indexes.add(item_index)
-            if len(selected) >= limit:
-                return selected
-    return selected
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    return scored[:max(0, limit)]
 
 
 def _paragraph_component_prompt(
