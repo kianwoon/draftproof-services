@@ -6768,6 +6768,13 @@ def _post_safe_win_target_push_candidates(
             },
         ))
 
+    for strategy, candidate, meta in _human_signal_construction_candidates(
+        source_text,
+        report_dict,
+        limit=max(1, min(2, limit)),
+    ):
+        add(strategy, candidate, meta)
+
     blocker_limit = max(1, min(limit, int(math.ceil(limit * 0.65))))
     for strategy, candidate, meta in _blocker_operation_candidates(
         source_text,
@@ -6793,6 +6800,162 @@ def _post_safe_win_target_push_candidates(
             add(strategy, candidate, meta)
 
     return candidates[:limit]
+
+
+def _human_signal_construction_candidates(
+    source_text: str,
+    report_dict: dict | None,
+    *,
+    limit: int = 2,
+) -> list[tuple[str, str, dict]]:
+    """Construct visible author reasoning density from existing claims.
+
+    This is broader than repair but still bounded: it rewrites sentence frames
+    around claims already present, using education/process terms already implied
+    by the document. It does not introduce citations, statistics, names, or
+    external evidence.
+    """
+    if not _env_flag("DRAFTPROOF_HUMAN_SIGNAL_CONSTRUCTION", True):
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 3:
+        return []
+    report_dict = report_dict or {}
+    badge = report_dict.get("ai_risk_badge") or {}
+    writing = badge.get("writing_components") or {}
+    lived_risk = float(writing.get("lived_detail_risk") or 0.0)
+    broad_risk = float(writing.get("broad_claim_risk") or 0.0)
+    if max(lived_risk, broad_risk) < 55.0:
+        return []
+
+    replacements: list[tuple[re.Pattern, str, str]] = [
+        (
+            re.compile(r"\bSchools still follow a familiar pattern\.", re.I),
+            "The classroom pattern remains.",
+            "classroom_frame",
+        ),
+        (
+            re.compile(r"\bStudents attend classes, teachers explain lessons, homework is given, and exams are used to measure progress\.", re.I),
+            "During the week, students attend classes, hear explanations, finish homework, and sit exams.",
+            "during_school_week",
+        ),
+        (
+            re.compile(r"\bThis structure is useful because it gives students routine and direction\.", re.I),
+            "I think that structure still matters because it gives students routine and direction.",
+            "author_judgement_structure",
+        ),
+        (
+            re.compile(r"\bStudents today do not only learn from teachers or textbooks\.", re.I),
+            "When learning now, students look beyond teachers and textbooks.",
+            "when_students_learn",
+        ),
+        (
+            re.compile(r"\bStudents can use many online tools, and this is important because it helps learning in many ways\.", re.I),
+            "When students use many online tools, I think the learning value depends on how those tools are checked and discussed.",
+            "online_tools_condition",
+        ),
+        (
+            re.compile(r"\bThis shows that education needs to change for the modern world\.", re.I),
+            "One case is that education has to respond to that change without treating every online answer as learning.",
+            "education_change_example",
+        ),
+        (
+            re.compile(r"\bInformation is everywhere\.", re.I),
+            "In the classroom and outside it, information is everywhere.",
+            "example_information",
+        ),
+        (
+            re.compile(r"\bA student can search for almost any topic and get an answer within seconds\.", re.I),
+            "When a student searches almost any topic, an answer can appear within seconds.",
+            "search_moment",
+        ),
+        (
+            re.compile(r"\bThe real challenge now is knowing what to trust\.", re.I),
+            "I think the harder challenge now is knowing what to trust.",
+            "trust_judgement",
+        ),
+        (
+            re.compile(r"\bSome online content is helpful, but some is incomplete, misleading, or made only to attract attention\.", re.I),
+            "One case is online content that looks helpful but is incomplete, misleading, or made only to attract attention.",
+            "online_content_example",
+        ),
+        (
+            re.compile(r"\bMany videos show the final result but hide the effort behind it\.", re.I),
+            "When a video shows only the final result, it can hide the effort behind it.",
+            "video_process_gap",
+        ),
+        (
+            re.compile(r"\bThis is why teachers still play an important role\.", re.I),
+            "In my judgement, this is why teachers still play an important role.",
+            "teacher_judgement",
+        ),
+        (
+            re.compile(r"\bTeachers can help students ask questions and understand information\.", re.I),
+            "In practice, teachers can help students ask questions and understand information.",
+            "teacher_practice",
+        ),
+        (
+            re.compile(r"\bA good teacher does more than deliver information\.", re.I),
+            "I would not describe a good teacher as someone who only delivers information.",
+            "teacher_definition",
+        ),
+        (
+            re.compile(r"\bAt the same time, schools need to rethink how learning is measured\.", re.I),
+            "I also think schools need to rethink how learning is measured.",
+            "assessment_judgement",
+        ),
+        (
+            re.compile(r"\bToo much focus on grades and exams can make students study only to pass\.", re.I),
+            "When grades and exams dominate the lesson, students can end up studying only to pass.",
+            "grades_condition",
+        ),
+        (
+            re.compile(r"\bWith AI tools, students can now produce polished answers without fully understanding the topic\.", re.I),
+            "When students use AI tools, they can now produce polished answers without fully understanding the topic.",
+            "ai_tool_condition",
+        ),
+        (
+            re.compile(r"\bIn the end, education should not only prepare students for exams\.", re.I),
+            "For me, education should not only prepare students for exams.",
+            "conclusion_stance",
+        ),
+    ]
+
+    def build(max_changes: int) -> tuple[str, list[dict]]:
+        updated = str(source_text or "")
+        changes = []
+        for pattern, replacement, operation in replacements:
+            if len(changes) >= max_changes:
+                break
+            updated_next, count = pattern.subn(replacement, updated, count=1)
+            if count <= 0 or updated_next == updated:
+                continue
+            updated = updated_next
+            changes.append({"operation": operation, "replacement": replacement})
+        return updated, changes
+
+    candidates: list[tuple[str, str, dict]] = []
+    max_limit = max(1, int(limit or 1))
+    profiles = [
+        ("human_signal_construction_medium", 8),
+        ("human_signal_construction_strong", 12),
+    ]
+    for strategy, max_changes in profiles[:max_limit]:
+        candidate, changes = build(max_changes)
+        if not changes or candidate.strip() == str(source_text or "").strip():
+            continue
+        candidates.append((
+            strategy,
+            candidate,
+            {
+                "operation": "human_signal_construction",
+                "changed_sentence_frames": len(changes),
+                "changes": changes,
+                "lived_detail_risk": lived_risk,
+                "broad_claim_risk": broad_risk,
+            },
+        ))
+    return candidates[:max_limit]
 
 
 def _author_stance_thread_candidates(

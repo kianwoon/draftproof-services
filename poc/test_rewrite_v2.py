@@ -122,6 +122,7 @@ from rewrite_pipeline import (
     _blocker_operation_plan,
     _blocker_operation_candidates,
     _post_safe_win_target_push_candidates,
+    _human_signal_construction_candidates,
     _author_stance_thread_candidates,
     _dominant_blocker_gate_status,
     _dominant_blocker_safe_progress_override,
@@ -4264,6 +4265,20 @@ assert_test(
     bool(target_push_candidates)
     and all(strategy.startswith("post_safe_target_push_") for strategy, _candidate, _meta in target_push_candidates),
     "post-safe-win target push generates bounded deterministic candidates below target",
+)
+construction_candidates = _human_signal_construction_candidates(
+    target_push_text,
+    target_push_report,
+    limit=2,
+)
+assert_test(
+    bool(construction_candidates)
+    and any(
+        meta.get("operation") == "human_signal_construction"
+        and meta.get("changed_sentence_frames", 0) >= 3
+        for _strategy, _candidate, meta in construction_candidates
+    ),
+    "human signal construction builds section-level author-density candidates",
 )
 stance_candidates = _author_stance_thread_candidates(
     target_push_text,
