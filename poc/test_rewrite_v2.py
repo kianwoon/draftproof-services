@@ -2809,6 +2809,15 @@ assert_test(
     "education" in _source_grounding_query("Teachers guide students to judge online information in education."),
     "source grounding query preserves claim keywords",
 )
+social_learning_query = _source_grounding_query(
+    "They also learn from YouTube, social media, online courses, websites, AI tools, and people they follow online."
+)
+assert_test(
+    "social media" in social_learning_query
+    and "AI tools" in social_learning_query
+    and len(social_learning_query) < 260,
+    "source grounding query converts broad claims into concise research search terms",
+)
 normalized_tavily = _normalize_tavily_results(
     {
         "results": [

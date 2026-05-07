@@ -1063,15 +1063,48 @@ def _source_search_keywords(text: str, limit: int = 10) -> list[str]:
 
 
 def _source_grounding_query(claim: str) -> str:
-    keywords = _source_search_keywords(claim, limit=9)
     claim_text = re.sub(r"\s+", " ", str(claim or "").strip())
-    claim_text = claim_text[:180].rstrip(" ,.;:")
-    keyword_text = " ".join(keywords[:6])
-    if claim_text and keyword_text:
-        base = f"{claim_text} {keyword_text}"
-    else:
-        base = claim_text or keyword_text
-    return f"{base} {_SOURCE_SEARCH_CREDIBLE_TERMS}".strip()[:360]
+    lower = claim_text.lower()
+    if any(term in lower for term in ("draft", "feedback", "discussion", "reflection", "improvement", "learning process")):
+        return "formative assessment feedback learning process education evidence research study"
+    if any(term in lower for term in ("trust", "accurate", "misleading", "sources", "information")):
+        return "information literacy evaluating online sources students education evidence research study"
+    if any(term in lower for term in ("youtube", "social media", "online course", "ai tool", "search engine")):
+        return "students learn from social media online courses AI tools education evidence research study"
+    if any(term in lower for term in ("teacher", "teachers", "guide", "questions", "viewpoints")):
+        return "teacher guidance information literacy students education evidence research study"
+    if any(term in lower for term in ("exam", "grades", "assessment", "understanding")):
+        return "AI tools assessment student understanding education evidence research study"
+
+    themes: list[str] = []
+
+    def add_theme(*items: str) -> None:
+        for item in items:
+            if item and item not in themes:
+                themes.append(item)
+
+    if any(term in lower for term in ("youtube", "social media", "online course", "ai tool", "search engine")):
+        add_theme("students", "digital learning", "social media", "AI tools", "online learning")
+    if any(term in lower for term in ("trust", "accurate", "misleading", "sources", "information")):
+        add_theme("information literacy", "evaluating online sources", "students")
+    if any(term in lower for term in ("draft", "feedback", "discussion", "reflection", "improvement", "learning process")):
+        add_theme("formative assessment", "feedback", "student learning", "reflection")
+    if any(term in lower for term in ("teacher", "teachers", "guide", "questions", "viewpoints")):
+        add_theme("teacher guidance", "student judgement", "information literacy")
+    if any(term in lower for term in ("exam", "grades", "assessment", "understanding")):
+        add_theme("assessment", "student understanding", "AI in education")
+
+    keywords = _source_search_keywords(claim_text, limit=8)
+    for keyword in keywords:
+        if len(themes) >= 8:
+            break
+        if keyword not in themes:
+            themes.append(keyword)
+
+    base = " ".join(themes[:8]).strip()
+    if not base:
+        base = " ".join(keywords[:6]).strip() or claim_text[:120].rstrip(" ,.;:")
+    return f"{base} {_SOURCE_SEARCH_CREDIBLE_TERMS}".strip()[:260]
 
 
 def _source_search_domain_list(name: str, default: set[str] | None = None) -> list[str]:
@@ -9824,9 +9857,9 @@ def run_rewrite_pipeline(
             )
             candidate_rank = (
                 1 if selection_status.get("selectable") else 0,
+                human_rank_value,
+                blocker_active_drop,
                 post_safe_climb_rank,
-                human_rank_value if post_safe_climb_rank else blocker_active_drop,
-                blocker_active_drop if post_safe_climb_rank else human_rank_value,
                 (
                     float(candidate_ai_authorship_delta)
                     if isinstance(candidate_ai_authorship_delta, (int, float)) else -9999.0
@@ -9835,10 +9868,10 @@ def run_rewrite_pipeline(
                     float(candidate_ai_transformation_delta)
                     if isinstance(candidate_ai_transformation_delta, (int, float)) else -9999.0
                 ),
+                -(float(candidate_ai) if isinstance(candidate_ai, (int, float)) else 999.0),
                 -float(candidate_review_burden),
                 -float(candidate_weighted_severity),
                 -float(_finding_total(candidate_report)),
-                float(ai_delta) if isinstance(ai_delta, (int, float)) else -9999.0,
                 float(human_shift_score) if isinstance(human_shift_score, (int, float)) else -9999.0,
             )
             if candidate_rank > best_human_shift_rank:
@@ -10087,57 +10120,121 @@ def run_rewrite_pipeline(
                         1,
                         int(_float_env(
                             "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_TARGETS",
-                            float(_adaptive_budget_default(best_text, 2, 3)),
+                            float(_adaptive_budget_default(best_text, 4, 6)),
+                        )),
+                    )
+                    llm_round_limit = max(
+                        1,
+                        int(_float_env(
+                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_ROUNDS",
+                            float(_adaptive_budget_default(best_text, 1, 2)),
+                        )),
+                    )
+                    llm_call_limit = max(
+                        1,
+                        int(_float_env(
+                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_MAX_CALLS",
+                            float(_adaptive_budget_default(best_text, 4, 6)),
                         )),
                     )
                 except (TypeError, ValueError):
                     llm_candidate_limit = 1
                     llm_target_limit = 1
-                llm_targets = _paragraph_component_targets(
-                    best_text,
-                    best_report if isinstance(best_report, dict) else ctx.raw_json,
-                    limit=max(llm_target_limit * 3, llm_target_limit),
-                )[:llm_target_limit]
+                    llm_round_limit = 1
+                    llm_call_limit = 1
                 summary["llm_target_push"] = {
                     "enabled": True,
-                    "target_count": len(llm_targets),
+                    "target_limit_per_round": llm_target_limit,
                     "candidate_limit_per_target": llm_candidate_limit,
+                    "round_limit": llm_round_limit,
+                    "max_calls": llm_call_limit,
+                    "calls_used": 0,
+                    "target_count": 0,
+                    "accepted_count": 0,
                     "accepted": False,
+                    "rounds": [],
                 }
-                if llm_targets:
-                    try:
-                        push_gateway = LLMGateway(LLMConfig(
-                            api_key=effective_key,
-                            model=generator_model,
-                            base_url=base_url,
-                            timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
-                            max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
-                            max_tokens=int(os.environ.get(
-                                "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MAX_TOKENS",
-                                os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS", "2600"),
-                            )),
-                            temperature=float(os.environ.get(
-                                "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_TEMPERATURE",
-                                os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
-                            )),
-                        ))
-                    except Exception as exc:
-                        summary["llm_target_push"]["reason"] = f"gateway_error {exc}"
-                        push_gateway = None
-                    if push_gateway:
-                        llm_base_text = best_text
-                        llm_base_strategy = best_strategy
-                        llm_base_ai = best_ai
-                        llm_base_human = (
-                            _contribution_scores(best_report).get("human")
-                            if isinstance(best_report, dict) else initial_human
+                try:
+                    push_gateway = LLMGateway(LLMConfig(
+                        api_key=effective_key,
+                        model=generator_model,
+                        base_url=base_url,
+                        timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
+                        max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
+                        max_tokens=int(os.environ.get(
+                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MAX_TOKENS",
+                            os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS", "2600"),
+                        )),
+                        temperature=float(os.environ.get(
+                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_TEMPERATURE",
+                            os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
+                        )),
+                    ))
+                except Exception as exc:
+                    summary["llm_target_push"]["reason"] = f"gateway_error {exc}"
+                    push_gateway = None
+                if push_gateway:
+                    llm_base_text = best_text
+                    llm_base_strategy = best_strategy
+                    llm_base_ai = best_ai
+                    llm_base_human = (
+                        _contribution_scores(best_report).get("human")
+                        if isinstance(best_report, dict) else initial_human
+                    )
+                    llm_attempted_indexes: set[int] = set()
+                    llm_calls_used = 0
+                    for llm_round in range(1, llm_round_limit + 1):
+                        if llm_calls_used >= llm_call_limit:
+                            summary["llm_target_push"]["reason"] = "llm_call_limit_reached"
+                            break
+                        if isinstance(llm_base_human, (int, float)) and float(llm_base_human) >= target_human:
+                            summary["llm_target_push"]["reason"] = "human_target_reached"
+                            break
+                        llm_target_pool = _paragraph_component_targets(
+                            llm_base_text,
+                            best_report if isinstance(best_report, dict) else ctx.raw_json,
+                            limit=max(llm_target_limit * 4, llm_target_limit + len(llm_attempted_indexes)),
                         )
+                        llm_targets = [
+                            target for target in llm_target_pool
+                            if int(target.get("index", -1) or -1) not in llm_attempted_indexes
+                        ][: max(0, min(llm_target_limit, llm_call_limit - llm_calls_used))]
+                        llm_round_summary = {
+                            "round": llm_round,
+                            "base_strategy": llm_base_strategy,
+                            "base_ai": llm_base_ai,
+                            "base_human": llm_base_human,
+                            "target_count": len(llm_targets),
+                            "targets": [
+                                {
+                                    "paragraph_index": target.get("index"),
+                                    "role": target.get("role"),
+                                    "score": target.get("score"),
+                                }
+                                for target in llm_targets
+                            ],
+                            "accepted": False,
+                        }
+                        summary["llm_target_push"]["rounds"].append(llm_round_summary)
+                        summary["llm_target_push"]["target_count"] += len(llm_targets)
+                        if not llm_targets:
+                            llm_round_summary["reason"] = "no_unattempted_llm_targets"
+                            if not summary["llm_target_push"].get("reason"):
+                                summary["llm_target_push"]["reason"] = "no_unattempted_llm_targets"
+                            break
+                        round_start_strategy = best_strategy
                         for target_number, target in enumerate(llm_targets, start=1):
+                            if llm_calls_used >= llm_call_limit:
+                                summary["llm_target_push"]["reason"] = "llm_call_limit_reached"
+                                break
+                            target_index = int(target.get("index", -1) or -1)
+                            if target_index >= 0:
+                                llm_attempted_indexes.add(target_index)
                             report_progress(
                                 min(92, 84 + target_number),
                                 (
                                     "Trying post-safe-win LLM target push "
-                                    f"{target_number}/{len(llm_targets)}"
+                                    f"{llm_round}.{target_number}/{len(llm_targets)}"
                                 ),
                             )
                             try:
@@ -10166,6 +10263,8 @@ def run_rewrite_pipeline(
                                         os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS", "2600"),
                                     )),
                                 )
+                                llm_calls_used += 1
+                                summary["llm_target_push"]["calls_used"] = llm_calls_used
                                 outputs = _extract_paragraph_component_candidates(
                                     response.content,
                                     llm_candidate_limit,
@@ -10266,6 +10365,13 @@ def run_rewrite_pipeline(
                                         "accepted_strategy": best_strategy,
                                         "accepted_human": candidate_human,
                                     })
+                                    summary["llm_target_push"]["accepted_count"] += 1
+                                    llm_round_summary.update({
+                                        "accepted": True,
+                                        "accepted_strategy": best_strategy,
+                                        "accepted_human": candidate_human,
+                                        "accepted_ai": best_ai,
+                                    })
                                     llm_base_text = best_text
                                     llm_base_strategy = best_strategy
                                     llm_base_ai = best_ai
@@ -10278,6 +10384,11 @@ def run_rewrite_pipeline(
                                         "selected_strategy": best_strategy,
                                         "selection_status": best_selection_status,
                                     }
+                        if best_strategy == round_start_strategy:
+                            llm_round_summary["reason"] = "no_safe_gain_in_round"
+                        elif isinstance(llm_base_human, (int, float)) and float(llm_base_human) >= target_human:
+                            summary["llm_target_push"]["reason"] = "human_target_reached"
+                            break
                 elif "llm_target_push" not in summary:
                     summary["llm_target_push"] = {
                         "enabled": False,
@@ -10288,6 +10399,41 @@ def run_rewrite_pipeline(
             _run_post_safe_win_target_push("early_stop")
         elif adaptive_stop_reason:
             _run_post_safe_win_target_push("adaptive_stop")
+
+        post_safe_summary = search_summary.get("post_safe_win_target_push")
+        post_safe_human = (
+            _contribution_scores(best_report).get("human")
+            if isinstance(best_report, dict) else None
+        )
+        target_human_after_post_safe = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+        writing_components_for_continue = (
+            (best_report or {}).get("ai_risk_badge", {}).get("writing_components", {})
+            if isinstance(best_report, dict) else {}
+        )
+        source_or_claim_blocker_after_post_safe = max(
+            float(writing_components_for_continue.get("source_grounding_risk") or 0.0),
+            float(writing_components_for_continue.get("unsupported_claim_risk") or 0.0),
+            float(writing_components_for_continue.get("broad_claim_risk") or 0.0),
+        )
+        if (
+            adaptive_stop_reason == "adaptive_stop_after_post_safe_win_target_push"
+            and isinstance(post_safe_summary, dict)
+            and post_safe_summary.get("accepted")
+            and isinstance(post_safe_human, (int, float))
+            and float(post_safe_human) < target_human_after_post_safe
+            and source_or_claim_blocker_after_post_safe >= _float_env(
+                "DRAFTPROOF_POST_SAFE_CONTINUE_MIN_GROUNDING_BLOCKER",
+                70.0,
+            )
+            and _source_search_enabled()
+            and _env_flag("DRAFTPROOF_CONTINUE_AFTER_POST_SAFE_TARGET_PUSH_FOR_GROUNDING", True)
+            and effective_key
+        ):
+            post_safe_summary["continued_after_plateau_for_grounding"] = True
+            post_safe_summary["continued_after_plateau_human"] = post_safe_human
+            post_safe_summary["continued_after_plateau_blocker"] = source_or_claim_blocker_after_post_safe
+            adaptive_stop_reason = ""
+            search_summary.pop("adaptive_stop", None)
 
         if early_stop_reason and not adaptive_stop_reason:
             search_summary["llm_reason"] = "skipped_after_fast_deterministic_accept"
@@ -10317,7 +10463,8 @@ def run_rewrite_pipeline(
                     "DRAFTPROOF_PARAGRAPH_COMPONENT_SEARCH",
                     "1",
                 ) != "0"
-                component_base_text, component_base_repairs = _repair_candidate_source_damage(search_source_text)
+                component_source_text = best_text if _best_ai_search_selectable() else search_source_text
+                component_base_text, component_base_repairs = _repair_candidate_source_damage(component_source_text)
                 if _env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True):
                     source_layer = _build_source_grounding_search_layer(
                         component_base_text,
