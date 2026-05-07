@@ -4373,15 +4373,16 @@ safe_stale_blocker_override = _dominant_blocker_safe_progress_override(
     critical_high_delta=0,
 )
 assert_test(
-    safe_stale_blocker_override.get("allowed") is True,
-    "dominant blocker gate allows safe progress when unsupported-claim metric is pinned",
+    safe_stale_blocker_override.get("allowed") is False
+    and safe_stale_blocker_override.get("dominant_drop_allowed") is False,
+    "dominant blocker gate blocks stale unsupported-claim progress without dominant movement",
 )
-net_positive_stale_blocker_override = _dominant_blocker_safe_progress_override(
+dominant_moving_blocker_override = _dominant_blocker_safe_progress_override(
     {
         "required": True,
         "cleared": False,
         "active_keys": ["unsupported_claim_risk"],
-        "drops": {"unsupported_claim_risk": 0.0},
+        "drops": {"unsupported_claim_risk": 2.0},
     },
     {
         "human_delta": 18.0,
@@ -4400,8 +4401,37 @@ net_positive_stale_blocker_override = _dominant_blocker_safe_progress_override(
     critical_high_delta=-1,
 )
 assert_test(
-    net_positive_stale_blocker_override.get("allowed") is True,
-    "dominant blocker gate allows net-positive blocker movement when one active metric is pinned",
+    dominant_moving_blocker_override.get("allowed") is True,
+    "dominant blocker gate allows safe progress when dominant blocker moves",
+)
+target_breakthrough_stale_blocker_override = _dominant_blocker_safe_progress_override(
+    {
+        "required": True,
+        "cleared": False,
+        "active_keys": ["unsupported_claim_risk"],
+        "drops": {"unsupported_claim_risk": 0.0},
+    },
+    {
+        "human_delta": 32.0,
+        "ai_authorship_delta": 1.0,
+        "ai_transformation_delta": 20.0,
+        "crosses_target_human": True,
+        "ai_authorship_regression_blocked": False,
+        "critical_high_regressed": False,
+        "review_burden_regressed": False,
+        "weighted_severity_regressed": False,
+    },
+    {"active_drop": 30.0, "active_regression": 0.0},
+    ai_score_regressed=False,
+    finding_delta=-1,
+    review_burden_delta=-6,
+    weighted_severity_delta=-10,
+    critical_high_delta=-1,
+)
+assert_test(
+    target_breakthrough_stale_blocker_override.get("allowed") is True
+    and target_breakthrough_stale_blocker_override.get("target_breakthrough") is True,
+    "dominant blocker gate allows target breakthrough even when unsupported blocker is pinned",
 )
 
 unsafe_stale_blocker_override = _dominant_blocker_safe_progress_override(

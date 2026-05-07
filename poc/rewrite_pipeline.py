@@ -2242,6 +2242,24 @@ def _dominant_blocker_safe_progress_override(
     max_active_regression = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MAX_ACTIVE_REGRESSION", 0.0)
     active_regression = float(blocker_status.get("active_regression") or 0.0)
     active_drop = float(blocker_status.get("active_drop") or 0.0)
+    dominant_drops = dominant_status.get("drops") if isinstance(dominant_status.get("drops"), dict) else {}
+    dominant_max_drop = max(
+        [0.0]
+        + [
+            float(value)
+            for value in dominant_drops.values()
+            if isinstance(value, (int, float))
+        ]
+    )
+    min_dominant_drop = _float_env(
+        "DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_DOMINANT_DROP",
+        1.0,
+    )
+    target_breakthrough = bool(authenticity_status.get("crosses_target_human"))
+    dominant_drop_allowed = bool(
+        dominant_max_drop >= min_dominant_drop
+        or target_breakthrough
+    )
     min_net_active_drop = _float_env(
         "DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_NET_ACTIVE_DROP",
         10.0,
@@ -2259,6 +2277,7 @@ def _dominant_blocker_safe_progress_override(
         and review_burden_delta <= 0
         and weighted_severity_delta <= 0
         and critical_high_delta <= 0
+        and dominant_drop_allowed
         and blocker_regression_allowed
         and not authenticity_status.get("ai_authorship_regression_blocked")
         and not authenticity_status.get("critical_high_regressed")
@@ -2279,6 +2298,10 @@ def _dominant_blocker_safe_progress_override(
         "review_burden_delta": review_burden_delta,
         "weighted_severity_delta": weighted_severity_delta,
         "critical_high_delta": critical_high_delta,
+        "dominant_max_drop": round(dominant_max_drop, 3),
+        "min_dominant_drop": min_dominant_drop,
+        "dominant_drop_allowed": dominant_drop_allowed,
+        "target_breakthrough": target_breakthrough,
         "active_drop": active_drop,
         "active_regression": active_regression,
         "min_net_active_drop": min_net_active_drop,
@@ -8395,7 +8418,8 @@ def run_rewrite_pipeline(
                                     and candidate_findings <= original_total
                                 )
                                 masked_accept = bool(
-                                    fresh_authorship_capped
+                                    gate.get("success")
+                                    and fresh_authorship_capped
                                     and saved_authorship_capped
                                     and findings_non_regression
                                     and (
@@ -8630,7 +8654,8 @@ def run_rewrite_pipeline(
                                 )
                             )
                             masked_accept = bool(
-                                authorship_capped
+                                gate.get("success")
+                                and authorship_capped
                                 and findings_non_regression
                                 and review_non_regression
                                 and severity_non_regression
@@ -8727,7 +8752,10 @@ def run_rewrite_pipeline(
                             "gate": masked_gate,
                         }
                         authenticity_summary["best_attempt"] = best_candidate_eval
-                        if _env_flag("DRAFTPROOF_MASKED_SPAN_SKIP_REGEN_ON_GAIN", True):
+                        if (
+                            masked_gate.get("success")
+                            and _env_flag("DRAFTPROOF_MASKED_SPAN_SKIP_REGEN_ON_GAIN", True)
+                        ):
                             authenticity_summary["skip_broad_generation_reason"] = "masked_span_authorship_capped_gain"
                             authenticity_candidate_limit = 0
                 for attempt_index in range(1, authenticity_candidate_limit + 1):
@@ -9239,14 +9267,7 @@ def run_rewrite_pipeline(
                 if (
                     best_candidate_gate
                     and best_candidate_report
-                    and (
-                        best_candidate_gate.get("success")
-                        or (
-                            masked_span_selected
-                            and isinstance(best_candidate_eval, dict)
-                            and best_candidate_eval.get("masked_span_repair")
-                        )
-                    )
+                    and best_candidate_gate.get("success")
                 ):
                     previous_ai = rewritten_ai
                     rewritten_text = best_candidate_text
@@ -10011,7 +10032,6 @@ def run_rewrite_pipeline(
                 selection_status.get("selectable")
                 and dominant_blocker_status.get("required")
                 and not dominant_blocker_status.get("cleared")
-                and not selection_status.get("post_safe_target_climb")
                 and not dominant_blocker_progress_override.get("allowed")
             ):
                 selection_status.update({

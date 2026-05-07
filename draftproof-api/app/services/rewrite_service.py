@@ -14,6 +14,7 @@ logger = logging.getLogger("rewrite_service")
 
 _STALE_THRESHOLD = timedelta(minutes=REWRITE_STALE_THRESHOLD_MINUTES)
 _ACTIVE_REWRITE_STATUSES = ("pending", "processing", "retrying")
+_STALE_RECOVERY_STATUSES = ("pending", "retrying")
 _REPHRASABLE_TYPES = {
     "high_predictability",
     "medium_predictability",
@@ -108,12 +109,13 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         if not scan:
             raise ValueError("Completed scan not found")
 
-        # Mark stale pending/processing rewrites as failed (older than threshold)
+        # Only recover queued/retry jobs here. A processing rewrite may still be
+        # running in the worker; the worker's own time limit owns true timeout.
         stale_cutoff = datetime.now(timezone.utc) - _STALE_THRESHOLD
         stale = await session.execute(
             select(RewriteJob).where(
                 RewriteJob.scan_id == scan_uuid,
-                RewriteJob.status.in_(_ACTIVE_REWRITE_STATUSES),
+                RewriteJob.status.in_(_STALE_RECOVERY_STATUSES),
                 RewriteJob.created_at < stale_cutoff,
             )
         )
@@ -125,7 +127,7 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
             stale_job.completed_at = datetime.now(timezone.utc)
             await _release_active_reservation(session, stale_job.id)
 
-        # Check for actively running rewrites (recent, not stale)
+        # Check for actively running rewrites.
         existing = await session.execute(
             select(RewriteJob).where(
                 RewriteJob.scan_id == scan_uuid,
@@ -207,7 +209,12 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
 
 
 async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | None:
-    """Get rewrite job status. Auto-fails stale jobs."""
+    """Get rewrite job status.
+
+    Stale recovery intentionally excludes ``processing`` rewrites because they
+    may still be actively running in Celery. The worker is responsible for true
+    runtime timeouts and failure updates.
+    """
     async with async_session() as session:
         q = select(RewriteJob).where(RewriteJob.id == uuid.UUID(rewrite_id))
         if user_id:
@@ -218,7 +225,7 @@ async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | Non
         if not job:
             return None
 
-        if job.status in _ACTIVE_REWRITE_STATUSES and job.created_at:
+        if job.status in _STALE_RECOVERY_STATUSES and job.created_at:
             age = datetime.now(timezone.utc) - job.created_at
             if age > _STALE_THRESHOLD:
                 job.status = "failed"

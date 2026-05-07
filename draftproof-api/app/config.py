@@ -60,7 +60,10 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in {"1", "true", "yes"} i
 
 # Redis / Celery
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-CELERY_VISIBILITY_TIMEOUT_SECONDS = int(os.getenv("CELERY_VISIBILITY_TIMEOUT_SECONDS", "900"))
+CELERY_VISIBILITY_TIMEOUT_SECONDS = max(
+    3000,
+    int(os.getenv("CELERY_VISIBILITY_TIMEOUT_SECONDS", "3000")),
+)
 
 # R2 Storage (for fetching report JSON)
 R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "")
@@ -69,4 +72,7 @@ R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "draftproof-reports")
 
 # Rewrite
-REWRITE_STALE_THRESHOLD_MINUTES = int(os.getenv("REWRITE_STALE_THRESHOLD_MINUTES", "15"))
+REWRITE_STALE_THRESHOLD_MINUTES = max(
+    50,
+    int(os.getenv("REWRITE_STALE_THRESHOLD_MINUTES", "50")),
+)
