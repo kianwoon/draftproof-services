@@ -21,6 +21,7 @@ import argparse
 import math
 import requests
 from difflib import SequenceMatcher
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -1036,7 +1037,11 @@ _SOURCE_SEARCH_STOPWORDS = {
     "while", "will", "were", "what", "who", "why", "how", "they", "them",
 }
 
-_SOURCE_SEARCH_CREDIBLE_TERMS = "research evidence education report study policy practice"
+_SOURCE_SEARCH_CREDIBLE_TERMS = "evidence research education study report"
+_SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS = {
+    "instagram.com", "facebook.com", "tiktok.com", "x.com", "twitter.com",
+    "pinterest.com", "reddit.com", "youtube.com", "getyourteachon.com",
+}
 
 
 def _source_search_enabled() -> bool:
@@ -1059,9 +1064,54 @@ def _source_search_keywords(text: str, limit: int = 10) -> list[str]:
 
 def _source_grounding_query(claim: str) -> str:
     keywords = _source_search_keywords(claim, limit=9)
-    base = " ".join(keywords) if keywords else str(claim or "").strip()
-    base = re.sub(r"\s+", " ", base).strip()
-    return f"{base} {_SOURCE_SEARCH_CREDIBLE_TERMS}".strip()[:280]
+    claim_text = re.sub(r"\s+", " ", str(claim or "").strip())
+    claim_text = claim_text[:180].rstrip(" ,.;:")
+    keyword_text = " ".join(keywords[:6])
+    if claim_text and keyword_text:
+        base = f"{claim_text} {keyword_text}"
+    else:
+        base = claim_text or keyword_text
+    return f"{base} {_SOURCE_SEARCH_CREDIBLE_TERMS}".strip()[:360]
+
+
+def _source_search_domain_list(name: str, default: set[str] | None = None) -> list[str]:
+    raw = os.environ.get(name, "")
+    domains = set(default or set())
+    for item in re.split(r"[,\\s]+", raw):
+        item = item.strip().lower()
+        if item:
+            domains.add(item)
+    return sorted(domains)
+
+
+def _source_search_hostname(url: str) -> str:
+    try:
+        host = urlparse(str(url or "")).netloc.lower()
+    except Exception:
+        return ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def _source_search_domain_blocked(url: str, excluded_domains: set[str]) -> bool:
+    host = _source_search_hostname(url)
+    if not host:
+        return False
+    return any(host == domain or host.endswith("." + domain) for domain in excluded_domains)
+
+
+def _source_search_quality_label(url: str) -> str:
+    host = _source_search_hostname(url)
+    if not host:
+        return "unknown"
+    if host.endswith(".edu") or host.endswith(".gov"):
+        return "high"
+    if any(domain in host for domain in ("oecd.org", "unesco.org", "worldbank.org", "who.int", "eric.ed.gov")):
+        return "high"
+    if any(domain in host for domain in ("springer.com", "sciencedirect.com", "tandfonline.com", "emerald.com", "sagepub.com", "frontiersin.org")):
+        return "medium_high"
+    if any(domain in host for domain in ("instagram.com", "facebook.com", "tiktok.com", "youtube.com", "pinterest.com")):
+        return "low"
+    return "medium"
 
 
 def _source_grounding_claim_targets(
@@ -1155,37 +1205,53 @@ def _tavily_search(
     api_key: str,
     max_results: int = 3,
     timeout: float = 20.0,
+    exclude_domains: list[str] | None = None,
+    include_domains: list[str] | None = None,
 ) -> dict:
+    payload = {
+        "query": query,
+        "search_depth": os.environ.get("DRAFTPROOF_SOURCE_SEARCH_DEPTH", "basic"),
+        "max_results": max(1, min(int(max_results or 3), 10)),
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    if exclude_domains:
+        payload["exclude_domains"] = exclude_domains
+    if include_domains:
+        payload["include_domains"] = include_domains
     response = requests.post(
         "https://api.tavily.com/search",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json={
-            "query": query,
-            "search_depth": "basic",
-            "max_results": max(1, min(int(max_results or 3), 10)),
-            "include_answer": False,
-            "include_raw_content": False,
-        },
+        json=payload,
         timeout=max(3.0, float(timeout or 20.0)),
     )
     response.raise_for_status()
     return response.json()
 
 
-def _normalize_tavily_results(payload: dict, claim: str = "", *, limit: int = 3) -> list[dict]:
+def _normalize_tavily_results(
+    payload: dict,
+    claim: str = "",
+    *,
+    limit: int = 3,
+    excluded_domains: set[str] | None = None,
+) -> list[dict]:
     results = payload.get("results") if isinstance(payload, dict) else []
     if not isinstance(results, list):
         return []
     claim_terms = set(_source_search_keywords(claim, limit=12))
     normalized = []
-    for item in results[:max(1, limit)]:
+    excluded_domains = excluded_domains or set()
+    for item in results:
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or "").strip()
         url = str(item.get("url") or "").strip()
+        if _source_search_domain_blocked(url, excluded_domains):
+            continue
         content = re.sub(r"\s+", " ", str(item.get("content") or "").strip())
         haystack = f"{title} {content}".lower()
         overlap = sorted(term for term in claim_terms if term in haystack)
@@ -1199,10 +1265,28 @@ def _normalize_tavily_results(payload: dict, claim: str = "", *, limit: int = 3)
             "snippet": content[:360],
             "provider_score": round(provider_score, 4),
             "claim_keyword_overlap": overlap[:8],
+            "source_quality": _source_search_quality_label(url),
             "relevance_score": round(provider_score + min(len(overlap), 8) * 0.05, 4),
         })
     normalized.sort(key=lambda item: item.get("relevance_score", 0), reverse=True)
-    return normalized
+    return normalized[:max(1, limit)]
+
+
+def _source_result_confidence(sources: list[dict]) -> str:
+    if not sources:
+        return "none"
+    best = sources[0]
+    quality = str(best.get("source_quality") or "unknown")
+    score = float(best.get("relevance_score") or 0.0)
+    if quality == "high" and score >= 0.45:
+        return "strong"
+    if quality in {"high", "medium_high"} and score >= 0.35:
+        return "moderate"
+    if score >= 0.85 and quality not in {"low", "unknown"}:
+        return "moderate"
+    if score >= 0.25:
+        return "weak"
+    return "very_weak"
 
 
 def _build_source_grounding_search_layer(
@@ -1256,6 +1340,15 @@ def _build_source_grounding_search_layer(
         layer["status"] = "missing_api_key"
         return layer
     timeout = _float_env("DRAFTPROOF_SOURCE_SEARCH_TIMEOUT", 20.0)
+    excluded_domains = set(_source_search_domain_list(
+        "DRAFTPROOF_SOURCE_SEARCH_EXCLUDE_DOMAINS",
+        _SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS,
+    ))
+    included_domains = _source_search_domain_list("DRAFTPROOF_SOURCE_SEARCH_INCLUDE_DOMAINS")
+    layer["domain_filters"] = {
+        "exclude_domains": sorted(excluded_domains),
+        "include_domains": included_domains,
+    }
     errors = []
     for target in targets:
         try:
@@ -1264,12 +1357,21 @@ def _build_source_grounding_search_layer(
                 api_key=api_key,
                 max_results=max_results,
                 timeout=timeout,
+                exclude_domains=sorted(excluded_domains),
+                include_domains=included_domains,
+            )
+            sources = _normalize_tavily_results(
+                payload,
+                target.get("claim") or "",
+                limit=max_results,
+                excluded_domains=excluded_domains,
             )
             layer["results"].append({
                 "claim_id": target.get("id"),
                 "paragraph_index": target.get("paragraph_index"),
                 "query": target.get("query"),
-                "sources": _normalize_tavily_results(payload, target.get("claim") or "", limit=max_results),
+                "source_confidence": _source_result_confidence(sources),
+                "sources": sources,
             })
         except requests.RequestException as exc:
             errors.append({
@@ -5615,6 +5717,138 @@ def _splice_paragraph(text: str, paragraph_index: int, replacement: str) -> str:
     return _join_logical_paragraphs(paragraphs)
 
 
+def _content_pruning_candidates(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 4,
+) -> list[tuple[str, str, dict]]:
+    """Create deletion/compression candidates for paragraphs that drag scores down.
+
+    Pruning is only a candidate. The normal drift, protected-span, scan, and
+    authenticity gates decide whether it is safe enough to keep.
+    """
+    if not _env_flag("DRAFTPROOF_CONTENT_PRUNING_REPAIR", True):
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 3:
+        return []
+    source_words = _text_word_count(source_text)
+    min_words = max(1, int(source_words * _float_env("DRAFTPROOF_CONTENT_PRUNING_MIN_WORD_RATIO", 0.75)))
+    targets = _paragraph_component_targets(source_text, raw_json or {}, limit=max(limit * 2, 4))
+    protected = detect_protected_spans(source_text)
+
+    def paragraph_has_protected_anchor(index: int) -> bool:
+        before = _join_logical_paragraphs(paragraphs[:index])
+        start = len(before) + (2 if before else 0)
+        end = start + len(paragraphs[index])
+        return any(span.start_char >= start and span.end_char <= end for span in protected)
+
+    candidates: list[tuple[str, str, dict]] = []
+    seen_texts: set[str] = set()
+    for target in targets:
+        index = int(target.get("index", 0) or 0)
+        if index < 0 or index >= len(paragraphs):
+            continue
+        paragraph = paragraphs[index]
+        words = _text_word_count(paragraph)
+        role = target.get("role") or _paragraph_role(paragraph, target.get("drivers") or {})
+        drivers = target.get("drivers") or {}
+        if role in {"human_anchor_rich", "technical_process_rich", "source_summary_heavy"}:
+            continue
+        if paragraph_has_protected_anchor(index):
+            continue
+        if words < 35:
+            continue
+        generic_hits = int(drivers.get("generic_assertion_hits") or 0)
+        concrete_hits = int(drivers.get("concrete_anchor_hits") or 0)
+        generic_density = generic_hits / max(words / 100.0, 1.0)
+        source_gap = bool(drivers.get("source_gap"))
+        if generic_density < 3.0 and not source_gap and role != "conclusion_template_risk":
+            continue
+
+        variants: list[tuple[str, str, dict]] = []
+        delete_paragraphs = list(paragraphs)
+        delete_paragraphs.pop(index)
+        delete_text = _join_logical_paragraphs(delete_paragraphs)
+        if _text_word_count(delete_text) >= min_words:
+            variants.append((
+                f"content_pruning_delete_p{index + 1}",
+                delete_text,
+                {
+                    "operation": "delete_paragraph",
+                    "paragraph_index": index,
+                    "paragraph_role": role,
+                    "removed_words": words,
+                    "drivers": drivers,
+                },
+            ))
+
+        sentences = _split_sentences(paragraph)
+        if len(sentences) >= 3:
+            sentence_scores = []
+            for sentence_index, sentence in enumerate(sentences):
+                sentence_words = _text_word_count(sentence)
+                generic_sentence_hits = len(re.findall(
+                    r"\b(?:important|significant|should|must|need(?:s)?|can|will|"
+                    r"helps?|allows?|enables?|creates?|means|shows?|suggests?|"
+                    r"highlights?|underscores?)\b",
+                    sentence,
+                    flags=re.I,
+                ))
+                concrete_sentence_hits = len(re.findall(
+                    r"\b(?:\d+(?:\.\d+)?%?|\bI\b|\bmy\b|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|"
+                    r"teacher|student|class|feedback|draft|source|practice|assessment)\b",
+                    sentence,
+                    flags=re.I,
+                ))
+                sentence_scores.append((
+                    generic_sentence_hits * 2.0
+                    + sentence_words / 35.0
+                    - concrete_sentence_hits * 0.8,
+                    sentence_index,
+                    sentence,
+                ))
+            sentence_scores.sort(reverse=True)
+            remove_count = 1 if len(sentences) < 5 else 2
+            remove_indexes = {idx for _score, idx, _sentence in sentence_scores[:remove_count]}
+            kept_sentences = [
+                sentence for idx, sentence in enumerate(sentences)
+                if idx not in remove_indexes
+            ]
+            compressed = " ".join(kept_sentences).strip()
+            if (
+                compressed
+                and compressed != paragraph
+                and _text_word_count(compressed) >= max(25, int(words * 0.45))
+            ):
+                compressed_paragraphs = list(paragraphs)
+                compressed_paragraphs[index] = compressed
+                compressed_text = _join_logical_paragraphs(compressed_paragraphs)
+                if _text_word_count(compressed_text) >= min_words:
+                    variants.append((
+                        f"content_pruning_compress_p{index + 1}",
+                        compressed_text,
+                        {
+                            "operation": "compress_paragraph",
+                            "paragraph_index": index,
+                            "paragraph_role": role,
+                            "removed_sentence_indexes": sorted(remove_indexes),
+                            "removed_words": words - _text_word_count(compressed),
+                            "drivers": drivers,
+                        },
+                    ))
+
+        for strategy, candidate_text, meta in variants:
+            if candidate_text.strip() == source_text.strip() or candidate_text in seen_texts:
+                continue
+            seen_texts.add(candidate_text)
+            candidates.append((strategy, candidate_text, meta))
+            if len(candidates) >= max(1, limit):
+                return candidates
+    return candidates
+
+
 def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, str]]:
     """Create deterministic marked-addition candidates for missing grounding.
 
@@ -5999,7 +6233,7 @@ def run_rewrite_pipeline(
             # Preserve raw data from report JSON for scanners that have it
             scanner_raw = None
             if scanner == "predictability":
-                pred = detect_json.get("predictability", {})
+                pred = detect_json.get("predictability", {}) if isinstance(detect_json, dict) else {}
                 # Use all_sentences (full text + scores) if available,
                 # otherwise fall back to the predictability block
                 all_sents = pred.get("all_sentences")
@@ -7755,6 +7989,15 @@ def run_rewrite_pipeline(
                 "deterministic_source_integrity_repair",
                 search_source_text,
             ))
+        pruning_candidates = _content_pruning_candidates(
+            search_source_text,
+            original_report_dict,
+            limit=int(_float_env("DRAFTPROOF_CONTENT_PRUNING_CANDIDATES", 4.0)),
+        )
+        deterministic_candidates.extend(
+            (strategy, candidate)
+            for strategy, candidate, _meta in pruning_candidates
+        )
         deterministic_candidates.extend(_ai_search_marked_grounding_candidates(search_source_text))
         search_summary = {
             "enabled": True,
@@ -7774,6 +8017,17 @@ def run_rewrite_pipeline(
                 "candidate_limit": len(confirmed_anchor_strategies),
                 "strategies": confirmed_anchor_strategies,
                 "base_candidate_limit": len(base_strategies),
+            },
+            "content_pruning_repair": {
+                "enabled": _env_flag("DRAFTPROOF_CONTENT_PRUNING_REPAIR", True),
+                "candidate_count": len(pruning_candidates),
+                "candidates": [
+                    {
+                        "strategy": strategy,
+                        **meta,
+                    }
+                    for strategy, _candidate, meta in pruning_candidates
+                ],
             },
         }
         if search_source_repairs:

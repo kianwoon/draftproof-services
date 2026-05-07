@@ -576,12 +576,13 @@ def render_rewrite_report(
             if isinstance(item, dict)
         }
         if targets:
-            lines.append("| Claim | Query | Candidate Sources |")
-            lines.append("|-------|-------|-------------------|")
+            lines.append("| Claim | Confidence | Query | Candidate Sources |")
+            lines.append("|-------|------------|-------|-------------------|")
             for target in targets[:8]:
                 claim = str(target.get("claim") or "").replace("|", "·")
                 query = str(target.get("query") or "").replace("|", "·")
                 result = results_by_claim.get(target.get("id")) or {}
+                confidence = str(result.get("source_confidence") or "-").replace("_", " ")
                 source_links = []
                 for source in (result.get("sources") or [])[:3]:
                     title = str(source.get("title") or source.get("url") or "source").replace("|", "·")
@@ -591,7 +592,7 @@ def render_rewrite_report(
                     elif title:
                         source_links.append(title)
                 sources = "<br>".join(source_links) if source_links else "-"
-                lines.append(f"| {claim[:220]} | `{query[:180]}` | {sources} |")
+                lines.append(f"| {claim[:220]} | `{confidence}` | `{query[:180]}` | {sources} |")
             lines.append("")
         policy = source_search.get("policy") or []
         if policy:

@@ -117,6 +117,7 @@ from rewrite_pipeline import (
     _human_signal_amplification_prompt,
     _author_reasoning_amplification_prompt,
     _score_human_amplification_candidate,
+    _content_pruning_candidates,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
@@ -124,6 +125,7 @@ from rewrite_pipeline import (
     _source_grounding_claim_targets,
     _source_grounding_query,
     _normalize_tavily_results,
+    _source_result_confidence,
     _build_source_grounding_search_layer,
     _confirmed_author_anchor_brief,
     _confirmed_anchor_echo_reason,
@@ -2793,6 +2795,11 @@ assert_test(
     and normalized_tavily[0]["claim_keyword_overlap"],
     "tavily results normalize with relevance metadata",
 )
+assert_test(
+    _source_result_confidence(normalized_tavily) in {"strong", "moderate"}
+    and _source_result_confidence([]) == "none",
+    "source search assigns confidence before generation can use results",
+)
 previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
 previous_tavily_key = os.environ.get("TAVILY_API_KEY")
 try:
@@ -2826,6 +2833,24 @@ assert_test(
     and source_layer.get("auto_apply") is False
     and any("must not be converted into author-owned" in item for item in source_layer.get("policy", [])),
     "source grounding search is optional and cannot fabricate author-owned context",
+)
+pruning_source = (
+    "Students need structure because education can be confusing. This point is useful for the essay.\n\n"
+    "Technology is changing education rapidly. It is important to consider that students can learn from many different sources. "
+    "This creates a significant challenge because information can be useful, confusing, accurate, inaccurate, ethical, or not ethical. "
+    "This shows that education should support students in many ways and teachers should help them develop important skills.\n\n"
+    "Teachers can ask students to compare sources before they use them in a draft. That keeps the focus on judgement, not only access."
+)
+pruning_candidates = _content_pruning_candidates(
+    pruning_source,
+    {"rewrite_edit_briefs": []},
+    limit=3,
+)
+assert_test(
+    pruning_candidates
+    and any(meta.get("operation") in {"delete_paragraph", "compress_paragraph"} for _s, _c, meta in pruning_candidates)
+    and all("Technology is changing education rapidly" not in candidate or meta.get("operation") == "compress_paragraph" for _s, candidate, meta in pruning_candidates),
+    "content pruning generates deletion/compression candidates for generic score-drag paragraphs",
 )
 valid_anchor_answers, rejected_anchor_answers = _validate_author_evidence_answers(
     intake_layer,
