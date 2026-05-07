@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, buildApiEventUrl } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
 
 const TIER_CONFIG = {
@@ -596,6 +597,7 @@ export default function Report() {
   const [rewriteJob, setRewriteJob] = useState(null);
   const [rewriteLoading, setRewriteLoading] = useState(false);
   const [rewriteCanceling, setRewriteCanceling] = useState(false);
+  const [showCancelRewriteDialog, setShowCancelRewriteDialog] = useState(false);
   const [rewriteError, setRewriteError] = useState(null);
   const [rewriteStartedHere, setRewriteStartedHere] = useState(false);
   const [rewriteSseUnavailable, setRewriteSseUnavailable] = useState(false);
@@ -967,9 +969,14 @@ export default function Report() {
     event?.preventDefault();
     event?.stopPropagation();
     if (!currentRewrite?.id || !rewriteInProgress || rewriteCanceling) return;
-    const confirmed = window.confirm('Cancel this rewrite and release the reserved tokens?');
-    if (!confirmed) return;
+    setShowCancelRewriteDialog(true);
+  };
 
+  const confirmCancelRewrite = async () => {
+    if (!currentRewrite?.id || !rewriteInProgress || rewriteCanceling) {
+      setShowCancelRewriteDialog(false);
+      return;
+    }
     setRewriteCanceling(true);
     setRewriteError(null);
     try {
@@ -977,6 +984,7 @@ export default function Report() {
       closeRewriteEventSource();
       syncRewriteJob(data);
       setRewriteStartedHere(false);
+      setShowCancelRewriteDialog(false);
       refreshBalance?.();
     } catch (err) {
       setRewriteError(err.response?.data?.detail || 'Failed to cancel rewrite');
@@ -1245,6 +1253,16 @@ export default function Report() {
         title={rewriteNotice?.title}
         message={rewriteNotice?.message}
         onClose={() => setRewriteNotice(null)}
+      />
+      <ConfirmDialog
+        open={showCancelRewriteDialog}
+        title="Cancel this rewrite?"
+        message="DraftProof will stop tracking this rewrite, release the reserved tokens, and ignore any late worker result for this job."
+        confirmLabel={rewriteCanceling ? 'Canceling...' : 'Cancel rewrite'}
+        onConfirm={confirmCancelRewrite}
+        onCancel={() => {
+          if (!rewriteCanceling) setShowCancelRewriteDialog(false);
+        }}
       />
       <div className="container">
         {/* Back link */}
