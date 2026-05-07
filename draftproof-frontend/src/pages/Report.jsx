@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getReport, createRewrite, getRewriteStatus, getRewriteReport, buildApiEventUrl } from '../api/draftproofApi';
+import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, buildApiEventUrl } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
+import { useAuth } from '../context/AuthContext';
 
 const TIER_CONFIG = {
   low:      { label: 'Low Risk',      color: '#22c55e', bg: '#f0fdf4', icon: 'M12 15.5l-3-3 1.4-1.4L12 12.6l4.6-4.6L18 9.5z' },
@@ -514,6 +515,7 @@ function formatRewriteStatus(status) {
   if (status === 'processing') return 'Rewriting AI sections';
   if (status === 'retrying') return 'Retrying rewrite';
   if (status === 'completed') return 'Rewrite complete';
+  if (status === 'canceled') return 'Rewrite canceled';
   if (status === 'failed') return 'Rewrite failed';
   return 'Rewriting AI sections';
 }
@@ -586,12 +588,14 @@ function isReviewOnlyRewriteMessage(message) {
 
 export default function Report() {
   const { id } = useParams();
+  const { refreshBalance } = useAuth();
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedIssue, setExpandedIssue] = useState(null);
   const [rewriteJob, setRewriteJob] = useState(null);
   const [rewriteLoading, setRewriteLoading] = useState(false);
+  const [rewriteCanceling, setRewriteCanceling] = useState(false);
   const [rewriteError, setRewriteError] = useState(null);
   const [rewriteStartedHere, setRewriteStartedHere] = useState(false);
   const [rewriteSseUnavailable, setRewriteSseUnavailable] = useState(false);
@@ -620,7 +624,7 @@ export default function Report() {
   const syncRewriteJob = useCallback((job) => {
     const normalizedJob = normalizeRewriteJob(job);
     setRewriteJob(normalizedJob);
-    if (normalizedJob?.status && normalizedJob.status !== 'failed') {
+    if (normalizedJob?.status && !['failed', 'canceled'].includes(normalizedJob.status)) {
       setRewriteError(null);
     }
     if (normalizedJob?.status === 'completed') {
@@ -640,6 +644,9 @@ export default function Report() {
         } else {
           setRewriteError(failedMessage);
         }
+      }
+      if (data.status === 'canceled') {
+        setRewriteError(null);
       }
       return data;
     } catch (err) {
@@ -683,7 +690,7 @@ export default function Report() {
         }
         closeRewriteEventSource();
       }
-      if (data.status === 'completed') {
+      if (data.status === 'completed' || data.status === 'canceled') {
         closeRewriteEventSource();
       }
     });
@@ -910,7 +917,7 @@ export default function Report() {
     : null;
   const rewriteElapsedLabel = rewriteElapsedSeconds > 0 ? formatElapsed(rewriteElapsedSeconds) : null;
   const showRewriteProgress = !hasRewriteResult && (
-    rewriteStartedHere || rewriteInProgress || rewriteLoading || rewriteError
+    rewriteStartedHere || rewriteInProgress || rewriteLoading || rewriteCanceling || rewriteError
   );
 
   const handleRewrite = async (event) => {
@@ -953,6 +960,28 @@ export default function Report() {
       }
     } finally {
       setRewriteLoading(false);
+    }
+  };
+
+  const handleCancelRewrite = async (event) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (!currentRewrite?.id || !rewriteInProgress || rewriteCanceling) return;
+    const confirmed = window.confirm('Cancel this rewrite and release the reserved tokens?');
+    if (!confirmed) return;
+
+    setRewriteCanceling(true);
+    setRewriteError(null);
+    try {
+      const { data } = await cancelRewrite(currentRewrite.id);
+      closeRewriteEventSource();
+      syncRewriteJob(data);
+      setRewriteStartedHere(false);
+      refreshBalance?.();
+    } catch (err) {
+      setRewriteError(err.response?.data?.detail || 'Failed to cancel rewrite');
+    } finally {
+      setRewriteCanceling(false);
     }
   };
 
@@ -1263,9 +1292,19 @@ export default function Report() {
                   type="button"
                   className="rewrite-btn"
                   onClick={handleRewrite}
-                  disabled={rewriteLoading}
+                  disabled={rewriteLoading || rewriteCanceling}
                 >
                   {rewriteLoading ? 'Starting rewrite...' : rewriteInProgress ? 'Resume Rewrite' : 'Rewrite AI Sections'}
+                </button>
+              )}
+              {rewriteInProgress && currentRewrite?.id && (
+                <button
+                  type="button"
+                  className="rewrite-btn rewrite-cancel-btn"
+                  onClick={handleCancelRewrite}
+                  disabled={rewriteCanceling}
+                >
+                  {rewriteCanceling ? 'Canceling...' : 'Cancel Rewrite'}
                 </button>
               )}
             </div>

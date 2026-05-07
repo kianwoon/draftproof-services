@@ -180,7 +180,7 @@ def update_rewrite_status(
         sets, vals = _fields(include_progress)
         with get_conn() as conn:
             conn.cursor().execute(
-                f"UPDATE rewrite_jobs SET {', '.join(sets)} WHERE id = %s",
+                f"UPDATE rewrite_jobs SET {', '.join(sets)} WHERE id = %s AND status <> 'canceled'",
                 vals + [job_id],
             )
 

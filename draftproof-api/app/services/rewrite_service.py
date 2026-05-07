@@ -197,7 +197,7 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         await session.commit()
 
     from app.services.celery_client import run_rewrite
-    run_rewrite.delay(str(job_id), scan_id)
+    run_rewrite.apply_async(args=[str(job_id), scan_id], task_id=str(job_id))
 
     return {
         "id": str(job_id),
@@ -206,6 +206,46 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         "progress_percent": 0,
         "progress_message": "Queued",
     }
+
+
+async def cancel_rewrite(rewrite_id: str, user_id: str) -> dict | None:
+    """Cancel an active rewrite and release its reserved credits."""
+    rewrite_uuid = uuid.UUID(rewrite_id)
+    uid = uuid.UUID(user_id)
+    async with async_session() as session:
+        result = await session.execute(
+            select(RewriteJob)
+            .where(RewriteJob.id == rewrite_uuid, RewriteJob.user_id == uid)
+            .with_for_update()
+        )
+        job = result.scalar_one_or_none()
+        if not job:
+            return None
+
+        if job.status in _ACTIVE_REWRITE_STATUSES:
+            job.status = "canceled"
+            job.error = "Rewrite canceled by user"
+            job.progress_message = "Rewrite canceled"
+            job.completed_at = datetime.now(timezone.utc)
+            await _release_active_reservation(session, job.id)
+            await session.commit()
+            await session.refresh(job)
+        else:
+            await session.commit()
+
+    try:
+        from app.services.celery_client import celery_app
+
+        await asyncio.to_thread(
+            celery_app.control.revoke,
+            rewrite_id,
+            terminate=True,
+            signal="SIGTERM",
+        )
+    except Exception as exc:
+        logger.info("Rewrite cancel requested; worker revoke was not applied for %s: %s", rewrite_id, exc)
+
+    return await get_rewrite(rewrite_id, user_id)
 
 
 async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | None:

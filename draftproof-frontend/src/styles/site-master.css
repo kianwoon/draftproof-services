@@ -3641,6 +3641,18 @@ th {
   background: #4338ca;
 }
 
+.rewrite-cancel-btn {
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.rewrite-cancel-btn:hover:not(:disabled) {
+  color: #7f1d1d;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
 .rewrite-btn:disabled {
   background: #94a3b8;
   cursor: wait;

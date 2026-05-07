@@ -11,6 +11,7 @@ from app.routes.auth import get_current_user
 
 router = APIRouter()
 _REDIS_STREAM_ID_RE = re.compile(r"^\d+-\d+$")
+_TERMINAL_REWRITE_STATUSES = ("completed", "failed", "canceled")
 
 
 @router.post("/", response_model=RewriteOut)
@@ -34,6 +35,14 @@ async def create_rewrite(req: RewriteCreateRequest, user: dict = Depends(get_cur
 @router.get("/{rewrite_id}", response_model=RewriteOut)
 async def get_rewrite(rewrite_id: str, user: dict = Depends(get_current_user)):
     result = await rewrite_service.get_rewrite(rewrite_id, user_id=user["id"])
+    if not result:
+        raise HTTPException(status_code=404, detail="Rewrite not found")
+    return RewriteOut(**result)
+
+
+@router.post("/{rewrite_id}/cancel", response_model=RewriteOut)
+async def cancel_rewrite(rewrite_id: str, user: dict = Depends(get_current_user)):
+    result = await rewrite_service.cancel_rewrite(rewrite_id, user_id=user["id"])
     if not result:
         raise HTTPException(status_code=404, detail="Rewrite not found")
     return RewriteOut(**result)
@@ -95,7 +104,7 @@ async def stream_rewrite_events(
         last_payload = data
         last_db_check = asyncio.get_running_loop().time()
 
-        if result["status"] in ("completed", "failed"):
+        if result["status"] in _TERMINAL_REWRITE_STATUSES:
             return
 
         while True:
@@ -119,7 +128,7 @@ async def stream_rewrite_events(
                         if data != last_payload:
                             yield f"id: {event_id}\nevent: progress\ndata: {data}\n\n"
                             last_payload = data
-                        if current_payload.get("status") in ("completed", "failed"):
+                        if current_payload.get("status") in _TERMINAL_REWRITE_STATUSES:
                             result = await rewrite_service.get_rewrite(rewrite_id, user_id=user["id"])
                             if result:
                                 current_payload = _payload_from_rewrite(result)
@@ -142,7 +151,7 @@ async def stream_rewrite_events(
                     last_payload = data
                 last_db_check = now
 
-                if result["status"] in ("completed", "failed"):
+                if result["status"] in _TERMINAL_REWRITE_STATUSES:
                     break
 
             if redis_unavailable:

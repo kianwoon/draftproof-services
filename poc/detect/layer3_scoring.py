@@ -1076,8 +1076,8 @@ def estimate_unsupported_claim_risk(
     if ratio >= 0.20:
         return 0.55
     if ratio >= 0.10:
-        return 0.65
-    return 0.80
+        return 0.40
+    return 0.25
 
 
 class Layer3Scorer:

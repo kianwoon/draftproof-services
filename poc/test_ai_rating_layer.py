@@ -12,6 +12,7 @@ from detect.layer3_scoring import (
     Tier,
     build_layer3_input_from_text,
     derive_authorship_rating,
+    estimate_unsupported_claim_risk,
 )
 from detect.transformation import (
     TransformationFeatures,
@@ -54,6 +55,18 @@ for score, tier, code, label in cases:
     assert_equal(rating["label"], label, f"{score} label")
     assert_equal(rating["is_verdict"], False, "rating is not a verdict")
     assert_true("not proof" in rating["disclaimer"], "rating carries authorship disclaimer")
+
+assert_true(
+    estimate_unsupported_claim_risk("Maybe. Perhaps. This depends on context.") <= 0.40,
+    "unsupported-claim risk drops for low-assertion uncited text",
+)
+assert_true(
+    estimate_unsupported_claim_risk(
+        "Education is changing. Students are online. Teachers need to guide learning. "
+        "Schools should rethink assessment."
+    ) >= 0.80,
+    "unsupported-claim risk remains high for dense uncited assertions",
+)
 
 low_signal = derive_authorship_rating(
     ai_score=0.12,

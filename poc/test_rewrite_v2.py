@@ -2890,6 +2890,25 @@ assert_test(
     and _source_result_confidence([]) == "none",
     "source search assigns confidence before generation can use results",
 )
+irrelevant_high_provider_tavily = _normalize_tavily_results(
+    {
+        "results": [
+            {
+                "title": "Opera performance calendar",
+                "url": "https://example.com/events",
+                "content": "Application deadline, auditions, venue details, and ticket information.",
+                "score": 0.99,
+            },
+        ]
+    },
+    "Students evaluate online information and compare sources.",
+    limit=1,
+)
+assert_test(
+    irrelevant_high_provider_tavily[0]["relevance_score"] < 0.10
+    and _source_result_confidence(irrelevant_high_provider_tavily) == "very_weak",
+    "source search does not treat high provider score with zero claim overlap as usable evidence",
+)
 pruning_source = (
     "Students need structure because education can be confusing. This point is useful for the essay.\n\n"
     "Technology is changing education rapidly. It is important to consider that students can learn from many different sources. "
@@ -3063,6 +3082,33 @@ assert_test(
     and dominant_blocker_status["reason"] == "dominant_blocker_not_reduced"
     and dominant_blocker_clear["cleared"],
     "dominant blocker gate blocks weak wins while unsupported/generic blockers stay unchanged",
+)
+dominant_source_clear = _dominant_blocker_gate_status(
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 90.0,
+                "source_grounding_risk": 100.0,
+                "broad_claim_risk": 85.0,
+            },
+            "ai_components": {"generic_assertion_risk": 65.0, "topk_pattern": 87.0},
+        }
+    },
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 90.0,
+                "source_grounding_risk": 70.0,
+                "broad_claim_risk": 75.0,
+            },
+            "ai_components": {"generic_assertion_risk": 65.0, "topk_pattern": 87.0},
+        }
+    },
+)
+assert_test(
+    dominant_source_clear["cleared"]
+    and dominant_source_clear["drops"]["source_grounding_risk"] == 30.0,
+    "dominant blocker gate counts source/broad blocker movement, not only unsupported claims",
 )
 assert_test(
     _ai_search_adaptive_stop_reason(
@@ -4403,6 +4449,39 @@ dominant_moving_blocker_override = _dominant_blocker_safe_progress_override(
 assert_test(
     dominant_moving_blocker_override.get("allowed") is True,
     "dominant blocker gate allows safe progress when dominant blocker moves",
+)
+topk_moving_blocker_override = _dominant_blocker_safe_progress_override(
+    {
+        "required": True,
+        "cleared": False,
+        "active_keys": ["unsupported_claim_risk", "source_grounding_risk", "broad_claim_risk", "topk_pattern"],
+        "drops": {
+            "unsupported_claim_risk": 0.0,
+            "source_grounding_risk": 0.0,
+            "broad_claim_risk": 0.0,
+            "topk_pattern": 0.75,
+        },
+    },
+    {
+        "human_delta": 5.0,
+        "ai_authorship_delta": 2.0,
+        "ai_transformation_delta": 5.0,
+        "ai_authorship_regression_blocked": False,
+        "critical_high_regressed": False,
+        "review_burden_regressed": False,
+        "weighted_severity_regressed": False,
+    },
+    {"active_drop": 0.75, "active_regression": 0.0},
+    ai_score_regressed=False,
+    finding_delta=-1,
+    review_burden_delta=-1,
+    weighted_severity_delta=-2,
+    critical_high_delta=0,
+)
+assert_test(
+    topk_moving_blocker_override.get("allowed") is True
+    and topk_moving_blocker_override.get("dominant_drop_allowed") is True,
+    "dominant blocker gate allows safe progress when top-k moves while source/unsupported remain pinned",
 )
 target_breakthrough_stale_blocker_override = _dominant_blocker_safe_progress_override(
     {

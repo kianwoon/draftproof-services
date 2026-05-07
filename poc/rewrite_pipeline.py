@@ -1036,6 +1036,10 @@ _SOURCE_SEARCH_STOPWORDS = {
     "through", "with", "within", "without", "would", "when", "where", "which",
     "while", "will", "were", "what", "who", "why", "how", "they", "them",
 }
+_SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS = {
+    "education", "evidence", "information", "learning", "report", "research",
+    "school", "schools", "student", "students", "study", "teacher", "teachers",
+}
 
 _SOURCE_SEARCH_CREDIBLE_TERMS = "evidence research education study report"
 _SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS = {
@@ -1288,18 +1292,34 @@ def _normalize_tavily_results(
         content = re.sub(r"\s+", " ", str(item.get("content") or "").strip())
         haystack = f"{title} {content}".lower()
         overlap = sorted(term for term in claim_terms if term in haystack)
+        substantive_overlap = [
+            term for term in overlap
+            if term not in _SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS
+        ]
         try:
             provider_score = float(item.get("score") or 0.0)
         except (TypeError, ValueError):
             provider_score = 0.0
+        overlap_count = len(overlap)
+        substantive_count = len(substantive_overlap)
+        overlap_ratio = substantive_count / max(len(claim_terms), 1)
+        if claim_terms and substantive_count == 0:
+            relevance_score = min(provider_score * 0.10, 0.08)
+        else:
+            relevance_score = (
+                provider_score * 0.45
+                + min(1.0, overlap_ratio) * 0.45
+                + min(substantive_count, 3) * 0.03
+            )
         normalized.append({
             "title": title[:180],
             "url": url,
             "snippet": content[:360],
             "provider_score": round(provider_score, 4),
             "claim_keyword_overlap": overlap[:8],
+            "substantive_claim_keyword_overlap": substantive_overlap[:8],
             "source_quality": _source_search_quality_label(url),
-            "relevance_score": round(provider_score + min(len(overlap), 8) * 0.05, 4),
+            "relevance_score": round(min(1.0, relevance_score), 4),
         })
     normalized.sort(key=lambda item: item.get("relevance_score", 0), reverse=True)
     return normalized[:max(1, limit)]
@@ -1311,6 +1331,12 @@ def _source_result_confidence(sources: list[dict]) -> str:
     best = sources[0]
     quality = str(best.get("source_quality") or "unknown")
     score = float(best.get("relevance_score") or 0.0)
+    overlap = best.get("claim_keyword_overlap")
+    overlap_count = len(overlap) if isinstance(overlap, list) else 0
+    substantive_overlap = best.get("substantive_claim_keyword_overlap")
+    substantive_count = len(substantive_overlap) if isinstance(substantive_overlap, list) else overlap_count
+    if substantive_count <= 0:
+        return "very_weak"
     if quality == "high" and score >= 0.45:
         return "strong"
     if quality in {"high", "medium_high"} and score >= 0.35:
@@ -2163,7 +2189,7 @@ def _dominant_blocker_gate_status(original_report: dict | None, candidate_report
         key.strip()
         for key in os.environ.get(
             "DRAFTPROOF_DOMINANT_BLOCKER_KEYS",
-            "unsupported_claim_risk,generic_assertion_risk",
+            "unsupported_claim_risk,source_grounding_risk,broad_claim_risk,topk_pattern,generic_assertion_risk",
         ).split(",")
         if key.strip()
     ]
@@ -2225,7 +2251,7 @@ def _dominant_blocker_safe_progress_override(
         key.strip()
         for key in os.environ.get(
             "DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_KEYS",
-            "unsupported_claim_risk,source_grounding_risk",
+            "unsupported_claim_risk,source_grounding_risk,broad_claim_risk,topk_pattern,generic_assertion_risk",
         ).split(",")
         if key.strip()
     }
@@ -2253,7 +2279,7 @@ def _dominant_blocker_safe_progress_override(
     )
     min_dominant_drop = _float_env(
         "DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_DOMINANT_DROP",
-        1.0,
+        0.5,
     )
     target_breakthrough = bool(authenticity_status.get("crosses_target_human"))
     dominant_drop_allowed = bool(
