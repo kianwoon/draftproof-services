@@ -124,6 +124,7 @@ from rewrite_pipeline import (
     _post_safe_win_target_push_candidates,
     _human_signal_construction_candidates,
     _author_stance_thread_candidates,
+    _human_target_ai_search_status,
     _dominant_blocker_gate_status,
     _dominant_blocker_safe_progress_override,
     _ai_search_adaptive_stop_reason,
@@ -3109,6 +3110,48 @@ assert_test(
     dominant_source_clear["cleared"]
     and dominant_source_clear["drops"]["source_grounding_risk"] == 30.0,
     "dominant blocker gate counts source/broad blocker movement, not only unsupported claims",
+)
+human_target_search_status = _human_target_ai_search_status(
+    {
+        "scan_intelligence": {
+            "transformation": {
+                "contribution": {
+                    "human_contribution_ratio": 73,
+                    "ai_transformation_ratio": 27,
+                }
+            }
+        },
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 80.0,
+                "source_grounding_risk": 70.0,
+                "broad_claim_risk": 65.0,
+            },
+            "ai_components": {"topk_pattern": 77.0, "generic_assertion_risk": 65.0},
+        },
+    }
+)
+human_target_reached_status = _human_target_ai_search_status(
+    {
+        "scan_intelligence": {
+            "transformation": {
+                "contribution": {
+                    "human_contribution_ratio": 82,
+                    "ai_transformation_ratio": 18,
+                }
+            }
+        },
+        "ai_risk_badge": {
+            "writing_components": {"unsupported_claim_risk": 80.0},
+            "ai_components": {"topk_pattern": 77.0},
+        },
+    }
+)
+assert_test(
+    human_target_search_status["active"]
+    and human_target_search_status["reason"] == "human_below_target_with_active_blockers"
+    and not human_target_reached_status["active"],
+    "AI mitigation search stays enabled below AI threshold when Human target is still unmet",
 )
 assert_test(
     _ai_search_adaptive_stop_reason(

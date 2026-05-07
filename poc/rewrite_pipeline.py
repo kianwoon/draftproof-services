@@ -2144,6 +2144,48 @@ def _blocker_scores(report_dict: dict | None) -> dict:
     }
 
 
+def _human_target_ai_search_status(report_dict: dict | None) -> dict:
+    """Allow mitigation search below the AI-risk threshold when Human is still below target."""
+    if not _env_flag("DRAFTPROOF_AI_SEARCH_FOR_HUMAN_TARGET", True):
+        return {"active": False, "reason": "disabled"}
+    contribution = _contribution_scores(report_dict)
+    human = contribution.get("human")
+    target = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    if not isinstance(human, (int, float)):
+        return {"active": False, "reason": "missing_human_score", "target_human": target}
+    if float(human) >= target:
+        return {
+            "active": False,
+            "reason": "target_reached",
+            "current_human": round(float(human), 3),
+            "target_human": target,
+        }
+    blockers = _blocker_scores(report_dict)
+    blocker_threshold = _float_env("DRAFTPROOF_AI_SEARCH_FOR_HUMAN_TARGET_BLOCKER_THRESHOLD", 65.0)
+    active_blockers = [
+        key for key, value in blockers.items()
+        if isinstance(value, (int, float)) and float(value) >= blocker_threshold
+    ]
+    if not active_blockers:
+        return {
+            "active": False,
+            "reason": "no_active_blockers",
+            "current_human": round(float(human), 3),
+            "target_human": target,
+            "blocker_threshold": blocker_threshold,
+        }
+    return {
+        "active": True,
+        "reason": "human_below_target_with_active_blockers",
+        "current_human": round(float(human), 3),
+        "target_human": target,
+        "human_gap": round(target - float(human), 3),
+        "blocker_threshold": blocker_threshold,
+        "active_blockers": active_blockers,
+        "blockers": blockers,
+    }
+
+
 def _blocker_elimination_status(original_report: dict | None, candidate_report: dict | None) -> dict:
     original = _blocker_scores(original_report)
     candidate = _blocker_scores(candidate_report)
@@ -9451,11 +9493,20 @@ def run_rewrite_pipeline(
         and not allow_auto_with_author_gaps
         and not authenticity_mitigation_selected
     )
+    human_target_search_status = _human_target_ai_search_status(original_report_dict)
+    ai_search_reference_meets_threshold = bool(
+        isinstance(ai_search_reference, (int, float))
+        and ai_search_reference >= ai_first_required_min_ai
+    )
+    ai_search_reference_allowed = bool(
+        ai_search_reference_meets_threshold
+        or human_target_search_status.get("active")
+    )
     if (
         ai_search_enabled
         and not ai_search_blocked_by_author_gaps
         and isinstance(ai_search_reference, (int, float))
-        and ai_search_reference >= ai_first_required_min_ai
+        and ai_search_reference_allowed
     ):
         ai_search_target_score = round(max(0.0, ai_search_reference - ai_first_min_drop), 2)
         search_started = time.time()
@@ -9534,6 +9585,8 @@ def run_rewrite_pipeline(
             "llm_candidate_limit": len(strategies),
             "required_ai_drop": ai_first_min_drop,
             "target_ai_score": ai_search_target_score,
+            "reference_ai_meets_threshold": ai_search_reference_meets_threshold,
+            "human_target_search": human_target_search_status,
             "llm_calls": 0,
             "selected": False,
             "candidates": [],
@@ -10197,7 +10250,11 @@ def run_rewrite_pipeline(
             _evaluate_ai_search_candidate(strategy, candidate, deterministic=True)
             if index < min_deterministic_scans:
                 continue
-            early_stop_reason = _ai_search_fast_accept_reason(ai_search_reference, best_ai)
+            early_stop_reason = (
+                _ai_search_fast_accept_reason(ai_search_reference, best_ai)
+                if _best_ai_search_selectable()
+                else ""
+            )
             if early_stop_reason:
                 search_summary["early_stop"] = {
                     "phase": "deterministic_candidates",
