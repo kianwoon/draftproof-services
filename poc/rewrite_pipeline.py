@@ -1679,7 +1679,7 @@ def _build_source_grounding_search_layer(
 ) -> dict:
     if not _source_search_enabled():
         return {}
-    max_queries = max(1, int(max_queries or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_QUERIES", 5.0)))
+    max_queries = max(1, int(max_queries or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_QUERIES", 2.0)))
     max_results = max(1, int(max_results or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_RESULTS", 3.0)))
     targets = _source_grounding_claim_targets(text, report_dict, limit=max_queries)
     layer = {
@@ -9651,6 +9651,21 @@ def run_rewrite_pipeline(
         best_human_shift_rank: tuple = (-1, -9999.0, -9999.0)
         best_blocked_human_candidate: dict | None = None
         best_blocked_human_rank: tuple | None = None
+        search_budget = {
+            "max_seconds": _float_env(
+                "DRAFTPROOF_AI_SEARCH_MAX_SECONDS",
+                float(_adaptive_budget_default(search_source_text, 180, 300)),
+            ),
+            "max_llm_calls": int(_float_env(
+                "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
+                float(_adaptive_budget_default(search_source_text, 4, 5)),
+            )),
+            "max_candidate_scans": int(_float_env(
+                "DRAFTPROOF_AI_SEARCH_MAX_CANDIDATE_SCANS",
+                float(_adaptive_budget_default(search_source_text, 24, 36)),
+            )),
+        }
+        search_summary["budget"] = search_budget
 
         def _best_ai_search_selectable() -> bool:
             return bool(best_strategy and best_selection_status.get("selectable"))
@@ -9671,6 +9686,57 @@ def run_rewrite_pipeline(
             }
 
         adaptive_stop_reason = ""
+
+        def _search_budget_exhausted(phase: str, *, before_llm: bool = False) -> bool:
+            nonlocal adaptive_stop_reason
+            if adaptive_stop_reason and str(adaptive_stop_reason).startswith("budget_exhausted"):
+                return True
+            elapsed = time.time() - search_started
+            reason = ""
+            if elapsed >= float(search_budget["max_seconds"]):
+                reason = "budget_exhausted_time"
+            elif before_llm and int(search_summary.get("llm_calls") or 0) >= int(search_budget["max_llm_calls"]):
+                reason = "budget_exhausted_llm_calls"
+            elif len(search_summary.get("candidates", [])) >= int(search_budget["max_candidate_scans"]):
+                reason = "budget_exhausted_candidate_scans"
+            if not reason:
+                return False
+            adaptive_stop_reason = reason
+            search_summary["budget_exhausted"] = {
+                "phase": phase,
+                "reason": reason,
+                "seconds": round(elapsed, 3),
+                "llm_calls": int(search_summary.get("llm_calls") or 0),
+                "candidate_scans": len(search_summary.get("candidates", [])),
+                **search_budget,
+                "selected_strategy": best_strategy,
+                "has_selectable_candidate": _best_ai_search_selectable(),
+            }
+            search_summary["adaptive_stop"] = {
+                "phase": phase,
+                "reason": reason,
+                "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                "selected_strategy": best_strategy,
+                "selection_status": best_selection_status,
+            }
+            return True
+
+        def _budget_gateway(gateway: LLMGateway, phase: str) -> LLMGateway:
+            original_chat = gateway.chat
+
+            def chat_with_budget(*args, **kwargs):
+                if _search_budget_exhausted(phase, before_llm=True):
+                    # Most call sites increment llm_calls immediately before chat().
+                    # If the budget blocks the call, roll that optimistic count back.
+                    search_summary["llm_calls"] = max(0, int(search_summary.get("llm_calls") or 0) - 1)
+                    budget_record = search_summary.get("budget_exhausted")
+                    if isinstance(budget_record, dict):
+                        budget_record["llm_calls"] = int(search_summary.get("llm_calls") or 0)
+                    raise RuntimeError(search_summary["budget_exhausted"]["reason"])
+                return original_chat(*args, **kwargs)
+
+            gateway.chat = chat_with_budget  # type: ignore[method-assign]
+            return gateway
 
         def _maybe_adaptive_stop(phase: str) -> bool:
             nonlocal adaptive_stop_reason
@@ -9716,6 +9782,13 @@ def run_rewrite_pipeline(
             }
             if extra:
                 candidate_eval.update(extra)
+            if _search_budget_exhausted("candidate_scan"):
+                if not search_summary.get("budget_exhausted_candidate_recorded"):
+                    candidate_eval["reason"] = search_summary["budget_exhausted"]["reason"]
+                    candidate_eval["passed_local_checks"] = False
+                    search_summary["candidates"].append(candidate_eval)
+                    search_summary["budget_exhausted_candidate_recorded"] = True
+                return
             if not candidate:
                 candidate_eval["reason"] = "empty_candidate"
                 search_summary["candidates"].append(candidate_eval)
@@ -10243,11 +10316,15 @@ def run_rewrite_pipeline(
             min_deterministic_scans = len(deterministic_candidates) or 1
         early_stop_reason = ""
         for index, (strategy, candidate) in enumerate(deterministic_candidates, start=1):
+            if _search_budget_exhausted("deterministic_candidates"):
+                break
             report_progress(
                 min(79, 76 + index),
                 f"Scanning deterministic AI mitigation candidate {index}/{len(deterministic_candidates)}",
             )
             _evaluate_ai_search_candidate(strategy, candidate, deterministic=True)
+            if adaptive_stop_reason:
+                break
             if index < min_deterministic_scans:
                 continue
             early_stop_reason = (
@@ -10269,6 +10346,13 @@ def run_rewrite_pipeline(
 
         def _run_post_safe_win_target_push(trigger_phase: str) -> None:
             nonlocal adaptive_stop_reason
+            if str(adaptive_stop_reason).startswith("budget_exhausted"):
+                search_summary["post_safe_win_target_push"] = {
+                    "enabled": False,
+                    "reason": adaptive_stop_reason,
+                    "trigger_phase": trigger_phase,
+                }
+                return
             if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True):
                 return
             if not _best_ai_search_selectable() or not isinstance(best_report, dict):
@@ -10521,6 +10605,7 @@ def run_rewrite_pipeline(
                             os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
                         )),
                     ))
+                    push_gateway = _budget_gateway(push_gateway, "post_safe_win_target_push_llm")
                 except Exception as exc:
                     summary["llm_target_push"]["reason"] = f"gateway_error {exc}"
                     push_gateway = None
@@ -10969,6 +11054,7 @@ def run_rewrite_pipeline(
                     max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
                     temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.45")),
                 ))
+                gateway = _budget_gateway(gateway, "ai_search_llm")
                 paragraph_search_enabled = os.environ.get(
                     "DRAFTPROOF_PARAGRAPH_COMPONENT_SEARCH",
                     "1",
@@ -10979,7 +11065,7 @@ def run_rewrite_pipeline(
                     source_layer = _build_source_grounding_search_layer(
                         component_base_text,
                         original_report_dict,
-                        max_queries=int(_float_env("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TARGETS", 4.0)),
+                        max_queries=int(_float_env("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TARGETS", 2.0)),
                         max_results=int(_float_env("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_MAX_RESULTS", 3.0)),
                     )
                     usable_confidences = {
@@ -11001,7 +11087,7 @@ def run_rewrite_pipeline(
                         and claim_targets_by_id.get(result.get("claim_id"))
                     ][: max(0, int(_float_env(
                         "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TARGETS",
-                        float(_adaptive_budget_default(component_base_text, 2, 4)),
+                        float(_adaptive_budget_default(component_base_text, 1, 2)),
                     )))]
                     source_candidate_count = max(
                         1,
@@ -11871,6 +11957,7 @@ def run_rewrite_pipeline(
                             max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
                             temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_TEMPERATURE", "0.45")),
                         ))
+                        retry_gateway = _budget_gateway(retry_gateway, "score_feedback_loop")
                     for feedback_index in range(1, feedback_limit + 1):
                         report_progress(
                             min(89, 80 + feedback_index),
