@@ -126,6 +126,8 @@ from rewrite_pipeline import (
     _source_grounding_query,
     _normalize_tavily_results,
     _source_result_confidence,
+    _source_grounding_repair_prompt,
+    _internet_reinforced_reauthor_prompt,
     _build_source_grounding_search_layer,
     _confirmed_author_anchor_brief,
     _confirmed_anchor_echo_reason,
@@ -2800,6 +2802,60 @@ assert_test(
     and _source_result_confidence([]) == "none",
     "source search assigns confidence before generation can use results",
 )
+pruning_source = (
+    "Students need structure because education can be confusing. This point is useful for the essay.\n\n"
+    "Technology is changing education rapidly. It is important to consider that students can learn from many different sources. "
+    "This creates a significant challenge because information can be useful, confusing, accurate, inaccurate, ethical, or not ethical. "
+    "This shows that education should support students in many ways and teachers should help them develop important skills.\n\n"
+    "Teachers can ask students to compare sources before they use them in a draft. That keeps the focus on judgement, not only access."
+)
+source_reinforce_prompt = _source_grounding_repair_prompt(
+    {
+        "paragraph_index": 2,
+        "paragraph_role": "generic_claim_heavy",
+        "claim": "Teachers should help students compare online sources before trusting them.",
+        "target_preview": "Teachers should help students compare online sources before trusting them.",
+    },
+    {
+        "source_confidence": "moderate",
+        "sources": normalized_tavily[:1],
+    },
+    candidate_count=2,
+)
+assert_test(
+    "First try to reinforce" in source_reinforce_prompt
+    and "remove or narrow" in source_reinforce_prompt
+    and "do not create lived experience" in source_reinforce_prompt
+    and "<CANDIDATE_1>" in source_reinforce_prompt,
+    "source-grounding block path reinforces first and narrows/removes unsupported content if source support is weak",
+)
+internet_reauthor_prompt = _internet_reinforced_reauthor_prompt(
+    pruning_source,
+    {
+        "claim_targets": [
+            {
+                "id": "source_claim_1",
+                "paragraph_index": 1,
+                "claim": "Teachers should help students compare online sources.",
+                "paragraph_role": "generic_claim_heavy",
+            }
+        ],
+        "results": [
+            {
+                "claim_id": "source_claim_1",
+                "source_confidence": "moderate",
+                "sources": normalized_tavily[:1],
+            }
+        ],
+    },
+    candidate_count=2,
+)
+assert_test(
+    "Rebuild the document around supported claims" in internet_reauthor_prompt
+    and "remove unsupported generic drag" in internet_reauthor_prompt
+    and "Return exactly 2 complete document candidates" in internet_reauthor_prompt,
+    "internet-reinforced reauthoring rebuilds full document instead of sentence repair",
+)
 previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
 previous_tavily_key = os.environ.get("TAVILY_API_KEY")
 try:
@@ -2833,13 +2889,6 @@ assert_test(
     and source_layer.get("auto_apply") is False
     and any("must not be converted into author-owned" in item for item in source_layer.get("policy", [])),
     "source grounding search is optional and cannot fabricate author-owned context",
-)
-pruning_source = (
-    "Students need structure because education can be confusing. This point is useful for the essay.\n\n"
-    "Technology is changing education rapidly. It is important to consider that students can learn from many different sources. "
-    "This creates a significant challenge because information can be useful, confusing, accurate, inaccurate, ethical, or not ethical. "
-    "This shows that education should support students in many ways and teachers should help them develop important skills.\n\n"
-    "Teachers can ask students to compare sources before they use them in a draft. That keeps the focus on judgement, not only access."
 )
 pruning_candidates = _content_pruning_candidates(
     pruning_source,
