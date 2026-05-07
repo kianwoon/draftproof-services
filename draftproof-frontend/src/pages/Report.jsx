@@ -156,6 +156,18 @@ function buildTransformationSignals(features = {}, suppliedSignals = []) {
     .sort((a, b) => b.value - a.value);
 }
 
+function sortTransformationSignalsForComparison(signals = []) {
+  return [...signals].sort((a, b) => {
+    const labelCompare = String(a.label || '').localeCompare(String(b.label || ''), undefined, {
+      sensitivity: 'base',
+    });
+    if (labelCompare !== 0) return labelCompare;
+    return String(a.key || '').localeCompare(String(b.key || ''), undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
 function buildTransformationSummary(features = {}, signals = []) {
   const humanAnchor = clampPercent(features.human_anchor_score) ?? 0;
   const groundingQuality = 100 - (clampPercent(features.citation_grounding_risk) ?? 0);
@@ -966,73 +978,77 @@ export default function Report() {
     </div>
   );
 
-  const renderTransformationDetails = (variant, pattern, summary, signals, variantAiScore) => (
-    <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
-      <div className="transformation-detail-head">
-        <div>
-          <span>{variant === 'rewritten' ? 'Rewritten Scan' : 'Original Scan'}</span>
-          <strong>{pattern?.label || 'Pattern analysis'}</strong>
-        </div>
-        <em>{formatMetricPercent(variantAiScore, 1)}</em>
-      </div>
-      {summary && (
-        <div className="transformation-ratio-summary">
-          <div className="transformation-ratio-copy">
-            <span>Estimated Contribution</span>
-            <p>{summary.summary}</p>
-            <div className="transformation-adjustment-row">
-              <strong>Calibrated AI risk {summary.adjustedAiRisk}%</strong>
-              <strong>Human anchor discount {summary.humanAnchorDiscount}%</strong>
-              <strong>Calibration confidence {summary.calibrationConfidence}%</strong>
-              <strong>Reporting suppression {summary.reportingSuppression}%</strong>
-            </div>
+  const renderTransformationDetails = (variant, pattern, summary, signals, variantAiScore) => {
+    const comparisonSignals = sortTransformationSignalsForComparison(signals);
+
+    return (
+      <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
+        <div className="transformation-detail-head">
+          <div>
+            <span>{variant === 'rewritten' ? 'Rewritten Scan' : 'Original Scan'}</span>
+            <strong>{pattern?.label || 'Pattern analysis'}</strong>
           </div>
-          <div className="transformation-ratio-bars" aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} human contribution versus AI transformation estimate`}>
-            <div className="transformation-ratio-row">
-              <span>Human Contribution</span>
-              <strong>{summary.humanContribution}%</strong>
-              <div className="transformation-ratio-track">
-                <div className="transformation-ratio-fill is-human" style={{ width: `${summary.humanContribution}%` }} />
+          <em>{formatMetricPercent(variantAiScore, 1)}</em>
+        </div>
+        {summary && (
+          <div className="transformation-ratio-summary">
+            <div className="transformation-ratio-copy">
+              <span>Estimated Contribution</span>
+              <p>{summary.summary}</p>
+              <div className="transformation-adjustment-row">
+                <strong>Calibrated AI risk {summary.adjustedAiRisk}%</strong>
+                <strong>Human anchor discount {summary.humanAnchorDiscount}%</strong>
+                <strong>Calibration confidence {summary.calibrationConfidence}%</strong>
+                <strong>Reporting suppression {summary.reportingSuppression}%</strong>
               </div>
             </div>
-            <div className="transformation-ratio-row">
-              <span>AI Transformation</span>
-              <strong>{summary.aiTransformation}%</strong>
-              <div className="transformation-ratio-track">
-                <div className="transformation-ratio-fill is-ai" style={{ width: `${summary.aiTransformation}%` }} />
+            <div className="transformation-ratio-bars" aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} human contribution versus AI transformation estimate`}>
+              <div className="transformation-ratio-row">
+                <span>Human Contribution</span>
+                <strong>{summary.humanContribution}%</strong>
+                <div className="transformation-ratio-track">
+                  <div className="transformation-ratio-fill is-human" style={{ width: `${summary.humanContribution}%` }} />
+                </div>
+              </div>
+              <div className="transformation-ratio-row">
+                <span>AI Transformation</span>
+                <strong>{summary.aiTransformation}%</strong>
+                <div className="transformation-ratio-track">
+                  <div className="transformation-ratio-fill is-ai" style={{ width: `${summary.aiTransformation}%` }} />
+                </div>
               </div>
             </div>
           </div>
+        )}
+        <div className="transformation-chart-head">
+          <span>Core Signals</span>
         </div>
-      )}
-      <div className="transformation-chart-head">
-        <span>Core Signals</span>
-      </div>
-      <div className="transformation-bars">
-        {signals.map((signal) => (
-          <div
-            key={`${variant}-${signal.key}`}
-            className="transformation-bar-row"
-            data-tooltip={signal.description}
-            tabIndex={0}
-            aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.label}: ${signal.value.toFixed(0)}%. ${signal.description}`}
-            title={signal.description}
-          >
-            <div className="transformation-bar-label">
-              <span>{signal.label}</span>
-              <strong>{signal.value.toFixed(0)}%</strong>
+        <div className="transformation-bars">
+          {comparisonSignals.map((signal) => (
+            <div
+              key={`${variant}-${signal.key}`}
+              className="transformation-bar-row"
+              data-tooltip={signal.description}
+              tabIndex={0}
+              aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.label}: ${signal.value.toFixed(0)}%. ${signal.description}`}
+              title={signal.description}
+            >
+              <div className="transformation-bar-label">
+                <span>{signal.label}</span>
+                <strong>{signal.value.toFixed(0)}%</strong>
+              </div>
+              <div className="transformation-bar-track" aria-hidden="true">
+                <div
+                  className={`transformation-bar-fill transformation-bar-${signal.key}`}
+                  style={{ width: `${signal.value}%` }}
+                />
+              </div>
             </div>
-            <div className="transformation-bar-track" aria-hidden="true">
-              <div
-                className={`transformation-bar-fill transformation-bar-${signal.key}`}
-                style={{ width: `${signal.value}%` }}
-              />
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const transformationScorecard = transformation && transformationSignals.length > 0 ? (
     <section className="transformation-scorecard" aria-label="Transformation pattern scorecard">
