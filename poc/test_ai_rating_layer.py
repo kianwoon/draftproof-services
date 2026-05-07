@@ -805,6 +805,35 @@ assert_true(
     anchored_ai_pattern.features["reporting_suppression"] >= 0,
     "classification exposes reporting suppression for policy calibration",
 )
+weak_grounded_anchor = classify_transformation(TransformationFeatures(
+    ai_likelihood=0.60,
+    human_anchor_score=0.70,
+    rewrite_smoothness=0.35,
+    source_similarity=0.0,
+    surface_similarity=0.0,
+    outline_to_text_expansion=0.30,
+    section_style_variance=0.10,
+    citation_grounding_risk=0.95,
+))
+strong_grounded_anchor = classify_transformation(TransformationFeatures(
+    ai_likelihood=0.60,
+    human_anchor_score=0.70,
+    rewrite_smoothness=0.35,
+    source_similarity=0.0,
+    surface_similarity=0.0,
+    outline_to_text_expansion=0.30,
+    section_style_variance=0.10,
+    citation_grounding_risk=0.05,
+))
+assert_equal(
+    weak_grounded_anchor.features["human_anchor_discount"],
+    strong_grounded_anchor.features["human_anchor_discount"],
+    "grounding weakness does not reduce human-anchor discount",
+)
+assert_true(
+    weak_grounded_anchor.features["calibrated_ai_risk"] <= strong_grounded_anchor.features["calibrated_ai_risk"] + 0.001,
+    "grounding weakness does not raise calibrated AI risk through attribution layer",
+)
 
 plain_reasoning_input = build_layer3_input_from_text(
     "Technology can help students organise an answer. "
@@ -833,6 +862,36 @@ fully_generic_input = build_layer3_input_from_text(
 assert_true(
     contextual_detail_input.generic_assertion_risk < fully_generic_input.generic_assertion_risk,
     "contextual education anchors reduce generic assertion risk",
+)
+contextual_density_input = build_layer3_input_from_text(
+    (
+        "Students compared YouTube videos and AI tools during a classroom discussion. "
+        "Some trusted the final result but missed the source checks behind it. "
+        "The teacher asked them to explain what changed after feedback. "
+        "That made the draft-and-feedback process more visible than a pass/fail answer. "
+    ) * 8,
+    predictability=0.45,
+    topk_pattern=0.78,
+    citation_weakness_risk=0.50,
+    source_grounding_strength=0.30,
+    domain_grounding_strength=0.30,
+)
+generic_density_input = build_layer3_input_from_text(
+    (
+        "Education is changing rapidly and this creates important opportunities for learning. "
+        "Students need support because technology can improve outcomes in many different ways. "
+        "Teachers should help learners adapt to these changes and develop useful skills. "
+        "This is significant because modern education requires flexible approaches. "
+    ) * 8,
+    predictability=0.45,
+    topk_pattern=0.78,
+    citation_weakness_risk=0.50,
+    source_grounding_strength=0.30,
+    domain_grounding_strength=0.30,
+)
+assert_true(
+    contextual_density_input.qualifying_text_ai_density < generic_density_input.qualifying_text_ai_density,
+    "contextual anchors suppress qualifying-text AI density compared with generic prose",
 )
 
 print("AI rating layer tests passed")

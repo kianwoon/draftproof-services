@@ -259,16 +259,13 @@ def build_transformation_features(
     )
 
     raw_ai_likelihood = clamp(layer3_result.ai_likelihood_score)
-    effective_human_anchor = clamp(
-        human_anchor_score * (1.0 - 0.35 * citation_grounding_risk)
-    )
+    effective_human_anchor = human_anchor_score
     human_anchor_discount = clamp(effective_human_anchor * 0.45)
     adjusted_ai_risk = clamp(raw_ai_likelihood * (1.0 - human_anchor_discount))
     signal_agreement_score = _signal_agreement(
         adjusted_ai_risk,
         rewrite_smoothness,
         outline_to_text_expansion,
-        citation_grounding_risk,
         semantic_uniformity_risk,
         discourse_regularity_risk,
         paraphrase_transformation_risk,
@@ -377,10 +374,7 @@ def classify_transformation(features: TransformationFeatures) -> TransformationC
 def _human_anchor_discount(features: TransformationFeatures) -> float:
     if features.human_anchor_discount > 0:
         return clamp(features.human_anchor_discount)
-    effective_human_anchor = clamp(
-        features.human_anchor_score * (1.0 - 0.35 * features.citation_grounding_risk)
-    )
-    return clamp(effective_human_anchor * 0.45)
+    return clamp(features.human_anchor_score * 0.45)
 
 
 def _adjusted_ai_risk(features: TransformationFeatures) -> float:
@@ -432,7 +426,6 @@ def _calibrated_ai_risk(features: TransformationFeatures) -> float:
         adjusted,
         features.rewrite_smoothness,
         features.outline_to_text_expansion,
-        features.citation_grounding_risk,
         features.semantic_uniformity_risk,
         features.discourse_regularity_risk,
         features.paraphrase_transformation_risk,

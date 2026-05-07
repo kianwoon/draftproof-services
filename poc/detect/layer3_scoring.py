@@ -785,6 +785,35 @@ CONCRETE_DETAIL_PATTERNS = [
     r"\b(?:source checks?|peer communities|discussion|reflection|practice|attempts?)\b",
 ]
 NAMED_ENTITY_DETAIL_PATTERN = CONCRETE_DETAIL_PATTERNS[1]
+CONTEXTUAL_ANCHOR_PATTERNS = [
+    r"\bonline content\b",
+    r"\bfinal result\b",
+    r"\bhiding the effort\b",
+    r"\bwhat to trust\b",
+    r"\bsource(?:s)?\s+(?:they\s+)?trusted\b",
+    r"\bpass/fail\b",
+    r"\bdrafts?\s+and\s+feedback\b",
+    r"\bfeedback routines?\b",
+    r"\bafter reflection\b",
+    r"\breal situations?\b",
+    r"\bconfusion\b",
+    r"\bstudents?\s+(?:explain|search|write|practice|understand|learn|think)\b",
+    r"\bteachers?\s+(?:explain|notice|ask|help|guide)\b",
+]
+
+
+def _sentence_has_concrete_or_context(sentence: str) -> bool:
+    return any(
+        re.search(p, sentence, flags=0 if p == NAMED_ENTITY_DETAIL_PATTERN else re.I)
+        for p in CONCRETE_DETAIL_PATTERNS
+    ) or any(re.search(p, sentence, flags=re.I) for p in CONTEXTUAL_ANCHOR_PATTERNS)
+
+
+def _contextual_anchor_density(sentences: list[str]) -> float:
+    if not sentences:
+        return 0.0
+    hits = sum(1 for sentence in sentences if _sentence_has_concrete_or_context(sentence))
+    return hits / len(sentences)
 
 
 def estimate_generic_assertion_risk(text: str) -> float:
@@ -799,11 +828,7 @@ def estimate_generic_assertion_risk(text: str) -> float:
 
     generic_count = 0
     for sentence in sentences:
-        has_concrete = any(
-            re.search(p, sentence, flags=0 if p == NAMED_ENTITY_DETAIL_PATTERN else re.I)
-            for p in CONCRETE_DETAIL_PATTERNS
-        )
-        if not has_concrete:
+        if not _sentence_has_concrete_or_context(sentence):
             generic_count += 1
 
     ratio = generic_count / len(sentences)
@@ -973,6 +998,7 @@ def estimate_qualifying_text_ai_density(
         if any(lower.startswith(starter) for starter in GENERIC_ESSAY_STARTERS):
             starter_hits += 1
     starter_density = starter_hits / max(len(qualifying_sentences), 1)
+    contextual_density = _contextual_anchor_density(qualifying_sentences)
 
     topk = clamp(topk_pattern)
     pred = clamp(predictability)
@@ -1005,6 +1031,12 @@ def estimate_qualifying_text_ai_density(
         score += 0.06
     if topk >= 0.60 and generic_assertion >= 0.80:
         score += 0.05
+    if contextual_density >= 0.45:
+        score -= 0.10
+    elif contextual_density >= 0.30:
+        score -= 0.06
+    elif contextual_density >= 0.20:
+        score -= 0.03
     return round(clamp(score), 4)
 
 

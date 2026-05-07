@@ -121,6 +121,10 @@ from rewrite_pipeline import (
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
     _build_author_context_discovery_layer,
+    _source_grounding_claim_targets,
+    _source_grounding_query,
+    _normalize_tavily_results,
+    _build_source_grounding_search_layer,
     _confirmed_author_anchor_brief,
     _confirmed_anchor_echo_reason,
     _validate_author_evidence_answers,
@@ -2733,6 +2737,95 @@ assert_test(
     and context_discovery["handoff_env"]["json"] == "DRAFTPROOF_AUTHOR_EVIDENCE_ANSWERS_JSON"
     and "permission_to_use" in context_discovery["answer_payload_schema"]["answers"][0],
     "author context discovery lets LLM ask and shape answers without fabricating author context",
+)
+source_targets = _source_grounding_claim_targets(
+    (
+        "Students are surrounded by information from teachers, search engines, social media, "
+        "online courses, and AI tools. The real challenge is knowing what is accurate, useful, "
+        "ethical, and worth trusting.\n\n"
+        "Teachers should guide students to question sources, compare viewpoints, and apply "
+        "knowledge in real situations because information access is no longer the main barrier."
+    ),
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "source_grounding_risk": 90.0,
+                "unsupported_claim_risk": 85.0,
+            },
+            "ai_components": {"generic_assertion_risk": 72.0},
+        }
+    },
+    limit=2,
+)
+assert_test(
+    source_targets
+    and source_targets[0]["query"]
+    and "evidence" in source_targets[0]["query"]
+    and "author-owned lived evidence" in source_targets[0]["why_needed"],
+    "source grounding search targets public evidence gaps without treating them as author context",
+)
+assert_test(
+    "education" in _source_grounding_query("Teachers guide students to judge online information in education."),
+    "source grounding query preserves claim keywords",
+)
+normalized_tavily = _normalize_tavily_results(
+    {
+        "results": [
+            {
+                "title": "Digital literacy and evaluating online information",
+                "url": "https://example.edu/digital-literacy",
+                "content": "Students need support evaluating online information and comparing sources.",
+                "score": 0.7,
+            },
+            {
+                "title": "Unrelated result",
+                "url": "https://example.com/other",
+                "content": "Other topic.",
+                "score": 0.2,
+            },
+        ]
+    },
+    "Students evaluate online information and compare sources.",
+    limit=2,
+)
+assert_test(
+    normalized_tavily[0]["url"] == "https://example.edu/digital-literacy"
+    and normalized_tavily[0]["claim_keyword_overlap"],
+    "tavily results normalize with relevance metadata",
+)
+previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
+previous_tavily_key = os.environ.get("TAVILY_API_KEY")
+try:
+    os.environ["DRAFTPROOF_SOURCE_SEARCH_ENABLED"] = "1"
+    os.environ.pop("TAVILY_API_KEY", None)
+    source_layer = _build_source_grounding_search_layer(
+        "Teachers should guide students to compare online sources before trusting them.",
+        {
+            "ai_risk_badge": {
+                "writing_components": {
+                    "source_grounding_risk": 90.0,
+                    "unsupported_claim_risk": 85.0,
+                },
+                "ai_components": {"generic_assertion_risk": 72.0},
+            }
+        },
+        max_queries=1,
+        max_results=1,
+    )
+finally:
+    if previous_search_enabled is None:
+        os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_ENABLED", None)
+    else:
+        os.environ["DRAFTPROOF_SOURCE_SEARCH_ENABLED"] = previous_search_enabled
+    if previous_tavily_key is None:
+        os.environ.pop("TAVILY_API_KEY", None)
+    else:
+        os.environ["TAVILY_API_KEY"] = previous_tavily_key
+assert_test(
+    source_layer.get("status") == "missing_api_key"
+    and source_layer.get("auto_apply") is False
+    and any("must not be converted into author-owned" in item for item in source_layer.get("policy", [])),
+    "source grounding search is optional and cannot fabricate author-owned context",
 )
 valid_anchor_answers, rejected_anchor_answers = _validate_author_evidence_answers(
     intake_layer,

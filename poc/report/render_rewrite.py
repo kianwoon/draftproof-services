@@ -558,6 +558,49 @@ def render_rewrite_report(
                 lines.append(f"- {str(gate).replace('|', '·')}")
             lines.append("")
 
+    source_search = summary.get("source_grounding_search") or {}
+    if source_search.get("enabled"):
+        lines.append("## Source Grounding Search")
+        lines.append("")
+        status = str(source_search.get("status") or "ready").replace("_", " ")
+        provider = str(source_search.get("provider") or "tavily")
+        lines.append(
+            f"**Status:** {status}. Provider: `{provider}`. "
+            "These are public-source candidates for grounding quality; they are not author-owned context."
+        )
+        lines.append("")
+        targets = source_search.get("claim_targets") or []
+        results_by_claim = {
+            item.get("claim_id"): item
+            for item in (source_search.get("results") or [])
+            if isinstance(item, dict)
+        }
+        if targets:
+            lines.append("| Claim | Query | Candidate Sources |")
+            lines.append("|-------|-------|-------------------|")
+            for target in targets[:8]:
+                claim = str(target.get("claim") or "").replace("|", "·")
+                query = str(target.get("query") or "").replace("|", "·")
+                result = results_by_claim.get(target.get("id")) or {}
+                source_links = []
+                for source in (result.get("sources") or [])[:3]:
+                    title = str(source.get("title") or source.get("url") or "source").replace("|", "·")
+                    url = str(source.get("url") or "").strip()
+                    if url:
+                        source_links.append(f"[{title}]({url})")
+                    elif title:
+                        source_links.append(title)
+                sources = "<br>".join(source_links) if source_links else "-"
+                lines.append(f"| {claim[:220]} | `{query[:180]}` | {sources} |")
+            lines.append("")
+        policy = source_search.get("policy") or []
+        if policy:
+            lines.append("**Search policy:**")
+            lines.append("")
+            for item in policy[:4]:
+                lines.append(f"- {str(item).replace('|', '·')}")
+            lines.append("")
+
     integration = summary.get("author_evidence_integration") or {}
     if integration.get("enabled"):
         lines.append("## Author Evidence Integration")

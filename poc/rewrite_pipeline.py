@@ -19,6 +19,7 @@ import time
 import re
 import argparse
 import math
+import requests
 from difflib import SequenceMatcher
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -1025,6 +1026,260 @@ def _build_author_context_discovery_layer(
             "rescan does not regress AI Authorship, AI Transformation, review burden, severity, or drift gates",
         ],
     }
+
+
+_SOURCE_SEARCH_STOPWORDS = {
+    "about", "after", "also", "and", "are", "because", "been", "being", "but",
+    "can", "could", "does", "from", "have", "into", "more", "must", "not",
+    "only", "should", "that", "the", "their", "then", "there", "these", "this",
+    "through", "with", "within", "without", "would", "when", "where", "which",
+    "while", "will", "were", "what", "who", "why", "how", "they", "them",
+}
+
+_SOURCE_SEARCH_CREDIBLE_TERMS = "research evidence education report study policy practice"
+
+
+def _source_search_enabled() -> bool:
+    return _env_flag("DRAFTPROOF_SOURCE_SEARCH_ENABLED", False)
+
+
+def _source_search_keywords(text: str, limit: int = 10) -> list[str]:
+    words = re.findall(r"[A-Za-z][A-Za-z'-]{3,}|\b[A-Z]{2,}\d*\b|\b\d{4}\b", str(text or ""))
+    scored: dict[str, int] = {}
+    for raw in words:
+        key = raw.strip("-'").lower()
+        if not key or key in _SOURCE_SEARCH_STOPWORDS:
+            continue
+        if len(key) < 4 and not re.match(r"^[a-z]{2,}\d", key):
+            continue
+        scored[key] = scored.get(key, 0) + (2 if raw[:1].isupper() or any(ch.isdigit() for ch in raw) else 1)
+    ordered = sorted(scored.items(), key=lambda item: (-item[1], item[0]))
+    return [word for word, _score in ordered[:max(1, limit)]]
+
+
+def _source_grounding_query(claim: str) -> str:
+    keywords = _source_search_keywords(claim, limit=9)
+    base = " ".join(keywords) if keywords else str(claim or "").strip()
+    base = re.sub(r"\s+", " ", base).strip()
+    return f"{base} {_SOURCE_SEARCH_CREDIBLE_TERMS}".strip()[:280]
+
+
+def _source_grounding_claim_targets(
+    text: str,
+    report_dict: dict | None,
+    *,
+    limit: int = 5,
+) -> list[dict]:
+    """Find claim spans where external evidence could reduce grounding risk."""
+    paragraphs = _logical_paragraphs(text)
+    if not paragraphs:
+        return []
+    badge = (report_dict or {}).get("ai_risk_badge") or {}
+    writing = badge.get("writing_components") or {}
+    ai_components = badge.get("ai_components") or {}
+    component_targets = _paragraph_component_targets(text, report_dict or {}, limit=max(limit * 2, 4))
+    ranked: list[dict] = []
+    seen: set[int] = set()
+    for target in component_targets:
+        index = int(target.get("index", 0) or 0)
+        if index in seen or index >= len(paragraphs):
+            continue
+        seen.add(index)
+        paragraph = paragraphs[index]
+        sentences = _split_sentences(paragraph) or [paragraph]
+        candidate_sentence = max(
+            sentences,
+            key=lambda sentence: (
+                len(re.findall(
+                    r"\b(?:should|must|need(?:s)?|important|significant|supports?|helps?|"
+                    r"allows?|enables?|creates?|means|shows?|suggests?|indicates?)\b",
+                    sentence,
+                    flags=re.I,
+                )),
+                min(len(sentence.split()), 38),
+            ),
+        ).strip()
+        if len(candidate_sentence.split()) < 8:
+            candidate_sentence = paragraph[:260].strip()
+        role = target.get("role") or _paragraph_role(paragraph, target.get("drivers") or {})
+        if role == "human_anchor_rich":
+            continue
+        ranked.append({
+            "id": f"source_claim_{len(ranked) + 1}",
+            "paragraph_index": index,
+            "paragraph_role": role,
+            "claim": candidate_sentence[:420],
+            "query": _source_grounding_query(candidate_sentence),
+            "target_preview": paragraph[:360],
+            "why_needed": (
+                "External source support can reduce grounding quality risk for this claim. "
+                "It must not be treated as author-owned lived evidence."
+            ),
+            "scanner_context": {
+                "source_grounding_risk": writing.get("source_grounding_risk"),
+                "unsupported_claim_risk": writing.get("unsupported_claim_risk"),
+                "generic_assertion_risk": ai_components.get("generic_assertion_risk"),
+            },
+        })
+        if len(ranked) >= max(1, limit):
+            break
+    if ranked:
+        return ranked
+    fallback = []
+    for index, paragraph in enumerate(paragraphs[:max(limit * 2, 3)]):
+        if len(paragraph.split()) < 35 or _PARAGRAPH_CITATION_RE.search(paragraph):
+            continue
+        sentence = (_split_sentences(paragraph) or [paragraph])[0].strip()
+        fallback.append({
+            "id": f"source_claim_{len(fallback) + 1}",
+            "paragraph_index": index,
+            "paragraph_role": _paragraph_role(paragraph, {"source_gap": True}),
+            "claim": sentence[:420],
+            "query": _source_grounding_query(sentence),
+            "target_preview": paragraph[:360],
+            "why_needed": "This uncited claim may need a public source or a narrower wording.",
+            "scanner_context": {
+                "source_grounding_risk": writing.get("source_grounding_risk"),
+                "unsupported_claim_risk": writing.get("unsupported_claim_risk"),
+                "generic_assertion_risk": ai_components.get("generic_assertion_risk"),
+            },
+        })
+        if len(fallback) >= max(1, limit):
+            break
+    return fallback
+
+
+def _tavily_search(
+    query: str,
+    *,
+    api_key: str,
+    max_results: int = 3,
+    timeout: float = 20.0,
+) -> dict:
+    response = requests.post(
+        "https://api.tavily.com/search",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "query": query,
+            "search_depth": "basic",
+            "max_results": max(1, min(int(max_results or 3), 10)),
+            "include_answer": False,
+            "include_raw_content": False,
+        },
+        timeout=max(3.0, float(timeout or 20.0)),
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _normalize_tavily_results(payload: dict, claim: str = "", *, limit: int = 3) -> list[dict]:
+    results = payload.get("results") if isinstance(payload, dict) else []
+    if not isinstance(results, list):
+        return []
+    claim_terms = set(_source_search_keywords(claim, limit=12))
+    normalized = []
+    for item in results[:max(1, limit)]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        content = re.sub(r"\s+", " ", str(item.get("content") or "").strip())
+        haystack = f"{title} {content}".lower()
+        overlap = sorted(term for term in claim_terms if term in haystack)
+        try:
+            provider_score = float(item.get("score") or 0.0)
+        except (TypeError, ValueError):
+            provider_score = 0.0
+        normalized.append({
+            "title": title[:180],
+            "url": url,
+            "snippet": content[:360],
+            "provider_score": round(provider_score, 4),
+            "claim_keyword_overlap": overlap[:8],
+            "relevance_score": round(provider_score + min(len(overlap), 8) * 0.05, 4),
+        })
+    normalized.sort(key=lambda item: item.get("relevance_score", 0), reverse=True)
+    return normalized
+
+
+def _build_source_grounding_search_layer(
+    text: str,
+    report_dict: dict | None,
+    *,
+    max_queries: int | None = None,
+    max_results: int | None = None,
+) -> dict:
+    if not _source_search_enabled():
+        return {}
+    max_queries = max(1, int(max_queries or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_QUERIES", 5.0)))
+    max_results = max(1, int(max_results or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_RESULTS", 3.0)))
+    targets = _source_grounding_claim_targets(text, report_dict, limit=max_queries)
+    layer = {
+        "enabled": True,
+        "kind": "source_grounding_search",
+        "provider": os.environ.get("DRAFTPROOF_SOURCE_SEARCH_PROVIDER", "tavily"),
+        "status": "ready",
+        "auto_apply": False,
+        "claim_targets": targets,
+        "results": [],
+        "policy": [
+            "Search results may support public/source-grounded claims after user review.",
+            "Search results must not be converted into author-owned observations or lived experience.",
+            "Search results must not directly change AI Authorship scoring; grounding remains a separate quality dimension.",
+            "Generation may cite or bridge to a source only after the source is relevant and acceptable to the user.",
+        ],
+        "rewrite_handoff": {
+            "allowed": [
+                "source-to-claim bridge",
+                "narrow an unsupported claim using an identified public source",
+                "prepare citation/evidence candidates for user review",
+            ],
+            "forbidden": [
+                "invent author-owned context",
+                "invent statistics, dates, names, or source claims not present in the result",
+                "auto-apply searched evidence without review",
+            ],
+        },
+    }
+    if not targets:
+        layer["status"] = "no_claim_targets"
+        return layer
+    provider = str(layer["provider"] or "tavily").lower()
+    if provider != "tavily":
+        layer["status"] = "unsupported_provider"
+        return layer
+    api_key = os.environ.get("TAVILY_API_KEY") or os.environ.get("DRAFTPROOF_TAVILY_API_KEY")
+    if not api_key:
+        layer["status"] = "missing_api_key"
+        return layer
+    timeout = _float_env("DRAFTPROOF_SOURCE_SEARCH_TIMEOUT", 20.0)
+    errors = []
+    for target in targets:
+        try:
+            payload = _tavily_search(
+                target.get("query") or target.get("claim") or "",
+                api_key=api_key,
+                max_results=max_results,
+                timeout=timeout,
+            )
+            layer["results"].append({
+                "claim_id": target.get("id"),
+                "paragraph_index": target.get("paragraph_index"),
+                "query": target.get("query"),
+                "sources": _normalize_tavily_results(payload, target.get("claim") or "", limit=max_results),
+            })
+        except requests.RequestException as exc:
+            errors.append({
+                "claim_id": target.get("id"),
+                "error": exc.__class__.__name__,
+                "message": str(exc)[:240],
+            })
+    layer["errors"] = errors
+    layer["status"] = "completed" if layer["results"] else "search_error"
+    return layer
 
 
 def _load_author_evidence_answers() -> list[dict]:
@@ -9663,6 +9918,12 @@ def run_rewrite_pipeline(
     )
     if author_context_discovery:
         result.summary["author_context_discovery"] = author_context_discovery
+    source_grounding_search = _build_source_grounding_search_layer(
+        rewritten_text,
+        rewritten_report_dict,
+    )
+    if source_grounding_search:
+        result.summary["source_grounding_search"] = source_grounding_search
     author_evidence_answers = _load_author_evidence_answers()
     author_evidence_integration = {
         "enabled": bool(author_evidence_intake),
