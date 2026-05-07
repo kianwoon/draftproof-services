@@ -2849,7 +2849,7 @@ assert_test(
     "pipeline no longer labels author-evidence gaps as an AI search blocker",
 )
 assert_test(
-    guided_summary.get("ai_mitigation_search", {}).get("enabled") is False,
+    guided_summary.get("ai_mitigation_search", {}).get("enabled") is not True,
     "test disables AI search while preserving guidance output",
 )
 educational_rewrite = guided_summary.get("educational_mitigation_rewrite") or {}

@@ -6215,19 +6215,16 @@ def run_rewrite_pipeline(
     generation_first_active = _env_flag("DRAFTPROOF_REGENERATION_FIRST", True)
     ai_search_after_generation_failure = _env_flag(
         "DRAFTPROOF_AI_SEARCH_AFTER_GENERATION_FAILURE",
-        False,
+        True,
     )
     if (
         generation_first_active
         and authenticity_enabled
+        and authenticity_mitigation_selected
         and not ai_search_after_generation_failure
     ):
         ai_search_enabled = False
-        reason = (
-            "skipped_after_generation_layer_selected"
-            if authenticity_mitigation_selected
-            else "skipped_after_generation_layer_no_target_candidate"
-        )
+        reason = "skipped_after_generation_layer_selected"
         result.summary["ai_mitigation_search"] = {
             "enabled": False,
             "reason": reason,
@@ -6463,6 +6460,11 @@ def run_rewrite_pipeline(
                 target=ai_first_target,
                 required_min_ai=ai_first_required_min_ai,
             )
+            ai_delta = (
+                ai_search_reference - candidate_ai
+                if isinstance(ai_search_reference, (int, float)) and isinstance(candidate_ai, (int, float))
+                else -9999.0
+            )
             authenticity_status = _authenticity_gate_status(
                 original_report_dict,
                 candidate_report,
@@ -6478,6 +6480,20 @@ def run_rewrite_pipeline(
                 ),
                 drift_similarity=candidate_eval.get("drift_similarity"),
             )
+            if (
+                selection_status.get("selectable")
+                and not _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_REVIEW_REGRESSION", False)
+                and (
+                    authenticity_status.get("review_burden_regressed")
+                    or authenticity_status.get("weighted_severity_regressed")
+                    or authenticity_status.get("critical_high_regressed")
+                )
+            ):
+                selection_status.update({
+                    "success": False,
+                    "selectable": False,
+                    "reason": "ai_drop_quality_regressed",
+                })
             incremental_authenticity_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_INCREMENTAL_AUTHENTICITY", True)
                 and authenticity_status.get("candidate_progress")
@@ -6486,25 +6502,44 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("review_burden_regressed")
                 and not authenticity_status.get("weighted_severity_regressed")
             )
+            ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
+            safe_authorship_suppression_selectable = bool(
+                _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SAFE_AUTHORSHIP_SUPPRESSION", True)
+                and isinstance(ai_authorship_delta, (int, float))
+                and ai_authorship_delta >= _float_env(
+                    "DRAFTPROOF_AI_SEARCH_MIN_SAFE_AUTHORSHIP_DROP",
+                    1.0,
+                )
+                and isinstance(ai_delta, (int, float))
+                and ai_delta > 0.05
+                and _finding_total(candidate_report) <= original_total
+                and candidate_review_burden <= original_review_burden
+                and candidate_weighted_severity <= original_severity
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("critical_high_regressed")
+            )
             if (
                 not selection_status.get("selectable")
-                and incremental_authenticity_selectable
+                and (
+                    incremental_authenticity_selectable
+                    or safe_authorship_suppression_selectable
+                )
             ):
                 selection_status.update({
                     "success": True,
                     "selectable": True,
-                    "reason": "accepted_incremental_authenticity_progress",
-                    "authenticity_incremental": True,
+                    "reason": (
+                        "accepted_safe_authorship_suppression"
+                        if safe_authorship_suppression_selectable
+                        else "accepted_incremental_authenticity_progress"
+                    ),
+                    "authenticity_incremental": bool(incremental_authenticity_selectable),
+                    "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
                 })
             selection_status["authenticity_gate"] = authenticity_status
             selection_status["human_shift_score"] = human_shift.get("score")
             selection_status["human_shift_components"] = human_shift.get("components")
             candidate_eval["selection_status"] = selection_status
-            ai_delta = (
-                ai_search_reference - candidate_ai
-                if isinstance(ai_search_reference, (int, float)) and isinstance(candidate_ai, (int, float))
-                else -9999.0
-            )
             human_shift_score = human_shift.get("score")
             candidate_rank = (
                 1 if selection_status.get("selectable") else 0,
@@ -6589,7 +6624,7 @@ def run_rewrite_pipeline(
                     try:
                         paragraph_limit = max(
                             1,
-                            int(os.environ.get("DRAFTPROOF_PARAGRAPH_COMPONENT_TARGETS", "4")),
+                            int(os.environ.get("DRAFTPROOF_PARAGRAPH_COMPONENT_TARGETS", "6")),
                         )
                     except ValueError:
                         paragraph_limit = 4
@@ -7165,8 +7200,10 @@ def run_rewrite_pipeline(
     ai_search_selected_by_authenticity = bool(
         ai_search_selected
         and (
-            ((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
-            .get("authenticity_incremental")
+            (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
+             .get("authenticity_incremental"))
+            or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
+                .get("safe_authorship_suppression"))
         )
     )
     if (
