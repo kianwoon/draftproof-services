@@ -4036,10 +4036,13 @@ th {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.1rem;
-  align-items: start;
+  align-items: stretch;
 }
 
 .transformation-detail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  align-items: start;
   min-width: 0;
 }
 
@@ -4092,6 +4095,7 @@ th {
   display: grid;
   grid-template-columns: minmax(220px, .85fr) minmax(280px, 1.15fr);
   gap: 1rem;
+  align-self: stretch;
   align-items: center;
   padding: .9rem;
   margin-bottom: .9rem;
@@ -4206,6 +4210,7 @@ th {
   display: grid;
   gap: .72rem;
   padding-top: .55rem;
+  align-self: start;
 }
 
 .transformation-bar-row {
@@ -5169,6 +5174,9 @@ th {
   }
   .transformation-comparison-grid {
     grid-template-columns: 1fr;
+  }
+  .transformation-detail {
+    display: block;
   }
   .transformation-detail + .transformation-detail {
     border-left: 0;

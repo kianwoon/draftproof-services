@@ -2714,6 +2714,68 @@ def _is_better_human_shift_candidate(candidate_gate: dict | None, best_gate: dic
     return _human_shift_rank_key(candidate_gate) > _human_shift_rank_key(best_gate)
 
 
+def _goal_climb_candidate_rank(
+    selection_status: dict | None,
+    candidate_eval: dict | None,
+    *,
+    candidate_ai=None,
+    candidate_review_burden: int | float = 0,
+    candidate_weighted_severity: int | float = 0,
+    candidate_finding_total: int | float = 0,
+    original_review_burden: int | float = 0,
+    original_weighted_severity: int | float = 0,
+    original_finding_total: int | float = 0,
+) -> tuple:
+    """Rank AI-mitigation candidates by progress toward the Human 80 goal.
+
+    AI score is intentionally late in the key. A lower AI score is not a win
+    when Human Shift, authorship texture, or review burden move the wrong way.
+    """
+    status = selection_status or {}
+    eval_data = candidate_eval or {}
+    gate = status.get("authenticity_gate") if isinstance(status.get("authenticity_gate"), dict) else status
+    components = (
+        status.get("human_shift_components")
+        if isinstance(status.get("human_shift_components"), dict)
+        else gate.get("human_shift_components")
+        if isinstance(gate.get("human_shift_components"), dict)
+        else {}
+    )
+
+    def num(value, default=-9999.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    human_shift = num(status.get("human_shift_score", gate.get("human_shift_score")))
+    human_delta = num(gate.get("human_delta"))
+    candidate_human = num(gate.get("candidate_human", eval_data.get("human_contribution")))
+    ai_authorship_delta = num(gate.get("ai_authorship_delta"))
+    ai_transform_delta = num(gate.get("ai_transformation_delta"))
+    stage_target = _human_gain_stage_target(candidate_human)
+    target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    review_reduction = num(original_review_burden, 0.0) - num(candidate_review_burden, 0.0)
+    severity_reduction = num(original_weighted_severity, 0.0) - num(candidate_weighted_severity, 0.0)
+    finding_reduction = num(original_finding_total, 0.0) - num(candidate_finding_total, 0.0)
+    semantic_uniformity_reduction = num(components.get("semantic_uniformity_reduction"), 0.0)
+    rewrite_smoothness_reduction = num(components.get("rewrite_smoothness_reduction"), 0.0)
+
+    return (
+        1 if status.get("selectable") else 0,
+        1 if human_shift > 0 else 0,
+        1 if candidate_human >= target_human else 0,
+        1 if candidate_human >= stage_target else 0,
+        human_shift,
+        human_delta,
+        ai_authorship_delta,
+        ai_transform_delta,
+        semantic_uniformity_reduction,
+        rewrite_smoothness_reduction,
+        review_reduction,
+        severity_reduction,
+        finding_reduction,
+        -(num(candidate_ai, 9999.0)),
+    )
+
+
 def _anchor_lock_mapping(anchors: list[str] | tuple[str, ...] | None) -> list[dict]:
     """Create deterministic placeholders for anchors that should not be rewritten."""
     unique: list[str] = []
@@ -10313,6 +10375,11 @@ def run_rewrite_pipeline(
             candidate_ai_transform_delta = authenticity_status.get("ai_transformation_delta")
             safe_authorship_suppression_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SAFE_AUTHORSHIP_SUPPRESSION", True)
+                and isinstance(human_shift.get("score"), (int, float))
+                and float(human_shift.get("score")) >= _float_env(
+                    "DRAFTPROOF_SAFE_AUTHORSHIP_SUPPRESSION_MIN_HUMAN_SHIFT",
+                    0.0,
+                )
                 and isinstance(ai_authorship_delta, (int, float))
                 and ai_authorship_delta >= _float_env(
                     "DRAFTPROOF_AI_SEARCH_MIN_SAFE_AUTHORSHIP_DROP",
@@ -10585,31 +10652,16 @@ def run_rewrite_pipeline(
             candidate_ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
             candidate_ai_transformation_delta = authenticity_status.get("ai_transformation_delta")
             blocker_active_drop = float(blocker_status.get("active_drop") or 0.0)
-            post_safe_climb_rank = 1 if selection_status.get("post_safe_target_climb") else 0
-            final_cleanup_rank = 1 if candidate_eval.get("final_depolish_cleanup") else 0
-            human_rank_value = (
-                float(candidate_human_value)
-                if isinstance(candidate_human_value, (int, float)) else -9999.0
-            )
-            candidate_rank = (
-                1 if selection_status.get("selectable") else 0,
-                human_rank_value,
-                blocker_active_drop,
-                (
-                    float(candidate_ai_authorship_delta)
-                    if isinstance(candidate_ai_authorship_delta, (int, float)) else -9999.0
-                ),
-                (
-                    float(candidate_ai_transformation_delta)
-                    if isinstance(candidate_ai_transformation_delta, (int, float)) else -9999.0
-                ),
-                -(float(candidate_ai) if isinstance(candidate_ai, (int, float)) else 999.0),
-                -float(candidate_review_burden),
-                -float(candidate_weighted_severity),
-                -float(_finding_total(candidate_report)),
-                final_cleanup_rank,
-                post_safe_climb_rank,
-                float(human_shift_score) if isinstance(human_shift_score, (int, float)) else -9999.0,
+            candidate_rank = _goal_climb_candidate_rank(
+                selection_status,
+                candidate_eval,
+                candidate_ai=candidate_ai,
+                candidate_review_burden=candidate_review_burden,
+                candidate_weighted_severity=candidate_weighted_severity,
+                candidate_finding_total=_finding_total(candidate_report),
+                original_review_burden=original_review_burden,
+                original_weighted_severity=original_severity,
+                original_finding_total=original_total,
             )
             if candidate_rank > best_human_shift_rank:
                 best_ai = candidate_ai
