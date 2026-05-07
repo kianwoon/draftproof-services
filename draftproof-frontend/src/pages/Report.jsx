@@ -133,6 +133,24 @@ const TRANSFORMATION_SIGNAL_ORDER = [
   'reporting_suppression',
 ];
 
+const TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION = {
+  ai_likelihood: 'lower',
+  adjusted_ai_risk: 'lower',
+  calibrated_ai_risk: 'lower',
+  grounding_risk: 'lower',
+  citation_grounding_risk: 'lower',
+  rewrite_smoothness: 'lower',
+  semantic_uniformity_risk: 'lower',
+  discourse_regularity_risk: 'lower',
+  source_similarity: 'lower',
+  surface_similarity: 'lower',
+  paraphrase_transformation_risk: 'lower',
+  outline_to_text_expansion: 'lower',
+  section_style_variance: 'lower',
+  human_anchor_score: 'higher',
+  human_anchor_discount: 'higher',
+};
+
 function buildTransformationSignals(features = {}, suppliedSignals = []) {
   const suppliedByKey = new Map(
     (Array.isArray(suppliedSignals) ? suppliedSignals : [])
@@ -168,6 +186,23 @@ function sortTransformationSignalsForComparison(signals = []) {
       sensitivity: 'base',
     });
   });
+}
+
+function getTransformationSignalImprovement(signal, baselineSignal) {
+  if (!signal || !baselineSignal) return null;
+  const direction = TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION[signal.key];
+  if (!direction) return null;
+
+  const baselineValue = Number(baselineSignal.value);
+  const rewrittenValue = Number(signal.value);
+  if (!Number.isFinite(baselineValue) || !Number.isFinite(rewrittenValue)) return null;
+
+  const delta = rewrittenValue - baselineValue;
+  const changedEnough = Math.abs(delta) >= 0.5;
+  if (!changedEnough) return null;
+  if (direction === 'lower' && delta < 0) return { from: baselineValue, to: rewrittenValue, delta };
+  if (direction === 'higher' && delta > 0) return { from: baselineValue, to: rewrittenValue, delta };
+  return null;
 }
 
 function buildTransformationSummary(features = {}, signals = [], contributionOverride = null) {
@@ -1091,27 +1126,51 @@ export default function Report() {
               <span>Core Signals</span>
             </div>
             <div className="transformation-bars">
-              {comparisonSignals.map((signal) => (
-                <div
-                  key={`${variant}-${signal.key}`}
-                  className="transformation-bar-row"
-                  data-tooltip={signal.description}
-                  tabIndex={0}
-                  aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.label}: ${signal.value.toFixed(0)}%. ${signal.description}`}
-                  title={signal.description}
-                >
-                  <div className="transformation-bar-label">
-                    <span>{signal.label}</span>
-                    <strong>{signal.value.toFixed(0)}%</strong>
+              {comparisonSignals.map((signal) => {
+                const baselineSignal = variant === 'rewritten'
+                  ? transformationSignals.find((item) => item.key === signal.key)
+                  : null;
+                const improvement = getTransformationSignalImprovement(signal, baselineSignal);
+                const improvementCopy = improvement
+                  ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%.`
+                  : '';
+                const tooltip = [signal.description, improvementCopy].filter(Boolean).join(' ');
+
+                return (
+                  <div
+                    key={`${variant}-${signal.key}`}
+                    className={`transformation-bar-row${improvement ? ' is-improved' : ''}`}
+                    data-tooltip={tooltip}
+                    tabIndex={0}
+                    aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.label}: ${signal.value.toFixed(0)}%. ${tooltip}`}
+                    title={tooltip}
+                  >
+                    <div className="transformation-bar-label">
+                      <span className="transformation-bar-name">
+                        {signal.label}
+                        {improvement && (
+                          <span
+                            className="transformation-improvement-badge"
+                            aria-label={`Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%`}
+                            title={`Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%`}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                              <path d="M3.2 6.1l1.8 1.8 3.8-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </span>
+                        )}
+                      </span>
+                      <strong>{signal.value.toFixed(0)}%</strong>
+                    </div>
+                    <div className="transformation-bar-track" aria-hidden="true">
+                      <div
+                        className={`transformation-bar-fill transformation-bar-${signal.key}`}
+                        style={{ width: `${signal.value}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="transformation-bar-track" aria-hidden="true">
-                    <div
-                      className={`transformation-bar-fill transformation-bar-${signal.key}`}
-                      style={{ width: `${signal.value}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}
