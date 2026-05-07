@@ -113,12 +113,14 @@ from rewrite_pipeline import (
     _retry_model_enabled,
     _paragraph_component_targets,
     _paragraph_component_prompt,
+    _logical_paragraphs,
     _ai_search_prompt,
     _paragraph_role,
     _human_signal_amplification_prompt,
     _author_reasoning_amplification_prompt,
     _score_human_amplification_candidate,
     _content_pruning_candidates,
+    _generic_assertion_compiler_candidates,
     _blocker_operation_plan,
     _blocker_operation_candidates,
     _post_safe_win_target_push_candidates,
@@ -3264,6 +3266,48 @@ assert_test(
     and any(meta.get("operation") in {"delete_paragraph", "compress_or_narrow_paragraph", "claim_narrow"} for _s, _c, meta in blocker_candidates)
     and all("operation_plan" in meta for _s, _c, meta in blocker_candidates),
     "blocker compiler converts scanner blockers into hard delete/compress/narrow candidates",
+)
+newline_structured_source = (
+    "Inclusive Learning Design in Certificate III Hairdressing\n"
+    "Introduction\n"
+    "Inclusive learning design in adult VET hairdressing training is part of teaching technical skills, not separate from it.\n"
+    "When learners start to get lost\n"
+    "Learners can name the seven cutting procedures, but naming them does not always turn into correct action on mannequins."
+)
+assert_test(
+    len(_logical_paragraphs(newline_structured_source)) == 5,
+    "single-newline headed submissions are split into logical blocks for paragraph targeting",
+)
+generic_compiler_source = (
+    "Overview\n"
+    "Technology is changing education rapidly. It is important to consider that students can learn from many different sources. "
+    "This shows that education should support students in many ways and teachers should help them develop important skills.\n"
+    "HBB26 learners practise SHBHCUT006 with six learners at Box Hill. I compare the guide line with each learner before they continue.\n"
+    "Conclusion\n"
+    "The goal should be to help students achieve success in a changing system."
+)
+generic_compiler_candidates = _generic_assertion_compiler_candidates(
+    generic_compiler_source,
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 85.0,
+                "broad_claim_risk": 82.0,
+            },
+            "ai_components": {
+                "generic_assertion_risk": 90.0,
+                "topk_pattern": 70.0,
+            },
+        }
+    },
+    limit=4,
+)
+assert_test(
+    generic_compiler_candidates
+    and all("HBB26" in candidate and "SHBHCUT006" in candidate for _s, candidate, _m in generic_compiler_candidates)
+    and any("important to consider" not in candidate for _s, candidate, _m in generic_compiler_candidates)
+    and any(meta.get("generic_assertion_compiler") for _s, _c, meta in generic_compiler_candidates),
+    "generic assertion compiler narrows or prunes broad claims while preserving code anchors",
 )
 claim_narrowing_prompt = _claim_narrowing_repair_prompt(
     pruning_source,

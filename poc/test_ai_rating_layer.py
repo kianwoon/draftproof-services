@@ -876,6 +876,20 @@ assert_true(
     contextual_detail_input.generic_assertion_risk < fully_generic_input.generic_assertion_risk,
     "contextual education anchors reduce generic assertion risk",
 )
+hairdressing_domain_input = build_layer3_input_from_text(
+    "At Box Hill Institute, I see this issue before SHBHCUT006 Combine haircut structures. "
+    "Learners practise parting, sectioning, projection, finger position, and the design line on mannequins. "
+    "In my current HBB26 intake, six learners need different levels of correction when the guide disappears."
+)
+hairdressing_generic_input = build_layer3_input_from_text(
+    "Inclusive learning design is important for technical skills. "
+    "This supports learners and helps them achieve better outcomes. "
+    "Educators should create clear opportunities for success."
+)
+assert_true(
+    hairdressing_domain_input.generic_assertion_risk < hairdressing_generic_input.generic_assertion_risk,
+    "domain unit codes and practical haircutting anchors reduce generic assertion risk",
+)
 contextual_density_input = build_layer3_input_from_text(
     (
         "Students compared YouTube videos and AI tools during a classroom discussion. "

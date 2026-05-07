@@ -6206,7 +6206,28 @@ def _apply_finding_local_patches(text: str, patches: list[dict]) -> tuple[str, l
 
 
 def _logical_paragraphs(text: str) -> list[str]:
-    return [p.strip() for p in re.split(r"\n\s*\n", str(text or "").strip()) if p.strip()]
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
+    if len(paragraphs) != 1:
+        return paragraphs
+
+    # Many plain-text submissions preserve paragraph breaks as single newlines
+    # rather than blank lines. Treat those as blocks when the shape looks like a
+    # headed draft, but avoid splitting hard-wrapped prose into fake paragraphs.
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) < 4:
+        return paragraphs
+    heading_like = sum(
+        1
+        for line in lines
+        if len(line.split()) <= 9 and not re.search(r"[.!?:;]\s*$", line)
+    )
+    prose_like = sum(1 for line in lines if len(line.split()) >= 14)
+    if heading_like >= 2 and prose_like >= 2:
+        return lines
+    return paragraphs
 
 
 def _join_logical_paragraphs(paragraphs: list[str]) -> str:
@@ -6773,6 +6794,7 @@ def _narrow_generic_claim_text(text: str) -> str:
         (r"\b[Mm]any schools continue to\b", "Some schools still"),
         (r"\b[Ss]tudents may become too dependent\b", "Some students may become too dependent"),
         (r"\b[Nn]ot every student has equal access\b", "Some students do not have equal access"),
+        (r"\b[Ii]t is important to consider that\b", "In this situation,"),
     ]
     narrowed = str(text or "")
     for pattern, replacement in replacements:
@@ -7021,6 +7043,224 @@ def _compress_score_drag_paragraph(paragraph: str, *, max_remove: int = 2) -> st
         return paragraph
     compressed = " ".join(kept).strip()
     return _narrow_generic_claim_text(compressed)
+
+
+_GENERIC_ASSERTION_TERMS_RE = re.compile(
+    r"\b(?:important|significant|essential|crucial|supports?|helps?|allows?|"
+    r"enables?|creates?|means|shows?|suggests?|highlights?|underscores?|"
+    r"challenge|issue|goal|system|world|framework|approach|outcomes?|success|"
+    r"effective|clear|improve|develop|ensure|provide|promote|enhance|"
+    r"commercial expectations|technical skills|inclusive learning design)\b",
+    re.I,
+)
+
+_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE = re.compile(
+    r"(?:\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b|\b\d+(?:\.\d+)?%?\b|"
+    r"\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)|"
+    r"\b[A-Z][A-Za-z]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z]+)?\s*\(\d{4}\)|"
+    r"\b(?:I|my|me|Box Hill|HBB26|SHBHCUT|CESE|CAST|DEWR|Billett|Kirschner|"
+    r"Chandler|Sweller|Jwad|sectioning|projection|guide|parting|mannequin|client|"
+    r"elbow|wrist|finger|scissor|comb|tension|subsection)\b)",
+    re.I,
+)
+
+
+def _generic_assertion_sentence_score(sentence: str) -> float:
+    words = max(1, _text_word_count(sentence))
+    generic_hits = len(_GENERIC_ASSERTION_TERMS_RE.findall(sentence))
+    modal_hits = len(re.findall(r"\b(?:should|must|need(?:s|ed)?|can|will|may)\b", sentence, flags=re.I))
+    broad_noun_hits = len(re.findall(
+        r"\b(?:learners?|students?|teachers?|educators?|schools?|education|training|practice|skills?)\b",
+        sentence,
+        flags=re.I,
+    ))
+    protected_hits = len(_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.findall(sentence))
+    return generic_hits * 2.4 + modal_hits * 1.2 + broad_noun_hits * 0.35 + words / 45.0 - protected_hits * 2.6
+
+
+def _generic_assertion_compiler_candidates(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 4,
+) -> list[tuple[str, str, dict]]:
+    """Compile broad generic-assertion blockers into bounded deterministic candidates.
+
+    This is intentionally not an LLM rewrite. It removes or narrows only the
+    broad, unsupported sentences that keep generic_assertion_risk high, while
+    preserving anchor-heavy and technical paragraphs for later local repair.
+    """
+    if not _env_flag("DRAFTPROOF_GENERIC_ASSERTION_COMPILER", True):
+        return []
+    blockers = _blocker_scores(raw_json)
+    generic_risk = float(blockers.get("generic_assertion_risk") or 0.0)
+    unsupported_risk = float(blockers.get("unsupported_claim_risk") or 0.0)
+    broad_risk = float(blockers.get("broad_claim_risk") or 0.0)
+    if max(generic_risk, unsupported_risk, broad_risk) < 60.0:
+        return []
+
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 3:
+        return []
+    source_words = _text_word_count(source_text)
+    min_ratio = _float_env("DRAFTPROOF_GENERIC_ASSERTION_MIN_WORD_RATIO", 0.75)
+    min_words = max(1, int(source_words * min_ratio))
+    targets = _paragraph_component_targets(source_text, raw_json or {}, limit=max(limit * 3, 8))
+    targeted_indexes = {int(target.get("index", -1) or -1) for target in targets}
+    for index, paragraph in enumerate(paragraphs):
+        if index in targeted_indexes:
+            continue
+        words = _text_word_count(paragraph)
+        if words < 12:
+            continue
+        generic_hits = len(_GENERIC_ASSERTION_TERMS_RE.findall(paragraph))
+        if generic_hits < 2:
+            continue
+        drivers = {
+            "rewrite_brief_count": 0,
+            "predictability_score_sum": 0,
+            "generic_assertion_hits": generic_hits,
+            "concrete_anchor_hits": len(_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.findall(paragraph)),
+            "source_gap": not bool(_PARAGRAPH_CITATION_RE.search(paragraph)),
+            "repeated_sentence_starters": 0,
+            "word_count": words,
+        }
+        role = _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
+        targets.append({
+            "index": index,
+            "paragraph": paragraph,
+            "score": round(_generic_assertion_sentence_score(paragraph) + 60.0, 3),
+            "raw_score": round(_generic_assertion_sentence_score(paragraph), 3),
+            "role": role,
+            "drivers": drivers,
+            "target_sentences": [],
+            "problem_spans": [],
+            "domain_anchors": [],
+        })
+    targets.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    candidates: list[tuple[str, str, dict]] = []
+    seen: set[str] = {str(source_text or "").strip()}
+
+    def add(strategy: str, candidate_paragraphs: list[str], meta: dict) -> None:
+        candidate_text = _join_logical_paragraphs(candidate_paragraphs)
+        normalized = candidate_text.strip()
+        if not normalized or normalized in seen:
+            return
+        if _text_word_count(candidate_text) < min_words:
+            return
+        seen.add(normalized)
+        candidates.append((
+            strategy,
+            candidate_text,
+            {
+                **meta,
+                "generic_assertion_compiler": True,
+                "blockers": {
+                    "generic_assertion_risk": generic_risk,
+                    "unsupported_claim_risk": unsupported_risk,
+                    "broad_claim_risk": broad_risk,
+                },
+            },
+        ))
+
+    for target in targets:
+        if len(candidates) >= max(1, limit):
+            break
+        index = int(target.get("index", 0) or 0)
+        if index < 0 or index >= len(paragraphs):
+            continue
+        paragraph = paragraphs[index]
+        drivers = target.get("drivers") or {}
+        role = target.get("role") or _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
+        if role in {"human_anchor_rich", "technical_process_rich"}:
+            continue
+        sentences = _split_sentences(paragraph)
+        if len(sentences) < 2:
+            narrowed = _narrow_generic_claim_text(paragraph)
+            if narrowed.strip() and narrowed.strip() != paragraph.strip():
+                next_paragraphs = list(paragraphs)
+                next_paragraphs[index] = narrowed
+                add(
+                    f"generic_assertion_narrow_p{index + 1}",
+                    next_paragraphs,
+                    {"operation": "narrow_single_block", "paragraph_index": index, "paragraph_role": role},
+                )
+            continue
+
+        removable = []
+        for sentence_index, sentence in enumerate(sentences):
+            sentence_text = sentence.strip()
+            if not sentence_text:
+                continue
+            if _GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.search(sentence_text):
+                continue
+            score = _generic_assertion_sentence_score(sentence_text)
+            generic_hits = len(_GENERIC_ASSERTION_TERMS_RE.findall(sentence_text))
+            if score >= 3.0 and generic_hits >= 1:
+                removable.append((score, sentence_index, sentence_text))
+        removable.sort(reverse=True)
+
+        if removable:
+            remove_count = 1 if len(sentences) < 5 else min(2, len(removable))
+            remove_indexes = {idx for _score, idx, _sentence in removable[:remove_count]}
+            kept = [sentence for sentence_index, sentence in enumerate(sentences) if sentence_index not in remove_indexes]
+            if len(kept) >= 1:
+                replacement = _narrow_generic_claim_text(" ".join(kept).strip())
+                if replacement and replacement.strip() != paragraph.strip():
+                    next_paragraphs = list(paragraphs)
+                    next_paragraphs[index] = replacement
+                    add(
+                        f"generic_assertion_prune_p{index + 1}",
+                        next_paragraphs,
+                        {
+                            "operation": "remove_generic_assertion_sentence",
+                            "paragraph_index": index,
+                            "paragraph_role": role,
+                            "removed_sentence_indexes": sorted(remove_indexes),
+                            "removed_sentences": [sentence for _score, _idx, sentence in removable[:remove_count]],
+                            "drivers": drivers,
+                        },
+                    )
+
+        narrowed = _narrow_generic_claim_text(paragraph)
+        if narrowed.strip() and narrowed.strip() != paragraph.strip():
+            next_paragraphs = list(paragraphs)
+            next_paragraphs[index] = narrowed
+            add(
+                f"generic_assertion_narrow_p{index + 1}",
+                next_paragraphs,
+                {
+                    "operation": "narrow_generic_claim_language",
+                    "paragraph_index": index,
+                    "paragraph_role": role,
+                    "drivers": drivers,
+                },
+            )
+
+    if len(candidates) < max(1, limit):
+        changed = []
+        combined = list(paragraphs)
+        for target in targets[:6]:
+            index = int(target.get("index", 0) or 0)
+            if index < 0 or index >= len(combined):
+                continue
+            role = target.get("role") or _paragraph_role(combined[index], target.get("drivers") or {}, is_last=index == len(combined) - 1)
+            if role in {"human_anchor_rich", "technical_process_rich"}:
+                continue
+            narrowed = _narrow_generic_claim_text(combined[index])
+            if narrowed.strip() and narrowed.strip() != combined[index].strip():
+                combined[index] = narrowed
+                changed.append(index)
+            if len(changed) >= 4:
+                break
+        if changed:
+            add(
+                "generic_assertion_multi_narrow",
+                combined,
+                {"operation": "multi_narrow_generic_claim_language", "paragraph_indexes": changed},
+            )
+
+    return candidates[:max(1, limit)]
 
 
 def _blocker_operation_candidates(
@@ -9591,6 +9831,15 @@ def run_rewrite_pipeline(
             (strategy, candidate)
             for strategy, candidate, _meta in blocker_operation_candidates
         )
+        generic_assertion_candidates = _generic_assertion_compiler_candidates(
+            search_source_text,
+            original_report_dict,
+            limit=int(_float_env("DRAFTPROOF_GENERIC_ASSERTION_CANDIDATES", 5.0)),
+        )
+        deterministic_candidates.extend(
+            (strategy, candidate)
+            for strategy, candidate, _meta in generic_assertion_candidates
+        )
         pruning_candidates = _content_pruning_candidates(
             search_source_text,
             original_report_dict,
@@ -9648,6 +9897,20 @@ def run_rewrite_pipeline(
                         **meta,
                     }
                     for strategy, _candidate, meta in blocker_operation_candidates
+                ],
+            },
+            "generic_assertion_compiler": {
+                "enabled": _env_flag("DRAFTPROOF_GENERIC_ASSERTION_COMPILER", True),
+                "candidate_count": len(generic_assertion_candidates),
+                "candidates": [
+                    {
+                        "strategy": strategy,
+                        "operation": meta.get("operation"),
+                        "paragraph_index": meta.get("paragraph_index"),
+                        "paragraph_role": meta.get("paragraph_role"),
+                        "removed_sentence_indexes": meta.get("removed_sentence_indexes"),
+                    }
+                    for strategy, _candidate, meta in generic_assertion_candidates
                 ],
             },
         }

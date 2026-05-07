@@ -773,9 +773,13 @@ def estimate_formulaic_conclusion_risk(text: str) -> float:
 
 CONCRETE_DETAIL_PATTERNS = [
     r"\b\d+\.?\d*\s*%?\b",  # numbers/percentages
+    r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",  # unit/intake/course codes
     r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)+\b",  # named entities (rough)
+    r"\b[A-Z][A-Za-z]+(?:\s+et\s+al\.)?\s*\(\d{4}\)",  # named source citation
+    r"\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)",  # parenthetical citation
     r"\bduring\b.*\b\d{4}\b",  # specific time references
-    r"\bin my\b", r"\bI (?:saw|noticed|found|observed|taught|experienced)\b",
+    r"\bin my\b", r"\bI (?:saw|see|noticed|found|observed|taught|experienced|usually|ask|demonstrate|want|encourage)\b",
+    r"\bI do not\b", r"\bI have seen\b", r"\bmy current\b",
     r"\bwe (?:found|observed|measured|tested)\b",
     r"\bspecifically\b", r"\bfor example\b", r"\bfor instance\b",
     r"\bcase study\b", r"\bdata (?:show|from|set)\b",
@@ -783,8 +787,11 @@ CONCRETE_DETAIL_PATTERNS = [
     r"\b(?:drafts?|homework|exams?|lesson notes?|classroom discussion|feedback activity)\b",
     r"\b(?:YouTube|TikTok|AI tools?|search engines?|online courses?|social media|websites?)\b",
     r"\b(?:source checks?|peer communities|discussion|reflection|practice|attempts?)\b",
+    r"\b(?:sectioning|projection|parting|distribution|design line|mobile guide|stationary guide|guide line|"
+    r"mannequin|client model|client models|weight line|elbow|wrist|finger|scissor|comb|tension|subsection|"
+    r"graduation|graduated haircut|solid form|one length|uniform layer|increased layer|haircut structures?)\b",
 ]
-NAMED_ENTITY_DETAIL_PATTERN = CONCRETE_DETAIL_PATTERNS[1]
+NAMED_ENTITY_DETAIL_PATTERN = CONCRETE_DETAIL_PATTERNS[2]
 CONTEXTUAL_ANCHOR_PATTERNS = [
     r"\bonline content\b",
     r"\bfinal result\b",
@@ -798,7 +805,10 @@ CONTEXTUAL_ANCHOR_PATTERNS = [
     r"\breal situations?\b",
     r"\bconfusion\b",
     r"\bstudents?\s+(?:explain|search|write|practice|understand|learn|think)\b",
+    r"\blearners?\s+(?:shift|practise|practice|repeat|name|combine|cut|pause|continue|describe|notice|need|work)\b",
     r"\bteachers?\s+(?:explain|notice|ask|help|guide)\b",
+    r"\beducators?\s+(?:spot|watch|demonstrate|correct|guide)\b",
+    r"\b(?:comb tension|elbow height|section size|scissor control|guide awareness)\b",
 ]
 
 
