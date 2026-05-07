@@ -2043,6 +2043,22 @@ def _integrity_scores(report_dict: dict | None) -> dict:
     }
 
 
+def _mitigation_sampling_policy_summary() -> dict:
+    return {
+        "ai_search_temperature": float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.45")),
+        "paragraph_component_temperature": float(os.environ.get("DRAFTPROOF_PARAGRAPH_COMPONENT_TEMPERATURE", "0.45")),
+        "human_signal_amplification_temperature": float(os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45")),
+        "author_reasoning_amplification_temperature": float(os.environ.get("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TEMPERATURE", "0.45")),
+        "iterative_human_climb_temperature": float(os.environ.get(
+            "DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_TEMPERATURE",
+            os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
+        )),
+        "internet_reauthor_temperature": float(os.environ.get("DRAFTPROOF_INTERNET_REAUTHOR_TEMPERATURE", "0.45")),
+        "claim_narrowing_temperature": float(os.environ.get("DRAFTPROOF_CLAIM_NARROWING_TEMPERATURE", "0.35")),
+        "topk_texture_temperature": float(os.environ.get("DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE", "0.35")),
+    }
+
+
 def _blocker_scores(report_dict: dict | None) -> dict:
     if not isinstance(report_dict, dict):
         return {}
@@ -2094,6 +2110,51 @@ def _blocker_elimination_status(original_report: dict | None, candidate_report: 
             {"key": key, "score": value}
             for key, value in top_remaining
         ],
+    }
+
+
+def _dominant_blocker_gate_status(original_report: dict | None, candidate_report: dict | None) -> dict:
+    """Require movement on the blockers that define the current failure.
+
+    Generic score improvements are not enough when the dominant blockers remain
+    untouched. This prevents weak fallback candidates from being labelled as
+    mitigation success.
+    """
+    original = _blocker_scores(original_report)
+    candidate = _blocker_scores(candidate_report)
+    dominant_keys = [
+        key.strip()
+        for key in os.environ.get(
+            "DRAFTPROOF_DOMINANT_BLOCKER_KEYS",
+            "unsupported_claim_risk,generic_assertion_risk",
+        ).split(",")
+        if key.strip()
+    ]
+    active_threshold = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_ACTIVE_THRESHOLD", 85.0)
+    min_drop = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_MIN_DROP", 5.0)
+    active_keys = [
+        key for key in dominant_keys
+        if float(original.get(key, 0.0) or 0.0) >= active_threshold
+    ]
+    drops = {
+        key: round(float(original.get(key, 0.0) or 0.0) - float(candidate.get(key, 0.0) or 0.0), 3)
+        for key in active_keys
+    }
+    max_drop = max([0.0] + list(drops.values()))
+    regression = sum(max(0.0, -value) for value in drops.values())
+    required = bool(active_keys) and _env_flag("DRAFTPROOF_REQUIRE_DOMINANT_BLOCKER_DROP", True)
+    cleared = (not required) or (max_drop >= min_drop and regression <= 0.0)
+    return {
+        "required": required,
+        "cleared": cleared,
+        "active_keys": active_keys,
+        "drops": drops,
+        "max_drop": round(max_drop, 3),
+        "regression": round(regression, 3),
+        "min_drop": min_drop,
+        "original": {key: original.get(key, 0.0) for key in dominant_keys},
+        "candidate": {key: candidate.get(key, 0.0) for key in dominant_keys},
+        "reason": "" if cleared else "dominant_blocker_not_reduced",
     }
 
 
@@ -5375,6 +5436,13 @@ def _ai_search_entity_drift_scan_allowed(candidate: str, reasons: list[str], sim
         if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
             return False
     return True
+
+
+def _ai_search_quote_drift_scan_allowed(candidate: str, reasons: list[str], similarity: float) -> bool:
+    """Allow scoring quote-marker drift after protected-span preservation passed."""
+    if not isinstance(candidate, str) or not reasons or similarity < 0.70:
+        return False
+    return all(str(reason).startswith("quote_lost:") for reason in reasons)
 
 
 def _reconstruction_drift_scan_allowed(candidate: str, reasons: list[str], similarity: float) -> bool:
@@ -8690,6 +8758,7 @@ def run_rewrite_pipeline(
             "selected": False,
             "candidates": [],
             "model_roles": llm_roles,
+            "sampling_policy": _mitigation_sampling_policy_summary(),
             "confirmed_anchor_search": {
                 "enabled": bool(confirmed_anchor_strategies),
                 "candidate_limit": len(confirmed_anchor_strategies),
@@ -8853,6 +8922,9 @@ def run_rewrite_pipeline(
                 elif _ai_search_drift_false_positive(candidate, drift.reasons, drift.similarity):
                     candidate_eval["drift_relaxed_for_ai_search"] = True
                     candidate_eval["drift_reasons_relaxed"] = drift.reasons[:5]
+                elif _ai_search_quote_drift_scan_allowed(candidate, drift.reasons, drift.similarity):
+                    candidate_eval["semantic_review_required"] = True
+                    candidate_eval["drift_scan_relaxed_for_quote_markers"] = True
                 elif _ai_search_entity_drift_scan_allowed(candidate, drift.reasons, drift.similarity):
                     candidate_eval["semantic_review_required"] = True
                     candidate_eval["drift_scan_relaxed_for_scoring"] = True
@@ -8883,6 +8955,7 @@ def run_rewrite_pipeline(
             candidate_contribution = _contribution_scores(candidate_report)
             candidate_integrity = _integrity_scores(candidate_report)
             blocker_status = _blocker_elimination_status(original_report_dict, candidate_report)
+            dominant_blocker_status = _dominant_blocker_gate_status(original_report_dict, candidate_report)
             human_shift = _human_shift_score(
                 original_report_dict,
                 candidate_report,
@@ -8908,6 +8981,7 @@ def run_rewrite_pipeline(
                 "human_shift_score": human_shift.get("score"),
                 "human_shift_components": human_shift.get("components"),
                 "blocker_elimination": blocker_status,
+                "dominant_blocker_gate": dominant_blocker_status,
                 "scan_scope": _scan_scope_summary(candidate_report),
             })
             selection_status = _ai_search_candidate_selection_status(
@@ -9129,7 +9203,19 @@ def run_rewrite_pipeline(
                 })
             if human_amplification_score:
                 selection_status["human_signal_amplification_score"] = human_amplification_score
+            if (
+                selection_status.get("selectable")
+                and dominant_blocker_status.get("required")
+                and not dominant_blocker_status.get("cleared")
+            ):
+                selection_status.update({
+                    "success": False,
+                    "selectable": False,
+                    "reason": "dominant_blocker_not_reduced",
+                    "dominant_blocker_required": True,
+                })
             selection_status["authenticity_gate"] = authenticity_status
+            selection_status["dominant_blocker_gate"] = dominant_blocker_status
             selection_status["ai_score_regression_tolerance"] = ai_score_regression_tolerance
             selection_status["ai_score_regressed"] = ai_score_regressed
             selection_status["human_shift_score"] = human_shift.get("score")
@@ -9272,7 +9358,7 @@ def run_rewrite_pipeline(
                     timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
                     max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
                     max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
-                    temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.75")),
+                    temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.45")),
                 ))
                 paragraph_search_enabled = os.environ.get(
                     "DRAFTPROOF_PARAGRAPH_COMPONENT_SEARCH",
@@ -9738,7 +9824,7 @@ def run_rewrite_pipeline(
                                 ),
                                 temperature=float(os.environ.get(
                                     "DRAFTPROOF_PARAGRAPH_COMPONENT_TEMPERATURE",
-                                    "0.8",
+                                    "0.45",
                                 )),
                                 max_tokens=int(os.environ.get(
                                     "DRAFTPROOF_PARAGRAPH_COMPONENT_MAX_TOKENS",
@@ -9864,7 +9950,7 @@ def run_rewrite_pipeline(
                                     ),
                                     temperature=float(os.environ.get(
                                         "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
-                                        "0.55",
+                                        "0.45",
                                     )),
                                     max_tokens=int(os.environ.get(
                                         "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
@@ -9974,7 +10060,7 @@ def run_rewrite_pipeline(
                                     ),
                                     temperature=float(os.environ.get(
                                         "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TEMPERATURE",
-                                        "0.5",
+                                        "0.45",
                                     )),
                                     max_tokens=int(os.environ.get(
                                         "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_MAX_TOKENS",
@@ -10063,7 +10149,7 @@ def run_rewrite_pipeline(
                                 "You are DraftProof's AI-score mitigation engine. "
                                 "Return only the complete rewritten document."
                             ),
-                            temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.75")),
+                            temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.45")),
                             max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
                         )
                         candidate = _clean_full_document_candidate(response.content, search_source_text)
@@ -10122,7 +10208,7 @@ def run_rewrite_pipeline(
                             timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
                             max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
                             max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
-                            temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_TEMPERATURE", "0.8")),
+                            temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_TEMPERATURE", "0.45")),
                         ))
                     for feedback_index in range(1, feedback_limit + 1):
                         report_progress(
@@ -10148,7 +10234,7 @@ def run_rewrite_pipeline(
                                     "You are DraftProof's score-feedback rewrite engine. "
                                     "Use the detector scorecard to produce a lower-scoring complete document."
                                 ),
-                                temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_TEMPERATURE", "0.8")),
+                                temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_TEMPERATURE", "0.45")),
                                 max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
                             )
                             candidate = _clean_full_document_candidate(response.content, search_source_text)
@@ -10237,7 +10323,7 @@ def run_rewrite_pipeline(
                                 ),
                                 temperature=float(os.environ.get(
                                     "DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
-                                    os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.55"),
+                                    os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
                                 )),
                                 max_tokens=int(os.environ.get(
                                     "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
@@ -10392,7 +10478,7 @@ def run_rewrite_pipeline(
                                     ),
                                     temperature=float(os.environ.get(
                                         "DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_TEMPERATURE",
-                                        os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.55"),
+                                        os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
                                     )),
                                     max_tokens=int(os.environ.get(
                                         "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",

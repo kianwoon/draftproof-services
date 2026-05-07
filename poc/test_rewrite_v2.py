@@ -73,6 +73,7 @@ from rewrite_pipeline import (
     _source_repair_drift_false_positive,
     _ai_search_protected_loss_reason,
     _ai_search_drift_false_positive,
+    _ai_search_quote_drift_scan_allowed,
     _ai_search_entity_drift_scan_allowed,
     _reconstruction_drift_scan_allowed,
     _scan_scope_summary,
@@ -120,6 +121,7 @@ from rewrite_pipeline import (
     _content_pruning_candidates,
     _blocker_operation_plan,
     _blocker_operation_candidates,
+    _dominant_blocker_gate_status,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
@@ -2260,6 +2262,19 @@ assert_test(
     "AI search can score high-similarity candidates with non-critical entity-only drift",
 )
 assert_test(
+    _ai_search_quote_drift_scan_allowed(
+        'Education should focus on "what students know" and "how students think".',
+        ["quote_lost: count 2"],
+        0.82,
+    )
+    and not _ai_search_quote_drift_scan_allowed(
+        'Education should focus on changed content.',
+        ["quote_lost: count 2", "lost_named_entity: 'Teacher'"],
+        0.82,
+    ),
+    "AI search can score quote-marker drift after protected quote content has passed",
+)
+assert_test(
     not _ai_search_entity_drift_scan_allowed(
         "Certificate III Hairdressing content.",
         ["lost_named_entity: 'Box Hill Institute'"],
@@ -2955,6 +2970,41 @@ assert_test(
     and blocker_status["drops"]["unsupported_claim_risk"] == 20.0
     and blocker_status["top_remaining"][0]["key"] == "topk_pattern",
     "blocker elimination status measures active blocker reduction directly",
+)
+dominant_blocker_status = _dominant_blocker_gate_status(
+    {
+        "ai_risk_badge": {
+            "writing_components": {"unsupported_claim_risk": 90.0},
+            "ai_components": {"generic_assertion_risk": 90.0},
+        }
+    },
+    {
+        "ai_risk_badge": {
+            "writing_components": {"unsupported_claim_risk": 90.0},
+            "ai_components": {"generic_assertion_risk": 90.0},
+        }
+    },
+)
+dominant_blocker_clear = _dominant_blocker_gate_status(
+    {
+        "ai_risk_badge": {
+            "writing_components": {"unsupported_claim_risk": 90.0},
+            "ai_components": {"generic_assertion_risk": 90.0},
+        }
+    },
+    {
+        "ai_risk_badge": {
+            "writing_components": {"unsupported_claim_risk": 82.0},
+            "ai_components": {"generic_assertion_risk": 90.0},
+        }
+    },
+)
+assert_test(
+    dominant_blocker_status["required"]
+    and not dominant_blocker_status["cleared"]
+    and dominant_blocker_status["reason"] == "dominant_blocker_not_reduced"
+    and dominant_blocker_clear["cleared"],
+    "dominant blocker gate blocks weak wins while unsupported/generic blockers stay unchanged",
 )
 blocker_plan = _blocker_operation_plan(
     pruning_source,
