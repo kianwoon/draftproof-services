@@ -118,6 +118,8 @@ from rewrite_pipeline import (
     _author_reasoning_amplification_prompt,
     _score_human_amplification_candidate,
     _content_pruning_candidates,
+    _blocker_operation_plan,
+    _blocker_operation_candidates,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
@@ -2953,6 +2955,64 @@ assert_test(
     and blocker_status["drops"]["unsupported_claim_risk"] == 20.0
     and blocker_status["top_remaining"][0]["key"] == "topk_pattern",
     "blocker elimination status measures active blocker reduction directly",
+)
+blocker_plan = _blocker_operation_plan(
+    pruning_source,
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 90.0,
+                "broad_claim_risk": 85.0,
+                "source_grounding_risk": 70.0,
+                "lived_detail_risk": 80.0,
+            },
+            "ai_components": {
+                "generic_assertion_risk": 90.0,
+                "topk_pattern": 85.0,
+                "predictability": 47.0,
+            },
+        },
+        "rewrite_edit_briefs": [
+            {
+                "target_sentence": "Technology is changing education rapidly.",
+                "signals": {"score": 0.9},
+            }
+        ],
+    },
+    limit=4,
+)
+blocker_candidates = _blocker_operation_candidates(
+    pruning_source,
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 90.0,
+                "broad_claim_risk": 85.0,
+                "source_grounding_risk": 70.0,
+                "lived_detail_risk": 80.0,
+            },
+            "ai_components": {
+                "generic_assertion_risk": 90.0,
+                "topk_pattern": 85.0,
+                "predictability": 47.0,
+            },
+        },
+        "rewrite_edit_briefs": [
+            {
+                "target_sentence": "Technology is changing education rapidly.",
+                "signals": {"score": 0.9},
+            }
+        ],
+    },
+    limit=4,
+)
+assert_test(
+    blocker_plan.get("operations")
+    and blocker_plan["operations"][0]["operation"] in {"delete_or_compress", "claim_narrow", "compress_or_delete"}
+    and blocker_candidates
+    and any(meta.get("operation") in {"delete_paragraph", "compress_or_narrow_paragraph", "claim_narrow"} for _s, _c, meta in blocker_candidates)
+    and all("operation_plan" in meta for _s, _c, meta in blocker_candidates),
+    "blocker compiler converts scanner blockers into hard delete/compress/narrow candidates",
 )
 claim_narrowing_prompt = _claim_narrowing_repair_prompt(
     pruning_source,

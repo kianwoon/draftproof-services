@@ -2097,6 +2097,120 @@ def _blocker_elimination_status(original_report: dict | None, candidate_report: 
     }
 
 
+def _blocker_operation_plan(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 8,
+) -> dict:
+    """Compile scanner blockers into hard paragraph operations.
+
+    This is the missing bridge between scan and generation: high blockers must
+    become delete/compress/narrow/rebuild operations before the LLM gets a
+    chance to smooth the same weak backbone again.
+    """
+    blockers = _blocker_scores(raw_json)
+    paragraphs = _logical_paragraphs(source_text)
+    if not paragraphs:
+        return {"enabled": False, "reason": "no_paragraphs", "blockers": blockers, "operations": []}
+
+    active = {
+        key: value for key, value in blockers.items()
+        if isinstance(value, (int, float)) and float(value) >= 60.0
+    }
+    if not active:
+        return {"enabled": False, "reason": "no_active_blockers", "blockers": blockers, "operations": []}
+
+    protected = detect_protected_spans(source_text)
+
+    def protected_in_paragraph(index: int) -> bool:
+        before = _join_logical_paragraphs(paragraphs[:index])
+        start = len(before) + (2 if before else 0)
+        end = start + len(paragraphs[index])
+        return any(span.start_char >= start and span.end_char <= end for span in protected)
+
+    targets = _paragraph_component_targets(source_text, raw_json or {}, limit=max(limit * 2, 6))
+    operations = []
+    for target in targets:
+        index = int(target.get("index", 0) or 0)
+        if index < 0 or index >= len(paragraphs):
+            continue
+        paragraph = paragraphs[index]
+        words = _text_word_count(paragraph)
+        if words < 20:
+            continue
+        drivers = target.get("drivers") or {}
+        role = target.get("role") or _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
+        has_protected = protected_in_paragraph(index)
+        generic_hits = int(drivers.get("generic_assertion_hits") or 0)
+        concrete_hits = int(drivers.get("concrete_anchor_hits") or 0)
+        source_gap = bool(drivers.get("source_gap"))
+        generic_density = generic_hits / max(words / 100.0, 1.0)
+
+        reasons = []
+        if blockers.get("unsupported_claim_risk", 0.0) >= 75 and source_gap:
+            reasons.append("unsupported_claim_risk")
+        if blockers.get("broad_claim_risk", 0.0) >= 75 and generic_hits >= 3:
+            reasons.append("broad_claim_risk")
+        if blockers.get("generic_assertion_risk", 0.0) >= 75 and generic_density >= 3.0:
+            reasons.append("generic_assertion_risk")
+        if blockers.get("topk_pattern", 0.0) >= 75 and target.get("target_sentences"):
+            reasons.append("topk_pattern")
+        if blockers.get("lived_detail_risk", 0.0) >= 70 and concrete_hits <= 2:
+            reasons.append("lived_detail_risk")
+        if not reasons:
+            continue
+
+        if role in {"human_anchor_rich", "technical_process_rich"}:
+            operation = "preserve_micro_texture"
+        elif has_protected:
+            operation = "narrow_protected_paragraph"
+        elif role == "conclusion_template_risk":
+            operation = "compress_or_delete"
+        elif "generic_assertion_risk" in reasons or "unsupported_claim_risk" in reasons:
+            operation = "delete_or_compress"
+        elif "broad_claim_risk" in reasons:
+            operation = "claim_narrow"
+        else:
+            operation = "topk_texture_patch"
+
+        priority = (
+            float(target.get("score") or 0.0)
+            + len(reasons) * 10.0
+            + generic_density * 2.0
+            + (8.0 if source_gap else 0.0)
+            - concrete_hits * 0.5
+            - (8.0 if has_protected else 0.0)
+        )
+        operations.append({
+            "paragraph_index": index,
+            "operation": operation,
+            "role": role,
+            "priority": round(priority, 3),
+            "blockers": reasons,
+            "has_protected_anchor": has_protected,
+            "word_count": words,
+            "generic_density": round(generic_density, 3),
+            "drivers": drivers,
+            "preview": paragraph[:360],
+        })
+
+    operations.sort(key=lambda item: item["priority"], reverse=True)
+    return {
+        "enabled": True,
+        "kind": "blocker_operation_plan",
+        "blockers": blockers,
+        "active_blockers": active,
+        "operations": operations[:max(1, int(limit or 1))],
+        "policy": [
+            "delete or compress score-dragging generic paragraphs before texture repair",
+            "narrow unsupported/broad claims before adding sources or author language",
+            "preserve protected anchors; never delete a protected paragraph automatically",
+            "rank candidate selection by blocker elimination before cosmetic score movement",
+        ],
+    }
+
+
 def _transformation_features(report_dict: dict | None) -> dict:
     if not isinstance(report_dict, dict):
         return {}
@@ -6244,6 +6358,166 @@ def _content_pruning_candidates(
     return candidates
 
 
+def _narrow_generic_claim_text(text: str) -> str:
+    replacements = [
+        (
+            r"\b[Tt]oday's education system is changing faster than many schools can comfortably manage\b",
+            "In many schools, education is changing faster than existing routines can comfortably absorb",
+        ),
+        (r"\b[Kk]nowledge is no longer scarce\b", "Information is easier to reach than before"),
+        (r"\b[Aa]ccess is no longer the biggest problem\b", "Access is not the only problem"),
+        (r"\b[Tt]he real challenge is\b", "A harder challenge is"),
+        (
+            r"\b[Tt]his has created a new kind of learning environment\b",
+            "This has changed the learning environment in practical ways",
+        ),
+        (r"\b[Tt]his shift has made\b", "This shift can make"),
+        (r"\b[Tt]his is a serious concern because\b", "The concern is practical because"),
+        (
+            r"\b[Tt]he modern world does not only reward\b",
+            "Many current settings do not only reward",
+        ),
+        (r"\b[Ss]chools should still teach\b", "Schools still need to teach"),
+        (r"\b[Tt]hey must also teach\b", "they also need room to teach"),
+        (r"\b[Tt]he goal should not be\b", "The goal does not need to be"),
+        (r"\b[Tt]he goal should be\b", "A more useful goal is"),
+        (r"\b[Mm]any schools continue to\b", "Some schools still"),
+        (r"\b[Ss]tudents may become too dependent\b", "Some students may become too dependent"),
+        (r"\b[Nn]ot every student has equal access\b", "Some students do not have equal access"),
+    ]
+    narrowed = str(text or "")
+    for pattern, replacement in replacements:
+        narrowed = re.sub(pattern, replacement, narrowed)
+    narrowed = re.sub(r"\bmust\b", "need to", narrowed)
+    narrowed = re.sub(r"\bwill\b", "may", narrowed)
+    narrowed = re.sub(r"\balways\b", "often", narrowed, flags=re.I)
+    return narrowed
+
+
+def _compress_score_drag_paragraph(paragraph: str, *, max_remove: int = 2) -> str:
+    sentences = _split_sentences(paragraph)
+    if len(sentences) < 3:
+        return _narrow_generic_claim_text(paragraph)
+    scores = []
+    for index, sentence in enumerate(sentences):
+        words = _text_word_count(sentence)
+        generic_hits = len(re.findall(
+            r"\b(?:important|significant|should|must|need(?:s)?|can|will|"
+            r"helps?|allows?|enables?|creates?|means|shows?|suggests?|"
+            r"highlights?|underscores?|challenge|issue|goal|system|world)\b",
+            sentence,
+            flags=re.I,
+        ))
+        anchor_hits = len(re.findall(
+            r"\b(?:\d+(?:\.\d+)?%?|\"[^\"]+\"|“[^”]+”|\bI\b|\bmy\b|"
+            r"YouTube|TikTok|AI|teacher|student|assessment|feedback|draft|source)\b",
+            sentence,
+            flags=re.I,
+        ))
+        scores.append((generic_hits * 2.2 + words / 30.0 - anchor_hits * 1.1, index))
+    scores.sort(reverse=True)
+    remove_indexes = {index for _score, index in scores[:max(1, int(max_remove or 1))]}
+    kept = [sentence for index, sentence in enumerate(sentences) if index not in remove_indexes]
+    if not kept:
+        return paragraph
+    compressed = " ".join(kept).strip()
+    return _narrow_generic_claim_text(compressed)
+
+
+def _blocker_operation_candidates(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 6,
+) -> list[tuple[str, str, dict]]:
+    """Generate deterministic candidates from the blocker operation compiler."""
+    if not _env_flag("DRAFTPROOF_BLOCKER_OPERATION_COMPILER", True):
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 2:
+        return []
+    source_words = _text_word_count(source_text)
+    min_words = max(1, int(source_words * _float_env("DRAFTPROOF_BLOCKER_OPERATION_MIN_WORD_RATIO", 0.60)))
+    plan = _blocker_operation_plan(source_text, raw_json or {}, limit=max(limit * 2, 6))
+    operations = plan.get("operations") or []
+    candidates: list[tuple[str, str, dict]] = []
+    seen: set[str] = set()
+
+    def add_candidate(strategy: str, candidate_paragraphs: list[str], meta: dict) -> None:
+        candidate_text = _join_logical_paragraphs(candidate_paragraphs)
+        if candidate_text.strip() == source_text.strip():
+            return
+        if _text_word_count(candidate_text) < min_words:
+            return
+        if candidate_text in seen:
+            return
+        seen.add(candidate_text)
+        candidates.append((strategy, candidate_text, {**meta, "operation_plan": plan}))
+
+    for op in operations:
+        if len(candidates) >= max(1, limit):
+            break
+        index = int(op.get("paragraph_index", -1) or -1)
+        if index < 0 or index >= len(paragraphs):
+            continue
+        paragraph = paragraphs[index]
+        operation = str(op.get("operation") or "")
+        has_protected = bool(op.get("has_protected_anchor"))
+        if operation in {"delete_or_compress", "compress_or_delete"} and not has_protected:
+            deleted = list(paragraphs)
+            deleted.pop(index)
+            add_candidate(
+                f"blocker_compiler_delete_p{index + 1}",
+                deleted,
+                {"operation": "delete_paragraph", "paragraph_index": index, "compiled_from": op},
+            )
+        compressed_text = _compress_score_drag_paragraph(
+            paragraph,
+            max_remove=2 if operation in {"delete_or_compress", "compress_or_delete"} else 1,
+        )
+        if compressed_text.strip() and compressed_text.strip() != paragraph.strip():
+            compressed = list(paragraphs)
+            compressed[index] = compressed_text
+            add_candidate(
+                f"blocker_compiler_compress_p{index + 1}",
+                compressed,
+                {"operation": "compress_or_narrow_paragraph", "paragraph_index": index, "compiled_from": op},
+            )
+        narrowed_text = _narrow_generic_claim_text(paragraph)
+        if narrowed_text.strip() and narrowed_text.strip() != paragraph.strip():
+            narrowed = list(paragraphs)
+            narrowed[index] = narrowed_text
+            add_candidate(
+                f"blocker_compiler_narrow_p{index + 1}",
+                narrowed,
+                {"operation": "claim_narrow", "paragraph_index": index, "compiled_from": op},
+            )
+
+    if len(candidates) < max(1, limit):
+        combined = list(paragraphs)
+        changed_indexes = []
+        for op in operations:
+            index = int(op.get("paragraph_index", -1) or -1)
+            if index < 0 or index >= len(combined) or bool(op.get("has_protected_anchor")):
+                continue
+            if len(changed_indexes) >= 3:
+                break
+            operation = str(op.get("operation") or "")
+            if operation in {"delete_or_compress", "compress_or_delete", "claim_narrow"}:
+                replacement = _compress_score_drag_paragraph(combined[index], max_remove=2)
+                if replacement.strip() and replacement.strip() != combined[index].strip():
+                    combined[index] = replacement
+                    changed_indexes.append(index)
+        if changed_indexes:
+            add_candidate(
+                "blocker_compiler_multi_compress",
+                combined,
+                {"operation": "multi_compress_or_narrow", "paragraph_indexes": changed_indexes},
+            )
+
+    return candidates[:max(1, limit)]
+
+
 def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, str]]:
     """Create deterministic marked-addition candidates for missing grounding.
 
@@ -8384,6 +8658,15 @@ def run_rewrite_pipeline(
                 "deterministic_source_integrity_repair",
                 search_source_text,
             ))
+        blocker_operation_candidates = _blocker_operation_candidates(
+            search_source_text,
+            original_report_dict,
+            limit=int(_float_env("DRAFTPROOF_BLOCKER_OPERATION_CANDIDATES", 6.0)),
+        )
+        deterministic_candidates.extend(
+            (strategy, candidate)
+            for strategy, candidate, _meta in blocker_operation_candidates
+        )
         pruning_candidates = _content_pruning_candidates(
             search_source_text,
             original_report_dict,
@@ -8422,6 +8705,22 @@ def run_rewrite_pipeline(
                         **meta,
                     }
                     for strategy, _candidate, meta in pruning_candidates
+                ],
+            },
+            "blocker_operation_compiler": {
+                "enabled": _env_flag("DRAFTPROOF_BLOCKER_OPERATION_COMPILER", True),
+                "candidate_count": len(blocker_operation_candidates),
+                "operation_plan": _blocker_operation_plan(
+                    search_source_text,
+                    original_report_dict,
+                    limit=int(_float_env("DRAFTPROOF_BLOCKER_OPERATION_PLAN_LIMIT", 8.0)),
+                ),
+                "candidates": [
+                    {
+                        "strategy": strategy,
+                        **meta,
+                    }
+                    for strategy, _candidate, meta in blocker_operation_candidates
                 ],
             },
         }
@@ -8889,8 +9188,8 @@ def run_rewrite_pipeline(
             blocker_active_drop = float(blocker_status.get("active_drop") or 0.0)
             candidate_rank = (
                 1 if selection_status.get("selectable") else 0,
-                float(candidate_human_value) if isinstance(candidate_human_value, (int, float)) else -9999.0,
                 blocker_active_drop,
+                float(candidate_human_value) if isinstance(candidate_human_value, (int, float)) else -9999.0,
                 (
                     float(candidate_ai_authorship_delta)
                     if isinstance(candidate_ai_authorship_delta, (int, float)) else -9999.0
