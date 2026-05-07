@@ -213,6 +213,68 @@ def _allow_ai_search_llm_after_deterministic() -> bool:
     return _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", True)
 
 
+def _score_human_amplification_candidate(
+    original_report: dict,
+    candidate_report: dict,
+    *,
+    review_burden_delta: int = 0,
+    weighted_severity_delta: int = 0,
+    repair_aggression: float = 0.0,
+    locality_score: float = 0.0,
+) -> dict:
+    original_contribution = _contribution_scores(original_report)
+    candidate_contribution = _contribution_scores(candidate_report)
+    original_integrity = _integrity_scores(original_report)
+    candidate_integrity = _integrity_scores(candidate_report)
+
+    def _delta(original_value, candidate_value, *, direction: str = "increase"):
+        if not isinstance(original_value, (int, float)) or not isinstance(candidate_value, (int, float)):
+            return 0.0
+        if direction == "decrease":
+            return float(original_value) - float(candidate_value)
+        return float(candidate_value) - float(original_value)
+
+    human_delta = _delta(original_contribution.get("human"), candidate_contribution.get("human"))
+    ai_authorship_delta = _delta(
+        original_integrity.get("ai_authorship"),
+        candidate_integrity.get("ai_authorship"),
+        direction="decrease",
+    )
+    ai_transformation_delta = _delta(
+        original_contribution.get("ai_transformation"),
+        candidate_contribution.get("ai_transformation"),
+        direction="decrease",
+    )
+    score = (
+        human_delta * 5.0
+        + max(0.0, ai_authorship_delta) * 2.0
+        + max(0.0, ai_transformation_delta) * 1.5
+        + max(0.0, -float(weighted_severity_delta or 0)) * 1.5
+        - max(0.0, float(review_burden_delta or 0)) * 2.0
+        - max(0.0, float(repair_aggression or 0.0)) * 1.0
+        - max(0.0, float(locality_score or 0.0)) * 0.5
+    )
+    return {
+        "score": round(score, 3),
+        "human_delta": round(human_delta, 3),
+        "ai_authorship_delta": round(ai_authorship_delta, 3),
+        "ai_transformation_delta": round(ai_transformation_delta, 3),
+        "review_burden_delta": int(review_burden_delta or 0),
+        "weighted_severity_delta": int(weighted_severity_delta or 0),
+        "repair_aggression": round(float(repair_aggression or 0.0), 3),
+        "locality_score": round(float(locality_score or 0.0), 3),
+        "weights": {
+            "human_delta": 5.0,
+            "ai_authorship_delta": 2.0,
+            "ai_transformation_delta": 1.5,
+            "weighted_severity_delta": -1.5,
+            "review_burden_delta": -2.0,
+            "repair_aggression": -1.0,
+            "locality_score": -0.5,
+        },
+    }
+
+
 def _role_model(role: str, fallback_model: str | None = None) -> str | None:
     """Resolve stage-specific LLM model names from env with legacy fallback."""
     role = (role or "").strip().lower()
@@ -3964,6 +4026,36 @@ def _paragraph_sentence_starters(paragraph: str) -> list[str]:
     return starters
 
 
+def _paragraph_role(paragraph: str, drivers: dict | None = None, *, is_last: bool = False) -> str:
+    drivers = drivers or {}
+    text = str(paragraph or "")
+    citation_count = len(re.findall(
+        r"(?:\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)|"
+        r"\b[A-Z][A-Za-z]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z]+)?\s*\(\d{4}\))",
+        text,
+    ))
+    first_person_count = len(re.findall(r"\b(?:I|my|me)\b", text))
+    process_count = len(re.findall(
+        r"\b(?:SHBHCUT\d+|sectioning|projection|guide|parting|haircut|mannequin|client|elbow|wrist|finger|scissor|comb|tension|subsection)\b",
+        text,
+        flags=re.I,
+    ))
+    source_gap = bool(drivers.get("source_gap"))
+    generic_hits = int(drivers.get("generic_assertion_hits") or 0)
+    word_count = max(1, int(drivers.get("word_count") or len(text.split()) or 1))
+    if first_person_count >= 3 and process_count >= 6:
+        return "human_anchor_rich"
+    if is_last or re.search(r"^\s*(?:Conclusion|This review has discussed)\b", text, re.I):
+        return "conclusion_template_risk"
+    if citation_count >= 2 and first_person_count == 0:
+        return "source_summary_heavy"
+    if process_count >= 8 and first_person_count >= 1:
+        return "technical_process_rich"
+    if source_gap or generic_hits / max(word_count / 100.0, 1.0) >= 4.0:
+        return "generic_claim_heavy"
+    return "mixed"
+
+
 def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> list[dict]:
     """Rank logical paragraphs by their likely contribution to AI-style score."""
     paragraphs = _logical_paragraphs(text)
@@ -4013,21 +4105,23 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
         )
         if score <= 0:
             continue
+        drivers = {
+            "rewrite_brief_count": len(matching_briefs),
+            "predictability_score_sum": round(brief_score, 4),
+            "generic_assertion_hits": generic_hits,
+            "concrete_anchor_hits": concrete_hits,
+            "source_gap": bool(source_gap),
+            "repeated_sentence_starters": repeated_starter_count,
+            "word_count": len(words),
+        }
         scored.append({
             "index": index,
             "paragraph": paragraph,
             "previous_paragraph": paragraphs[index - 1] if index > 0 else "",
             "next_paragraph": paragraphs[index + 1] if index + 1 < len(paragraphs) else "",
             "score": round(score, 3),
-            "drivers": {
-                "rewrite_brief_count": len(matching_briefs),
-                "predictability_score_sum": round(brief_score, 4),
-                "generic_assertion_hits": generic_hits,
-                "concrete_anchor_hits": concrete_hits,
-                "source_gap": bool(source_gap),
-                "repeated_sentence_starters": repeated_starter_count,
-                "word_count": len(words),
-            },
+            "role": _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1),
+            "drivers": drivers,
             "target_sentences": [
                 (b.get("target_sentence") or "") for b in matching_briefs[:5]
             ],
@@ -4097,6 +4191,63 @@ def _paragraph_component_prompt(
         "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
         "...continue until the requested candidate count.\n"
         "Do not include commentary outside the candidate tags."
+    )
+
+
+def _human_signal_amplification_prompt(
+    target: dict,
+    raw_json: dict,
+    attempt_index: int,
+    *,
+    candidate_count: int = 3,
+) -> str:
+    role = str(target.get("role") or "mixed")
+    operation = {
+        "source_summary_heavy": "add a source-to-practice bridge",
+        "generic_claim_heavy": "narrow the claim with condition and local context",
+        "conclusion_template_risk": "remove summary cadence and add a reflective limitation",
+        "technical_process_rich": "preserve the technical process and make only a micro-repair",
+    }.get(role, "add one controlled author-reasoning bridge")
+    return (
+        "DraftProof HUMAN_SIGNAL_AMPLIFICATION_REPAIR.\n"
+        "You are repairing one paragraph only.\n"
+        f"Paragraph role: {role}.\n"
+        f"Controlled operation: {operation}.\n\n"
+        "Goal:\n"
+        "Increase authentic author contribution using reasoning already implied by this paragraph.\n"
+        "Do not increase AI Authorship, AI Transformation, review burden, or severity.\n\n"
+        "Allowed:\n"
+        "- connect a source claim to a teaching/practice decision already present in the context\n"
+        "- add one limitation or condition already implied by the paragraph\n"
+        "- make a claim more specific using existing local context\n"
+        "- reduce template conclusion cadence\n"
+        "- vary sentence purpose without making the paragraph more polished\n\n"
+        "Forbidden:\n"
+        "- invent new evidence, citations, dates, names, people, institutions, examples, or statistics\n"
+        "- add a new source\n"
+        "- rewrite the full paragraph into a smoother academic paragraph\n"
+        "- use generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion\n"
+        "- change or remove citations, years, numbers, unit codes, source names, or quoted text\n\n"
+        "Acceptance gate used by the scanner:\n"
+        "- Human Contribution must increase by at least 2\n"
+        "- AI Authorship must not increase\n"
+        "- AI Transformation must not increase\n"
+        "- review burden and weighted severity must not increase\n"
+        "- semantic drift and anchor loss must be false\n\n"
+        f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
+        "Domain anchors already present nearby:\n"
+        + ", ".join(str(a) for a in (target.get("domain_anchors") or [])[:16])
+        + "\n\nPrevious paragraph context:\n"
+        f"{target.get('previous_paragraph') or '[none]'}\n\n"
+        "TARGET PARAGRAPH:\n"
+        f"<TARGET_PARAGRAPH>\n{target.get('paragraph') or ''}\n</TARGET_PARAGRAPH>\n\n"
+        "Next paragraph context:\n"
+        f"{target.get('next_paragraph') or '[none]'}\n\n"
+        f"Attempt {attempt_index}: return exactly {candidate_count} alternatives using this format:\n"
+        "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
+        "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
+        "...continue until the requested candidate count.\n"
+        "No commentary outside tags."
     )
 
 
@@ -6502,6 +6653,33 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("review_burden_regressed")
                 and not authenticity_status.get("weighted_severity_regressed")
             )
+            human_amplification_score = None
+            human_amplification_selectable = False
+            if candidate_eval.get("human_signal_amplification"):
+                aggression = _repair_aggression_score(text, candidate).get("score", 0.0)
+                locality = _locality_score(text, candidate).get("changed_sentence_ratio", 0.0)
+                human_amplification_score = _score_human_amplification_candidate(
+                    original_report_dict,
+                    candidate_report,
+                    review_burden_delta=candidate_review_burden - original_review_burden,
+                    weighted_severity_delta=candidate_weighted_severity - original_severity,
+                    repair_aggression=float(aggression or 0.0),
+                    locality_score=float(locality or 0.0),
+                )
+                candidate_eval["human_signal_amplification_score"] = human_amplification_score
+                human_amplification_selectable = bool(
+                    _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_HUMAN_SIGNAL_AMPLIFICATION", True)
+                    and human_amplification_score.get("human_delta", 0.0) >= _float_env(
+                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MIN_HUMAN_GAIN",
+                        2.0,
+                    )
+                    and human_amplification_score.get("ai_authorship_delta", -9999.0) >= 0.0
+                    and human_amplification_score.get("ai_transformation_delta", -9999.0) >= 0.0
+                    and candidate_review_burden <= original_review_burden
+                    and candidate_weighted_severity <= original_severity
+                    and not authenticity_status.get("critical_high_regressed")
+                    and not authenticity_status.get("ai_authorship_regression_blocked")
+                )
             ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
             safe_authorship_suppression_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SAFE_AUTHORSHIP_SUPPRESSION", True)
@@ -6522,6 +6700,7 @@ def run_rewrite_pipeline(
                 not selection_status.get("selectable")
                 and (
                     incremental_authenticity_selectable
+                    or human_amplification_selectable
                     or safe_authorship_suppression_selectable
                 )
             ):
@@ -6529,13 +6708,20 @@ def run_rewrite_pipeline(
                     "success": True,
                     "selectable": True,
                     "reason": (
-                        "accepted_safe_authorship_suppression"
-                        if safe_authorship_suppression_selectable
-                        else "accepted_incremental_authenticity_progress"
+                        "accepted_human_signal_amplification"
+                        if human_amplification_selectable
+                        else (
+                            "accepted_safe_authorship_suppression"
+                            if safe_authorship_suppression_selectable
+                            else "accepted_incremental_authenticity_progress"
+                        )
                     ),
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
+                    "human_signal_amplification": bool(human_amplification_selectable),
                     "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
                 })
+                if human_amplification_score:
+                    selection_status["human_signal_amplification_score"] = human_amplification_score
             selection_status["authenticity_gate"] = authenticity_status
             selection_status["human_shift_score"] = human_shift.get("score")
             selection_status["human_shift_components"] = human_shift.get("components")
@@ -6543,6 +6729,7 @@ def run_rewrite_pipeline(
             human_shift_score = human_shift.get("score")
             candidate_rank = (
                 1 if selection_status.get("selectable") else 0,
+                1 if selection_status.get("human_signal_amplification") else 0,
                 float(human_shift_score) if isinstance(human_shift_score, (int, float)) else -9999.0,
                 float(ai_delta) if isinstance(ai_delta, (int, float)) else -9999.0,
             )
@@ -6650,6 +6837,7 @@ def run_rewrite_pipeline(
                             {
                                 "paragraph_index": t.get("index"),
                                 "score": t.get("score"),
+                                "role": t.get("role"),
                                 "drivers": t.get("drivers"),
                                 "preview": (t.get("paragraph") or "")[:180],
                             }
@@ -6750,12 +6938,126 @@ def run_rewrite_pipeline(
                                 extra={
                                     "paragraph_component": True,
                                     "paragraph_index": target.get("index"),
+                                    "paragraph_role": target.get("role"),
                                     "paragraph_driver_score": target.get("score"),
                                     "paragraph_drivers": target.get("drivers"),
                                 },
                             )
                         if best_strategy:
                             component_base_text = best_text
+
+                    if _env_flag("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_REPAIR", True):
+                        amplify_roles = {
+                            role.strip()
+                            for role in (
+                                os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TARGET_ROLES")
+                                or os.environ.get(
+                                    "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_ROLES",
+                                    "source_summary_heavy,conclusion_template_risk",
+                                )
+                            ).split(",")
+                            if role.strip()
+                        }
+                        amplify_targets = [
+                            target for target in component_targets
+                            if str(target.get("role") or "") in amplify_roles
+                        ][: max(0, int(_float_env("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TARGETS", 2.0)))]
+                        amplify_candidates = max(
+                            1,
+                            int(_float_env("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_CANDIDATES", 3.0)),
+                        )
+                        search_summary["human_signal_amplification"] = {
+                            "enabled": True,
+                            "target_roles": sorted(amplify_roles),
+                            "target_count": len(amplify_targets),
+                            "candidate_limit_per_target": amplify_candidates,
+                            "targets": [
+                                {
+                                    "paragraph_index": t.get("index"),
+                                    "role": t.get("role"),
+                                    "score": t.get("score"),
+                                }
+                                for t in amplify_targets
+                            ],
+                        }
+                        for amplify_number, target in enumerate(amplify_targets, start=1):
+                            try:
+                                prompt = _human_signal_amplification_prompt(
+                                    target,
+                                    ctx.raw_json,
+                                    amplify_number,
+                                    candidate_count=amplify_candidates,
+                                )
+                                search_summary["llm_calls"] += 1
+                                response = gateway.chat(
+                                    prompt,
+                                    system=(
+                                        "You are DraftProof's human-signal amplification engine. "
+                                        "Return only tagged replacement paragraphs."
+                                    ),
+                                    temperature=float(os.environ.get(
+                                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
+                                        "0.55",
+                                    )),
+                                    max_tokens=int(os.environ.get(
+                                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
+                                        "2600",
+                                    )),
+                                )
+                                amplify_outputs = _extract_paragraph_component_candidates(
+                                    response.content,
+                                    amplify_candidates,
+                                )
+                            except Exception as exc:
+                                search_summary["candidates"].append({
+                                    "strategy": (
+                                        f"human_signal_amplification_p{int(target.get('index', 0)) + 1}"
+                                        "_batch"
+                                    ),
+                                    "passed_local_checks": False,
+                                    "reason": f"llm_error {exc}",
+                                    "human_signal_amplification": True,
+                                    "paragraph_index": target.get("index"),
+                                    "paragraph_role": target.get("role"),
+                                })
+                                continue
+                            for candidate_number, raw_paragraph_candidate in enumerate(amplify_outputs, start=1):
+                                strategy = (
+                                    f"human_signal_amplification_p{int(target.get('index', 0)) + 1}"
+                                    f"_c{candidate_number}"
+                                )
+                                paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
+                                    raw_paragraph_candidate,
+                                    target.get("paragraph") or "",
+                                )
+                                if paragraph_reject:
+                                    search_summary["candidates"].append({
+                                        "strategy": strategy,
+                                        "passed_local_checks": False,
+                                        "reason": paragraph_reject,
+                                        "human_signal_amplification": True,
+                                        "paragraph_index": target.get("index"),
+                                        "paragraph_role": target.get("role"),
+                                    })
+                                    continue
+                                patched_candidate = _splice_paragraph(
+                                    component_base_text,
+                                    int(target.get("index", 0)),
+                                    paragraph_candidate,
+                                )
+                                _evaluate_ai_search_candidate(
+                                    strategy,
+                                    patched_candidate,
+                                    deterministic=False,
+                                    extra={
+                                        "human_signal_amplification": True,
+                                        "paragraph_component": True,
+                                        "paragraph_index": target.get("index"),
+                                        "paragraph_role": target.get("role"),
+                                        "paragraph_driver_score": target.get("score"),
+                                        "paragraph_drivers": target.get("drivers"),
+                                    },
+                                )
 
                 for index, strategy in enumerate(strategies, start=1):
                     report_progress(
@@ -7202,6 +7504,8 @@ def run_rewrite_pipeline(
         and (
             (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
              .get("authenticity_incremental"))
+            or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
+                .get("human_signal_amplification"))
             or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
                 .get("safe_authorship_suppression"))
         )

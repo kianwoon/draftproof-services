@@ -112,6 +112,9 @@ from rewrite_pipeline import (
     _retry_model_enabled,
     _paragraph_component_targets,
     _paragraph_component_prompt,
+    _paragraph_role,
+    _human_signal_amplification_prompt,
+    _score_human_amplification_candidate,
     _extract_paragraph_component_candidates,
     _clean_paragraph_component_candidate,
     _splice_paragraph,
@@ -2335,6 +2338,95 @@ assert_test(
     and "Short title." in spliced
     and "CESE (2017)" in spliced,
     "paragraph component splice patches only the target paragraph into full text",
+)
+source_role = _paragraph_role(
+    "CESE (2017) explains that working memory can be overloaded during complex practical learning. "
+    "Chandler and Sweller (1991) also describe how instruction should reduce unnecessary load when learners are still developing basic schemas. "
+    "These sources are useful because they explain why practical tasks need to be sequenced carefully.",
+    {"word_count": 51, "generic_assertion_hits": 3, "source_gap": False},
+)
+assert_test(
+    source_role == "source_summary_heavy",
+    "paragraph role detects source-summary-heavy paragraphs for amplification",
+)
+conclusion_role = _paragraph_role(
+    "Conclusion\nThis review has discussed the main issues that affect practical skills teaching and assessment.",
+    {"word_count": 14, "generic_assertion_hits": 2, "source_gap": True},
+    is_last=True,
+)
+assert_test(
+    conclusion_role == "conclusion_template_risk",
+    "paragraph role detects conclusion template risk for amplification",
+)
+anchor_rich_role = _paragraph_role(
+    "In my practice I noticed that my learners handled sectioning, projection, guide control, "
+    "parting, comb tension, wrist position, elbow height, scissor angle, client consultation, "
+    "mannequin practice, and subsection checks more confidently after I slowed the demonstration.",
+    {"word_count": 35, "generic_assertion_hits": 2, "source_gap": True},
+)
+assert_test(
+    anchor_rich_role == "human_anchor_rich",
+    "paragraph role preserves human-anchor-rich paragraphs",
+)
+amplification_prompt = _human_signal_amplification_prompt(
+    {
+        "role": "source_summary_heavy",
+        "paragraph": (
+            "CESE (2017) explains working memory limits in practical learning. "
+            "Chandler and Sweller (1991) describe cognitive load."
+        ),
+        "previous_paragraph": "Learners were preparing for sectioning practice.",
+        "next_paragraph": "The next paragraph discusses feedback timing.",
+        "drivers": {"generic_assertion_hits": 5, "word_count": 42},
+        "domain_anchors": ["CESE (2017)", "Chandler and Sweller (1991)", "sectioning"],
+    },
+    paragraph_search_json,
+    1,
+    candidate_count=3,
+)
+assert_test(
+    "HUMAN_SIGNAL_AMPLIFICATION_REPAIR" in amplification_prompt
+    and "Controlled operation: add a source-to-practice bridge" in amplification_prompt
+    and "Human Contribution must increase by at least 2" in amplification_prompt
+    and "AI Authorship must not increase" in amplification_prompt
+    and "invent new evidence" in amplification_prompt
+    and "generic connectors" in amplification_prompt,
+    "human signal amplification prompt enforces operation-level gate",
+)
+human_amp_original = {
+    "integrity_layers": {
+        "layers": {
+            "human_contribution_signal": {"score": 51},
+            "ai_transformation_risk": {"score": 49},
+            "ai_authorship_risk": {"score": 58},
+            "grounding_quality_risk": {"score": 58},
+        }
+    }
+}
+human_amp_candidate = {
+    "integrity_layers": {
+        "layers": {
+            "human_contribution_signal": {"score": 54},
+            "ai_transformation_risk": {"score": 48},
+            "ai_authorship_risk": {"score": 57},
+            "grounding_quality_risk": {"score": 58},
+        }
+    }
+}
+human_amp_score = _score_human_amplification_candidate(
+    human_amp_original,
+    human_amp_candidate,
+    review_burden_delta=-1,
+    weighted_severity_delta=-8,
+    repair_aggression=0.04,
+    locality_score=0.09,
+)
+assert_test(
+    human_amp_score["human_delta"] == 3
+    and human_amp_score["ai_authorship_delta"] == 1
+    and human_amp_score["ai_transformation_delta"] == 1
+    and human_amp_score["score"] > 25,
+    "human signal amplification scorer rewards human gain under authorship cap",
 )
 scope_summary = _scan_scope_summary({
     "predictability": {
