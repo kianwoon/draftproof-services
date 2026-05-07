@@ -9855,6 +9855,9 @@ def run_rewrite_pipeline(
             nonlocal adaptive_stop_reason
             if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True):
                 return
+            existing_target_push = search_summary.get("post_safe_win_target_push")
+            if isinstance(existing_target_push, dict) and existing_target_push.get("accepted"):
+                return
             if not _best_ai_search_selectable() or not isinstance(best_report, dict):
                 return
             current_human = _contribution_scores(best_report).get("human")
@@ -10986,6 +10989,7 @@ def run_rewrite_pipeline(
                                 break
 
                 if adaptive_stop_reason:
+                    _run_post_safe_win_target_push("post_llm_adaptive_stop")
                     search_summary["llm_reason"] = adaptive_stop_reason
 
                 for index, strategy in enumerate([] if adaptive_stop_reason else strategies, start=1):
@@ -11563,6 +11567,7 @@ def run_rewrite_pipeline(
                         )
 
                 if _best_ai_search_selectable():
+                    _run_post_safe_win_target_push("pre_selection")
                     previous_ai = rewritten_ai
                     rewritten_text = best_text
                     rewritten_report_dict = best_report
