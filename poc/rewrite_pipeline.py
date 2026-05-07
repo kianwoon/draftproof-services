@@ -2543,6 +2543,86 @@ def _blocked_winner_bounded_quality_tradeoff(
     }
 
 
+def _score_drag_removal_status(
+    *,
+    authenticity_status: dict | None,
+    human_shift: dict | None,
+    ai_delta: float,
+    finding_delta: int,
+    review_burden_delta: int,
+    weighted_severity_delta: int,
+    critical_high_delta: int,
+    ai_score_regressed: bool,
+) -> dict:
+    """Accept bounded removals/compressions that reduce review burden safely."""
+    authenticity_status = authenticity_status or {}
+    human_shift = human_shift or {}
+    human_delta = authenticity_status.get("human_delta")
+    authorship_delta = authenticity_status.get("ai_authorship_delta")
+    transform_delta = authenticity_status.get("ai_transformation_delta")
+    min_human = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_HUMAN_DELTA", 0.0)
+    min_authorship = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_AUTHORSHIP_DELTA", 0.0)
+    min_transform = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_TRANSFORM_DELTA", 0.0)
+    min_ai_drop = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_AI_DROP", 0.05)
+    min_finding_drop = int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_FINDING_DROP", 2.0))
+    min_review_drop = int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_REVIEW_DROP", 1.0))
+    min_severity_drop = int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_SEVERITY_DROP", 2.0))
+    finding_drop = max(0, -int(finding_delta or 0))
+    review_drop = max(0, -int(review_burden_delta or 0))
+    severity_drop = max(0, -int(weighted_severity_delta or 0))
+    burden_reduced = bool(
+        finding_drop >= min_finding_drop
+        or review_drop >= min_review_drop
+        or severity_drop >= min_severity_drop
+    )
+    numeric_ok = all(
+        isinstance(value, (int, float))
+        for value in (human_delta, authorship_delta, transform_delta, ai_delta)
+    )
+    allowed = bool(
+        _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SCORE_DRAG_REMOVAL", True)
+        and numeric_ok
+        and float(human_delta) >= min_human
+        and float(authorship_delta) >= min_authorship
+        and float(transform_delta) >= min_transform
+        and float(ai_delta) > min_ai_drop
+        and burden_reduced
+        and int(finding_delta or 0) <= 0
+        and int(review_burden_delta or 0) <= 0
+        and int(weighted_severity_delta or 0) <= 0
+        and int(critical_high_delta or 0) <= 0
+        and not ai_score_regressed
+        and not authenticity_status.get("ai_authorship_regression_blocked")
+        and not authenticity_status.get("critical_high_regressed")
+    )
+    return {
+        "allowed": allowed,
+        "reason": "" if allowed else "score_drag_threshold_not_met",
+        "human_delta": human_delta,
+        "ai_authorship_delta": authorship_delta,
+        "ai_transformation_delta": transform_delta,
+        "ai_delta": ai_delta,
+        "human_shift_score": human_shift.get("score"),
+        "finding_delta": finding_delta,
+        "review_burden_delta": review_burden_delta,
+        "weighted_severity_delta": weighted_severity_delta,
+        "critical_high_delta": critical_high_delta,
+        "finding_drop": finding_drop,
+        "review_burden_drop": review_drop,
+        "weighted_severity_drop": severity_drop,
+        "min_ai_drop": min_ai_drop,
+        "min_finding_drop": min_finding_drop,
+        "min_review_burden_drop": min_review_drop,
+        "min_weighted_severity_drop": min_severity_drop,
+        "burden_reduced": burden_reduced,
+        "ignored_negative_human_shift": bool(
+            isinstance(human_shift.get("score"), (int, float))
+            and float(human_shift.get("score")) < 0
+            and burden_reduced
+        ),
+    }
+
+
 def _adaptive_budget_default(source_text: str, short_value: int, long_value: int) -> str:
     if _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_DOC_BUDGETS", True):
         threshold = int(_float_env("DRAFTPROOF_SHORT_DOC_WORD_THRESHOLD", 450.0))
@@ -10621,36 +10701,18 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
             )
-            score_drag_removal_selectable = bool(
-                _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SCORE_DRAG_REMOVAL", True)
-                and isinstance(candidate_human_delta, (int, float))
-                and candidate_human_delta >= 0.0
-                and isinstance(human_shift.get("score"), (int, float))
-                and float(human_shift.get("score")) >= _float_env(
-                    "DRAFTPROOF_SCORE_DRAG_MIN_HUMAN_SHIFT",
-                    0.0,
-                )
-                and isinstance(ai_authorship_delta, (int, float))
-                and ai_authorship_delta >= 0.0
-                and isinstance(candidate_ai_transform_delta, (int, float))
-                and candidate_ai_transform_delta >= 0.0
-                and isinstance(ai_delta, (int, float))
-                and ai_delta > _float_env("DRAFTPROOF_SCORE_DRAG_MIN_AI_DROP", 0.05)
-                and (
-                    original_total - _finding_total(candidate_report)
-                    >= int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_FINDING_DROP", 2.0))
-                    or original_review_burden - candidate_review_burden
-                    >= int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_REVIEW_DROP", 1.0))
-                    or original_severity - candidate_weighted_severity
-                    >= int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_SEVERITY_DROP", 2.0))
-                )
-                and _finding_total(candidate_report) <= original_total
-                and candidate_review_burden <= original_review_burden
-                and candidate_weighted_severity <= original_severity
-                and candidate_critical_high <= saved_critical_high
-                and not authenticity_status.get("ai_authorship_regression_blocked")
-                and not authenticity_status.get("critical_high_regressed")
+            score_drag_status = _score_drag_removal_status(
+                authenticity_status=authenticity_status,
+                human_shift=human_shift,
+                ai_delta=ai_delta,
+                finding_delta=_finding_total(candidate_report) - original_total,
+                review_burden_delta=candidate_review_burden - original_review_burden,
+                weighted_severity_delta=candidate_weighted_severity - original_severity,
+                critical_high_delta=candidate_critical_high - saved_critical_high,
+                ai_score_regressed=ai_score_regressed,
             )
+            score_drag_removal_selectable = bool(score_drag_status.get("allowed"))
+            candidate_eval["score_drag_removal_status"] = score_drag_status
             human_primary_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_HUMAN_PRIMARY_PROGRESS", True)
                 and isinstance(candidate_human_delta, (int, float))

@@ -370,15 +370,25 @@ function getRewrittenDetectScan(rewriteReport) {
   return summary.detect_scan_rewritten || rewriteReport?.detect_scan_rewritten || null;
 }
 
+function hasObjectData(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
+}
+
 function mergeScanSummary(baseScan, savedScan) {
   if (!savedScan) return baseScan || null;
   if (!baseScan) return savedScan;
+  const baseBadge = baseScan.ai_risk_badge || {};
+  const savedBadge = savedScan.ai_risk_badge || {};
   return {
     ...baseScan,
     ...savedScan,
-    ai_risk_badge: savedScan.ai_risk_badge || baseScan.ai_risk_badge,
-    scan_intelligence: savedScan.scan_intelligence || baseScan.scan_intelligence,
-    integrity_layers: savedScan.integrity_layers || baseScan.integrity_layers,
+    ai_risk_badge: {
+      ...baseBadge,
+      ...savedBadge,
+      transformation_classification: savedBadge.transformation_classification || baseBadge.transformation_classification,
+    },
+    scan_intelligence: hasObjectData(savedScan.scan_intelligence) ? savedScan.scan_intelligence : baseScan.scan_intelligence,
+    integrity_layers: hasObjectData(savedScan.integrity_layers) ? savedScan.integrity_layers : baseScan.integrity_layers,
   };
 }
 
@@ -398,10 +408,10 @@ function getScanContributionSummary(scan) {
   const humanLayerScore = layers.human_contribution_signal?.score;
   const aiLayerScore = layers.ai_transformation_risk?.score;
   const human = clampPercent(
-    humanLayerScore ?? contribution.human_contribution_ratio ?? contribution.human_contribution ?? contribution.human_ratio
+    contribution.human_contribution_ratio ?? contribution.human_contribution ?? contribution.human_ratio ?? humanLayerScore
   );
   const ai = clampPercent(
-    aiLayerScore ?? contribution.ai_transformation_ratio ?? contribution.ai_transformation ?? contribution.transformation_ratio
+    contribution.ai_transformation_ratio ?? contribution.ai_transformation ?? contribution.transformation_ratio ?? aiLayerScore
   );
 
   if (human == null && ai == null) return null;

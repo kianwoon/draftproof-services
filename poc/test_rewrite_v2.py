@@ -134,6 +134,7 @@ from rewrite_pipeline import (
     _should_track_blocked_human_winner,
     _blocked_human_winner_repair_budget_override,
     _blocked_winner_bounded_quality_tradeoff,
+    _score_drag_removal_status,
     _adaptive_budget_default,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
@@ -3518,6 +3519,26 @@ assert_test(
     and any(meta.get("operation") in {"delete_paragraph", "compress_paragraph"} for _s, _c, meta in pruning_candidates)
     and all("Technology is changing education rapidly" not in candidate or meta.get("operation") == "compress_paragraph" for _s, candidate, meta in pruning_candidates),
     "content pruning generates deletion/compression candidates for generic score-drag paragraphs",
+)
+score_drag_status = _score_drag_removal_status(
+    authenticity_status={
+        "human_delta": 0.0,
+        "ai_authorship_delta": 1.0,
+        "ai_transformation_delta": 0.0,
+    },
+    human_shift={"score": -3.92},
+    ai_delta=0.5,
+    finding_delta=-3,
+    review_burden_delta=-1,
+    weighted_severity_delta=-4,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    score_drag_status.get("allowed")
+    and score_drag_status.get("ignored_negative_human_shift")
+    and score_drag_status.get("finding_drop") == 3,
+    "score-drag removal accepts safe burden reduction even when aggregate Human Shift is negative",
 )
 valid_anchor_answers, rejected_anchor_answers = _validate_author_evidence_answers(
     intake_layer,
