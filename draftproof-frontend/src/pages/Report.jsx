@@ -362,7 +362,7 @@ function getRewritePayloadSummary(rewriteReport) {
 
 function getOriginalDetectScan(rewriteReport) {
   const summary = getRewritePayloadSummary(rewriteReport);
-  return summary.detect_scan_original_saved || summary.detect_scan_original || rewriteReport?.detect_scan_original || null;
+  return summary.detect_scan_original_saved || rewriteReport?.detect_scan_original_saved || null;
 }
 
 function getRewrittenDetectScan(rewriteReport) {

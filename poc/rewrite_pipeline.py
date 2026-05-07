@@ -5657,6 +5657,9 @@ def _ai_candidate_quality_reject_reason(
         return "broken_word_fragment"
     if re.search(r"\b(?:introduction|conclusion)[ \t]+(?:inclusive|this|the)\b", candidate, re.I):
         return "heading_merged_into_sentence"
+    orphan_heading = _orphan_heading_reason(candidate)
+    if orphan_heading:
+        return orphan_heading
     if (
         re.search(
             r"\b(?:(?:research|studies|evidence)\s+(?:shows?|suggests?|indicates?|finds?)|"
@@ -6565,6 +6568,28 @@ def _join_logical_paragraphs(paragraphs: list[str]) -> str:
     return "\n\n".join(p.strip() for p in paragraphs if str(p or "").strip())
 
 
+def _is_heading_like_paragraph(paragraph: str) -> bool:
+    text = str(paragraph or "").strip()
+    if not text:
+        return False
+    if re.search(r"[.!?:;]\s*$", text):
+        return False
+    return bool(len(text.split()) <= 9)
+
+
+def _orphan_heading_reason(text: str) -> str:
+    paragraphs = _logical_paragraphs(text)
+    for index, paragraph in enumerate(paragraphs):
+        if not _is_heading_like_paragraph(paragraph):
+            continue
+        if index == 0 and len(paragraphs) > 1:
+            continue
+        next_paragraph = paragraphs[index + 1] if index + 1 < len(paragraphs) else ""
+        if not next_paragraph or _is_heading_like_paragraph(next_paragraph):
+            return f"orphan_heading:{paragraph[:60]}"
+    return ""
+
+
 def _paragraph_sentence_starters(paragraph: str) -> list[str]:
     starters = []
     for sentence in re.split(r"(?<=[.!?])\s+", paragraph):
@@ -6663,6 +6688,13 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
             "word_count": len(words),
         }
         role = _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
+        if (
+            role == "conclusion_template_risk"
+            and len(words) < 8
+            and index + 1 < len(paragraphs)
+            and not _is_heading_like_paragraph(paragraphs[index + 1])
+        ):
+            continue
         if len(words) < 45 and role != "conclusion_template_risk":
             continue
         role_score_adjustment = {

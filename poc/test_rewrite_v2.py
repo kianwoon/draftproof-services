@@ -3520,6 +3520,20 @@ assert_test(
     and all("Technology is changing education rapidly" not in candidate or meta.get("operation") == "compress_paragraph" for _s, candidate, meta in pruning_candidates),
     "content pruning generates deletion/compression candidates for generic score-drag paragraphs",
 )
+heading_target_text = (
+    "Title\n\n"
+    "Introduction\n\n"
+    "This paragraph gives enough body text for the opening section to be treated as prose rather than a heading.\n\n"
+    "Conclusion\n\n"
+    "This review has discussed inclusive learning design in Certificate III Hairdressing. Demonstration alone does not build competency. Learners need a process they can follow and repeat."
+)
+heading_targets = _paragraph_component_targets(heading_target_text, {}, limit=4)
+assert_test(
+    _ai_candidate_quality_reject_reason("Title\n\nConclusion") == "orphan_heading:Conclusion"
+    and all(t.get("paragraph") != "Conclusion" for t in heading_targets)
+    and any(str(t.get("paragraph") or "").startswith("This review has discussed") for t in heading_targets),
+    "paragraph targeting skips heading-only conclusion targets and quality gate rejects orphan headings",
+)
 score_drag_status = _score_drag_removal_status(
     authenticity_status={
         "human_delta": 0.0,
