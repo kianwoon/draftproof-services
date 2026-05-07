@@ -4618,6 +4618,20 @@ th {
   margin: 0;
 }
 
+.rewritten-document-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .45rem .75rem;
+  min-width: 0;
+}
+
+.rewritten-document-title span {
+  color: var(--muted);
+  font-size: .84rem;
+  font-weight: 750;
+}
+
 .copy-rewrite-btn {
   display: inline-flex;
   align-items: center;

@@ -7966,6 +7966,21 @@ def _sentence_detail_lookup(details: list) -> dict:
     return lookup
 
 
+def _comparison_sentences(text: str) -> list[str]:
+    """Split comparison text without merging headings into adjacent prose."""
+    rows: list[str] = []
+    for block in str(text or "").splitlines():
+        block = block.strip()
+        if not block:
+            continue
+        rows.extend(
+            s.strip()
+            for s in re.split(r"(?<=[.!?])\s+", block)
+            if s.strip()
+        )
+    return rows
+
+
 def _build_aligned_sentence_comparison(mp) -> list:
     """Build before/after sentence rows using text alignment, not index pairing.
 
@@ -7976,14 +7991,8 @@ def _build_aligned_sentence_comparison(mp) -> list:
     if not mp:
         return []
 
-    original_sentences = [
-        s.strip() for s in re.split(r"(?<=[.!?])\s+", mp.original_text or "")
-        if s.strip()
-    ]
-    final_sentences = [
-        s.strip() for s in re.split(r"(?<=[.!?])\s+", mp.final_text or "")
-        if s.strip()
-    ]
+    original_sentences = _comparison_sentences(mp.original_text or "")
+    final_sentences = _comparison_sentences(mp.final_text or "")
     if not original_sentences and not final_sentences:
         return []
 

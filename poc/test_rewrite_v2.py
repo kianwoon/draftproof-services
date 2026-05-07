@@ -78,6 +78,7 @@ from rewrite_pipeline import (
     _reconstruction_drift_scan_allowed,
     _scan_scope_summary,
     _human_shift_score,
+    _goal_climb_candidate_rank,
     _authenticity_gate_status,
     _optimization_candidate_status,
     _select_best_optimization_candidate,
@@ -926,6 +927,52 @@ meaningful_search_status = _ai_search_candidate_selection_status(57.78, 52.50, T
 assert_test(
     meaningful_search_status["selectable"],
     "AI search selects candidates only after the required AI drop is met",
+)
+negative_shift_rank = _goal_climb_candidate_rank(
+    {
+        "selectable": True,
+        "human_shift_score": -0.5,
+        "authenticity_gate": {
+            "candidate_human": 65,
+            "human_delta": 1,
+            "ai_authorship_delta": 1,
+            "ai_transformation_delta": 1,
+        },
+        "human_shift_components": {"semantic_uniformity_reduction": -3.0},
+    },
+    {"human_contribution": 65},
+    candidate_ai=46.2,
+    candidate_review_burden=4,
+    candidate_weighted_severity=52,
+    candidate_finding_total=45,
+    original_review_burden=5,
+    original_weighted_severity=57,
+    original_finding_total=49,
+)
+positive_shift_rank = _goal_climb_candidate_rank(
+    {
+        "selectable": True,
+        "human_shift_score": 4.1,
+        "authenticity_gate": {
+            "candidate_human": 65,
+            "human_delta": 1,
+            "ai_authorship_delta": 1,
+            "ai_transformation_delta": 1,
+        },
+        "human_shift_components": {"rewrite_smoothness_reduction": 1.4},
+    },
+    {"human_contribution": 65},
+    candidate_ai=46.8,
+    candidate_review_burden=2,
+    candidate_weighted_severity=54,
+    candidate_finding_total=49,
+    original_review_burden=5,
+    original_weighted_severity=57,
+    original_finding_total=49,
+)
+assert_test(
+    positive_shift_rank > negative_shift_rank,
+    "goal-climb selector ranks positive Human Shift above lower-AI negative-shift candidates",
 )
 
 def make_shift_report(
@@ -3654,6 +3701,28 @@ changed_rows = [
 assert_test(
     all(row.get("new_sentence") for row in changed_rows),
     "sentence comparison groups unequal replace blocks without blank rewritten cells",
+)
+heading_comparison_mp = SimpleNamespace(
+    original_text=(
+        "The standard stays the same, but the learning path must be more transparent.\n"
+        "Conclusion\n"
+        "This review has discussed inclusive learning design.\n"
+        "Demonstration alone does not build competency."
+    ),
+    final_text=(
+        "The standard stays the same, but the learning path must be more transparent.\n"
+        "Conclusion\n"
+        "This review has discussed inclusive learning design.\n"
+        "Demonstration alone does not build competency."
+    ),
+    original_metrics=SimpleNamespace(sentence_details=[]),
+    final_metrics=SimpleNamespace(sentence_details=[]),
+)
+heading_rows = _build_aligned_sentence_comparison(heading_comparison_mp)
+assert_test(
+    any(row.get("orig_sentence") == "Conclusion" for row in heading_rows)
+    and all("Conclusion This review" not in row.get("orig_sentence", "") for row in heading_rows),
+    "sentence comparison keeps newline headings separate from conclusion prose",
 )
 
 driver_plan = build_mitigation_plan(

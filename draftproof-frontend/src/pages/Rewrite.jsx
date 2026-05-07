@@ -8,6 +8,11 @@ function normalizeSentence(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function countWords(value) {
+  const normalized = String(value || '').trim();
+  return normalized ? normalized.split(/\s+/).length : 0;
+}
+
 function renderPlaceholderText(value) {
   return String(value || '').split(/(\[[^\[\]]+\])/g).map((part, index) => {
     if (!part) return null;
@@ -134,6 +139,7 @@ export default function Rewrite() {
   );
   const outcome = summary.outcome || (rewrite?.status === 'completed' ? 'completed' : rewrite?.status || '');
   const scanId = rewrite?.scan_id;
+  const rewrittenWordCount = countWords(report?.final_text);
 
   return (
     <main className="dash-shell">
@@ -171,7 +177,10 @@ export default function Rewrite() {
         {report?.final_text && (
           <section className="rewritten-document-section">
             <div className="rewritten-document-heading">
-              <h3>Rewritten Document</h3>
+              <div className="rewritten-document-title">
+                <h3>Rewritten Document</h3>
+                <span>{rewrittenWordCount.toLocaleString()} word{rewrittenWordCount === 1 ? '' : 's'}</span>
+              </div>
               <button
                 type="button"
                 className={`copy-rewrite-btn${copyStatus === 'copied' ? ' is-copied' : ''}${copyStatus === 'error' ? ' has-error' : ''}`}
