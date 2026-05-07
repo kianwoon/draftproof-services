@@ -9617,6 +9617,33 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
             )
+            post_safe_target_climb_selectable = bool(
+                candidate_eval.get("post_safe_win_target_push")
+                and _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_ACCEPT_CLIMB", True)
+                and isinstance(candidate_human_delta, (int, float))
+                and candidate_human_delta >= _float_env(
+                    "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MIN_TOTAL_HUMAN_GAIN",
+                    8.0,
+                )
+                and isinstance(ai_authorship_delta, (int, float))
+                and ai_authorship_delta >= _float_env(
+                    "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MIN_AUTHORSHIP_DELTA",
+                    0.0,
+                )
+                and isinstance(candidate_ai_transform_delta, (int, float))
+                and candidate_ai_transform_delta >= 0.0
+                and isinstance(candidate_ai, (int, float))
+                and float(candidate_ai) <= ai_search_reference + _float_env(
+                    "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_AI_TOLERANCE",
+                    1.0,
+                )
+                and _finding_total(candidate_report) <= original_total
+                and candidate_review_burden <= original_review_burden
+                and candidate_weighted_severity <= original_severity
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("critical_high_regressed")
+                and candidate_critical_high <= saved_critical_high
+            )
             blocker_review_tolerance = int(_float_env(
                 "DRAFTPROOF_BLOCKER_ELIMINATION_REVIEW_TOLERANCE",
                 0.0,
@@ -9663,6 +9690,7 @@ def run_rewrite_pipeline(
                     incremental_authenticity_selectable
                     or human_amplification_selectable
                     or safe_authorship_suppression_selectable
+                    or post_safe_target_climb_selectable
                 )
             ):
                 selection_status.update({
@@ -9678,9 +9706,13 @@ def run_rewrite_pipeline(
                                 "accepted_human_signal_amplification"
                                 if human_amplification_selectable
                                 else (
-                                    "accepted_safe_authorship_suppression"
-                                    if safe_authorship_suppression_selectable
-                                    else "accepted_incremental_authenticity_progress"
+                                    "accepted_post_safe_target_climb"
+                                    if post_safe_target_climb_selectable
+                                    else (
+                                        "accepted_safe_authorship_suppression"
+                                        if safe_authorship_suppression_selectable
+                                        else "accepted_incremental_authenticity_progress"
+                                    )
                                 )
                             )
                         )
@@ -9690,6 +9722,7 @@ def run_rewrite_pipeline(
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
                     "human_signal_amplification": bool(human_amplification_selectable),
                     "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
+                    "post_safe_target_climb": bool(post_safe_target_climb_selectable),
                 })
             if human_amplification_score:
                 selection_status["human_signal_amplification_score"] = human_amplification_score
@@ -9707,6 +9740,7 @@ def run_rewrite_pipeline(
                 selection_status.get("selectable")
                 and dominant_blocker_status.get("required")
                 and not dominant_blocker_status.get("cleared")
+                and not selection_status.get("post_safe_target_climb")
                 and not dominant_blocker_progress_override.get("allowed")
             ):
                 selection_status.update({
@@ -9783,10 +9817,16 @@ def run_rewrite_pipeline(
             candidate_ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
             candidate_ai_transformation_delta = authenticity_status.get("ai_transformation_delta")
             blocker_active_drop = float(blocker_status.get("active_drop") or 0.0)
+            post_safe_climb_rank = 1 if selection_status.get("post_safe_target_climb") else 0
+            human_rank_value = (
+                float(candidate_human_value)
+                if isinstance(candidate_human_value, (int, float)) else -9999.0
+            )
             candidate_rank = (
                 1 if selection_status.get("selectable") else 0,
-                blocker_active_drop,
-                float(candidate_human_value) if isinstance(candidate_human_value, (int, float)) else -9999.0,
+                post_safe_climb_rank,
+                human_rank_value if post_safe_climb_rank else blocker_active_drop,
+                blocker_active_drop if post_safe_climb_rank else human_rank_value,
                 (
                     float(candidate_ai_authorship_delta)
                     if isinstance(candidate_ai_authorship_delta, (int, float)) else -9999.0
@@ -9891,78 +9931,147 @@ def run_rewrite_pipeline(
                     "target_human": target_human,
                 }
                 return
-            base_strategy = best_strategy
-            base_human = float(current_human)
-            base_ai = best_ai
-            candidates = _post_safe_win_target_push_candidates(
-                best_text,
-                best_report,
-                limit=push_limit,
-            )
+            initial_strategy = best_strategy
+            initial_human = float(current_human)
+            initial_ai = best_ai
+            try:
+                max_rounds = max(
+                    1,
+                    int(_float_env(
+                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_ROUNDS",
+                        float(_adaptive_budget_default(best_text, 2, 4)),
+                    )),
+                )
+            except (TypeError, ValueError):
+                max_rounds = 2
             summary = {
                 "enabled": True,
                 "trigger_phase": trigger_phase,
-                "base_strategy": base_strategy,
-                "base_ai": base_ai,
-                "base_human": base_human,
+                "base_strategy": initial_strategy,
+                "base_ai": initial_ai,
+                "base_human": initial_human,
                 "target_human": target_human,
                 "candidate_limit": push_limit,
-                "candidate_count": len(candidates),
+                "max_rounds": max_rounds,
+                "candidate_count": 0,
                 "accepted": False,
                 "accepted_strategy": None,
+                "rounds": [],
             }
             search_summary["post_safe_win_target_push"] = summary
-            if not candidates:
-                summary["reason"] = "no_target_push_candidates"
-                return
             min_extra_gain = _float_env("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MIN_EXTRA_HUMAN_GAIN", 1.0)
-            for push_index, (strategy, candidate, meta) in enumerate(candidates, start=1):
-                report_progress(
-                    min(89, 80 + push_index),
-                    f"Trying post-safe-win target push {push_index}/{len(candidates)}",
+            total_scanned = 0
+            for round_index in range(1, max_rounds + 1):
+                if not isinstance(best_report, dict):
+                    break
+                round_human = _contribution_scores(best_report).get("human")
+                if not isinstance(round_human, (int, float)):
+                    break
+                if float(round_human) >= target_human:
+                    summary["reason"] = "human_target_reached"
+                    break
+                round_base_strategy = best_strategy
+                round_base_human = float(round_human)
+                round_base_ai = best_ai
+                candidates = _post_safe_win_target_push_candidates(
+                    best_text,
+                    best_report,
+                    limit=push_limit,
                 )
-                _evaluate_ai_search_candidate(
-                    strategy,
-                    candidate,
-                    deterministic=True,
-                    extra={
-                        **meta,
-                        "post_safe_win_target_push": True,
-                        "base_strategy": base_strategy,
-                        "trigger_phase": trigger_phase,
-                    },
-                )
+                summary["candidate_count"] += len(candidates)
+                round_summary = {
+                    "round": round_index,
+                    "base_strategy": round_base_strategy,
+                    "base_ai": round_base_ai,
+                    "base_human": round_base_human,
+                    "candidate_count": len(candidates),
+                    "accepted": False,
+                }
+                summary["rounds"].append(round_summary)
+                if not candidates:
+                    round_summary["reason"] = "no_target_push_candidates"
+                    if not summary.get("accepted"):
+                        summary["reason"] = "no_target_push_candidates"
+                    break
+                for push_index, (strategy, candidate, meta) in enumerate(candidates, start=1):
+                    total_scanned += 1
+                    report_progress(
+                        min(89, 80 + total_scanned),
+                        (
+                            "Trying post-safe-win target push "
+                            f"{round_index}.{push_index}/{len(candidates)}"
+                        ),
+                    )
+                    _evaluate_ai_search_candidate(
+                        strategy,
+                        candidate,
+                        deterministic=True,
+                        extra={
+                            **meta,
+                            "post_safe_win_target_push": True,
+                            "post_safe_win_target_push_round": round_index,
+                            "base_strategy": round_base_strategy,
+                            "trigger_phase": trigger_phase,
+                        },
+                    )
                 candidate_human = (
                     _contribution_scores(best_report).get("human")
                     if isinstance(best_report, dict) else None
                 )
-                if (
-                    best_strategy != base_strategy
+                round_accepted = (
+                    best_strategy != round_base_strategy
                     and best_selection_status.get("selectable")
                     and isinstance(candidate_human, (int, float))
-                    and float(candidate_human) >= base_human + min_extra_gain
-                ):
-                    summary.update({
-                        "accepted": True,
-                        "accepted_strategy": best_strategy,
-                        "accepted_human": candidate_human,
-                        "accepted_ai": best_ai,
-                        "scanned": push_index,
-                    })
-                    adaptive_stop_reason = "adaptive_stop_after_post_safe_win_target_push"
-                    search_summary["adaptive_stop"] = {
-                        "phase": "post_safe_win_target_push",
-                        "reason": adaptive_stop_reason,
-                        "candidate_count_scanned": len(search_summary.get("candidates", [])),
-                        "selected_strategy": best_strategy,
-                        "selection_status": best_selection_status,
-                    }
+                    and float(candidate_human) >= round_base_human + min_extra_gain
+                )
+                if not round_accepted:
+                    round_summary["reason"] = "no_extra_safe_human_gain"
+                    if not summary.get("accepted"):
+                        summary["reason"] = "no_extra_safe_human_gain"
                     break
-            if not summary.get("accepted"):
-                summary["scanned"] = len(candidates)
-                summary["reason"] = "no_extra_safe_human_gain"
+                round_summary.update({
+                    "accepted": True,
+                    "accepted_strategy": best_strategy,
+                    "accepted_human": candidate_human,
+                    "accepted_ai": best_ai,
+                    "scanned": len(candidates),
+                })
+                summary.update({
+                    "accepted": True,
+                    "accepted_strategy": best_strategy,
+                    "accepted_human": candidate_human,
+                    "accepted_ai": best_ai,
+                    "scanned": total_scanned,
+                    "accepted_round": round_index,
+                })
+                adaptive_stop_reason = "adaptive_stop_after_post_safe_win_target_push"
+                search_summary["adaptive_stop"] = {
+                    "phase": "post_safe_win_target_push",
+                    "reason": adaptive_stop_reason,
+                    "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                    "selected_strategy": best_strategy,
+                    "selection_status": best_selection_status,
+                }
+            deterministic_plateau_after_accept = False
+            if summary.get("accepted"):
+                latest_human = (
+                    _contribution_scores(best_report).get("human")
+                    if isinstance(best_report, dict) else None
+                )
+                deterministic_plateau_after_accept = bool(
+                    _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_AFTER_ACCEPT", True)
+                    and isinstance(latest_human, (int, float))
+                    and float(latest_human) < target_human
+                )
+                if not deterministic_plateau_after_accept:
+                    if not summary.get("reason"):
+                        summary["reason"] = "accepted_iterative_target_push"
+                    return
+                summary["deterministic_plateau_after_accept"] = True
+                summary["deterministic_plateau_human"] = latest_human
+                summary["reason"] = "deterministic_target_push_plateau_below_target"
             if (
-                not summary.get("accepted")
+                (not summary.get("accepted") or deterministic_plateau_after_accept)
                 and _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM", True)
                 and effective_key
             ):
@@ -9971,14 +10080,14 @@ def run_rewrite_pipeline(
                         1,
                         int(_float_env(
                             "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_CANDIDATES",
-                            float(_adaptive_budget_default(best_text, 1, 2)),
+                            float(_adaptive_budget_default(best_text, 3, 4)),
                         )),
                     )
                     llm_target_limit = max(
                         1,
                         int(_float_env(
                             "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_TARGETS",
-                            float(_adaptive_budget_default(best_text, 1, 1)),
+                            float(_adaptive_budget_default(best_text, 2, 3)),
                         )),
                     )
                 except (TypeError, ValueError):
@@ -10018,6 +10127,11 @@ def run_rewrite_pipeline(
                     if push_gateway:
                         llm_base_text = best_text
                         llm_base_strategy = best_strategy
+                        llm_base_ai = best_ai
+                        llm_base_human = (
+                            _contribution_scores(best_report).get("human")
+                            if isinstance(best_report, dict) else initial_human
+                        )
                         for target_number, target in enumerate(llm_targets, start=1):
                             report_progress(
                                 min(92, 84 + target_number),
@@ -10095,6 +10209,7 @@ def run_rewrite_pipeline(
                                     int(target.get("index", 0)),
                                     paragraph_candidate,
                                 )
+                                previous_best_strategy = best_strategy
                                 _evaluate_ai_search_candidate(
                                     strategy,
                                     patched_candidate,
@@ -10116,24 +10231,45 @@ def run_rewrite_pipeline(
                                     _contribution_scores(best_report).get("human")
                                     if isinstance(best_report, dict) else None
                                 )
+                                llm_extra_human_gain = bool(
+                                    isinstance(candidate_human, (int, float))
+                                    and isinstance(llm_base_human, (int, float))
+                                    and float(candidate_human) >= float(llm_base_human) + min_extra_gain
+                                )
+                                llm_same_human_quality_gain = bool(
+                                    isinstance(candidate_human, (int, float))
+                                    and isinstance(llm_base_human, (int, float))
+                                    and float(candidate_human) >= float(llm_base_human)
+                                    and isinstance(best_ai, (int, float))
+                                    and isinstance(llm_base_ai, (int, float))
+                                    and float(best_ai) < float(llm_base_ai) - 0.05
+                                )
                                 if (
-                                    best_strategy != base_strategy
+                                    best_strategy == strategy
+                                    and previous_best_strategy != strategy
                                     and best_selection_status.get("selectable")
-                                    and isinstance(candidate_human, (int, float))
-                                    and float(candidate_human) >= base_human + min_extra_gain
+                                    and (llm_extra_human_gain or llm_same_human_quality_gain)
                                 ):
                                     summary.update({
                                         "accepted": True,
                                         "accepted_strategy": best_strategy,
                                         "accepted_human": candidate_human,
                                         "accepted_ai": best_ai,
-                                        "reason": "accepted_llm_target_push",
+                                        "reason": (
+                                            "accepted_llm_target_push"
+                                            if llm_extra_human_gain
+                                            else "accepted_llm_target_push_quality_gain"
+                                        ),
                                     })
                                     summary["llm_target_push"].update({
                                         "accepted": True,
                                         "accepted_strategy": best_strategy,
                                         "accepted_human": candidate_human,
                                     })
+                                    llm_base_text = best_text
+                                    llm_base_strategy = best_strategy
+                                    llm_base_ai = best_ai
+                                    llm_base_human = candidate_human
                                     adaptive_stop_reason = "adaptive_stop_after_post_safe_win_target_push"
                                     search_summary["adaptive_stop"] = {
                                         "phase": "post_safe_win_target_push",
@@ -10142,9 +10278,6 @@ def run_rewrite_pipeline(
                                         "selected_strategy": best_strategy,
                                         "selection_status": best_selection_status,
                                     }
-                                    break
-                            if summary.get("accepted"):
-                                break
                 elif "llm_target_push" not in summary:
                     summary["llm_target_push"] = {
                         "enabled": False,
