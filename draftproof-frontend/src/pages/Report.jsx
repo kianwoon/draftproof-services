@@ -370,6 +370,65 @@ function getRewrittenDetectScan(rewriteReport) {
   return summary.detect_scan_rewritten || rewriteReport?.detect_scan_rewritten || null;
 }
 
+function mergeScanSummary(baseScan, savedScan) {
+  if (!savedScan) return baseScan || null;
+  if (!baseScan) return savedScan;
+  return {
+    ...baseScan,
+    ...savedScan,
+    ai_risk_badge: savedScan.ai_risk_badge || baseScan.ai_risk_badge,
+    scan_intelligence: savedScan.scan_intelligence || baseScan.scan_intelligence,
+    integrity_layers: savedScan.integrity_layers || baseScan.integrity_layers,
+  };
+}
+
+function getScanIntelligence(scan) {
+  return scan?.scan_intelligence || scan?.results_json?.scan_intelligence || {};
+}
+
+function getScanTransformationSignals(scan) {
+  return getScanIntelligence(scan).transformation?.core_signals || [];
+}
+
+function getScanContributionSummary(scan) {
+  if (!scan) return null;
+  const intelligence = getScanIntelligence(scan);
+  const contribution = intelligence.transformation?.contribution || {};
+  const layers = scan.integrity_layers?.layers || intelligence.integrity_layers?.layers || {};
+  const humanLayerScore = layers.human_contribution_signal?.score;
+  const aiLayerScore = layers.ai_transformation_risk?.score;
+  const human = clampPercent(
+    humanLayerScore ?? contribution.human_contribution_ratio ?? contribution.human_contribution ?? contribution.human_ratio
+  );
+  const ai = clampPercent(
+    aiLayerScore ?? contribution.ai_transformation_ratio ?? contribution.ai_transformation ?? contribution.transformation_ratio
+  );
+
+  if (human == null && ai == null) return null;
+  return {
+    humanContribution: Math.round(human ?? 100 - ai),
+    aiTransformation: Math.round(ai ?? 100 - human),
+    adjustedAiRisk: Math.round(clampPercent(contribution.calibrated_ai_risk ?? contribution.adjusted_ai_risk) ?? 0),
+    rawAdjustedAiRisk: Math.round(clampPercent(contribution.adjusted_ai_risk ?? contribution.calibrated_ai_risk) ?? 0),
+    humanAnchorDiscount: Math.round(clampPercent(contribution.human_anchor_discount) ?? 0),
+    calibrationConfidence: Math.round(clampPercent(contribution.calibration_confidence) ?? 0),
+    reportingSuppression: Math.round(clampPercent(contribution.reporting_suppression) ?? 0),
+    summary: contribution.summary || '',
+  };
+}
+
+function mergeTransformationSummary(baseSummary, authoritativeSummary) {
+  if (!authoritativeSummary) return baseSummary;
+  if (!baseSummary) return authoritativeSummary;
+  const merged = { ...baseSummary };
+  Object.entries(authoritativeSummary).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
 function buildRewriteResultSummary(rewriteReport) {
   const summary = getRewritePayloadSummary(rewriteReport);
   const detectScores = summary.detect_scores || {};
@@ -887,29 +946,38 @@ export default function Report() {
   const badge = report.ai_risk_badge || {};
   const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
-  const originalComparisonScan = getOriginalDetectScan(rewriteResultReport);
+  const reportScanJson = report.results_json || {};
+  const originalComparisonScan = mergeScanSummary(reportScanJson, getOriginalDetectScan(rewriteResultReport));
   const originalComparisonBadge = originalComparisonScan?.ai_risk_badge || badge;
   const originalComparisonAiScore = originalComparisonScan
     ? (originalComparisonScan.ai_score ?? originalComparisonBadge.ai_likelihood_score ?? rewriteResultSummary?.original_risk ?? aiScore)
     : aiScore;
   const transformation = originalComparisonBadge.transformation_classification || null;
-  const transformationSignalMetadata = originalComparisonScan?.scan_intelligence?.transformation?.core_signals || report.scan_intelligence?.transformation?.core_signals || [];
+  const transformationSignalMetadata = getScanTransformationSignals(originalComparisonScan);
   const transformationSignals = buildTransformationSignals(transformation?.features, transformationSignalMetadata);
-  const originalContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'original');
+  const originalScanContributionSummary = getScanContributionSummary(originalComparisonScan);
+  const originalContributionOverride = originalScanContributionSummary || buildRewriteContributionOverride(rewriteResultSummary, 'original');
   const transformationSummary = transformation
-    ? buildTransformationSummary(transformation.features, transformationSignals, originalContributionOverride)
+    ? mergeTransformationSummary(
+      buildTransformationSummary(transformation.features, transformationSignals, originalContributionOverride),
+      originalScanContributionSummary
+    )
     : null;
   const rewrittenScan = getRewrittenDetectScan(rewriteResultReport) || {};
   const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
   const rewrittenTransformation = rewrittenBadge.transformation_classification || null;
-  const rewrittenTransformationSignalMetadata = rewrittenScan.scan_intelligence?.transformation?.core_signals || [];
+  const rewrittenTransformationSignalMetadata = getScanTransformationSignals(rewrittenScan);
   const rewrittenTransformationSignals = buildTransformationSignals(
     rewrittenTransformation?.features,
     rewrittenTransformationSignalMetadata
   );
-  const rewrittenContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'rewritten');
+  const rewrittenScanContributionSummary = getScanContributionSummary(rewrittenScan);
+  const rewrittenContributionOverride = rewrittenScanContributionSummary || buildRewriteContributionOverride(rewriteResultSummary, 'rewritten');
   const rewrittenTransformationSummary = rewrittenTransformation
-    ? buildTransformationSummary(rewrittenTransformation.features, rewrittenTransformationSignals, rewrittenContributionOverride)
+    ? mergeTransformationSummary(
+      buildTransformationSummary(rewrittenTransformation.features, rewrittenTransformationSignals, rewrittenContributionOverride),
+      rewrittenScanContributionSummary
+    )
     : rewrittenContributionOverride
       ? {
         humanContribution: Math.round(rewrittenContributionOverride.humanContribution),

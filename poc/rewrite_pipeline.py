@@ -2481,6 +2481,68 @@ def _blocked_human_winner_repair_budget_override(adaptive_stop_reason: str) -> b
     }
 
 
+def _blocked_winner_bounded_quality_tradeoff(
+    *,
+    candidate_eval: dict | None,
+    authenticity_status: dict | None,
+    ai_delta: float,
+    review_burden_delta: int,
+    weighted_severity_delta: int,
+    finding_delta: int,
+    critical_high_delta: int,
+    ai_score_regressed: bool,
+) -> dict:
+    """Permit small quality cost only when a repaired blocked winner makes a large attribution move."""
+    if not _env_flag("DRAFTPROOF_BLOCKED_HUMAN_WINNER_BOUNDED_TRADEOFF", True):
+        return {"allowed": False, "reason": "disabled"}
+    candidate_eval = candidate_eval or {}
+    authenticity_status = authenticity_status or {}
+    if not candidate_eval.get("blocked_human_winner_repair"):
+        return {"allowed": False, "reason": "not_blocked_winner_repair"}
+    max_severity_delta = int(_float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_MAX_SEVERITY_DELTA", 3.0))
+    max_finding_delta = int(_float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_MAX_FINDING_DELTA", 2.0))
+    min_ai_delta = _float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_MIN_AI_DELTA", 5.0)
+    min_authorship_delta = _float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_MIN_AUTHORSHIP_DELTA", 5.0)
+    min_human_delta = _float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_MIN_HUMAN_DELTA", 1.0)
+    min_transform_delta = _float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_MIN_TRANSFORM_DELTA", 1.0)
+    min_shift = _float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_MIN_SHIFT", 3.0)
+    checks = {
+        "ai_delta": float(ai_delta or 0.0),
+        "ai_authorship_delta": float(authenticity_status.get("ai_authorship_delta") or 0.0),
+        "human_delta": float(authenticity_status.get("human_delta") or 0.0),
+        "ai_transformation_delta": float(authenticity_status.get("ai_transformation_delta") or 0.0),
+        "human_shift_score": float(authenticity_status.get("human_shift_score") or 0.0),
+        "review_burden_delta": int(review_burden_delta or 0),
+        "weighted_severity_delta": int(weighted_severity_delta or 0),
+        "finding_delta": int(finding_delta or 0),
+        "critical_high_delta": int(critical_high_delta or 0),
+    }
+    allowed = bool(
+        not ai_score_regressed
+        and checks["ai_delta"] >= min_ai_delta
+        and checks["ai_authorship_delta"] >= min_authorship_delta
+        and checks["human_delta"] >= min_human_delta
+        and checks["ai_transformation_delta"] >= min_transform_delta
+        and checks["human_shift_score"] >= min_shift
+        and checks["review_burden_delta"] <= 0
+        and checks["critical_high_delta"] <= 0
+        and checks["weighted_severity_delta"] <= max_severity_delta
+        and checks["finding_delta"] <= max_finding_delta
+    )
+    return {
+        "allowed": allowed,
+        "reason": "" if allowed else "threshold_not_met",
+        **checks,
+        "max_weighted_severity_delta": max_severity_delta,
+        "max_finding_delta": max_finding_delta,
+        "min_ai_delta": min_ai_delta,
+        "min_ai_authorship_delta": min_authorship_delta,
+        "min_human_delta": min_human_delta,
+        "min_ai_transformation_delta": min_transform_delta,
+        "min_human_shift_score": min_shift,
+    }
+
+
 def _adaptive_budget_default(source_text: str, short_value: int, long_value: int) -> str:
     if _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_DOC_BUDGETS", True):
         threshold = int(_float_env("DRAFTPROOF_SHORT_DOC_WORD_THRESHOLD", 450.0))
@@ -6196,7 +6258,78 @@ def _blocked_human_candidate_repair_prompt(
     )
 
 
-def _blocking_finding_targets(report_dict: dict | None, *, limit: int = 3) -> list[dict]:
+def _sentences_from_excerpt(text: str) -> list[str]:
+    text = " ".join(str(text or "").split()).strip()
+    if not text:
+        return []
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", text)
+        if len(sentence.strip().split()) >= 5
+    ]
+
+
+def _exact_blocking_target_from_context(
+    item: dict,
+    context: dict,
+    candidate_text: str,
+) -> tuple[str, str]:
+    candidate_text = str(candidate_text or "")
+    target = (
+        context.get("target_sentence")
+        or item.get("target_sentence")
+        or item.get("sentence")
+        or ""
+    )
+    evidence = item.get("evidence")
+    if isinstance(evidence, dict):
+        target = target or evidence.get("text") or evidence.get("sentence") or ""
+    elif isinstance(evidence, str):
+        target = target or evidence
+    target = " ".join(str(target or "").split()).strip()
+    if target and (not candidate_text or target in candidate_text):
+        return target, "explicit_target"
+
+    excerpt = str(context.get("paragraph_excerpt") or "")
+    sentences = _sentences_from_excerpt(excerpt)
+    title = str(item.get("title") or "").lower()
+    category = str(item.get("category") or "").lower()
+    preferred_patterns = []
+    if "draft_evolution" in title or "ai_generation" in category:
+        preferred_patterns.extend([
+            r"\bin this review\b",
+            r"\bhas been examined\b",
+            r"\bfurthermore\b",
+            r"\bwhereas\b",
+            r"\bit arises from\b",
+        ])
+    if "predictability" in title:
+        preferred_patterns.extend([
+            r"\bwhen learners\b",
+            r"\bthis does not\b",
+            r"\bstill must\b",
+            r"\bthere are\b",
+        ])
+
+    def exact(sentence: str) -> bool:
+        return bool(sentence and (not candidate_text or sentence in candidate_text))
+
+    for pattern in preferred_patterns:
+        for sentence in sentences:
+            if exact(sentence) and re.search(pattern, sentence, flags=re.I):
+                return sentence, "paragraph_excerpt_preferred_sentence"
+    for sentence in sentences:
+        if exact(sentence):
+            return sentence, "paragraph_excerpt_sentence"
+    return "", ""
+
+
+def _blocking_finding_targets(
+    report_dict: dict | None,
+    *,
+    limit: int = 3,
+    candidate_text: str = "",
+) -> list[dict]:
     if not isinstance(report_dict, dict):
         return []
     findings = report_dict.get("findings") or {}
@@ -6206,15 +6339,13 @@ def _blocking_finding_targets(report_dict: dict | None, *, limit: int = 3) -> li
             if not isinstance(item, dict):
                 continue
             context = item.get("rewrite_context") or {}
-            target = (
-                context.get("target_sentence")
-                or item.get("target_sentence")
-                or item.get("sentence")
-                or ""
+            target, target_source = _exact_blocking_target_from_context(
+                item,
+                context,
+                candidate_text,
             )
-            evidence = item.get("evidence")
-            if isinstance(evidence, dict):
-                target = target or evidence.get("text") or evidence.get("sentence") or ""
+            if not target:
+                continue
             row = {
                 "tier": tier,
                 "finding_id": item.get("finding_id"),
@@ -6223,11 +6354,11 @@ def _blocking_finding_targets(report_dict: dict | None, *, limit: int = 3) -> li
                 "detail": item.get("detail"),
                 "recommendation": item.get("recommendation"),
                 "target_sentence": str(target or "").strip(),
+                "target_source": target_source,
                 "paragraph_excerpt": str(context.get("paragraph_excerpt") or "")[:700],
                 "signals": context.get("signals") or {},
             }
-            if row["target_sentence"] or row.get("detail"):
-                rows.append(row)
+            rows.append(row)
             if len(rows) >= limit:
                 return rows
     return rows[:limit]
@@ -10401,6 +10532,26 @@ def run_rewrite_pipeline(
                     "selectable": False,
                     "reason": "ai_drop_quality_regressed",
                 })
+            bounded_blocked_tradeoff = _blocked_winner_bounded_quality_tradeoff(
+                candidate_eval=candidate_eval,
+                authenticity_status=authenticity_status,
+                ai_delta=ai_delta,
+                review_burden_delta=candidate_review_burden - original_review_burden,
+                weighted_severity_delta=candidate_weighted_severity - original_severity,
+                finding_delta=_finding_total(candidate_report) - original_total,
+                critical_high_delta=candidate_critical_high - saved_critical_high,
+                ai_score_regressed=ai_score_regressed,
+            )
+            if bounded_blocked_tradeoff.get("allowed"):
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "reason": "accepted_blocked_human_winner_bounded_tradeoff",
+                    "blocked_human_winner_repair": True,
+                    "bounded_quality_tradeoff": bounded_blocked_tradeoff,
+                })
+            elif candidate_eval.get("blocked_human_winner_repair"):
+                selection_status["bounded_quality_tradeoff"] = bounded_blocked_tradeoff
             incremental_authenticity_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_INCREMENTAL_AUTHENTICITY", True)
                 and authenticity_status.get("candidate_progress")
@@ -12846,6 +12997,7 @@ def run_rewrite_pipeline(
                     blocking_targets = _blocking_finding_targets(
                         best_blocked_human_candidate.get("report"),
                         limit=int(_float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_FINDING_TARGETS", 3.0)),
+                        candidate_text=str(best_blocked_human_candidate.get("text") or ""),
                     )
                     search_summary["blocked_human_winner_repair"] = {
                         "enabled": True,
@@ -13989,7 +14141,11 @@ def run_rewrite_pipeline(
         badge = report_dict.get("ai_risk_badge") or {}
         findings = report_dict.get("findings", {})
         return {
+            "ai_score": report_dict.get("ai_score") or badge.get("ai_likelihood_score"),
+            "writing_score": report_dict.get("writing_score") or badge.get("writing_quality_score"),
             "ai_risk_badge": badge,
+            "scan_intelligence": report_dict.get("scan_intelligence") or {},
+            "integrity_layers": report_dict.get("integrity_layers") or {},
             "overall_tier": report_dict.get("overall_tier", "?"),
             "findings": {t: [{"finding_id": f.get("finding_id"), "title": f.get("title"),
                               "category": f.get("category")} for f in findings.get(t, [])]

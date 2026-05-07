@@ -409,7 +409,11 @@ def _extract_rewrite_scan_summary(report_dict: dict) -> dict:
     badge = report_dict.get("ai_risk_badge") or {}
     findings = report_dict.get("findings", {})
     return {
+        "ai_score": report_dict.get("ai_score") or badge.get("ai_likelihood_score"),
+        "writing_score": report_dict.get("writing_score") or badge.get("writing_quality_score"),
         "ai_risk_badge": badge,
+        "scan_intelligence": report_dict.get("scan_intelligence") or {},
+        "integrity_layers": report_dict.get("integrity_layers") or {},
         "overall_tier": report_dict.get("overall_tier", "?"),
         "findings": {
             tier: [

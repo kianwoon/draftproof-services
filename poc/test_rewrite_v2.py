@@ -133,6 +133,7 @@ from rewrite_pipeline import (
     _ai_search_adaptive_stop_reason,
     _should_track_blocked_human_winner,
     _blocked_human_winner_repair_budget_override,
+    _blocked_winner_bounded_quality_tradeoff,
     _adaptive_budget_default,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
@@ -2729,6 +2730,31 @@ finding_targets = _blocking_finding_targets({
         "low": [],
     }
 })
+document_level_targets = _blocking_finding_targets(
+    {
+        "findings": {
+            "critical": [],
+            "high": [{
+                "finding_id": "f999",
+                "title": "draft_evolution",
+                "category": "ai_generation",
+                "detail": "document-level jump",
+                "recommendation": "Patch the template-like conclusion sentence.",
+                "rewrite_context": {
+                    "paragraph_excerpt": (
+                        "In this review, inclusive learning design within Certificate III Hairdressing has been examined. "
+                        "Furthermore, CAST and Jwad et al. present multiple pathways for learning."
+                    ),
+                },
+            }],
+            "medium": [],
+        },
+    },
+    candidate_text=(
+        "In this review, inclusive learning design within Certificate III Hairdressing has been examined. "
+        "Furthermore, CAST and Jwad et al. present multiple pathways for learning."
+    ),
+)
 finding_local_prompt = _finding_local_repair_prompt(
     "AI tools always improve student learning when used in schools.",
     {"strategy": "paragraph_resequence", "human_delta": 9, "weighted_severity": 58},
@@ -2756,6 +2782,17 @@ assert_test(
     "finding-local blocked winner repair extracts targets, parses JSON patches, and splices exact text",
 )
 assert_test(
+    document_level_targets
+    and document_level_targets[0]["target_sentence"]
+    and document_level_targets[0]["target_sentence"] != ""
+    and document_level_targets[0]["target_sentence"] in (
+        "In this review, inclusive learning design within Certificate III Hairdressing has been examined. "
+        "Furthermore, CAST and Jwad et al. present multiple pathways for learning."
+    )
+    and document_level_targets[0]["target_source"].startswith("paragraph_excerpt"),
+    "blocking target extraction derives exact candidate sentence for document-level findings",
+)
+assert_test(
     polished_finding_local_patches == [],
     "finding-local blocked winner repair rejects polished generic patch replacements",
 )
@@ -2778,6 +2815,24 @@ assert_test(
     and _blocked_human_winner_repair_budget_override("budget_exhausted_candidate_scans")
     and not _blocked_human_winner_repair_budget_override("budget_exhausted_time"),
     "blocked Human winner repair has a bounded post-budget reserve for call/scan exhaustion",
+)
+assert_test(
+    _blocked_winner_bounded_quality_tradeoff(
+        candidate_eval={"blocked_human_winner_repair": True},
+        authenticity_status={
+            "human_delta": 1.0,
+            "ai_authorship_delta": 7.0,
+            "ai_transformation_delta": 1.0,
+            "human_shift_score": 3.688,
+        },
+        ai_delta=7.15,
+        review_burden_delta=0,
+        weighted_severity_delta=2,
+        finding_delta=2,
+        critical_high_delta=0,
+        ai_score_regressed=False,
+    ).get("allowed"),
+    "blocked Human winner bounded tradeoff accepts large attribution gain with small severity cost",
 )
 ceiling_diagnostics = _build_mitigation_ceiling_diagnostics(
     {
