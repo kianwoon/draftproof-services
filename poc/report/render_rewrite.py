@@ -526,6 +526,38 @@ def render_rewrite_report(
                 lines.append(f"- {str(item).replace('|', '·')}")
             lines.append("")
 
+    discovery = summary.get("author_context_discovery") or {}
+    if discovery.get("context_cards"):
+        lines.append("## Author Context Discovery")
+        lines.append("")
+        lines.append(
+            "Use this LLM-assisted intake to close the author-owned context gap. "
+            "The LLM may ask and shape answers, but confirmed user answers are required before generation."
+        )
+        lines.append("")
+        lines.append("| Anchor | Gap | Safe Answer Shape |")
+        lines.append("|--------|-----|-------------------|")
+        for card in (discovery.get("context_cards") or [])[:8]:
+            anchor = str(card.get("anchor_id") or "").replace("|", "·")
+            gap = str(card.get("llm_follow_up_question") or card.get("gap") or "").replace("|", "·")
+            shape = str(card.get("safe_answer_shape") or "").replace("|", "·")
+            lines.append(f"| {anchor} | {gap} | {shape} |")
+        lines.append("")
+        handoff = discovery.get("handoff_env") or {}
+        if handoff:
+            lines.append(
+                f"Confirmed answers feed back through `{handoff.get('json')}` "
+                f"or `{handoff.get('file')}`."
+            )
+            lines.append("")
+        gates = discovery.get("success_gate") or []
+        if gates:
+            lines.append("**Discovery success gate:**")
+            lines.append("")
+            for gate in gates[:4]:
+                lines.append(f"- {str(gate).replace('|', '·')}")
+            lines.append("")
+
     integration = summary.get("author_evidence_integration") or {}
     if integration.get("enabled"):
         lines.append("## Author Evidence Integration")

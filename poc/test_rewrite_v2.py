@@ -119,6 +119,7 @@ from rewrite_pipeline import (
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
+    _build_author_context_discovery_layer,
     _confirmed_author_anchor_brief,
     _confirmed_anchor_echo_reason,
     _validate_author_evidence_answers,
@@ -2686,6 +2687,31 @@ assert_test(
     and "Do not invent" in intake_layer["llm_supervisor_prompt"]
     and any("must not create" in item for item in intake_layer["close_gap_policy"]),
     "author evidence intake lets LLM close gaps only through confirmed anchors",
+)
+context_discovery = _build_author_context_discovery_layer(
+    intake_layer,
+    {
+        "ai_risk_badge": {
+            "ai_components": {
+                "generic_assertion_risk": 90.0,
+                "qualifying_text_ai_density": 80.0,
+            },
+            "writing_components": {
+                "lived_detail_risk": 80.0,
+                "source_grounding_risk": 70.0,
+                "unsupported_claim_risk": 80.0,
+            },
+        }
+    },
+    max_items=2,
+)
+assert_test(
+    context_discovery.get("enabled")
+    and context_discovery["context_cards"][0]["safe_answer_shape"]
+    and "must not answer on the user's behalf" in context_discovery["llm_task_prompt"]
+    and context_discovery["handoff_env"]["json"] == "DRAFTPROOF_AUTHOR_EVIDENCE_ANSWERS_JSON"
+    and "permission_to_use" in context_discovery["answer_payload_schema"]["answers"][0],
+    "author context discovery lets LLM ask and shape answers without fabricating author context",
 )
 valid_anchor_answers, rejected_anchor_answers = _validate_author_evidence_answers(
     intake_layer,
