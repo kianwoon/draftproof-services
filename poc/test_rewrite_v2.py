@@ -133,6 +133,7 @@ from rewrite_pipeline import (
     _ai_search_adaptive_stop_reason,
     _should_track_blocked_human_winner,
     _blocked_human_winner_repair_budget_override,
+    _post_safe_target_push_allows_deterministic_after_budget,
     _blocked_winner_bounded_quality_tradeoff,
     _score_drag_removal_status,
     _adaptive_budget_default,
@@ -2816,6 +2817,12 @@ assert_test(
     and _blocked_human_winner_repair_budget_override("budget_exhausted_candidate_scans")
     and not _blocked_human_winner_repair_budget_override("budget_exhausted_time"),
     "blocked Human winner repair has a bounded post-budget reserve for call/scan exhaustion",
+)
+assert_test(
+    _post_safe_target_push_allows_deterministic_after_budget("budget_exhausted_llm_calls")
+    and not _post_safe_target_push_allows_deterministic_after_budget("budget_exhausted_candidate_scans")
+    and not _post_safe_target_push_allows_deterministic_after_budget("budget_exhausted_time"),
+    "post-safe target push can still run deterministic candidates after LLM call budget exhaustion",
 )
 assert_test(
     _blocked_winner_bounded_quality_tradeoff(

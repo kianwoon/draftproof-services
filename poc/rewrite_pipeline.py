@@ -2481,6 +2481,14 @@ def _blocked_human_winner_repair_budget_override(adaptive_stop_reason: str) -> b
     }
 
 
+def _post_safe_target_push_allows_deterministic_after_budget(adaptive_stop_reason: str) -> bool:
+    """Let no-LLM target push run after the LLM call budget is exhausted."""
+    return bool(
+        _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_AFTER_LLM_BUDGET", True)
+        and str(adaptive_stop_reason or "") == "budget_exhausted_llm_calls"
+    )
+
+
 def _blocked_winner_bounded_quality_tradeoff(
     *,
     candidate_eval: dict | None,
@@ -11039,13 +11047,18 @@ def run_rewrite_pipeline(
 
         def _run_post_safe_win_target_push(trigger_phase: str) -> None:
             nonlocal adaptive_stop_reason
+            resumed_after_llm_budget = False
             if str(adaptive_stop_reason).startswith("budget_exhausted"):
-                search_summary["post_safe_win_target_push"] = {
-                    "enabled": False,
-                    "reason": adaptive_stop_reason,
-                    "trigger_phase": trigger_phase,
-                }
-                return
+                if _post_safe_target_push_allows_deterministic_after_budget(adaptive_stop_reason):
+                    resumed_after_llm_budget = True
+                    adaptive_stop_reason = ""
+                else:
+                    search_summary["post_safe_win_target_push"] = {
+                        "enabled": False,
+                        "reason": adaptive_stop_reason,
+                        "trigger_phase": trigger_phase,
+                    }
+                    return
             if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True):
                 return
             if not _best_ai_search_selectable() or not isinstance(best_report, dict):
@@ -11112,6 +11125,7 @@ def run_rewrite_pipeline(
                 "base_ai": initial_ai,
                 "base_human": initial_human,
                 "target_human": target_human,
+                "resumed_after_llm_budget": resumed_after_llm_budget,
                 "candidate_limit": push_limit,
                 "max_rounds": max_rounds,
                 "candidate_count": 0,
@@ -11231,10 +11245,19 @@ def run_rewrite_pipeline(
                 summary["deterministic_plateau_after_accept"] = True
                 summary["deterministic_plateau_human"] = latest_human
                 summary["reason"] = "deterministic_target_push_plateau_below_target"
+            if resumed_after_llm_budget:
+                summary["llm_target_push"] = {
+                    "enabled": False,
+                    "reason": "llm_budget_exhausted_before_target_push",
+                }
+                if not summary.get("accepted"):
+                    adaptive_stop_reason = "budget_exhausted_llm_calls"
+                return
             if (
                 (not summary.get("accepted") or deterministic_plateau_after_accept)
                 and _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM", True)
                 and effective_key
+                and not resumed_after_llm_budget
             ):
                 try:
                     llm_candidate_limit = max(

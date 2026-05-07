@@ -1033,6 +1033,12 @@ export default function Report() {
     hasRewriteResult &&
     (rewrittenTransformation || rewrittenTransformationSummary)
   );
+  const transformationOriginalScore = hasRewriteSignalComparison
+    ? (rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk ?? originalComparisonAiScore)
+    : originalComparisonAiScore;
+  const transformationRewrittenScore = hasRewriteSignalComparison
+    ? (rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk ?? rewrittenAiScore)
+    : rewrittenAiScore;
   const canStartRewrite = hasAIFindings && !hasRewriteResult;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
@@ -1301,19 +1307,19 @@ export default function Report() {
           <span>AI Score</span>
           <strong>
             {hasRewriteSignalComparison
-              ? `${formatMetricPercent(originalComparisonAiScore, 1)} -> ${formatMetricPercent(rewrittenAiScore, 1)}`
-              : formatMetricPercent(originalComparisonAiScore, 1)}
+              ? `${formatMetricPercent(transformationOriginalScore, 1)} -> ${formatMetricPercent(transformationRewrittenScore, 1)}`
+              : formatMetricPercent(transformationOriginalScore, 1)}
           </strong>
         </div>
       </div>
       <div className="transformation-chart">
         {hasRewriteSignalComparison ? (
           <div className="transformation-comparison-grid">
-            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, originalComparisonAiScore)}
-            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, rewrittenAiScore)}
+            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore)}
+            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, transformationRewrittenScore)}
           </div>
         ) : (
-          renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, originalComparisonAiScore)
+          renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore)
         )}
         {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
           <div className="transformation-evidence">
