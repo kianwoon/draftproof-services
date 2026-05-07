@@ -534,6 +534,295 @@ def _build_educational_mitigation_rewrite(
     }
 
 
+def _build_author_evidence_completion_layer(
+    text: str,
+    report_dict: dict | None,
+    *,
+    target_human: int = 80,
+    max_slots: int = 5,
+) -> dict:
+    """Build a user-completion draft for missing real anchors.
+
+    This is intentionally separate from the accepted rewrite. The markers are
+    prompts for the author to supply truth, not content the system fabricates.
+    """
+    if not isinstance(text, str) or not text.strip() or not isinstance(report_dict, dict):
+        return {}
+    contribution = _contribution_scores(report_dict)
+    current_human = contribution.get("human")
+    if isinstance(current_human, (int, float)) and current_human >= target_human:
+        return {
+            "enabled": False,
+            "reason": "human_target_already_met",
+            "current_human_contribution": round(float(current_human), 3),
+            "target_human_contribution": target_human,
+        }
+
+    badge = report_dict.get("ai_risk_badge") or {}
+    writing_components = badge.get("writing_components") or {}
+    ai_components = badge.get("ai_components") or {}
+    lived_detail_risk = float(writing_components.get("lived_detail_risk") or 0.0)
+    source_grounding_risk = float(writing_components.get("source_grounding_risk") or 0.0)
+    unsupported_claim_risk = float(writing_components.get("unsupported_claim_risk") or 0.0)
+    generic_assertion_risk = float(ai_components.get("generic_assertion_risk") or 0.0)
+    density_risk = float(ai_components.get("qualifying_text_ai_density") or 0.0)
+
+    if max(lived_detail_risk, source_grounding_risk, unsupported_claim_risk, generic_assertion_risk, density_risk) < 55:
+        return {
+            "enabled": False,
+            "reason": "no_strong_missing_anchor_signal",
+            "current_human_contribution": current_human,
+            "target_human_contribution": target_human,
+        }
+
+    paragraphs = _logical_paragraphs(text)
+    if not paragraphs:
+        return {}
+    target_limit = max(1, int(max_slots or 1))
+    targets = _paragraph_component_targets(text, report_dict, limit=max(target_limit * 2, target_limit))
+    target_indexes = []
+    for target in targets:
+        index = target.get("index")
+        if isinstance(index, int) and index not in target_indexes:
+            target_indexes.append(index)
+        if len(target_indexes) >= target_limit:
+            break
+    if not target_indexes:
+        ranked = sorted(
+            enumerate(paragraphs),
+            key=lambda item: len(item[1].split()),
+            reverse=True,
+        )
+        target_indexes = [index for index, paragraph in ranked[:target_limit] if len(paragraph.split()) >= 12]
+
+    slots = []
+    patched = list(paragraphs)
+    for slot_number, index in enumerate(target_indexes, start=1):
+        if index < 0 or index >= len(patched):
+            continue
+        paragraph = patched[index]
+        role = _paragraph_role(
+            paragraph,
+            {"source_gap": source_grounding_risk >= 55, "generic_assertion_hits": 4, "word_count": len(paragraph.split())},
+            is_last=index == len(paragraphs) - 1,
+        )
+        if source_grounding_risk >= 60 or unsupported_claim_risk >= 65:
+            instruction = (
+                "add one real source, classroom example, assignment artefact, feedback note, "
+                "or observation that proves this claim"
+            )
+        elif lived_detail_risk >= 65:
+            instruction = (
+                "add one real classroom, workplace, learner, assessment, or feedback detail "
+                "that you can defend"
+            )
+        else:
+            instruction = (
+                "add one real author reasoning detail that narrows this broad claim without inventing evidence"
+            )
+        marker = f" [[ADD REAL AUTHOR ANCHOR {slot_number}: {instruction}]]"
+        stripped = paragraph.rstrip()
+        terminal = ""
+        if stripped and stripped[-1] in ".!?":
+            terminal = stripped[-1]
+            stripped = stripped[:-1].rstrip()
+        patched[index] = f"{stripped}{marker}{terminal}"
+        slots.append({
+            "slot": slot_number,
+            "paragraph_index": index,
+            "paragraph_role": role,
+            "instruction": instruction,
+            "target_paragraph_preview": paragraph[:220],
+            "why_needed": (
+                "Human Contribution is capped because the scan sees broad claims, weak lived detail, "
+                "or missing source/context anchors. DraftProof will not invent those anchors."
+            ),
+        })
+
+    if not slots:
+        return {}
+
+    current_value = float(current_human) if isinstance(current_human, (int, float)) else 0.0
+    slot_lift = min(18.0, len(slots) * 3.5)
+    grounding_lift = 0.0
+    if source_grounding_risk >= 60:
+        grounding_lift += min(8.0, len(slots) * 1.5)
+    if lived_detail_risk >= 65:
+        grounding_lift += min(8.0, len(slots) * 1.5)
+    estimated_low = min(float(target_human), current_value + max(2.0, slot_lift * 0.45))
+    estimated_high = min(float(target_human), current_value + slot_lift + grounding_lift)
+    return {
+        "enabled": True,
+        "kind": "author_evidence_completion",
+        "auto_apply": False,
+        "status": "requires_author_completion",
+        "current_human_contribution": round(current_value, 3) if current_value else current_human,
+        "target_human_contribution": target_human,
+        "estimated_human_after_completion": {
+            "low": int(round(estimated_low)),
+            "high": int(round(estimated_high)),
+            "basis": "Heuristic estimate only; final score requires user-supplied real anchors and rescan.",
+        },
+        "current_blockers": {
+            "lived_detail_risk": lived_detail_risk,
+            "source_grounding_risk": source_grounding_risk,
+            "unsupported_claim_risk": unsupported_claim_risk,
+            "generic_assertion_risk": generic_assertion_risk,
+            "qualifying_text_ai_density": density_risk,
+        },
+        "draft_text": _join_logical_paragraphs(patched),
+        "slots": slots,
+        "instructions": [
+            "Replace every [[ADD REAL AUTHOR ANCHOR ...]] marker with a true source, example, observation, feedback moment, limitation, or author judgement.",
+            "Do not keep bracket markers in the final submission.",
+            "Delete any marker you cannot truthfully support, and narrow the surrounding claim instead.",
+            "Rescan only after all markers are resolved with real author-owned evidence.",
+        ],
+    }
+
+
+def _build_mitigation_ceiling_diagnostics(
+    summary: dict,
+    author_evidence_completion: dict | None = None,
+    *,
+    target_human: int = 80,
+) -> dict:
+    """Explain why automatic mitigation stopped below the Human target."""
+    if not isinstance(summary, dict):
+        return {}
+    scores = summary.get("detect_scores") or {}
+    search = summary.get("ai_mitigation_search") or {}
+    generation = summary.get("generation_layer") or {}
+    candidates = [
+        item for item in (search.get("candidates") or [])
+        if isinstance(item, dict) and isinstance(item.get("ai"), (int, float))
+    ]
+    safe_candidates = [
+        item for item in candidates
+        if (item.get("selection_status") or {}).get("selectable")
+    ]
+    blocked_candidates = [
+        item for item in candidates
+        if not (item.get("selection_status") or {}).get("selectable")
+    ]
+
+    def _num(value, default=None):
+        return float(value) if isinstance(value, (int, float)) else default
+
+    original_human = _num(scores.get("original_human_contribution"), 0.0)
+    final_human = _num(scores.get("rewritten_human_contribution"), original_human)
+    original_ai = _num(scores.get("original_ai"))
+    final_ai = _num(scores.get("rewritten_ai"))
+    original_authorship = _num(scores.get("original_ai_authorship"))
+    final_authorship = _num(scores.get("rewritten_ai_authorship"))
+    original_transform = _num(scores.get("original_ai_transformation"))
+    final_transform = _num(scores.get("rewritten_ai_transformation"))
+
+    human_values = [final_human] + [
+        _num(item.get("human_contribution"), final_human) for item in candidates
+    ]
+    safe_human_values = [final_human] + [
+        _num(item.get("human_contribution"), final_human) for item in safe_candidates
+    ]
+    ai_values = [
+        value for value in [final_ai] + [_num(item.get("ai")) for item in candidates]
+        if value is not None
+    ]
+    best_seen_human = max(human_values)
+    best_safe_human = max(safe_human_values)
+    best_seen_ai = min(ai_values) if ai_values else final_ai
+
+    reason_counts: dict[str, int] = {}
+    for item in blocked_candidates:
+        status = item.get("selection_status") or {}
+        auth = status.get("authenticity_gate") or {}
+        reason = str(auth.get("reason") or status.get("reason") or item.get("reason") or "unknown")
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+    completion = author_evidence_completion or summary.get("author_evidence_completion") or {}
+    estimate = completion.get("estimated_human_after_completion") or {}
+    estimated_high = _num(estimate.get("high"))
+    missing_slots = len(completion.get("slots") or [])
+    evidence_blocked = bool(completion.get("enabled")) and missing_slots > 0
+
+    if evidence_blocked and estimated_high is not None and estimated_high < target_human:
+        primary = "missing_author_owned_evidence_and_context"
+    elif best_seen_human <= final_human + 2:
+        primary = "human_score_ceiling_from_generic_claims"
+    elif reason_counts:
+        primary = max(reason_counts.items(), key=lambda item: item[1])[0]
+    else:
+        primary = "candidate_pool_exhausted"
+
+    recommended_next = []
+    if evidence_blocked:
+        recommended_next.append(
+            "Complete the Author Evidence slots with real examples, source support, or author observations, then rescan."
+        )
+    if candidates and best_safe_human < target_human:
+        recommended_next.append(
+            "Keep automatic generation in micro-local mode; broad rewrites are no longer the main bottleneck."
+        )
+    if reason_counts.get("review_burden_regressed") or reason_counts.get("weighted_severity_regressed"):
+        recommended_next.append(
+            "Use finding-local patching for review-burden and severity blockers instead of rewriting whole paragraphs."
+        )
+    if not recommended_next:
+        recommended_next.append(
+            "Increase candidate diversity and rescan only if semantic and authorship gates stay non-regressing."
+        )
+
+    return {
+        "schema_version": "mitigation_ceiling.v1",
+        "target_human_contribution": target_human,
+        "primary_blocker": primary,
+        "safe_auto_result": {
+            "human_contribution": round(final_human, 3) if final_human is not None else None,
+            "human_gain": round(final_human - original_human, 3) if final_human is not None else None,
+            "ai_score": round(final_ai, 3) if final_ai is not None else None,
+            "ai_drop": (
+                round(original_ai - final_ai, 3)
+                if original_ai is not None and final_ai is not None else None
+            ),
+            "ai_authorship": round(final_authorship, 3) if final_authorship is not None else None,
+            "ai_authorship_drop": (
+                round(original_authorship - final_authorship, 3)
+                if original_authorship is not None and final_authorship is not None else None
+            ),
+            "ai_transformation": round(final_transform, 3) if final_transform is not None else None,
+            "ai_transformation_drop": (
+                round(original_transform - final_transform, 3)
+                if original_transform is not None and final_transform is not None else None
+            ),
+            "review_burden": scores.get("rewritten_review_burden"),
+            "weighted_severity": scores.get("rewritten_weighted_severity"),
+        },
+        "candidate_frontier": {
+            "scanned_candidates": len(candidates),
+            "safe_candidates": len(safe_candidates),
+            "blocked_candidates": len(blocked_candidates),
+            "best_seen_human": round(best_seen_human, 3),
+            "best_safe_human": round(best_safe_human, 3),
+            "best_seen_ai": round(best_seen_ai, 3) if best_seen_ai is not None else None,
+            "blocked_reason_counts": reason_counts,
+            "blocked_human_winner_repair": search.get("blocked_human_winner_repair"),
+        },
+        "author_evidence_gap": {
+            "enabled": evidence_blocked,
+            "slot_count": missing_slots,
+            "estimated_human_after_completion": estimate or None,
+            "current_blockers": completion.get("current_blockers") or {},
+        },
+        "generation_layer": {
+            "selected": generation.get("selected"),
+            "selected_strategy": generation.get("selected_strategy"),
+            "selection_reason": generation.get("selection_reason"),
+            "candidate_count": generation.get("candidate_count"),
+        },
+        "recommended_next_actions": recommended_next,
+    }
+
+
 def _contribution_scores(report_dict: dict | None) -> dict:
     """Extract the Human Contribution / AI Transformation product scores."""
     if not isinstance(report_dict, dict):
@@ -4009,6 +4298,184 @@ def _ai_search_feedback_prompt(
     )
 
 
+def _blocked_human_candidate_repair_prompt(
+    source_text: str,
+    blocked_candidate: str,
+    raw_json: dict,
+    blocked_summary: dict,
+    attempt_index: int,
+) -> str:
+    """Repair a high-Human candidate that failed one or more hard gates."""
+    signal_brief = _ai_search_signal_brief(raw_json)
+    selection = blocked_summary.get("selection_status") or {}
+    authenticity = selection.get("authenticity_gate") or {}
+    failure_controls = []
+    if blocked_summary.get("critical_high_findings", 0) > blocked_summary.get("saved_critical_high", 0):
+        failure_controls.append(
+            "Remove whatever created the new critical/high finding. Usually this means narrowing unsupported claims, deleting over-strong judgement, or restoring a safer factual scope."
+        )
+    if selection.get("reason") in {"best_candidate_below_required_ai_drop", "candidate_not_below_reference"}:
+        failure_controls.append(
+            "Reduce AI score further by changing cadence and sentence routes, but preserve the Human Contribution gain."
+        )
+    if authenticity.get("ai_authorship_regression_blocked") or authenticity.get("ai_authorship_regressed"):
+        failure_controls.append(
+            "Lower AI Authorship texture: less clean explanation, less balanced structure, fewer polished transitions."
+        )
+    if authenticity.get("review_burden_regressed"):
+        failure_controls.append(
+            "Reduce review burden: remove unsupported broad claims introduced by the candidate."
+        )
+    if authenticity.get("weighted_severity_regressed"):
+        failure_controls.append(
+            "Reduce weighted severity: weaken or qualify any candidate sentence that sounds more assertive than the source."
+        )
+    if not failure_controls:
+        failure_controls.append(
+            "Keep the Human gain while fixing the detector gate failure shown in the scorecard."
+        )
+
+    return (
+        "DraftProof BLOCKED_HUMAN_WINNER_REPAIR.\n"
+        "A candidate moved Human Contribution in the right direction but failed the acceptance gate. "
+        "Repair only the failure. Do not restart the rewrite.\n\n"
+        f"Blocked candidate scorecard: {json.dumps(blocked_summary, ensure_ascii=False)[:2600]}\n\n"
+        f"{signal_brief}\n\n"
+        "Repair controls:\n"
+        + "\n".join(f"- {item}" for item in failure_controls)
+        + "\n\nHard constraints:\n"
+        "- Return a complete document, not notes.\n"
+        "- Preserve all factual claims, names, numbers, dates, quotes, citations, unit codes, and chronology from the source or blocked candidate.\n"
+        "- Do not invent sources, examples, personal experiences, institutions, statistics, or evidence.\n"
+        "- Preserve the Human Contribution gain: keep bounded author reasoning traces already present in the blocked candidate unless they caused the gate failure.\n"
+        "- If the blocked candidate added an unsafe unsupported claim, narrow it rather than adding evidence.\n"
+        "- Do not add bracket markers, commentary, headings, markdown fences, or explanations.\n"
+        f"- Repair attempt {attempt_index}: make the smallest complete-document repair that can pass the gates.\n\n"
+        "SOURCE DOCUMENT FOR FACT CHECKING:\n"
+        f"<SOURCE_DOCUMENT>\n{source_text.strip()}\n</SOURCE_DOCUMENT>\n\n"
+        "BLOCKED CANDIDATE TO REPAIR:\n"
+        f"<BLOCKED_CANDIDATE>\n{blocked_candidate.strip()}\n</BLOCKED_CANDIDATE>\n\n"
+        "Return only the repaired complete document."
+    )
+
+
+def _blocking_finding_targets(report_dict: dict | None, *, limit: int = 3) -> list[dict]:
+    if not isinstance(report_dict, dict):
+        return []
+    findings = report_dict.get("findings") or {}
+    rows = []
+    for tier in ("critical", "high", "medium"):
+        for item in findings.get(tier, []) or []:
+            if not isinstance(item, dict):
+                continue
+            context = item.get("rewrite_context") or {}
+            target = (
+                context.get("target_sentence")
+                or item.get("target_sentence")
+                or item.get("sentence")
+                or ""
+            )
+            evidence = item.get("evidence")
+            if isinstance(evidence, dict):
+                target = target or evidence.get("text") or evidence.get("sentence") or ""
+            row = {
+                "tier": tier,
+                "finding_id": item.get("finding_id"),
+                "title": item.get("title"),
+                "category": item.get("category"),
+                "detail": item.get("detail"),
+                "recommendation": item.get("recommendation"),
+                "target_sentence": str(target or "").strip(),
+                "paragraph_excerpt": str(context.get("paragraph_excerpt") or "")[:700],
+                "signals": context.get("signals") or {},
+            }
+            if row["target_sentence"] or row.get("detail"):
+                rows.append(row)
+            if len(rows) >= limit:
+                return rows
+    return rows[:limit]
+
+
+def _finding_local_repair_prompt(
+    blocked_candidate: str,
+    blocked_summary: dict,
+    targets: list[dict],
+    attempt_index: int,
+) -> str:
+    return (
+        "DraftProof FINDING_LOCAL_BLOCKED_WINNER_REPAIR.\n"
+        "A high-Human candidate failed because specific findings became too severe. "
+        "Patch only the listed finding targets. Do not rewrite the whole document.\n\n"
+        f"Blocked candidate scorecard: {json.dumps(blocked_summary, ensure_ascii=False)[:2200]}\n\n"
+        "Blocking findings to repair:\n"
+        f"{json.dumps(targets, ensure_ascii=False, indent=2)[:3200]}\n\n"
+        "Rules:\n"
+        "- Return JSON only.\n"
+        "- Each patch must target one exact sentence or short paragraph span from the blocked candidate.\n"
+        "- Replacement must narrow or qualify the unsafe claim; do not add evidence.\n"
+        "- Preserve the Human Contribution structure and author reasoning where possible.\n"
+        "- Do not invent sources, examples, personal experiences, institutions, statistics, or citations.\n"
+        "- Do not change unaffected sentences.\n"
+        "- If a target is not exact enough to patch safely, omit it.\n\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "patches": [\n'
+        '    {"target": "exact text from blocked candidate", "replacement": "safer replacement text"}\n'
+        "  ]\n"
+        "}\n\n"
+        f"Attempt {attempt_index}.\n\n"
+        "BLOCKED CANDIDATE:\n"
+        f"<BLOCKED_CANDIDATE>\n{blocked_candidate.strip()}\n</BLOCKED_CANDIDATE>"
+    )
+
+
+def _extract_finding_local_patches(output: str) -> list[dict]:
+    text = str(output or "").strip()
+    if not text:
+        return []
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+    match = re.search(r"\{.*\}", text, flags=re.S)
+    if match:
+        text = match.group(0)
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return []
+    patches = payload.get("patches") if isinstance(payload, dict) else payload
+    if not isinstance(patches, list):
+        return []
+    cleaned = []
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        target = " ".join(str(patch.get("target") or "").split()).strip()
+        replacement = " ".join(str(patch.get("replacement") or "").split()).strip()
+        if len(target.split()) < 5 or len(replacement.split()) < 5:
+            continue
+        if "[[" in replacement or "]]" in replacement:
+            continue
+        cleaned.append({"target": target, "replacement": replacement})
+    return cleaned[:5]
+
+
+def _apply_finding_local_patches(text: str, patches: list[dict]) -> tuple[str, list[dict]]:
+    updated = str(text or "")
+    applied = []
+    for patch in patches or []:
+        target = str(patch.get("target") or "").strip()
+        replacement = str(patch.get("replacement") or "").strip()
+        if not target or not replacement or target not in updated:
+            continue
+        updated = updated.replace(target, replacement, 1)
+        applied.append({
+            "target": target[:220],
+            "replacement": replacement[:220],
+        })
+    return updated, applied
+
+
 def _logical_paragraphs(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", str(text or "").strip()) if p.strip()]
 
@@ -6481,6 +6948,8 @@ def run_rewrite_pipeline(
         best_drift_reasons: list[str] = []
         best_selection_status: dict = {}
         best_human_shift_rank: tuple = (-1, -9999.0, -9999.0)
+        best_blocked_human_candidate: dict | None = None
+        best_blocked_human_rank: tuple | None = None
 
         def _best_ai_search_selectable() -> bool:
             return bool(best_strategy and best_selection_status.get("selectable"))
@@ -6509,7 +6978,7 @@ def run_rewrite_pipeline(
         ) -> None:
             nonlocal best_text, best_report, best_ai, best_strategy
             nonlocal best_semantic_review_required, best_drift_reasons, best_selection_status
-            nonlocal best_human_shift_rank
+            nonlocal best_human_shift_rank, best_blocked_human_candidate, best_blocked_human_rank
             candidate_eval = {
                 "strategy": strategy,
                 "deterministic": deterministic,
@@ -6598,6 +7067,10 @@ def run_rewrite_pipeline(
             candidate_wq = _badge_wq(candidate_report)
             candidate_review_burden = _review_burden(candidate_report)
             candidate_weighted_severity = _weighted_severity(candidate_report)
+            candidate_critical_high = (
+                len(candidate_report.get("findings", {}).get("critical", []))
+                + len(candidate_report.get("findings", {}).get("high", []))
+            )
             candidate_contribution = _contribution_scores(candidate_report)
             candidate_integrity = _integrity_scores(candidate_report)
             human_shift = _human_shift_score(
@@ -6621,6 +7094,7 @@ def run_rewrite_pipeline(
                 "findings": _finding_total(candidate_report),
                 "review_burden": candidate_review_burden,
                 "weighted_severity": candidate_weighted_severity,
+                "critical_high_findings": candidate_critical_high,
                 "human_shift_score": human_shift.get("score"),
                 "human_shift_components": human_shift.get("components"),
                 "scan_scope": _scan_scope_summary(candidate_report),
@@ -6660,6 +7134,7 @@ def run_rewrite_pipeline(
                     authenticity_status.get("review_burden_regressed")
                     or authenticity_status.get("weighted_severity_regressed")
                     or authenticity_status.get("critical_high_regressed")
+                    or candidate_critical_high > saved_critical_high
                 )
             ):
                 selection_status.update({
@@ -6672,6 +7147,8 @@ def run_rewrite_pipeline(
                 and authenticity_status.get("candidate_progress")
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
+                and candidate_critical_high <= saved_critical_high
+                and _finding_total(candidate_report) <= original_total
                 and not authenticity_status.get("review_burden_regressed")
                 and not authenticity_status.get("weighted_severity_regressed")
             )
@@ -6697,9 +7174,11 @@ def run_rewrite_pipeline(
                     )
                     and human_amplification_score.get("ai_authorship_delta", -9999.0) >= 0.0
                     and human_amplification_score.get("ai_transformation_delta", -9999.0) >= 0.0
+                    and _finding_total(candidate_report) <= original_total
                     and candidate_review_burden <= original_review_burden
                     and candidate_weighted_severity <= original_severity
                     and not authenticity_status.get("critical_high_regressed")
+                    and candidate_critical_high <= saved_critical_high
                     and not authenticity_status.get("ai_authorship_regression_blocked")
                 )
             ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
@@ -6717,6 +7196,7 @@ def run_rewrite_pipeline(
                 and candidate_weighted_severity <= original_severity
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
+                and candidate_critical_high <= saved_critical_high
             )
             if (
                 not selection_status.get("selectable")
@@ -6748,12 +7228,72 @@ def run_rewrite_pipeline(
             selection_status["human_shift_score"] = human_shift.get("score")
             selection_status["human_shift_components"] = human_shift.get("components")
             candidate_eval["selection_status"] = selection_status
+            original_human_value = _contribution_scores(original_report_dict).get("human")
+            candidate_human_value = candidate_contribution.get("human")
+            human_delta_for_blocked = (
+                float(candidate_human_value) - float(original_human_value)
+                if isinstance(candidate_human_value, (int, float))
+                and isinstance(original_human_value, (int, float))
+                else 0.0
+            )
+            if (
+                not selection_status.get("selectable")
+                and human_delta_for_blocked >= _float_env(
+                    "DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_HUMAN_GAIN",
+                    2.0,
+                )
+            ):
+                saved_ch_delta = max(0, int(candidate_critical_high or 0) - int(saved_critical_high or 0))
+                blocked_rank = (
+                    round(human_delta_for_blocked, 3),
+                    float(human_shift.get("score") or -9999.0),
+                    -saved_ch_delta,
+                    -max(0, candidate_review_burden - original_review_burden),
+                    -max(0, candidate_weighted_severity - original_severity),
+                    -(candidate_ai if isinstance(candidate_ai, (int, float)) else 999.0),
+                )
+                if best_blocked_human_rank is None or blocked_rank > best_blocked_human_rank:
+                    best_blocked_human_rank = blocked_rank
+                    best_blocked_human_candidate = {
+                        "strategy": strategy,
+                        "text": candidate,
+                        "report": candidate_report,
+                        "summary": {
+                            "strategy": strategy,
+                            "ai": candidate_ai,
+                            "ai_delta_vs_reference": candidate_eval.get("ai_delta_vs_reference"),
+                            "human_contribution": candidate_contribution.get("human"),
+                            "human_delta": round(human_delta_for_blocked, 3),
+                            "ai_transformation": candidate_contribution.get("ai_transformation"),
+                            "ai_authorship": candidate_integrity.get("ai_authorship"),
+                            "grounding_quality_risk": candidate_integrity.get("grounding"),
+                            "findings": _finding_total(candidate_report),
+                            "review_burden": candidate_review_burden,
+                            "weighted_severity": candidate_weighted_severity,
+                            "critical_high_findings": candidate_critical_high,
+                            "saved_critical_high": saved_critical_high,
+                            "selection_status": selection_status,
+                        },
+                    }
             human_shift_score = human_shift.get("score")
+            candidate_ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
+            candidate_ai_transformation_delta = authenticity_status.get("ai_transformation_delta")
             candidate_rank = (
                 1 if selection_status.get("selectable") else 0,
-                1 if selection_status.get("human_signal_amplification") else 0,
-                float(human_shift_score) if isinstance(human_shift_score, (int, float)) else -9999.0,
+                float(candidate_human_value) if isinstance(candidate_human_value, (int, float)) else -9999.0,
+                (
+                    float(candidate_ai_authorship_delta)
+                    if isinstance(candidate_ai_authorship_delta, (int, float)) else -9999.0
+                ),
+                (
+                    float(candidate_ai_transformation_delta)
+                    if isinstance(candidate_ai_transformation_delta, (int, float)) else -9999.0
+                ),
+                -float(candidate_review_burden),
+                -float(candidate_weighted_severity),
+                -float(_finding_total(candidate_report)),
                 float(ai_delta) if isinstance(ai_delta, (int, float)) else -9999.0,
+                float(human_shift_score) if isinstance(human_shift_score, (int, float)) else -9999.0,
             )
             if candidate_rank > best_human_shift_rank:
                 best_ai = candidate_ai
@@ -7341,6 +7881,116 @@ def run_rewrite_pipeline(
                                 and best_strategy == strategy
                             ):
                                 post_base_text = best_text
+
+                if (
+                    _env_flag("DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR", True)
+                    and best_blocked_human_candidate
+                    and effective_key
+                ):
+                    try:
+                        blocked_repair_limit = max(
+                            0,
+                            int(_float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR_CANDIDATES", 2.0)),
+                        )
+                    except (TypeError, ValueError):
+                        blocked_repair_limit = 2
+                    blocked_summary = best_blocked_human_candidate.get("summary") or {}
+                    blocking_targets = _blocking_finding_targets(
+                        best_blocked_human_candidate.get("report"),
+                        limit=int(_float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_FINDING_TARGETS", 3.0)),
+                    )
+                    search_summary["blocked_human_winner_repair"] = {
+                        "enabled": True,
+                        "candidate_limit": blocked_repair_limit,
+                        "mode": "finding_local_then_document_repair",
+                        "blocked_candidate": {
+                            key: value
+                            for key, value in blocked_summary.items()
+                            if key != "selection_status"
+                        },
+                        "blocked_selection_status": blocked_summary.get("selection_status"),
+                        "blocking_targets": blocking_targets,
+                    }
+                    for repair_index in range(1, blocked_repair_limit + 1):
+                        report_progress(
+                            min(93, 90 + repair_index),
+                            f"Repairing blocked Human-gain candidate {repair_index}/{blocked_repair_limit}",
+                        )
+                        try:
+                            if blocking_targets:
+                                prompt = _finding_local_repair_prompt(
+                                    str(best_blocked_human_candidate.get("text") or ""),
+                                    blocked_summary,
+                                    blocking_targets,
+                                    repair_index,
+                                )
+                            else:
+                                prompt = _blocked_human_candidate_repair_prompt(
+                                    search_source_text,
+                                    str(best_blocked_human_candidate.get("text") or ""),
+                                    ctx.raw_json,
+                                    blocked_summary,
+                                    repair_index,
+                                )
+                            search_summary["llm_calls"] += 1
+                            response = gateway.chat(
+                                prompt,
+                                system=(
+                                    "You are DraftProof's blocked-candidate repair engine. "
+                                    "Repair only the gate failure."
+                                ),
+                                temperature=float(os.environ.get(
+                                    "DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR_TEMPERATURE",
+                                    "0.45",
+                                )),
+                                max_tokens=int(os.environ.get(
+                                    "DRAFTPROOF_AI_SEARCH_MAX_TOKENS",
+                                    "6500",
+                                )),
+                            )
+                            if blocking_targets:
+                                patches = _extract_finding_local_patches(response.content)
+                                repaired_candidate, applied_patches = _apply_finding_local_patches(
+                                    str(best_blocked_human_candidate.get("text") or ""),
+                                    patches,
+                                )
+                                if not applied_patches:
+                                    search_summary["candidates"].append({
+                                        "strategy": f"blocked_human_winner_repair_{repair_index}",
+                                        "passed_local_checks": False,
+                                        "reason": "no_finding_local_patch_applied",
+                                        "blocked_human_winner_repair": True,
+                                        "finding_local_repair": True,
+                                        "source_blocked_strategy": blocked_summary.get("strategy"),
+                                    })
+                                    continue
+                            else:
+                                applied_patches = []
+                                repaired_candidate = _clean_full_document_candidate(
+                                    response.content,
+                                    search_source_text,
+                                )
+                        except Exception as exc:
+                            search_summary["candidates"].append({
+                                "strategy": f"blocked_human_winner_repair_{repair_index}",
+                                "passed_local_checks": False,
+                                "reason": f"llm_error {exc}",
+                                "blocked_human_winner_repair": True,
+                                "source_blocked_strategy": blocked_summary.get("strategy"),
+                            })
+                            continue
+                        _evaluate_ai_search_candidate(
+                            f"blocked_human_winner_repair_{repair_index}",
+                            repaired_candidate,
+                            deterministic=False,
+                            extra={
+                                "blocked_human_winner_repair": True,
+                                "finding_local_repair": bool(blocking_targets),
+                                "applied_finding_patches": applied_patches,
+                                "source_blocked_strategy": blocked_summary.get("strategy"),
+                                "source_blocked_human_delta": blocked_summary.get("human_delta"),
+                            },
+                        )
 
                 if _best_ai_search_selectable():
                     previous_ai = rewritten_ai
@@ -8038,7 +8688,27 @@ def run_rewrite_pipeline(
         result.summary["rollback_applied"] = True
         result.summary["rollback_reason"] = reason
         result.summary["outcome"] = "rejected_for_drift"
-        result.summary["detect_scores"]["rollback_reason"] = reason
+        result.summary["detect_scores"].update({
+            "rewritten_ai": _badge_ai(original_report_dict),
+            "rewritten_writing_quality": _badge_wq(original_report_dict),
+            "rewritten_ai_authorship": _integrity_scores(original_report_dict).get("ai_authorship"),
+            "rewritten_grounding_quality_risk": _integrity_scores(original_report_dict).get("grounding"),
+            "rewritten_human_contribution": _contribution_scores(original_report_dict).get("human"),
+            "rewritten_ai_transformation": _contribution_scores(original_report_dict).get("ai_transformation"),
+            "rewritten_findings": _finding_total(original_report_dict),
+            "rewritten_review_burden": _review_burden(original_report_dict),
+            "rewritten_weighted_severity": _weighted_severity(original_report_dict),
+            "attempted_ai": rewritten_ai,
+            "attempted_writing_quality": rewritten_wq,
+            "attempted_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+            "attempted_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+            "attempted_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+            "attempted_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+            "attempted_findings": rewritten_total,
+            "attempted_review_burden": rewritten_review_burden,
+            "attempted_weighted_severity": rewritten_severity,
+            "rollback_reason": reason,
+        })
         sentence_comparison = []
         rewritten_report_dict = original_report_dict
 
@@ -8052,6 +8722,21 @@ def run_rewrite_pipeline(
         "human_shift_score": final_human_shift.get("score"),
         "human_shift_components": final_human_shift.get("components"),
     })
+    author_evidence_completion = _build_author_evidence_completion_layer(
+        rewritten_text,
+        rewritten_report_dict,
+        target_human=int(_float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0)),
+        max_slots=int(_float_env("DRAFTPROOF_AUTHOR_EVIDENCE_COMPLETION_SLOTS", 5.0)),
+    )
+    if author_evidence_completion:
+        result.summary["author_evidence_completion"] = author_evidence_completion
+    ceiling_diagnostics = _build_mitigation_ceiling_diagnostics(
+        result.summary,
+        author_evidence_completion,
+        target_human=int(_float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0)),
+    )
+    if ceiling_diagnostics:
+        result.summary["mitigation_ceiling"] = ceiling_diagnostics
 
     # Extract only the fields needed for comparison (not full report dicts)
     def _extract_scan_summary(report_dict):

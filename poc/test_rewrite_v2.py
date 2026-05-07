@@ -115,6 +115,13 @@ from rewrite_pipeline import (
     _paragraph_role,
     _human_signal_amplification_prompt,
     _score_human_amplification_candidate,
+    _build_author_evidence_completion_layer,
+    _build_mitigation_ceiling_diagnostics,
+    _blocked_human_candidate_repair_prompt,
+    _blocking_finding_targets,
+    _finding_local_repair_prompt,
+    _extract_finding_local_patches,
+    _apply_finding_local_patches,
     _extract_paragraph_component_candidates,
     _clean_paragraph_component_candidate,
     _splice_paragraph,
@@ -2450,6 +2457,153 @@ assert_test(
     and human_amp_score["ai_transformation_delta"] == 1
     and human_amp_score["score"] > 25,
     "human signal amplification scorer rewards human gain under authorship cap",
+)
+author_completion = _build_author_evidence_completion_layer(
+    paragraph_search_text,
+    {
+        "ai_risk_badge": {
+            "ai_components": {
+                "generic_assertion_risk": 90.0,
+                "qualifying_text_ai_density": 80.0,
+            },
+            "writing_components": {
+                "lived_detail_risk": 80.0,
+                "source_grounding_risk": 70.0,
+                "unsupported_claim_risk": 80.0,
+            },
+        },
+        "integrity_layers": {
+            "layers": {
+                "human_contribution_signal": {"score": 34},
+                "ai_transformation_risk": {"score": 66},
+                "ai_authorship_risk": {"score": 80},
+                "grounding_quality_risk": {"score": 69},
+            }
+        },
+    },
+    max_slots=2,
+)
+assert_test(
+    author_completion.get("draft_text")
+    and "[[ADD REAL AUTHOR ANCHOR" in author_completion.get("draft_text")
+    and author_completion.get("auto_apply") is False
+    and len(author_completion.get("slots") or []) <= 2
+    and author_completion.get("estimated_human_after_completion", {}).get("high", 0) > 34,
+    "author evidence completion creates explicit user-fill anchor slots with projected Human lift",
+)
+blocked_repair_prompt = _blocked_human_candidate_repair_prompt(
+    paragraph_search_text,
+    paragraph_search_text.replace("Teachers are important", "I would check whether teachers are important"),
+    paragraph_search_json,
+    {
+        "strategy": "human_signal_amplification_p2_c1",
+        "ai": 86.0,
+        "human_contribution": 39,
+        "human_delta": 5,
+        "ai_authorship": 86,
+        "critical_high_findings": 1,
+        "saved_critical_high": 0,
+        "selection_status": {
+            "reason": "candidate_not_below_reference",
+            "authenticity_gate": {
+                "critical_high_regressed": True,
+                "ai_authorship_regressed": True,
+            },
+        },
+    },
+    1,
+)
+assert_test(
+    "BLOCKED_HUMAN_WINNER_REPAIR" in blocked_repair_prompt
+    and "Preserve the Human Contribution gain" in blocked_repair_prompt
+    and "Remove whatever created the new critical/high finding" in blocked_repair_prompt
+    and "Reduce AI score further" in blocked_repair_prompt
+    and "<BLOCKED_CANDIDATE>" in blocked_repair_prompt,
+    "blocked Human winner repair prompt targets failed gate without restarting rewrite",
+)
+finding_targets = _blocking_finding_targets({
+    "findings": {
+        "high": [{
+            "finding_id": "f001",
+            "title": "unsupported_claim",
+            "category": "writing_quality",
+            "detail": "Claim is too strong for the evidence supplied.",
+            "recommendation": "Narrow the claim.",
+            "rewrite_context": {
+                "target_sentence": "AI tools always improve student learning when used in schools.",
+                "paragraph_excerpt": "AI tools always improve student learning when used in schools.",
+            },
+        }],
+        "medium": [],
+        "low": [],
+    }
+})
+finding_local_prompt = _finding_local_repair_prompt(
+    "AI tools always improve student learning when used in schools.",
+    {"strategy": "paragraph_resequence", "human_delta": 9, "weighted_severity": 58},
+    finding_targets,
+    1,
+)
+finding_local_patches = _extract_finding_local_patches(
+    '{"patches":[{"target":"AI tools always improve student learning when used in schools.",'
+    '"replacement":"AI tools can support student learning when students still have to explain their choices."}]}'
+)
+patched_text, applied_patches = _apply_finding_local_patches(
+    "AI tools always improve student learning when used in schools.",
+    finding_local_patches,
+)
+assert_test(
+    finding_targets
+    and "FINDING_LOCAL_BLOCKED_WINNER_REPAIR" in finding_local_prompt
+    and finding_local_patches
+    and "can support" in patched_text
+    and applied_patches,
+    "finding-local blocked winner repair extracts targets, parses JSON patches, and splices exact text",
+)
+ceiling_diagnostics = _build_mitigation_ceiling_diagnostics(
+    {
+        "detect_scores": {
+            "original_ai": 80.0,
+            "rewritten_ai": 78.0,
+            "original_human_contribution": 34.0,
+            "rewritten_human_contribution": 38.0,
+            "original_ai_authorship": 80.0,
+            "rewritten_ai_authorship": 78.0,
+            "original_ai_transformation": 66.0,
+            "rewritten_ai_transformation": 62.0,
+            "rewritten_review_burden": 16,
+            "rewritten_weighted_severity": 50,
+        },
+        "ai_mitigation_search": {
+            "candidates": [
+                {
+                    "ai": 78.0,
+                    "human_contribution": 38.0,
+                    "selection_status": {"selectable": True},
+                },
+                {
+                    "ai": 77.0,
+                    "human_contribution": 43.0,
+                    "selection_status": {
+                        "selectable": False,
+                        "authenticity_gate": {"reason": "review_burden_regressed"},
+                    },
+                },
+            ]
+        },
+    },
+    {
+        "enabled": True,
+        "slots": [{"slot": 1}, {"slot": 2}],
+        "estimated_human_after_completion": {"low": 46, "high": 63},
+    },
+)
+assert_test(
+    ceiling_diagnostics.get("primary_blocker") == "missing_author_owned_evidence_and_context"
+    and ceiling_diagnostics["candidate_frontier"]["best_seen_human"] == 43.0
+    and ceiling_diagnostics["candidate_frontier"]["best_safe_human"] == 38.0
+    and ceiling_diagnostics["author_evidence_gap"]["slot_count"] == 2,
+    "mitigation ceiling diagnostics expose safe frontier and missing author-evidence blocker",
 )
 scope_summary = _scan_scope_summary({
     "predictability": {

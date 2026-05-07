@@ -453,6 +453,53 @@ def render_rewrite_report(
             lines.append(f"{i}. {action}")
         lines.append("")
 
+    ceiling = summary.get("mitigation_ceiling") or {}
+    if ceiling:
+        lines.append("## Mitigation Ceiling")
+        lines.append("")
+        safe = ceiling.get("safe_auto_result") or {}
+        frontier = ceiling.get("candidate_frontier") or {}
+        evidence_gap = ceiling.get("author_evidence_gap") or {}
+        primary = str(ceiling.get("primary_blocker") or "unknown").replace("_", " ")
+        lines.append(f"**Primary blocker:** {primary}.")
+        lines.append("")
+        lines.append("| Signal | Current Safe Result | Frontier |")
+        lines.append("|--------|--------------------:|---------:|")
+        lines.append(
+            f"| Human Contribution | `{safe.get('human_contribution', '-')}` | "
+            f"best safe `{frontier.get('best_safe_human', '-')}` / best seen `{frontier.get('best_seen_human', '-')}` |"
+        )
+        lines.append(
+            f"| AI Score | `{safe.get('ai_score', '-')}` | best seen `{frontier.get('best_seen_ai', '-')}` |"
+        )
+        lines.append(
+            f"| AI Authorship | `{safe.get('ai_authorship', '-')}` | drop `{safe.get('ai_authorship_drop', '-')}` |"
+        )
+        lines.append(
+            f"| AI Transformation | `{safe.get('ai_transformation', '-')}` | drop `{safe.get('ai_transformation_drop', '-')}` |"
+        )
+        lines.append(
+            f"| Candidate Pool | {frontier.get('safe_candidates', 0)} safe / "
+            f"{frontier.get('scanned_candidates', 0)} scanned | "
+            f"{frontier.get('blocked_candidates', 0)} blocked |"
+        )
+        lines.append("")
+        if evidence_gap.get("enabled"):
+            estimate = evidence_gap.get("estimated_human_after_completion") or {}
+            lines.append(
+                f"Author evidence is still the Human Contribution ceiling: "
+                f"{evidence_gap.get('slot_count', 0)} real-author slot(s) are needed. "
+                f"Heuristic Human range after completion: `{estimate.get('low', '-')}`-`{estimate.get('high', '-')}`."
+            )
+            lines.append("")
+        actions = ceiling.get("recommended_next_actions") or []
+        if actions:
+            lines.append("**Next actions:**")
+            lines.append("")
+            for action in actions[:4]:
+                lines.append(f"- {str(action).replace('|', '·')}")
+            lines.append("")
+
     if mitigation:
         score_targets = mitigation.get("score_mitigation_targets") or []
         if score_targets:
@@ -548,6 +595,41 @@ def render_rewrite_report(
             lines.append("")
 
     educational = summary.get("educational_mitigation_rewrite") or {}
+    completion = summary.get("author_evidence_completion") or {}
+    if completion.get("draft_text"):
+        lines.append("## Author Evidence Completion Draft")
+        lines.append("")
+        estimate = completion.get("estimated_human_after_completion") or {}
+        current_human = completion.get("current_human_contribution")
+        target_human = completion.get("target_human_contribution")
+        if estimate:
+            lines.append(
+                f"Current Human Contribution is `{current_human}%`; target is `{target_human}%`. "
+                f"If the bracketed slots are completed with real evidence, the estimated Human range is "
+                f"`{estimate.get('low')}%-{estimate.get('high')}%`. This is a heuristic estimate; rescan after completion."
+            )
+        else:
+            lines.append(
+                "This draft marks where the author should add real source evidence, concrete context, or defensible reasoning. It is not an accepted final rewrite."
+            )
+        lines.append("")
+        lines.append("```text")
+        lines.append(str(completion.get("draft_text", "")).strip())
+        lines.append("```")
+        lines.append("")
+        slots = completion.get("slots") or []
+        if slots:
+            lines.append("| Slot | Paragraph | Role | What To Supply |")
+            lines.append("|------|-----------|------|----------------|")
+            for slot in slots[:12]:
+                instruction = str(slot.get("instruction") or "").replace("|", "·")
+                role = str(slot.get("paragraph_role") or "").replace("_", " ")
+                paragraph_index = slot.get("paragraph_index")
+                lines.append(
+                    f"| {slot.get('slot', '')} | {paragraph_index} | {role} | {instruction} |"
+                )
+            lines.append("")
+
     if educational.get("draft_text"):
         lines.append("## Educational Mitigation Draft")
         lines.append("")
