@@ -112,12 +112,21 @@ from rewrite_pipeline import (
     _retry_model_enabled,
     _paragraph_component_targets,
     _paragraph_component_prompt,
+    _ai_search_prompt,
     _paragraph_role,
     _human_signal_amplification_prompt,
     _score_human_amplification_candidate,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
+    _confirmed_author_anchor_brief,
+    _confirmed_anchor_echo_reason,
+    _validate_author_evidence_answers,
+    _author_answer_relevance,
+    _author_evidence_integration_prompt,
+    _deterministic_author_anchor_paragraph,
+    _clean_author_evidence_integrated_paragraph,
+    _splice_author_evidence_paragraph,
     _blocked_human_candidate_repair_prompt,
     _blocking_finding_targets,
     _finding_local_repair_prompt,
@@ -2305,6 +2314,14 @@ assert_test(
     any(target.get("role") == "conclusion_template_risk" for target in conclusion_targets),
     "paragraph component search keeps short conclusion-template targets for amplification",
 )
+confirmed_anchor_brief = _confirmed_author_anchor_brief([
+    {
+        "anchor_id": "anchor_1",
+        "answer": "During a classroom practice task, I saw students make repeated mistakes first, then improve after feedback and another attempt.",
+        "confidence": "confirmed",
+        "permission_to_use": True,
+    }
+])
 paragraph_prompt = _paragraph_component_prompt(
     paragraph_targets[0],
     paragraph_search_json,
@@ -2313,13 +2330,51 @@ paragraph_prompt = _paragraph_component_prompt(
     required_ai_drop=5.0,
     target_ai_score=52.78,
     candidate_count=3,
+    confirmed_author_anchors=confirmed_anchor_brief,
 )
 assert_test(
     "TARGET PARAGRAPH" in paragraph_prompt
     and "generic_assertion_risk=90.00%" in paragraph_prompt
     and "target AI<=52.78" in paragraph_prompt
+    and "Confirmed author anchors available before generation" in paragraph_prompt
+    and "Each anchor may be used at most once" in paragraph_prompt
     and "Return exactly 3 alternative replacement paragraphs" in paragraph_prompt,
-    "paragraph component prompt passes score drivers and scoped rewrite instruction",
+    "paragraph component prompt passes score drivers, confirmed anchors, and scoped rewrite instruction",
+)
+anchor_search_prompt = _ai_search_prompt(
+    paragraph_search_text,
+    paragraph_search_json,
+    "confirmed_anchor_threading",
+    reference_ai=57.78,
+    required_ai_drop=5.0,
+    target_ai_score=52.78,
+    confirmed_author_anchors=confirmed_anchor_brief,
+)
+assert_test(
+    "Strategy: confirmed-anchor threading" in anchor_search_prompt
+    and "Use only the confirmed author anchors provided below" in anchor_search_prompt
+    and "Confirmed author anchors available before generation" in anchor_search_prompt
+    and "Do not repeat, paraphrase, or echo the same anchor" in anchor_search_prompt
+    and "Do not invent a wider story" in anchor_search_prompt,
+    "AI mitigation search has dedicated confirmed-anchor strategies",
+)
+anchor_echo_reason = _confirmed_anchor_echo_reason(
+    (
+        "I saw students make repeated mistakes first, then improve after feedback. "
+        "Later I watched the same repeated mistakes improve only after feedback and another attempt."
+    ),
+    [
+        {
+            "anchor_id": "anchor_1",
+            "answer": "During a classroom practice task, I saw students make repeated mistakes first, then improve after feedback and another attempt.",
+            "confidence": "confirmed",
+            "permission_to_use": True,
+        }
+    ],
+)
+assert_test(
+    anchor_echo_reason.startswith("confirmed_anchor_repeated"),
+    "confirmed anchor echo guard blocks repeated use of the same author anchor",
 )
 extracted_paragraph_candidates = _extract_paragraph_component_candidates(
     "<CANDIDATE_1>\nFirst replacement paragraph.\n</CANDIDATE_1>\n"
@@ -2397,10 +2452,12 @@ amplification_prompt = _human_signal_amplification_prompt(
     paragraph_search_json,
     1,
     candidate_count=3,
+    confirmed_author_anchors=confirmed_anchor_brief,
 )
 assert_test(
     "HUMAN_SIGNAL_AMPLIFICATION_REPAIR" in amplification_prompt
     and "Controlled operation: add a source-to-practice bridge" in amplification_prompt
+    and "Confirmed author anchors available before generation" in amplification_prompt
     and "Human Contribution must increase by at least 2" in amplification_prompt
     and "AI Authorship must not increase" in amplification_prompt
     and "invent new evidence" in amplification_prompt
@@ -2617,7 +2674,7 @@ intake_layer = _build_author_evidence_intake_layer(
                 "slot": 1,
                 "paragraph_index": 2,
                 "paragraph_role": "generic_claim_heavy",
-                "target_paragraph_preview": "Students are surrounded by too much information.",
+                "target_paragraph_preview": "Students are surrounded by too much information and must decide which source to trust.",
             }
         ],
     },
@@ -2629,6 +2686,59 @@ assert_test(
     and "Do not invent" in intake_layer["llm_supervisor_prompt"]
     and any("must not create" in item for item in intake_layer["close_gap_policy"]),
     "author evidence intake lets LLM close gaps only through confirmed anchors",
+)
+valid_anchor_answers, rejected_anchor_answers = _validate_author_evidence_answers(
+    intake_layer,
+    [
+        {
+            "anchor_id": "anchor_1",
+            "answer": "In my class, two students copied short online source explanations but could not explain why they trusted those sources.",
+            "confidence": "confirmed",
+            "permission_to_use": True,
+        },
+        {
+            "anchor_id": "anchor_1",
+            "answer": "Maybe something like that happened.",
+            "confidence": "uncertain",
+            "permission_to_use": True,
+        },
+    ],
+)
+irrelevant_anchor_check = _author_answer_relevance(
+    {
+        "target_preview": "Real learning takes time, mistakes, practice, confusion, feedback, and trying again."
+    },
+    "In one class discussion, students named online platforms but did not explain which source they trusted.",
+)
+integration_prompt = _author_evidence_integration_prompt(
+    "Students are surrounded by too much information.",
+    intake_layer["questions"][0],
+    valid_anchor_answers[0]["answer"],
+)
+deterministic_integrated, deterministic_reason = _deterministic_author_anchor_paragraph(
+    "Students are surrounded by too much information. Some of it is helpful, and some of it is wrong.",
+    intake_layer["questions"][0],
+    valid_anchor_answers[0]["answer"],
+)
+clean_integrated, clean_integrated_reason = _clean_author_evidence_integrated_paragraph(
+    "Students are surrounded by too much information. In my class, two students copied short online explanations but could not explain the steps when I asked them to talk through their work.",
+    "Students are surrounded by too much information.",
+)
+spliced_anchor_text = _splice_author_evidence_paragraph(
+    "Intro paragraph.\n\nStudents are surrounded by too much information.\n\nEnd paragraph.",
+    1,
+    clean_integrated,
+)
+assert_test(
+    len(valid_anchor_answers) == 1
+    and rejected_anchor_answers
+    and not irrelevant_anchor_check["accepted"]
+    and "Use only the confirmed answer" in integration_prompt
+    and not deterministic_reason
+    and "two students copied" in deterministic_integrated
+    and not clean_integrated_reason
+    and "two students copied" in spliced_anchor_text,
+    "confirmed author evidence answers validate, prompt, clean, and splice into the target paragraph",
 )
 scope_summary = _scan_scope_summary({
     "predictability": {

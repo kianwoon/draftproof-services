@@ -904,6 +904,275 @@ def _build_author_evidence_intake_layer(
     }
 
 
+def _load_author_evidence_answers() -> list[dict]:
+    """Load confirmed author-evidence answers supplied by the product layer."""
+    raw = os.environ.get("DRAFTPROOF_AUTHOR_EVIDENCE_ANSWERS_JSON")
+    file_path = os.environ.get("DRAFTPROOF_AUTHOR_EVIDENCE_ANSWERS_FILE")
+    if file_path and not raw:
+        try:
+            with open(file_path, "r", encoding="utf-8") as fh:
+                raw = fh.read()
+        except OSError:
+            return []
+    if not raw:
+        return []
+    raw = raw.strip()
+    if raw.startswith("@"):
+        try:
+            with open(raw[1:], "r", encoding="utf-8") as fh:
+                raw = fh.read()
+        except OSError:
+            return []
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return []
+    if isinstance(payload, dict):
+        answers = payload.get("answers") or payload.get("author_evidence_answers") or []
+    else:
+        answers = payload
+    return [item for item in answers if isinstance(item, dict)] if isinstance(answers, list) else []
+
+
+def _confirmed_author_anchor_brief(answers: list[dict], *, limit: int = 6) -> str:
+    rows = []
+    for raw in answers or []:
+        if not isinstance(raw, dict):
+            continue
+        answer = " ".join(str(raw.get("answer") or "").split()).strip()
+        confidence = str(raw.get("confidence") or "").strip().lower()
+        if confidence != "confirmed" or raw.get("permission_to_use") is not True:
+            continue
+        if len(answer.split()) < 8 or "[[" in answer or "]]" in answer:
+            continue
+        rows.append({
+            "anchor_id": raw.get("anchor_id") or raw.get("id"),
+            "answer": answer[:420],
+        })
+        if len(rows) >= max(1, int(limit or 1)):
+            break
+    if not rows:
+        return ""
+    return (
+        "Confirmed author anchors available before generation:\n"
+        f"{json.dumps(rows, ensure_ascii=False, indent=2)}\n"
+        "Use these anchors only where they directly fit the paragraph context. "
+        "Each anchor may be used at most once in the whole draft. "
+        "Do not repeat, paraphrase, or echo the same anchor across multiple paragraphs. "
+        "Do not invent adjacent facts, and do not force an anchor into an unrelated paragraph."
+    )
+
+
+def _confirmed_anchor_echo_reason(text: str, answers: list[dict]) -> str:
+    """Reject candidates that reuse one confirmed anchor as repeated prose texture."""
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", str(text or ""))
+        if sentence.strip()
+    ]
+    for raw in answers or []:
+        if not isinstance(raw, dict):
+            continue
+        answer = " ".join(str(raw.get("answer") or "").split()).strip()
+        confidence = str(raw.get("confidence") or "").strip().lower()
+        if confidence != "confirmed" or raw.get("permission_to_use") is not True:
+            continue
+        keywords = _author_anchor_keywords(answer)
+        if len(keywords) < 3:
+            continue
+        matched = []
+        threshold = max(2, min(4, len(keywords) // 2))
+        for idx, sentence in enumerate(sentences):
+            sentence_keywords = _author_anchor_keywords(sentence)
+            overlap = keywords & sentence_keywords
+            if len(overlap) >= threshold:
+                matched.append({
+                    "sentence_index": idx,
+                    "overlap": sorted(overlap)[:8],
+                })
+        if len(matched) > 1:
+            return (
+                "confirmed_anchor_repeated "
+                f"{raw.get('anchor_id') or raw.get('id') or 'anchor'}:{len(matched)}"
+            )
+    return ""
+
+
+def _author_anchor_keywords(text: str) -> set[str]:
+    stop = {
+        "about", "after", "again", "also", "because", "before", "being", "between",
+        "could", "every", "from", "have", "into", "more", "most", "only", "other",
+        "should", "some", "that", "their", "them", "then", "there", "these", "they",
+        "this", "through", "when", "where", "which", "while", "with", "would",
+        "students", "student", "education", "school", "schools", "class", "learning",
+    }
+    words = re.findall(r"\b[A-Za-z][A-Za-z']{3,}\b", str(text or "").lower())
+    normalized = set()
+    for word in words:
+        base = word.rstrip("s")
+        if base and base not in stop:
+            normalized.add(base)
+    return normalized
+
+
+def _author_answer_relevance(question: dict, answer: str) -> dict:
+    preview = str((question or {}).get("target_preview") or "")
+    preview_keywords = _author_anchor_keywords(preview)
+    answer_keywords = _author_anchor_keywords(answer)
+    overlap = sorted(preview_keywords & answer_keywords)
+    if not preview_keywords:
+        return {"accepted": True, "overlap": overlap, "reason": "no_preview_keywords"}
+    if overlap:
+        return {"accepted": True, "overlap": overlap, "reason": ""}
+    return {
+        "accepted": False,
+        "overlap": [],
+        "reason": "answer_does_not_match_anchor_context",
+        "preview_keywords": sorted(preview_keywords)[:12],
+        "answer_keywords": sorted(answer_keywords)[:12],
+    }
+
+
+def _validate_author_evidence_answers(intake: dict | None, answers: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Keep only confirmed, permissioned, concrete answers matched to intake anchors."""
+    if not isinstance(intake, dict):
+        return [], []
+    question_map = {
+        str(item.get("id") or ""): item
+        for item in (intake.get("questions") or [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    accepted = []
+    rejected = []
+    weak_patterns = re.compile(
+        r"\b(?:not sure|maybe|possibly|some example|something like|n/?a|none|no idea|tbd)\b",
+        flags=re.I,
+    )
+    for raw in answers or []:
+        anchor_id = str(raw.get("anchor_id") or raw.get("id") or "").strip()
+        answer = " ".join(str(raw.get("answer") or "").split()).strip()
+        confidence = str(raw.get("confidence") or "").strip().lower()
+        permission = raw.get("permission_to_use")
+        question = question_map.get(anchor_id)
+        reason = ""
+        if not question:
+            reason = "unknown_anchor_id"
+        elif confidence != "confirmed":
+            reason = "answer_not_confirmed"
+        elif permission is not True:
+            reason = "permission_to_use_required"
+        elif len(answer.split()) < 8:
+            reason = "answer_too_short"
+        elif weak_patterns.search(answer):
+            reason = "answer_too_uncertain_or_generic"
+        elif "[[" in answer or "]]" in answer:
+            reason = "answer_contains_placeholder_marker"
+        relevance = _author_answer_relevance(question, answer) if question and not reason else {}
+        if not reason and not relevance.get("accepted", True):
+            reason = relevance.get("reason") or "answer_does_not_match_anchor_context"
+        if reason:
+            rejected.append({
+                "anchor_id": anchor_id,
+                "reason": reason,
+                "relevance": relevance or None,
+            })
+            continue
+        accepted.append({
+            "anchor_id": anchor_id,
+            "answer": answer,
+            "question": question,
+            "confidence": confidence,
+            "permission_to_use": True,
+            "relevance": relevance,
+        })
+    return accepted, rejected
+
+
+def _author_evidence_integration_prompt(paragraph: str, question: dict, answer: str) -> str:
+    return (
+        "DraftProof AUTHOR_EVIDENCE_INTEGRATION.\n"
+        "Integrate one confirmed author-owned anchor into one paragraph.\n\n"
+        "Rules:\n"
+        "- Return the revised paragraph only.\n"
+        "- Use only the confirmed answer. Do not invent any extra source, date, place, statistic, institution, or experience.\n"
+        "- Keep the paragraph's original meaning and stance.\n"
+        "- Add the anchor where it naturally supports the claim.\n"
+        "- Do not make the paragraph more polished, generic, or longer than needed.\n"
+        "- If the answer does not support the paragraph, narrow the paragraph's claim instead of forcing it.\n\n"
+        f"Anchor question: {question.get('question')}\n"
+        f"Answer type: {question.get('answer_type')}\n"
+        f"Confirmed answer: {answer}\n\n"
+        "TARGET PARAGRAPH:\n"
+        f"<PARAGRAPH>\n{paragraph.strip()}\n</PARAGRAPH>"
+    )
+
+
+def _anchor_bridge_sentence(answer: str) -> str:
+    cleaned = " ".join(str(answer or "").split()).strip()
+    if not cleaned:
+        return ""
+    cleaned = cleaned[0].upper() + cleaned[1:] if len(cleaned) > 1 else cleaned.upper()
+    if cleaned[-1] not in ".!?":
+        cleaned += "."
+    lowered = cleaned.lower()
+    if re.match(r"^(in|during|when|while|after|before|from|at|on|for)\b", lowered):
+        return cleaned
+    if re.search(r"\b(i|my|we|our)\b", lowered):
+        return cleaned
+    return f"In my own context, {cleaned[0].lower() + cleaned[1:]}"
+
+
+def _deterministic_author_anchor_paragraph(paragraph: str, question: dict, answer: str) -> tuple[str, str]:
+    """Insert a confirmed anchor with minimal surface change before using LLM."""
+    paragraph = str(paragraph or "").strip()
+    bridge = _anchor_bridge_sentence(answer)
+    if not paragraph or not bridge:
+        return "", "missing_paragraph_or_answer"
+    if bridge in paragraph:
+        return paragraph, ""
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", paragraph) if s.strip()]
+    if not sentences:
+        return f"{paragraph} {bridge}".strip(), ""
+    role = str((question or {}).get("paragraph_role") or "")
+    answer_type = str((question or {}).get("answer_type") or "")
+    if role == "conclusion_template_risk" or answer_type == "author_judgement":
+        insert_at = max(0, len(sentences) - 1)
+    elif len(sentences) >= 3:
+        insert_at = min(2, len(sentences))
+    else:
+        insert_at = len(sentences)
+    patched = sentences[:insert_at] + [bridge] + sentences[insert_at:]
+    return " ".join(patched), ""
+
+
+def _clean_author_evidence_integrated_paragraph(output: str, original_paragraph: str) -> tuple[str, str]:
+    text = str(output or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.I).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+    text = re.sub(r"</?PARAGRAPH>", "", text, flags=re.I).strip()
+    text = "\n".join(line.rstrip() for line in text.splitlines()).strip()
+    if not text:
+        return "", "empty_integrated_paragraph"
+    if "[[" in text or "]]" in text:
+        return "", "placeholder_marker_in_integrated_paragraph"
+    original_words = max(1, len(str(original_paragraph or "").split()))
+    new_words = len(text.split())
+    if new_words < max(8, int(original_words * 0.65)):
+        return "", "integrated_paragraph_too_short"
+    if new_words > max(original_words + 90, int(original_words * 1.9)):
+        return "", "integrated_paragraph_too_long"
+    return text, ""
+
+
+def _splice_author_evidence_paragraph(text: str, paragraph_index: int, replacement: str) -> str:
+    paragraphs = _logical_paragraphs(text)
+    if paragraph_index < 0 or paragraph_index >= len(paragraphs):
+        return text
+    paragraphs[paragraph_index] = replacement.strip()
+    return _join_logical_paragraphs(paragraphs)
+
+
 def _contribution_scores(report_dict: dict | None) -> dict:
     """Extract the Human Contribution / AI Transformation product scores."""
     if not isinstance(report_dict, dict):
@@ -4232,6 +4501,7 @@ def _ai_search_prompt(
     reference_ai=None,
     required_ai_drop: float | None = None,
     target_ai_score: float | None = None,
+    confirmed_author_anchors: str = "",
 ) -> str:
     signal_brief = _ai_search_signal_brief(raw_json)
     repair_brief = _source_repair_brief(source_text)
@@ -4277,6 +4547,30 @@ def _ai_search_prompt(
             "For each paragraph, preserve the factual anchors, then rebuild the surrounding explanation from scratch.",
             "Prefer domain details already present in the source over new vocabulary.",
         ],
+        "confirmed_anchor_threading": [
+            "Strategy: confirmed-anchor threading.",
+            "Use only the confirmed author anchors provided below, and only where they directly fit the draft's existing topic.",
+            "Thread one confirmed anchor into the relevant paragraph as a reasoning hinge, then keep the surrounding text restrained.",
+            "Do not invent a wider story, new evidence, new dates, new institutions, or extra examples.",
+        ],
+        "confirmed_anchor_process_voice": [
+            "Strategy: confirmed-anchor process voice.",
+            "Where a confirmed author anchor describes an observation or process, let that observation carry the paragraph before the abstract claim.",
+            "Use a practical order: what happened, what that showed, then the narrower claim.",
+            "Keep uneven sentence length and avoid making the paragraph smoother or more essay-like.",
+        ],
+        "confirmed_anchor_asymmetry": [
+            "Strategy: confirmed-anchor asymmetry.",
+            "Use a confirmed anchor in one relevant place, leave unrelated areas mostly untouched in meaning, and avoid balanced claim-explanation-summary cadence.",
+            "Allow a slight topic wobble or late connection if it is natural and still faithful to the source.",
+            "Do not spread the anchor mechanically across multiple paragraphs.",
+        ],
+        "confirmed_anchor_claim_narrowing": [
+            "Strategy: confirmed-anchor claim narrowing.",
+            "Use confirmed author anchors to narrow broad claims into a specific condition, classroom/practice situation, or observed consequence.",
+            "If an anchor does not directly support a claim, do not use it there.",
+            "Prefer a smaller true claim over a broader polished claim.",
+        ],
     }.get(strategy, ["Strategy: rewrite for lower measured AI score."])
     lines = [
         "DraftProof AI-score mitigation search.",
@@ -4307,6 +4601,8 @@ def _ai_search_prompt(
     ]
     if signal_brief:
         lines.append(signal_brief)
+    if confirmed_author_anchors:
+        lines.append(confirmed_author_anchors)
     if repair_brief:
         lines.append(repair_brief)
     lines.extend([
@@ -4700,6 +4996,7 @@ def _paragraph_component_prompt(
     required_ai_drop: float | None = None,
     target_ai_score: float | None = None,
     candidate_count: int = 1,
+    confirmed_author_anchors: str = "",
 ) -> str:
     signal_brief = _ai_search_signal_brief(raw_json)
     drivers = target.get("drivers") or {}
@@ -4711,7 +5008,8 @@ def _paragraph_component_prompt(
         f"Measured success condition: reference AI={reference_ai}, required drop>={required_ai_drop}, target AI<={target_ai_score}.\n"
         "The candidate will be rescanned; do not make a mild paraphrase.\n\n"
         f"{signal_brief}\n\n"
-        f"Paragraph driver score: {target.get('score')}\n"
+        + (f"{confirmed_author_anchors}\n\n" if confirmed_author_anchors else "")
+        + f"Paragraph driver score: {target.get('score')}\n"
         f"Drivers: {json.dumps(drivers, ensure_ascii=False)}\n"
         "Target sentences from scan:\n"
         + "\n".join(f"- {s}" for s in (target.get("target_sentences") or [])[:5])
@@ -4751,6 +5049,7 @@ def _human_signal_amplification_prompt(
     attempt_index: int,
     *,
     candidate_count: int = 3,
+    confirmed_author_anchors: str = "",
 ) -> str:
     role = str(target.get("role") or "mixed")
     operation = {
@@ -4804,7 +5103,8 @@ def _human_signal_amplification_prompt(
         "- AI Transformation must not increase\n"
         "- review burden and weighted severity must not increase\n"
         "- semantic drift and anchor loss must be false\n\n"
-        f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
+        + (f"{confirmed_author_anchors}\n\n" if confirmed_author_anchors else "")
+        + f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
         "Domain anchors already present nearby:\n"
         + ", ".join(str(a) for a in (target.get("domain_anchors") or [])[:16])
         + "\n\nPrevious paragraph context:\n"
@@ -6988,7 +7288,32 @@ def run_rewrite_pipeline(
             search_limit = max(1, int(os.environ.get("DRAFTPROOF_AI_SEARCH_CANDIDATES", "4")))
         except ValueError:
             search_limit = 4
-        strategies = strategies[:search_limit]
+        confirmed_author_answers_for_search = _load_author_evidence_answers()
+        confirmed_author_anchor_brief = _confirmed_author_anchor_brief(
+            confirmed_author_answers_for_search,
+            limit=int(_float_env("DRAFTPROOF_CONFIRMED_AUTHOR_ANCHOR_CONTEXT_LIMIT", 6.0)),
+        )
+        confirmed_anchor_strategies: list[str] = []
+        if confirmed_author_anchor_brief and _env_flag("DRAFTPROOF_CONFIRMED_ANCHOR_SEARCH", True):
+            anchor_strategy_pool = [
+                "confirmed_anchor_threading",
+                "confirmed_anchor_process_voice",
+                "confirmed_anchor_asymmetry",
+                "confirmed_anchor_claim_narrowing",
+            ]
+            try:
+                anchor_search_limit = max(
+                    0,
+                    int(os.environ.get(
+                        "DRAFTPROOF_CONFIRMED_ANCHOR_SEARCH_CANDIDATES",
+                        "3",
+                    )),
+                )
+            except ValueError:
+                anchor_search_limit = 3
+            confirmed_anchor_strategies = anchor_strategy_pool[:anchor_search_limit]
+        base_strategies = strategies[:search_limit]
+        strategies = confirmed_anchor_strategies + base_strategies
         search_source_text, search_source_repairs = _repair_candidate_source_damage(text)
         deterministic_candidates = []
         if search_source_repairs and search_source_text.strip() != text.strip():
@@ -7010,9 +7335,17 @@ def run_rewrite_pipeline(
             "selected": False,
             "candidates": [],
             "model_roles": llm_roles,
+            "confirmed_anchor_search": {
+                "enabled": bool(confirmed_anchor_strategies),
+                "candidate_limit": len(confirmed_anchor_strategies),
+                "strategies": confirmed_anchor_strategies,
+                "base_candidate_limit": len(base_strategies),
+            },
         }
         if search_source_repairs:
             search_summary["source_repairs"] = search_source_repairs
+        if confirmed_author_anchor_brief:
+            search_summary["confirmed_author_anchors_in_generation"] = True
         effective_key = (
             api_key
             or os.environ.get("OPENROUTER_API_KEY")
@@ -7102,6 +7435,16 @@ def run_rewrite_pipeline(
                 candidate_eval["reason"] = quality_rejection
                 search_summary["candidates"].append(candidate_eval)
                 return
+            anchor_echo_rejection = _confirmed_anchor_echo_reason(
+                candidate,
+                confirmed_author_answers_for_search,
+            )
+            if anchor_echo_rejection:
+                candidate_eval["confirmed_anchor_echo_warning"] = anchor_echo_rejection
+                if _env_flag("DRAFTPROOF_CONFIRMED_ANCHOR_ECHO_HARD_REJECT", False):
+                    candidate_eval["reason"] = anchor_echo_rejection
+                    search_summary["candidates"].append(candidate_eval)
+                    return
             if len(candidate) < min_chars:
                 candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{min_chars}"
                 search_summary["candidates"].append(candidate_eval)
@@ -7193,6 +7536,14 @@ def run_rewrite_pipeline(
                 if isinstance(ai_search_reference, (int, float)) and isinstance(candidate_ai, (int, float))
                 else -9999.0
             )
+            ai_score_regression_tolerance = _float_env(
+                "DRAFTPROOF_AI_SEARCH_AI_SCORE_REGRESSION_TOLERANCE",
+                0.25,
+            )
+            ai_score_regressed = bool(
+                isinstance(ai_delta, (int, float))
+                and ai_delta < -float(ai_score_regression_tolerance or 0.0)
+            )
             authenticity_status = _authenticity_gate_status(
                 original_report_dict,
                 candidate_report,
@@ -7215,7 +7566,17 @@ def run_rewrite_pipeline(
                     authenticity_status.get("review_burden_regressed")
                     or authenticity_status.get("weighted_severity_regressed")
                     or authenticity_status.get("critical_high_regressed")
+                    or (
+                        isinstance(authenticity_status.get("human_delta"), (int, float))
+                        and authenticity_status.get("human_delta") < 0
+                    )
+                    or (
+                        isinstance(authenticity_status.get("ai_transformation_delta"), (int, float))
+                        and authenticity_status.get("ai_transformation_delta") < 0
+                    )
+                    or ai_score_regressed
                     or candidate_critical_high > saved_critical_high
+                    or _finding_total(candidate_report) > original_total
                 )
             ):
                 selection_status.update({
@@ -7227,6 +7588,7 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_INCREMENTAL_AUTHENTICITY", True)
                 and authenticity_status.get("candidate_progress")
                 and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not ai_score_regressed
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
                 and _finding_total(candidate_report) <= original_total
@@ -7253,6 +7615,7 @@ def run_rewrite_pipeline(
                         "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MIN_HUMAN_GAIN",
                         2.0,
                     )
+                    and not ai_score_regressed
                     and human_amplification_score.get("ai_authorship_delta", -9999.0) >= 0.0
                     and human_amplification_score.get("ai_transformation_delta", -9999.0) >= 0.0
                     and _finding_total(candidate_report) <= original_total
@@ -7263,6 +7626,8 @@ def run_rewrite_pipeline(
                     and not authenticity_status.get("ai_authorship_regression_blocked")
                 )
             ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
+            candidate_human_delta = authenticity_status.get("human_delta")
+            candidate_ai_transform_delta = authenticity_status.get("ai_transformation_delta")
             safe_authorship_suppression_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SAFE_AUTHORSHIP_SUPPRESSION", True)
                 and isinstance(ai_authorship_delta, (int, float))
@@ -7270,6 +7635,10 @@ def run_rewrite_pipeline(
                     "DRAFTPROOF_AI_SEARCH_MIN_SAFE_AUTHORSHIP_DROP",
                     1.0,
                 )
+                and isinstance(candidate_human_delta, (int, float))
+                and candidate_human_delta >= 0.0
+                and isinstance(candidate_ai_transform_delta, (int, float))
+                and candidate_ai_transform_delta >= 0.0
                 and isinstance(ai_delta, (int, float))
                 and ai_delta > 0.05
                 and _finding_total(candidate_report) <= original_total
@@ -7303,9 +7672,11 @@ def run_rewrite_pipeline(
                     "human_signal_amplification": bool(human_amplification_selectable),
                     "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
                 })
-                if human_amplification_score:
-                    selection_status["human_signal_amplification_score"] = human_amplification_score
+            if human_amplification_score:
+                selection_status["human_signal_amplification_score"] = human_amplification_score
             selection_status["authenticity_gate"] = authenticity_status
+            selection_status["ai_score_regression_tolerance"] = ai_score_regression_tolerance
+            selection_status["ai_score_regressed"] = ai_score_regressed
             selection_status["human_shift_score"] = human_shift.get("score")
             selection_status["human_shift_components"] = human_shift.get("components")
             candidate_eval["selection_status"] = selection_status
@@ -7505,6 +7876,7 @@ def run_rewrite_pipeline(
                                 required_ai_drop=ai_first_min_drop,
                                 target_ai_score=ai_search_target_score,
                                 candidate_count=paragraph_candidates,
+                                confirmed_author_anchors=confirmed_author_anchor_brief,
                             )
                             search_summary["llm_calls"] += 1
                             response = gateway.chat(
@@ -7630,6 +8002,7 @@ def run_rewrite_pipeline(
                                     ctx.raw_json,
                                     amplify_number,
                                     candidate_count=amplify_candidates,
+                                    confirmed_author_anchors=confirmed_author_anchor_brief,
                                 )
                                 search_summary["llm_calls"] += 1
                                 response = gateway.chat(
@@ -7719,6 +8092,7 @@ def run_rewrite_pipeline(
                             reference_ai=ai_search_reference,
                             required_ai_drop=ai_first_min_drop,
                             target_ai_score=ai_search_target_score,
+                            confirmed_author_anchors=confirmed_author_anchor_brief,
                         )
                         search_summary["llm_calls"] += 1
                         response = gateway.chat(
@@ -7736,7 +8110,14 @@ def run_rewrite_pipeline(
                         search_summary["candidates"].append(candidate_eval)
                         continue
 
-                    _evaluate_ai_search_candidate(strategy, candidate, deterministic=False)
+                    _evaluate_ai_search_candidate(
+                        strategy,
+                        candidate,
+                        deterministic=False,
+                        extra={
+                            "confirmed_anchor_strategy": strategy in confirmed_anchor_strategies,
+                        },
+                    )
 
                 if not _best_ai_search_selectable():
                     try:
@@ -7883,6 +8264,7 @@ def run_rewrite_pipeline(
                                 ctx.raw_json,
                                 post_number,
                                 candidate_count=post_candidate_limit,
+                                confirmed_author_anchors=confirmed_author_anchor_brief,
                             )
                             search_summary["llm_calls"] += 1
                             response = gateway.chat(
@@ -8825,6 +9207,236 @@ def run_rewrite_pipeline(
     )
     if author_evidence_intake:
         result.summary["author_evidence_intake"] = author_evidence_intake
+    author_evidence_answers = _load_author_evidence_answers()
+    author_evidence_integration = {
+        "enabled": bool(author_evidence_intake),
+        "status": "awaiting_user_answers",
+        "answer_count": len(author_evidence_answers),
+        "accepted_answers": 0,
+        "applied_answers": 0,
+        "candidates": [],
+    }
+    if author_evidence_intake and author_evidence_answers:
+        integration_started = time.time()
+        valid_answers, rejected_answers = _validate_author_evidence_answers(
+            author_evidence_intake,
+            author_evidence_answers,
+        )
+        author_evidence_integration.update({
+            "status": "validating_answers",
+            "accepted_answers": len(valid_answers),
+            "rejected_answers": rejected_answers,
+        })
+        integration_key = (
+            api_key
+            or os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("LLM_API_KEY")
+        )
+        if not valid_answers:
+            author_evidence_integration["status"] = "no_valid_confirmed_answers"
+        else:
+            integration_gateway = None
+            if integration_key:
+                integration_gateway = LLMGateway(LLMConfig(
+                    api_key=integration_key,
+                    model=generator_model,
+                    base_url=base_url,
+                    timeout=int(os.environ.get("DRAFTPROOF_AUTHOR_EVIDENCE_INTEGRATION_TIMEOUT", "90")),
+                    max_retries=int(os.environ.get("DRAFTPROOF_AUTHOR_EVIDENCE_INTEGRATION_RETRIES", "1")),
+                    max_tokens=int(os.environ.get("DRAFTPROOF_AUTHOR_EVIDENCE_INTEGRATION_MAX_TOKENS", "1800")),
+                    temperature=float(os.environ.get("DRAFTPROOF_AUTHOR_EVIDENCE_INTEGRATION_TEMPERATURE", "0.35")),
+                ))
+            max_integrations = max(
+                1,
+                int(_float_env("DRAFTPROOF_AUTHOR_EVIDENCE_INTEGRATION_MAX_ANSWERS", 2.0)),
+            )
+            base_text_for_integration = rewritten_text
+            base_report_for_integration = rewritten_report_dict
+            applied_count = 0
+            for answer_index, answer_item in enumerate(valid_answers[:max_integrations], start=1):
+                question = answer_item.get("question") or {}
+                paragraph_index = question.get("paragraph_index")
+                candidate_eval = {
+                    "anchor_id": answer_item.get("anchor_id"),
+                    "paragraph_index": paragraph_index,
+                    "status": "started",
+                }
+                paragraphs = _logical_paragraphs(base_text_for_integration)
+                if not isinstance(paragraph_index, int) or paragraph_index < 0 or paragraph_index >= len(paragraphs):
+                    candidate_eval["status"] = "rejected"
+                    candidate_eval["reason"] = "paragraph_index_out_of_range"
+                    author_evidence_integration["candidates"].append(candidate_eval)
+                    continue
+                original_paragraph = paragraphs[paragraph_index]
+                integrated_paragraph, reject_reason = _deterministic_author_anchor_paragraph(
+                    original_paragraph,
+                    question,
+                    answer_item.get("answer") or "",
+                )
+                candidate_eval["integration_method"] = "deterministic_anchor_insert"
+                if reject_reason:
+                    candidate_eval["status"] = "rejected"
+                    candidate_eval["reason"] = reject_reason
+                    author_evidence_integration["candidates"].append(candidate_eval)
+                    continue
+                candidate_text = _splice_author_evidence_paragraph(
+                    base_text_for_integration,
+                    paragraph_index,
+                    integrated_paragraph,
+                )
+                if candidate_text == base_text_for_integration:
+                    candidate_eval["status"] = "rejected"
+                    candidate_eval["reason"] = "no_text_change"
+                    author_evidence_integration["candidates"].append(candidate_eval)
+                    continue
+                drift = check_semantic_drift(
+                    base_text_for_integration,
+                    candidate_text,
+                    threshold=float(os.environ.get(
+                        "DRAFTPROOF_AUTHOR_EVIDENCE_INTEGRATION_DRIFT_THRESHOLD",
+                        "0.88",
+                    )),
+                )
+                candidate_eval["drift_similarity"] = round(drift.similarity, 3)
+                if not drift.accepted:
+                    candidate_eval["status"] = "rejected"
+                    candidate_eval["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
+                    author_evidence_integration["candidates"].append(candidate_eval)
+                    continue
+                scan_t0 = time.time()
+                candidate_report = _full_scan_report_dict(candidate_text)
+                candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
+                base_review = _review_burden(base_report_for_integration)
+                candidate_review = _review_burden(candidate_report)
+                base_severity = _weighted_severity(base_report_for_integration)
+                candidate_severity = _weighted_severity(candidate_report)
+                base_findings = _finding_total(base_report_for_integration)
+                candidate_findings = _finding_total(candidate_report)
+                base_critical_high = _critical_high_count(base_report_for_integration)
+                candidate_critical_high = _critical_high_count(candidate_report)
+                gate = _authenticity_gate_status(
+                    base_report_for_integration,
+                    candidate_report,
+                    True,
+                    original_review_burden=base_review,
+                    candidate_review_burden=candidate_review,
+                    original_weighted_severity=base_severity,
+                    candidate_weighted_severity=candidate_severity,
+                    min_human_gain=float(os.environ.get(
+                        "DRAFTPROOF_AUTHOR_EVIDENCE_INTEGRATION_MIN_HUMAN_GAIN",
+                        "1.0",
+                    )),
+                    min_ai_transformation_drop=0.0,
+                    drift_similarity=candidate_eval.get("drift_similarity"),
+                )
+                candidate_eval.update({
+                    "ai": _badge_ai(candidate_report),
+                    "human_contribution": _contribution_scores(candidate_report).get("human"),
+                    "ai_transformation": _contribution_scores(candidate_report).get("ai_transformation"),
+                    "ai_authorship": _integrity_scores(candidate_report).get("ai_authorship"),
+                    "findings": candidate_findings,
+                    "review_burden": candidate_review,
+                    "weighted_severity": candidate_severity,
+                    "gate": gate,
+                })
+                accepted = bool(
+                    gate.get("human_delta") is not None
+                    and gate.get("human_delta") >= float(os.environ.get(
+                        "DRAFTPROOF_AUTHOR_EVIDENCE_INTEGRATION_MIN_HUMAN_GAIN",
+                        "1.0",
+                    ))
+                    and not gate.get("ai_authorship_regression_blocked")
+                    and candidate_findings <= base_findings
+                    and candidate_review <= base_review
+                    and candidate_severity <= base_severity
+                    and candidate_critical_high <= base_critical_high
+                )
+                if not accepted:
+                    candidate_eval["status"] = "rejected"
+                    candidate_eval["reason"] = (
+                        gate.get("reason")
+                        or "integration_gate_failed"
+                    )
+                    author_evidence_integration["candidates"].append(candidate_eval)
+                    continue
+                candidate_eval["status"] = "accepted"
+                author_evidence_integration["candidates"].append(candidate_eval)
+                base_text_for_integration = candidate_text
+                base_report_for_integration = candidate_report
+                applied_count += 1
+            if applied_count:
+                rewritten_text = base_text_for_integration
+                rewritten_report_dict = base_report_for_integration
+                attempted_report_dict = rewritten_report_dict
+                rewritten_ai = _badge_ai(rewritten_report_dict)
+                rewritten_wq = _badge_wq(rewritten_report_dict)
+                rewritten_total = _finding_total(rewritten_report_dict)
+                rewritten_review_burden = _review_burden(rewritten_report_dict)
+                rewritten_severity = _weighted_severity(rewritten_report_dict)
+                if result.mp_result:
+                    result.mp_result.final_text = rewritten_text
+                    result.mp_result.converged = True
+                    result.mp_result.convergence_reason = "Integrated confirmed author evidence through gated rescan"
+                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                result.summary["outcome"] = "ai_mitigated"
+                result.summary["converged"] = True
+                result.summary["detect_scores"].update({
+                    "rewritten_ai": rewritten_ai,
+                    "rewritten_writing_quality": rewritten_wq,
+                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                    "rewritten_findings": rewritten_total,
+                    "rewritten_review_burden": rewritten_review_burden,
+                    "rewritten_weighted_severity": rewritten_severity,
+                })
+                author_evidence_integration["status"] = "applied"
+            else:
+                author_evidence_integration["status"] = "no_answer_passed_gate"
+            author_evidence_integration["applied_answers"] = applied_count
+        author_evidence_integration["seconds"] = round(time.time() - integration_started, 3)
+        stage_timings.append({
+            "stage": "author_evidence_integration",
+            "seconds": author_evidence_integration["seconds"],
+            "answers": len(author_evidence_answers),
+            "applied": author_evidence_integration.get("applied_answers", 0),
+        })
+        if author_evidence_integration.get("applied_answers", 0) > 0:
+            final_human_shift = _human_shift_score(
+                original_report_dict,
+                rewritten_report_dict,
+                review_burden_delta=_review_burden(rewritten_report_dict) - original_review_burden,
+                weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
+            )
+            result.summary.setdefault("detect_scores", {}).update({
+                "human_shift_score": final_human_shift.get("score"),
+                "human_shift_components": final_human_shift.get("components"),
+            })
+            author_evidence_completion = _build_author_evidence_completion_layer(
+                rewritten_text,
+                rewritten_report_dict,
+                target_human=int(_float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0)),
+                max_slots=int(_float_env("DRAFTPROOF_AUTHOR_EVIDENCE_COMPLETION_SLOTS", 5.0)),
+            )
+            if author_evidence_completion:
+                result.summary["author_evidence_completion"] = author_evidence_completion
+            ceiling_diagnostics = _build_mitigation_ceiling_diagnostics(
+                result.summary,
+                author_evidence_completion,
+                target_human=int(_float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0)),
+            )
+            if ceiling_diagnostics:
+                result.summary["mitigation_ceiling"] = ceiling_diagnostics
+            author_evidence_intake = _build_author_evidence_intake_layer(
+                author_evidence_completion,
+                ceiling_diagnostics,
+                max_questions=int(_float_env("DRAFTPROOF_AUTHOR_EVIDENCE_INTAKE_QUESTIONS", 5.0)),
+            )
+            if author_evidence_intake:
+                result.summary["author_evidence_intake"] = author_evidence_intake
+    if author_evidence_integration.get("enabled"):
+        result.summary["author_evidence_integration"] = author_evidence_integration
 
     # Extract only the fields needed for comparison (not full report dicts)
     def _extract_scan_summary(report_dict):

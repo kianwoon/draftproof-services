@@ -526,6 +526,34 @@ def render_rewrite_report(
                 lines.append(f"- {str(item).replace('|', '·')}")
             lines.append("")
 
+    integration = summary.get("author_evidence_integration") or {}
+    if integration.get("enabled"):
+        lines.append("## Author Evidence Integration")
+        lines.append("")
+        status = str(integration.get("status") or "awaiting_user_answers").replace("_", " ")
+        lines.append(
+            f"**Status:** {status}. "
+            f"Answers received: `{integration.get('answer_count', 0)}`; "
+            f"valid answers: `{integration.get('accepted_answers', 0)}`; "
+            f"applied: `{integration.get('applied_answers', 0)}`."
+        )
+        lines.append("")
+        candidates = integration.get("candidates") or []
+        if candidates:
+            lines.append("| Anchor | Status | Human | AI Authorship | Findings | Reason |")
+            lines.append("|--------|--------|------:|--------------:|---------:|--------|")
+            for item in candidates[:8]:
+                anchor = str(item.get("anchor_id") or "").replace("|", "·")
+                item_status = str(item.get("status") or "").replace("_", " ")
+                human = item.get("human_contribution", "-")
+                authorship = item.get("ai_authorship", "-")
+                findings = item.get("findings", "-")
+                reason = str(item.get("reason") or "").replace("|", "·")
+                lines.append(
+                    f"| {anchor} | {item_status} | `{human}` | `{authorship}` | `{findings}` | {reason} |"
+                )
+            lines.append("")
+
     if mitigation:
         score_targets = mitigation.get("score_mitigation_targets") or []
         if score_targets:
