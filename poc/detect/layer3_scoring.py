@@ -780,7 +780,11 @@ CONCRETE_DETAIL_PATTERNS = [
     r"\bspecifically\b", r"\bfor example\b", r"\bfor instance\b",
     r"\bcase study\b", r"\bdata (?:show|from|set)\b",
     r"\baccording to\b", r'\b["""].+?["""]\b',  # quotes
+    r"\b(?:drafts?|homework|exams?|lesson notes?|classroom discussion|feedback activity)\b",
+    r"\b(?:YouTube|TikTok|AI tools?|search engines?|online courses?|social media|websites?)\b",
+    r"\b(?:source checks?|peer communities|discussion|reflection|practice|attempts?)\b",
 ]
+NAMED_ENTITY_DETAIL_PATTERN = CONCRETE_DETAIL_PATTERNS[1]
 
 
 def estimate_generic_assertion_risk(text: str) -> float:
@@ -795,8 +799,10 @@ def estimate_generic_assertion_risk(text: str) -> float:
 
     generic_count = 0
     for sentence in sentences:
-        lower = sentence.lower()
-        has_concrete = any(re.search(p, lower) for p in CONCRETE_DETAIL_PATTERNS)
+        has_concrete = any(
+            re.search(p, sentence, flags=0 if p == NAMED_ENTITY_DETAIL_PATTERN else re.I)
+            for p in CONCRETE_DETAIL_PATTERNS
+        )
         if not has_concrete:
             generic_count += 1
 

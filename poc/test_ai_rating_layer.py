@@ -680,7 +680,7 @@ assert_true(
     "text-derived layer populates qualifying_text_ai_density",
 )
 assert_true(
-    fixture_input.qualifying_text_ai_density >= 0.65,
+    fixture_input.qualifying_text_ai_density >= 0.60,
     "long-form generic grounded-by-domain fixture produces dense qualifying-text signal",
 )
 
@@ -819,6 +819,20 @@ plain_generic_input = build_layer3_input_from_text(
 assert_true(
     plain_reasoning_input.lived_detail_risk < plain_generic_input.lived_detail_risk,
     "bounded author reasoning trace reduces lived-detail risk without requiring external evidence",
+)
+contextual_detail_input = build_layer3_input_from_text(
+    "Students compared YouTube videos, AI tools, homework feedback, and exam answers during a classroom discussion. "
+    "The teacher then asked them to explain which source they trusted and why."
+)
+fully_generic_input = build_layer3_input_from_text(
+    "Students use many resources in modern education. "
+    "This creates important challenges and supports learning in different ways."
+    "It is important for schools to adapt to change. "
+    "This supports better outcomes for all learners."
+)
+assert_true(
+    contextual_detail_input.generic_assertion_risk < fully_generic_input.generic_assertion_risk,
+    "contextual education anchors reduce generic assertion risk",
 )
 
 print("AI rating layer tests passed")

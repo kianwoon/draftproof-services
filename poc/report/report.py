@@ -2072,16 +2072,18 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             )
         )
         human_raw = (
-            _clamp01(features.get("human_anchor_score")) * 0.55
-            + (1.0 - _clamp01(features.get("citation_grounding_risk"))) * 0.25
-            + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.20
+            _clamp01(features.get("human_anchor_score")) * 0.62
+            + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.23
+            + (1.0 - max(
+                _clamp01(features.get("source_similarity")),
+                _clamp01(features.get("surface_similarity")),
+            )) * 0.15
         )
         ai_raw = (
-            calibrated_ai * 0.35
-            + _clamp01(features.get("rewrite_smoothness")) * 0.20
-            + _clamp01(features.get("outline_to_text_expansion")) * 0.15
-            + _clamp01(features.get("citation_grounding_risk")) * 0.15
-            + _clamp01(features.get("section_style_variance")) * 0.10
+            calibrated_ai * 0.42
+            + _clamp01(features.get("rewrite_smoothness")) * 0.24
+            + _clamp01(features.get("outline_to_text_expansion")) * 0.18
+            + _clamp01(features.get("section_style_variance")) * 0.11
             + _clamp01(features.get("source_similarity")) * 0.05
         )
         total = human_raw + ai_raw

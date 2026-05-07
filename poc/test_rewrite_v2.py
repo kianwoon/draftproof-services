@@ -115,6 +115,7 @@ from rewrite_pipeline import (
     _ai_search_prompt,
     _paragraph_role,
     _human_signal_amplification_prompt,
+    _author_reasoning_amplification_prompt,
     _score_human_amplification_candidate,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
@@ -2481,6 +2482,26 @@ assert_test(
     and "does not introduce a new fact" in generic_amplification_prompt
     and "add one author judgement or reasoning trace if it changes no factual claim" in generic_amplification_prompt,
     "generic-claim amplification targets bounded author reasoning instead of evidence invention",
+)
+reasoning_amplification_prompt = _author_reasoning_amplification_prompt(
+    {
+        "role": "generic_claim_heavy",
+        "paragraph": "Technology can help students learn, but it can also become a shortcut.",
+        "drivers": {"generic_assertion_hits": 4, "word_count": 12},
+        "previous_paragraph": "Students use AI tools and online platforms.",
+        "next_paragraph": "Teachers need to check whether students understand the answer.",
+    },
+    paragraph_search_json,
+    1,
+    candidate_count=2,
+)
+assert_test(
+    "AUTHOR_REASONING_AMPLIFICATION_REPAIR" in reasoning_amplification_prompt
+    and "This is not evidence insertion" in reasoning_amplification_prompt
+    and "do not write 'in my class'" in reasoning_amplification_prompt
+    and "narrow one broad claim into a defensible condition" in reasoning_amplification_prompt
+    and "return exactly 2 alternatives" in reasoning_amplification_prompt,
+    "author reasoning amplification prompt targets implied reasoning without fake context",
 )
 human_amp_original = {
     "integrity_layers": {

@@ -5244,6 +5244,62 @@ def _human_signal_amplification_prompt(
     )
 
 
+def _author_reasoning_amplification_prompt(
+    target: dict,
+    raw_json: dict,
+    attempt_index: int,
+    *,
+    candidate_count: int = 3,
+) -> str:
+    role = str(target.get("role") or "mixed")
+    return (
+        "DraftProof AUTHOR_REASONING_AMPLIFICATION_REPAIR.\n"
+        "You are repairing one paragraph only.\n"
+        f"Paragraph role: {role}.\n\n"
+        "Purpose:\n"
+        "Increase Human Contribution using author reasoning that is already implied by the paragraph, "
+        "without adding author evidence, lived experience, sources, dates, people, statistics, or new events.\n\n"
+        "This is not evidence insertion. This is reasoning-shape repair.\n\n"
+        "Allowed operations, choose one per candidate:\n"
+        "- narrow one broad claim into a defensible condition\n"
+        "- add one judgement about what the author would check, question, or prioritise\n"
+        "- add one limitation or tension already implied by the paragraph\n"
+        "- replace a neat summary sentence with a more specific reasoning consequence\n"
+        "- remove an over-clean transition if the paragraph works without it\n\n"
+        "Required texture:\n"
+        "- keep the paragraph a little uneven\n"
+        "- use one shorter sentence if natural\n"
+        "- avoid balanced claim -> explanation -> conclusion rhythm\n"
+        "- do not make the paragraph more polished\n\n"
+        "Forbidden:\n"
+        "- do not write 'in my class', 'I noticed', 'I saw', or any lived observation unless it already appears in the paragraph\n"
+        "- do not invent examples, sources, citations, dates, people, places, institutions, statistics, or events\n"
+        "- do not add generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion\n"
+        "- do not rewrite the whole paragraph into academic style\n"
+        "- do not change citations, numbers, names, unit codes, quoted text, or chronology\n\n"
+        "Acceptance gate used by the scanner:\n"
+        "- Human Contribution should increase\n"
+        "- AI Authorship must not increase\n"
+        "- AI Transformation must not increase\n"
+        "- findings, review burden, and weighted severity must not increase\n"
+        "- semantic drift must be false\n\n"
+        f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
+        "Domain anchors already present nearby:\n"
+        + ", ".join(str(a) for a in (target.get("domain_anchors") or [])[:16])
+        + "\n\nPrevious paragraph context:\n"
+        f"{target.get('previous_paragraph') or '[none]'}\n\n"
+        "TARGET PARAGRAPH:\n"
+        f"<TARGET_PARAGRAPH>\n{target.get('paragraph') or ''}\n</TARGET_PARAGRAPH>\n\n"
+        "Next paragraph context:\n"
+        f"{target.get('next_paragraph') or '[none]'}\n\n"
+        f"Attempt {attempt_index}: return exactly {candidate_count} alternatives using this format:\n"
+        "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
+        "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
+        "...continue until the requested candidate count.\n"
+        "No commentary outside tags."
+    )
+
+
 def _extract_paragraph_component_candidates(output: str, limit: int) -> list[str]:
     text = str(output or "").strip()
     if not text:
@@ -8198,6 +8254,117 @@ def run_rewrite_pipeline(
                                     },
                                 )
 
+                    if _env_flag("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_REPAIR", True):
+                        reasoning_roles = {
+                            role.strip()
+                            for role in (
+                                os.environ.get("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_ROLES")
+                                or "generic_claim_heavy,conclusion_template_risk,mixed"
+                            ).split(",")
+                            if role.strip()
+                        }
+                        reasoning_targets = [
+                            target for target in component_targets
+                            if str(target.get("role") or "") in reasoning_roles
+                        ][: max(0, int(_float_env("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TARGETS", 2.0)))]
+                        reasoning_candidates = max(
+                            1,
+                            int(_float_env("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_CANDIDATES", 3.0)),
+                        )
+                        search_summary["author_reasoning_amplification"] = {
+                            "enabled": True,
+                            "target_roles": sorted(reasoning_roles),
+                            "target_count": len(reasoning_targets),
+                            "candidate_limit_per_target": reasoning_candidates,
+                            "targets": [
+                                {
+                                    "paragraph_index": t.get("index"),
+                                    "role": t.get("role"),
+                                    "score": t.get("score"),
+                                }
+                                for t in reasoning_targets
+                            ],
+                        }
+                        for reasoning_number, target in enumerate(reasoning_targets, start=1):
+                            try:
+                                prompt = _author_reasoning_amplification_prompt(
+                                    target,
+                                    ctx.raw_json,
+                                    reasoning_number,
+                                    candidate_count=reasoning_candidates,
+                                )
+                                search_summary["llm_calls"] += 1
+                                response = gateway.chat(
+                                    prompt,
+                                    system=(
+                                        "You are DraftProof's author-reasoning amplification engine. "
+                                        "Return only tagged replacement paragraphs."
+                                    ),
+                                    temperature=float(os.environ.get(
+                                        "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TEMPERATURE",
+                                        "0.5",
+                                    )),
+                                    max_tokens=int(os.environ.get(
+                                        "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_MAX_TOKENS",
+                                        "2600",
+                                    )),
+                                )
+                                reasoning_outputs = _extract_paragraph_component_candidates(
+                                    response.content,
+                                    reasoning_candidates,
+                                )
+                            except Exception as exc:
+                                search_summary["candidates"].append({
+                                    "strategy": (
+                                        f"author_reasoning_amplification_p{int(target.get('index', 0)) + 1}"
+                                        "_batch"
+                                    ),
+                                    "passed_local_checks": False,
+                                    "reason": f"llm_error {exc}",
+                                    "author_reasoning_amplification": True,
+                                    "paragraph_index": target.get("index"),
+                                    "paragraph_role": target.get("role"),
+                                })
+                                continue
+                            for candidate_number, raw_paragraph_candidate in enumerate(reasoning_outputs, start=1):
+                                strategy = (
+                                    f"author_reasoning_amplification_p{int(target.get('index', 0)) + 1}"
+                                    f"_c{candidate_number}"
+                                )
+                                paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
+                                    raw_paragraph_candidate,
+                                    target.get("paragraph") or "",
+                                )
+                                if paragraph_reject:
+                                    search_summary["candidates"].append({
+                                        "strategy": strategy,
+                                        "passed_local_checks": False,
+                                        "reason": paragraph_reject,
+                                        "author_reasoning_amplification": True,
+                                        "paragraph_index": target.get("index"),
+                                        "paragraph_role": target.get("role"),
+                                    })
+                                    continue
+                                patched_candidate = _splice_paragraph(
+                                    component_base_text,
+                                    int(target.get("index", 0)),
+                                    paragraph_candidate,
+                                )
+                                _evaluate_ai_search_candidate(
+                                    strategy,
+                                    patched_candidate,
+                                    deterministic=False,
+                                    extra={
+                                        "human_signal_amplification": True,
+                                        "author_reasoning_amplification": True,
+                                        "paragraph_component": True,
+                                        "paragraph_index": target.get("index"),
+                                        "paragraph_role": target.get("role"),
+                                        "paragraph_driver_score": target.get("score"),
+                                        "paragraph_drivers": target.get("drivers"),
+                                    },
+                                )
+
                 for index, strategy in enumerate(strategies, start=1):
                     report_progress(
                         min(79, 76 + index),
@@ -8467,6 +8634,165 @@ def run_rewrite_pipeline(
                                 and best_strategy == strategy
                             ):
                                 post_base_text = best_text
+
+                if (
+                    _best_ai_search_selectable()
+                    and _env_flag("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB", True)
+                ):
+                    climb_rounds = max(
+                        0,
+                        int(_float_env("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_ROUNDS", 2.0)),
+                    )
+                    climb_target_limit = max(
+                        1,
+                        int(_float_env("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_TARGETS", 1.0)),
+                    )
+                    climb_candidate_limit = max(
+                        1,
+                        int(_float_env("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_CANDIDATES", 2.0)),
+                    )
+                    climb_roles = {
+                        role.strip()
+                        for role in (
+                            os.environ.get("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_ROLES")
+                            or os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TARGET_ROLES")
+                            or "generic_claim_heavy,conclusion_template_risk,mixed"
+                        ).split(",")
+                        if role.strip()
+                    }
+                    climb_summary = {
+                        "enabled": True,
+                        "rounds": climb_rounds,
+                        "target_limit": climb_target_limit,
+                        "candidate_limit_per_target": climb_candidate_limit,
+                        "target_roles": sorted(climb_roles),
+                        "round_results": [],
+                    }
+                    search_summary["iterative_human_climb"] = climb_summary
+                    climb_base_text = best_text
+                    for climb_round in range(1, climb_rounds + 1):
+                        climb_start_strategy = best_strategy
+                        climb_targets = [
+                            target for target in _paragraph_component_targets(
+                                climb_base_text,
+                                ctx.raw_json,
+                                limit=max(climb_target_limit * 3, climb_target_limit),
+                            )
+                            if str(target.get("role") or "") in climb_roles
+                        ][:climb_target_limit]
+                        climb_summary["round_results"].append({
+                            "round": climb_round,
+                            "base_strategy": climb_start_strategy,
+                            "target_count": len(climb_targets),
+                            "targets": [
+                                {
+                                    "paragraph_index": target.get("index"),
+                                    "role": target.get("role"),
+                                    "score": target.get("score"),
+                                }
+                                for target in climb_targets
+                            ],
+                        })
+                        if not climb_targets:
+                            break
+                        for target_number, target in enumerate(climb_targets, start=1):
+                            report_progress(
+                                min(92, 89 + climb_round),
+                                (
+                                    "Trying iterative Human climb "
+                                    f"{climb_round}/{climb_rounds}"
+                                ),
+                            )
+                            try:
+                                prompt = _human_signal_amplification_prompt(
+                                    target,
+                                    ctx.raw_json,
+                                    climb_round,
+                                    candidate_count=climb_candidate_limit,
+                                    confirmed_author_anchors=confirmed_author_anchor_brief,
+                                )
+                                search_summary["llm_calls"] += 1
+                                response = gateway.chat(
+                                    prompt,
+                                    system=(
+                                        "You are DraftProof's iterative human-signal climb engine. "
+                                        "Return only tagged replacement paragraphs."
+                                    ),
+                                    temperature=float(os.environ.get(
+                                        "DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_TEMPERATURE",
+                                        os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.55"),
+                                    )),
+                                    max_tokens=int(os.environ.get(
+                                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
+                                        "2600",
+                                    )),
+                                )
+                                climb_outputs = _extract_paragraph_component_candidates(
+                                    response.content,
+                                    climb_candidate_limit,
+                                )
+                            except Exception as exc:
+                                search_summary["candidates"].append({
+                                    "strategy": (
+                                        f"iterative_human_climb_r{climb_round}"
+                                        f"_p{int(target.get('index', 0)) + 1}_batch"
+                                    ),
+                                    "passed_local_checks": False,
+                                    "reason": f"llm_error {exc}",
+                                    "iterative_human_climb": True,
+                                    "paragraph_index": target.get("index"),
+                                    "paragraph_role": target.get("role"),
+                                })
+                                continue
+                            for candidate_number, raw_paragraph_candidate in enumerate(climb_outputs, start=1):
+                                strategy = (
+                                    f"iterative_human_climb_r{climb_round}"
+                                    f"_p{int(target.get('index', 0)) + 1}"
+                                    f"_c{candidate_number}"
+                                )
+                                paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
+                                    raw_paragraph_candidate,
+                                    target.get("paragraph") or "",
+                                )
+                                if paragraph_reject:
+                                    search_summary["candidates"].append({
+                                        "strategy": strategy,
+                                        "passed_local_checks": False,
+                                        "reason": paragraph_reject,
+                                        "iterative_human_climb": True,
+                                        "paragraph_index": target.get("index"),
+                                        "paragraph_role": target.get("role"),
+                                    })
+                                    continue
+                                patched_candidate = _splice_paragraph(
+                                    climb_base_text,
+                                    int(target.get("index", 0)),
+                                    paragraph_candidate,
+                                )
+                                _evaluate_ai_search_candidate(
+                                    strategy,
+                                    patched_candidate,
+                                    deterministic=False,
+                                    extra={
+                                        "human_signal_amplification": True,
+                                        "iterative_human_climb": True,
+                                        "paragraph_component": True,
+                                        "paragraph_index": target.get("index"),
+                                        "paragraph_role": target.get("role"),
+                                        "paragraph_driver_score": target.get("score"),
+                                        "paragraph_drivers": target.get("drivers"),
+                                    },
+                                )
+                        if best_strategy != climb_start_strategy and _best_ai_search_selectable():
+                            climb_base_text = best_text
+                            climb_summary["round_results"][-1]["selected_strategy_after_round"] = best_strategy
+                            climb_summary["round_results"][-1]["selected_human_after_round"] = (
+                                _contribution_scores(best_report).get("human")
+                                if isinstance(best_report, dict) else None
+                            )
+                        else:
+                            climb_summary["round_results"][-1]["stopped_reason"] = "no_better_selectable_candidate"
+                            break
 
                 if (
                     _env_flag("DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR", True)

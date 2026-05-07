@@ -141,11 +141,11 @@ def _transformation_signals(features: dict) -> list[dict]:
 
 def _transformation_contribution_summary(features: dict, signals: list[dict]) -> dict:
     human_anchor = _tf_pct((features or {}).get("human_anchor_score")) or 0.0
-    grounding_quality = 100.0 - (_tf_pct((features or {}).get("citation_grounding_risk")) or 0.0)
     semantic_originality = 100.0 - max(
         _tf_pct((features or {}).get("source_similarity")) or 0.0,
         _tf_pct((features or {}).get("surface_similarity")) or 0.0,
     )
+    natural_variance = 100.0 - (_tf_pct((features or {}).get("rewrite_smoothness")) or 0.0)
 
     ai_likelihood = (
         _tf_pct((features or {}).get("calibrated_ai_risk"))
@@ -159,16 +159,14 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
     rewrite_smoothness = _tf_pct((features or {}).get("rewrite_smoothness")) or 0.0
     expansion = _tf_pct((features or {}).get("outline_to_text_expansion")) or 0.0
     patchwork = _tf_pct((features or {}).get("section_style_variance")) or 0.0
-    grounding_risk = _tf_pct((features or {}).get("citation_grounding_risk")) or 0.0
     source_similarity = _tf_pct((features or {}).get("source_similarity")) or 0.0
 
-    human_raw = human_anchor * 0.55 + grounding_quality * 0.25 + semantic_originality * 0.20
+    human_raw = human_anchor * 0.62 + natural_variance * 0.23 + semantic_originality * 0.15
     ai_raw = (
-        ai_likelihood * 0.35
-        + rewrite_smoothness * 0.20
-        + expansion * 0.15
-        + grounding_risk * 0.15
-        + patchwork * 0.10
+        ai_likelihood * 0.42
+        + rewrite_smoothness * 0.24
+        + expansion * 0.18
+        + patchwork * 0.11
         + source_similarity * 0.05
     )
     total = max(human_raw + ai_raw, 1.0)
