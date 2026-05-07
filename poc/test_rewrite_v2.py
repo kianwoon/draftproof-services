@@ -140,6 +140,7 @@ from rewrite_pipeline import (
     _internet_reinforced_reauthor_prompt,
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
+    _plain_language_depolish_text,
     _protected_anchor_brief_for_prompt,
     _build_source_grounding_search_layer,
     _confirmed_author_anchor_brief,
@@ -2039,6 +2040,18 @@ assert_test(
 )
 assert_test(
     _ai_candidate_quality_reject_reason(
+        "Research shows that social media and AI tools are transformative for students and affect academic performance."
+    ) == "unsupported_source_attribution",
+    "AI search rejects uncited source-attribution claims from source grounding repair",
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(
+        "A study indicates that students increasingly engage with AI tools in their learning processes."
+    ) == "unsupported_source_attribution",
+    "AI search rejects uncited study-attribution claims from source grounding repair",
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(
         "I encourage open discussion so learners can With only six learners in my current HBB26 intake, smaller classes help. "
         "The rest of the document continues normally with enough words to form a candidate."
     ) == "dangling_sentence_fragment_join",
@@ -2818,6 +2831,16 @@ assert_test(
     and len(social_learning_query) < 260,
     "source grounding query converts broad claims into concise research search terms",
 )
+depolished_text, depolish_repairs = _plain_language_depolish_text(
+    "Therefore, it is crucial for education to emphasize the learning journey, "
+    "incorporating elements like drafts, feedback, discussions, reflections, and continuous improvement."
+)
+assert_test(
+    depolish_repairs
+    and "Therefore" not in depolished_text
+    and "learning journey" not in depolished_text,
+    "final depolish cleanup removes late-stage polished connector artifacts",
+)
 normalized_tavily = _normalize_tavily_results(
     {
         "results": [
@@ -2872,6 +2895,7 @@ assert_test(
     "First try to reinforce" in source_reinforce_prompt
     and "remove or narrow" in source_reinforce_prompt
     and "do not create lived experience" in source_reinforce_prompt
+    and "same sentence also names the source" in source_reinforce_prompt
     and "<CANDIDATE_1>" in source_reinforce_prompt,
     "source-grounding block path reinforces first and narrows/removes unsupported content if source support is weak",
 )
@@ -4332,6 +4356,33 @@ safe_stale_blocker_override = _dominant_blocker_safe_progress_override(
 assert_test(
     safe_stale_blocker_override.get("allowed") is True,
     "dominant blocker gate allows safe progress when unsupported-claim metric is pinned",
+)
+net_positive_stale_blocker_override = _dominant_blocker_safe_progress_override(
+    {
+        "required": True,
+        "cleared": False,
+        "active_keys": ["unsupported_claim_risk"],
+        "drops": {"unsupported_claim_risk": 0.0},
+    },
+    {
+        "human_delta": 18.0,
+        "ai_authorship_delta": 1.0,
+        "ai_transformation_delta": 18.0,
+        "ai_authorship_regression_blocked": False,
+        "critical_high_regressed": False,
+        "review_burden_regressed": False,
+        "weighted_severity_regressed": False,
+    },
+    {"active_drop": 30.0, "active_regression": 15.0},
+    ai_score_regressed=False,
+    finding_delta=-1,
+    review_burden_delta=-6,
+    weighted_severity_delta=-10,
+    critical_high_delta=-1,
+)
+assert_test(
+    net_positive_stale_blocker_override.get("allowed") is True,
+    "dominant blocker gate allows net-positive blocker movement when one active metric is pinned",
 )
 
 unsafe_stale_blocker_override = _dominant_blocker_safe_progress_override(

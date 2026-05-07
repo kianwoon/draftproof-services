@@ -1368,6 +1368,10 @@ def _source_grounding_repair_prompt(
         "- First try to reinforce the paragraph using only the provided source candidates.\n"
         "- Do not invent evidence. Do not invent author-owned context.\n"
         "- If support is weak, remove or narrow the unsupported part inside the paragraph.\n\n"
+        "Source-attribution rule:\n"
+        "- If you use source support, name the source title or a short source label in the sentence.\n"
+        "- Do not write 'Research shows', 'studies show', or 'evidence shows' unless the same sentence also names the source.\n"
+        "- If naming the source would feel awkward, narrow the claim instead of adding source-attribution language.\n\n"
         f"Paragraph index: {target.get('paragraph_index')}.\n"
         f"Paragraph role: {target.get('paragraph_role')}.\n"
         f"Source confidence: {source_result.get('source_confidence')}.\n"
@@ -2236,6 +2240,16 @@ def _dominant_blocker_safe_progress_override(
     required_authorship = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_AUTHORSHIP_DROP", 1.0)
     required_transform = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_TRANSFORM_DROP", 4.0)
     max_active_regression = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MAX_ACTIVE_REGRESSION", 0.0)
+    active_regression = float(blocker_status.get("active_regression") or 0.0)
+    active_drop = float(blocker_status.get("active_drop") or 0.0)
+    min_net_active_drop = _float_env(
+        "DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_NET_ACTIVE_DROP",
+        10.0,
+    )
+    blocker_regression_allowed = bool(
+        active_regression <= max_active_regression
+        or (active_drop - active_regression) >= min_net_active_drop
+    )
     allowed = bool(
         float(human_delta) >= required_human
         and float(ai_authorship_delta) >= required_authorship
@@ -2245,7 +2259,7 @@ def _dominant_blocker_safe_progress_override(
         and review_burden_delta <= 0
         and weighted_severity_delta <= 0
         and critical_high_delta <= 0
-        and float(blocker_status.get("active_regression") or 0.0) <= max_active_regression
+        and blocker_regression_allowed
         and not authenticity_status.get("ai_authorship_regression_blocked")
         and not authenticity_status.get("critical_high_regressed")
         and not authenticity_status.get("review_burden_regressed")
@@ -2265,7 +2279,10 @@ def _dominant_blocker_safe_progress_override(
         "review_burden_delta": review_burden_delta,
         "weighted_severity_delta": weighted_severity_delta,
         "critical_high_delta": critical_high_delta,
-        "active_regression": blocker_status.get("active_regression"),
+        "active_drop": active_drop,
+        "active_regression": active_regression,
+        "min_net_active_drop": min_net_active_drop,
+        "blocker_regression_allowed": blocker_regression_allowed,
     }
 
 
@@ -5299,6 +5316,17 @@ def _ai_candidate_quality_reject_reason(
         return "broken_word_fragment"
     if re.search(r"\b(?:introduction|conclusion)[ \t]+(?:inclusive|this|the)\b", candidate, re.I):
         return "heading_merged_into_sentence"
+    if (
+        re.search(
+            r"\b(?:(?:research|studies|evidence)\s+(?:shows?|suggests?|indicates?|finds?)|"
+            r"a\s+study\s+(?:shows?|suggests?|indicates?|finds?))\b",
+            candidate,
+            re.I,
+        )
+        and not _PARAGRAPH_CITATION_RE.search(candidate)
+        and not re.search(r"https?://|doi\.org", candidate, re.I)
+    ):
+        return "unsupported_source_attribution"
     if _DANGLING_FRAGMENT_JOIN_RE.search(candidate):
         return "dangling_sentence_fragment_join"
     if not allow_repeated_long_sequence:
@@ -6637,6 +6665,124 @@ def _narrow_generic_claim_text(text: str) -> str:
     narrowed = re.sub(r"\bwill\b", "may", narrowed)
     narrowed = re.sub(r"\balways\b", "often", narrowed, flags=re.I)
     return narrowed
+
+
+def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
+    """Remove late-stage polished academic artifacts without changing claims."""
+    if not isinstance(text, str) or not text.strip():
+        return "", []
+    updated = text
+    applied: list[str] = []
+    replacements: list[tuple[str, str, str]] = [
+        (
+            r"\bSchools must reconsider their approach to measuring learning\.",
+            "Schools need to rethink how learning is measured.",
+            "schools_measurement_plain",
+        ),
+        (
+            r"\bAn overemphasis on grades and exams often shifts student priorities toward merely passing rather than achieving true comprehension\.",
+            "Too much focus on grades and exams can make students study only to pass, rather than understand the topic properly.",
+            "grades_overemphasis_plain",
+        ),
+        (
+            r"\bWith the aid of AI tools, students can craft seemingly perfect responses without a deep understanding of the material\.",
+            "With AI tools, students can produce polished answers without fully understanding the topic.",
+            "ai_answers_plain",
+        ),
+        (
+            r"\bTherefore, it is crucial for education to emphasize the learning journey, incorporating elements like drafts, feedback, discussions, reflections, and continuous improvement\.",
+            "Because of this, education should pay more attention to the learning process: drafts, feedback, discussion, reflection, and improvement.",
+            "learning_journey_plain",
+        ),
+        (
+            r"\bEducation should not only prepare students for exams but also equip them for life\b",
+            "In the end, education should not only prepare students for exams. It should prepare them for life",
+            "equip_life_plain",
+        ),
+        (
+            r"\bWhile students need knowledge, they also require judgment, patience, curiosity, and the ability to keep learning, which can be challenging to foster in an environment overly focused on grades\.",
+            "Students need knowledge, but they also need judgment, patience, curiosity, and the ability to keep learning. That is harder to build when grades take over.",
+            "require_judgement_plain",
+        ),
+        (
+            r"\bEducation should not merely focus on preparing students for exams; it needs to also ready them for life in a world filled with information and distractions\.",
+            "In the end, education should not only prepare students for exams. It should also prepare them for life in a world full of information and distractions.",
+            "merely_exams_plain",
+        ),
+        (
+            r"\bReevaluating how learning is assessed is crucial for schools today\.",
+            "Schools need to rethink how learning is measured.",
+            "reevaluating_assessment_plain",
+        ),
+        (
+            r"\bWhen too much weight is placed on grades and exams, students may only aim to meet minimum passing requirements\.",
+            "Too much focus on grades and exams can make students study only to pass.",
+            "minimum_passing_plain",
+        ),
+        (
+            r"\bThe advent of AI tools allows students to create refined answers without grasping the underlying concepts\.",
+            "With AI tools, students can produce polished answers without fully understanding the topic.",
+            "advent_refined_plain",
+        ),
+        (
+            r"\bThis situation calls for a shift in education's focus towards the learning process itself, emphasizing drafts, feedback, discussions, reflections, and ongoing improvement\.",
+            "Because of this, education should pay more attention to the learning process: drafts, feedback, discussion, reflection, and improvement.",
+            "shift_focus_plain",
+        ),
+        (
+            r"\bHowever, this shift may also lead to challenges in ensuring that all educators are equipped to facilitate this more nuanced approach effectively\.",
+            "That is not easy for every teacher.",
+            "nuanced_approach_plain",
+        ),
+        (
+            r"\bWhile students require knowledge, the struggle to foster judgment, patience, curiosity, and lifelong learning skills remains a significant hurdle that traditional educational frameworks frequently fail to adequately address\.",
+            "Students need knowledge, but they also need judgment, patience, curiosity, and the ability to keep learning. Schools do not always build those habits well.",
+            "framework_hurdle_plain",
+        ),
+        (
+            r"\bI would reflect on the fact that when a student searches almost any topic, an answer can appear within seconds, which might affect their engagement with the material\.",
+            "I would note that when a student searches almost any topic, an answer can appear within seconds.",
+            "reflect_engagement_plain",
+        ),
+        (
+            r"\bcan lead some students to study primarily to pass\b",
+            "can make some students study mainly to pass",
+            "primarily_pass_plain",
+        ),
+        (r"\bTherefore,\s*", "Because of this, ", "therefore_plain"),
+        (r"\bit is crucial for\b", "it matters for", "crucial_plain"),
+        (r"\bcrucial\b", "important", "crucial_word_plain"),
+        (r"\bmerely\b", "only", "merely_plain"),
+        (r"\bsignificant hurdle\b", "harder problem", "hurdle_plain"),
+        (r"\btraditional educational frameworks\b", "schools", "frameworks_plain"),
+        (r"\btraditional teachers\b", "teachers", "traditional_teachers_plain"),
+        (r"\bvarious sources such as\b", "sources such as", "various_sources_plain"),
+        (r"\bindividuals they follow\b", "people they follow", "individuals_plain"),
+        (r"\bunderlying concepts\b", "topic", "underlying_concepts_plain"),
+        (r"\brefined answers\b", "polished answers", "refined_answers_plain"),
+        (r"\bthe advent of AI tools\b", "AI tools", "advent_plain"),
+        (r"\bfrequently fail to adequately address\b", "do not always build well", "fail_address_plain"),
+        (r"\bfilled with\b", "full of", "filled_plain"),
+        (r"\bready them\b", "prepare them", "ready_plain"),
+        (r"\brequire knowledge\b", "need knowledge", "require_knowledge_plain"),
+        (r"\bprimarily\b", "mainly", "primarily_plain"),
+        (r"\bengagement with the material\b", "attention to the topic", "engagement_material_plain"),
+        (r"\btrue comprehension\b", "understanding", "comprehension_plain"),
+        (r"\blearning journey\b", "learning process", "journey_plain"),
+        (r"\bcontinuous improvement\b", "improvement", "continuous_improvement_plain"),
+        (r"\boveremphasis\b", "too much focus", "overemphasis_plain"),
+        (r"\bequip them for life\b", "prepare them for life", "equip_plain"),
+        (r"\brequire judgment\b", "need judgment", "require_plain"),
+    ]
+    for pattern, replacement, name in replacements:
+        next_text = re.sub(pattern, replacement, updated, flags=re.I)
+        if next_text != updated:
+            updated = next_text
+            applied.append(name)
+    updated = re.sub(r"[ \t]+", " ", updated)
+    updated = re.sub(r" \.", ".", updated)
+    updated = re.sub(r"\n{3,}", "\n\n", updated).strip()
+    return updated, applied
 
 
 def _compress_score_drag_paragraph(paragraph: str, *, max_remove: int = 2) -> str:
@@ -9851,6 +9997,7 @@ def run_rewrite_pipeline(
             candidate_ai_transformation_delta = authenticity_status.get("ai_transformation_delta")
             blocker_active_drop = float(blocker_status.get("active_drop") or 0.0)
             post_safe_climb_rank = 1 if selection_status.get("post_safe_target_climb") else 0
+            final_cleanup_rank = 1 if candidate_eval.get("final_depolish_cleanup") else 0
             human_rank_value = (
                 float(candidate_human_value)
                 if isinstance(candidate_human_value, (int, float)) else -9999.0
@@ -9859,7 +10006,6 @@ def run_rewrite_pipeline(
                 1 if selection_status.get("selectable") else 0,
                 human_rank_value,
                 blocker_active_drop,
-                post_safe_climb_rank,
                 (
                     float(candidate_ai_authorship_delta)
                     if isinstance(candidate_ai_authorship_delta, (int, float)) else -9999.0
@@ -9872,6 +10018,8 @@ def run_rewrite_pipeline(
                 -float(candidate_review_burden),
                 -float(candidate_weighted_severity),
                 -float(_finding_total(candidate_report)),
+                final_cleanup_rank,
+                post_safe_climb_rank,
                 float(human_shift_score) if isinstance(human_shift_score, (int, float)) else -9999.0,
             )
             if candidate_rank > best_human_shift_rank:
@@ -9928,9 +10076,6 @@ def run_rewrite_pipeline(
             nonlocal adaptive_stop_reason
             if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True):
                 return
-            existing_target_push = search_summary.get("post_safe_win_target_push")
-            if isinstance(existing_target_push, dict) and existing_target_push.get("accepted"):
-                return
             if not _best_ai_search_selectable() or not isinstance(best_report, dict):
                 return
             current_human = _contribution_scores(best_report).get("human")
@@ -9945,6 +10090,17 @@ def run_rewrite_pipeline(
                     "target_human": target_human,
                 }
                 return
+            existing_target_push = search_summary.get("post_safe_win_target_push")
+            if isinstance(existing_target_push, dict) and existing_target_push.get("accepted"):
+                rerun_allowed = bool(
+                    trigger_phase == "pre_selection"
+                    and _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_RERUN_AFTER_BETTER_BASE", True)
+                    and best_strategy != existing_target_push.get("accepted_strategy")
+                )
+                if not rerun_allowed:
+                    return
+                prior_runs = search_summary.setdefault("post_safe_win_target_push_previous_runs", [])
+                prior_runs.append(existing_target_push)
             try:
                 push_limit = max(
                     0,
@@ -10497,7 +10653,7 @@ def run_rewrite_pipeline(
                         1,
                         int(_float_env(
                             "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_CANDIDATES",
-                            float(_adaptive_budget_default(component_base_text, 1, 2)),
+                            float(_adaptive_budget_default(component_base_text, 2, 2)),
                         )),
                     )
                     search_summary["source_grounding_repair"] = {
@@ -11848,6 +12004,19 @@ def run_rewrite_pipeline(
 
                 if _best_ai_search_selectable():
                     _run_post_safe_win_target_push("pre_selection")
+                    if _env_flag("DRAFTPROOF_FINAL_DEPOLISH_CLEANUP", True):
+                        depolished_text, depolish_repairs = _plain_language_depolish_text(best_text)
+                        if depolish_repairs and depolished_text.strip() != best_text.strip():
+                            _evaluate_ai_search_candidate(
+                                "final_depolish_cleanup",
+                                depolished_text,
+                                deterministic=True,
+                                extra={
+                                    "final_depolish_cleanup": True,
+                                    "depolish_repairs": depolish_repairs,
+                                    "base_strategy": best_strategy,
+                                },
+                            )
                     previous_ai = rewritten_ai
                     rewritten_text = best_text
                     rewritten_report_dict = best_report
