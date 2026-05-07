@@ -122,6 +122,9 @@ from rewrite_pipeline import (
     _blocker_operation_plan,
     _blocker_operation_candidates,
     _dominant_blocker_gate_status,
+    _dominant_blocker_safe_progress_override,
+    _ai_search_adaptive_stop_reason,
+    _adaptive_budget_default,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
@@ -3006,6 +3009,60 @@ assert_test(
     and dominant_blocker_clear["cleared"],
     "dominant blocker gate blocks weak wins while unsupported/generic blockers stay unchanged",
 )
+assert_test(
+    _ai_search_adaptive_stop_reason(
+        {
+            "selectable": True,
+            "dominant_blocker_gate": {"required": True, "cleared": True},
+            "authenticity_gate": {
+                "human_delta": 10.0,
+                "ai_authorship_delta": 4.0,
+                "ai_transformation_delta": 10.0,
+                "critical_high_regressed": False,
+                "review_burden_regressed": False,
+                "weighted_severity_regressed": False,
+            },
+        },
+        phase="paragraph_component_search",
+    ) == "adaptive_stop_after_paragraph_component_search"
+    and not _ai_search_adaptive_stop_reason(
+        {
+            "selectable": True,
+            "dominant_blocker_gate": {"required": True, "cleared": False},
+            "authenticity_gate": {
+                "human_delta": 10.0,
+                "ai_authorship_delta": 4.0,
+                "ai_transformation_delta": 10.0,
+            },
+        },
+        phase="paragraph_component_search",
+    ),
+    "AI search adaptive stop ends candidate search only after dominant blockers and safe movement clear",
+)
+assert_test(
+    _ai_search_adaptive_stop_reason(
+        {
+            "selectable": True,
+            "dominant_blocker_gate": {
+                "required": True,
+                "cleared": False,
+                "active_keys": ["unsupported_claim_risk"],
+            },
+            "dominant_blocker_safe_progress_override": True,
+            "authenticity_gate": {
+                "human_delta": 5.0,
+                "ai_authorship_delta": 1.0,
+                "ai_transformation_delta": 4.0,
+                "critical_high_regressed": False,
+                "review_burden_regressed": False,
+                "weighted_severity_regressed": False,
+            },
+        },
+        phase="deterministic_candidates",
+        short_document=True,
+    ) == "adaptive_stop_after_deterministic_candidates",
+    "short-document adaptive stop accepts safe deterministic progress with stale blocker override",
+)
 blocker_plan = _blocker_operation_plan(
     pruning_source,
     {
@@ -4156,6 +4213,70 @@ assert_test(
 assert_test(
     near_threshold_result.summary.get("density_paragraph_pass", {}).get("density_threshold") == 60.0,
     "AI-risk density threshold lowers to 60 for mitigation",
+)
+
+short_budget_text = "Short mitigation paragraph. " * 20
+long_budget_text = "Long mitigation paragraph. " * 240
+assert_test(
+    _adaptive_budget_default(short_budget_text, 2, 6) == "2",
+    "adaptive budget uses short-document default below threshold",
+)
+assert_test(
+    _adaptive_budget_default(long_budget_text, 2, 6) == "6",
+    "adaptive budget keeps long-document default above threshold",
+)
+
+safe_stale_blocker_override = _dominant_blocker_safe_progress_override(
+    {
+        "required": True,
+        "cleared": False,
+        "active_keys": ["unsupported_claim_risk"],
+        "drops": {"unsupported_claim_risk": 0.0},
+    },
+    {
+        "human_delta": 5.0,
+        "ai_authorship_delta": 2.0,
+        "ai_transformation_delta": 5.0,
+        "ai_authorship_regression_blocked": False,
+        "critical_high_regressed": False,
+        "review_burden_regressed": False,
+        "weighted_severity_regressed": False,
+    },
+    {"active_regression": 0.0},
+    ai_score_regressed=False,
+    finding_delta=-1,
+    review_burden_delta=-1,
+    weighted_severity_delta=-2,
+    critical_high_delta=0,
+)
+assert_test(
+    safe_stale_blocker_override.get("allowed") is True,
+    "dominant blocker gate allows safe progress when unsupported-claim metric is pinned",
+)
+
+unsafe_stale_blocker_override = _dominant_blocker_safe_progress_override(
+    {
+        "required": True,
+        "cleared": False,
+        "active_keys": ["unsupported_claim_risk"],
+        "drops": {"unsupported_claim_risk": 0.0},
+    },
+    {
+        "human_delta": 5.0,
+        "ai_authorship_delta": -1.0,
+        "ai_transformation_delta": 5.0,
+        "ai_authorship_regression_blocked": True,
+    },
+    {"active_regression": 0.0},
+    ai_score_regressed=False,
+    finding_delta=-1,
+    review_burden_delta=-1,
+    weighted_severity_delta=-2,
+    critical_high_delta=0,
+)
+assert_test(
+    unsafe_stale_blocker_override.get("allowed") is False,
+    "dominant blocker gate still blocks authorship regression",
 )
 
 

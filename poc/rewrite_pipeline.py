@@ -2158,6 +2158,150 @@ def _dominant_blocker_gate_status(original_report: dict | None, candidate_report
     }
 
 
+def _dominant_blocker_safe_progress_override(
+    dominant_status: dict | None,
+    authenticity_status: dict | None,
+    blocker_status: dict | None,
+    *,
+    ai_score_regressed: bool,
+    finding_delta: int,
+    review_burden_delta: int,
+    weighted_severity_delta: int,
+    critical_high_delta: int,
+) -> dict:
+    """Allow safe wins when an unsupported-claim blocker is pinned.
+
+    Some short submissions cannot reduce source/evidence metrics because the
+    author did not provide source material. In that case the dominant blocker
+    gate must not veto a candidate that improves authorship, transformation,
+    review burden, and severity without inventing evidence.
+    """
+    if not _env_flag("DRAFTPROOF_DOMINANT_BLOCKER_ALLOW_SAFE_PROGRESS", True):
+        return {"allowed": False, "reason": "disabled"}
+    dominant_status = dominant_status if isinstance(dominant_status, dict) else {}
+    authenticity_status = authenticity_status if isinstance(authenticity_status, dict) else {}
+    blocker_status = blocker_status if isinstance(blocker_status, dict) else {}
+    if not dominant_status.get("required") or dominant_status.get("cleared"):
+        return {"allowed": False, "reason": "dominant_blocker_not_active"}
+    active_keys = set(dominant_status.get("active_keys") or [])
+    allowed_stale_keys = {
+        key.strip()
+        for key in os.environ.get(
+            "DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_KEYS",
+            "unsupported_claim_risk,source_grounding_risk",
+        ).split(",")
+        if key.strip()
+    }
+    if not active_keys or not active_keys.issubset(allowed_stale_keys):
+        return {"allowed": False, "reason": "dominant_blocker_not_safe_stale_type"}
+    human_delta = authenticity_status.get("human_delta")
+    ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
+    ai_transform_delta = authenticity_status.get("ai_transformation_delta")
+    if not all(isinstance(value, (int, float)) for value in (human_delta, ai_authorship_delta, ai_transform_delta)):
+        return {"allowed": False, "reason": "missing_authenticity_deltas"}
+    required_human = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_HUMAN_GAIN", 4.0)
+    required_authorship = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_AUTHORSHIP_DROP", 1.0)
+    required_transform = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MIN_TRANSFORM_DROP", 4.0)
+    max_active_regression = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_MAX_ACTIVE_REGRESSION", 0.0)
+    allowed = bool(
+        float(human_delta) >= required_human
+        and float(ai_authorship_delta) >= required_authorship
+        and float(ai_transform_delta) >= required_transform
+        and not ai_score_regressed
+        and finding_delta <= 0
+        and review_burden_delta <= 0
+        and weighted_severity_delta <= 0
+        and critical_high_delta <= 0
+        and float(blocker_status.get("active_regression") or 0.0) <= max_active_regression
+        and not authenticity_status.get("ai_authorship_regression_blocked")
+        and not authenticity_status.get("critical_high_regressed")
+        and not authenticity_status.get("review_burden_regressed")
+        and not authenticity_status.get("weighted_severity_regressed")
+    )
+    return {
+        "allowed": allowed,
+        "reason": "" if allowed else "safe_progress_threshold_not_met",
+        "active_keys": sorted(active_keys),
+        "required_human_gain": required_human,
+        "required_ai_authorship_drop": required_authorship,
+        "required_ai_transformation_drop": required_transform,
+        "human_delta": human_delta,
+        "ai_authorship_delta": ai_authorship_delta,
+        "ai_transformation_delta": ai_transform_delta,
+        "finding_delta": finding_delta,
+        "review_burden_delta": review_burden_delta,
+        "weighted_severity_delta": weighted_severity_delta,
+        "critical_high_delta": critical_high_delta,
+        "active_regression": blocker_status.get("active_regression"),
+    }
+
+
+def _ai_search_adaptive_stop_reason(
+    selection_status: dict | None,
+    *,
+    phase: str,
+    short_document: bool = False,
+) -> str:
+    if not _env_flag("DRAFTPROOF_AI_SEARCH_ADAPTIVE_STOP", True):
+        return ""
+    if not isinstance(selection_status, dict) or not selection_status.get("selectable"):
+        return ""
+    dominant = selection_status.get("dominant_blocker_gate") or {}
+    if (
+        dominant.get("required")
+        and not dominant.get("cleared")
+        and not selection_status.get("dominant_blocker_safe_progress_override")
+    ):
+        return ""
+    gate = selection_status.get("authenticity_gate") or {}
+    human_delta = gate.get("human_delta")
+    ai_authorship_delta = gate.get("ai_authorship_delta")
+    ai_transform_delta = gate.get("ai_transformation_delta")
+    if not all(isinstance(value, (int, float)) for value in (human_delta, ai_authorship_delta, ai_transform_delta)):
+        return ""
+    human_min_default = 4.0 if short_document else 8.0
+    authorship_min_default = 1.0 if short_document else 2.0
+    transform_min_default = 4.0 if short_document else 5.0
+    human_min = _float_env(
+        (
+            "DRAFTPROOF_ADAPTIVE_STOP_SHORT_MIN_HUMAN_GAIN"
+            if short_document else "DRAFTPROOF_ADAPTIVE_STOP_MIN_HUMAN_GAIN"
+        ),
+        human_min_default,
+    )
+    authorship_min = _float_env(
+        (
+            "DRAFTPROOF_ADAPTIVE_STOP_SHORT_MIN_AUTHORSHIP_DROP"
+            if short_document else "DRAFTPROOF_ADAPTIVE_STOP_MIN_AUTHORSHIP_DROP"
+        ),
+        authorship_min_default,
+    )
+    transform_min = _float_env(
+        (
+            "DRAFTPROOF_ADAPTIVE_STOP_SHORT_MIN_TRANSFORM_DROP"
+            if short_document else "DRAFTPROOF_ADAPTIVE_STOP_MIN_TRANSFORM_DROP"
+        ),
+        transform_min_default,
+    )
+    if float(human_delta) < human_min:
+        return ""
+    if float(ai_authorship_delta) < authorship_min:
+        return ""
+    if float(ai_transform_delta) < transform_min:
+        return ""
+    if gate.get("critical_high_regressed") or gate.get("review_burden_regressed") or gate.get("weighted_severity_regressed"):
+        return ""
+    return f"adaptive_stop_after_{phase}"
+
+
+def _adaptive_budget_default(source_text: str, short_value: int, long_value: int) -> str:
+    if _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_DOC_BUDGETS", True):
+        threshold = int(_float_env("DRAFTPROOF_SHORT_DOC_WORD_THRESHOLD", 450.0))
+        if _text_word_count(source_text) <= threshold:
+            return str(short_value)
+    return str(long_value)
+
+
 def _blocker_operation_plan(
     source_text: str,
     raw_json: dict | None,
@@ -8837,6 +8981,34 @@ def run_rewrite_pipeline(
                 "selection_status": best_selection_status,
             }
 
+        adaptive_stop_reason = ""
+
+        def _maybe_adaptive_stop(phase: str) -> bool:
+            nonlocal adaptive_stop_reason
+            if adaptive_stop_reason:
+                return True
+            adaptive_stop_reason = _ai_search_adaptive_stop_reason(
+                best_selection_status,
+                phase=phase,
+                short_document=(
+                    _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_DOC_BUDGETS", True)
+                    and _text_word_count(search_source_text) <= int(_float_env(
+                        "DRAFTPROOF_SHORT_DOC_WORD_THRESHOLD",
+                        450.0,
+                    ))
+                ),
+            )
+            if adaptive_stop_reason:
+                search_summary["adaptive_stop"] = {
+                    "phase": phase,
+                    "reason": adaptive_stop_reason,
+                    "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                    "selected_strategy": best_strategy,
+                    "selection_status": best_selection_status,
+                }
+                return True
+            return False
+
         def _evaluate_ai_search_candidate(
             strategy: str,
             candidate: str,
@@ -9203,10 +9375,21 @@ def run_rewrite_pipeline(
                 })
             if human_amplification_score:
                 selection_status["human_signal_amplification_score"] = human_amplification_score
+            dominant_blocker_progress_override = _dominant_blocker_safe_progress_override(
+                dominant_blocker_status,
+                authenticity_status,
+                blocker_status,
+                ai_score_regressed=ai_score_regressed,
+                finding_delta=_finding_total(candidate_report) - original_total,
+                review_burden_delta=candidate_review_burden - original_review_burden,
+                weighted_severity_delta=candidate_weighted_severity - original_severity,
+                critical_high_delta=candidate_critical_high - saved_critical_high,
+            )
             if (
                 selection_status.get("selectable")
                 and dominant_blocker_status.get("required")
                 and not dominant_blocker_status.get("cleared")
+                and not dominant_blocker_progress_override.get("allowed")
             ):
                 selection_status.update({
                     "success": False,
@@ -9214,8 +9397,18 @@ def run_rewrite_pipeline(
                     "reason": "dominant_blocker_not_reduced",
                     "dominant_blocker_required": True,
                 })
+            elif dominant_blocker_progress_override.get("allowed"):
+                selection_status.update({
+                    "dominant_blocker_required": True,
+                    "dominant_blocker_safe_progress_override": True,
+                    "reason": (
+                        selection_status.get("reason")
+                        or "accepted_safe_progress_with_stale_dominant_blocker"
+                    ),
+                })
             selection_status["authenticity_gate"] = authenticity_status
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
+            selection_status["dominant_blocker_progress_override"] = dominant_blocker_progress_override
             selection_status["ai_score_regression_tolerance"] = ai_score_regression_tolerance
             selection_status["ai_score_regressed"] = ai_score_regressed
             selection_status["human_shift_score"] = human_shift.get("score")
@@ -9337,9 +9530,13 @@ def run_rewrite_pipeline(
                     "selected_ai": best_ai,
                 }
                 break
+            if _maybe_adaptive_stop("deterministic_candidates"):
+                break
 
         if early_stop_reason:
             search_summary["llm_reason"] = "skipped_after_fast_deterministic_accept"
+        elif adaptive_stop_reason:
+            search_summary["llm_reason"] = adaptive_stop_reason
         elif deterministic_only:
             search_summary["llm_reason"] = "skipped_deterministic_only_ai_first"
             if best_strategy:
@@ -9389,10 +9586,16 @@ def run_rewrite_pipeline(
                         result for result in (source_layer.get("results") or [])
                         if str(result.get("source_confidence") or "") in usable_confidences
                         and claim_targets_by_id.get(result.get("claim_id"))
-                    ][: max(0, int(_float_env("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TARGETS", 4.0)))]
+                    ][: max(0, int(_float_env(
+                        "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TARGETS",
+                        float(_adaptive_budget_default(component_base_text, 2, 4)),
+                    )))]
                     source_candidate_count = max(
                         1,
-                        int(_float_env("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_CANDIDATES", 2.0)),
+                        int(_float_env(
+                            "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_CANDIDATES",
+                            float(_adaptive_budget_default(component_base_text, 1, 2)),
+                        )),
                     )
                     search_summary["source_grounding_repair"] = {
                         "enabled": True,
@@ -9418,7 +9621,10 @@ def run_rewrite_pipeline(
                     if _env_flag("DRAFTPROOF_INTERNET_REINFORCED_REAUTHORING", True):
                         internet_candidate_count = max(
                             1,
-                            int(_float_env("DRAFTPROOF_INTERNET_REAUTHOR_CANDIDATES", 2.0)),
+                            int(_float_env(
+                                "DRAFTPROOF_INTERNET_REAUTHOR_CANDIDATES",
+                                float(_adaptive_budget_default(component_base_text, 1, 2)),
+                            )),
                         )
                         search_summary["internet_reinforced_reauthoring"] = {
                             "enabled": True,
@@ -9497,7 +9703,10 @@ def run_rewrite_pipeline(
                     if _env_flag("DRAFTPROOF_CLAIM_NARROWING_REPAIR", True):
                         claim_candidate_count = max(
                             1,
-                            int(_float_env("DRAFTPROOF_CLAIM_NARROWING_CANDIDATES", 2.0)),
+                            int(_float_env(
+                                "DRAFTPROOF_CLAIM_NARROWING_CANDIDATES",
+                                float(_adaptive_budget_default(component_base_text, 1, 2)),
+                            )),
                         )
                         search_summary["claim_narrowing_repair"] = {
                             "enabled": True,
@@ -9575,7 +9784,10 @@ def run_rewrite_pipeline(
                         texture_base_report = best_report if _best_ai_search_selectable() else original_report_dict
                         topk_candidate_count = max(
                             1,
-                            int(_float_env("DRAFTPROOF_TOPK_TEXTURE_CANDIDATES", 2.0)),
+                            int(_float_env(
+                                "DRAFTPROOF_TOPK_TEXTURE_CANDIDATES",
+                                float(_adaptive_budget_default(component_base_text, 1, 2)),
+                            )),
                         )
                         search_summary["topk_texture_repair"] = {
                             "enabled": True,
@@ -9763,14 +9975,20 @@ def run_rewrite_pipeline(
                     try:
                         paragraph_limit = max(
                             1,
-                            int(os.environ.get("DRAFTPROOF_PARAGRAPH_COMPONENT_TARGETS", "6")),
+                            int(os.environ.get(
+                                "DRAFTPROOF_PARAGRAPH_COMPONENT_TARGETS",
+                                _adaptive_budget_default(component_base_text, 3, 6),
+                            )),
                         )
                     except ValueError:
                         paragraph_limit = 4
                     try:
                         paragraph_candidates = max(
                             1,
-                            int(os.environ.get("DRAFTPROOF_PARAGRAPH_COMPONENT_CANDIDATES", "3")),
+                            int(os.environ.get(
+                                "DRAFTPROOF_PARAGRAPH_COMPONENT_CANDIDATES",
+                                _adaptive_budget_default(component_base_text, 2, 3),
+                            )),
                         )
                     except ValueError:
                         paragraph_candidates = 3
@@ -9895,10 +10113,14 @@ def run_rewrite_pipeline(
                                     "paragraph_drivers": target.get("drivers"),
                                 },
                             )
+                            if _maybe_adaptive_stop("paragraph_component_search"):
+                                break
+                        if adaptive_stop_reason:
+                            break
                         if best_strategy:
                             component_base_text = best_text
 
-                    if _env_flag("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_REPAIR", True):
+                    if (not adaptive_stop_reason) and _env_flag("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_REPAIR", True):
                         amplify_roles = {
                             role.strip()
                             for role in (
@@ -9913,10 +10135,16 @@ def run_rewrite_pipeline(
                         amplify_targets = [
                             target for target in component_targets
                             if str(target.get("role") or "") in amplify_roles
-                        ][: max(0, int(_float_env("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TARGETS", 2.0)))]
+                        ][: max(0, int(_float_env(
+                            "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TARGETS",
+                            float(_adaptive_budget_default(component_base_text, 1, 2)),
+                        )))]
                         amplify_candidates = max(
                             1,
-                            int(_float_env("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_CANDIDATES", 3.0)),
+                            int(_float_env(
+                                "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_CANDIDATES",
+                                float(_adaptive_budget_default(component_base_text, 2, 3)),
+                            )),
                         )
                         search_summary["human_signal_amplification"] = {
                             "enabled": True,
@@ -10011,8 +10239,12 @@ def run_rewrite_pipeline(
                                         "paragraph_drivers": target.get("drivers"),
                                     },
                                 )
+                                if _maybe_adaptive_stop("human_signal_amplification"):
+                                    break
+                            if adaptive_stop_reason:
+                                break
 
-                    if _env_flag("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_REPAIR", True):
+                    if (not adaptive_stop_reason) and _env_flag("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_REPAIR", True):
                         reasoning_roles = {
                             role.strip()
                             for role in (
@@ -10024,10 +10256,16 @@ def run_rewrite_pipeline(
                         reasoning_targets = [
                             target for target in component_targets
                             if str(target.get("role") or "") in reasoning_roles
-                        ][: max(0, int(_float_env("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TARGETS", 2.0)))]
+                        ][: max(0, int(_float_env(
+                            "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TARGETS",
+                            float(_adaptive_budget_default(component_base_text, 1, 2)),
+                        )))]
                         reasoning_candidates = max(
                             1,
-                            int(_float_env("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_CANDIDATES", 3.0)),
+                            int(_float_env(
+                                "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_CANDIDATES",
+                                float(_adaptive_budget_default(component_base_text, 2, 3)),
+                            )),
                         )
                         search_summary["author_reasoning_amplification"] = {
                             "enabled": True,
@@ -10122,8 +10360,15 @@ def run_rewrite_pipeline(
                                         "paragraph_drivers": target.get("drivers"),
                                     },
                                 )
+                                if _maybe_adaptive_stop("author_reasoning_amplification"):
+                                    break
+                            if adaptive_stop_reason:
+                                break
 
-                for index, strategy in enumerate(strategies, start=1):
+                if adaptive_stop_reason:
+                    search_summary["llm_reason"] = adaptive_stop_reason
+
+                for index, strategy in enumerate([] if adaptive_stop_reason else strategies, start=1):
                     report_progress(
                         min(79, 76 + index),
                         f"Trying AI mitigation candidate {index}/{len(strategies)}",
@@ -10166,8 +10411,10 @@ def run_rewrite_pipeline(
                             "confirmed_anchor_strategy": strategy in confirmed_anchor_strategies,
                         },
                     )
+                    if _maybe_adaptive_stop("full_document_strategy_search"):
+                        break
 
-                if not _best_ai_search_selectable():
+                if (not adaptive_stop_reason) and not _best_ai_search_selectable():
                     try:
                         feedback_limit = max(
                             0,
@@ -10247,10 +10494,14 @@ def run_rewrite_pipeline(
                             candidate,
                             deterministic=False,
                         )
+                        if _maybe_adaptive_stop("score_feedback_loop"):
+                            break
                         if _best_ai_search_selectable():
                             break
 
                 if (
+                    not adaptive_stop_reason
+                    and
                     _best_ai_search_selectable()
                     and _env_flag("DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION", True)
                 ):
@@ -10268,11 +10519,17 @@ def run_rewrite_pipeline(
                     }
                     post_target_limit = max(
                         0,
-                        int(_float_env("DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_TARGETS", 1.0)),
+                        int(_float_env(
+                            "DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_TARGETS",
+                            float(_adaptive_budget_default(best_text, 1, 1)),
+                        )),
                     )
                     post_candidate_limit = max(
                         1,
-                        int(_float_env("DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_CANDIDATES", 2.0)),
+                        int(_float_env(
+                            "DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_CANDIDATES",
+                            float(_adaptive_budget_default(best_text, 1, 2)),
+                        )),
                     )
                     post_targets = [
                         target for target in _paragraph_component_targets(
@@ -10387,27 +10644,42 @@ def run_rewrite_pipeline(
                                     "paragraph_drivers": target.get("drivers"),
                                 },
                             )
+                            if _maybe_adaptive_stop("post_selection_human_signal_amplification"):
+                                break
                             if (
                                 best_selection_status.get("human_signal_amplification")
                                 and best_strategy == strategy
                             ):
                                 post_base_text = best_text
+                        if adaptive_stop_reason:
+                            break
 
                 if (
+                    not adaptive_stop_reason
+                    and
                     _best_ai_search_selectable()
                     and _env_flag("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB", True)
                 ):
                     climb_rounds = max(
                         0,
-                        int(_float_env("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_ROUNDS", 2.0)),
+                        int(_float_env(
+                            "DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_ROUNDS",
+                            float(_adaptive_budget_default(best_text, 1, 2)),
+                        )),
                     )
                     climb_target_limit = max(
                         1,
-                        int(_float_env("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_TARGETS", 1.0)),
+                        int(_float_env(
+                            "DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_TARGETS",
+                            float(_adaptive_budget_default(best_text, 1, 1)),
+                        )),
                     )
                     climb_candidate_limit = max(
                         1,
-                        int(_float_env("DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_CANDIDATES", 2.0)),
+                        int(_float_env(
+                            "DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_CANDIDATES",
+                            float(_adaptive_budget_default(best_text, 1, 2)),
+                        )),
                     )
                     climb_roles = {
                         role.strip()
@@ -10541,6 +10813,10 @@ def run_rewrite_pipeline(
                                         "paragraph_drivers": target.get("drivers"),
                                     },
                                 )
+                                if _maybe_adaptive_stop("iterative_human_climb"):
+                                    break
+                            if adaptive_stop_reason:
+                                break
                         if best_strategy != climb_start_strategy and _best_ai_search_selectable():
                             climb_base_text = best_text
                             climb_summary["round_results"][-1]["selected_strategy_after_round"] = best_strategy
@@ -10551,8 +10827,12 @@ def run_rewrite_pipeline(
                         else:
                             climb_summary["round_results"][-1]["stopped_reason"] = "no_better_selectable_candidate"
                             break
+                        if adaptive_stop_reason:
+                            break
 
                 if (
+                    not adaptive_stop_reason
+                    and
                     _env_flag("DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR", True)
                     and best_blocked_human_candidate
                     and effective_key
