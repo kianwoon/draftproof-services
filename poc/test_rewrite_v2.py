@@ -131,6 +131,8 @@ from rewrite_pipeline import (
     _dominant_blocker_gate_status,
     _dominant_blocker_safe_progress_override,
     _ai_search_adaptive_stop_reason,
+    _should_track_blocked_human_winner,
+    _blocked_human_winner_repair_budget_override,
     _adaptive_budget_default,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
@@ -2748,6 +2750,26 @@ assert_test(
     and "can support" in patched_text
     and applied_patches,
     "finding-local blocked winner repair extracts targets, parses JSON patches, and splices exact text",
+)
+assert_test(
+    _should_track_blocked_human_winner(
+        selection_status={"selectable": False, "reason": "ai_drop_quality_regressed"},
+        human_delta=1.0,
+        ai_delta=7.4,
+        authenticity_status={
+            "ai_authorship_delta": 8.0,
+            "ai_transformation_delta": 1.0,
+            "review_burden_regressed": True,
+            "weighted_severity_regressed": True,
+        },
+    ),
+    "blocked Human winner tracker keeps small-Human but large-authorship candidates for repair",
+)
+assert_test(
+    _blocked_human_winner_repair_budget_override("budget_exhausted_llm_calls")
+    and _blocked_human_winner_repair_budget_override("budget_exhausted_candidate_scans")
+    and not _blocked_human_winner_repair_budget_override("budget_exhausted_time"),
+    "blocked Human winner repair has a bounded post-budget reserve for call/scan exhaustion",
 )
 ceiling_diagnostics = _build_mitigation_ceiling_diagnostics(
     {

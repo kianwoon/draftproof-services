@@ -1327,6 +1327,14 @@ class ReportBuilder:
                 uncited_claims=uncited,
                 total_claims=total_claims,
             ) if self._cite_summary.bib_entry_count > 0 else 0.50
+        source_grounding_strength = min(
+            sig.get("source_grounding", 0.0) or 0.0,
+            0.30 if not (self._cite_summary and self._cite_summary.bib_entry_count > 0) else 1.0,
+        )
+        source_grounding_strength = max(
+            source_grounding_strength,
+            _estimate_in_text_source_grounding_strength(self._original_text or ""),
+        )
 
         # Build Layer3Input from scanner outputs + text-derived signals
         layer3_input = build_layer3_input_from_text(
@@ -1336,11 +1344,7 @@ class ReportBuilder:
             generic_phrase_density=sig.get("genericity", 0.0) or 0.0,
             # broad_claim_risk & unsupported_claim_risk: auto-computed from text
             citation_weakness_risk=cite_risk,
-            # source_grounding: cap at 0.30 when no actual sources/bibliography exist
-            source_grounding_strength=min(
-                sig.get("source_grounding", 0.0) or 0.0,
-                0.30 if not (self._cite_summary and self._cite_summary.bib_entry_count > 0) else 1.0,
-            ),
+            source_grounding_strength=source_grounding_strength,
             domain_grounding_strength=domain_grounding_strength,
             semantic_uniformity_risk=(
                 self._semantic_summary.semantic_uniformity_risk
@@ -1480,6 +1484,34 @@ def _is_weak_only(signals: Optional[Dict[str, Any]]) -> bool:
                    for k in ("predictability", "genericity", "specificity"))
     has_strong = any(signals.get(k) is not None and signals.get(k, 0) >= 0.25 for k in strong)
     return has_weak and not has_strong
+
+
+def _estimate_in_text_source_grounding_strength(text: str) -> float:
+    """Bounded source strength from in-text source relationships without a bibliography object."""
+    text = text or ""
+    parenthetical = len(re.findall(
+        r"\((?:[A-Z][A-Za-z'’.-]+(?:\s+(?:&|and)\s+[A-Z][A-Za-z'’.-]+)?|[A-Z][A-Za-z'’.-]+\s+et\s+al\.?|[A-Z]{2,})\s*,?\s*(?:19|20)\d{2}[a-z]?\)",
+        text,
+    ))
+    narrative = len(re.findall(
+        r"\b[A-Z][A-Za-z'’.-]+(?:\s+(?:and|&|et\s+al\.?)\s+[A-Z][A-Za-z'’.-]+)*\s*\((?:19|20)\d{2}[a-z]?\)",
+        text,
+    ))
+    source_relations = len(re.findall(
+        r"\b(?:states|argues|explains|shows|describes|defines|discusses|notes?|offers|focus(?:es)? on|highlight(?:s)?|according to)\b",
+        text,
+        flags=re.I,
+    ))
+    citation_count = parenthetical + narrative
+    if citation_count >= 6 and source_relations >= 4:
+        return 0.70
+    if citation_count >= 4 and source_relations >= 2:
+        return 0.60
+    if citation_count >= 2 and source_relations >= 1:
+        return 0.45
+    if citation_count >= 1:
+        return 0.35
+    return 0.0
 
 
 def report_to_dict(report: DraftReport) -> Dict[str, Any]:

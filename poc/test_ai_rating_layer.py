@@ -20,7 +20,13 @@ from detect.transformation import (
     classify_transformation_from_scan,
 )
 from detect.mitigation import build_ai_mitigation_plan
-from report.report import Finding, ReportBuilder, Tier as ReportTier, report_to_dict
+from report.report import (
+    Finding,
+    ReportBuilder,
+    Tier as ReportTier,
+    _estimate_in_text_source_grounding_strength,
+    report_to_dict,
+)
 from detect.semantic_shape import SemanticShapeDetector
 from report.render import _authorship_rating_from_badge, render_markdown
 
@@ -75,6 +81,18 @@ assert_true(
         "That pause helps them notice whether the weight line is forming where they intended."
     ) <= 0.40,
     "author-owned practical domain context discounts unsupported-claim risk",
+)
+source_relation_text = (
+    "The Centre for Education Statistics and Evaluation (CESE, 2017) states that working memory has limits. "
+    "Chandler and Sweller (1991) show that instructional format can increase cognitive load. "
+    "Billett (2013) discusses modelling and scaffolding in practice-based learning. "
+    "Kirschner et al. (2006) argue that novices need clear guidance. "
+    "CAST (2024) defines Universal Design for Learning. "
+    "Jwad et al. (2022) note that learner diversity includes attention and communication needs."
+)
+assert_true(
+    _estimate_in_text_source_grounding_strength(source_relation_text) >= 0.60,
+    "in-text source relationships create bounded source grounding strength without bibliography object",
 )
 
 low_signal = derive_authorship_rating(

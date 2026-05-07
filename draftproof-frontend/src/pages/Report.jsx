@@ -401,10 +401,18 @@ function buildRewriteResultSummary(rewriteReport) {
   };
 }
 
-function buildRewriteContributionOverride(rewriteResultSummary) {
+function buildRewriteContributionOverride(rewriteResultSummary, variant = 'rewritten') {
   if (!rewriteResultSummary) return null;
-  const human = clampPercent(rewriteResultSummary.rewritten_human_contribution);
-  const ai = clampPercent(rewriteResultSummary.rewritten_ai_transformation);
+  const human = clampPercent(
+    variant === 'original'
+      ? rewriteResultSummary.original_human_contribution
+      : rewriteResultSummary.rewritten_human_contribution
+  );
+  const ai = clampPercent(
+    variant === 'original'
+      ? rewriteResultSummary.original_ai_transformation
+      : rewriteResultSummary.rewritten_ai_transformation
+  );
   if (human == null && ai == null) return null;
   return {
     humanContribution: human ?? 100 - ai,
@@ -877,8 +885,9 @@ export default function Report() {
   const transformation = badge.transformation_classification || null;
   const transformationSignalMetadata = report.scan_intelligence?.transformation?.core_signals || [];
   const transformationSignals = buildTransformationSignals(transformation?.features, transformationSignalMetadata);
+  const originalContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'original');
   const transformationSummary = transformation
-    ? buildTransformationSummary(transformation.features, transformationSignals)
+    ? buildTransformationSummary(transformation.features, transformationSignals, originalContributionOverride)
     : null;
   const rewrittenScan = getRewrittenDetectScan(rewriteResultReport) || {};
   const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
@@ -888,7 +897,7 @@ export default function Report() {
     rewrittenTransformation?.features,
     rewrittenTransformationSignalMetadata
   );
-  const rewrittenContributionOverride = buildRewriteContributionOverride(rewriteResultSummary);
+  const rewrittenContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'rewritten');
   const rewrittenTransformationSummary = rewrittenTransformation
     ? buildTransformationSummary(rewrittenTransformation.features, rewrittenTransformationSignals, rewrittenContributionOverride)
     : rewrittenContributionOverride

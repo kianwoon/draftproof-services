@@ -2435,6 +2435,52 @@ def _ai_search_adaptive_stop_reason(
     return f"adaptive_stop_after_{phase}"
 
 
+def _should_track_blocked_human_winner(
+    *,
+    selection_status: dict | None,
+    human_delta: float,
+    ai_delta: float,
+    authenticity_status: dict | None,
+) -> bool:
+    """Track promising Human/AI candidates that failed only late safety gates."""
+    if not isinstance(selection_status, dict) or selection_status.get("selectable"):
+        return False
+    authenticity_status = authenticity_status or {}
+    min_human_gain = _float_env("DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_HUMAN_GAIN", 1.0)
+    if float(human_delta or 0.0) < min_human_gain:
+        return False
+    if authenticity_status.get("ai_authorship_regression_blocked"):
+        return False
+    if authenticity_status.get("critical_high_regressed"):
+        return True
+    quality_regressed = bool(
+        authenticity_status.get("review_burden_regressed")
+        or authenticity_status.get("weighted_severity_regressed")
+    )
+    if not quality_regressed:
+        return False
+    ai_authorship_drop = float(authenticity_status.get("ai_authorship_delta") or 0.0)
+    ai_transform_drop = float(authenticity_status.get("ai_transformation_delta") or 0.0)
+    min_ai_drop = _float_env("DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_AI_DROP", 5.0)
+    min_authorship_drop = _float_env("DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_AUTHORSHIP_DROP", 2.0)
+    min_transform_drop = _float_env("DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_TRANSFORM_DROP", 0.0)
+    return bool(
+        float(ai_delta or 0.0) >= min_ai_drop
+        or ai_authorship_drop >= min_authorship_drop
+        or ai_transform_drop >= min_transform_drop
+    )
+
+
+def _blocked_human_winner_repair_budget_override(adaptive_stop_reason: str) -> bool:
+    """Allow one bounded repair attempt after normal search budget exhaustion."""
+    if not _env_flag("DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR_AFTER_BUDGET", True):
+        return False
+    return str(adaptive_stop_reason or "") in {
+        "budget_exhausted_llm_calls",
+        "budget_exhausted_candidate_scans",
+    }
+
+
 def _adaptive_budget_default(source_text: str, short_value: int, long_value: int) -> str:
     if _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_DOC_BUDGETS", True):
         threshold = int(_float_env("DRAFTPROOF_SHORT_DOC_WORD_THRESHOLD", 450.0))
@@ -10141,7 +10187,12 @@ def run_rewrite_pipeline(
             }
             if extra:
                 candidate_eval.update(extra)
-            if _search_budget_exhausted("candidate_scan"):
+            ignore_search_budget = bool(
+                extra
+                and extra.get("blocked_human_winner_repair")
+                and _blocked_human_winner_repair_budget_override(adaptive_stop_reason)
+            )
+            if not ignore_search_budget and _search_budget_exhausted("candidate_scan"):
                 if not search_summary.get("budget_exhausted_candidate_recorded"):
                     candidate_eval["reason"] = search_summary["budget_exhausted"]["reason"]
                     candidate_eval["passed_local_checks"] = False
@@ -10618,12 +10669,11 @@ def run_rewrite_pipeline(
                 and isinstance(original_human_value, (int, float))
                 else 0.0
             )
-            if (
-                not selection_status.get("selectable")
-                and human_delta_for_blocked >= _float_env(
-                    "DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_HUMAN_GAIN",
-                    2.0,
-                )
+            if _should_track_blocked_human_winner(
+                selection_status=selection_status,
+                human_delta=human_delta_for_blocked,
+                ai_delta=ai_delta,
+                authenticity_status=authenticity_status,
             ):
                 saved_ch_delta = max(0, int(candidate_critical_high or 0) - int(saved_critical_high or 0))
                 blocked_rank = (
@@ -12757,19 +12807,29 @@ def run_rewrite_pipeline(
                             break
 
                 if (
-                    not adaptive_stop_reason
-                    and
                     _env_flag("DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR", True)
                     and best_blocked_human_candidate
                     and effective_key
+                    and (
+                        not adaptive_stop_reason
+                        or _blocked_human_winner_repair_budget_override(adaptive_stop_reason)
+                    )
                 ):
                     try:
+                        default_repair_candidates = (
+                            1.0
+                            if _blocked_human_winner_repair_budget_override(adaptive_stop_reason)
+                            else 2.0
+                        )
                         blocked_repair_limit = max(
                             0,
-                            int(_float_env("DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR_CANDIDATES", 2.0)),
+                            int(_float_env(
+                                "DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR_CANDIDATES",
+                                default_repair_candidates,
+                            )),
                         )
                     except (TypeError, ValueError):
-                        blocked_repair_limit = 2
+                        blocked_repair_limit = 1 if _blocked_human_winner_repair_budget_override(adaptive_stop_reason) else 2
                     blocked_summary = best_blocked_human_candidate.get("summary") or {}
                     blocking_targets = _blocking_finding_targets(
                         best_blocked_human_candidate.get("report"),
@@ -12779,6 +12839,8 @@ def run_rewrite_pipeline(
                         "enabled": True,
                         "candidate_limit": blocked_repair_limit,
                         "mode": "finding_local_then_document_repair",
+                        "ran_after_search_budget": _blocked_human_winner_repair_budget_override(adaptive_stop_reason),
+                        "search_budget_reason": adaptive_stop_reason or "",
                         "blocked_candidate": {
                             key: value
                             for key, value in blocked_summary.items()
@@ -12809,7 +12871,24 @@ def run_rewrite_pipeline(
                                     repair_index,
                                 )
                             search_summary["llm_calls"] += 1
-                            response = gateway.chat(
+                            repair_gateway = gateway
+                            if _blocked_human_winner_repair_budget_override(adaptive_stop_reason):
+                                repair_gateway = LLMGateway(LLMConfig(
+                                    api_key=effective_key,
+                                    model=generator_model,
+                                    base_url=base_url,
+                                    timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
+                                    max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
+                                    max_tokens=int(os.environ.get(
+                                        "DRAFTPROOF_AI_SEARCH_MAX_TOKENS",
+                                        "6500",
+                                    )),
+                                    temperature=float(os.environ.get(
+                                        "DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR_TEMPERATURE",
+                                        "0.45",
+                                    )),
+                                ))
+                            response = repair_gateway.chat(
                                 prompt,
                                 system=(
                                     "You are DraftProof's blocked-candidate repair engine. "
