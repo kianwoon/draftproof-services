@@ -8383,7 +8383,7 @@ def run_rewrite_pipeline(
         source_protected = detect_protected_spans(search_source_text)
         min_chars = max(
             200,
-            int(len(search_source_text) * _float_env("DRAFTPROOF_AI_SEARCH_MIN_CHAR_RATIO", 0.75)),
+            int(len(search_source_text) * _float_env("DRAFTPROOF_AI_SEARCH_MIN_CHAR_RATIO", 0.60)),
         )
         max_chars = max(min_chars, int(len(text) * 1.30))
         best_text = rewritten_text
@@ -8700,6 +8700,18 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
             )
+            blocker_review_tolerance = int(_float_env(
+                "DRAFTPROOF_BLOCKER_ELIMINATION_REVIEW_TOLERANCE",
+                0.0,
+            ))
+            blocker_severity_tolerance = int(_float_env(
+                "DRAFTPROOF_BLOCKER_ELIMINATION_SEVERITY_TOLERANCE",
+                0.0,
+            ))
+            blocker_critical_high_tolerance = int(_float_env(
+                "DRAFTPROOF_BLOCKER_ELIMINATION_CRITICAL_HIGH_TOLERANCE",
+                0.0,
+            ))
             blocker_elimination_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_BLOCKER_ELIMINATION", True)
                 and isinstance(candidate_human_delta, (int, float))
@@ -8719,18 +8731,9 @@ def run_rewrite_pipeline(
                     "DRAFTPROOF_BLOCKER_ELIMINATION_MAX_ACTIVE_REGRESSION",
                     20.0,
                 )
-                and candidate_review_burden <= original_review_burden + int(_float_env(
-                    "DRAFTPROOF_BLOCKER_ELIMINATION_REVIEW_TOLERANCE",
-                    3.0,
-                ))
-                and candidate_weighted_severity <= original_severity + int(_float_env(
-                    "DRAFTPROOF_BLOCKER_ELIMINATION_SEVERITY_TOLERANCE",
-                    8.0,
-                ))
-                and candidate_critical_high <= saved_critical_high + int(_float_env(
-                    "DRAFTPROOF_BLOCKER_ELIMINATION_CRITICAL_HIGH_TOLERANCE",
-                    1.0,
-                ))
+                and candidate_review_burden <= original_review_burden + blocker_review_tolerance
+                and candidate_weighted_severity <= original_severity + blocker_severity_tolerance
+                and candidate_critical_high <= saved_critical_high + blocker_critical_high_tolerance
                 and not authenticity_status.get("ai_authorship_regression_blocked")
             )
             if (
