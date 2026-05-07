@@ -49,8 +49,8 @@ app.conf.update(
         # Saves ~40K Redis commands/day.
         "health_check_interval": 120,
         # BRPOP polling interval. Default 1s = ~86K commands/day.
-        # 5s = ~17K/day. Adds up to 4s latency on task pickup — acceptable
+        # 10s = ~8.6K/day. Adds up to 9s latency on task pickup — acceptable
         # for scan/rewrite jobs that run for minutes.
-        "polling_interval": 5,
+        "polling_interval": 10,
     },
 )
