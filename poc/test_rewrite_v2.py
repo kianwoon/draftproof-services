@@ -4370,6 +4370,33 @@ assert_test(
     "adaptive budget keeps long-document default above threshold",
 )
 
+paragraph_target_text = (
+    "I watch learners in SHBHCUT006 when they move from sectioning to projection. "
+    "In my class I can see the guide disappear, and my correction usually starts with comb angle, elbow position, and tension. "
+    "I slow the section down, check the mannequin, and ask learners to show where the next subsection should sit before cutting.\n\n"
+    "Inclusive learning design is important because it supports students and helps create better outcomes. "
+    "This shows that the framework is significant and can improve access for different learners in a range of settings. "
+    "The issue is important because learners need support and guidance across different classroom situations. "
+    "This can help learning because students require clear structures, suitable adjustments, and useful pathways for progress.\n\n"
+    "This review has discussed inclusive learning design. "
+    "It is important for teachers to support learners and create better outcomes."
+)
+paragraph_targets = _paragraph_component_targets(
+    paragraph_target_text,
+    {"rewrite_edit_briefs": []},
+    limit=5,
+)
+paragraph_roles = [target.get("role") for target in paragraph_targets]
+assert_test(
+    paragraph_roles
+    and paragraph_roles[0] in {"generic_claim_heavy", "conclusion_template_risk"}
+    and (
+        "human_anchor_rich" not in paragraph_roles
+        or paragraph_roles.index("human_anchor_rich") > 0
+    ),
+    "paragraph-component targeting prioritizes generic/conclusion blockers over human-anchor-rich paragraphs",
+)
+
 target_push_text = (
     "Opening paragraph keeps the topic clear for the reader.\n\n"
     "The real challenge now is knowing what to trust. "

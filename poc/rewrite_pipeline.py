@@ -6302,12 +6302,26 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
         role = _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
         if len(words) < 45 and role != "conclusion_template_risk":
             continue
+        role_score_adjustment = {
+            "generic_claim_heavy": 80.0,
+            "conclusion_template_risk": 70.0,
+            "source_summary_heavy": 50.0,
+            "mixed": 20.0,
+            "technical_process_rich": -35.0,
+            "human_anchor_rich": -100.0,
+        }.get(role, 0.0)
+        adjusted_score = score + role_score_adjustment
+        if role == "human_anchor_rich" and not source_gap:
+            adjusted_score -= 50.0
+        if adjusted_score <= 0:
+            continue
         scored.append({
             "index": index,
             "paragraph": paragraph,
             "previous_paragraph": paragraphs[index - 1] if index > 0 else "",
             "next_paragraph": paragraphs[index + 1] if index + 1 < len(paragraphs) else "",
-            "score": round(score, 3),
+            "score": round(adjusted_score, 3),
+            "raw_score": round(score, 3),
             "role": role,
             "drivers": drivers,
             "target_sentences": [
@@ -9695,7 +9709,7 @@ def run_rewrite_pipeline(
             reason = ""
             if elapsed >= float(search_budget["max_seconds"]):
                 reason = "budget_exhausted_time"
-            elif before_llm and int(search_summary.get("llm_calls") or 0) >= int(search_budget["max_llm_calls"]):
+            elif before_llm and int(search_summary.get("llm_calls") or 0) > int(search_budget["max_llm_calls"]):
                 reason = "budget_exhausted_llm_calls"
             elif len(search_summary.get("candidates", [])) >= int(search_budget["max_candidate_scans"]):
                 reason = "budget_exhausted_candidate_scans"
@@ -10043,6 +10057,31 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
             )
+            score_drag_removal_selectable = bool(
+                _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SCORE_DRAG_REMOVAL", True)
+                and isinstance(candidate_human_delta, (int, float))
+                and candidate_human_delta >= 0.0
+                and isinstance(ai_authorship_delta, (int, float))
+                and ai_authorship_delta >= 0.0
+                and isinstance(candidate_ai_transform_delta, (int, float))
+                and candidate_ai_transform_delta >= 0.0
+                and isinstance(ai_delta, (int, float))
+                and ai_delta > _float_env("DRAFTPROOF_SCORE_DRAG_MIN_AI_DROP", 0.05)
+                and (
+                    original_total - _finding_total(candidate_report)
+                    >= int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_FINDING_DROP", 2.0))
+                    or original_review_burden - candidate_review_burden
+                    >= int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_REVIEW_DROP", 1.0))
+                    or original_severity - candidate_weighted_severity
+                    >= int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_SEVERITY_DROP", 2.0))
+                )
+                and _finding_total(candidate_report) <= original_total
+                and candidate_review_burden <= original_review_burden
+                and candidate_weighted_severity <= original_severity
+                and candidate_critical_high <= saved_critical_high
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("critical_high_regressed")
+            )
             human_primary_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_HUMAN_PRIMARY_PROGRESS", True)
                 and isinstance(candidate_human_delta, (int, float))
@@ -10134,6 +10173,7 @@ def run_rewrite_pipeline(
                     incremental_authenticity_selectable
                     or human_amplification_selectable
                     or safe_authorship_suppression_selectable
+                    or score_drag_removal_selectable
                     or post_safe_target_climb_selectable
                 )
             ):
@@ -10153,9 +10193,13 @@ def run_rewrite_pipeline(
                                     "accepted_post_safe_target_climb"
                                     if post_safe_target_climb_selectable
                                     else (
-                                        "accepted_safe_authorship_suppression"
-                                        if safe_authorship_suppression_selectable
-                                        else "accepted_incremental_authenticity_progress"
+                                        "accepted_score_drag_removal"
+                                        if score_drag_removal_selectable
+                                        else (
+                                            "accepted_safe_authorship_suppression"
+                                            if safe_authorship_suppression_selectable
+                                            else "accepted_incremental_authenticity_progress"
+                                        )
                                     )
                                 )
                             )
@@ -10166,6 +10210,7 @@ def run_rewrite_pipeline(
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
                     "human_signal_amplification": bool(human_amplification_selectable),
                     "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
+                    "score_drag_removal": bool(score_drag_removal_selectable),
                     "post_safe_target_climb": bool(post_safe_target_climb_selectable),
                 })
             if human_amplification_score:
@@ -10185,6 +10230,7 @@ def run_rewrite_pipeline(
                 and dominant_blocker_status.get("required")
                 and not dominant_blocker_status.get("cleared")
                 and not dominant_blocker_progress_override.get("allowed")
+                and not selection_status.get("score_drag_removal")
             ):
                 selection_status.update({
                     "success": False,
@@ -11061,6 +11107,14 @@ def run_rewrite_pipeline(
                 ) != "0"
                 component_source_text = best_text if _best_ai_search_selectable() else search_source_text
                 component_base_text, component_base_repairs = _repair_candidate_source_damage(component_source_text)
+                paragraph_component_first = bool(
+                    paragraph_search_enabled
+                    and _env_flag("DRAFTPROOF_PARAGRAPH_COMPONENT_FIRST", True)
+                    and _text_word_count(component_base_text) >= int(_float_env(
+                        "DRAFTPROOF_PARAGRAPH_COMPONENT_FIRST_MIN_WORDS",
+                        450.0,
+                    ))
+                )
                 if _env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True):
                     source_layer = _build_source_grounding_search_layer(
                         component_base_text,
@@ -11117,7 +11171,7 @@ def run_rewrite_pipeline(
                             for result in source_repair_results
                         ],
                     }
-                    if _env_flag("DRAFTPROOF_INTERNET_REINFORCED_REAUTHORING", True):
+                    if _env_flag("DRAFTPROOF_INTERNET_REINFORCED_REAUTHORING", True) and not paragraph_component_first:
                         internet_candidate_count = max(
                             1,
                             int(_float_env(
@@ -11199,7 +11253,12 @@ def run_rewrite_pipeline(
                                     "source_result_count": len(source_layer.get("results") or []),
                                 },
                             )
-                    if _env_flag("DRAFTPROOF_CLAIM_NARROWING_REPAIR", True):
+                    elif paragraph_component_first:
+                        search_summary["internet_reinforced_reauthoring"] = {
+                            "enabled": False,
+                            "reason": "deferred_after_paragraph_component_first",
+                        }
+                    if _env_flag("DRAFTPROOF_CLAIM_NARROWING_REPAIR", True) and not paragraph_component_first:
                         claim_candidate_count = max(
                             1,
                             int(_float_env(
@@ -11278,7 +11337,12 @@ def run_rewrite_pipeline(
                                 deterministic=False,
                                 extra={"claim_narrowing_repair": True},
                             )
-                    if _env_flag("DRAFTPROOF_TOPK_TEXTURE_REPAIR", True):
+                    elif paragraph_component_first:
+                        search_summary["claim_narrowing_repair"] = {
+                            "enabled": False,
+                            "reason": "deferred_after_paragraph_component_first",
+                        }
+                    if _env_flag("DRAFTPROOF_TOPK_TEXTURE_REPAIR", True) and not paragraph_component_first:
                         texture_base_text = best_text if _best_ai_search_selectable() else component_base_text
                         texture_base_report = best_report if _best_ai_search_selectable() else original_report_dict
                         topk_candidate_count = max(
@@ -11359,6 +11423,11 @@ def run_rewrite_pipeline(
                                     "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
                                 },
                             )
+                    elif paragraph_component_first:
+                        search_summary["topk_texture_repair"] = {
+                            "enabled": False,
+                            "reason": "deferred_after_paragraph_component_first",
+                        }
                     for source_number, source_result in enumerate(source_repair_results, start=1):
                         target = claim_targets_by_id.get(source_result.get("claim_id")) or {}
                         paragraph_index = int(target.get("paragraph_index", 0) or 0)
@@ -11491,14 +11560,28 @@ def run_rewrite_pipeline(
                         )
                     except ValueError:
                         paragraph_candidates = 3
-                    component_targets = _paragraph_component_targets(
+                    paragraph_roles = {
+                        role.strip()
+                        for role in os.environ.get(
+                            "DRAFTPROOF_PARAGRAPH_COMPONENT_ROLES",
+                            "generic_claim_heavy,conclusion_template_risk,source_summary_heavy,mixed",
+                        ).split(",")
+                        if role.strip()
+                    }
+                    component_target_pool = _paragraph_component_targets(
                         component_base_text,
                         ctx.raw_json,
-                        limit=paragraph_limit,
+                        limit=max(paragraph_limit * 4, paragraph_limit + 8),
                     )
+                    component_targets = [
+                        target for target in component_target_pool
+                        if str(target.get("role") or "") in paragraph_roles
+                    ][:paragraph_limit]
                     component_summary = {
                         "enabled": True,
                         "base_repairs": component_base_repairs,
+                        "target_roles": sorted(paragraph_roles),
+                        "pool_count": len(component_target_pool),
                         "target_count": len(component_targets),
                         "candidate_limit_per_target": paragraph_candidates,
                         "targets": [
@@ -11563,6 +11646,8 @@ def run_rewrite_pipeline(
                                 "paragraph_component": True,
                                 "paragraph_index": target.get("index"),
                             })
+                            if adaptive_stop_reason:
+                                break
                             continue
                         if not paragraph_outputs:
                             search_summary["candidates"].append({
@@ -12800,6 +12885,8 @@ def run_rewrite_pipeline(
                 .get("human_signal_amplification"))
             or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
                 .get("safe_authorship_suppression"))
+            or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
+                .get("score_drag_removal"))
         )
     )
     if (
