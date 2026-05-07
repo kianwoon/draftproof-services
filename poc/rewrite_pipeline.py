@@ -823,6 +823,87 @@ def _build_mitigation_ceiling_diagnostics(
     }
 
 
+def _build_author_evidence_intake_layer(
+    author_evidence_completion: dict | None,
+    mitigation_ceiling: dict | None = None,
+    *,
+    max_questions: int = 5,
+) -> dict:
+    """Create a structured intake contract for closing Human Contribution gaps.
+
+    The LLM can ask for, classify, and place author-owned anchors. It must not
+    fabricate them. Confirmed answers can then be fed into the existing gated
+    rewrite path.
+    """
+    completion = author_evidence_completion or {}
+    if not isinstance(completion, dict) or not completion.get("enabled"):
+        return {}
+    slots = [slot for slot in (completion.get("slots") or []) if isinstance(slot, dict)]
+    if not slots:
+        return {}
+    ceiling = mitigation_ceiling or {}
+    questions = []
+    for index, slot in enumerate(slots[: max(1, int(max_questions or 1))], start=1):
+        role = str(slot.get("paragraph_role") or "generic_claim_heavy")
+        preview = str(slot.get("target_paragraph_preview") or "").strip()
+        if role == "source_summary_heavy":
+            question = "What source, reading, class material, or citation supports this paragraph's claim?"
+            answer_type = "source_or_citation"
+        elif role == "technical_process_rich":
+            question = "What concrete task, process step, learner action, or feedback moment did you personally observe?"
+            answer_type = "practice_observation"
+        elif role == "conclusion_template_risk":
+            question = "What limitation, judgement, or specific takeaway would you personally add to make this ending less generic?"
+            answer_type = "author_judgement"
+        else:
+            question = "What real example, classroom/workplace observation, assignment detail, or feedback note proves this claim?"
+            answer_type = "real_example_or_observation"
+        questions.append({
+            "id": f"anchor_{index}",
+            "slot": slot.get("slot", index),
+            "paragraph_index": slot.get("paragraph_index"),
+            "paragraph_role": role,
+            "question": question,
+            "answer_type": answer_type,
+            "target_preview": preview[:260],
+            "minimum_answer": "1-3 concrete sentences, or one verifiable source/citation plus why it supports the claim.",
+            "truth_gate": (
+                "Use only information the author can verify. If the answer is uncertain, "
+                "the rewrite must narrow the claim instead of presenting it as evidence."
+            ),
+        })
+
+    return {
+        "enabled": True,
+        "kind": "author_evidence_intake",
+        "status": "awaiting_user_answers",
+        "auto_apply": False,
+        "primary_blocker": ceiling.get("primary_blocker"),
+        "target_human_contribution": completion.get("target_human_contribution"),
+        "current_human_contribution": completion.get("current_human_contribution"),
+        "estimated_human_after_completion": completion.get("estimated_human_after_completion"),
+        "questions": questions,
+        "answer_schema": {
+            "anchor_id": "anchor_1",
+            "answer": "real author-owned evidence, source, example, observation, or limitation",
+            "confidence": "confirmed|uncertain|not_available",
+            "permission_to_use": True,
+        },
+        "llm_supervisor_prompt": (
+            "Collect concise answers for the listed anchors. Do not invent answers. "
+            "For confirmed answers, integrate the anchor into the matching paragraph with minimal wording change. "
+            "For uncertain or unavailable answers, narrow the claim instead. Return a rewritten draft only after "
+            "every used anchor is confirmed by the user."
+        ),
+        "close_gap_policy": [
+            "LLM may infer the type of missing anchor, not the factual anchor itself.",
+            "LLM may ask targeted questions and transform confirmed answers into prose.",
+            "LLM must not create dates, sources, institutions, experiences, statistics, or observations that the user did not confirm.",
+            "Confirmed anchor integration must still pass drift, authorship, findings, review-burden, and severity gates.",
+        ],
+    }
+
+
 def _contribution_scores(report_dict: dict | None) -> dict:
     """Extract the Human Contribution / AI Transformation product scores."""
     if not isinstance(report_dict, dict):
@@ -8737,6 +8818,13 @@ def run_rewrite_pipeline(
     )
     if ceiling_diagnostics:
         result.summary["mitigation_ceiling"] = ceiling_diagnostics
+    author_evidence_intake = _build_author_evidence_intake_layer(
+        author_evidence_completion,
+        ceiling_diagnostics,
+        max_questions=int(_float_env("DRAFTPROOF_AUTHOR_EVIDENCE_INTAKE_QUESTIONS", 5.0)),
+    )
+    if author_evidence_intake:
+        result.summary["author_evidence_intake"] = author_evidence_intake
 
     # Extract only the fields needed for comparison (not full report dicts)
     def _extract_scan_summary(report_dict):

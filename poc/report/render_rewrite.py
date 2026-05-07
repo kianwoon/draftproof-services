@@ -500,6 +500,32 @@ def render_rewrite_report(
                 lines.append(f"- {str(action).replace('|', '·')}")
             lines.append("")
 
+    intake = summary.get("author_evidence_intake") or {}
+    if intake.get("questions"):
+        lines.append("## Author Evidence Intake")
+        lines.append("")
+        lines.append(
+            "Use these prompts to collect the real author-owned details needed before another mitigation pass. "
+            "DraftProof can place confirmed answers, but it should not invent these anchors."
+        )
+        lines.append("")
+        lines.append("| Anchor | Paragraph | What To Ask | Answer Type |")
+        lines.append("|--------|-----------|-------------|-------------|")
+        for question in (intake.get("questions") or [])[:8]:
+            qid = str(question.get("id") or "").replace("|", "·")
+            paragraph = question.get("paragraph_index")
+            text = str(question.get("question") or "").replace("|", "·")
+            answer_type = str(question.get("answer_type") or "").replace("_", " ")
+            lines.append(f"| {qid} | {paragraph} | {text} | {answer_type} |")
+        lines.append("")
+        policy = intake.get("close_gap_policy") or []
+        if policy:
+            lines.append("**LLM close-gap policy:**")
+            lines.append("")
+            for item in policy[:4]:
+                lines.append(f"- {str(item).replace('|', '·')}")
+            lines.append("")
+
     if mitigation:
         score_targets = mitigation.get("score_mitigation_targets") or []
         if score_targets:

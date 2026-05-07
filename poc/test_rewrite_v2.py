@@ -117,6 +117,7 @@ from rewrite_pipeline import (
     _score_human_amplification_candidate,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
+    _build_author_evidence_intake_layer,
     _blocked_human_candidate_repair_prompt,
     _blocking_finding_targets,
     _finding_local_repair_prompt,
@@ -2604,6 +2605,30 @@ assert_test(
     and ceiling_diagnostics["candidate_frontier"]["best_safe_human"] == 38.0
     and ceiling_diagnostics["author_evidence_gap"]["slot_count"] == 2,
     "mitigation ceiling diagnostics expose safe frontier and missing author-evidence blocker",
+)
+intake_layer = _build_author_evidence_intake_layer(
+    {
+        "enabled": True,
+        "target_human_contribution": 80,
+        "current_human_contribution": 38,
+        "estimated_human_after_completion": {"low": 46, "high": 63},
+        "slots": [
+            {
+                "slot": 1,
+                "paragraph_index": 2,
+                "paragraph_role": "generic_claim_heavy",
+                "target_paragraph_preview": "Students are surrounded by too much information.",
+            }
+        ],
+    },
+    ceiling_diagnostics,
+)
+assert_test(
+    intake_layer.get("enabled")
+    and intake_layer["questions"][0]["answer_type"] == "real_example_or_observation"
+    and "Do not invent" in intake_layer["llm_supervisor_prompt"]
+    and any("must not create" in item for item in intake_layer["close_gap_policy"]),
+    "author evidence intake lets LLM close gaps only through confirmed anchors",
 )
 scope_summary = _scan_scope_summary({
     "predictability": {
