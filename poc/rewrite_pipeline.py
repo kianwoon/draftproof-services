@@ -5786,6 +5786,13 @@ def _protected_number_set(text: str) -> set[str]:
     return set(re.findall(r"\b\d+(?:\.\d+)?%?\b", str(text or "")))
 
 
+def _protected_code_anchor_set(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.findall(r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b", str(text or ""))
+    }
+
+
 def _normalize_direct_quote_content(text: str) -> str:
     normalized = _normalize_protected_text(text).strip()
     normalized = normalized.strip('"').strip("'").strip()
@@ -5806,6 +5813,10 @@ def _ai_search_protected_loss_reason(original: str, candidate: str, protected) -
     for number in sorted(_protected_number_set(original)):
         if number not in candidate_numbers:
             return f"number_lost:{number}"
+
+    for code_anchor in sorted(_protected_code_anchor_set(original)):
+        if code_anchor not in candidate_norm:
+            return f"code_anchor_lost:{code_anchor}"
 
     for span in protected or []:
         span_text = original[span.start_char:span.end_char]
@@ -10061,6 +10072,11 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SCORE_DRAG_REMOVAL", True)
                 and isinstance(candidate_human_delta, (int, float))
                 and candidate_human_delta >= 0.0
+                and isinstance(human_shift.get("score"), (int, float))
+                and float(human_shift.get("score")) >= _float_env(
+                    "DRAFTPROOF_SCORE_DRAG_MIN_HUMAN_SHIFT",
+                    0.0,
+                )
                 and isinstance(ai_authorship_delta, (int, float))
                 and ai_authorship_delta >= 0.0
                 and isinstance(candidate_ai_transform_delta, (int, float))

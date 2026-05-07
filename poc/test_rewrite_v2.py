@@ -4396,6 +4396,15 @@ assert_test(
     ),
     "paragraph-component targeting prioritizes generic/conclusion blockers over human-anchor-rich paragraphs",
 )
+code_anchor_loss_reason = _ai_search_protected_loss_reason(
+    "The HBB26 group uses SHBHCUT006 with 6 learners.",
+    "The group uses SHBHCUT006 with 6 learners.",
+    detect_protected_spans("The HBB26 group uses SHBHCUT006 with 6 learners."),
+)
+assert_test(
+    code_anchor_loss_reason == "code_anchor_lost:hbb26",
+    "AI-search protected-span guard preserves course/intake code anchors",
+)
 
 target_push_text = (
     "Opening paragraph keeps the topic clear for the reader.\n\n"
