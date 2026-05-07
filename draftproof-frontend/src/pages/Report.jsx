@@ -168,7 +168,7 @@ function sortTransformationSignalsForComparison(signals = []) {
   });
 }
 
-function buildTransformationSummary(features = {}, signals = []) {
+function buildTransformationSummary(features = {}, signals = [], contributionOverride = null) {
   const humanAnchor = clampPercent(features.human_anchor_score) ?? 0;
   const groundingQuality = 100 - (clampPercent(features.citation_grounding_risk) ?? 0);
   const semanticOriginality = 100 - Math.max(
@@ -197,8 +197,14 @@ function buildTransformationSummary(features = {}, signals = []) {
     sourceSimilarity * 0.05
   );
   const total = Math.max(humanRaw + aiRaw, 1);
-  const humanContribution = Math.round((humanRaw / total) * 100);
-  const aiTransformation = 100 - humanContribution;
+  const overrideHuman = clampPercent(contributionOverride?.humanContribution);
+  const overrideAi = clampPercent(contributionOverride?.aiTransformation);
+  const humanContribution = Math.round(
+    overrideHuman ?? (overrideAi != null ? 100 - overrideAi : (humanRaw / total) * 100)
+  );
+  const aiTransformation = Math.round(
+    overrideAi ?? (overrideHuman != null ? 100 - overrideHuman : 100 - humanContribution)
+  );
   const topSignals = signals
     .filter((signal) => signal.key !== 'human_anchor_score')
     .slice(0, 2)
@@ -355,6 +361,17 @@ function buildRewriteResultSummary(rewriteReport) {
     original_findings: originalFindings,
     rewritten_findings: rewrittenFindings,
     changed_sentences: changedSentences,
+  };
+}
+
+function buildRewriteContributionOverride(rewriteResultSummary) {
+  if (!rewriteResultSummary) return null;
+  const human = clampPercent(rewriteResultSummary.rewritten_human_contribution);
+  const ai = clampPercent(rewriteResultSummary.rewritten_ai_transformation);
+  if (human == null && ai == null) return null;
+  return {
+    humanContribution: human ?? 100 - ai,
+    aiTransformation: ai ?? 100 - human,
   };
 }
 
@@ -827,10 +844,22 @@ export default function Report() {
     rewrittenTransformation?.features,
     rewrittenTransformationSignalMetadata
   );
+  const rewrittenContributionOverride = buildRewriteContributionOverride(rewriteResultSummary);
   const rewrittenTransformationSummary = rewrittenTransformation
-    ? buildTransformationSummary(rewrittenTransformation.features, rewrittenTransformationSignals)
+    ? buildTransformationSummary(rewrittenTransformation.features, rewrittenTransformationSignals, rewrittenContributionOverride)
+    : rewrittenContributionOverride
+      ? {
+        humanContribution: Math.round(rewrittenContributionOverride.humanContribution),
+        aiTransformation: Math.round(rewrittenContributionOverride.aiTransformation),
+        adjustedAiRisk: Math.round(rewriteResultSummary?.rewrite_risk ?? 0),
+        rawAdjustedAiRisk: Math.round(rewriteResultSummary?.rewrite_risk ?? 0),
+        humanAnchorDiscount: 0,
+        calibrationConfidence: 0,
+        reportingSuppression: 0,
+        summary: 'Rewritten contribution estimate from the completed rewrite scan.',
+      }
     : null;
-  const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? null;
+  const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
   const authorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
     badge.tier || report.tier,
@@ -861,8 +890,7 @@ export default function Report() {
   const hasRewriteResult = hasCompletedRewrite && Boolean(currentRewrite?.id);
   const hasRewriteSignalComparison = Boolean(
     hasRewriteResult &&
-    rewrittenTransformation &&
-    rewrittenTransformationSignals.length > 0
+    (rewrittenTransformation || rewrittenTransformationSummary)
   );
   const canStartRewrite = hasAIFindings && !hasRewriteResult;
   const rewriteProgress = currentRewrite
@@ -986,7 +1014,7 @@ export default function Report() {
         <div className="transformation-detail-head">
           <div>
             <span>{variant === 'rewritten' ? 'Rewritten Scan' : 'Original Scan'}</span>
-            <strong>{pattern?.label || 'Pattern analysis'}</strong>
+            <strong>{pattern?.label || (variant === 'rewritten' ? 'Rewritten contribution pattern' : 'Pattern analysis')}</strong>
           </div>
           <em>{formatMetricPercent(variantAiScore, 1)}</em>
         </div>
@@ -1020,32 +1048,36 @@ export default function Report() {
             </div>
           </div>
         )}
-        <div className="transformation-chart-head">
-          <span>Core Signals</span>
-        </div>
-        <div className="transformation-bars">
-          {comparisonSignals.map((signal) => (
-            <div
-              key={`${variant}-${signal.key}`}
-              className="transformation-bar-row"
-              data-tooltip={signal.description}
-              tabIndex={0}
-              aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.label}: ${signal.value.toFixed(0)}%. ${signal.description}`}
-              title={signal.description}
-            >
-              <div className="transformation-bar-label">
-                <span>{signal.label}</span>
-                <strong>{signal.value.toFixed(0)}%</strong>
-              </div>
-              <div className="transformation-bar-track" aria-hidden="true">
-                <div
-                  className={`transformation-bar-fill transformation-bar-${signal.key}`}
-                  style={{ width: `${signal.value}%` }}
-                />
-              </div>
+        {comparisonSignals.length > 0 && (
+          <>
+            <div className="transformation-chart-head">
+              <span>Core Signals</span>
             </div>
-          ))}
-        </div>
+            <div className="transformation-bars">
+              {comparisonSignals.map((signal) => (
+                <div
+                  key={`${variant}-${signal.key}`}
+                  className="transformation-bar-row"
+                  data-tooltip={signal.description}
+                  tabIndex={0}
+                  aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.label}: ${signal.value.toFixed(0)}%. ${signal.description}`}
+                  title={signal.description}
+                >
+                  <div className="transformation-bar-label">
+                    <span>{signal.label}</span>
+                    <strong>{signal.value.toFixed(0)}%</strong>
+                  </div>
+                  <div className="transformation-bar-track" aria-hidden="true">
+                    <div
+                      className={`transformation-bar-fill transformation-bar-${signal.key}`}
+                      style={{ width: `${signal.value}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     );
   };
