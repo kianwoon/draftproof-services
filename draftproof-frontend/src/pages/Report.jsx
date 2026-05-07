@@ -1369,9 +1369,21 @@ export default function Report() {
         {rewriteCompletionBand}
 
         {transformationScorecard ? (
-          <section className="report-overview-card" aria-label="Report overview">
-            {reportSummaryBar}
-            {transformationScorecard}
+          <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label="Report overview">
+            {hasRewriteSignalComparison ? (
+              <>
+                {transformationScorecard}
+                <div className="report-baseline-summary" aria-label="Original scan summary">
+                  <span className="report-baseline-label">Original scan baseline</span>
+                  {reportSummaryBar}
+                </div>
+              </>
+            ) : (
+              <>
+                {reportSummaryBar}
+                {transformationScorecard}
+              </>
+            )}
           </section>
         ) : (
           reportSummaryBar

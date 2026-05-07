@@ -3788,6 +3788,65 @@ th {
   background: transparent;
 }
 
+.report-overview-card.is-rewrite-comparison .transformation-scorecard {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.report-baseline-summary {
+  padding: .85rem 1rem 1rem;
+  background: #f8fafc;
+}
+
+.report-baseline-label {
+  display: block;
+  color: #64748b;
+  font-size: .68rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.report-overview-card.is-rewrite-comparison .report-baseline-summary .report-summary-bar {
+  margin: .7rem 0 0;
+  padding: .7rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.report-overview-card.is-rewrite-comparison .report-baseline-summary .report-stat {
+  min-height: 48px;
+  padding: .35rem .7rem;
+}
+
+.report-overview-card.is-rewrite-comparison .report-baseline-summary .report-risk-stat {
+  gap: .65rem;
+  padding-left: 0;
+}
+
+.report-overview-card.is-rewrite-comparison .report-baseline-summary .report-risk-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.report-overview-card.is-rewrite-comparison .report-baseline-summary .report-risk-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.report-overview-card.is-rewrite-comparison .report-baseline-summary .report-risk-value,
+.report-overview-card.is-rewrite-comparison .report-baseline-summary .report-stat-value {
+  font-size: .82rem;
+}
+
+.report-overview-card.is-rewrite-comparison .report-baseline-summary .report-stat-label {
+  margin-top: .45rem;
+  font-size: .66rem;
+  letter-spacing: .06em;
+}
+
 .report-rewrite-summary-bar {
   display: grid;
   grid-template-columns: auto minmax(180px, 1.3fr) repeat(6, minmax(90px, 1fr)) auto;
