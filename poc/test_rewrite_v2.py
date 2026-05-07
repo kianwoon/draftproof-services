@@ -130,6 +130,7 @@ from rewrite_pipeline import (
     _internet_reinforced_reauthor_prompt,
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
+    _protected_anchor_brief_for_prompt,
     _build_source_grounding_search_layer,
     _confirmed_author_anchor_brief,
     _blocker_elimination_status,
@@ -2197,6 +2198,16 @@ assert_test(
     ),
     "AI search protected check allows quote and citation punctuation normalization",
 )
+quote_comma_original = 'Education should focus on “what students know,” and “how students think.”'
+quote_comma_candidate = 'Education should focus on "what students know" and "how students think".'
+assert_test(
+    not _ai_search_protected_loss_reason(
+        quote_comma_original,
+        quote_comma_candidate,
+        detect_protected_spans(quote_comma_original),
+    ),
+    "AI search protected check preserves quote content without rejecting comma placement changes",
+)
 assert_test(
     _ai_search_protected_loss_reason(
         protected_original,
@@ -2858,6 +2869,52 @@ assert_test(
     and "remove unsupported generic drag" in internet_reauthor_prompt
     and "Return exactly 2 complete document candidates" in internet_reauthor_prompt,
     "internet-reinforced reauthoring rebuilds full document instead of sentence repair",
+)
+quote_anchor_source = (
+    "Education should not only focus on “what students know,” but also on “how students think.”"
+)
+quote_anchor_brief = _protected_anchor_brief_for_prompt(quote_anchor_source)
+quote_anchor_prompt = _internet_reinforced_reauthor_prompt(
+    quote_anchor_source,
+    {"claim_targets": [], "results": []},
+    candidate_count=1,
+)
+assert_test(
+    any("what students know" in item.get("text", "") for item in quote_anchor_brief)
+    and any("how students think" in item.get("text", "") for item in quote_anchor_brief)
+    and "Protected anchors" in quote_anchor_prompt
+    and "what students know" in quote_anchor_prompt
+    and "how students think" in quote_anchor_prompt
+    and "keep the quote exactly" in quote_anchor_prompt,
+    "full-document repair prompts carry exact quote anchors before generation",
+)
+quote_anchor_ai_search_prompt = _ai_search_prompt(
+    quote_anchor_source,
+    {"rewrite_edit_briefs": []},
+    "syntax_demolition",
+)
+quote_anchor_paragraph_prompt = _paragraph_component_prompt(
+    {
+        "paragraph": quote_anchor_source,
+        "previous_paragraph": "",
+        "next_paragraph": "",
+        "drivers": {},
+        "target_sentences": [quote_anchor_source],
+        "problem_spans": [],
+        "domain_anchors": [],
+    },
+    {"rewrite_edit_briefs": []},
+    1,
+    candidate_count=1,
+)
+assert_test(
+    "Protected anchors" in quote_anchor_ai_search_prompt
+    and "what students know" in quote_anchor_ai_search_prompt
+    and "how students think" in quote_anchor_ai_search_prompt
+    and "Protected anchors" in quote_anchor_paragraph_prompt
+    and "what students know" in quote_anchor_paragraph_prompt
+    and "how students think" in quote_anchor_paragraph_prompt,
+    "AI-search and paragraph-component prompts carry exact quote anchors before generation",
 )
 blocker_status = _blocker_elimination_status(
     {

@@ -1289,6 +1289,25 @@ def _source_result_confidence(sources: list[dict]) -> str:
     return "very_weak"
 
 
+def _protected_anchor_brief_for_prompt(source_text: str, *, limit: int = 24) -> list[dict]:
+    """Return exact protected spans that generation prompts must preserve."""
+    seen: set[str] = set()
+    anchors: list[dict] = []
+    for span in detect_protected_spans(source_text or ""):
+        value = str(source_text or "")[span.start_char:span.end_char].strip()
+        value = re.sub(r"\s+", " ", value)
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        anchors.append({
+            "text": value,
+            "reason": getattr(span, "reason", "protected"),
+        })
+        if len(anchors) >= max(1, int(limit or 1)):
+            break
+    return anchors
+
+
 def _source_grounding_repair_prompt(
     target: dict,
     source_result: dict,
@@ -1358,6 +1377,7 @@ def _internet_reinforced_reauthor_prompt(
         source_text,
         variance=_float_env("DRAFTPROOF_INTERNET_REAUTHOR_WORD_VARIANCE", 0.25),
     )
+    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
     paragraphs = _logical_paragraphs(source_text)
     evidence_cards = []
     targets_by_id = {
@@ -1428,6 +1448,8 @@ def _internet_reinforced_reauthor_prompt(
         "- If a block can be reinforced by the evidence cards, rewrite that block around the supported claim.\n"
         "- If a block cannot be reinforced and is generic/repetitive, remove or compress it.\n"
         "- Preserve the submitted meaning coverage, but do not preserve weak wording or weak paragraph order.\n\n"
+        "Protected anchors. These exact spans must appear unchanged in every candidate, including quote text:\n"
+        f"{json.dumps(protected_anchors, ensure_ascii=False)[:2600]}\n\n"
         "Goal:\n"
         "Maximize Human Contribution under the AI Authorship cap. The next scan will reject candidates that raise AI Authorship, drift, findings, review burden, or severity.\n\n"
         f"Word-count band: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
@@ -1442,6 +1464,7 @@ def _internet_reinforced_reauthor_prompt(
         "- Keep the prose direct and uneven enough to avoid polished academic template flow.\n"
         "- Use fewer broad claims. Prefer bounded claims tied to the sources or the document's existing educational context.\n"
         "- Do not create author-owned observations, lived experience, classroom events, personal examples, new institutions, new dates, new statistics, or fake citations.\n"
+        "- Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
         "- Do not add markdown links or bibliography. Mention source titles only when useful and supported by the card.\n"
         "- Do not use generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion.\n\n"
         "Selection gate:\n"
@@ -1489,11 +1512,14 @@ def _claim_narrowing_repair_prompt(
         source_text,
         variance=_float_env("DRAFTPROOF_CLAIM_NARROWING_WORD_VARIANCE", 0.25),
     )
+    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
     return (
         "DraftProof CLAIM_NARROWING_REPAIR.\n"
         "Do not humanize generically. Reduce unsupported_claim_risk and broad_claim_risk directly.\n\n"
         f"Current blocker scores: {json.dumps(blockers, ensure_ascii=False)}\n"
         f"Word-count band: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
+        "Protected anchors. These exact spans must appear unchanged in every candidate, including quote text:\n"
+        f"{json.dumps(protected_anchors, ensure_ascii=False)[:2600]}\n\n"
         "Target blocks:\n"
         f"{json.dumps(target_blocks, ensure_ascii=False)[:7000]}\n\n"
         "Required operations:\n"
@@ -1505,6 +1531,7 @@ def _claim_narrowing_repair_prompt(
         "- preserve existing anchors, source relations, and meaning coverage\n\n"
         "Forbidden:\n"
         "- do not add new facts, citations, dates, names, statistics, examples, institutions, or author experiences\n"
+        "- do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
         "- do not make the prose more polished or academic\n"
         "- do not use generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion\n\n"
         "Acceptance target:\n"
@@ -1544,11 +1571,14 @@ def _topk_texture_repair_prompt(
         source_text,
         variance=_float_env("DRAFTPROOF_TOPK_TEXTURE_WORD_VARIANCE", 0.25),
     )
+    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
     return (
         "DraftProof TOPK_TEXTURE_REPAIR.\n"
         "Reduce predictable phrasing after claim narrowing. Do not add facts.\n\n"
         f"Current blocker scores: {json.dumps(blockers, ensure_ascii=False)}\n"
         f"Word-count band: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
+        "Protected anchors. These exact spans must appear unchanged in every candidate, including quote text:\n"
+        f"{json.dumps(protected_anchors, ensure_ascii=False)[:2600]}\n\n"
         "Highest-risk sentence texture targets:\n"
         f"{json.dumps(target_sentences, ensure_ascii=False)[:5000]}\n\n"
         "Allowed operations:\n"
@@ -1560,6 +1590,7 @@ def _topk_texture_repair_prompt(
         "Hard rule:\n"
         "- Do not add new facts, citations, statistics, examples, institutions, names, dates, or author experiences.\n"
         "- Preserve claim scope after narrowing.\n"
+        "- Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
         "- Do not rewrite into smoother academic prose.\n\n"
         "Acceptance target:\n"
         "- topk_pattern must drop\n"
@@ -5277,6 +5308,12 @@ def _protected_number_set(text: str) -> set[str]:
     return set(re.findall(r"\b\d+(?:\.\d+)?%?\b", str(text or "")))
 
 
+def _normalize_direct_quote_content(text: str) -> str:
+    normalized = _normalize_protected_text(text).strip()
+    normalized = normalized.strip('"').strip("'").strip()
+    return normalized.strip(" ,.;:!?")
+
+
 def _ai_search_protected_loss_reason(original: str, candidate: str, protected) -> str:
     """Lenient protected-span check for full-document AI candidates.
 
@@ -5298,8 +5335,9 @@ def _ai_search_protected_loss_reason(original: str, candidate: str, protected) -
         if not span_norm:
             continue
         if span.reason == "direct_quote":
-            if span_norm not in candidate_norm:
-                return f"quote_lost:{span_norm[:40]}"
+            quote_norm = _normalize_direct_quote_content(span_text)
+            if quote_norm and quote_norm not in candidate_norm:
+                return f"quote_lost:{quote_norm[:40]}"
             continue
         if span.reason == "citation":
             names = [
@@ -5326,6 +5364,7 @@ def _ai_search_prompt(
 ) -> str:
     signal_brief = _ai_search_signal_brief(raw_json)
     repair_brief = _source_repair_brief(source_text)
+    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
     strategy_lines = {
         "syntax_demolition": [
             "Strategy: syntax demolition.",
@@ -5412,6 +5451,9 @@ def _ai_search_prompt(
         "- Repeated starters/rhythm: vary openings naturally without mechanical prefixes.",
         "Hard constraints:",
         "Keep the same topic, stance, factual claims, numbers, names, quotes, citations, unit codes, and chronology.",
+        "Protected anchors. These exact spans must appear unchanged in the output, including quote text:",
+        json.dumps(protected_anchors, ensure_ascii=False)[:2600],
+        "Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.",
         "Do not invent new evidence, citations, sources, dates, institutions, or examples.",
         "If evidence is missing and the strategy allows marked grounding, use [[REVIEW: ...]] bracketed text instead of inventing the evidence.",
         "Do not summarize or shorten the document. Keep length within about 85% to 115% of the source, except remove accidental duplicate fragments if the source already contains prior rewrite damage.",
@@ -5822,6 +5864,15 @@ def _paragraph_component_prompt(
     signal_brief = _ai_search_signal_brief(raw_json)
     drivers = target.get("drivers") or {}
     candidate_count = max(1, int(candidate_count or 1))
+    protected_source = "\n\n".join(
+        part for part in [
+            target.get("previous_paragraph") or "",
+            target.get("paragraph") or "",
+            target.get("next_paragraph") or "",
+        ]
+        if part
+    )
+    protected_anchors = _protected_anchor_brief_for_prompt(protected_source)
     return (
         "DraftProof paragraph-component AI mitigation.\n"
         "Rewrite only the target paragraph.\n"
@@ -5846,6 +5897,9 @@ def _paragraph_component_prompt(
         f"{target.get('next_paragraph') or '[none]'}\n\n"
         "Rewrite rules:\n"
         "- Preserve all citations, years, numbers, names, unit codes, and source references.\n"
+        "- Preserve every protected anchor exactly, including quoted phrases.\n"
+        f"- Protected anchors: {json.dumps(protected_anchors, ensure_ascii=False)[:2200]}\n"
+        "- If a protected quote is awkward, keep the quote exactly and rewrite around it.\n"
         "- Do not invent new evidence, sources, people, institutions, or events.\n"
         "- Break generic assertion flow: avoid broad claims unless tied to the local haircutting/classroom process.\n"
         "- Start from concrete action, learner behavior, source relation, or assessment consequence before broad explanation.\n"
