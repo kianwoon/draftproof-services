@@ -141,6 +141,7 @@ from rewrite_pipeline import (
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
     _plain_language_depolish_text,
+    _final_score_drag_sentence_prune_text,
     _protected_anchor_brief_for_prompt,
     _build_source_grounding_search_layer,
     _confirmed_author_anchor_brief,
@@ -2840,6 +2841,24 @@ assert_test(
     and "Therefore" not in depolished_text
     and "learning journey" not in depolished_text,
     "final depolish cleanup removes late-stage polished connector artifacts",
+)
+score_drag_text = (
+    "The classroom pattern remains. "
+    "During the week, students attend classes, hear explanations, finish homework, and sit exams. "
+    "I think that structure still matters because it gives students routine and direction. "
+    "But the world outside school has changed much faster than the classroom.\n\n"
+    "In the classroom and outside it, information is everywhere. "
+    "I think the harder challenge now is knowing what to trust.\n\n"
+    "It should prepare them for life in a world full of information and distractions. "
+    "Students need knowledge, but they also need judgment."
+)
+score_drag_pruned, score_drag_repairs = _final_score_drag_sentence_prune_text(score_drag_text)
+assert_test(
+    score_drag_repairs
+    and "world outside school has changed much faster" not in score_drag_pruned
+    and "information is everywhere" not in score_drag_pruned
+    and "Students need knowledge" in score_drag_pruned,
+    "final score-drag pruning removes broad unsupported sentences without deleting anchored follow-up",
 )
 normalized_tavily = _normalize_tavily_results(
     {

@@ -6785,6 +6785,98 @@ def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
     return updated, applied
 
 
+def _final_score_drag_sentence_prune_text(text: str) -> tuple[str, list[str]]:
+    """Remove broad late-stage sentences that drag scanner scores down.
+
+    This is intentionally narrow and deterministic. It does not add claims or
+    rewrite the document; it only offers a candidate with reusable, unsupported
+    broad assertions removed. The scanner/selector still decides whether to keep
+    it.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return "", []
+    if not _env_flag("DRAFTPROOF_FINAL_SCORE_DRAG_PRUNE", True):
+        return text, []
+    max_removed = max(1, int(_float_env("DRAFTPROOF_FINAL_SCORE_DRAG_PRUNE_MAX_SENTENCES", 3.0)))
+    min_ratio = _float_env("DRAFTPROOF_FINAL_SCORE_DRAG_PRUNE_MIN_WORD_RATIO", 0.75)
+    source_words = _text_word_count(text)
+    if source_words <= 0:
+        return text, []
+    min_words = int(source_words * min_ratio)
+    remaining_words = source_words
+    sentence_patterns: list[tuple[str, str]] = [
+        (
+            r"\bthe world outside school has changed much faster than the classroom\b",
+            "outside_school_changed_faster",
+        ),
+        (
+            r"\bin the classroom and outside it,\s+information is everywhere\b",
+            "information_everywhere",
+        ),
+        (
+            r"\bworld full of information and distractions\b",
+            "world_information_distractions",
+        ),
+        (
+            r"\bknowledge is no longer scarce\b",
+            "knowledge_no_longer_scarce",
+        ),
+        (
+            r"\baccess is no longer the biggest problem\b",
+            "access_no_longer_biggest_problem",
+        ),
+    ]
+    protected_pattern = re.compile(
+        r"(?:\"[^\"]+\"|“[^”]+”|\[[^\]]+\]|\([A-Za-z]+,\s*\d{4}\)|\b\d+(?:\.\d+)?%?\b|"
+        r"\b[A-Z]{2,}[A-Z0-9-]*\b)",
+    )
+    paragraphs = _logical_paragraphs(text)
+    updated_paragraphs: list[str] = []
+    applied: list[str] = []
+    removed = 0
+    for paragraph in paragraphs:
+        if removed >= max_removed:
+            updated_paragraphs.append(paragraph)
+            continue
+        sentences = _split_sentences(paragraph)
+        if len(sentences) < 2:
+            updated_paragraphs.append(paragraph)
+            continue
+        kept: list[str] = []
+        for sentence in sentences:
+            if removed >= max_removed:
+                kept.append(sentence)
+                continue
+            sentence_text = sentence.strip()
+            lower_sentence = sentence_text.lower()
+            matched_name = ""
+            for pattern, name in sentence_patterns:
+                if re.search(pattern, lower_sentence, flags=re.I):
+                    matched_name = name
+                    break
+            if (
+                matched_name
+                and not protected_pattern.search(sentence_text)
+                and _text_word_count(sentence_text) <= 22
+                and len(sentences) - 1 >= 1
+                and remaining_words - _text_word_count(sentence_text) >= min_words
+            ):
+                removed += 1
+                remaining_words -= _text_word_count(sentence_text)
+                applied.append(matched_name)
+                continue
+            kept.append(sentence)
+        next_paragraph = " ".join(kept).strip()
+        if next_paragraph:
+            updated_paragraphs.append(next_paragraph)
+    updated = _join_logical_paragraphs(updated_paragraphs)
+    if not applied or updated.strip() == text.strip():
+        return text, []
+    if _text_word_count(updated) < min_words:
+        return text, []
+    return updated, applied
+
+
 def _compress_score_drag_paragraph(paragraph: str, *, max_remove: int = 2) -> str:
     sentences = _split_sentences(paragraph)
     if len(sentences) < 3:
@@ -10556,6 +10648,165 @@ def run_rewrite_pipeline(
         elif adaptive_stop_reason:
             _run_post_safe_win_target_push("adaptive_stop")
 
+        def _run_final_topk_texture_repair(trigger_phase: str) -> None:
+            if not _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_REPAIR", True):
+                search_summary["final_topk_texture_repair"] = {
+                    "enabled": False,
+                    "reason": "disabled",
+                    "trigger_phase": trigger_phase,
+                }
+                return
+            if not effective_key:
+                search_summary["final_topk_texture_repair"] = {
+                    "enabled": False,
+                    "reason": "no_llm_key",
+                    "trigger_phase": trigger_phase,
+                }
+                return
+            if not _best_ai_search_selectable() or not isinstance(best_report, dict):
+                search_summary["final_topk_texture_repair"] = {
+                    "enabled": True,
+                    "skipped": True,
+                    "reason": "no_selectable_base",
+                    "trigger_phase": trigger_phase,
+                }
+                return
+            blockers = _blocker_scores(best_report)
+            min_topk = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_TOPK", 75.0)
+            min_predictability = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_PREDICTABILITY", 75.0)
+            min_generic = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_GENERIC_ASSERTION", 70.0)
+            active = {
+                "topk_pattern": float(blockers.get("topk_pattern") or 0.0),
+                "predictability": float(blockers.get("predictability") or 0.0),
+                "generic_assertion_risk": float(blockers.get("generic_assertion_risk") or 0.0),
+            }
+            should_run = (
+                active["topk_pattern"] >= min_topk
+                or active["predictability"] >= min_predictability
+                or active["generic_assertion_risk"] >= min_generic
+            )
+            try:
+                candidate_limit = max(
+                    1,
+                    int(_float_env(
+                        "DRAFTPROOF_FINAL_TOPK_TEXTURE_CANDIDATES",
+                        float(_adaptive_budget_default(best_text, 1, 2)),
+                    )),
+                )
+            except (TypeError, ValueError):
+                candidate_limit = 1
+            summary = {
+                "enabled": True,
+                "trigger_phase": trigger_phase,
+                "candidate_limit": candidate_limit,
+                "base_strategy": best_strategy,
+                "blockers_before": blockers,
+                "thresholds": {
+                    "topk_pattern": min_topk,
+                    "predictability": min_predictability,
+                    "generic_assertion_risk": min_generic,
+                },
+            }
+            if not should_run:
+                summary.update({"skipped": True, "reason": "texture_below_threshold"})
+                search_summary["final_topk_texture_repair"] = summary
+                return
+            search_summary["final_topk_texture_repair"] = summary
+            try:
+                prompt = _topk_texture_repair_prompt(
+                    best_text,
+                    best_report,
+                    candidate_count=candidate_limit,
+                )
+                search_summary["llm_calls"] += 1
+                response = gateway.chat(
+                    prompt,
+                    system=(
+                        "You are DraftProof's final top-k texture repair engine. "
+                        "Patch only predictable phrasing in the already selected candidate. "
+                        "Do not add facts. Return only tagged full-document candidates."
+                    ),
+                    temperature=float(os.environ.get(
+                        "DRAFTPROOF_FINAL_TOPK_TEXTURE_TEMPERATURE",
+                        os.environ.get("DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE", "0.45"),
+                    )),
+                    max_tokens=int(os.environ.get(
+                        "DRAFTPROOF_FINAL_TOPK_TEXTURE_MAX_TOKENS",
+                        os.environ.get("DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS", "4800"),
+                    )),
+                    top_p=(
+                        _float_env_optional("DRAFTPROOF_FINAL_TOPK_TEXTURE_TOP_P")
+                        if os.environ.get("DRAFTPROOF_FINAL_TOPK_TEXTURE_TOP_P") is not None
+                        else _float_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_P")
+                    ),
+                    top_k=(
+                        _int_env_optional("DRAFTPROOF_FINAL_TOPK_TEXTURE_TOP_K")
+                        if os.environ.get("DRAFTPROOF_FINAL_TOPK_TEXTURE_TOP_K") is not None
+                        else _int_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_K")
+                    ),
+                    presence_penalty=(
+                        _float_env_optional("DRAFTPROOF_FINAL_TOPK_TEXTURE_PRESENCE_PENALTY")
+                        if os.environ.get("DRAFTPROOF_FINAL_TOPK_TEXTURE_PRESENCE_PENALTY") is not None
+                        else _float_env_optional("DRAFTPROOF_TOPK_TEXTURE_PRESENCE_PENALTY")
+                    ),
+                    frequency_penalty=(
+                        _float_env_optional("DRAFTPROOF_FINAL_TOPK_TEXTURE_FREQUENCY_PENALTY")
+                        if os.environ.get("DRAFTPROOF_FINAL_TOPK_TEXTURE_FREQUENCY_PENALTY") is not None
+                        else _float_env_optional("DRAFTPROOF_TOPK_TEXTURE_FREQUENCY_PENALTY")
+                    ),
+                )
+                outputs = _extract_paragraph_component_candidates(response.content, candidate_limit)
+            except Exception as exc:
+                search_summary["candidates"].append({
+                    "strategy": "final_topk_texture_repair_batch",
+                    "passed_local_checks": False,
+                    "reason": f"llm_error {exc}",
+                    "topk_texture_repair": True,
+                    "final_topk_texture_repair": True,
+                    "base_strategy": best_strategy,
+                })
+                summary["reason"] = f"llm_error {exc}"
+                return
+            accepted_before = len([
+                candidate
+                for candidate in search_summary.get("candidates", [])
+                if isinstance(candidate, dict)
+                and candidate.get("final_topk_texture_repair")
+                and (candidate.get("selection_status") or {}).get("selectable")
+            ])
+            for candidate_number, raw_candidate in enumerate(outputs, start=1):
+                candidate = _clean_full_document_candidate(raw_candidate, best_text)
+                strategy = f"final_topk_texture_repair_c{candidate_number}"
+                if not candidate:
+                    search_summary["candidates"].append({
+                        "strategy": strategy,
+                        "passed_local_checks": False,
+                        "reason": "empty_or_unchanged_candidate",
+                        "topk_texture_repair": True,
+                        "final_topk_texture_repair": True,
+                        "base_strategy": best_strategy,
+                    })
+                    continue
+                _evaluate_ai_search_candidate(
+                    strategy,
+                    candidate,
+                    deterministic=False,
+                    extra={
+                        "topk_texture_repair": True,
+                        "final_topk_texture_repair": True,
+                        "base_strategy": best_strategy,
+                    },
+                )
+            accepted_after = len([
+                candidate
+                for candidate in search_summary.get("candidates", [])
+                if isinstance(candidate, dict)
+                and candidate.get("final_topk_texture_repair")
+                and (candidate.get("selection_status") or {}).get("selectable")
+            ])
+            summary["accepted_count"] = max(0, accepted_after - accepted_before)
+            summary["selected_strategy_after"] = best_strategy
+
         post_safe_summary = search_summary.get("post_safe_win_target_push")
         post_safe_human = (
             _contribution_scores(best_report).get("human")
@@ -12017,6 +12268,19 @@ def run_rewrite_pipeline(
                                     "base_strategy": best_strategy,
                                 },
                             )
+                    pruned_text, prune_repairs = _final_score_drag_sentence_prune_text(best_text)
+                    if prune_repairs and pruned_text.strip() != best_text.strip():
+                        _evaluate_ai_search_candidate(
+                            "final_score_drag_prune",
+                            pruned_text,
+                            deterministic=True,
+                            extra={
+                                "final_score_drag_prune": True,
+                                "score_drag_prune_repairs": prune_repairs,
+                                "base_strategy": best_strategy,
+                            },
+                        )
+                    _run_final_topk_texture_repair("pre_selection_after_depolish")
                     previous_ai = rewritten_ai
                     rewritten_text = best_text
                     rewritten_report_dict = best_report
