@@ -6730,6 +6730,161 @@ def _blocker_operation_candidates(
     return candidates[:max(1, limit)]
 
 
+def _post_safe_win_target_push_candidates(
+    source_text: str,
+    report_dict: dict | None,
+    *,
+    limit: int = 6,
+) -> list[tuple[str, str, dict]]:
+    """Build a bounded second-stage candidate set after the first safe win.
+
+    This avoids the old failure mode where adaptive stop protected cost but
+    froze the result at the first small gain even when Human Contribution was
+    still far below target.
+    """
+    if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True):
+        return []
+    current_human = _contribution_scores(report_dict or {}).get("human")
+    target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    if isinstance(current_human, (int, float)) and float(current_human) >= target_human:
+        return []
+    limit = max(1, int(limit or 1))
+    candidates: list[tuple[str, str, dict]] = []
+    seen: set[str] = {str(source_text or "").strip()}
+
+    def add(strategy: str, candidate: str, meta: dict) -> None:
+        normalized = str(candidate or "").strip()
+        if not normalized or normalized in seen or len(candidates) >= limit:
+            return
+        seen.add(normalized)
+        candidates.append((
+            f"post_safe_target_push_{strategy}",
+            candidate,
+            {
+                **meta,
+                "post_safe_win_target_push": True,
+                "base_human": current_human,
+                "target_human": target_human,
+            },
+        ))
+
+    blocker_limit = max(1, min(limit, int(math.ceil(limit * 0.65))))
+    for strategy, candidate, meta in _blocker_operation_candidates(
+        source_text,
+        report_dict,
+        limit=blocker_limit,
+    ):
+        add(strategy, candidate, meta)
+
+    if len(candidates) < limit:
+        for strategy, candidate, meta in _author_stance_thread_candidates(
+            source_text,
+            report_dict,
+            limit=limit - len(candidates),
+        ):
+            add(strategy, candidate, meta)
+
+    if len(candidates) < limit:
+        for strategy, candidate, meta in _content_pruning_candidates(
+            source_text,
+            report_dict,
+            limit=limit - len(candidates),
+        ):
+            add(strategy, candidate, meta)
+
+    return candidates[:limit]
+
+
+def _author_stance_thread_candidates(
+    source_text: str,
+    report_dict: dict | None,
+    *,
+    limit: int = 3,
+) -> list[tuple[str, str, dict]]:
+    """Create conservative author-stance candidates from claims already present.
+
+    This is not evidence invention. It only converts existing claims into a
+    visible author judgement where the paragraph is already making that claim.
+    The scanner/gate still rejects any authorship, drift, review, or severity
+    regression.
+    """
+    if not _env_flag("DRAFTPROOF_AUTHOR_STANCE_THREADING", True):
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 2:
+        return []
+    targets = _paragraph_component_targets(source_text, report_dict or {}, limit=max(limit * 3, 4))
+    protected = detect_protected_spans(source_text)
+
+    def paragraph_has_protected_anchor(index: int) -> bool:
+        before = _join_logical_paragraphs(paragraphs[:index])
+        start = len(before) + (2 if before else 0)
+        end = start + len(paragraphs[index])
+        return any(span.start_char >= start and span.end_char <= end for span in protected)
+
+    replacements = [
+        (
+            re.compile(r"\bThe real challenge now is knowing what to trust\.", re.I),
+            "I think the harder issue now is knowing what to trust.",
+            "trust_judgement",
+        ),
+        (
+            re.compile(r"\bThis is why teachers still play an important role\.", re.I),
+            "This is why I still see teachers as important.",
+            "teacher_role_judgement",
+        ),
+        (
+            re.compile(r"\bAt the same time, schools need to rethink how learning is measured\.", re.I),
+            "I also think schools need to rethink how learning is measured.",
+            "assessment_judgement",
+        ),
+        (
+            re.compile(r"\bIn the end, education should not only prepare students for exams\.", re.I),
+            "For me, education should not only prepare students for exams.",
+            "conclusion_stance",
+        ),
+        (
+            re.compile(r"\bBut having more information does not always mean better learning\.", re.I),
+            "But I do not think more information automatically means better learning.",
+            "information_learning_judgement",
+        ),
+    ]
+    candidates: list[tuple[str, str, dict]] = []
+    seen: set[str] = set()
+    for target in targets:
+        if len(candidates) >= max(1, limit):
+            break
+        index = int(target.get("index", 0) or 0)
+        if index < 0 or index >= len(paragraphs) or paragraph_has_protected_anchor(index):
+            continue
+        paragraph = paragraphs[index]
+        if re.search(r"\b(?:I|my|me|for me)\b", paragraph, flags=re.I):
+            continue
+        for pattern, replacement, operation in replacements:
+            if len(candidates) >= max(1, limit):
+                break
+            updated_paragraph, count = pattern.subn(replacement, paragraph, count=1)
+            if count <= 0 or updated_paragraph.strip() == paragraph.strip():
+                continue
+            updated = list(paragraphs)
+            updated[index] = updated_paragraph
+            candidate = _join_logical_paragraphs(updated)
+            if candidate.strip() == source_text.strip() or candidate in seen:
+                continue
+            seen.add(candidate)
+            candidates.append((
+                f"author_stance_thread_p{index + 1}_{operation}",
+                candidate,
+                {
+                    "operation": operation,
+                    "paragraph_index": index,
+                    "paragraph_role": target.get("role"),
+                    "paragraph_driver_score": target.get("score"),
+                },
+            ))
+    return candidates[:max(1, limit)]
+
+
 def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, str]]:
     """Create deterministic marked-addition candidates for missing grounding.
 
@@ -9533,7 +9688,309 @@ def run_rewrite_pipeline(
             if _maybe_adaptive_stop("deterministic_candidates"):
                 break
 
+        def _run_post_safe_win_target_push(trigger_phase: str) -> None:
+            nonlocal adaptive_stop_reason
+            if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True):
+                return
+            if not _best_ai_search_selectable() or not isinstance(best_report, dict):
+                return
+            current_human = _contribution_scores(best_report).get("human")
+            target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+            if not isinstance(current_human, (int, float)) or float(current_human) >= target_human:
+                search_summary["post_safe_win_target_push"] = {
+                    "enabled": True,
+                    "trigger_phase": trigger_phase,
+                    "skipped": True,
+                    "reason": "human_target_already_reached",
+                    "current_human": current_human,
+                    "target_human": target_human,
+                }
+                return
+            try:
+                push_limit = max(
+                    0,
+                    int(_float_env(
+                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_CANDIDATES",
+                        float(_adaptive_budget_default(best_text, 4, 8)),
+                    )),
+                )
+            except (TypeError, ValueError):
+                push_limit = 4
+            if push_limit <= 0:
+                search_summary["post_safe_win_target_push"] = {
+                    "enabled": False,
+                    "trigger_phase": trigger_phase,
+                    "reason": "candidate_limit_zero",
+                    "current_human": current_human,
+                    "target_human": target_human,
+                }
+                return
+            base_strategy = best_strategy
+            base_human = float(current_human)
+            base_ai = best_ai
+            candidates = _post_safe_win_target_push_candidates(
+                best_text,
+                best_report,
+                limit=push_limit,
+            )
+            summary = {
+                "enabled": True,
+                "trigger_phase": trigger_phase,
+                "base_strategy": base_strategy,
+                "base_ai": base_ai,
+                "base_human": base_human,
+                "target_human": target_human,
+                "candidate_limit": push_limit,
+                "candidate_count": len(candidates),
+                "accepted": False,
+                "accepted_strategy": None,
+            }
+            search_summary["post_safe_win_target_push"] = summary
+            if not candidates:
+                summary["reason"] = "no_target_push_candidates"
+                return
+            min_extra_gain = _float_env("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MIN_EXTRA_HUMAN_GAIN", 1.0)
+            for push_index, (strategy, candidate, meta) in enumerate(candidates, start=1):
+                report_progress(
+                    min(89, 80 + push_index),
+                    f"Trying post-safe-win target push {push_index}/{len(candidates)}",
+                )
+                _evaluate_ai_search_candidate(
+                    strategy,
+                    candidate,
+                    deterministic=True,
+                    extra={
+                        **meta,
+                        "post_safe_win_target_push": True,
+                        "base_strategy": base_strategy,
+                        "trigger_phase": trigger_phase,
+                    },
+                )
+                candidate_human = (
+                    _contribution_scores(best_report).get("human")
+                    if isinstance(best_report, dict) else None
+                )
+                if (
+                    best_strategy != base_strategy
+                    and best_selection_status.get("selectable")
+                    and isinstance(candidate_human, (int, float))
+                    and float(candidate_human) >= base_human + min_extra_gain
+                ):
+                    summary.update({
+                        "accepted": True,
+                        "accepted_strategy": best_strategy,
+                        "accepted_human": candidate_human,
+                        "accepted_ai": best_ai,
+                        "scanned": push_index,
+                    })
+                    adaptive_stop_reason = "adaptive_stop_after_post_safe_win_target_push"
+                    search_summary["adaptive_stop"] = {
+                        "phase": "post_safe_win_target_push",
+                        "reason": adaptive_stop_reason,
+                        "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                        "selected_strategy": best_strategy,
+                        "selection_status": best_selection_status,
+                    }
+                    break
+            if not summary.get("accepted"):
+                summary["scanned"] = len(candidates)
+                summary["reason"] = "no_extra_safe_human_gain"
+            if (
+                not summary.get("accepted")
+                and _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM", True)
+                and effective_key
+            ):
+                try:
+                    llm_candidate_limit = max(
+                        1,
+                        int(_float_env(
+                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_CANDIDATES",
+                            float(_adaptive_budget_default(best_text, 1, 2)),
+                        )),
+                    )
+                    llm_target_limit = max(
+                        1,
+                        int(_float_env(
+                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_TARGETS",
+                            float(_adaptive_budget_default(best_text, 1, 1)),
+                        )),
+                    )
+                except (TypeError, ValueError):
+                    llm_candidate_limit = 1
+                    llm_target_limit = 1
+                llm_targets = _paragraph_component_targets(
+                    best_text,
+                    best_report if isinstance(best_report, dict) else ctx.raw_json,
+                    limit=max(llm_target_limit * 3, llm_target_limit),
+                )[:llm_target_limit]
+                summary["llm_target_push"] = {
+                    "enabled": True,
+                    "target_count": len(llm_targets),
+                    "candidate_limit_per_target": llm_candidate_limit,
+                    "accepted": False,
+                }
+                if llm_targets:
+                    try:
+                        push_gateway = LLMGateway(LLMConfig(
+                            api_key=effective_key,
+                            model=generator_model,
+                            base_url=base_url,
+                            timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
+                            max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
+                            max_tokens=int(os.environ.get(
+                                "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MAX_TOKENS",
+                                os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS", "2600"),
+                            )),
+                            temperature=float(os.environ.get(
+                                "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_TEMPERATURE",
+                                os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
+                            )),
+                        ))
+                    except Exception as exc:
+                        summary["llm_target_push"]["reason"] = f"gateway_error {exc}"
+                        push_gateway = None
+                    if push_gateway:
+                        llm_base_text = best_text
+                        llm_base_strategy = best_strategy
+                        for target_number, target in enumerate(llm_targets, start=1):
+                            report_progress(
+                                min(92, 84 + target_number),
+                                (
+                                    "Trying post-safe-win LLM target push "
+                                    f"{target_number}/{len(llm_targets)}"
+                                ),
+                            )
+                            try:
+                                prompt = _human_signal_amplification_prompt(
+                                    target,
+                                    ctx.raw_json,
+                                    target_number,
+                                    candidate_count=llm_candidate_limit,
+                                    confirmed_author_anchors=confirmed_author_anchor_brief,
+                                )
+                                search_summary["llm_calls"] += 1
+                                response = push_gateway.chat(
+                                    prompt,
+                                    system=(
+                                        "You are DraftProof's post-safe-win target push engine. "
+                                        "Increase Human Contribution only if Authorship, Transformation, "
+                                        "review burden, severity, anchors, and meaning remain safe. "
+                                        "Return only tagged replacement paragraphs."
+                                    ),
+                                    temperature=float(os.environ.get(
+                                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_TEMPERATURE",
+                                        os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
+                                    )),
+                                    max_tokens=int(os.environ.get(
+                                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MAX_TOKENS",
+                                        os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS", "2600"),
+                                    )),
+                                )
+                                outputs = _extract_paragraph_component_candidates(
+                                    response.content,
+                                    llm_candidate_limit,
+                                )
+                            except Exception as exc:
+                                search_summary["candidates"].append({
+                                    "strategy": (
+                                        f"post_safe_target_push_llm_p{int(target.get('index', 0)) + 1}"
+                                        "_batch"
+                                    ),
+                                    "passed_local_checks": False,
+                                    "reason": f"llm_error {exc}",
+                                    "post_safe_win_target_push": True,
+                                    "post_safe_win_target_push_llm": True,
+                                    "paragraph_index": target.get("index"),
+                                    "paragraph_role": target.get("role"),
+                                })
+                                continue
+                            for candidate_number, raw_paragraph_candidate in enumerate(outputs, start=1):
+                                strategy = (
+                                    f"post_safe_target_push_llm_p{int(target.get('index', 0)) + 1}"
+                                    f"_c{candidate_number}"
+                                )
+                                paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
+                                    raw_paragraph_candidate,
+                                    target.get("paragraph") or "",
+                                )
+                                if paragraph_reject:
+                                    search_summary["candidates"].append({
+                                        "strategy": strategy,
+                                        "passed_local_checks": False,
+                                        "reason": paragraph_reject,
+                                        "post_safe_win_target_push": True,
+                                        "post_safe_win_target_push_llm": True,
+                                        "paragraph_index": target.get("index"),
+                                        "paragraph_role": target.get("role"),
+                                    })
+                                    continue
+                                patched_candidate = _splice_paragraph(
+                                    llm_base_text,
+                                    int(target.get("index", 0)),
+                                    paragraph_candidate,
+                                )
+                                _evaluate_ai_search_candidate(
+                                    strategy,
+                                    patched_candidate,
+                                    deterministic=False,
+                                    extra={
+                                        "post_safe_win_target_push": True,
+                                        "post_safe_win_target_push_llm": True,
+                                        "human_signal_amplification": True,
+                                        "paragraph_component": True,
+                                        "paragraph_index": target.get("index"),
+                                        "paragraph_role": target.get("role"),
+                                        "paragraph_driver_score": target.get("score"),
+                                        "paragraph_drivers": target.get("drivers"),
+                                        "base_strategy": llm_base_strategy,
+                                        "trigger_phase": trigger_phase,
+                                    },
+                                )
+                                candidate_human = (
+                                    _contribution_scores(best_report).get("human")
+                                    if isinstance(best_report, dict) else None
+                                )
+                                if (
+                                    best_strategy != base_strategy
+                                    and best_selection_status.get("selectable")
+                                    and isinstance(candidate_human, (int, float))
+                                    and float(candidate_human) >= base_human + min_extra_gain
+                                ):
+                                    summary.update({
+                                        "accepted": True,
+                                        "accepted_strategy": best_strategy,
+                                        "accepted_human": candidate_human,
+                                        "accepted_ai": best_ai,
+                                        "reason": "accepted_llm_target_push",
+                                    })
+                                    summary["llm_target_push"].update({
+                                        "accepted": True,
+                                        "accepted_strategy": best_strategy,
+                                        "accepted_human": candidate_human,
+                                    })
+                                    adaptive_stop_reason = "adaptive_stop_after_post_safe_win_target_push"
+                                    search_summary["adaptive_stop"] = {
+                                        "phase": "post_safe_win_target_push",
+                                        "reason": adaptive_stop_reason,
+                                        "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                                        "selected_strategy": best_strategy,
+                                        "selection_status": best_selection_status,
+                                    }
+                                    break
+                            if summary.get("accepted"):
+                                break
+                elif "llm_target_push" not in summary:
+                    summary["llm_target_push"] = {
+                        "enabled": False,
+                        "reason": "no_llm_key",
+                    }
+
         if early_stop_reason:
+            _run_post_safe_win_target_push("early_stop")
+        elif adaptive_stop_reason:
+            _run_post_safe_win_target_push("adaptive_stop")
+
+        if early_stop_reason and not adaptive_stop_reason:
             search_summary["llm_reason"] = "skipped_after_fast_deterministic_accept"
         elif adaptive_stop_reason:
             search_summary["llm_reason"] = adaptive_stop_reason

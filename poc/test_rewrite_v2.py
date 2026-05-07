@@ -121,6 +121,8 @@ from rewrite_pipeline import (
     _content_pruning_candidates,
     _blocker_operation_plan,
     _blocker_operation_candidates,
+    _post_safe_win_target_push_candidates,
+    _author_stance_thread_candidates,
     _dominant_blocker_gate_status,
     _dominant_blocker_safe_progress_override,
     _ai_search_adaptive_stop_reason,
@@ -4224,6 +4226,60 @@ assert_test(
 assert_test(
     _adaptive_budget_default(long_budget_text, 2, 6) == "6",
     "adaptive budget keeps long-document default above threshold",
+)
+
+target_push_text = (
+    "Opening paragraph keeps the topic clear for the reader.\n\n"
+    "The real challenge now is knowing what to trust. "
+    "Students can use many online tools, and this is important because it helps learning in many ways. "
+    "This shows that education needs to change for the modern world. "
+    "The issue is significant because students need support and guidance. "
+    "This can create better outcomes because the system can help students learn more effectively over time.\n\n"
+    "This is why teachers still play an important role. "
+    "Teachers can help students ask questions and understand information. "
+    "This is useful because it improves learning and creates better outcomes. "
+    "Schools should focus on skills and knowledge for the future. "
+    "This means assessment should support learning, feedback, and improvement in a broad educational context.\n\n"
+    "The conclusion is that education should prepare students for change."
+)
+target_push_report = {
+    "integrity_layers": {
+        "layers": {
+            "human_contribution_signal": {"score": 55.0},
+            "ai_transformation_risk": {"score": 45.0},
+            "ai_authorship_risk": {"score": 56.0},
+        }
+    },
+    "ai_risk_badge": {
+        "ai_components": {"generic_assertion_risk": 90.0, "predictability": 75.0},
+        "writing_components": {"unsupported_claim_risk": 90.0, "broad_claim_risk": 80.0},
+    },
+}
+target_push_candidates = _post_safe_win_target_push_candidates(
+    target_push_text,
+    target_push_report,
+    limit=4,
+)
+assert_test(
+    bool(target_push_candidates)
+    and all(strategy.startswith("post_safe_target_push_") for strategy, _candidate, _meta in target_push_candidates),
+    "post-safe-win target push generates bounded deterministic candidates below target",
+)
+stance_candidates = _author_stance_thread_candidates(
+    target_push_text,
+    target_push_report,
+    limit=3,
+)
+assert_test(
+    bool(stance_candidates)
+    and any("I think" in candidate or "For me" in candidate for _strategy, candidate, _meta in stance_candidates),
+    "author stance threading creates implied author-judgement candidates without new evidence",
+)
+target_push_report_at_goal = json.loads(json.dumps(target_push_report))
+target_push_report_at_goal["integrity_layers"]["layers"]["human_contribution_signal"]["score"] = 82.0
+assert_test(
+    _post_safe_win_target_push_candidates(target_push_text, target_push_report_at_goal, limit=4) == [],
+    "post-safe-win target push skips when Human target is already reached",
 )
 
 safe_stale_blocker_override = _dominant_blocker_safe_progress_override(
