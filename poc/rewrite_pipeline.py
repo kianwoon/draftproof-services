@@ -6284,6 +6284,16 @@ def _extract_finding_local_patches(output: str) -> list[dict]:
     if not isinstance(patches, list):
         return []
     cleaned = []
+    polished_patch_patterns = [
+        r"\bthere are instances where\b",
+        r"\balign with\b",
+        r"\bemphasizing aspects such as\b",
+        r"\bit is important to\b",
+        r"\bplays? a crucial role\b",
+        r"\bserves as\b",
+        r"\bhighlights? the importance\b",
+        r"\bunderscores? the need\b",
+    ]
     for patch in patches:
         if not isinstance(patch, dict):
             continue
@@ -6292,6 +6302,8 @@ def _extract_finding_local_patches(output: str) -> list[dict]:
         if len(target.split()) < 5 or len(replacement.split()) < 5:
             continue
         if "[[" in replacement or "]]" in replacement:
+            continue
+        if any(re.search(pattern, replacement, flags=re.I) for pattern in polished_patch_patterns):
             continue
         cleaned.append({"target": target, "replacement": replacement})
     return cleaned[:5]

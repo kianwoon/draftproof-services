@@ -360,6 +360,11 @@ function getRewritePayloadSummary(rewriteReport) {
   return rewriteReport?.summary || rewriteReport?.rewrite_summary || rewriteReport || {};
 }
 
+function getOriginalDetectScan(rewriteReport) {
+  const summary = getRewritePayloadSummary(rewriteReport);
+  return summary.detect_scan_original_saved || summary.detect_scan_original || rewriteReport?.detect_scan_original || null;
+}
+
 function getRewrittenDetectScan(rewriteReport) {
   const summary = getRewritePayloadSummary(rewriteReport);
   return summary.detect_scan_rewritten || rewriteReport?.detect_scan_rewritten || null;
@@ -882,8 +887,13 @@ export default function Report() {
   const badge = report.ai_risk_badge || {};
   const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
-  const transformation = badge.transformation_classification || null;
-  const transformationSignalMetadata = report.scan_intelligence?.transformation?.core_signals || [];
+  const originalComparisonScan = getOriginalDetectScan(rewriteResultReport);
+  const originalComparisonBadge = originalComparisonScan?.ai_risk_badge || badge;
+  const originalComparisonAiScore = originalComparisonScan
+    ? (originalComparisonScan.ai_score ?? originalComparisonBadge.ai_likelihood_score ?? rewriteResultSummary?.original_risk ?? aiScore)
+    : aiScore;
+  const transformation = originalComparisonBadge.transformation_classification || null;
+  const transformationSignalMetadata = originalComparisonScan?.scan_intelligence?.transformation?.core_signals || report.scan_intelligence?.transformation?.core_signals || [];
   const transformationSignals = buildTransformationSignals(transformation?.features, transformationSignalMetadata);
   const originalContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'original');
   const transformationSummary = transformation
@@ -1213,19 +1223,19 @@ export default function Report() {
           <span>AI Score</span>
           <strong>
             {hasRewriteSignalComparison
-              ? `${formatMetricPercent(aiScore, 1)} -> ${formatMetricPercent(rewrittenAiScore, 1)}`
-              : formatMetricPercent(aiScore, 1)}
+              ? `${formatMetricPercent(originalComparisonAiScore, 1)} -> ${formatMetricPercent(rewrittenAiScore, 1)}`
+              : formatMetricPercent(originalComparisonAiScore, 1)}
           </strong>
         </div>
       </div>
       <div className="transformation-chart">
         {hasRewriteSignalComparison ? (
           <div className="transformation-comparison-grid">
-            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, aiScore)}
+            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, originalComparisonAiScore)}
             {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, rewrittenAiScore)}
           </div>
         ) : (
-          renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, aiScore)
+          renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, originalComparisonAiScore)
         )}
         {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
           <div className="transformation-evidence">

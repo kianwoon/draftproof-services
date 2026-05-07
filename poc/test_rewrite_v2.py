@@ -2739,6 +2739,10 @@ finding_local_patches = _extract_finding_local_patches(
     '{"patches":[{"target":"AI tools always improve student learning when used in schools.",'
     '"replacement":"AI tools can support student learning when students still have to explain their choices."}]}'
 )
+polished_finding_local_patches = _extract_finding_local_patches(
+    '{"patches":[{"target":"In practical haircutting classes, some learners do not ask for help directly.",'
+    '"replacement":"In practical haircutting classes, there are instances where learners may not directly seek assistance."}]}'
+)
 patched_text, applied_patches = _apply_finding_local_patches(
     "AI tools always improve student learning when used in schools.",
     finding_local_patches,
@@ -2750,6 +2754,10 @@ assert_test(
     and "can support" in patched_text
     and applied_patches,
     "finding-local blocked winner repair extracts targets, parses JSON patches, and splices exact text",
+)
+assert_test(
+    polished_finding_local_patches == [],
+    "finding-local blocked winner repair rejects polished generic patch replacements",
 )
 assert_test(
     _should_track_blocked_human_winner(
