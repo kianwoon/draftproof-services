@@ -4350,12 +4350,36 @@ th {
 
 .transformation-bar-label {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: .75rem;
   color: #475569;
   font-size: .78rem;
   font-weight: 750;
   line-height: 1.2;
+}
+
+.transformation-bar-name {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  min-width: 0;
+}
+
+.transformation-improvement-badge {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: #047857;
+  background: #d1fae5;
+  border: 1px solid #86efac;
+  border-radius: 999px;
+}
+
+.transformation-bar-row.is-improved .transformation-bar-label {
+  color: #0f766e;
 }
 
 .transformation-bar-label strong {
