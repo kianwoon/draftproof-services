@@ -1458,6 +1458,124 @@ def _internet_reinforced_reauthor_prompt(
     )
 
 
+def _claim_narrowing_repair_prompt(
+    source_text: str,
+    report_dict: dict | None,
+    *,
+    candidate_count: int = 2,
+) -> str:
+    blockers = _blocker_scores(report_dict)
+    paragraphs = _logical_paragraphs(source_text)
+    target_blocks = []
+    for target in _paragraph_component_targets(source_text, report_dict or {}, limit=8):
+        paragraph = target.get("paragraph") or ""
+        role = str(target.get("role") or "")
+        drivers = target.get("drivers") or {}
+        if role in {"generic_claim_heavy", "conclusion_template_risk", "mixed"}:
+            target_blocks.append({
+                "paragraph_index": target.get("index"),
+                "role": role,
+                "score": target.get("score"),
+                "drivers": drivers,
+                "preview": paragraph[:520],
+            })
+    if not target_blocks:
+        target_blocks = [
+            {"paragraph_index": i, "role": "candidate", "preview": p[:520]}
+            for i, p in enumerate(paragraphs)
+            if _text_word_count(p) >= 35
+        ][:5]
+    word_band = _word_count_band(
+        source_text,
+        variance=_float_env("DRAFTPROOF_CLAIM_NARROWING_WORD_VARIANCE", 0.25),
+    )
+    return (
+        "DraftProof CLAIM_NARROWING_REPAIR.\n"
+        "Do not humanize generically. Reduce unsupported_claim_risk and broad_claim_risk directly.\n\n"
+        f"Current blocker scores: {json.dumps(blockers, ensure_ascii=False)}\n"
+        f"Word-count band: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
+        "Target blocks:\n"
+        f"{json.dumps(target_blocks, ensure_ascii=False)[:7000]}\n\n"
+        "Required operations:\n"
+        "- weaken absolute claims\n"
+        "- add scope limits\n"
+        "- convert universal claims into conditional or observed/context-bound claims\n"
+        "- remove overreach\n"
+        "- delete or compress unsupported broad claims when narrowing is not enough\n"
+        "- preserve existing anchors, source relations, and meaning coverage\n\n"
+        "Forbidden:\n"
+        "- do not add new facts, citations, dates, names, statistics, examples, institutions, or author experiences\n"
+        "- do not make the prose more polished or academic\n"
+        "- do not use generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion\n\n"
+        "Acceptance target:\n"
+        "- unsupported_claim_risk must drop\n"
+        "- broad_claim_risk must drop\n"
+        "- AI Authorship must not increase\n"
+        "- AI Transformation must drop or stay safe\n"
+        "- findings/review/severity must not regress\n\n"
+        "SOURCE DOCUMENT:\n"
+        f"<SOURCE_DOCUMENT>\n{source_text.strip()}\n</SOURCE_DOCUMENT>\n\n"
+        f"Return exactly {max(1, int(candidate_count or 1))} complete document candidates using this exact format:\n"
+        "<CANDIDATE_1>\ncomplete document only\n</CANDIDATE_1>\n"
+        "<CANDIDATE_2>\ncomplete document only\n</CANDIDATE_2>\n"
+        "...continue until the requested candidate count.\n"
+        "No commentary outside tags."
+    )
+
+
+def _topk_texture_repair_prompt(
+    source_text: str,
+    report_dict: dict | None,
+    *,
+    candidate_count: int = 2,
+) -> str:
+    blockers = _blocker_scores(report_dict)
+    risk_map = _sentence_texture_risk_map(source_text, report_dict, limit=10)
+    target_sentences = [
+        {
+            "sentence_index": item.get("sentence_index"),
+            "risk": item.get("risk"),
+            "sentence": item.get("sentence"),
+            "drivers": item.get("drivers"),
+        }
+        for item in risk_map[:8]
+    ]
+    word_band = _word_count_band(
+        source_text,
+        variance=_float_env("DRAFTPROOF_TOPK_TEXTURE_WORD_VARIANCE", 0.25),
+    )
+    return (
+        "DraftProof TOPK_TEXTURE_REPAIR.\n"
+        "Reduce predictable phrasing after claim narrowing. Do not add facts.\n\n"
+        f"Current blocker scores: {json.dumps(blockers, ensure_ascii=False)}\n"
+        f"Word-count band: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
+        "Highest-risk sentence texture targets:\n"
+        f"{json.dumps(target_sentences, ensure_ascii=False)[:5000]}\n\n"
+        "Allowed operations:\n"
+        "- replace generic sentence openings\n"
+        "- break balanced sentence rhythm\n"
+        "- remove polished connectors\n"
+        "- vary sentence length lightly\n"
+        "- patch only high-risk sentences or adjacent clauses\n\n"
+        "Hard rule:\n"
+        "- Do not add new facts, citations, statistics, examples, institutions, names, dates, or author experiences.\n"
+        "- Preserve claim scope after narrowing.\n"
+        "- Do not rewrite into smoother academic prose.\n\n"
+        "Acceptance target:\n"
+        "- topk_pattern must drop\n"
+        "- predictability should drop\n"
+        "- AI Authorship must not increase\n"
+        "- unsupported/broad claims must not regress\n\n"
+        "SOURCE DOCUMENT:\n"
+        f"<SOURCE_DOCUMENT>\n{source_text.strip()}\n</SOURCE_DOCUMENT>\n\n"
+        f"Return exactly {max(1, int(candidate_count or 1))} complete document candidates using this exact format:\n"
+        "<CANDIDATE_1>\ncomplete document only\n</CANDIDATE_1>\n"
+        "<CANDIDATE_2>\ncomplete document only\n</CANDIDATE_2>\n"
+        "...continue until the requested candidate count.\n"
+        "No commentary outside tags."
+    )
+
+
 def _build_source_grounding_search_layer(
     text: str,
     report_dict: dict | None,
@@ -8263,7 +8381,10 @@ def run_rewrite_pipeline(
             or os.environ.get("LLM_API_KEY")
         )
         source_protected = detect_protected_spans(search_source_text)
-        min_chars = max(200, int(len(search_source_text) * 0.75))
+        min_chars = max(
+            200,
+            int(len(search_source_text) * _float_env("DRAFTPROOF_AI_SEARCH_MIN_CHAR_RATIO", 0.75)),
+        )
         max_chars = max(min_chars, int(len(text) * 1.30))
         best_text = rewritten_text
         best_report = rewritten_report_dict
@@ -8929,6 +9050,160 @@ def run_rewrite_pipeline(
                                     "internet_reinforced_reauthoring": True,
                                     "source_search_status": source_layer.get("status"),
                                     "source_result_count": len(source_layer.get("results") or []),
+                                },
+                            )
+                    if _env_flag("DRAFTPROOF_CLAIM_NARROWING_REPAIR", True):
+                        claim_candidate_count = max(
+                            1,
+                            int(_float_env("DRAFTPROOF_CLAIM_NARROWING_CANDIDATES", 2.0)),
+                        )
+                        search_summary["claim_narrowing_repair"] = {
+                            "enabled": True,
+                            "candidate_limit": claim_candidate_count,
+                            "target_blockers": [
+                                "unsupported_claim_risk",
+                                "broad_claim_risk",
+                            ],
+                        }
+                        try:
+                            prompt = _claim_narrowing_repair_prompt(
+                                component_base_text,
+                                original_report_dict,
+                                candidate_count=claim_candidate_count,
+                            )
+                            search_summary["llm_calls"] += 1
+                            response = gateway.chat(
+                                prompt,
+                                system=(
+                                    "You are DraftProof's claim narrowing engine. "
+                                    "Reduce unsupported and broad claims by narrowing/removing overreach. "
+                                    "Return only tagged full-document candidates."
+                                ),
+                                temperature=float(os.environ.get(
+                                    "DRAFTPROOF_CLAIM_NARROWING_TEMPERATURE",
+                                    "0.38",
+                                )),
+                                max_tokens=int(os.environ.get(
+                                    "DRAFTPROOF_CLAIM_NARROWING_MAX_TOKENS",
+                                    "4800",
+                                )),
+                                top_p=_float_env_optional("DRAFTPROOF_CLAIM_NARROWING_TOP_P"),
+                                top_k=_int_env_optional("DRAFTPROOF_CLAIM_NARROWING_TOP_K"),
+                                presence_penalty=_float_env_optional(
+                                    "DRAFTPROOF_CLAIM_NARROWING_PRESENCE_PENALTY"
+                                ),
+                                frequency_penalty=_float_env_optional(
+                                    "DRAFTPROOF_CLAIM_NARROWING_FREQUENCY_PENALTY"
+                                ),
+                            )
+                            claim_outputs = _extract_paragraph_component_candidates(
+                                response.content,
+                                claim_candidate_count,
+                            )
+                        except Exception as exc:
+                            search_summary["candidates"].append({
+                                "strategy": "claim_narrowing_repair_batch",
+                                "passed_local_checks": False,
+                                "reason": f"llm_error {exc}",
+                                "claim_narrowing_repair": True,
+                            })
+                            claim_outputs = []
+                        for candidate_number, raw_candidate in enumerate(claim_outputs, start=1):
+                            candidate = _clean_full_document_candidate(
+                                raw_candidate,
+                                component_base_text,
+                            )
+                            strategy = f"claim_narrowing_repair_c{candidate_number}"
+                            if not candidate:
+                                search_summary["candidates"].append({
+                                    "strategy": strategy,
+                                    "passed_local_checks": False,
+                                    "reason": "empty_or_unchanged_candidate",
+                                    "claim_narrowing_repair": True,
+                                })
+                                continue
+                            _evaluate_ai_search_candidate(
+                                strategy,
+                                candidate,
+                                deterministic=False,
+                                extra={"claim_narrowing_repair": True},
+                            )
+                    if _env_flag("DRAFTPROOF_TOPK_TEXTURE_REPAIR", True):
+                        texture_base_text = best_text if _best_ai_search_selectable() else component_base_text
+                        texture_base_report = best_report if _best_ai_search_selectable() else original_report_dict
+                        topk_candidate_count = max(
+                            1,
+                            int(_float_env("DRAFTPROOF_TOPK_TEXTURE_CANDIDATES", 2.0)),
+                        )
+                        search_summary["topk_texture_repair"] = {
+                            "enabled": True,
+                            "candidate_limit": topk_candidate_count,
+                            "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
+                        }
+                        try:
+                            prompt = _topk_texture_repair_prompt(
+                                texture_base_text,
+                                texture_base_report,
+                                candidate_count=topk_candidate_count,
+                            )
+                            search_summary["llm_calls"] += 1
+                            response = gateway.chat(
+                                prompt,
+                                system=(
+                                    "You are DraftProof's top-k texture repair engine. "
+                                    "Patch predictable phrasing without adding facts. "
+                                    "Return only tagged full-document candidates."
+                                ),
+                                temperature=float(os.environ.get(
+                                    "DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
+                                    "0.45",
+                                )),
+                                max_tokens=int(os.environ.get(
+                                    "DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS",
+                                    "4800",
+                                )),
+                                top_p=_float_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_P"),
+                                top_k=_int_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_K"),
+                                presence_penalty=_float_env_optional(
+                                    "DRAFTPROOF_TOPK_TEXTURE_PRESENCE_PENALTY"
+                                ),
+                                frequency_penalty=_float_env_optional(
+                                    "DRAFTPROOF_TOPK_TEXTURE_FREQUENCY_PENALTY"
+                                ),
+                            )
+                            topk_outputs = _extract_paragraph_component_candidates(
+                                response.content,
+                                topk_candidate_count,
+                            )
+                        except Exception as exc:
+                            search_summary["candidates"].append({
+                                "strategy": "topk_texture_repair_batch",
+                                "passed_local_checks": False,
+                                "reason": f"llm_error {exc}",
+                                "topk_texture_repair": True,
+                            })
+                            topk_outputs = []
+                        for candidate_number, raw_candidate in enumerate(topk_outputs, start=1):
+                            candidate = _clean_full_document_candidate(
+                                raw_candidate,
+                                texture_base_text,
+                            )
+                            strategy = f"topk_texture_repair_c{candidate_number}"
+                            if not candidate:
+                                search_summary["candidates"].append({
+                                    "strategy": strategy,
+                                    "passed_local_checks": False,
+                                    "reason": "empty_or_unchanged_candidate",
+                                    "topk_texture_repair": True,
+                                })
+                                continue
+                            _evaluate_ai_search_candidate(
+                                strategy,
+                                candidate,
+                                deterministic=False,
+                                extra={
+                                    "topk_texture_repair": True,
+                                    "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
                                 },
                             )
                     for source_number, source_result in enumerate(source_repair_results, start=1):

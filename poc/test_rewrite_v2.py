@@ -128,6 +128,8 @@ from rewrite_pipeline import (
     _source_result_confidence,
     _source_grounding_repair_prompt,
     _internet_reinforced_reauthor_prompt,
+    _claim_narrowing_repair_prompt,
+    _topk_texture_repair_prompt,
     _build_source_grounding_search_layer,
     _confirmed_author_anchor_brief,
     _blocker_elimination_status,
@@ -2894,6 +2896,39 @@ assert_test(
     and blocker_status["drops"]["unsupported_claim_risk"] == 20.0
     and blocker_status["top_remaining"][0]["key"] == "topk_pattern",
     "blocker elimination status measures active blocker reduction directly",
+)
+claim_narrowing_prompt = _claim_narrowing_repair_prompt(
+    pruning_source,
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 90.0,
+                "broad_claim_risk": 85.0,
+            },
+            "ai_components": {
+                "generic_assertion_risk": 65.0,
+                "topk_pattern": 80.0,
+            },
+        }
+    },
+    candidate_count=2,
+)
+topk_texture_prompt = _topk_texture_repair_prompt(
+    pruning_source,
+    {
+        "ai_risk_badge": {
+            "ai_components": {"topk_pattern": 80.0, "predictability": 47.0},
+            "writing_components": {"unsupported_claim_risk": 70.0, "broad_claim_risk": 65.0},
+        }
+    },
+    candidate_count=2,
+)
+assert_test(
+    "weaken absolute claims" in claim_narrowing_prompt
+    and "unsupported_claim_risk must drop" in claim_narrowing_prompt
+    and "topk_pattern must drop" in topk_texture_prompt
+    and "Do not add new facts" in topk_texture_prompt,
+    "targeted claim narrowing and top-k texture prompts attack remaining blockers directly",
 )
 previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
 previous_tavily_key = os.environ.get("TAVILY_API_KEY")
