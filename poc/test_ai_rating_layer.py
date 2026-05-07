@@ -806,4 +806,19 @@ assert_true(
     "classification exposes reporting suppression for policy calibration",
 )
 
+plain_reasoning_input = build_layer3_input_from_text(
+    "Technology can help students organise an answer. "
+    "The issue I would check is whether the student can explain the choice afterwards. "
+    "That matters because a clean response is not the same as understanding."
+)
+plain_generic_input = build_layer3_input_from_text(
+    "Technology can help students organise an answer. "
+    "This is important because it supports learning and improves outcomes. "
+    "A clean response is useful for education."
+)
+assert_true(
+    plain_reasoning_input.lived_detail_risk < plain_generic_input.lived_detail_risk,
+    "bounded author reasoning trace reduces lived-detail risk without requiring external evidence",
+)
+
 print("AI rating layer tests passed")

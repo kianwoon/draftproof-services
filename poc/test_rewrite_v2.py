@@ -2291,6 +2291,12 @@ assert_test(
     and paragraph_targets[0]["drivers"]["rewrite_brief_count"] == 1,
     "paragraph component search ranks paragraph-level AI drivers",
 )
+conclusion_target_text = paragraph_search_text + "\n\nThat, perhaps, is what this lesson should prepare learners for."
+conclusion_targets = _paragraph_component_targets(conclusion_target_text, paragraph_search_json, limit=5)
+assert_test(
+    any(target.get("role") == "conclusion_template_risk" for target in conclusion_targets),
+    "paragraph component search keeps short conclusion-template targets for amplification",
+)
 paragraph_prompt = _paragraph_component_prompt(
     paragraph_targets[0],
     paragraph_search_json,
@@ -2392,6 +2398,23 @@ assert_test(
     and "invent new evidence" in amplification_prompt
     and "generic connectors" in amplification_prompt,
     "human signal amplification prompt enforces operation-level gate",
+)
+generic_amplification_prompt = _human_signal_amplification_prompt(
+    {
+        "role": "generic_claim_heavy",
+        "paragraph": "Technology can help students learn, but it can also become a shortcut.",
+        "drivers": {"generic_assertion_hits": 4, "word_count": 12},
+    },
+    paragraph_search_json,
+    1,
+    candidate_count=1,
+)
+assert_test(
+    "Controlled operation: narrow the claim with one author-reasoning trace" in generic_amplification_prompt
+    and "Include exactly one" in generic_amplification_prompt
+    and "does not introduce a new fact" in generic_amplification_prompt
+    and "add one author judgement or reasoning trace if it changes no factual claim" in generic_amplification_prompt,
+    "generic-claim amplification targets bounded author reasoning instead of evidence invention",
 )
 human_amp_original = {
     "integrity_layers": {

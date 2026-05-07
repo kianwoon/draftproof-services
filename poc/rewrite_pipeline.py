@@ -4026,14 +4026,16 @@ def _paragraph_sentence_starters(paragraph: str) -> list[str]:
     return starters
 
 
+_PARAGRAPH_CITATION_RE = re.compile(
+    r"(?:\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)|"
+    r"\b[A-Z][A-Za-z]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z]+)?\s*\(\d{4}\))"
+)
+
+
 def _paragraph_role(paragraph: str, drivers: dict | None = None, *, is_last: bool = False) -> str:
     drivers = drivers or {}
     text = str(paragraph or "")
-    citation_count = len(re.findall(
-        r"(?:\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)|"
-        r"\b[A-Z][A-Za-z]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z]+)?\s*\(\d{4}\))",
-        text,
-    ))
+    citation_count = len(_PARAGRAPH_CITATION_RE.findall(text))
     first_person_count = len(re.findall(r"\b(?:I|my|me)\b", text))
     process_count = len(re.findall(
         r"\b(?:SHBHCUT\d+|sectioning|projection|guide|parting|haircut|mannequin|client|elbow|wrist|finger|scissor|comb|tension|subsection)\b",
@@ -4076,8 +4078,6 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
     )
     for index, paragraph in enumerate(paragraphs):
         words = paragraph.split()
-        if len(words) < 45:
-            continue
         matching_briefs = []
         for brief in briefs:
             if not isinstance(brief, dict):
@@ -4089,7 +4089,7 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
         concrete_hits = len(concrete_re.findall(paragraph))
         starters = _paragraph_sentence_starters(paragraph)
         repeated_starter_count = len(starters) - len(set(starters))
-        has_citation = bool(re.search(r"\(\s*[A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}", paragraph))
+        has_citation = bool(_PARAGRAPH_CITATION_RE.search(paragraph))
         brief_score = sum(
             float(((b.get("signals") or {}).get("score") or 0.0) or 0.0)
             for b in matching_briefs
@@ -4114,13 +4114,16 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
             "repeated_sentence_starters": repeated_starter_count,
             "word_count": len(words),
         }
+        role = _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
+        if len(words) < 45 and role != "conclusion_template_risk":
+            continue
         scored.append({
             "index": index,
             "paragraph": paragraph,
             "previous_paragraph": paragraphs[index - 1] if index > 0 else "",
             "next_paragraph": paragraphs[index + 1] if index + 1 < len(paragraphs) else "",
             "score": round(score, 3),
-            "role": _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1),
+            "role": role,
             "drivers": drivers,
             "target_sentences": [
                 (b.get("target_sentence") or "") for b in matching_briefs[:5]
@@ -4204,21 +4207,40 @@ def _human_signal_amplification_prompt(
     role = str(target.get("role") or "mixed")
     operation = {
         "source_summary_heavy": "add a source-to-practice bridge",
-        "generic_claim_heavy": "narrow the claim with condition and local context",
+        "generic_claim_heavy": "narrow the claim with one author-reasoning trace",
         "conclusion_template_risk": "remove summary cadence and add a reflective limitation",
         "technical_process_rich": "preserve the technical process and make only a micro-repair",
     }.get(role, "add one controlled author-reasoning bridge")
+    role_rule = {
+        "generic_claim_heavy": (
+            "For this role, replace one broad claim with a bounded author judgement, concern, "
+            "or reasoning trace that is already implied by the paragraph. Include exactly one "
+            "plain author-reasoning phrase such as 'I would...' or 'the issue I would check...' "
+            "only when it does not introduce a new fact, example, source, event, institution, "
+            "statistic, or personal evidence."
+        ),
+        "source_summary_heavy": (
+            "For this role, keep the source claim intact and add one sentence that explains how "
+            "the source changes a teaching, assessment, or practice decision already present nearby."
+        ),
+        "conclusion_template_risk": (
+            "For this role, reduce the neat closing-summary shape and add one limitation, tension, "
+            "or unresolved judgement already implied by the document."
+        ),
+    }.get(role, "Use one small author-reasoning move without expanding the evidence base.")
     return (
         "DraftProof HUMAN_SIGNAL_AMPLIFICATION_REPAIR.\n"
         "You are repairing one paragraph only.\n"
         f"Paragraph role: {role}.\n"
         f"Controlled operation: {operation}.\n\n"
+        f"Role-specific rule: {role_rule}\n\n"
         "Goal:\n"
         "Increase authentic author contribution using reasoning already implied by this paragraph.\n"
         "Do not increase AI Authorship, AI Transformation, review burden, or severity.\n\n"
         "Allowed:\n"
         "- connect a source claim to a teaching/practice decision already present in the context\n"
         "- add one limitation or condition already implied by the paragraph\n"
+        "- add one author judgement or reasoning trace if it changes no factual claim\n"
         "- make a claim more specific using existing local context\n"
         "- reduce template conclusion cadence\n"
         "- vary sentence purpose without making the paragraph more polished\n\n"
@@ -6953,7 +6975,7 @@ def run_rewrite_pipeline(
                                 os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TARGET_ROLES")
                                 or os.environ.get(
                                     "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_ROLES",
-                                    "source_summary_heavy,conclusion_template_risk",
+                                    "source_summary_heavy,conclusion_template_risk,generic_claim_heavy",
                                 )
                             ).split(",")
                             if role.strip()
@@ -7177,6 +7199,148 @@ def run_rewrite_pipeline(
                         )
                         if _best_ai_search_selectable():
                             break
+
+                if (
+                    _best_ai_search_selectable()
+                    and _env_flag("DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION", True)
+                ):
+                    post_roles = {
+                        role.strip()
+                        for role in (
+                            os.environ.get("DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_TARGET_ROLES")
+                            or os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TARGET_ROLES")
+                            or os.environ.get(
+                                "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_ROLES",
+                                "source_summary_heavy,conclusion_template_risk,generic_claim_heavy",
+                            )
+                        ).split(",")
+                        if role.strip()
+                    }
+                    post_target_limit = max(
+                        0,
+                        int(_float_env("DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_TARGETS", 1.0)),
+                    )
+                    post_candidate_limit = max(
+                        1,
+                        int(_float_env("DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_CANDIDATES", 2.0)),
+                    )
+                    post_targets = [
+                        target for target in _paragraph_component_targets(
+                            best_text,
+                            ctx.raw_json,
+                            limit=max(post_target_limit, 1),
+                        )
+                        if str(target.get("role") or "") in post_roles
+                    ][:post_target_limit]
+                    search_summary["post_selection_human_signal_amplification"] = {
+                        "enabled": True,
+                        "base_strategy": best_strategy,
+                        "target_roles": sorted(post_roles),
+                        "target_count": len(post_targets),
+                        "candidate_limit_per_target": post_candidate_limit,
+                        "targets": [
+                            {
+                                "paragraph_index": target.get("index"),
+                                "role": target.get("role"),
+                                "score": target.get("score"),
+                            }
+                            for target in post_targets
+                        ],
+                    }
+                    post_base_text = best_text
+                    for post_number, target in enumerate(post_targets, start=1):
+                        report_progress(
+                            min(91, 88 + post_number),
+                            (
+                                "Trying post-selection Human Signal amplification "
+                                f"{post_number}/{len(post_targets)}"
+                            ),
+                        )
+                        try:
+                            prompt = _human_signal_amplification_prompt(
+                                target,
+                                ctx.raw_json,
+                                post_number,
+                                candidate_count=post_candidate_limit,
+                            )
+                            search_summary["llm_calls"] += 1
+                            response = gateway.chat(
+                                prompt,
+                                system=(
+                                    "You are DraftProof's post-selection human-signal amplification engine. "
+                                    "Return only tagged replacement paragraphs."
+                                ),
+                                temperature=float(os.environ.get(
+                                    "DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
+                                    os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.55"),
+                                )),
+                                max_tokens=int(os.environ.get(
+                                    "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
+                                    "2600",
+                                )),
+                            )
+                            post_outputs = _extract_paragraph_component_candidates(
+                                response.content,
+                                post_candidate_limit,
+                            )
+                        except Exception as exc:
+                            search_summary["candidates"].append({
+                                "strategy": (
+                                    f"post_human_signal_amplification_p{int(target.get('index', 0)) + 1}"
+                                    "_batch"
+                                ),
+                                "passed_local_checks": False,
+                                "reason": f"llm_error {exc}",
+                                "human_signal_amplification": True,
+                                "post_selection_human_signal_amplification": True,
+                                "paragraph_index": target.get("index"),
+                                "paragraph_role": target.get("role"),
+                            })
+                            continue
+                        for candidate_number, raw_paragraph_candidate in enumerate(post_outputs, start=1):
+                            strategy = (
+                                f"post_human_signal_amplification_p{int(target.get('index', 0)) + 1}"
+                                f"_c{candidate_number}"
+                            )
+                            paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
+                                raw_paragraph_candidate,
+                                target.get("paragraph") or "",
+                            )
+                            if paragraph_reject:
+                                search_summary["candidates"].append({
+                                    "strategy": strategy,
+                                    "passed_local_checks": False,
+                                    "reason": paragraph_reject,
+                                    "human_signal_amplification": True,
+                                    "post_selection_human_signal_amplification": True,
+                                    "paragraph_index": target.get("index"),
+                                    "paragraph_role": target.get("role"),
+                                })
+                                continue
+                            patched_candidate = _splice_paragraph(
+                                post_base_text,
+                                int(target.get("index", 0)),
+                                paragraph_candidate,
+                            )
+                            _evaluate_ai_search_candidate(
+                                strategy,
+                                patched_candidate,
+                                deterministic=False,
+                                extra={
+                                    "human_signal_amplification": True,
+                                    "post_selection_human_signal_amplification": True,
+                                    "paragraph_component": True,
+                                    "paragraph_index": target.get("index"),
+                                    "paragraph_role": target.get("role"),
+                                    "paragraph_driver_score": target.get("score"),
+                                    "paragraph_drivers": target.get("drivers"),
+                                },
+                            )
+                            if (
+                                best_selection_status.get("human_signal_amplification")
+                                and best_strategy == strategy
+                            ):
+                                post_base_text = best_text
 
                 if _best_ai_search_selectable():
                     previous_ai = rewritten_ai
