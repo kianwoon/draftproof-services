@@ -130,6 +130,7 @@ from rewrite_pipeline import (
     _internet_reinforced_reauthor_prompt,
     _build_source_grounding_search_layer,
     _confirmed_author_anchor_brief,
+    _blocker_elimination_status,
     _confirmed_anchor_echo_reason,
     _validate_author_evidence_answers,
     _author_answer_relevance,
@@ -2855,6 +2856,44 @@ assert_test(
     and "remove unsupported generic drag" in internet_reauthor_prompt
     and "Return exactly 2 complete document candidates" in internet_reauthor_prompt,
     "internet-reinforced reauthoring rebuilds full document instead of sentence repair",
+)
+blocker_status = _blocker_elimination_status(
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 90.0,
+                "broad_claim_risk": 85.0,
+                "source_grounding_risk": 100.0,
+                "lived_detail_risk": 65.0,
+            },
+            "ai_components": {
+                "generic_assertion_risk": 65.0,
+                "topk_pattern": 85.0,
+                "predictability": 47.0,
+            },
+        }
+    },
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 70.0,
+                "broad_claim_risk": 65.0,
+                "source_grounding_risk": 60.0,
+                "lived_detail_risk": 55.0,
+            },
+            "ai_components": {
+                "generic_assertion_risk": 55.0,
+                "topk_pattern": 80.0,
+                "predictability": 45.0,
+            },
+        }
+    },
+)
+assert_test(
+    blocker_status["active_drop"] >= 100
+    and blocker_status["drops"]["unsupported_claim_risk"] == 20.0
+    and blocker_status["top_remaining"][0]["key"] == "topk_pattern",
+    "blocker elimination status measures active blocker reduction directly",
 )
 previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
 previous_tavily_key = os.environ.get("TAVILY_API_KEY")

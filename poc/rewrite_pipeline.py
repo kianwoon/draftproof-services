@@ -1894,6 +1894,60 @@ def _integrity_scores(report_dict: dict | None) -> dict:
     }
 
 
+def _blocker_scores(report_dict: dict | None) -> dict:
+    if not isinstance(report_dict, dict):
+        return {}
+    badge = report_dict.get("ai_risk_badge") or {}
+    ai = badge.get("ai_components") or {}
+    writing = badge.get("writing_components") or {}
+
+    def num(source: dict, key: str) -> float:
+        value = source.get(key)
+        return float(value) if isinstance(value, (int, float)) else 0.0
+
+    return {
+        "unsupported_claim_risk": num(writing, "unsupported_claim_risk"),
+        "broad_claim_risk": num(writing, "broad_claim_risk"),
+        "source_grounding_risk": num(writing, "source_grounding_risk"),
+        "lived_detail_risk": num(writing, "lived_detail_risk"),
+        "generic_assertion_risk": num(ai, "generic_assertion_risk"),
+        "topk_pattern": num(ai, "topk_pattern"),
+        "predictability": num(ai, "predictability"),
+    }
+
+
+def _blocker_elimination_status(original_report: dict | None, candidate_report: dict | None) -> dict:
+    original = _blocker_scores(original_report)
+    candidate = _blocker_scores(candidate_report)
+    drops = {
+        key: round(float(original.get(key, 0.0)) - float(candidate.get(key, 0.0)), 3)
+        for key in sorted(set(original) | set(candidate))
+    }
+    active_keys = [
+        key for key, value in original.items()
+        if isinstance(value, (int, float)) and value >= 60.0
+    ]
+    active_drop = sum(max(0.0, drops.get(key, 0.0)) for key in active_keys)
+    active_regression = sum(max(0.0, -drops.get(key, 0.0)) for key in active_keys)
+    top_remaining = sorted(
+        candidate.items(),
+        key=lambda item: float(item[1] or 0.0),
+        reverse=True,
+    )[:5]
+    return {
+        "original": original,
+        "candidate": candidate,
+        "drops": drops,
+        "active_keys": active_keys,
+        "active_drop": round(active_drop, 3),
+        "active_regression": round(active_regression, 3),
+        "top_remaining": [
+            {"key": key, "score": value}
+            for key, value in top_remaining
+        ],
+    }
+
+
 def _transformation_features(report_dict: dict | None) -> dict:
     if not isinstance(report_dict, dict):
         return {}
@@ -8354,6 +8408,7 @@ def run_rewrite_pipeline(
             )
             candidate_contribution = _contribution_scores(candidate_report)
             candidate_integrity = _integrity_scores(candidate_report)
+            blocker_status = _blocker_elimination_status(original_report_dict, candidate_report)
             human_shift = _human_shift_score(
                 original_report_dict,
                 candidate_report,
@@ -8378,6 +8433,7 @@ def run_rewrite_pipeline(
                 "critical_high_findings": candidate_critical_high,
                 "human_shift_score": human_shift.get("score"),
                 "human_shift_components": human_shift.get("components"),
+                "blocker_elimination": blocker_status,
                 "scan_scope": _scan_scope_summary(candidate_report),
             })
             selection_status = _ai_search_candidate_selection_status(
@@ -8523,9 +8579,44 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
             )
+            blocker_elimination_selectable = bool(
+                _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_BLOCKER_ELIMINATION", True)
+                and isinstance(candidate_human_delta, (int, float))
+                and candidate_human_delta >= _float_env(
+                    "DRAFTPROOF_BLOCKER_ELIMINATION_MIN_HUMAN_GAIN",
+                    5.0,
+                )
+                and isinstance(ai_authorship_delta, (int, float))
+                and ai_authorship_delta >= 0.0
+                and isinstance(candidate_ai_transform_delta, (int, float))
+                and candidate_ai_transform_delta >= 0.0
+                and float(blocker_status.get("active_drop") or 0.0) >= _float_env(
+                    "DRAFTPROOF_BLOCKER_ELIMINATION_MIN_ACTIVE_DROP",
+                    20.0,
+                )
+                and float(blocker_status.get("active_regression") or 0.0) <= _float_env(
+                    "DRAFTPROOF_BLOCKER_ELIMINATION_MAX_ACTIVE_REGRESSION",
+                    20.0,
+                )
+                and candidate_review_burden <= original_review_burden + int(_float_env(
+                    "DRAFTPROOF_BLOCKER_ELIMINATION_REVIEW_TOLERANCE",
+                    3.0,
+                ))
+                and candidate_weighted_severity <= original_severity + int(_float_env(
+                    "DRAFTPROOF_BLOCKER_ELIMINATION_SEVERITY_TOLERANCE",
+                    8.0,
+                ))
+                and candidate_critical_high <= saved_critical_high + int(_float_env(
+                    "DRAFTPROOF_BLOCKER_ELIMINATION_CRITICAL_HIGH_TOLERANCE",
+                    1.0,
+                ))
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+            )
             if (
                 not selection_status.get("selectable")
                 and (
+                    blocker_elimination_selectable
+                    or
                     human_primary_selectable
                     or
                     incremental_authenticity_selectable
@@ -8537,18 +8628,23 @@ def run_rewrite_pipeline(
                     "success": True,
                     "selectable": True,
                     "reason": (
-                        "accepted_human_primary_progress"
-                        if human_primary_selectable
+                        "accepted_blocker_elimination"
+                        if blocker_elimination_selectable
                         else (
-                            "accepted_human_signal_amplification"
-                            if human_amplification_selectable
+                            "accepted_human_primary_progress"
+                            if human_primary_selectable
                             else (
-                                "accepted_safe_authorship_suppression"
-                                if safe_authorship_suppression_selectable
-                                else "accepted_incremental_authenticity_progress"
+                                "accepted_human_signal_amplification"
+                                if human_amplification_selectable
+                                else (
+                                    "accepted_safe_authorship_suppression"
+                                    if safe_authorship_suppression_selectable
+                                    else "accepted_incremental_authenticity_progress"
+                                )
                             )
                         )
                     ),
+                    "blocker_elimination": bool(blocker_elimination_selectable),
                     "human_primary_progress": bool(human_primary_selectable),
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
                     "human_signal_amplification": bool(human_amplification_selectable),
@@ -8612,9 +8708,11 @@ def run_rewrite_pipeline(
             human_shift_score = human_shift.get("score")
             candidate_ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
             candidate_ai_transformation_delta = authenticity_status.get("ai_transformation_delta")
+            blocker_active_drop = float(blocker_status.get("active_drop") or 0.0)
             candidate_rank = (
                 1 if selection_status.get("selectable") else 0,
                 float(candidate_human_value) if isinstance(candidate_human_value, (int, float)) else -9999.0,
+                blocker_active_drop,
                 (
                     float(candidate_ai_authorship_delta)
                     if isinstance(candidate_ai_authorship_delta, (int, float)) else -9999.0
