@@ -1305,6 +1305,14 @@ class ReportBuilder:
                 ai_lik = max(ai_lik, f.metadata.get("ai_likelihood", 0.0))
                 dg_idx = max(dg_idx, f.metadata.get("domain_grounding_index", 0.0))
 
+        domain_grounding_strength = max(0.0, min(float(dg_idx or 0.0), 1.0))
+        if dg_level == "strong":
+            domain_grounding_strength = max(domain_grounding_strength, 0.75)
+        elif dg_level == "moderate":
+            domain_grounding_strength = max(domain_grounding_strength, 0.55)
+        elif domain_grounding_strength > 0:
+            domain_grounding_strength = max(domain_grounding_strength, 0.30)
+
         n_high = sum(1 for f in self._findings if f.tier == Tier.HIGH)
         n_critical = sum(1 for f in self._findings if f.tier == Tier.CRITICAL)
 
@@ -1333,7 +1341,7 @@ class ReportBuilder:
                 sig.get("source_grounding", 0.0) or 0.0,
                 0.30 if not (self._cite_summary and self._cite_summary.bib_entry_count > 0) else 1.0,
             ),
-            domain_grounding_strength=min(dg_idx, 0.30),
+            domain_grounding_strength=domain_grounding_strength,
             semantic_uniformity_risk=(
                 self._semantic_summary.semantic_uniformity_risk
                 if self._semantic_summary else None

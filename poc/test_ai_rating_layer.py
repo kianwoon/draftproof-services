@@ -67,6 +67,15 @@ assert_true(
     ) >= 0.80,
     "unsupported-claim risk remains high for dense uncited assertions",
 )
+assert_true(
+    estimate_unsupported_claim_risk(
+        "At Box Hill Institute, SHBHCUT003 graduated haircut requires learners to control sectioning and projection. "
+        "Learners must keep tension steady while they move from mannequin practice to a client model. "
+        "I usually ask them to compare their guide line with mine before they continue cutting. "
+        "That pause helps them notice whether the weight line is forming where they intended."
+    ) <= 0.40,
+    "author-owned practical domain context discounts unsupported-claim risk",
+)
 
 low_signal = derive_authorship_rating(
     ai_score=0.12,
@@ -366,6 +375,36 @@ assert_true(
 assert_true(
     "keep ready" in human_contract.get("generation_readiness", {}).get("user_evidence_footnote", ""),
     "human contribution contract leaves evidence-preparation footnote for users",
+)
+domain_builder = ReportBuilder().set_meta(
+    original_text=(
+        "At Box Hill Institute, SHBHCUT002 solid form and SHBHCUT003 graduated haircut require learners "
+        "to control sectioning, projection, distribution, guide lines, scissor position, and tension."
+    )
+)
+domain_builder._findings.append(Finding(
+    tier=ReportTier.LOW,
+    category="specificity",
+    scanner="specificity",
+    title="low_specificity",
+    detail="Strong domain grounding present.",
+    evidence="SHBHCUT003 graduated haircut requires sectioning and projection control.",
+    recommendation="Preserve domain anchors.",
+    metadata={
+        "domain_grounding_index": 0.86,
+        "domain_grounding_level": "strong",
+        "domain_terms": ["SHBHCUT003", "graduated haircut", "sectioning", "projection"],
+        "specificity_score": 0.82,
+        "word_count": 24,
+    },
+    finding_id="f_domain_grounding",
+    sentence_id="s001",
+    signal_category="writing_quality",
+))
+domain_json = report_to_dict(domain_builder.build())
+assert_true(
+    domain_json["ai_risk_badge"]["writing_components"]["domain_grounding_strength"] >= 75,
+    "strong scanner domain grounding is not capped at 30 percent in Layer 3",
 )
 assert_equal(
     intel.get("mitigation_inputs", {}).get("human_contribution_contract"),
@@ -889,6 +928,10 @@ hairdressing_generic_input = build_layer3_input_from_text(
 assert_true(
     hairdressing_domain_input.generic_assertion_risk < hairdressing_generic_input.generic_assertion_risk,
     "domain unit codes and practical haircutting anchors reduce generic assertion risk",
+)
+assert_true(
+    hairdressing_domain_input.lived_detail_risk < hairdressing_generic_input.lived_detail_risk,
+    "domain unit codes and practical haircutting anchors reduce lived-detail risk",
 )
 contextual_density_input = build_layer3_input_from_text(
     (

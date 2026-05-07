@@ -884,6 +884,14 @@ def estimate_lived_detail_risk(text: str, domain_patterns: Optional[list[str]] =
         r"\bcase\b",
         r"\bexample\b",
         r"\bincident\b",
+        r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",
+        r"\bBox Hill\b",
+        r"\bI (?:see|ask|demonstrate|want|encourage|usually)\b",
+        r"\bmy current\b",
+        r"\blearners?\s+(?:shift|practise|practice|repeat|name|combine|cut|pause|continue|describe|notice|need|work)\b",
+        r"\b(?:sectioning|projection|parting|distribution|design line|mobile guide|stationary guide|guide line|"
+        r"guide|mannequin|client model|client models|weight line|elbow|wrist|finger|scissor|comb|tension|subsection|"
+        r"graduation|graduated haircut|solid form|one length|uniform layer|increased layer|haircut structures?)\b",
     ]
 
     patterns = base_patterns + (domain_patterns or [])
@@ -921,6 +929,20 @@ ASSERTION_VERB_PATTERNS = [
     r"\bcreates?\b", r"\bmakes?\b", r"\bprovides?\b", r"\brequires?\b",
     r"\benables?\b", r"\bforces?\b", r"\bthreatens?\b",
 ]
+
+AUTHOR_OWNED_CONTEXT_PATTERNS = [
+    r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",
+    r"\b(?:At Box Hill Institute|Certificate III|my current learners)\b",
+    r"\bI (?:see|ask|demonstrate|want|encourage|usually|notice|use|treat)\b",
+    r"\blearners?\s+(?:shift|practise|practice|repeat|name|combine|cut|pause|continue|describe|notice|need|work|must|can)\b",
+    r"\b(?:sectioning|projection|parting|distribution|design line|mobile guide|stationary guide|guide line|"
+    r"mannequin|client model|client models|weight line|elbow|wrist|finger|scissor|comb|tension|subsection|"
+    r"graduation|graduated haircut|solid form|one length|uniform layer|increased layer|haircut structures?)\b",
+]
+
+
+def _has_author_owned_context(sentence: str) -> bool:
+    return any(re.search(pattern, sentence or "", flags=re.I) for pattern in AUTHOR_OWNED_CONTEXT_PATTERNS)
 
 
 def estimate_broad_claim_risk(text: str) -> float:
@@ -1066,28 +1088,41 @@ def estimate_unsupported_claim_risk(
     if not sentences:
         return 0.70
 
-    # Count assertive sentences (same logic as broad_claim)
-    assert_count = 0
+    # Count assertive sentences, but discount claims grounded in local author/process context.
+    assert_count = 0.0
+    contextual_assertions = 0
+    raw_assertions = 0
     for sentence in sentences:
         lower = sentence.lower()
         has_assertion = any(re.search(p, lower) for p in ASSERTION_VERB_PATTERNS)
         has_hedge = any(re.search(p, lower) for p in HEDGING_PATTERNS)
         if has_assertion and not has_hedge:
-            assert_count += 1
+            raw_assertions += 1
+            if _has_author_owned_context(sentence):
+                contextual_assertions += 1
+                assert_count += 0.20
+            else:
+                assert_count += 1.0
 
     ratio = assert_count / len(sentences)
     # No citations at all — escalate thresholds
     if ratio >= 0.55:
-        return 0.90
-    if ratio >= 0.40:
-        return 0.80
-    if ratio >= 0.30:
-        return 0.70
-    if ratio >= 0.20:
-        return 0.55
-    if ratio >= 0.10:
-        return 0.40
-    return 0.25
+        risk = 0.90
+    elif ratio >= 0.40:
+        risk = 0.80
+    elif ratio >= 0.30:
+        risk = 0.70
+    elif ratio >= 0.20:
+        risk = 0.55
+    elif ratio >= 0.10:
+        risk = 0.40
+    else:
+        risk = 0.25
+
+    contextual_ratio = contextual_assertions / max(raw_assertions, 1)
+    if contextual_ratio >= 0.35 and ratio < 0.28:
+        risk = min(risk, 0.40)
+    return risk
 
 
 class Layer3Scorer:
