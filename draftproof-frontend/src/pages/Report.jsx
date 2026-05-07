@@ -1146,18 +1146,16 @@ export default function Report() {
                     title={tooltip}
                   >
                     <div className="transformation-bar-label">
-                      <span className="transformation-bar-name">
-                        {signal.label}
+                      <span className="transformation-bar-name">{signal.label}</span>
+                      <span
+                        className={`transformation-improvement-slot${improvement ? ' is-visible' : ''}`}
+                        aria-label={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
+                        title={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
+                      >
                         {improvement && (
-                          <span
-                            className="transformation-improvement-badge"
-                            aria-label={`Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%`}
-                            title={`Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%`}
-                          >
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                              <path d="M3.2 6.1l1.8 1.8 3.8-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          </span>
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                            <path d="M3.2 6.1l1.8 1.8 3.8-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
                         )}
                       </span>
                       <strong>{signal.value.toFixed(0)}%</strong>

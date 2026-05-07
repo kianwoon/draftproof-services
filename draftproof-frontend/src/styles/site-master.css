@@ -4349,10 +4349,11 @@ th {
 }
 
 .transformation-bar-label {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px auto;
   align-items: center;
-  justify-content: space-between;
-  gap: .75rem;
+  gap: .45rem;
+  min-height: 18px;
   color: #475569;
   font-size: .78rem;
   font-weight: 750;
@@ -4360,22 +4361,27 @@ th {
 }
 
 .transformation-bar-name {
-  display: inline-flex;
-  align-items: center;
-  gap: .4rem;
+  display: block;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.transformation-improvement-badge {
+.transformation-improvement-slot {
   display: inline-grid;
   place-items: center;
-  flex: 0 0 auto;
   width: 18px;
   height: 18px;
+  opacity: 0;
+}
+
+.transformation-improvement-slot.is-visible {
   color: #047857;
   background: #d1fae5;
   border: 1px solid #86efac;
   border-radius: 999px;
+  opacity: 1;
 }
 
 .transformation-bar-row.is-improved .transformation-bar-label {
