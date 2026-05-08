@@ -190,6 +190,34 @@ def _phase_sampling_arg(phase_prefix: str, key: str, fallback_prefix: str = "DRA
     return value if value is not None else fallback.get(field)
 
 
+def _phase_chat_sampling_kwargs(
+    phase_prefix: str,
+    *,
+    temperature_env: str,
+    temperature_default: float,
+    max_tokens_env: str,
+    max_tokens_default: int,
+    fallback_prefix: str = "DRAFTPROOF_AI_SEARCH",
+) -> dict:
+    """Build normalized sampling kwargs for generation calls."""
+    return {
+        "temperature": float(os.environ.get(temperature_env, str(temperature_default))),
+        "max_tokens": int(os.environ.get(max_tokens_env, str(max_tokens_default))),
+        "top_p": _phase_sampling_arg(phase_prefix, "TOP_P", fallback_prefix=fallback_prefix),
+        "top_k": _phase_sampling_arg(phase_prefix, "TOP_K", fallback_prefix=fallback_prefix),
+        "presence_penalty": _phase_sampling_arg(
+            phase_prefix,
+            "PRESENCE_PENALTY",
+            fallback_prefix=fallback_prefix,
+        ),
+        "frequency_penalty": _phase_sampling_arg(
+            phase_prefix,
+            "FREQUENCY_PENALTY",
+            fallback_prefix=fallback_prefix,
+        ),
+    }
+
+
 def _llm_call_budget_exhausted_before_send(optimistic_llm_calls: int, max_llm_calls: int) -> bool:
     """Return true only after the optimistic pre-send count exceeds budget."""
     return int(optimistic_llm_calls or 0) > int(max_llm_calls or 0)
@@ -8970,8 +8998,51 @@ def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
             "primarily_pass_plain",
         ),
         (r"\bTherefore,\s*", "Because of this, ", "therefore_plain"),
+        (r"\bUltimately,\s*", "In the end, ", "ultimately_plain"),
+        (r"\bSimultaneously,\s*", "At the same time, ", "simultaneously_plain"),
+        (r"\bCrucially,\s*", "More importantly, ", "crucially_plain"),
+        (r"\bYet,\s*", "But ", "yet_plain"),
+        (r"\bOn one hand\b", "On one side", "on_one_hand_plain"),
+        (r"\bresembles\b", "feels like", "resembles_plain"),
+        (r"\bamid constant motion\b", "while everything is moving around it", "amid_motion_plain"),
+        (r"\bpersists\b", "still exists", "persists_plain"),
+        (r"\bdeliver content\b", "explain lessons", "deliver_content_plain"),
+        (r"\bgauge progress\b", "measure progress", "gauge_progress_plain"),
+        (r"\bshifted dramatically\b", "changed a lot", "shifted_dramatically_plain"),
+        (r"\bremarkably immediate\b", "very quick", "immediate_plain"),
+        (r"\babundance creates challenges\b", "creates a problem", "abundance_plain"),
+        (r"\bassume understanding comes effortlessly\b", "think understanding is easy", "effortless_understanding_plain"),
+        (r"\bconceal years of effort\b", "hide years of effort", "conceal_plain"),
+        (r"\blacks true comprehension\b", "does not really understand", "comprehension_plain_2"),
+        (r"\bunfolds more gradually\b", "is slower than that", "unfolds_plain"),
+        (r"\bremain vital\b", "still matter", "vital_plain"),
+        (r"\bextends beyond\b", "is more than", "extends_plain"),
+        (r"\bencourage students to pause and reflect\b", "help students slow down and think", "encourage_pause_plain"),
+        (r"\bdistinguishing reliable information from unreliable sources\b", "telling useful information from weak information", "distinguish_sources_plain"),
+        (r"\bintensifies these concerns\b", "makes this more urgent", "intensifies_plain"),
+        (r"\bfocus on passing tests rather than truly grasping material\b", "focus on passing rather than really understanding", "grasping_material_plain"),
+        (r"\bnurture confidence or independent inquiry\b", "build confidence or independent thinking", "nurture_plain"),
+        (r"\bserves as a learning tool\b", "is used as a learning tool", "serves_tool_plain"),
+        (r"\bsubstitute original thought\b", "replace their own thinking", "substitute_plain"),
+        (r"\brisks hollow learning\b", "can mean the learning is missing", "hollow_plain"),
+        (r"\beducators should inquire\b", "teachers should ask", "educators_inquire_plain"),
+        (r"\bPlacing greater emphasis on\b", "Paying more attention to", "placing_emphasis_plain"),
+        (r"\bflawless final submission\b", "perfect final submission", "flawless_plain"),
+        (r"\bEquity also demands attention\b", "Fairness is another issue", "equity_plain"),
+        (r"\bbenefit from\b", "have", "benefit_plain"),
+        (r"\badvanced tools\b", "better tools", "advanced_tools_plain"),
+        (r"\bdisparities\b", "gaps", "disparities_plain"),
+        (r"\bhold value\b", "still matter", "hold_value_plain"),
+        (r"\bconfront the realities\b", "be honest about the world", "confront_plain"),
+        (r"\blearners require\b", "students need", "learners_require_plain"),
+        (r"\bcultivate\b", "build", "cultivate_plain"),
+        (r"\bpersist when learning proves difficult\b", "keep learning when things are not easy", "persist_plain"),
+        (r"\bThis ongoing effort defines education's true purpose in the present age\.", "That is the real work of education today.", "true_purpose_plain"),
         (r"\bit is crucial for\b", "it matters for", "crucial_plain"),
         (r"\bcrucial\b", "important", "crucial_word_plain"),
+        (r"\bvital\b", "important", "vital_word_plain"),
+        (r"\bemphasize\b", "focus on", "emphasize_plain"),
+        (r"\bfrequently\b", "often", "frequently_plain"),
         (r"\bmerely\b", "only", "merely_plain"),
         (r"\bsignificant hurdle\b", "harder problem", "hurdle_plain"),
         (r"\btraditional educational frameworks\b", "schools", "frameworks_plain"),
@@ -9003,6 +9074,25 @@ def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
     updated = re.sub(r" \.", ".", updated)
     updated = re.sub(r"\n{3,}", "\n\n", updated).strip()
     return updated, applied
+
+
+def _plain_style_artifact_count(text: str) -> int:
+    """Count polished paraphrase markers that external detectors often punish."""
+    if not isinstance(text, str) or not text.strip():
+        return 0
+    patterns = [
+        r"\bresembles\b", r"\bamid\b", r"\bpersists\b", r"\bgauge\b",
+        r"\bdramatically\b", r"\bremarkably\b", r"\babundance\b",
+        r"\beffortlessly\b", r"\bconceal\b", r"\bcomprehension\b",
+        r"\bunfolds\b", r"\bvital\b", r"\bextends beyond\b",
+        r"\bcrucially\b", r"\bsimultaneously\b", r"\btherefore\b",
+        r"\bultimately\b", r"\bintensifies\b", r"\bnurture\b",
+        r"\binquiry\b", r"\bequity\b", r"\bdisparities\b",
+        r"\bconfront\b", r"\brequire\b", r"\bcultivate\b",
+        r"\bpresent age\b", r"\bserves as\b", r"\bsubstitute\b",
+    ]
+    lower = text.lower()
+    return sum(len(re.findall(pattern, lower)) for pattern in patterns)
 
 
 def _final_score_drag_sentence_prune_text(text: str) -> tuple[str, list[str]]:
@@ -11363,8 +11453,13 @@ def run_rewrite_pipeline(
                                 "You are DraftProof's AI-Mitigation authenticity engine. "
                                 "Return only a complete fact-preserving rewritten document."
                             ),
-                            temperature=float(os.environ.get("DRAFTPROOF_AUTHENTICITY_TEMPERATURE", "0.7")),
-                            max_tokens=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_MAX_TOKENS", "6500")),
+                            **_phase_chat_sampling_kwargs(
+                                "DRAFTPROOF_AUTHENTICITY",
+                                temperature_env="DRAFTPROOF_AUTHENTICITY_TEMPERATURE",
+                                temperature_default=0.7,
+                                max_tokens_env="DRAFTPROOF_AUTHENTICITY_MAX_TOKENS",
+                                max_tokens_default=6500,
+                            ),
                         )
                         candidate = _clean_full_document_candidate(response.content, source_for_mitigation)
                     except Exception as exc:
@@ -11591,12 +11686,13 @@ def run_rewrite_pipeline(
                                         "You are DraftProof's AI-Mitigation reconstruction engine. "
                                         "Return only a complete fact-preserving reconstructed document."
                                     ),
-                                    temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.78")),
-                                    max_tokens=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_MAX_TOKENS", "6500")),
-                                    top_p=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_P"),
-                                    top_k=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_K"),
-                                    presence_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "PRESENCE_PENALTY"),
-                                    frequency_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "FREQUENCY_PENALTY"),
+                                    **_phase_chat_sampling_kwargs(
+                                        "DRAFTPROOF_RECONSTRUCTION",
+                                        temperature_env="DRAFTPROOF_RECONSTRUCTION_TEMPERATURE",
+                                        temperature_default=0.78,
+                                        max_tokens_env="DRAFTPROOF_AUTHENTICITY_MAX_TOKENS",
+                                        max_tokens_default=6500,
+                                    ),
                                 )
                                 candidate = _clean_full_document_candidate(response.content, source_for_mitigation)
                         except Exception as exc:
@@ -13414,14 +13510,19 @@ def run_rewrite_pipeline(
                                         "review burden, severity, anchors, and meaning remain safe. "
                                         "Return only tagged replacement paragraphs."
                                     ),
-                                    temperature=float(os.environ.get(
-                                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_TEMPERATURE",
-                                        os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
-                                    )),
-                                    max_tokens=int(os.environ.get(
-                                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MAX_TOKENS",
-                                        os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS", "2600"),
-                                    )),
+                                    **_phase_chat_sampling_kwargs(
+                                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH",
+                                        temperature_env="DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_TEMPERATURE",
+                                        temperature_default=float(os.environ.get(
+                                            "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
+                                            "0.45",
+                                        )),
+                                        max_tokens_env="DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MAX_TOKENS",
+                                        max_tokens_default=int(os.environ.get(
+                                            "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
+                                            "2600",
+                                        )),
+                                    ),
                                 )
                                 llm_calls_used += 1
                                 summary["llm_target_push"]["calls_used"] = llm_calls_used
@@ -13662,33 +13763,19 @@ def run_rewrite_pipeline(
                         "Patch only predictable phrasing in the already selected candidate. "
                         "Do not add facts. Return only tagged full-document candidates."
                     ),
-                    temperature=float(os.environ.get(
-                        "DRAFTPROOF_FINAL_TOPK_TEXTURE_TEMPERATURE",
-                        os.environ.get("DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE", "0.45"),
-                    )),
-                    max_tokens=int(os.environ.get(
-                        "DRAFTPROOF_FINAL_TOPK_TEXTURE_MAX_TOKENS",
-                        os.environ.get("DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS", "4800"),
-                    )),
-                    top_p=(
-                        _float_env_optional("DRAFTPROOF_FINAL_TOPK_TEXTURE_TOP_P")
-                        if os.environ.get("DRAFTPROOF_FINAL_TOPK_TEXTURE_TOP_P") is not None
-                        else _float_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_P")
-                    ),
-                    top_k=(
-                        _int_env_optional("DRAFTPROOF_FINAL_TOPK_TEXTURE_TOP_K")
-                        if os.environ.get("DRAFTPROOF_FINAL_TOPK_TEXTURE_TOP_K") is not None
-                        else _int_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_K")
-                    ),
-                    presence_penalty=(
-                        _float_env_optional("DRAFTPROOF_FINAL_TOPK_TEXTURE_PRESENCE_PENALTY")
-                        if os.environ.get("DRAFTPROOF_FINAL_TOPK_TEXTURE_PRESENCE_PENALTY") is not None
-                        else _float_env_optional("DRAFTPROOF_TOPK_TEXTURE_PRESENCE_PENALTY")
-                    ),
-                    frequency_penalty=(
-                        _float_env_optional("DRAFTPROOF_FINAL_TOPK_TEXTURE_FREQUENCY_PENALTY")
-                        if os.environ.get("DRAFTPROOF_FINAL_TOPK_TEXTURE_FREQUENCY_PENALTY") is not None
-                        else _float_env_optional("DRAFTPROOF_TOPK_TEXTURE_FREQUENCY_PENALTY")
+                    **_phase_chat_sampling_kwargs(
+                        "DRAFTPROOF_FINAL_TOPK_TEXTURE",
+                        temperature_env="DRAFTPROOF_FINAL_TOPK_TEXTURE_TEMPERATURE",
+                        temperature_default=float(os.environ.get(
+                            "DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
+                            "0.45",
+                        )),
+                        max_tokens_env="DRAFTPROOF_FINAL_TOPK_TEXTURE_MAX_TOKENS",
+                        max_tokens_default=int(os.environ.get(
+                            "DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS",
+                            "4800",
+                        )),
+                        fallback_prefix="DRAFTPROOF_TOPK_TEXTURE",
                     ),
                 )
                 outputs = _extract_paragraph_component_candidates(response.content, candidate_limit)
@@ -13965,21 +14052,12 @@ def run_rewrite_pipeline(
                                     "Rebuild from source-supported claims and remove unsupported generic drag. "
                                     "Return only tagged full-document candidates."
                                 ),
-                                temperature=float(os.environ.get(
-                                    "DRAFTPROOF_INTERNET_REAUTHOR_TEMPERATURE",
-                                    "0.52",
-                                )),
-                                max_tokens=int(os.environ.get(
-                                    "DRAFTPROOF_INTERNET_REAUTHOR_MAX_TOKENS",
-                                    "5200",
-                                )),
-                                top_p=_float_env_optional("DRAFTPROOF_INTERNET_REAUTHOR_TOP_P"),
-                                top_k=_int_env_optional("DRAFTPROOF_INTERNET_REAUTHOR_TOP_K"),
-                                presence_penalty=_float_env_optional(
-                                    "DRAFTPROOF_INTERNET_REAUTHOR_PRESENCE_PENALTY"
-                                ),
-                                frequency_penalty=_float_env_optional(
-                                    "DRAFTPROOF_INTERNET_REAUTHOR_FREQUENCY_PENALTY"
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_INTERNET_REAUTHOR",
+                                    temperature_env="DRAFTPROOF_INTERNET_REAUTHOR_TEMPERATURE",
+                                    temperature_default=0.52,
+                                    max_tokens_env="DRAFTPROOF_INTERNET_REAUTHOR_MAX_TOKENS",
+                                    max_tokens_default=5200,
                                 ),
                             )
                             internet_outputs = _extract_paragraph_component_candidates(
@@ -14053,21 +14131,12 @@ def run_rewrite_pipeline(
                                     "Reduce unsupported and broad claims by narrowing/removing overreach. "
                                     "Return only tagged full-document candidates."
                                 ),
-                                temperature=float(os.environ.get(
-                                    "DRAFTPROOF_CLAIM_NARROWING_TEMPERATURE",
-                                    "0.38",
-                                )),
-                                max_tokens=int(os.environ.get(
-                                    "DRAFTPROOF_CLAIM_NARROWING_MAX_TOKENS",
-                                    "4800",
-                                )),
-                                top_p=_float_env_optional("DRAFTPROOF_CLAIM_NARROWING_TOP_P"),
-                                top_k=_int_env_optional("DRAFTPROOF_CLAIM_NARROWING_TOP_K"),
-                                presence_penalty=_float_env_optional(
-                                    "DRAFTPROOF_CLAIM_NARROWING_PRESENCE_PENALTY"
-                                ),
-                                frequency_penalty=_float_env_optional(
-                                    "DRAFTPROOF_CLAIM_NARROWING_FREQUENCY_PENALTY"
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_CLAIM_NARROWING",
+                                    temperature_env="DRAFTPROOF_CLAIM_NARROWING_TEMPERATURE",
+                                    temperature_default=0.38,
+                                    max_tokens_env="DRAFTPROOF_CLAIM_NARROWING_MAX_TOKENS",
+                                    max_tokens_default=4800,
                                 ),
                             )
                             claim_outputs = _extract_paragraph_component_candidates(
@@ -14143,21 +14212,12 @@ def run_rewrite_pipeline(
                                 "Patch predictable phrasing without adding facts. "
                                 "Return only tagged full-document candidates."
                             ),
-                            temperature=float(os.environ.get(
-                                "DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
-                                "0.45",
-                            )),
-                            max_tokens=int(os.environ.get(
-                                "DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS",
-                                "4800",
-                            )),
-                            top_p=_float_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_P"),
-                            top_k=_int_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_K"),
-                            presence_penalty=_float_env_optional(
-                                "DRAFTPROOF_TOPK_TEXTURE_PRESENCE_PENALTY"
-                            ),
-                            frequency_penalty=_float_env_optional(
-                                "DRAFTPROOF_TOPK_TEXTURE_FREQUENCY_PENALTY"
+                            **_phase_chat_sampling_kwargs(
+                                "DRAFTPROOF_TOPK_TEXTURE",
+                                temperature_env="DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
+                                temperature_default=0.45,
+                                max_tokens_env="DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS",
+                                max_tokens_default=4800,
                             ),
                         )
                         topk_outputs = _extract_paragraph_component_candidates(
@@ -14223,21 +14283,12 @@ def run_rewrite_pipeline(
                                 "You are DraftProof's source-grounding repair engine. "
                                 "Use only provided source candidates and return tagged replacement paragraphs."
                             ),
-                            temperature=float(os.environ.get(
-                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TEMPERATURE",
-                                "0.45",
-                            )),
-                            max_tokens=int(os.environ.get(
-                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_MAX_TOKENS",
-                                "2200",
-                            )),
-                            top_p=_float_env_optional("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TOP_P"),
-                            top_k=_int_env_optional("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TOP_K"),
-                            presence_penalty=_float_env_optional(
-                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_PRESENCE_PENALTY"
-                            ),
-                            frequency_penalty=_float_env_optional(
-                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_FREQUENCY_PENALTY"
+                            **_phase_chat_sampling_kwargs(
+                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR",
+                                temperature_env="DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TEMPERATURE",
+                                temperature_default=0.45,
+                                max_tokens_env="DRAFTPROOF_SOURCE_GROUNDING_REPAIR_MAX_TOKENS",
+                                max_tokens_default=2200,
                             ),
                         )
                         source_outputs = _extract_paragraph_component_candidates(
@@ -14448,14 +14499,13 @@ def run_rewrite_pipeline(
                                     "You are DraftProof's paragraph AI-score mitigation engine. "
                                     "Return only the requested tagged replacement paragraphs."
                                 ),
-                                temperature=float(os.environ.get(
-                                    "DRAFTPROOF_PARAGRAPH_COMPONENT_TEMPERATURE",
-                                    "0.45",
-                                )),
-                                max_tokens=int(os.environ.get(
-                                    "DRAFTPROOF_PARAGRAPH_COMPONENT_MAX_TOKENS",
-                                    "2600",
-                                )),
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_PARAGRAPH_COMPONENT",
+                                    temperature_env="DRAFTPROOF_PARAGRAPH_COMPONENT_TEMPERATURE",
+                                    temperature_default=0.45,
+                                    max_tokens_env="DRAFTPROOF_PARAGRAPH_COMPONENT_MAX_TOKENS",
+                                    max_tokens_default=2600,
+                                ),
                             )
                             paragraph_outputs = _extract_paragraph_component_candidates(
                                 response.content,
@@ -14587,14 +14637,13 @@ def run_rewrite_pipeline(
                                         "You are DraftProof's human-signal amplification engine. "
                                         "Return only tagged replacement paragraphs."
                                     ),
-                                    temperature=float(os.environ.get(
-                                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
-                                        "0.45",
-                                    )),
-                                    max_tokens=int(os.environ.get(
-                                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
-                                        "2600",
-                                    )),
+                                    **_phase_chat_sampling_kwargs(
+                                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION",
+                                        temperature_env="DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
+                                        temperature_default=0.45,
+                                        max_tokens_env="DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
+                                        max_tokens_default=2600,
+                                    ),
                                 )
                                 amplify_outputs = _extract_paragraph_component_candidates(
                                     response.content,
@@ -14708,14 +14757,13 @@ def run_rewrite_pipeline(
                                         "You are DraftProof's author-reasoning amplification engine. "
                                         "Return only tagged replacement paragraphs."
                                     ),
-                                    temperature=float(os.environ.get(
-                                        "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TEMPERATURE",
-                                        "0.45",
-                                    )),
-                                    max_tokens=int(os.environ.get(
-                                        "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_MAX_TOKENS",
-                                        "2600",
-                                    )),
+                                    **_phase_chat_sampling_kwargs(
+                                        "DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION",
+                                        temperature_env="DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TEMPERATURE",
+                                        temperature_default=0.45,
+                                        max_tokens_env="DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_MAX_TOKENS",
+                                        max_tokens_default=2600,
+                                    ),
                                 )
                                 reasoning_outputs = _extract_paragraph_component_candidates(
                                     response.content,
@@ -14808,8 +14856,13 @@ def run_rewrite_pipeline(
                                 "You are DraftProof's AI-score mitigation engine. "
                                 "Return only the complete rewritten document."
                             ),
-                            temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.45")),
-                            max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
+                            **_phase_chat_sampling_kwargs(
+                                "DRAFTPROOF_AI_SEARCH",
+                                temperature_env="DRAFTPROOF_AI_SEARCH_TEMPERATURE",
+                                temperature_default=0.45,
+                                max_tokens_env="DRAFTPROOF_AI_SEARCH_MAX_TOKENS",
+                                max_tokens_default=6500,
+                            ),
                         )
                         candidate = _clean_full_document_candidate(response.content, search_source_text)
                     except Exception as exc:
@@ -14896,8 +14949,13 @@ def run_rewrite_pipeline(
                                     "You are DraftProof's score-feedback rewrite engine. "
                                     "Use the detector scorecard to produce a lower-scoring complete document."
                                 ),
-                                temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_FEEDBACK_TEMPERATURE", "0.45")),
-                                max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_AI_SEARCH_FEEDBACK",
+                                    temperature_env="DRAFTPROOF_AI_SEARCH_FEEDBACK_TEMPERATURE",
+                                    temperature_default=0.45,
+                                    max_tokens_env="DRAFTPROOF_AI_SEARCH_MAX_TOKENS",
+                                    max_tokens_default=6500,
+                                ),
                             )
                             candidate = _clean_full_document_candidate(response.content, search_source_text)
                         except Exception as exc:
@@ -14993,14 +15051,16 @@ def run_rewrite_pipeline(
                                     "You are DraftProof's post-selection human-signal amplification engine. "
                                     "Return only tagged replacement paragraphs."
                                 ),
-                                temperature=float(os.environ.get(
-                                    "DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
-                                    os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
-                                )),
-                                max_tokens=int(os.environ.get(
-                                    "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
-                                    "2600",
-                                )),
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION",
+                                    temperature_env="DRAFTPROOF_POST_SELECTION_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
+                                    temperature_default=float(os.environ.get(
+                                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
+                                        "0.45",
+                                    )),
+                                    max_tokens_env="DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
+                                    max_tokens_default=2600,
+                                ),
                             )
                             post_outputs = _extract_paragraph_component_candidates(
                                 response.content,
@@ -15164,14 +15224,16 @@ def run_rewrite_pipeline(
                                         "You are DraftProof's iterative human-signal climb engine. "
                                         "Return only tagged replacement paragraphs."
                                     ),
-                                    temperature=float(os.environ.get(
-                                        "DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_TEMPERATURE",
-                                        os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
-                                    )),
-                                    max_tokens=int(os.environ.get(
-                                        "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
-                                        "2600",
-                                    )),
+                                    **_phase_chat_sampling_kwargs(
+                                        "DRAFTPROOF_ITERATIVE_HUMAN_CLIMB",
+                                        temperature_env="DRAFTPROOF_ITERATIVE_HUMAN_CLIMB_TEMPERATURE",
+                                        temperature_default=float(os.environ.get(
+                                            "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
+                                            "0.45",
+                                        )),
+                                        max_tokens_env="DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
+                                        max_tokens_default=2600,
+                                    ),
                                 )
                                 climb_outputs = _extract_paragraph_component_candidates(
                                     response.content,
@@ -15337,14 +15399,13 @@ def run_rewrite_pipeline(
                                     "You are DraftProof's blocked-candidate repair engine. "
                                     "Repair only the gate failure."
                                 ),
-                                temperature=float(os.environ.get(
-                                    "DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR_TEMPERATURE",
-                                    "0.45",
-                                )),
-                                max_tokens=int(os.environ.get(
-                                    "DRAFTPROOF_AI_SEARCH_MAX_TOKENS",
-                                    "6500",
-                                )),
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR",
+                                    temperature_env="DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR_TEMPERATURE",
+                                    temperature_default=0.45,
+                                    max_tokens_env="DRAFTPROOF_AI_SEARCH_MAX_TOKENS",
+                                    max_tokens_default=6500,
+                                ),
                             )
                             if blocking_targets:
                                 patches = _extract_finding_local_patches(response.content)

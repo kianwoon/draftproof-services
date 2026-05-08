@@ -190,11 +190,13 @@ from rewrite_pipeline import (
     _splice_paragraph,
     _rewrite_sampling_profile,
     _phase_sampling_arg,
+    _phase_chat_sampling_kwargs,
     _mitigation_sampling_policy_summary,
     _llm_call_budget_exhausted_before_send,
     _resolve_stage_llm_budget,
 )
-from llm.gateway import _model_capabilities
+import llm.gateway as llm_gateway_module
+from llm.gateway import LLMConfig, LLMGateway, _model_capabilities
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
 
@@ -1509,6 +1511,59 @@ os.environ["DRAFTPROOF_DRIVER_SUPPRESSION_TOP_P"] = "0.91"
 assert_test(
     _phase_sampling_arg("DRAFTPROOF_DRIVER_SUPPRESSION", "TOP_P") == 0.91,
     "phase sampling env overrides inherited mitigation top_p",
+)
+phase_kwargs = _phase_chat_sampling_kwargs(
+    "DRAFTPROOF_AI_SEARCH",
+    temperature_env="DRAFTPROOF_AI_SEARCH_TEMPERATURE",
+    temperature_default=0.45,
+    max_tokens_env="DRAFTPROOF_AI_SEARCH_MAX_TOKENS",
+    max_tokens_default=6500,
+)
+assert_test(
+    phase_kwargs["top_p"] == 0.82
+    and phase_kwargs["presence_penalty"] == 0.15
+    and phase_kwargs["frequency_penalty"] == 0.25,
+    "chat generation kwargs include non-temperature sampling controls by default",
+)
+captured_llm_payload = {}
+original_requests_post = llm_gateway_module.requests.post
+
+
+class _FakeLLMHTTPResponse:
+    status_code = 200
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {
+            "model": "openai/gpt-4.1-mini",
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"total_tokens": 1},
+        }
+
+
+def _fake_requests_post(url, headers=None, json=None, timeout=None):
+    captured_llm_payload.update(json or {})
+    return _FakeLLMHTTPResponse()
+
+
+try:
+    llm_gateway_module.requests.post = _fake_requests_post
+    LLMGateway(LLMConfig(
+        api_key="test",
+        base_url="https://openrouter.ai/api/v1",
+        model="openai/gpt-4.1-mini",
+        max_retries=1,
+    )).chat("test", **phase_kwargs)
+finally:
+    llm_gateway_module.requests.post = original_requests_post
+assert_test(
+    captured_llm_payload.get("top_p") == 0.82
+    and captured_llm_payload.get("presence_penalty") == 0.15
+    and captured_llm_payload.get("frequency_penalty") == 0.25
+    and "top_k" not in captured_llm_payload,
+    "OpenAI gateway payload sends normalized sampling controls and strips unsupported top_k",
 )
 policy_summary = _mitigation_sampling_policy_summary()
 assert_test(
