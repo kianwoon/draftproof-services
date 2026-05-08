@@ -528,12 +528,6 @@ function findingDescription(issue) {
   return issue.description;
 }
 
-function findingEvidenceSummary(issue) {
-  if (issue.evidence?.summary) return issue.evidence.summary;
-  if (typeof issue.evidence === 'string') return issue.evidence;
-  return '';
-}
-
 function normalizeSignal(signal = {}, issue = {}) {
   const key = signal.key || issue.signal_category || issue.category || 'scan_signal';
   const severity = issue.severity ? SEVERITY_CONFIG[issue.severity] : null;
@@ -725,7 +719,6 @@ export default function Report() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [expandedIssue, setExpandedIssue] = useState(null);
   const [rewriteJob, setRewriteJob] = useState(null);
   const [rewriteLoading, setRewriteLoading] = useState(false);
   const [rewriteCanceling, setRewriteCanceling] = useState(false);
@@ -1608,10 +1601,6 @@ export default function Report() {
                           onFocus={() => setSelectedSegmentId(segment.id)}
                           onClick={() => {
                             setSelectedSegmentId(segment.id);
-                            const linkedIndex = report.issues.findIndex((issue) => (
-                              segment.signals.some((s) => String(s.finding_id) === String(issue.id))
-                            ));
-                            if (linkedIndex >= 0) setExpandedIssue(linkedIndex);
                           }}
                         >
                           {segment.text}
@@ -1663,131 +1652,6 @@ export default function Report() {
               </aside>
             </div>
           </section>
-        )}
-
-        {/* Findings list */}
-        {report.issues.length > 0 ? (
-          <div className="report-findings">
-            <h2>Findings</h2>
-            <div className="findings-list">
-              {report.issues.map((issue, i) => {
-                const sc = SEVERITY_CONFIG[issue.severity] || SEVERITY_CONFIG.info;
-                const isExpanded = expandedIssue === i;
-                const hasScores = issue.score != null || issue.top10_ratio != null;
-                return (
-                  <div
-                    key={issue.id || i}
-                    className={`finding-card${isExpanded ? ' expanded' : ''}`}
-                    onClick={() => setExpandedIssue(isExpanded ? null : i)}
-                    style={{ borderLeftColor: sc.color }}
-                  >
-                    <div className="finding-header">
-                      <span className="finding-severity" style={{ color: sc.color, background: sc.bg }}>
-                        {sc.label}
-                      </span>
-                      <span className="finding-number">#{i + 1}</span>
-                      {issue.title && <span className="finding-title-tag">{issue.title.replace(/_/g, ' ')}</span>}
-                      {issue.location && <span className="finding-location">{issue.location}</span>}
-                      <svg
-                        className="finding-chevron"
-                        width="14" height="14" viewBox="0 0 14 14" fill="none"
-                        style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform .2s' }}
-                      >
-                        <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                      </svg>
-                    </div>
-                    <p className="finding-desc">{findingDescription(issue)}</p>
-                    {isExpanded && (
-                      <div className="finding-detail" onClick={(e) => e.stopPropagation()}>
-                        {issue.scanner && (
-                          <div className="finding-meta-row">
-                            <span className="finding-meta-label">Scanner</span>
-                            <span className="finding-meta-value">{issue.scanner}</span>
-                          </div>
-                        )}
-                        {issue.category && (
-                          <div className="finding-meta-row">
-                            <span className="finding-meta-label">Category</span>
-                            <span className="finding-meta-value">{issue.category}</span>
-                          </div>
-                        )}
-                        {issue.signal_category && (
-                          <div className="finding-meta-row">
-                            <span className="finding-meta-label">Signal</span>
-                            <span className="finding-meta-value">{issue.signal_category.replace(/_/g, ' ')}</span>
-                          </div>
-                        )}
-                        {issue.actionability && (
-                          <div className="finding-meta-row">
-                            <span className="finding-meta-label">Action</span>
-                            <span className={`finding-action-badge finding-action-${issue.actionability}`}>
-                              {issue.actionability.replace(/_/g, ' ')}
-                            </span>
-                          </div>
-                        )}
-                        {hasScores && (
-                          <div className="finding-scores">
-                            {issue.score != null && (
-                              <div className="finding-score-item">
-                                <span className="finding-score-label">Risk Score</span>
-                                <div className="finding-score-bar">
-                                  <div className="finding-score-fill" style={{ width: `${Math.min(issue.score * 100, 100)}%`, background: sc.color }} />
-                                </div>
-                                <span className="finding-score-value">{(issue.score * 100).toFixed(0)}%</span>
-                              </div>
-                            )}
-                            {issue.top10_ratio != null && (
-                              <div className="finding-score-item">
-                                <span className="finding-score-label">Common Predictability</span>
-                                <div className="finding-score-bar">
-                                  <div className="finding-score-fill" style={{ width: `${Math.min(issue.top10_ratio * 100, 100)}%`, background: '#8b5cf6' }} />
-                                </div>
-                                <span className="finding-score-value">{(issue.top10_ratio * 100).toFixed(0)}%</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {issue.evidence && (
-                          <div className="finding-evidence">
-                            <span className="finding-meta-label">Evidence</span>
-                            {findingEvidenceSummary(issue) ? (
-                              <p>{findingEvidenceSummary(issue)}</p>
-                            ) : (
-                              null
-                            )}
-                            {typeof issue.evidence === 'object' && issue.evidence.sentence && (
-                              <blockquote className="finding-quote">&ldquo;{issue.evidence.sentence}&rdquo;</blockquote>
-                            )}
-                          </div>
-                        )}
-                        {issue.sentence_text && !(issue.evidence && typeof issue.evidence === 'object' && issue.evidence.sentence) && (
-                          <div className="finding-evidence">
-                            <span className="finding-meta-label">Sentence</span>
-                            <blockquote className="finding-quote">&ldquo;{issue.sentence_text}&rdquo;</blockquote>
-                          </div>
-                        )}
-                        {issue.recommendation && (
-                          <div className="finding-recommendation">
-                            <span className="finding-meta-label">Recommendation</span>
-                            <p>{issue.recommendation}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <div className="report-clean">
-            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-              <circle cx="24" cy="24" r="20" stroke="#22c55e" strokeWidth="2"/>
-              <path d="M16 24l5 5 11-11" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <h3>No issues found</h3>
-            <p>Your document looks clean. No findings were detected.</p>
-          </div>
         )}
 
       </div>
