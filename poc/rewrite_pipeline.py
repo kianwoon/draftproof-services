@@ -757,6 +757,11 @@ def _build_mitigation_ceiling_diagnostics(
     scores = summary.get("detect_scores") or {}
     search = summary.get("ai_mitigation_search") or {}
     generation = summary.get("generation_layer") or {}
+    driver_contract = (
+        search.get("human_contribution_driver_plan")
+        or search.get("driver_contract")
+        or {}
+    )
     candidates = [
         item for item in (search.get("candidates") or [])
         if isinstance(item, dict) and isinstance(item.get("ai"), (int, float))
@@ -809,7 +814,20 @@ def _build_mitigation_ceiling_diagnostics(
     missing_slots = len(completion.get("slots") or [])
     evidence_blocked = bool(completion.get("enabled")) and missing_slots > 0
 
-    if evidence_blocked and estimated_high is not None and estimated_high < target_human:
+    raw_formula = (
+        (driver_contract.get("raw_formula") or {})
+        if isinstance(driver_contract, dict) else {}
+    )
+    required_ai_raw_drop = _num(raw_formula.get("required_ai_raw_drop"), 0.0)
+    primary_switches = (
+        (driver_contract.get("primary_switches") or [])
+        if isinstance(driver_contract, dict) else []
+    )
+    formula_gap_active = bool(required_ai_raw_drop and required_ai_raw_drop >= 0.04)
+
+    if formula_gap_active:
+        primary = "formula_driver_gap_unresolved"
+    elif evidence_blocked and estimated_high is not None and estimated_high < target_human:
         primary = "missing_author_owned_evidence_and_context"
     elif best_seen_human <= final_human + 2:
         primary = "human_score_ceiling_from_generic_claims"
@@ -819,9 +837,23 @@ def _build_mitigation_ceiling_diagnostics(
         primary = "candidate_pool_exhausted"
 
     recommended_next = []
+    if formula_gap_active:
+        driver_names = [
+            str(item.get("driver"))
+            for item in primary_switches[:2]
+            if isinstance(item, dict) and item.get("driver")
+        ]
+        if driver_names:
+            recommended_next.append(
+                "Target unresolved formula drivers directly: " + ", ".join(driver_names) + "."
+            )
+        else:
+            recommended_next.append(
+                "Target unresolved formula drivers directly before adding more semantic detail."
+            )
     if evidence_blocked:
         recommended_next.append(
-            "Complete the Author Evidence slots with real examples, source support, or author observations, then rescan."
+            "If review requires support, keep real examples, source support, or author observations ready outside this rewrite pipeline."
         )
     if candidates and best_safe_human < target_human:
         recommended_next.append(
@@ -870,6 +902,11 @@ def _build_mitigation_ceiling_diagnostics(
             "best_seen_ai": round(best_seen_ai, 3) if best_seen_ai is not None else None,
             "blocked_reason_counts": reason_counts,
             "blocked_human_winner_repair": search.get("blocked_human_winner_repair"),
+        },
+        "remaining_driver_gap": {
+            "driver_contract": driver_contract,
+            "primary_switches": driver_contract.get("primary_switches") if isinstance(driver_contract, dict) else None,
+            "raw_formula": driver_contract.get("raw_formula") if isinstance(driver_contract, dict) else None,
         },
         "author_evidence_gap": {
             "enabled": evidence_blocked,
@@ -2044,6 +2081,89 @@ def _topk_texture_repair_prompt(
     )
 
 
+def _driver_suppression_repair_prompt(
+    source_text: str,
+    report_dict: dict | None,
+    *,
+    candidate_count: int = 2,
+) -> str:
+    """Full-document prompt for the actual Human formula switches.
+
+    This is not broad polishing. It asks the model to change the distributional
+    texture across enough sentences to reduce the scanner's ai_likelihood and
+    rewrite_smoothness features.
+    """
+    driver_plan = _human_contribution_driver_plan(report_dict)
+    blockers = _blocker_scores(report_dict)
+    risk_map = _sentence_texture_risk_map(source_text, report_dict, limit=14)
+    target_sentences = [
+        {
+            "sentence_index": item.get("sentence_index"),
+            "risk": item.get("risk"),
+            "sentence": item.get("sentence"),
+            "drivers": item.get("drivers"),
+        }
+        for item in risk_map[:12]
+    ]
+    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
+    word_band = _word_count_band(
+        source_text,
+        variance=_float_env("DRAFTPROOF_DRIVER_SUPPRESSION_WORD_VARIANCE", 0.30),
+    )
+    return (
+        "DraftProof DRIVER_SUPPRESSION_REPAIR.\n"
+        "Do not polish. Break the distributional pattern that keeps Human Contribution below target.\n\n"
+        "The numeric target is not the instruction. The scanner formula switches are the instruction.\n"
+        f"Human driver plan: {json.dumps(driver_plan, ensure_ascii=False)[:5000]}\n\n"
+        f"Current blocker scores: {json.dumps(blockers, ensure_ascii=False)}\n"
+        f"Word-count guidance: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
+        "Protected anchors. These exact spans must appear unchanged in every candidate, including quote text:\n"
+        f"{json.dumps(protected_anchors, ensure_ascii=False)[:2600]}\n\n"
+        "High-risk sentence targets from the scanner:\n"
+        f"{json.dumps(target_sentences, ensure_ascii=False)[:7000]}\n\n"
+        "Required operations across the document:\n"
+        "- Patch several high-risk sentences, not only one paragraph.\n"
+        "- Add controlled roughness: one short sentence after a longer one, one mild fragment if natural, one less perfect transition.\n"
+        "- Increase specificity using only the submitted context and safe domain-grounded reasoning.\n"
+        "- Replace perfect essay rhythm such as Today/However/Therefore/In conclusion.\n"
+        "- Reduce semantic smoothness by adding small human turns: condition, hesitation, contrast, or practical friction.\n"
+        "- Keep some simple or slightly uneven wording. Do not over-correct every sentence.\n"
+        "- Narrow broad claims before adding any new wording.\n\n"
+        "Examples of the target texture:\n"
+        "- This sounds simple. It is not.\n"
+        "- The problem is not access. It is judgement.\n"
+        "- Students may see the outcome, but not the decision-making behind it.\n"
+        "- This depends on the task, the source, and the student's current skill level.\n\n"
+        "Forbidden:\n"
+        "- do not add fake citations, dates, names, statistics, institutions, or author-owned evidence\n"
+        "- do not rewrite into smoother academic prose\n"
+        "- do not add generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion\n"
+        "- do not drop, paraphrase, normalize, or reword protected anchors\n"
+        "- do not add a new bibliography or markdown links\n\n"
+        "Patch format rules:\n"
+        "- Return JSON only.\n"
+        "- Each patch target must be one complete exact sentence copied from SOURCE DOCUMENT, ending with punctuation.\n"
+        "- Each replacement must keep the same meaning and protected anchors.\n"
+        "- Each replacement must be one or two complete sentences ending with punctuation.\n"
+        "- Patch several high-risk sentences if possible, but skip any sentence you cannot patch safely.\n\n"
+        "Acceptance target used by scanner gate:\n"
+        "- ai_likelihood feature should drop by at least 0.12\n"
+        "- rewrite_smoothness feature should drop by at least 0.08\n"
+        "- AI Authorship must not increase\n"
+        "- AI Transformation must not increase\n"
+        "- semantic drift must remain false\n"
+        "- review burden and severity must not materially regress\n\n"
+        "SOURCE DOCUMENT:\n"
+        f"<SOURCE_DOCUMENT>\n{source_text.strip()}\n</SOURCE_DOCUMENT>\n\n"
+        "Return exactly this JSON schema, with no commentary:\n"
+        "{\n"
+        '  "patches": [\n'
+        '    {"target": "one complete exact source sentence", "replacement": "one or two complete driver-suppressed sentences"}\n'
+        "  ]\n"
+        "}"
+    )
+
+
 def _build_source_grounding_search_layer(
     text: str,
     report_dict: dict | None,
@@ -2664,6 +2784,257 @@ def _integrity_scores(report_dict: dict | None) -> dict:
     }
 
 
+def _footprint_profile(report_dict: dict | None) -> dict:
+    """Build rewrite-only AI footprint buckets from existing scan output.
+
+    Scanner JSON stays unchanged. This profile is a controller view used by
+    rewrite to target authorship footprint without mixing grounding/evidence
+    quality into the authorship decision.
+    """
+    if not isinstance(report_dict, dict):
+        return {
+            "authorship_footprint": None,
+            "structural_footprint": None,
+            "semantic_footprint": None,
+            "grounding_footprint": None,
+            "components": {},
+        }
+    badge = report_dict.get("ai_risk_badge") or {}
+    ai_components = badge.get("ai_components") or {}
+    writing_components = badge.get("writing_components") or {}
+    integrity = _integrity_scores(report_dict)
+
+    def num(value, default=0.0) -> float:
+        if isinstance(value, (int, float)):
+            value = float(value)
+            return value * 100.0 if abs(value) <= 1.0 else value
+        return float(default)
+
+    def comp(mapping: dict, key: str) -> float:
+        return num((mapping or {}).get(key), 0.0)
+
+    def feat(key: str) -> float:
+        value = _feature_percent(report_dict, key)
+        return num(value, 0.0)
+
+    ai_likelihood = feat("ai_likelihood") or num(badge.get("ai_likelihood_score"), 0.0)
+    rewrite_smoothness = feat("rewrite_smoothness")
+    topk_pattern = comp(ai_components, "topk_pattern")
+    predictability = comp(ai_components, "predictability")
+    ai_authorship = integrity.get("ai_authorship")
+    if not isinstance(ai_authorship, (int, float)):
+        authorship_driver_values = [
+            ai_likelihood,
+            rewrite_smoothness,
+            topk_pattern,
+            predictability,
+        ]
+        ai_authorship = sum(authorship_driver_values) / max(1, len(authorship_driver_values))
+
+    discourse_regularity = feat("discourse_regularity_risk")
+    section_style_variance = feat("section_style_variance")
+    structural_values = [
+        value for value in [
+            discourse_regularity,
+            comp(ai_components, "repetitive_sentence_structure"),
+            comp(ai_components, "low_burstiness"),
+            section_style_variance,
+        ]
+        if value > 0
+    ]
+    semantic_uniformity = feat("semantic_uniformity_risk")
+    expansion_pattern = feat("outline_to_text_expansion")
+    semantic_values = [
+        value for value in [
+            semantic_uniformity,
+            expansion_pattern,
+            feat("paraphrase_transformation_risk"),
+        ]
+        if value > 0
+    ]
+    grounding_values = [
+        comp(writing_components, "unsupported_claim_risk"),
+        comp(writing_components, "broad_claim_risk"),
+        comp(writing_components, "citation_weakness_risk"),
+        comp(writing_components, "source_grounding_risk"),
+    ]
+    structural_score = sum(structural_values) / len(structural_values) if structural_values else 0.0
+    semantic_score = sum(semantic_values) / len(semantic_values) if semantic_values else 0.0
+    grounding_score = max(grounding_values) if grounding_values else 0.0
+    driver_score = (
+        ai_likelihood * 0.40
+        + rewrite_smoothness * 0.25
+        + topk_pattern * 0.20
+        + predictability * 0.15
+    )
+    return {
+        "schema_version": "rewrite_footprint_profile.v1",
+        "authorship_footprint": round(float(ai_authorship), 3),
+        "structural_footprint": round(structural_score, 3),
+        "semantic_footprint": round(semantic_score, 3),
+        "grounding_footprint": round(grounding_score, 3),
+        "components": {
+            "authorship": {
+                "ai_authorship": round(float(ai_authorship), 3),
+                "ai_likelihood": round(ai_likelihood, 3),
+                "topk_pattern": round(topk_pattern, 3),
+                "predictability": round(predictability, 3),
+                "rewrite_smoothness": round(rewrite_smoothness, 3),
+                "driver_score": round(driver_score, 3),
+            },
+            "structural": {
+                "discourse_regularity": round(discourse_regularity, 3),
+                "sentence_rhythm_uniformity": round(max(
+                    comp(ai_components, "repetitive_sentence_structure"),
+                    comp(ai_components, "low_burstiness"),
+                ), 3),
+                "paragraph_symmetry": round(section_style_variance, 3),
+            },
+            "semantic": {
+                "semantic_uniformity": round(semantic_uniformity, 3),
+                "expansion_pattern": round(expansion_pattern, 3),
+                "low_topic_drift": round(feat("semantic_drift_risk"), 3),
+            },
+            "grounding": {
+                "unsupported_claim_risk": round(comp(writing_components, "unsupported_claim_risk"), 3),
+                "broad_claim_risk": round(comp(writing_components, "broad_claim_risk"), 3),
+                "citation_weakness_risk": round(comp(writing_components, "citation_weakness_risk"), 3),
+                "source_grounding_risk": round(comp(writing_components, "source_grounding_risk"), 3),
+            },
+        },
+        "policy": {
+            "authorship_decides_success": True,
+            "grounding_excluded_from_authorship_success": True,
+        },
+    }
+
+
+def _footprint_delta_status(
+    original_report: dict | None,
+    candidate_report: dict | None,
+    *,
+    text_changed: bool,
+    review_burden_delta: int | float = 0,
+    weighted_severity_delta: int | float = 0,
+    critical_high_delta: int | float = 0,
+    drift_similarity: float | None = None,
+    target: float | None = None,
+) -> dict:
+    target = _float_env("DRAFTPROOF_AI_AUTHORSHIP_FOOTPRINT_TARGET", 20.0) if target is None else float(target)
+    before = _footprint_profile(original_report)
+    after = _footprint_profile(candidate_report)
+    before_score = before.get("authorship_footprint")
+    after_score = after.get("authorship_footprint")
+    drop = (
+        float(before_score) - float(after_score)
+        if isinstance(before_score, (int, float)) and isinstance(after_score, (int, float))
+        else None
+    )
+    component_drops: dict[str, float] = {}
+    before_auth = ((before.get("components") or {}).get("authorship") or {})
+    after_auth = ((after.get("components") or {}).get("authorship") or {})
+    for key in ("ai_likelihood", "topk_pattern", "predictability", "rewrite_smoothness", "driver_score"):
+        b = before_auth.get(key)
+        a = after_auth.get(key)
+        component_drops[key] = round(float(b) - float(a), 3) if isinstance(b, (int, float)) and isinstance(a, (int, float)) else 0.0
+    structural_drop = (
+        float(before.get("structural_footprint")) - float(after.get("structural_footprint"))
+        if isinstance(before.get("structural_footprint"), (int, float))
+        and isinstance(after.get("structural_footprint"), (int, float))
+        else 0.0
+    )
+    semantic_drop = (
+        float(before.get("semantic_footprint")) - float(after.get("semantic_footprint"))
+        if isinstance(before.get("semantic_footprint"), (int, float))
+        and isinstance(after.get("semantic_footprint"), (int, float))
+        else 0.0
+    )
+    hard_gate_passed = bool(
+        text_changed
+        and isinstance(drop, (int, float))
+        and drop > 0.0
+        and max(0.0, float(review_burden_delta or 0.0)) <= 0.0
+        and max(0.0, float(weighted_severity_delta or 0.0)) <= 0.0
+        and max(0.0, float(critical_high_delta or 0.0)) <= 0.0
+    )
+    achieved = bool(isinstance(after_score, (int, float)) and float(after_score) < target)
+    reason = ""
+    if not text_changed:
+        reason = "unchanged_candidate"
+    elif not isinstance(drop, (int, float)):
+        reason = "missing_authorship_footprint"
+    elif drop <= 0:
+        reason = "authorship_footprint_not_reduced"
+    elif review_burden_delta > 0:
+        reason = "review_burden_regressed"
+    elif weighted_severity_delta > 0:
+        reason = "weighted_severity_regressed"
+    elif critical_high_delta > 0:
+        reason = "critical_high_regressed"
+    elif achieved:
+        reason = "authorship_20_achieved"
+    else:
+        reason = "largest_safe_authorship_drop"
+    return {
+        "target": target,
+        "before": before_score,
+        "after": after_score,
+        "drop": round(drop, 3) if isinstance(drop, (int, float)) else None,
+        "achieved": achieved,
+        "hard_gate_passed": hard_gate_passed,
+        "selectable": hard_gate_passed,
+        "reason": reason,
+        "component_drops": component_drops,
+        "structural_drop": round(structural_drop, 3),
+        "semantic_drop": round(semantic_drop, 3),
+        "grounding_policy": "excluded_from_authorship_success",
+    }
+
+
+def _authorship_footprint_rank(
+    footprint_status: dict | None,
+    *,
+    review_burden_delta: int | float = 0,
+    weighted_severity_delta: int | float = 0,
+    drift_blocked: bool = False,
+    anchor_loss_blocked: bool = False,
+) -> tuple:
+    status = footprint_status or {}
+    drops = status.get("component_drops") if isinstance(status.get("component_drops"), dict) else {}
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    penalty = (
+        max(0.0, num(review_burden_delta)) * 4.0
+        + max(0.0, num(weighted_severity_delta)) * 4.0
+        + (999.0 if drift_blocked else 0.0)
+        + (999.0 if anchor_loss_blocked else 0.0)
+    )
+    score = (
+        num(status.get("drop")) * 6.0
+        + num(drops.get("ai_likelihood")) * 4.0
+        + num(drops.get("rewrite_smoothness")) * 3.0
+        + num(drops.get("topk_pattern")) * 2.5
+        + num(status.get("structural_drop")) * 1.5
+        + num(status.get("semantic_drop")) * 1.0
+        - penalty
+    )
+    return (
+        1 if status.get("selectable") else 0,
+        1 if status.get("achieved") else 0,
+        round(score, 3),
+        num(status.get("drop")),
+        num(drops.get("ai_likelihood")),
+        num(drops.get("rewrite_smoothness")),
+        num(drops.get("topk_pattern")),
+        num(status.get("structural_drop")),
+        num(status.get("semantic_drop")),
+        -max(0.0, num(review_burden_delta)),
+        -max(0.0, num(weighted_severity_delta)),
+    )
+
+
 def _mitigation_sampling_policy_summary() -> dict:
     return {
         "ai_search_temperature": float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.45")),
@@ -2944,6 +3315,151 @@ def _human_formula_driver_status(original_report: dict | None, candidate_report:
     }
 
 
+def _human_contribution_driver_plan(report_dict: dict | None, *, target_human: float | None = None) -> dict:
+    """Compile the Human Contribution target into scanner formula driver deltas.
+
+    This is the controller's math layer. A target like "Human >80" is not an
+    instruction the LLM can execute directly; it must become required movement
+    in the raw Human-vs-AI formula drivers before generation starts.
+    """
+    if not isinstance(report_dict, dict):
+        return {"enabled": False, "reason": "missing_report"}
+    target = float(
+        target_human
+        if isinstance(target_human, (int, float))
+        else _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    )
+    contribution = _contribution_scores(report_dict)
+    current_human = contribution.get("human")
+    badge = report_dict.get("ai_risk_badge") or {}
+    transform = badge.get("transformation_classification") or {}
+    features = transform.get("features") or {}
+
+    def fnum(key: str) -> float:
+        try:
+            return max(0.0, min(1.0, float(features.get(key))))
+        except (TypeError, ValueError):
+            return 0.0
+
+    max_similarity = max(fnum("source_similarity"), fnum("surface_similarity"))
+    human_raw = (
+        fnum("human_anchor_score") * 0.45
+        + (1.0 - fnum("rewrite_smoothness")) * 0.20
+        + (1.0 - max_similarity) * 0.10
+    )
+    ai_driver_weights = {
+        "ai_likelihood": 0.55,
+        "rewrite_smoothness": 0.25,
+        "outline_to_text_expansion": 0.15,
+        "semantic_uniformity_risk": 0.10,
+        "discourse_regularity_risk": 0.05,
+        "section_style_variance": 0.05,
+        "source_similarity": 0.05,
+    }
+    ai_raw = sum(fnum(key) * weight for key, weight in ai_driver_weights.items())
+    if human_raw <= 0.0 or target <= 0.0 or target >= 100.0:
+        return {
+            "enabled": False,
+            "reason": "invalid_formula_state",
+            "current_human_contribution": current_human,
+            "target_human_contribution": target,
+            "human_raw": round(human_raw, 4),
+            "ai_raw": round(ai_raw, 4),
+        }
+
+    target_ratio = target / 100.0
+    required_ai_raw = human_raw * (1.0 - target_ratio) / target_ratio
+    required_ai_raw_drop = max(0.0, ai_raw - required_ai_raw)
+    current_ratio = human_raw / (human_raw + ai_raw) * 100.0 if (human_raw + ai_raw) > 0 else 0.0
+
+    remaining = required_ai_raw_drop
+    lever_plan = []
+    for key, weight in sorted(ai_driver_weights.items(), key=lambda item: item[1], reverse=True):
+        current_value = fnum(key)
+        max_raw_drop = current_value * weight
+        needed_feature_drop = 0.0
+        raw_drop_target = 0.0
+        if remaining > 0.0 and weight > 0.0 and max_raw_drop > 0.0:
+            raw_drop_target = min(remaining, max_raw_drop)
+            needed_feature_drop = min(current_value, raw_drop_target / weight)
+            remaining -= raw_drop_target
+        lever_plan.append({
+            "driver": key,
+            "current": round(current_value, 4),
+            "weight": weight,
+            "max_raw_drop": round(max_raw_drop, 4),
+            "target_feature_drop": round(needed_feature_drop, 4),
+            "target_raw_drop": round(raw_drop_target, 4),
+        })
+
+    human_levers = {
+        "human_anchor_score": {
+            "current": round(fnum("human_anchor_score"), 4),
+            "remaining_headroom": round(max(0.0, 1.0 - fnum("human_anchor_score")), 4),
+            "weight": 0.45,
+        },
+        "rewrite_smoothness": {
+            "current": round(fnum("rewrite_smoothness"), 4),
+            "human_side_gain_if_lowered": "also reduces AI raw",
+            "weight": 0.20,
+        },
+        "source_or_surface_similarity": {
+            "current": round(max_similarity, 4),
+            "remaining_drop": round(max_similarity, 4),
+            "weight": 0.10,
+        },
+    }
+    return {
+        "enabled": True,
+        "schema_version": "human_contribution_driver_plan.v1",
+        "current_human_contribution": (
+            round(float(current_human), 3)
+            if isinstance(current_human, (int, float)) else current_human
+        ),
+        "formula_human_contribution": round(current_ratio, 3),
+        "target_human_contribution": round(target, 3),
+        "human_gap": (
+            round(max(0.0, target - float(current_human)), 3)
+            if isinstance(current_human, (int, float)) else None
+        ),
+        "raw_formula": {
+            "human_raw": round(human_raw, 4),
+            "ai_raw": round(ai_raw, 4),
+            "required_ai_raw_at_target": round(required_ai_raw, 4),
+            "required_ai_raw_drop": round(required_ai_raw_drop, 4),
+            "remaining_unallocated_raw_drop": round(max(0.0, remaining), 4),
+        },
+        "primary_switches": [
+            item for item in lever_plan
+            if item.get("target_feature_drop", 0.0) > 0.0
+        ][:4],
+        "all_ai_driver_levers": lever_plan,
+        "human_driver_levers": human_levers,
+        "controller_instruction": (
+            "Generation must target these driver deltas directly; do not rely on "
+            "the model to infer Human Contribution from a numeric target."
+        ),
+    }
+
+
+def _human_contribution_driver_plan_brief(report_dict: dict | None) -> str:
+    plan = _human_contribution_driver_plan(report_dict)
+    if not plan.get("enabled"):
+        return ""
+    compact = {
+        "target_human": plan.get("target_human_contribution"),
+        "current_human": plan.get("current_human_contribution"),
+        "human_gap": plan.get("human_gap"),
+        "raw_formula": plan.get("raw_formula"),
+        "primary_switches": plan.get("primary_switches"),
+    }
+    return (
+        "Human target driver plan from scanner formula:\n"
+        f"{json.dumps(compact, ensure_ascii=False)}\n"
+        "Use the primary switches as the repair objective. Do not treat the numeric target as a style instruction."
+    )
+
+
 def _dominant_blocker_safe_progress_override(
     dominant_status: dict | None,
     authenticity_status: dict | None,
@@ -3068,6 +3584,11 @@ def _ai_search_adaptive_stop_reason(
         return ""
     if not isinstance(selection_status, dict) or not selection_status.get("selectable"):
         return ""
+    if (
+        selection_status.get("safe_partial_progress")
+        and _env_flag("DRAFTPROOF_ADAPTIVE_STOP_ON_SAFE_PARTIAL", True)
+    ):
+        return f"adaptive_stop_after_safe_partial_{phase}"
     dominant = selection_status.get("dominant_blocker_gate") or {}
     if (
         dominant.get("required")
@@ -3167,7 +3688,9 @@ def _blocked_human_winner_failed_formula_gate(candidate: dict | None) -> bool:
 
     Finding-local repair can fix review burden or severity regressions. It cannot fix
     a candidate class whose direct Human Contribution formula drivers moved the wrong
-    way, so running it after that gate is pure budget waste.
+    way, so running it after that gate is pure budget waste. A candidate that has
+    already met the trajectory formula conditions is different: it has useful
+    formula movement and should be eligible for finding-local repair.
     """
     if not isinstance(candidate, dict):
         return False
@@ -3179,6 +3702,21 @@ def _blocked_human_winner_failed_formula_gate(candidate: dict | None) -> bool:
         return False
     formula_gate = selection.get("human_formula_driver_gate")
     if not isinstance(formula_gate, dict):
+        return False
+    trajectory = selection.get("human_goal_trajectory_progress")
+    if isinstance(trajectory, dict) and trajectory.get("formula_ok"):
+        return False
+    try:
+        human_delta = float(formula_gate.get("human_delta") or 0.0)
+        ai_raw_drop = float(formula_gate.get("ai_raw_drop") or 0.0)
+        min_ai_raw_drop = float(formula_gate.get("min_ai_raw_drop") or 0.04)
+        human_raw_gain = float(formula_gate.get("human_raw_gain") or 0.0)
+    except (TypeError, ValueError):
+        human_delta = 0.0
+        ai_raw_drop = 0.0
+        min_ai_raw_drop = 0.04
+        human_raw_gain = 0.0
+    if human_delta > 0.0 and ai_raw_drop >= min_ai_raw_drop and human_raw_gain >= -0.01:
         return False
     return bool(
         selection.get("reason") == "human_formula_drivers_not_reduced"
@@ -3292,6 +3830,202 @@ def _blocked_winner_bounded_quality_tradeoff(
     }
 
 
+def _human_goal_trajectory_progress_status(
+    *,
+    authenticity_status: dict | None,
+    human_formula_status: dict | None,
+    dominant_status: dict | None,
+    ai_delta: float,
+    finding_delta: int,
+    review_burden_delta: int,
+    weighted_severity_delta: int,
+    critical_high_delta: int,
+    ai_score_regressed: bool,
+) -> dict:
+    """Accept bounded trajectory moves toward Human 80 instead of resetting to zero.
+
+    Human Contribution is a ratio. On documents with already-high human anchors,
+    a useful candidate may mostly suppress AI pressure and move Human only one
+    point. Treating that as failure makes the optimizer chase its tail.
+    """
+    if not _env_flag("DRAFTPROOF_ACCEPT_HUMAN_GOAL_TRAJECTORY_PROGRESS", True):
+        return {"allowed": False, "reason": "disabled"}
+    authenticity_status = authenticity_status or {}
+    human_formula_status = human_formula_status or {}
+    dominant_status = dominant_status or {}
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    human_delta = num(authenticity_status.get("human_delta"))
+    ai_authorship_delta = num(authenticity_status.get("ai_authorship_delta"))
+    ai_transform_delta = num(authenticity_status.get("ai_transformation_delta"))
+    human_shift_score = num(authenticity_status.get("human_shift_score"))
+    ai_raw_drop = num(human_formula_status.get("ai_raw_drop"))
+    human_raw_gain = num(human_formula_status.get("human_raw_gain"))
+    dominant_drops = (
+        dominant_status.get("drops")
+        if isinstance(dominant_status.get("drops"), dict)
+        else {}
+    )
+    dominant_max_drop = max(
+        [0.0]
+        + [
+            float(value)
+            for value in dominant_drops.values()
+            if isinstance(value, (int, float))
+        ]
+    )
+    dominant_regression = num(dominant_status.get("regression"))
+    dominant_net_drop = dominant_max_drop - dominant_regression
+
+    min_human = _float_env("DRAFTPROOF_TRAJECTORY_MIN_HUMAN_GAIN", 1.0)
+    min_ai_delta = _float_env("DRAFTPROOF_TRAJECTORY_MIN_AI_DELTA", 5.0)
+    min_authorship = _float_env("DRAFTPROOF_TRAJECTORY_MIN_AUTHORSHIP_DROP", 5.0)
+    min_transform = _float_env("DRAFTPROOF_TRAJECTORY_MIN_TRANSFORM_DROP", 1.0)
+    min_shift = _float_env("DRAFTPROOF_TRAJECTORY_MIN_HUMAN_SHIFT_SCORE", 3.0)
+    min_ai_raw_drop = _float_env("DRAFTPROOF_TRAJECTORY_MIN_AI_RAW_DROP", 0.02)
+    max_human_raw_loss = _float_env("DRAFTPROOF_TRAJECTORY_MAX_HUMAN_RAW_LOSS", 0.01)
+    max_findings = int(_float_env("DRAFTPROOF_TRAJECTORY_MAX_FINDING_DELTA", 2.0))
+    max_review = int(_float_env("DRAFTPROOF_TRAJECTORY_MAX_REVIEW_DELTA", 1.0))
+    max_severity = int(_float_env("DRAFTPROOF_TRAJECTORY_MAX_SEVERITY_DELTA", 3.0))
+    max_dominant_regression = _float_env("DRAFTPROOF_TRAJECTORY_MAX_DOMINANT_REGRESSION", 2.0)
+    min_dominant_net_drop = _float_env("DRAFTPROOF_TRAJECTORY_MIN_DOMINANT_NET_DROP", 10.0)
+
+    formula_ok = bool(
+        ai_raw_drop >= min_ai_raw_drop
+        and human_raw_gain >= -max_human_raw_loss
+    )
+    dominant_ok = bool(
+        not dominant_status.get("required")
+        or dominant_status.get("cleared")
+        or dominant_regression <= max_dominant_regression
+        or dominant_net_drop >= min_dominant_net_drop
+    )
+    allowed = bool(
+        human_delta >= min_human
+        and float(ai_delta or 0.0) >= min_ai_delta
+        and ai_authorship_delta >= min_authorship
+        and ai_transform_delta >= min_transform
+        and human_shift_score >= min_shift
+        and formula_ok
+        and dominant_ok
+        and not ai_score_regressed
+        and not authenticity_status.get("ai_authorship_regression_blocked")
+        and critical_high_delta <= 0
+        and finding_delta <= max_findings
+        and review_burden_delta <= max_review
+        and weighted_severity_delta <= max_severity
+    )
+    return {
+        "allowed": allowed,
+        "reason": "" if allowed else "trajectory_threshold_not_met",
+        "human_delta": round(human_delta, 3),
+        "ai_delta": round(float(ai_delta or 0.0), 3),
+        "ai_authorship_delta": round(ai_authorship_delta, 3),
+        "ai_transformation_delta": round(ai_transform_delta, 3),
+        "human_shift_score": round(human_shift_score, 3),
+        "ai_raw_drop": round(ai_raw_drop, 4),
+        "human_raw_gain": round(human_raw_gain, 4),
+        "formula_ok": formula_ok,
+        "dominant_ok": dominant_ok,
+        "dominant_max_drop": round(dominant_max_drop, 3),
+        "dominant_regression": round(dominant_regression, 3),
+        "dominant_net_drop": round(dominant_net_drop, 3),
+        "finding_delta": int(finding_delta or 0),
+        "review_burden_delta": int(review_burden_delta or 0),
+        "weighted_severity_delta": int(weighted_severity_delta or 0),
+        "critical_high_delta": int(critical_high_delta or 0),
+        "thresholds": {
+            "min_human_gain": min_human,
+            "min_ai_delta": min_ai_delta,
+            "min_ai_authorship_drop": min_authorship,
+            "min_ai_transformation_drop": min_transform,
+            "min_human_shift_score": min_shift,
+            "min_ai_raw_drop": min_ai_raw_drop,
+            "max_human_raw_loss": max_human_raw_loss,
+            "max_finding_delta": max_findings,
+            "max_review_delta": max_review,
+            "max_weighted_severity_delta": max_severity,
+            "max_dominant_regression": max_dominant_regression,
+            "min_dominant_net_drop": min_dominant_net_drop,
+        },
+    }
+
+
+def _driver_suppression_candidate_status(
+    *,
+    authenticity_status: dict | None,
+    human_formula_status: dict | None,
+    ai_score_regressed: bool,
+    finding_delta: int,
+    review_burden_delta: int,
+    weighted_severity_delta: int,
+    critical_high_delta: int,
+) -> dict:
+    """Gate candidates that directly attack ai_likelihood and rewrite_smoothness."""
+    if not _env_flag("DRAFTPROOF_ACCEPT_DRIVER_SUPPRESSION_REPAIR", True):
+        return {"allowed": False, "reason": "disabled"}
+    authenticity_status = authenticity_status or {}
+    human_formula_status = human_formula_status or {}
+    drops = human_formula_status.get("driver_drops") or {}
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    ai_likelihood_drop = num(drops.get("ai_likelihood"))
+    smoothness_drop = num(drops.get("rewrite_smoothness"))
+    ai_raw_drop = num(human_formula_status.get("ai_raw_drop"))
+    human_raw_gain = num(human_formula_status.get("human_raw_gain"))
+    human_delta = num(authenticity_status.get("human_delta"))
+    ai_authorship_delta = num(authenticity_status.get("ai_authorship_delta"))
+    ai_transform_delta = num(authenticity_status.get("ai_transformation_delta"))
+    min_ai_likelihood = _float_env("DRAFTPROOF_DRIVER_SUPPRESSION_MIN_AI_LIKELIHOOD_DROP", 0.12)
+    min_smoothness = _float_env("DRAFTPROOF_DRIVER_SUPPRESSION_MIN_SMOOTHNESS_DROP", 0.08)
+    min_ai_raw = _float_env("DRAFTPROOF_DRIVER_SUPPRESSION_MIN_AI_RAW_DROP", 0.06)
+    max_findings = int(_float_env("DRAFTPROOF_DRIVER_SUPPRESSION_MAX_FINDING_DELTA", 2.0))
+    max_review = int(_float_env("DRAFTPROOF_DRIVER_SUPPRESSION_MAX_REVIEW_DELTA", 1.0))
+    max_severity = int(_float_env("DRAFTPROOF_DRIVER_SUPPRESSION_MAX_SEVERITY_DELTA", 3.0))
+    allowed = bool(
+        ai_likelihood_drop >= min_ai_likelihood
+        and smoothness_drop >= min_smoothness
+        and ai_raw_drop >= min_ai_raw
+        and human_raw_gain >= -0.01
+        and human_delta >= 0.0
+        and ai_authorship_delta >= 0.0
+        and ai_transform_delta >= 0.0
+        and not ai_score_regressed
+        and not authenticity_status.get("ai_authorship_regression_blocked")
+        and critical_high_delta <= 0
+        and finding_delta <= max_findings
+        and review_burden_delta <= max_review
+        and weighted_severity_delta <= max_severity
+    )
+    return {
+        "allowed": allowed,
+        "reason": "" if allowed else "driver_suppression_threshold_not_met",
+        "ai_likelihood_drop": round(ai_likelihood_drop, 4),
+        "rewrite_smoothness_drop": round(smoothness_drop, 4),
+        "ai_raw_drop": round(ai_raw_drop, 4),
+        "human_raw_gain": round(human_raw_gain, 4),
+        "human_delta": round(human_delta, 3),
+        "ai_authorship_delta": round(ai_authorship_delta, 3),
+        "ai_transformation_delta": round(ai_transform_delta, 3),
+        "finding_delta": int(finding_delta or 0),
+        "review_burden_delta": int(review_burden_delta or 0),
+        "weighted_severity_delta": int(weighted_severity_delta or 0),
+        "critical_high_delta": int(critical_high_delta or 0),
+        "thresholds": {
+            "min_ai_likelihood_drop": min_ai_likelihood,
+            "min_rewrite_smoothness_drop": min_smoothness,
+            "min_ai_raw_drop": min_ai_raw,
+            "max_finding_delta": max_findings,
+            "max_review_delta": max_review,
+            "max_weighted_severity_delta": max_severity,
+        },
+    }
+
+
 def _score_drag_removal_status(
     *,
     authenticity_status: dict | None,
@@ -3386,6 +4120,77 @@ def _adaptive_budget_default(source_text: str, short_value: int, long_value: int
         if _text_word_count(source_text) <= threshold:
             return str(short_value)
     return str(long_value)
+
+
+def _controller_size_policy(source_text: str) -> dict:
+    """Bound rewrite orchestration by document size.
+
+    The controller must work for 300-5000 words without falling into a
+    full-document LLM loop. These defaults are intentionally conservative and
+    can still be overridden by the existing environment variables.
+    """
+    words = _text_word_count(source_text)
+    if words < 700:
+        size_class = "short"
+        policy = {
+            "max_seconds": 90,
+            "max_candidate_scans": 16,
+            "max_llm_calls": 2,
+            "max_recreate_blocks": 2,
+            "driver_candidate_limit": 8,
+            "block_candidate_limit": 6,
+            "full_document_llm_allowed": False,
+            "full_document_patch_llm_allowed": True,
+        }
+    elif words < 1800:
+        size_class = "medium"
+        policy = {
+            "max_seconds": 180,
+            "max_candidate_scans": 22,
+            "max_llm_calls": 3,
+            "max_recreate_blocks": 4,
+            "driver_candidate_limit": 10,
+            "block_candidate_limit": 8,
+            "full_document_llm_allowed": False,
+            "full_document_patch_llm_allowed": True,
+        }
+    elif words <= 5000:
+        size_class = "long"
+        policy = {
+            "max_seconds": 300,
+            "max_candidate_scans": 28,
+            "max_llm_calls": 2,
+            "max_recreate_blocks": 6,
+            "driver_candidate_limit": 12,
+            "block_candidate_limit": 10,
+            "full_document_llm_allowed": False,
+            "full_document_patch_llm_allowed": False,
+        }
+    else:
+        size_class = "very_long"
+        policy = {
+            "max_seconds": 300,
+            "max_candidate_scans": 28,
+            "max_llm_calls": 1,
+            "max_recreate_blocks": 6,
+            "driver_candidate_limit": 12,
+            "block_candidate_limit": 10,
+            "full_document_llm_allowed": False,
+            "full_document_patch_llm_allowed": False,
+        }
+    return {
+        "schema_version": "rewrite_controller_size_policy.v1",
+        "word_count": words,
+        "size_class": size_class,
+        **policy,
+        "policy": (
+            "sentence_and_paragraph_batches"
+            if size_class == "short"
+            else "ranked_paragraph_then_sentence_windows"
+            if size_class == "medium"
+            else "block_level_triage_only_no_full_document_llm"
+        ),
+    }
 
 
 def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
@@ -3690,19 +4495,10 @@ def _radar_goal_controller_status(raw_json: dict | None) -> dict:
                 or ""
             )
         word_count = _text_word_count(str(source_text)) if source_text else None
+    size_policy = _controller_size_policy(" ".join(["x"] * int(word_count))) if isinstance(word_count, (int, float)) else {}
     if isinstance(word_count, (int, float)):
-        if word_count < 700:
-            size_class = "short"
-            max_recreate_blocks = 2
-        elif word_count < 1800:
-            size_class = "medium"
-            max_recreate_blocks = 4
-        elif word_count < 3500:
-            size_class = "long"
-            max_recreate_blocks = 6
-        else:
-            size_class = "very_long"
-            max_recreate_blocks = 8
+        size_class = str(size_policy.get("size_class") or "unknown")
+        max_recreate_blocks = int(size_policy.get("max_recreate_blocks") or 4)
     else:
         size_class = "unknown"
         max_recreate_blocks = 4
@@ -3755,6 +4551,7 @@ def _radar_goal_controller_status(raw_json: dict | None) -> dict:
         "document_word_count": int(word_count) if isinstance(word_count, (int, float)) else None,
         "document_size_class": size_class,
         "max_recreate_blocks": max_recreate_blocks,
+        "size_controller_policy": size_policy,
         "size_policy": (
             "short_doc_allows_whole_section_recreate"
             if size_class == "short"
@@ -4196,13 +4993,30 @@ def _goal_climb_candidate_rank(
     original_weighted_severity: int | float = 0,
     original_finding_total: int | float = 0,
 ) -> tuple:
-    """Rank AI-mitigation candidates by progress toward the Human 80 goal.
+    """Rank AI-mitigation candidates by the active rewrite objective.
 
-    AI score is intentionally late in the key. A lower AI score is not a win
-    when Human Shift, authorship texture, or review burden move the wrong way.
+    The current rewrite objective is AI Authorship Footprint <20. Human Shift
+    remains diagnostic, but candidate choice is authorship-first.
     """
     status = selection_status or {}
     eval_data = candidate_eval or {}
+
+    def num(value, default=-9999.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    if _env_flag("DRAFTPROOF_REWRITE_AUTHORSHIP_FOOTPRINT_OBJECTIVE", True):
+        footprint_status = (
+            status.get("authorship_footprint_gate")
+            if isinstance(status.get("authorship_footprint_gate"), dict)
+            else eval_data.get("authorship_footprint_status")
+            if isinstance(eval_data.get("authorship_footprint_status"), dict)
+            else {}
+        )
+        return _authorship_footprint_rank(
+            footprint_status,
+            review_burden_delta=num(candidate_review_burden, 0.0) - num(original_review_burden, 0.0),
+            weighted_severity_delta=num(candidate_weighted_severity, 0.0) - num(original_weighted_severity, 0.0),
+        )
     gate = status.get("authenticity_gate") if isinstance(status.get("authenticity_gate"), dict) else status
     components = (
         status.get("human_shift_components")
@@ -4211,9 +5025,6 @@ def _goal_climb_candidate_rank(
         if isinstance(gate.get("human_shift_components"), dict)
         else {}
     )
-
-    def num(value, default=-9999.0) -> float:
-        return float(value) if isinstance(value, (int, float)) else float(default)
 
     human_shift = num(status.get("human_shift_score", gate.get("human_shift_score")))
     human_delta = num(gate.get("human_delta"))
@@ -7924,6 +8735,32 @@ def _apply_finding_local_patches(text: str, patches: list[dict]) -> tuple[str, l
     return updated, applied
 
 
+def _extract_driver_suppression_patches(output: str, source_text: str) -> list[dict]:
+    """Driver suppression may only patch full sentences.
+
+    Generic finding-local repair can safely patch fragments because it targets
+    exact finding spans. Distribution repair cannot; fragment patches create
+    broken joins and false progress.
+    """
+    source = str(source_text or "")
+    cleaned = []
+    for patch in _extract_finding_local_patches(output):
+        target = str(patch.get("target") or "").strip()
+        replacement = str(patch.get("replacement") or "").strip()
+        if target not in source:
+            continue
+        if not re.search(r"[.!?][\"')\]]?$", target):
+            continue
+        if not re.search(r"[.!?][\"')\]]?$", replacement):
+            continue
+        if re.search(r"\b(?:tailore|cogn|deci|learni|educatio|inclusi)$", target, re.I):
+            continue
+        if re.search(r"\b(?:tailore|cogn|deci|learni|educatio|inclusi)$", replacement, re.I):
+            continue
+        cleaned.append({"target": target, "replacement": replacement})
+    return cleaned[:5]
+
+
 def _logical_paragraphs(text: str) -> list[str]:
     raw = str(text or "").strip()
     if not raw:
@@ -8144,6 +8981,7 @@ def _paragraph_component_prompt(
     confirmed_author_anchors: str = "",
 ) -> str:
     signal_brief = _ai_search_signal_brief(raw_json)
+    driver_plan_brief = _human_contribution_driver_plan_brief(raw_json)
     drivers = target.get("drivers") or {}
     candidate_count = max(1, int(candidate_count or 1))
     protected_source = "\n\n".join(
@@ -8198,6 +9036,7 @@ def _paragraph_component_prompt(
         "- using broad setup sentences before the actual point\n"
         "- ending with a tidy lesson, implication, or summary\n\n"
         f"{signal_brief}\n\n"
+        + (f"{driver_plan_brief}\n\n" if driver_plan_brief else "")
         + (f"{confirmed_author_anchors}\n\n" if confirmed_author_anchors else "")
         + f"Paragraph driver score: {target.get('score')}\n"
         f"Drivers: {json.dumps(drivers, ensure_ascii=False)}\n"
@@ -8297,6 +9136,7 @@ def _human_signal_amplification_prompt(
 ) -> str:
     role = str(target.get("role") or "mixed")
     anchor_context = _paragraph_generation_anchor_context(target)
+    driver_plan_brief = _human_contribution_driver_plan_brief(raw_json)
     min_word_rule = (
         f"Target replacement shape: more than {anchor_context['min_word_count'] - 1} words if possible, but scanner improvement overrides length.\n"
         if anchor_context["min_word_count"]
@@ -8359,6 +9199,7 @@ def _human_signal_amplification_prompt(
         "- AI Transformation must not increase\n"
         "- review burden and weighted severity must not increase\n"
         "- semantic drift and anchor loss must be false\n\n"
+        + (f"{driver_plan_brief}\n\n" if driver_plan_brief else "")
         + (f"{confirmed_author_anchors}\n\n" if confirmed_author_anchors else "")
         + f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
         f"Protected anchors: {json.dumps(anchor_context['protected_anchors'], ensure_ascii=False)[:2200]}\n"
@@ -8392,6 +9233,7 @@ def _author_reasoning_amplification_prompt(
 ) -> str:
     role = str(target.get("role") or "mixed")
     anchor_context = _paragraph_generation_anchor_context(target)
+    driver_plan_brief = _human_contribution_driver_plan_brief(raw_json)
     min_word_rule = (
         f"Target replacement shape: more than {anchor_context['min_word_count'] - 1} words if possible, but scanner improvement overrides length.\n"
         if anchor_context["min_word_count"]
@@ -8434,7 +9276,8 @@ def _author_reasoning_amplification_prompt(
         "- AI Transformation must not increase\n"
         "- findings, review burden, and weighted severity must not increase\n"
         "- semantic drift must be false\n\n"
-        f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
+        + (f"{driver_plan_brief}\n\n" if driver_plan_brief else "")
+        + f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
         f"Protected anchors: {json.dumps(anchor_context['protected_anchors'], ensure_ascii=False)[:2200]}\n"
         f"Anchor placeholders required in replacement: {json.dumps(anchor_context['required_placeholders'], ensure_ascii=False)}\n"
         f"Target replacement length: {anchor_context['min_char_count']}-{anchor_context['max_char_count']} characters after placeholders are restored. This is guidance, not a hard gate.\n"
@@ -8694,6 +9537,437 @@ def _content_pruning_candidates(
             if len(candidates) >= max(1, limit):
                 return candidates
     return candidates
+
+
+def _rewrite_controller_plan_from_report(
+    source_text: str,
+    raw_json: dict | None,
+) -> dict:
+    raw_json = raw_json or {}
+    plan = (
+        raw_json.get("rewrite_controller_plan")
+        or ((raw_json.get("scan_intelligence") or {}).get("rewrite_controller_plan"))
+        or ((raw_json.get("scan_intelligence") or {}).get("mitigation_inputs") or {}).get("rewrite_controller_plan")
+    )
+    if isinstance(plan, dict) and plan.get("block_driver_map"):
+        return plan
+
+    paragraphs = _logical_paragraphs(source_text)
+    targets = _paragraph_component_targets(source_text, raw_json, limit=max(8, len(paragraphs)))
+    target_by_index = {int(t.get("index") or 0): t for t in targets}
+    protected = detect_protected_spans(source_text)
+
+    def paragraph_bounds(index: int) -> tuple[int, int]:
+        before = _join_logical_paragraphs(paragraphs[:index])
+        start = len(before) + (2 if before else 0)
+        return start, start + len(paragraphs[index])
+
+    rows = []
+    for index, paragraph in enumerate(paragraphs):
+        target = target_by_index.get(index) or {}
+        drivers = target.get("drivers") if isinstance(target.get("drivers"), dict) else {}
+        role = target.get("role") or _paragraph_role(
+            paragraph,
+            drivers,
+            is_last=index == len(paragraphs) - 1,
+        )
+        start, end = paragraph_bounds(index)
+        has_protected = any(
+            span.start_char >= start and span.end_char <= end
+            for span in protected
+        )
+        word_count = _text_word_count(paragraph)
+        generic_hits = int(drivers.get("generic_assertion_hits") or 0)
+        concrete_hits = int(drivers.get("concrete_anchor_hits") or 0)
+        ai_drag = float(target.get("score") or 0.0)
+        if not ai_drag:
+            ai_drag = min(100.0, generic_hits * 7.0 + (12.0 if drivers.get("source_gap") else 0.0))
+        human_value = min(
+            100.0,
+            (35.0 if has_protected else 0.0)
+            + min(35.0, concrete_hits * 4.0)
+            + min(20.0, word_count / 8.0)
+            + (20.0 if role in {"human_anchor_rich", "technical_process_rich", "source_summary_heavy"} else 0.0),
+        )
+        remove_safety = "unsafe" if has_protected or role in {
+            "human_anchor_rich",
+            "technical_process_rich",
+            "source_summary_heavy",
+        } else ("safe" if ai_drag >= 45 and human_value <= 35 and word_count >= 20 else "limited")
+        if remove_safety == "safe":
+            actions = ["repair", "recreate", "remove"]
+        elif ai_drag >= 35:
+            actions = ["preserve", "repair", "recreate"]
+        else:
+            actions = ["preserve", "repair"]
+        rows.append({
+            "block_index": index,
+            "block_id": f"b{index + 1:03d}",
+            "role": role,
+            "word_count": word_count,
+            "protected_anchors": _protected_anchor_brief_for_prompt(paragraph, limit=18),
+            "core_claims": _split_sentences(paragraph)[:3],
+            "citation_markers": [
+                item.get("text")
+                for item in _protected_anchor_brief_for_prompt(paragraph, limit=18)
+                if item.get("type") == "citation"
+            ],
+            "ai_drag": round(ai_drag, 2),
+            "human_value": round(human_value, 2),
+            "remove_safety": remove_safety,
+            "recreate_priority": round(ai_drag * 0.65 + human_value * 0.35, 2),
+            "action_options": actions,
+            "required_driver_movement": {
+                "drivers": [
+                    item.get("driver")
+                    for item in ((raw_json.get("driver_contract") or {}).get("primary_switches") or [])[:4]
+                ],
+                "target_raw_drop": ((raw_json.get("driver_contract") or {}).get("raw_formula") or {}).get("required_ai_raw_drop"),
+            },
+            "preview": paragraph[:220],
+        })
+    size_policy = _controller_size_policy(source_text)
+    return {
+        "schema_version": "rewrite_controller_plan.fallback.v1",
+        "target_human_contribution": 80,
+        "size_policy": {
+            "word_count": _text_word_count(source_text),
+            "size_band": size_policy.get("size_band"),
+            "max_recreate_blocks": int(size_policy.get("paragraph_target_limit") or 3),
+            "max_remove_blocks": int(size_policy.get("block_candidate_limit") or 3),
+            "full_document_llm_rewrite_allowed": False,
+        },
+        "block_driver_map": rows,
+        "block_action_options": {row["block_id"]: row["action_options"] for row in rows},
+        "human_80_driver_gap": raw_json.get("human_80_driver_gap") or {
+            "raw_formula": (raw_json.get("driver_contract") or {}).get("raw_formula") or {},
+            "primary_switches": (raw_json.get("driver_contract") or {}).get("primary_switches") or [],
+        },
+    }
+
+
+def _block_optimizer_utility(block: dict) -> dict:
+    ai_drag = float(block.get("ai_drag") or 0.0)
+    human_value = float(block.get("human_value") or 0.0)
+    remove_safety = str(block.get("remove_safety") or "limited")
+    role = str(block.get("role") or "mixed")
+    preserve = bool(human_value >= 58.0 and ai_drag < 48.0)
+    recreate = bool(ai_drag >= 42.0 and human_value >= 34.0 and "recreate" in (block.get("action_options") or []))
+    remove = bool(remove_safety == "safe" and ai_drag >= 42.0 and human_value <= 42.0)
+    if role in {"required_heading", "human_anchor_rich", "technical_process_rich"}:
+        remove = False
+    if preserve:
+        action = "preserve"
+    elif remove:
+        action = "remove"
+    elif recreate:
+        action = "recreate"
+    elif ai_drag >= 28.0:
+        action = "repair"
+    else:
+        action = "preserve"
+    return {
+        "recommended_action": action,
+        "preserve": preserve,
+        "recreate": recreate,
+        "remove": remove,
+        "utility_score": round(ai_drag * 0.70 - human_value * 0.25 + (20.0 if remove else 0.0), 3),
+        "ai_drag": round(ai_drag, 3),
+        "human_value": round(human_value, 3),
+    }
+
+
+def _block_optimizer_targets(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 8,
+) -> list[dict]:
+    plan = _rewrite_controller_plan_from_report(source_text, raw_json or {})
+    rows = plan.get("block_driver_map") if isinstance(plan, dict) else []
+    if not isinstance(rows, list):
+        return []
+    targets = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        utility = _block_optimizer_utility(row)
+        item = dict(row)
+        item["utility"] = utility
+        item["recommended_action"] = utility["recommended_action"]
+        if utility["recommended_action"] == "preserve":
+            continue
+        targets.append(item)
+    targets.sort(
+        key=lambda item: (
+            item.get("recommended_action") == "remove",
+            item.get("recommended_action") == "recreate",
+            float((item.get("utility") or {}).get("utility_score") or 0.0),
+            float(item.get("ai_drag") or 0.0),
+        ),
+        reverse=True,
+    )
+    return targets[:max(0, limit)]
+
+
+def _compress_block_deterministically(block_text: str) -> str:
+    sentences = _split_sentences(block_text)
+    if len(sentences) < 3:
+        return _narrow_generic_claim_text(block_text)
+    scored = []
+    for index, sentence in enumerate(sentences):
+        generic_hits = len(re.findall(
+            r"\b(?:important|significant|crucial|various|wide range|plays? a role|"
+            r"highlights?|underscores?|should|must|need(?:s)?|can|will|"
+            r"helps?|allows?|enables?|creates?)\b",
+            sentence,
+            flags=re.I,
+        ))
+        connector_hits = len(re.findall(
+            r"\b(?:Furthermore|Moreover|Additionally|In conclusion|This highlights|"
+            r"This underscores|It is important to note)\b",
+            sentence,
+            flags=re.I,
+        ))
+        anchor_hits = len(_protected_anchor_brief_for_prompt(sentence, limit=8))
+        scored.append((generic_hits * 2.0 + connector_hits * 3.0 - anchor_hits * 4.0, index))
+    scored.sort(reverse=True)
+    remove_count = 1 if len(sentences) < 6 else 2
+    remove_indexes = {index for score, index in scored[:remove_count] if score > 0}
+    if not remove_indexes:
+        return _narrow_generic_claim_text(block_text)
+    kept = [sentence for index, sentence in enumerate(sentences) if index not in remove_indexes]
+    compressed = " ".join(kept).strip()
+    if _text_word_count(compressed) < max(18, int(_text_word_count(block_text) * 0.45)):
+        return _narrow_generic_claim_text(block_text)
+    return compressed
+
+
+def _block_optimizer_candidates(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 8,
+) -> list[tuple[str, str, dict]]:
+    if not _env_flag("DRAFTPROOF_BLOCK_DRIVER_OPTIMIZER", True):
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 2:
+        return []
+    plan = _rewrite_controller_plan_from_report(source_text, raw_json or {})
+    targets = _block_optimizer_targets(
+        source_text,
+        raw_json or {},
+        limit=max(limit * 2, 6),
+    )
+    protected = detect_protected_spans(source_text)
+
+    def paragraph_has_protected_anchor(index: int) -> bool:
+        before = _join_logical_paragraphs(paragraphs[:index])
+        start = len(before) + (2 if before else 0)
+        end = start + len(paragraphs[index])
+        return any(span.start_char >= start and span.end_char <= end for span in protected)
+
+    candidates: list[tuple[str, str, dict]] = []
+    seen: set[str] = set()
+    max_remove = int((plan.get("size_policy") or {}).get("max_remove_blocks") or 2)
+    removed_indexes: list[int] = []
+    repaired_paragraphs = list(paragraphs)
+    repaired_actions: list[dict] = []
+    for target in targets:
+        index = _safe_index(target.get("block_index"), -1)
+        if index < 0 or index >= len(paragraphs):
+            continue
+        action = str(target.get("recommended_action") or "")
+        original = paragraphs[index]
+        if action == "remove" and len(removed_indexes) < max_remove and not paragraph_has_protected_anchor(index):
+            next_paragraphs = list(paragraphs)
+            next_paragraphs.pop(index)
+            candidate = _join_logical_paragraphs(next_paragraphs)
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                removed_indexes.append(index)
+                candidates.append((
+                    f"block_optimizer_remove_b{index + 1}",
+                    candidate,
+                    {
+                        "operation": "remove",
+                        "block_index": index,
+                        "role": target.get("role"),
+                        "ai_drag": target.get("ai_drag"),
+                        "human_value": target.get("human_value"),
+                        "remove_safety": target.get("remove_safety"),
+                    },
+                ))
+        if action in {"repair", "recreate", "remove"}:
+            compressed = _compress_block_deterministically(original)
+            if compressed and compressed != original:
+                next_paragraphs = list(paragraphs)
+                next_paragraphs[index] = compressed
+                candidate = _join_logical_paragraphs(next_paragraphs)
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append((
+                        f"block_optimizer_repair_b{index + 1}",
+                        candidate,
+                        {
+                            "operation": "repair",
+                            "block_index": index,
+                            "role": target.get("role"),
+                            "ai_drag": target.get("ai_drag"),
+                            "human_value": target.get("human_value"),
+                        },
+                    ))
+                repaired_paragraphs[index] = compressed
+                repaired_actions.append({
+                    "operation": "repair",
+                    "block_index": index,
+                    "role": target.get("role"),
+                })
+        if len(candidates) >= max(1, limit):
+            break
+    hybrid = _join_logical_paragraphs(repaired_paragraphs)
+    if repaired_actions and hybrid and hybrid != source_text and hybrid not in seen:
+        candidates.append((
+            "block_optimizer_hybrid_repair",
+            hybrid,
+            {
+                "operation": "hybrid_repair",
+                "applied_actions": repaired_actions[:8],
+            },
+        ))
+    return candidates[:max(0, limit)]
+
+
+def _block_regeneration_prompt(
+    source_text: str,
+    raw_json: dict | None,
+    targets: list[dict],
+    *,
+    candidate_count: int = 1,
+) -> str:
+    paragraphs = _logical_paragraphs(source_text)
+    payload_targets = []
+    for target in targets:
+        index = _safe_index(target.get("block_index"), -1)
+        if index < 0 or index >= len(paragraphs):
+            continue
+        block = paragraphs[index]
+        anchor_lock = _anchor_lock_mapping(
+            _anchor_values_from_brief(_protected_anchor_brief_for_prompt(block, limit=24))
+        )
+        payload_targets.append({
+            "block_index": index,
+            "role": target.get("role"),
+            "ai_drag": target.get("ai_drag"),
+            "human_value": target.get("human_value"),
+            "required_anchors": [
+                item.get("placeholder")
+                for item in anchor_lock
+                if item.get("placeholder") and item.get("value") in block
+            ],
+            "protected_block": _freeze_anchor_text(block, anchor_lock),
+            "core_claims": target.get("core_claims") or _split_sentences(block)[:3],
+            "driver_failures": (target.get("required_driver_movement") or {}).get("drivers") or [],
+            "_anchor_lock": anchor_lock,
+            "target_words": {
+                "min": max(20, int(_text_word_count(block) * 0.55)),
+                "max": max(35, int(_text_word_count(block) * 1.20)),
+            },
+        })
+    public_targets = [
+        {k: v for k, v in item.items() if not k.startswith("_")}
+        for item in payload_targets
+    ]
+    return (
+        "Regenerate selected document blocks as structured JSON patches.\n\n"
+        "Goal: reduce scanner driver drag for each selected block while preserving its meaning inventory.\n"
+        "Do not rewrite the full document. Do not output unchanged blocks.\n\n"
+        "Allowed operations:\n"
+        "- rebuild one selected block from its core claims and protected anchors\n"
+        "- narrow broad claims\n"
+        "- reduce over-complete explanation and polished connector cadence\n"
+        "- vary sentence purpose lightly\n\n"
+        "Forbidden:\n"
+        "- remove or mutate any [[DP_ANCHOR_###]] placeholder\n"
+        "- add citations, dates, names, statistics, institutions, or events not already present in the protected block\n"
+        "- add review notes or ask the author for input\n"
+        "- return full document text\n\n"
+        "Return only valid JSON using this schema:\n"
+        "{\n"
+        '  "variants": [\n'
+        '    {"block_index": 0, "replacement": "replacement block with placeholders intact", "reason": "short reason"}\n'
+        "  ]\n"
+        "}\n\n"
+        f"Return up to {max(1, candidate_count)} variants total.\n"
+        f"Targets: {json.dumps(public_targets, ensure_ascii=False)}"
+    )
+
+
+def _extract_block_regeneration_variants(
+    output: str,
+    targets: list[dict],
+    source_text: str,
+) -> list[tuple[int, str, dict]]:
+    text = str(output or "").strip()
+    if not text:
+        return []
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
+    text = re.sub(r"\s*```$", "", text).strip()
+    match = re.search(r"\{.*\}", text, flags=re.S)
+    if match:
+        text = match.group(0)
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return []
+    variants = payload.get("variants") if isinstance(payload, dict) else payload
+    if not isinstance(variants, list):
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    target_by_index = {
+        _safe_index(target.get("block_index"), -1): target
+        for target in targets
+    }
+    cleaned: list[tuple[int, str, dict]] = []
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        index = _safe_index(variant.get("block_index"), -1)
+        if index < 0 or index >= len(paragraphs) or index not in target_by_index:
+            continue
+        replacement = str(variant.get("replacement") or "").strip()
+        if not replacement:
+            continue
+        original = paragraphs[index]
+        anchor_lock = _anchor_lock_mapping(
+            _anchor_values_from_brief(_protected_anchor_brief_for_prompt(original, limit=24))
+        )
+        frozen_original = _freeze_anchor_text(original, anchor_lock)
+        required = [
+            item.get("placeholder")
+            for item in anchor_lock
+            if item.get("placeholder") and item.get("placeholder") in frozen_original
+        ]
+        missing = [placeholder for placeholder in required if placeholder not in replacement]
+        if missing:
+            cleaned.append((index, "", {"reason": "anchor_placeholder_lost", "missing": missing}))
+            continue
+        replacement = _restore_anchor_placeholders(replacement, anchor_lock)
+        replacement = " ".join(replacement.split()).strip()
+        if not replacement or replacement == " ".join(original.split()):
+            continue
+        cleaned.append((
+            index,
+            replacement,
+            {
+                "reason": variant.get("reason"),
+                "role": target_by_index[index].get("role"),
+                "ai_drag": target_by_index[index].get("ai_drag"),
+                "human_value": target_by_index[index].get("human_value"),
+            },
+        ))
+    return cleaned
 
 
 def _narrow_generic_claim_text(text: str) -> str:
@@ -9189,6 +10463,226 @@ def _generic_assertion_compiler_candidates(
             )
 
     return candidates[:max(1, limit)]
+
+
+_DRIVER_CONNECTOR_PREFIX_RE = re.compile(
+    r"^\s*(?:Furthermore|Moreover|Additionally|In conclusion|Overall|Therefore|However|"
+    r"It is important to note that|This highlights that|This shows that|This demonstrates that)\s*,?\s+",
+    re.I,
+)
+
+_DRIVER_POLISH_PHRASES: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bit is important to note that\s+", re.I), ""),
+    (re.compile(r"\bit is important to\s+", re.I), "it helps to "),
+    (re.compile(r"\bplays? a (?:crucial|significant|vital) role in\b", re.I), "matters in"),
+    (re.compile(r"\ba wide range of\b", re.I), "many"),
+    (re.compile(r"\bvarious\b", re.I), "different"),
+    (re.compile(r"\bsignificant impact\b", re.I), "clear effect"),
+    (re.compile(r"\bcrucial\b", re.I), "important"),
+    (re.compile(r"\bessential\b", re.I), "needed"),
+    (re.compile(r"\bfacilitates?\b", re.I), "helps"),
+    (re.compile(r"\benables?\b", re.I), "allows"),
+    (re.compile(r"\bin order to\b", re.I), "to"),
+]
+
+
+def _clean_driver_sentence(sentence: str) -> str:
+    text = " ".join(str(sentence or "").split()).strip()
+    text = _DRIVER_CONNECTOR_PREFIX_RE.sub("", text)
+    for pattern, replacement in _DRIVER_POLISH_PHRASES:
+        text = pattern.sub(replacement, text)
+    text = re.sub(r"\bmust\b", "need to", text)
+    text = re.sub(r"\bwill\b", "may", text)
+    text = re.sub(r"\balways\b", "often", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip()
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+    if text and not re.search(r"[.!?]$", text):
+        text += "."
+    return text
+
+
+def _split_driver_sentence(sentence: str) -> str:
+    text = " ".join(str(sentence or "").split()).strip()
+    words = _text_word_count(text)
+    if words < 28:
+        return text
+    split_patterns = [
+        r",\s+(?:and|but|because|while|although|therefore)\s+",
+        r";\s+",
+        r"\s+which\s+",
+    ]
+    for pattern in split_patterns:
+        match = re.search(pattern, text, flags=re.I)
+        if not match:
+            continue
+        left = text[:match.start()].strip(" ,;")
+        right = text[match.end():].strip(" ,;")
+        if _text_word_count(left) < 8 or _text_word_count(right) < 8:
+            continue
+        if right and right[0].islower():
+            right = right[0].upper() + right[1:]
+        left = left.rstrip(".!?") + "."
+        right = right.rstrip(".!?") + "."
+        return f"{left} {right}"
+    return text
+
+
+def _compress_driver_sentence(sentence: str) -> str:
+    text = _clean_driver_sentence(sentence)
+    text = re.sub(
+        r",?\s+(?:which|that)\s+(?:is|are|was|were)\s+(?:important|significant|crucial|essential)\b[^.!?]*",
+        "",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"\b(?:This means that|This shows that|This highlights that)\s+",
+        "",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(r"\s+", " ", text).strip()
+    if text and not re.search(r"[.!?]$", text):
+        text += "."
+    return text
+
+
+def _driver_operation_variants(sentence: str) -> list[tuple[str, str]]:
+    """Return generic, operation-level sentence variants without sample-specific text."""
+    original = " ".join(str(sentence or "").split()).strip()
+    variants: list[tuple[str, str]] = []
+    if not original:
+        return variants
+    cleaned = _clean_driver_sentence(original)
+    if cleaned and cleaned != original:
+        variants.append(("generic_connector_remove", cleaned))
+    compressed = _compress_driver_sentence(original)
+    if compressed and compressed not in {original, cleaned}:
+        variants.append(("overexplained_clause_compress", compressed))
+    split = _split_driver_sentence(cleaned or original)
+    if split and split not in {original, cleaned, compressed}:
+        variants.append(("sentence_route_split", split))
+    narrowed = _narrow_generic_claim_text(cleaned or original)
+    narrowed = _clean_driver_sentence(narrowed)
+    if narrowed and narrowed not in {original, cleaned, compressed, split}:
+        variants.append(("claim_narrow", narrowed))
+    return variants
+
+
+def _sentence_preserves_local_anchors(original_sentence: str, replacement: str) -> bool:
+    original = str(original_sentence or "")
+    candidate = str(replacement or "")
+    anchor_patterns = [
+        r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",
+        r"\b(?:19|20)\d{2}[a-z]?\b",
+        r"\b\d+(?:\.\d+)?\s*(?:%|percent|degrees?|hours?|weeks?|months?|years?)?\b",
+        r"\([A-Z][^)]+,\s*(?:19|20)\d{2}[a-z]?\)",
+        r'"[^"\n]{2,160}"|“[^”\n]{2,160}”|‘[^’\n]{2,120}’',
+    ]
+    for pattern in anchor_patterns:
+        for match in re.findall(pattern, original):
+            value = match if isinstance(match, str) else next((part for part in match if part), "")
+            value = str(value or "").strip()
+            if value and value not in candidate:
+                return False
+    return True
+
+
+def _scanner_driver_operation_candidates(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 8,
+) -> list[tuple[str, str, dict]]:
+    """Compile scanner-driver pressure into deterministic sentence candidates.
+
+    This is the first controller stage. It changes only selected high-risk
+    sentence routes and generic/polished phrasing before any LLM is allowed to
+    recreate text.
+    """
+    if not _env_flag("DRAFTPROOF_SCANNER_DRIVER_OPERATION_COMPILER", True):
+        return []
+    sentences = _split_sentences(source_text)
+    if not sentences:
+        return []
+    size_policy = _controller_size_policy(source_text)
+    limit = max(1, min(int(limit or 1), int(size_policy.get("driver_candidate_limit") or limit or 1)))
+    risk_map = _sentence_texture_risk_map(source_text, raw_json or {}, limit=max(limit * 3, 8))
+    source_words = _text_word_count(source_text)
+    min_ratio = _float_env("DRAFTPROOF_DRIVER_OPERATION_MIN_WORD_RATIO", 0.75)
+    if source_words < 100:
+        min_ratio = min(min_ratio, 0.55)
+    min_words = max(1, int(source_words * min_ratio))
+    candidates: list[tuple[str, str, dict]] = []
+    seen: set[str] = {source_text.strip()}
+
+    def add(strategy: str, target: str, replacement: str, meta: dict) -> None:
+        if not target or target not in source_text:
+            return
+        if not replacement or replacement.strip() == target.strip():
+            return
+        if not _sentence_preserves_local_anchors(target, replacement):
+            return
+        candidate_text = source_text.replace(target, replacement, 1)
+        if _text_word_count(candidate_text) < min_words:
+            return
+        normalized = candidate_text.strip()
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append((strategy, candidate_text, meta))
+
+    for row in risk_map:
+        if len(candidates) >= limit:
+            break
+        index = _safe_index(row.get("sentence_index"), -1)
+        if index < 0 or index >= len(sentences):
+            continue
+        sentence = sentences[index]
+        for operation, replacement in _driver_operation_variants(sentence):
+            add(
+                f"driver_operation_{operation}_s{index + 1}",
+                sentence,
+                replacement,
+                {
+                    "operation": operation,
+                    "sentence_index": index,
+                    "risk": row.get("risk"),
+                    "drivers": row.get("drivers"),
+                    "size_policy": size_policy,
+                },
+            )
+            if len(candidates) >= limit:
+                break
+
+    if len(candidates) < limit:
+        combined = source_text
+        changed: list[dict] = []
+        for row in risk_map:
+            index = _safe_index(row.get("sentence_index"), -1)
+            if index < 0 or index >= len(sentences) or len(changed) >= 3:
+                continue
+            sentence = sentences[index]
+            variants = _driver_operation_variants(sentence)
+            if not variants:
+                continue
+            operation, replacement = variants[0]
+            if sentence in combined and _sentence_preserves_local_anchors(sentence, replacement):
+                combined = combined.replace(sentence, replacement, 1)
+                changed.append({"sentence_index": index, "operation": operation})
+        if changed and combined.strip() != source_text.strip() and _text_word_count(combined) >= min_words:
+            candidates.append((
+                "driver_operation_multi_sentence",
+                combined,
+                {
+                    "operation": "multi_sentence_driver_repair",
+                    "changed": changed,
+                    "size_policy": size_policy,
+                },
+            ))
+
+    return candidates[:limit]
 
 
 def _blocker_operation_candidates(
@@ -10477,6 +11971,36 @@ def run_rewrite_pipeline(
         (ai_mitigation_needs_author or ai_authorship_mitigation_needed)
         and os.environ.get("DRAFTPROOF_AUTHENTICITY_MITIGATION", "1") != "0"
     )
+    authenticity_skip_reason = ""
+    scanner_driver_controller_active = (
+        _env_flag("DRAFTPROOF_SCANNER_DRIVER_CONTROLLER", True)
+        and bool(radar_goal_controller.get("execute_before_local_rewrite"))
+    )
+    if (
+        authenticity_enabled
+        and scanner_driver_controller_active
+        and not _env_flag("DRAFTPROOF_LEGACY_AUTHENTICITY_MITIGATION", False)
+    ):
+        authenticity_enabled = False
+        authenticity_skip_reason = "replaced_by_scanner_driver_controller"
+
+    if not authenticity_enabled and authenticity_skip_reason:
+        result.summary["authenticity_mitigation"] = {
+            "enabled": False,
+            "selected": False,
+            "reason": authenticity_skip_reason,
+            "radar_goal_first": bool(radar_goal_controller.get("execute_before_local_rewrite")),
+        }
+        result.summary["generation_layer"] = {
+            "schema_version": "generation_layer.v1",
+            "mode": "scanner_driver_controller",
+            "goal": "Human Contribution >= 80",
+            "selected": False,
+            "selection_reason": authenticity_skip_reason,
+            "llm_calls": 0,
+            "model_roles": llm_roles,
+            "candidate_count": 0,
+        }
     if authenticity_enabled:
         mitigation_started = time.time()
         try:
@@ -11880,16 +13404,62 @@ def run_rewrite_pipeline(
         base_strategies = strategies[:search_limit]
         strategies = confirmed_anchor_strategies + base_strategies
         search_source_text, search_source_repairs = _repair_candidate_source_damage(text)
+        controller_size_policy = _controller_size_policy(search_source_text)
+        full_document_llm_allowed = bool(
+            _env_flag("DRAFTPROOF_ALLOW_FULL_DOCUMENT_LLM_SEARCH", False)
+            and controller_size_policy.get("full_document_llm_allowed")
+        )
+        if not full_document_llm_allowed:
+            strategies = []
         deterministic_candidates = []
         if search_source_repairs and search_source_text.strip() != text.strip():
             deterministic_candidates.append((
                 "deterministic_source_integrity_repair",
                 search_source_text,
             ))
+        block_optimizer_plan = _rewrite_controller_plan_from_report(
+            search_source_text,
+            original_report_dict,
+        )
+        block_optimizer_targets = _block_optimizer_targets(
+            search_source_text,
+            original_report_dict,
+            limit=int(controller_size_policy.get("paragraph_target_limit") or _float_env(
+                "DRAFTPROOF_BLOCK_OPTIMIZER_TARGETS",
+                6.0,
+            )),
+        )
+        block_optimizer_candidates = _block_optimizer_candidates(
+            search_source_text,
+            original_report_dict,
+            limit=int(controller_size_policy.get("block_candidate_limit") or _float_env(
+                "DRAFTPROOF_BLOCK_OPTIMIZER_CANDIDATES",
+                6.0,
+            )),
+        )
+        deterministic_candidates.extend(
+            (strategy, candidate)
+            for strategy, candidate, _meta in block_optimizer_candidates
+        )
+        driver_operation_candidates = _scanner_driver_operation_candidates(
+            search_source_text,
+            original_report_dict,
+            limit=int(controller_size_policy.get("driver_candidate_limit") or _float_env(
+                "DRAFTPROOF_DRIVER_OPERATION_CANDIDATES",
+                8.0,
+            )),
+        )
+        deterministic_candidates.extend(
+            (strategy, candidate)
+            for strategy, candidate, _meta in driver_operation_candidates
+        )
         blocker_operation_candidates = _blocker_operation_candidates(
             search_source_text,
             original_report_dict,
-            limit=int(_float_env("DRAFTPROOF_BLOCKER_OPERATION_CANDIDATES", 6.0)),
+            limit=int(controller_size_policy.get("block_candidate_limit") or _float_env(
+                "DRAFTPROOF_BLOCKER_OPERATION_CANDIDATES",
+                6.0,
+            )),
         )
         deterministic_candidates.extend(
             (strategy, candidate)
@@ -11925,6 +13495,27 @@ def run_rewrite_pipeline(
             "target_ai_score": ai_search_target_score,
             "reference_ai_meets_threshold": ai_search_reference_meets_threshold,
             "human_target_search": human_target_search_status,
+            "human_contribution_driver_plan": _human_contribution_driver_plan(original_report_dict),
+            "optimizer_strategy": "block_level_driver_optimizer",
+            "rewrite_objective": "ai_authorship_footprint_below_20",
+            "authorship_footprint_target": _float_env("DRAFTPROOF_AI_AUTHORSHIP_FOOTPRINT_TARGET", 20.0),
+            "footprint_profile_before": _footprint_profile(original_report_dict),
+            "authorship_footprint_before": _footprint_profile(original_report_dict).get("authorship_footprint"),
+            "authorship_20_achieved": False,
+            "remaining_authorship_drivers": [],
+            "block_candidates": [],
+            "assembled_candidates": [],
+            "selected_candidate_reason": "",
+            "human_80_achieved": False,
+            "remaining_formula_drivers": [],
+            "rewrite_controller_plan": {
+                "schema_version": block_optimizer_plan.get("schema_version"),
+                "size_policy": block_optimizer_plan.get("size_policy"),
+                "human_80_driver_gap": block_optimizer_plan.get("human_80_driver_gap"),
+                "block_count": len(block_optimizer_plan.get("block_driver_map") or []),
+            },
+            "controller_size_policy": controller_size_policy,
+            "full_document_llm_search_allowed": full_document_llm_allowed,
             "llm_calls": 0,
             "selected": False,
             "candidates": [],
@@ -11935,6 +13526,19 @@ def run_rewrite_pipeline(
                 "candidate_limit": len(confirmed_anchor_strategies),
                 "strategies": confirmed_anchor_strategies,
                 "base_candidate_limit": len(base_strategies),
+            },
+            "scanner_driver_operation_compiler": {
+                "enabled": _env_flag("DRAFTPROOF_SCANNER_DRIVER_OPERATION_COMPILER", True),
+                "candidate_count": len(driver_operation_candidates),
+                "candidates": [
+                    {
+                        "strategy": strategy,
+                        "operation": meta.get("operation"),
+                        "sentence_index": meta.get("sentence_index"),
+                        "risk": meta.get("risk"),
+                    }
+                    for strategy, _candidate, meta in driver_operation_candidates
+                ],
             },
             "content_pruning_repair": {
                 "enabled": _env_flag("DRAFTPROOF_CONTENT_PRUNING_REPAIR", True),
@@ -11961,6 +13565,29 @@ def run_rewrite_pipeline(
                         **meta,
                     }
                     for strategy, _candidate, meta in blocker_operation_candidates
+                ],
+            },
+            "block_driver_optimizer": {
+                "enabled": _env_flag("DRAFTPROOF_BLOCK_DRIVER_OPTIMIZER", True),
+                "candidate_count": len(block_optimizer_candidates),
+                "target_count": len(block_optimizer_targets),
+                "targets": [
+                    {
+                        "block_index": target.get("block_index"),
+                        "role": target.get("role"),
+                        "recommended_action": target.get("recommended_action"),
+                        "ai_drag": target.get("ai_drag"),
+                        "human_value": target.get("human_value"),
+                        "remove_safety": target.get("remove_safety"),
+                    }
+                    for target in block_optimizer_targets
+                ],
+                "candidates": [
+                    {
+                        "strategy": strategy,
+                        **meta,
+                    }
+                    for strategy, _candidate, meta in block_optimizer_candidates
                 ],
             },
             "generic_assertion_compiler": {
@@ -12006,18 +13633,36 @@ def run_rewrite_pipeline(
         search_budget = {
             "max_seconds": _float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_SECONDS",
-                float(_adaptive_budget_default(search_source_text, 180, 300)),
+                float(controller_size_policy.get("max_seconds") or _adaptive_budget_default(search_source_text, 180, 300)),
             ),
             "max_llm_calls": int(_float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
-                float(_adaptive_budget_default(search_source_text, 4, 5)),
+                float(controller_size_policy.get("max_llm_calls") or _adaptive_budget_default(search_source_text, 4, 5)),
             )),
             "max_candidate_scans": int(_float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_CANDIDATE_SCANS",
-                float(_adaptive_budget_default(search_source_text, 24, 36)),
+                float(controller_size_policy.get("max_candidate_scans") or _adaptive_budget_default(search_source_text, 24, 36)),
             )),
         }
         search_summary["budget"] = search_budget
+        if any(target.get("recommended_action") == "recreate" for target in block_optimizer_targets):
+            block_scan_reserve = max(
+                1,
+                int(_float_env("DRAFTPROOF_BLOCK_REGENERATION_SCAN_RESERVE", 4.0)),
+            )
+            deterministic_scan_cap = max(
+                1,
+                int(search_budget.get("max_candidate_scans") or 0) - block_scan_reserve,
+            )
+            if len(deterministic_candidates) > deterministic_scan_cap:
+                search_summary["block_optimizer_scan_reserve"] = {
+                    "reserved_scans": block_scan_reserve,
+                    "deterministic_before": len(deterministic_candidates),
+                    "deterministic_after": deterministic_scan_cap,
+                }
+                deterministic_candidates = deterministic_candidates[:deterministic_scan_cap]
+                search_summary["candidate_limit"] = len(deterministic_candidates) + len(strategies)
+                search_summary["deterministic_candidate_count"] = len(deterministic_candidates)
 
         def _best_ai_search_selectable() -> bool:
             return bool(best_strategy and best_selection_status.get("selectable"))
@@ -12047,7 +13692,7 @@ def run_rewrite_pipeline(
             reason = ""
             if elapsed >= float(search_budget["max_seconds"]):
                 reason = "budget_exhausted_time"
-            elif before_llm and int(search_summary.get("llm_calls") or 0) >= int(search_budget["max_llm_calls"]):
+            elif before_llm and int(search_summary.get("llm_calls") or 0) > int(search_budget["max_llm_calls"]):
                 reason = "budget_exhausted_llm_calls"
             elif len(search_summary.get("candidates", [])) >= int(search_budget["max_candidate_scans"]):
                 reason = "budget_exhausted_candidate_scans"
@@ -12105,6 +13750,33 @@ def run_rewrite_pipeline(
                     ))
                 ),
             )
+            if (
+                adaptive_stop_reason
+                and human_target_search_status.get("active")
+                and isinstance(best_report, dict)
+                and isinstance(_contribution_scores(best_report).get("human"), (int, float))
+                and float(_contribution_scores(best_report).get("human")) < _float_env(
+                    "DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION",
+                    80.0,
+                )
+                and any(
+                    target.get("recommended_action") == "recreate"
+                    for target in block_optimizer_targets
+                )
+                and str(adaptive_stop_reason).startswith("adaptive_stop_after_safe_partial")
+            ):
+                search_summary["adaptive_stop_suppressed_for_block_optimizer"] = {
+                    "suppressed_reason": adaptive_stop_reason,
+                    "phase": phase,
+                    "best_strategy": best_strategy,
+                    "best_human": _contribution_scores(best_report).get("human"),
+                    "target_human": _float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0),
+                    "recreate_target_count": len([
+                        target for target in block_optimizer_targets
+                        if target.get("recommended_action") == "recreate"
+                    ]),
+                }
+                adaptive_stop_reason = ""
             if adaptive_stop_reason:
                 search_summary["adaptive_stop"] = {
                     "phase": phase,
@@ -12313,6 +13985,16 @@ def run_rewrite_pipeline(
                 ),
                 drift_similarity=candidate_eval.get("drift_similarity"),
             )
+            footprint_status = _footprint_delta_status(
+                original_report_dict,
+                candidate_report,
+                text_changed=candidate != text,
+                review_burden_delta=candidate_review_burden - original_review_burden,
+                weighted_severity_delta=candidate_weighted_severity - original_severity,
+                critical_high_delta=candidate_critical_high - saved_critical_high,
+                drift_similarity=candidate_eval.get("drift_similarity"),
+            )
+            candidate_eval["authorship_footprint_status"] = footprint_status
             if (
                 selection_status.get("selectable")
                 and not _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_REVIEW_REGRESSION", False)
@@ -12434,6 +14116,39 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
             )
+            safe_partial_progress_selectable = bool(
+                _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SAFE_PARTIAL_PROGRESS", True)
+                and isinstance(candidate_human_delta, (int, float))
+                and candidate_human_delta >= _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_HUMAN_DELTA", 0.0)
+                and isinstance(ai_authorship_delta, (int, float))
+                and ai_authorship_delta >= _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_AUTHORSHIP_DROP", 2.0)
+                and isinstance(candidate_ai_transform_delta, (int, float))
+                and candidate_ai_transform_delta >= _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_TRANSFORMATION_DELTA", 0.0)
+                and isinstance(ai_delta, (int, float))
+                and ai_delta >= _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_AI_DROP", 2.0)
+                and float(dominant_blocker_status.get("max_drop") or 0.0) >= _float_env(
+                    "DRAFTPROOF_SAFE_PARTIAL_MIN_BLOCKER_DROP",
+                    5.0,
+                )
+                and not ai_score_regressed
+                and _finding_total(candidate_report) <= original_total
+                and candidate_review_burden <= original_review_burden
+                and candidate_weighted_severity <= original_severity
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("critical_high_regressed")
+                and candidate_critical_high <= saved_critical_high
+            )
+            candidate_eval["safe_partial_progress_status"] = {
+                "allowed": safe_partial_progress_selectable,
+                "human_delta": candidate_human_delta,
+                "ai_delta": round(ai_delta, 3) if isinstance(ai_delta, (int, float)) else None,
+                "ai_authorship_delta": ai_authorship_delta,
+                "ai_transformation_delta": candidate_ai_transform_delta,
+                "dominant_blocker_drop": dominant_blocker_status.get("max_drop"),
+                "review_burden_delta": candidate_review_burden - original_review_burden,
+                "weighted_severity_delta": candidate_weighted_severity - original_severity,
+                "reason": "" if safe_partial_progress_selectable else "safe_partial_threshold_not_met",
+            }
             score_drag_status = _score_drag_removal_status(
                 authenticity_status=authenticity_status,
                 human_shift=human_shift,
@@ -12527,6 +14242,55 @@ def run_rewrite_pipeline(
                 and candidate_critical_high <= saved_critical_high + blocker_critical_high_tolerance
                 and not authenticity_status.get("ai_authorship_regression_blocked")
             )
+            human_goal_trajectory = _human_goal_trajectory_progress_status(
+                authenticity_status=authenticity_status,
+                human_formula_status=human_formula_status,
+                dominant_status=dominant_blocker_status,
+                ai_delta=ai_delta,
+                finding_delta=_finding_total(candidate_report) - original_total,
+                review_burden_delta=candidate_review_burden - original_review_burden,
+                weighted_severity_delta=candidate_weighted_severity - original_severity,
+                critical_high_delta=candidate_critical_high - saved_critical_high,
+                ai_score_regressed=ai_score_regressed,
+            )
+            candidate_eval["human_goal_trajectory_progress"] = human_goal_trajectory
+            human_goal_trajectory_selectable = bool(human_goal_trajectory.get("allowed"))
+            driver_suppression_status = _driver_suppression_candidate_status(
+                authenticity_status=authenticity_status,
+                human_formula_status=human_formula_status,
+                ai_score_regressed=ai_score_regressed,
+                finding_delta=_finding_total(candidate_report) - original_total,
+                review_burden_delta=candidate_review_burden - original_review_burden,
+                weighted_severity_delta=candidate_weighted_severity - original_severity,
+                critical_high_delta=candidate_critical_high - saved_critical_high,
+            )
+            candidate_eval["driver_suppression_status"] = driver_suppression_status
+            driver_suppression_selectable = bool(
+                candidate_eval.get("driver_suppression_repair")
+                and driver_suppression_status.get("allowed")
+            )
+            if driver_suppression_selectable:
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "reason": "accepted_driver_suppression_repair",
+                    "driver_suppression_repair": True,
+                })
+            if _env_flag("DRAFTPROOF_REWRITE_AUTHORSHIP_FOOTPRINT_OBJECTIVE", True):
+                selection_status.update({
+                    "success": bool(footprint_status.get("selectable")),
+                    "selectable": bool(footprint_status.get("selectable")),
+                    "reason": footprint_status.get("reason") or "authorship_footprint_gate",
+                    "authorship_footprint_gate": footprint_status,
+                    "authorship_20_achieved": bool(footprint_status.get("achieved")),
+                })
+            if human_goal_trajectory_selectable:
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "reason": "accepted_human_goal_trajectory_progress",
+                    "human_goal_trajectory_progress": True,
+                })
             if (
                 not selection_status.get("selectable")
                 and (
@@ -12539,6 +14303,9 @@ def run_rewrite_pipeline(
                     or safe_authorship_suppression_selectable
                     or score_drag_removal_selectable
                     or post_safe_target_climb_selectable
+                    or driver_suppression_selectable
+                    or human_goal_trajectory_selectable
+                    or safe_partial_progress_selectable
                 )
             ):
                 selection_status.update({
@@ -12551,22 +14318,34 @@ def run_rewrite_pipeline(
                             "accepted_human_primary_progress"
                             if human_primary_selectable
                             else (
-                                "accepted_human_signal_amplification"
-                                if human_amplification_selectable
+                                "accepted_driver_suppression_repair"
+                                if driver_suppression_selectable
                                 else (
-                                    "accepted_post_safe_target_climb"
-                                    if post_safe_target_climb_selectable
+                                    "accepted_human_goal_trajectory_progress"
+                                    if human_goal_trajectory_selectable
                                     else (
-                                        "accepted_score_drag_removal"
-                                        if score_drag_removal_selectable
+                                        "accepted_safe_partial_progress"
+                                        if safe_partial_progress_selectable
                                         else (
-                                            (
-                                                "accepted_incremental_human_target_progress"
-                                                if _radar_goal_requires_human_progress(radar_goal_controller)
-                                                else "accepted_safe_authorship_suppression"
+                                            "accepted_human_signal_amplification"
+                                            if human_amplification_selectable
+                                            else (
+                                                "accepted_post_safe_target_climb"
+                                                if post_safe_target_climb_selectable
+                                                else (
+                                                    "accepted_score_drag_removal"
+                                                    if score_drag_removal_selectable
+                                                    else (
+                                                        (
+                                                            "accepted_incremental_human_target_progress"
+                                                            if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                            else "accepted_safe_authorship_suppression"
+                                                        )
+                                                        if safe_authorship_suppression_selectable
+                                                        else "accepted_incremental_authenticity_progress"
+                                                    )
+                                                )
                                             )
-                                            if safe_authorship_suppression_selectable
-                                            else "accepted_incremental_authenticity_progress"
                                         )
                                     )
                                 )
@@ -12580,6 +14359,9 @@ def run_rewrite_pipeline(
                     "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
                     "score_drag_removal": bool(score_drag_removal_selectable),
                     "post_safe_target_climb": bool(post_safe_target_climb_selectable),
+                    "driver_suppression_repair": bool(driver_suppression_selectable),
+                    "human_goal_trajectory_progress": bool(human_goal_trajectory_selectable),
+                    "safe_partial_progress": bool(safe_partial_progress_selectable),
                 })
             if human_amplification_score:
                 selection_status["human_signal_amplification_score"] = human_amplification_score
@@ -12598,7 +14380,9 @@ def run_rewrite_pipeline(
                 and dominant_blocker_status.get("required")
                 and not dominant_blocker_status.get("cleared")
                 and not dominant_blocker_progress_override.get("allowed")
+                and not selection_status.get("human_goal_trajectory_progress")
                 and not selection_status.get("score_drag_removal")
+                and not selection_status.get("safe_partial_progress")
             ):
                 selection_status.update({
                     "success": False,
@@ -12612,6 +14396,9 @@ def run_rewrite_pipeline(
                 and not human_formula_status.get("cleared")
                 and not selection_status.get("human_primary_progress")
                 and not selection_status.get("post_safe_target_climb")
+                and not selection_status.get("human_goal_trajectory_progress")
+                and not selection_status.get("driver_suppression_repair")
+                and not selection_status.get("safe_partial_progress")
             ):
                 selection_status.update({
                     "success": False,
@@ -12643,6 +14430,8 @@ def run_rewrite_pipeline(
                 and not selection_status.get("human_signal_amplification")
                 and not selection_status.get("post_safe_target_climb")
                 and not selection_status.get("score_drag_removal")
+                and not selection_status.get("driver_suppression_repair")
+                and not selection_status.get("safe_partial_progress")
                 and not (
                     isinstance(candidate_human_delta, (int, float))
                     and candidate_human_delta > 0.0
@@ -12653,6 +14442,14 @@ def run_rewrite_pipeline(
                     "selectable": False,
                     "reason": "radar_goal_requires_human_progress",
                     "radar_goal_requires_human_progress": True,
+                })
+            if _env_flag("DRAFTPROOF_REWRITE_AUTHORSHIP_FOOTPRINT_OBJECTIVE", True):
+                selection_status.update({
+                    "success": bool(footprint_status.get("selectable")),
+                    "selectable": bool(footprint_status.get("selectable")),
+                    "reason": footprint_status.get("reason") or "authorship_footprint_gate",
+                    "authorship_footprint_gate": footprint_status,
+                    "authorship_20_achieved": bool(footprint_status.get("achieved")),
                 })
             candidate_eval["selection_status"] = selection_status
             original_human_value = _contribution_scores(original_report_dict).get("human")
@@ -12762,6 +14559,31 @@ def run_rewrite_pipeline(
                 if _best_ai_search_selectable()
                 else ""
             )
+            if (
+                early_stop_reason
+                and human_target_search_status.get("active")
+                and isinstance(best_report, dict)
+                and isinstance(_contribution_scores(best_report).get("human"), (int, float))
+                and float(_contribution_scores(best_report).get("human")) < _float_env(
+                    "DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION",
+                    80.0,
+                )
+                and any(
+                    target.get("recommended_action") == "recreate"
+                    for target in block_optimizer_targets
+                )
+            ):
+                search_summary["early_stop_suppressed_for_block_optimizer"] = {
+                    "suppressed_reason": early_stop_reason,
+                    "best_strategy": best_strategy,
+                    "best_human": _contribution_scores(best_report).get("human"),
+                    "target_human": _float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0),
+                    "recreate_target_count": len([
+                        target for target in block_optimizer_targets
+                        if target.get("recommended_action") == "recreate"
+                    ]),
+                }
+                early_stop_reason = ""
             if early_stop_reason:
                 search_summary["early_stop"] = {
                     "phase": "deterministic_candidates",
@@ -12812,6 +14634,17 @@ def run_rewrite_pipeline(
             if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True):
                 return
             if not _best_ai_search_selectable() or not isinstance(best_report, dict):
+                return
+            if (
+                best_selection_status.get("safe_partial_progress")
+                and not _env_flag("DRAFTPROOF_SAFE_PARTIAL_TARGET_PUSH", False)
+            ):
+                search_summary["post_safe_win_target_push"] = {
+                    "enabled": False,
+                    "reason": "safe_partial_progress_selected",
+                    "trigger_phase": trigger_phase,
+                    "selected_strategy": best_strategy,
+                }
                 return
             current_human = _contribution_scores(best_report).get("human")
             target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
@@ -13321,6 +15154,14 @@ def run_rewrite_pipeline(
                     "trigger_phase": trigger_phase,
                 }
                 return
+            if not controller_size_policy.get("full_document_patch_llm_allowed"):
+                search_summary["final_topk_texture_repair"] = {
+                    "enabled": False,
+                    "reason": "disabled_by_size_policy_no_full_document_llm",
+                    "trigger_phase": trigger_phase,
+                    "size_policy": controller_size_policy,
+                }
+                return
             if not _best_ai_search_selectable() or not isinstance(best_report, dict):
                 search_summary["final_topk_texture_repair"] = {
                     "enabled": True,
@@ -13593,6 +15434,280 @@ def run_rewrite_pipeline(
                         65.0,
                     ),
                 }
+                block_regeneration_targets = [
+                    target for target in _block_optimizer_targets(
+                        component_base_text,
+                        best_report if _best_ai_search_selectable() else original_report_dict,
+                        limit=int(controller_size_policy.get("paragraph_target_limit") or _float_env(
+                            "DRAFTPROOF_BLOCK_REGENERATION_TARGETS",
+                            3.0,
+                        )),
+                    )
+                    if target.get("recommended_action") == "recreate"
+                    and "recreate" in (target.get("action_options") or [])
+                ]
+                if (
+                    _env_flag("DRAFTPROOF_BLOCK_REGENERATION_SEARCH", True)
+                    and block_regeneration_targets
+                    and not _search_budget_exhausted("block_regeneration", before_llm=True)
+                ):
+                    block_candidate_count = max(
+                        1,
+                        int(_float_env(
+                            "DRAFTPROOF_BLOCK_REGENERATION_CANDIDATES",
+                            1.0,
+                        )),
+                    )
+                    block_regeneration_targets = block_regeneration_targets[:max(1, int(
+                        (block_optimizer_plan.get("size_policy") or {}).get("max_recreate_blocks")
+                        or controller_size_policy.get("paragraph_target_limit")
+                        or 3
+                    ))]
+                    search_summary["block_regeneration_search"] = {
+                        "enabled": True,
+                        "target_count": len(block_regeneration_targets),
+                        "candidate_limit": block_candidate_count,
+                        "targets": [
+                            {
+                                "block_index": target.get("block_index"),
+                                "role": target.get("role"),
+                                "ai_drag": target.get("ai_drag"),
+                                "human_value": target.get("human_value"),
+                            }
+                            for target in block_regeneration_targets
+                        ],
+                    }
+                    try:
+                        prompt = _block_regeneration_prompt(
+                            component_base_text,
+                            best_report if _best_ai_search_selectable() else original_report_dict,
+                            block_regeneration_targets,
+                            candidate_count=block_candidate_count,
+                        )
+                        search_summary["llm_calls"] += 1
+                        response = gateway.chat(
+                            prompt,
+                            system=(
+                                "You are DraftProof's block-level driver optimizer. "
+                                "Return only valid JSON block replacement variants."
+                            ),
+                            temperature=float(os.environ.get(
+                                "DRAFTPROOF_BLOCK_REGENERATION_TEMPERATURE",
+                                "0.72",
+                            )),
+                            max_tokens=int(os.environ.get(
+                                "DRAFTPROOF_BLOCK_REGENERATION_MAX_TOKENS",
+                                "3600",
+                            )),
+                            top_p=_float_env_optional("DRAFTPROOF_BLOCK_REGENERATION_TOP_P"),
+                            top_k=_int_env_optional("DRAFTPROOF_BLOCK_REGENERATION_TOP_K"),
+                            presence_penalty=_float_env_optional(
+                                "DRAFTPROOF_BLOCK_REGENERATION_PRESENCE_PENALTY"
+                            ),
+                            frequency_penalty=_float_env_optional(
+                                "DRAFTPROOF_BLOCK_REGENERATION_FREQUENCY_PENALTY"
+                            ),
+                        )
+                        block_variants = _extract_block_regeneration_variants(
+                            response.content,
+                            block_regeneration_targets,
+                            component_base_text,
+                        )
+                    except Exception as exc:
+                        search_summary["candidates"].append({
+                            "strategy": "block_regeneration_batch",
+                            "passed_local_checks": False,
+                            "reason": f"llm_error {exc}",
+                            "block_regeneration": True,
+                        })
+                        block_variants = []
+                    search_summary["block_regeneration_search"]["variant_count"] = len([
+                        variant for variant in block_variants if variant[1]
+                    ])
+                    component_paragraphs = _logical_paragraphs(component_base_text)
+                    hybrid_paragraphs = list(component_paragraphs)
+                    hybrid_actions = []
+                    for variant_number, (block_index, replacement, meta) in enumerate(block_variants, start=1):
+                        strategy = f"block_regeneration_b{block_index + 1}_c{variant_number}"
+                        if not replacement:
+                            search_summary["candidates"].append({
+                                "strategy": strategy,
+                                "passed_local_checks": False,
+                                "reason": meta.get("reason") or "empty_block_variant",
+                                "block_regeneration": True,
+                                "block_index": block_index,
+                            })
+                            continue
+                        patched = _splice_paragraph(component_base_text, block_index, replacement)
+                        _evaluate_ai_search_candidate(
+                            strategy,
+                            patched,
+                            deterministic=False,
+                            extra={
+                                "block_regeneration": True,
+                                "block_index": block_index,
+                                **meta,
+                            },
+                        )
+                        if 0 <= block_index < len(hybrid_paragraphs):
+                            hybrid_paragraphs[block_index] = replacement
+                            hybrid_actions.append({
+                                "block_index": block_index,
+                                "strategy": strategy,
+                                "role": meta.get("role"),
+                            })
+                        if _maybe_adaptive_stop("block_regeneration_search"):
+                            break
+                    if hybrid_actions and not adaptive_stop_reason:
+                        hybrid_candidate = _join_logical_paragraphs(hybrid_paragraphs)
+                        if hybrid_candidate.strip() != component_base_text.strip():
+                            _evaluate_ai_search_candidate(
+                                "block_regeneration_hybrid_assemble",
+                                hybrid_candidate,
+                                deterministic=False,
+                                extra={
+                                    "block_regeneration": True,
+                                    "hybrid_assemble": True,
+                                    "applied_actions": hybrid_actions[:8],
+                                },
+                            )
+                else:
+                    search_summary["block_regeneration_search"] = {
+                        "enabled": bool(_env_flag("DRAFTPROOF_BLOCK_REGENERATION_SEARCH", True)),
+                        "skipped": True,
+                        "reason": (
+                            "no_recreate_targets"
+                            if not block_regeneration_targets
+                            else adaptive_stop_reason or "budget_exhausted"
+                        ),
+                    }
+                if (
+                    _env_flag("DRAFTPROOF_DRIVER_SUPPRESSION_REPAIR", True)
+                    and human_target_search_status.get("active")
+                    and controller_size_policy.get("full_document_patch_llm_allowed")
+                    and not _search_budget_exhausted("driver_suppression_repair", before_llm=True)
+                ):
+                    driver_candidate_count = max(
+                        1,
+                        int(_float_env(
+                            "DRAFTPROOF_DRIVER_SUPPRESSION_CANDIDATES",
+                            float(_adaptive_budget_default(component_base_text, 1, 2)),
+                        )),
+                    )
+                    driver_plan_for_run = _human_contribution_driver_plan(original_report_dict)
+                    search_summary["driver_suppression_repair"] = {
+                        "enabled": True,
+                        "candidate_limit": driver_candidate_count,
+                        "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
+                        "driver_plan": driver_plan_for_run,
+                    }
+                    try:
+                        driver_base_text = best_text if _best_ai_search_selectable() else component_base_text
+                        driver_base_report = best_report if _best_ai_search_selectable() else original_report_dict
+                        prompt = _driver_suppression_repair_prompt(
+                            driver_base_text,
+                            driver_base_report,
+                            candidate_count=driver_candidate_count,
+                        )
+                        search_summary["llm_calls"] += 1
+                        response = gateway.chat(
+                            prompt,
+                            system=(
+                                "You are DraftProof's scanner-driver suppression engine. "
+                                "Target ai_likelihood and rewrite_smoothness directly. "
+                                "Return only valid JSON sentence patches."
+                            ),
+                            temperature=float(os.environ.get(
+                                "DRAFTPROOF_DRIVER_SUPPRESSION_TEMPERATURE",
+                                "0.62",
+                            )),
+                            max_tokens=int(os.environ.get(
+                                "DRAFTPROOF_DRIVER_SUPPRESSION_MAX_TOKENS",
+                                "5200",
+                            )),
+                            top_p=_float_env_optional("DRAFTPROOF_DRIVER_SUPPRESSION_TOP_P"),
+                            top_k=_int_env_optional("DRAFTPROOF_DRIVER_SUPPRESSION_TOP_K"),
+                            presence_penalty=_float_env_optional(
+                                "DRAFTPROOF_DRIVER_SUPPRESSION_PRESENCE_PENALTY"
+                            ),
+                            frequency_penalty=_float_env_optional(
+                                "DRAFTPROOF_DRIVER_SUPPRESSION_FREQUENCY_PENALTY"
+                            ),
+                        )
+                        driver_patches = _extract_driver_suppression_patches(
+                            response.content,
+                            driver_base_text,
+                        )
+                        driver_candidate, applied_driver_patches = _apply_finding_local_patches(
+                            driver_base_text,
+                            driver_patches,
+                        )
+                        driver_outputs = [driver_candidate] if applied_driver_patches else []
+                    except Exception as exc:
+                        search_summary["candidates"].append({
+                            "strategy": "driver_suppression_repair_batch",
+                            "passed_local_checks": False,
+                            "reason": f"llm_error {exc}",
+                            "driver_suppression_repair": True,
+                        })
+                        driver_outputs = []
+                        applied_driver_patches = []
+                    search_summary["driver_suppression_repair"]["applied_patch_count"] = len(
+                        applied_driver_patches or []
+                    )
+                    if not driver_outputs:
+                        search_summary["candidates"].append({
+                            "strategy": "driver_suppression_repair_patch",
+                            "passed_local_checks": False,
+                            "reason": "no_driver_suppression_patch_applied",
+                            "driver_suppression_repair": True,
+                        })
+                    for candidate_number, raw_candidate in enumerate(driver_outputs, start=1):
+                        candidate = _clean_full_document_candidate(
+                            raw_candidate,
+                            driver_base_text,
+                        )
+                        strategy = f"driver_suppression_repair_patch_c{candidate_number}"
+                        if not candidate:
+                            search_summary["candidates"].append({
+                                "strategy": strategy,
+                                "passed_local_checks": False,
+                                "reason": "empty_or_unchanged_candidate",
+                                "driver_suppression_repair": True,
+                            })
+                            continue
+                        _evaluate_ai_search_candidate(
+                            strategy,
+                            candidate,
+                            deterministic=False,
+                            extra={
+                                "driver_suppression_repair": True,
+                                "applied_driver_patches": applied_driver_patches,
+                                "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
+                            },
+                        )
+                        if _maybe_adaptive_stop("driver_suppression_repair"):
+                            break
+                elif (
+                    _env_flag("DRAFTPROOF_DRIVER_SUPPRESSION_REPAIR", True)
+                    and human_target_search_status.get("active")
+                    and not controller_size_policy.get("full_document_patch_llm_allowed")
+                ):
+                    search_summary["driver_suppression_repair"] = {
+                        "enabled": False,
+                        "reason": "disabled_by_size_policy_no_full_document_llm",
+                        "size_policy": controller_size_policy,
+                    }
+                elif not search_summary.get("driver_suppression_repair"):
+                    search_summary["driver_suppression_repair"] = {
+                        "enabled": bool(_env_flag("DRAFTPROOF_DRIVER_SUPPRESSION_REPAIR", True)),
+                        "skipped": True,
+                        "reason": (
+                            "human_target_inactive"
+                            if not human_target_search_status.get("active")
+                            else adaptive_stop_reason or "budget_exhausted"
+                        ),
+                    }
                 source_layer = {}
                 source_repair_results = []
                 source_candidate_count = 0
@@ -15280,7 +17395,95 @@ def run_rewrite_pipeline(
             "max_calls_per_run": _source_search_max_calls_per_run(),
             "remaining_calls": _source_search_remaining_calls(),
         }
+        selected_human_for_target = _contribution_scores(rewritten_report_dict).get("human")
+        search_summary["human_80_achieved"] = bool(
+            isinstance(selected_human_for_target, (int, float))
+            and float(selected_human_for_target) >= _float_env(
+                "DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION",
+                80.0,
+            )
+        )
+        remaining_formula_drivers = []
+        selected_driver_contract = (
+            rewritten_report_dict.get("driver_contract")
+            or ((rewritten_report_dict.get("scan_intelligence") or {}).get("driver_contract"))
+            or {}
+        )
+        for switch in (selected_driver_contract.get("primary_switches") or [])[:6]:
+            if not isinstance(switch, dict):
+                continue
+            if float(switch.get("target_feature_drop") or 0.0) > 0.0:
+                remaining_formula_drivers.append({
+                    "driver": switch.get("driver"),
+                    "current": switch.get("current"),
+                    "target_feature_drop": switch.get("target_feature_drop"),
+                    "target_raw_drop": switch.get("target_raw_drop"),
+                })
+        search_summary["remaining_formula_drivers"] = remaining_formula_drivers
+        footprint_after = _footprint_profile(rewritten_report_dict)
+        footprint_status_final = _footprint_delta_status(
+            original_report_dict,
+            rewritten_report_dict,
+            text_changed=rewritten_text != text,
+            review_burden_delta=rewritten_review_burden - original_review_burden,
+            weighted_severity_delta=rewritten_severity - original_severity,
+            critical_high_delta=rewritten_critical_high - saved_critical_high,
+        )
+        remaining_authorship_drivers = []
+        for key, value in (((footprint_after.get("components") or {}).get("authorship") or {}).items()):
+            if key in {"ai_likelihood", "topk_pattern", "predictability", "rewrite_smoothness", "driver_score"}:
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if numeric >= _float_env("DRAFTPROOF_REMAINING_AUTHORSHIP_DRIVER_MIN", 20.0):
+                    remaining_authorship_drivers.append({
+                        "driver": key,
+                        "current": round(numeric, 3),
+                    })
+        remaining_authorship_drivers.sort(key=lambda item: item["current"], reverse=True)
+        search_summary.update({
+            "footprint_profile_after": footprint_after,
+            "authorship_footprint_after": footprint_after.get("authorship_footprint"),
+            "authorship_20_achieved": bool(footprint_status_final.get("achieved")),
+            "authorship_footprint_status": footprint_status_final,
+            "remaining_authorship_drivers": remaining_authorship_drivers[:6],
+        })
+        search_summary["selected_candidate_reason"] = (
+            (search_summary.get("selection_status") or {}).get("reason")
+            or search_summary.get("selection_reason")
+            or (
+                "authorship_20_achieved"
+                if search_summary.get("authorship_20_achieved")
+                else "best_safe_candidate_selected"
+                if search_summary.get("selected")
+                else "no_safe_candidate_selected"
+            )
+        )
+        search_summary["block_candidates"] = [
+            candidate for candidate in (search_summary.get("candidates") or [])
+            if str(candidate.get("strategy") or "").startswith("block_optimizer_")
+            or candidate.get("block_regeneration")
+        ][:20]
+        search_summary["assembled_candidates"] = [
+            candidate for candidate in (search_summary.get("candidates") or [])
+            if "hybrid" in str(candidate.get("strategy") or "")
+            or candidate.get("hybrid_assemble")
+        ][:12]
         result.summary["ai_mitigation_search"] = search_summary
+        result.summary["rewrite_objective"] = search_summary.get("rewrite_objective")
+        result.summary["optimizer_strategy"] = search_summary.get("optimizer_strategy")
+        result.summary["block_candidates"] = search_summary.get("block_candidates")
+        result.summary["assembled_candidates"] = search_summary.get("assembled_candidates")
+        result.summary["selected_candidate_reason"] = search_summary.get("selected_candidate_reason")
+        result.summary["authorship_footprint_before"] = search_summary.get("authorship_footprint_before")
+        result.summary["authorship_footprint_after"] = search_summary.get("authorship_footprint_after")
+        result.summary["authorship_20_achieved"] = search_summary.get("authorship_20_achieved")
+        result.summary["footprint_profile_before"] = search_summary.get("footprint_profile_before")
+        result.summary["footprint_profile_after"] = search_summary.get("footprint_profile_after")
+        result.summary["remaining_authorship_drivers"] = search_summary.get("remaining_authorship_drivers")
+        result.summary["human_80_achieved"] = search_summary.get("human_80_achieved")
+        result.summary["remaining_formula_drivers"] = search_summary.get("remaining_formula_drivers")
         if search_summary.get("llm_calls"):
             result.summary["ai_search_llm_calls_used"] = search_summary["llm_calls"]
             try:
@@ -15425,6 +17628,34 @@ def run_rewrite_pipeline(
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
     elif total_regressed_without_review_gain and not (review_burden_regressed or severity_regressed):
         regression_reasons.append(f"findings {original_total}->{rewritten_total}")
+    original_human_for_goal = _contribution_scores(original_report_dict).get("human")
+    rewritten_human_for_goal = _contribution_scores(rewritten_report_dict).get("human")
+    saved_human_for_goal = _contribution_scores(ctx.raw_json).get("human")
+    human_reference_for_goal = (
+        saved_human_for_goal
+        if isinstance(saved_human_for_goal, (int, float))
+        else original_human_for_goal
+    )
+    target_human_for_goal = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    human_regression_tolerance = _float_env("DRAFTPROOF_HUMAN_GOAL_REGRESSION_TOLERANCE", 0.0)
+    if (
+        rewritten_text != text
+        and isinstance(human_reference_for_goal, (int, float))
+        and isinstance(rewritten_human_for_goal, (int, float))
+        and float(human_reference_for_goal) < target_human_for_goal
+        and float(rewritten_human_for_goal) < float(human_reference_for_goal) - human_regression_tolerance
+    ):
+        regression_reasons.append(
+            f"human_contribution_goal_regressed {human_reference_for_goal}->{rewritten_human_for_goal}"
+        )
+        result.summary["human_goal_guard"] = {
+            "kept": False,
+            "target_human_contribution": target_human_for_goal,
+            "reference_human_contribution": human_reference_for_goal,
+            "rewritten_human_contribution": rewritten_human_for_goal,
+            "tolerance": human_regression_tolerance,
+            "reason": "candidate_lowered_human_contribution_under_active_target",
+        }
     # The saved scan is the user-visible contract, but detector scores can drift
     # between the saved report and a fresh rescan. Critical/high findings remain
     # hard guards. AI and total count are strict only when the fresh baseline did
@@ -15520,6 +17751,8 @@ def run_rewrite_pipeline(
                 .get("safe_authorship_suppression"))
             or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
                 .get("score_drag_removal"))
+            or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
+                .get("safe_partial_progress"))
         )
     )
     if (
@@ -16221,7 +18454,37 @@ def run_rewrite_pipeline(
     else:
         result.summary["final_text"] = rewritten_text
         if ai_search_selected:
-            result.summary["outcome"] = "ai_mitigated"
+            final_selection_status = (
+                (result.summary.get("ai_mitigation_search") or {}).get("selection_status")
+                or {}
+            )
+            final_footprint_status = _footprint_delta_status(
+                original_report_dict,
+                rewritten_report_dict,
+                text_changed=rewritten_text != text,
+                review_burden_delta=rewritten_review_burden - original_review_burden,
+                weighted_severity_delta=rewritten_severity - original_severity,
+                critical_high_delta=rewritten_critical_high - saved_critical_high,
+            )
+            result.summary["rewrite_objective"] = "ai_authorship_footprint_below_20"
+            result.summary["authorship_footprint_before"] = final_footprint_status.get("before")
+            result.summary["authorship_footprint_after"] = final_footprint_status.get("after")
+            result.summary["authorship_20_achieved"] = bool(final_footprint_status.get("achieved"))
+            result.summary["footprint_profile_before"] = _footprint_profile(original_report_dict)
+            result.summary["footprint_profile_after"] = _footprint_profile(rewritten_report_dict)
+            final_human_for_outcome = _contribution_scores(rewritten_report_dict).get("human")
+            target_human_for_outcome = _float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0)
+            human_target_met = bool(
+                isinstance(final_human_for_outcome, (int, float))
+                and float(final_human_for_outcome) >= target_human_for_outcome
+            )
+            result.summary["human_80_achieved"] = human_target_met
+            if final_footprint_status.get("achieved"):
+                result.summary["outcome"] = "ai_mitigated"
+            elif final_footprint_status.get("hard_gate_passed"):
+                result.summary["outcome"] = "partially_improved"
+            else:
+                result.summary["outcome"] = "original_preserved"
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings

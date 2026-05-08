@@ -79,6 +79,9 @@ from rewrite_pipeline import (
     _scan_scope_summary,
     _human_shift_score,
     _goal_climb_candidate_rank,
+    _footprint_profile,
+    _footprint_delta_status,
+    _authorship_footprint_rank,
     _authenticity_gate_status,
     _optimization_candidate_status,
     _select_best_optimization_candidate,
@@ -121,12 +124,20 @@ from rewrite_pipeline import (
     _author_reasoning_amplification_prompt,
     _score_human_amplification_candidate,
     _content_pruning_candidates,
+    _rewrite_controller_plan_from_report,
+    _block_optimizer_utility,
+    _block_optimizer_targets,
+    _block_optimizer_candidates,
+    _block_regeneration_prompt,
+    _extract_block_regeneration_variants,
     _generic_assertion_compiler_candidates,
     _radar_blocker_option_matrix,
     _radar_goal_controller_status,
     _radar_goal_requires_human_progress,
+    _controller_size_policy,
     _blocker_operation_plan,
     _blocker_operation_candidates,
+    _scanner_driver_operation_candidates,
     _post_safe_win_target_push_candidates,
     _human_signal_construction_candidates,
     _author_stance_thread_candidates,
@@ -136,10 +147,14 @@ from rewrite_pipeline import (
     _ai_search_adaptive_stop_reason,
     _should_track_blocked_human_winner,
     _blocked_human_winner_repair_budget_override,
+    _blocked_human_winner_failed_formula_gate,
     _post_safe_target_push_allows_deterministic_after_budget,
     _post_safe_target_push_scan_reserve,
     _final_topk_texture_scan_reserve,
     _blocked_winner_bounded_quality_tradeoff,
+    _human_goal_trajectory_progress_status,
+    _human_contribution_driver_plan,
+    _human_contribution_driver_plan_brief,
     _score_drag_removal_status,
     _block_level_decisions,
     _adaptive_budget_default,
@@ -162,6 +177,8 @@ from rewrite_pipeline import (
     _internet_reinforced_reauthor_prompt,
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
+    _driver_suppression_repair_prompt,
+    _driver_suppression_candidate_status,
     _source_search_enabled,
     _plain_language_depolish_text,
     _final_score_drag_sentence_prune_text,
@@ -181,6 +198,7 @@ from rewrite_pipeline import (
     _finding_local_repair_prompt,
     _extract_finding_local_patches,
     _apply_finding_local_patches,
+    _extract_driver_suppression_patches,
     _extract_paragraph_component_candidates,
     _clean_paragraph_component_candidate,
     _paragraph_anchor_lock,
@@ -950,6 +968,8 @@ assert_test(
     meaningful_search_status["selectable"],
     "AI search selects candidates only after the required AI drop is met",
 )
+previous_footprint_objective = os.environ.get("DRAFTPROOF_REWRITE_AUTHORSHIP_FOOTPRINT_OBJECTIVE")
+os.environ["DRAFTPROOF_REWRITE_AUTHORSHIP_FOOTPRINT_OBJECTIVE"] = "0"
 negative_shift_rank = _goal_climb_candidate_rank(
     {
         "selectable": True,
@@ -992,9 +1012,13 @@ positive_shift_rank = _goal_climb_candidate_rank(
     original_weighted_severity=57,
     original_finding_total=49,
 )
+if previous_footprint_objective is None:
+    os.environ.pop("DRAFTPROOF_REWRITE_AUTHORSHIP_FOOTPRINT_OBJECTIVE", None)
+else:
+    os.environ["DRAFTPROOF_REWRITE_AUTHORSHIP_FOOTPRINT_OBJECTIVE"] = previous_footprint_objective
 assert_test(
     positive_shift_rank > negative_shift_rank,
-    "goal-climb selector ranks positive Human Shift above lower-AI negative-shift candidates",
+    "legacy goal-climb selector ranks positive Human Shift above lower-AI negative-shift candidates",
 )
 
 def make_shift_report(
@@ -2821,6 +2845,187 @@ assert_test(
     and human_amp_score["score"] > 25,
     "human signal amplification scorer rewards human gain under authorship cap",
 )
+trajectory_status = _human_goal_trajectory_progress_status(
+    authenticity_status={
+        "human_delta": 1.0,
+        "ai_authorship_delta": 7.0,
+        "ai_transformation_delta": 1.0,
+        "human_shift_score": 10.03,
+        "ai_authorship_regression_blocked": False,
+    },
+    human_formula_status={
+        "ai_raw_drop": 0.0252,
+        "human_raw_gain": -0.0006,
+    },
+    dominant_status={
+        "required": True,
+        "cleared": False,
+        "drops": {"unsupported_claim_risk": 30.0, "broad_claim_risk": 0.0, "topk_pattern": -1.12},
+        "regression": 1.12,
+    },
+    ai_delta=7.19,
+    finding_delta=1,
+    review_burden_delta=1,
+    weighted_severity_delta=2,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    trajectory_status["allowed"]
+    and trajectory_status["formula_ok"]
+    and trajectory_status["dominant_ok"],
+    "human goal trajectory gate keeps bounded +1 Human moves with strong AI-pressure suppression",
+)
+driver_plan_report = {
+    "integrity_layers": {
+        "layers": {
+            "human_contribution_signal": {"score": 54},
+            "ai_transformation_risk": {"score": 46},
+        }
+    },
+    "ai_risk_badge": {
+        "transformation_classification": {
+            "features": {
+                "human_anchor_score": 0.79,
+                "rewrite_smoothness": 0.46,
+                "source_similarity": 0.0,
+                "surface_similarity": 0.0,
+                "ai_likelihood": 0.48,
+                "outline_to_text_expansion": 0.40,
+                "semantic_uniformity_risk": 0.45,
+                "discourse_regularity_risk": 0.25,
+                "section_style_variance": 0.20,
+            }
+        }
+    },
+}
+driver_plan = _human_contribution_driver_plan(driver_plan_report, target_human=80)
+driver_brief = _human_contribution_driver_plan_brief(driver_plan_report)
+assert_test(
+    driver_plan["enabled"]
+    and driver_plan["raw_formula"]["required_ai_raw_drop"] > 0
+    and driver_plan["primary_switches"][0]["driver"] == "ai_likelihood"
+    and "required_ai_raw_drop" in driver_brief,
+    "Human 80 target compiles into concrete scanner formula driver deltas",
+)
+short_policy = _controller_size_policy("word " * 625)
+medium_policy = _controller_size_policy("word " * 1459)
+long_policy = _controller_size_policy("word " * 5000)
+assert_test(
+    short_policy["size_class"] == "short"
+    and medium_policy["size_class"] == "medium"
+    and long_policy["size_class"] == "long"
+    and long_policy["full_document_llm_allowed"] is False
+    and long_policy["full_document_patch_llm_allowed"] is False,
+    "rewrite controller size policy covers 300-5000 words and blocks full-document LLM for long content",
+)
+driver_operation_source = (
+    "Furthermore, education plays a crucial role in helping students develop a wide range of skills. "
+    "The teacher guides the learner through the task."
+)
+driver_operation_candidates = _scanner_driver_operation_candidates(
+    driver_operation_source,
+    {
+        "rewrite_edit_briefs": [{
+            "sentence_index": 0,
+            "signals": {"finding_type": "high_predictability", "score": 85},
+        }]
+    },
+    limit=3,
+)
+assert_test(
+    driver_operation_candidates
+    and driver_operation_candidates[0][0].startswith("driver_operation_")
+    and "Furthermore" not in driver_operation_candidates[0][1].split(".")[0]
+    and "crucial role" not in driver_operation_candidates[0][1].lower(),
+    "scanner-driver operation compiler creates deterministic non-LLM candidates from high-risk sentences",
+)
+driver_suppression_prompt = _driver_suppression_repair_prompt(
+    "Today education is changing quickly. Students can use online tools, but teachers still guide judgement.",
+    driver_plan_report,
+    candidate_count=2,
+)
+assert_test(
+    "DRIVER_SUPPRESSION_REPAIR" in driver_suppression_prompt
+    and "ai_likelihood feature should drop by at least 0.12" in driver_suppression_prompt
+    and "rewrite_smoothness feature should drop by at least 0.08" in driver_suppression_prompt
+    and "This sounds simple. It is not." in driver_suppression_prompt
+    and "do not rewrite into smoother academic prose" in driver_suppression_prompt,
+    "driver suppression prompt targets ai_likelihood and rewrite_smoothness directly",
+)
+driver_suppression_status = _driver_suppression_candidate_status(
+    authenticity_status={
+        "human_delta": 1.0,
+        "ai_authorship_delta": 8.0,
+        "ai_transformation_delta": 2.0,
+        "ai_authorship_regression_blocked": False,
+    },
+    human_formula_status={
+        "ai_raw_drop": 0.08,
+        "human_raw_gain": 0.001,
+        "driver_drops": {
+            "ai_likelihood": 0.13,
+            "rewrite_smoothness": 0.09,
+        },
+    },
+    ai_score_regressed=False,
+    finding_delta=1,
+    review_burden_delta=0,
+    weighted_severity_delta=1,
+    critical_high_delta=0,
+)
+assert_test(
+    driver_suppression_status["allowed"]
+    and driver_suppression_status["ai_likelihood_drop"] >= 0.12
+    and driver_suppression_status["rewrite_smoothness_drop"] >= 0.08,
+    "driver suppression gate requires direct movement on formula switches",
+)
+driver_patch_source = (
+    "Technology is changing education quickly. "
+    "Students can now find answers online, but that does not mean they understand the work."
+)
+driver_patch_output = json.dumps({
+    "patches": [
+        {
+            "target": "Technology is changing education quickly",
+            "replacement": "Technology is changing education quickly. It is not always easy to manage.",
+        },
+        {
+            "target": "Technology is changing education quickly.",
+            "replacement": "Technology is changing education quickly. That sounds simple, but it is not.",
+        },
+    ]
+})
+driver_patches = _extract_driver_suppression_patches(driver_patch_output, driver_patch_source)
+assert_test(
+    len(driver_patches) == 1
+    and driver_patches[0]["target"].endswith(".")
+    and driver_patches[0]["replacement"].endswith("."),
+    "driver suppression patch extractor rejects dangling fragments",
+)
+blocked_formula_candidate = {
+    "summary": {
+        "selection_status": {
+            "reason": "human_formula_drivers_not_reduced",
+            "human_goal_trajectory_progress": {
+                "formula_ok": True,
+            },
+            "human_formula_driver_gate": {
+                "required": True,
+                "cleared": False,
+                "reason": "human_formula_drivers_not_reduced",
+                "human_delta": 3,
+                "ai_raw_drop": 0.042,
+                "min_ai_raw_drop": 0.04,
+                "human_raw_gain": 0.003,
+            },
+        }
+    }
+}
+assert_test(
+    _blocked_human_winner_failed_formula_gate(blocked_formula_candidate) is False,
+    "blocked Human winner repair is not skipped when formula trajectory already moved",
+)
 author_completion = _build_author_evidence_completion_layer(
     paragraph_search_text,
     {
@@ -3093,6 +3298,36 @@ assert_test(
     and ceiling_diagnostics["candidate_frontier"]["best_safe_human"] == 38.0
     and ceiling_diagnostics["author_evidence_gap"]["slot_count"] == 2,
     "mitigation ceiling diagnostics expose safe frontier and missing author-evidence blocker",
+)
+formula_gap_ceiling = _build_mitigation_ceiling_diagnostics(
+    {
+        "detect_scores": {
+            "original_human_contribution": 54,
+            "rewritten_human_contribution": 54,
+            "original_ai": 48,
+            "rewritten_ai": 48,
+        },
+        "ai_mitigation_search": {
+            "human_contribution_driver_plan": {
+                "raw_formula": {"required_ai_raw_drop": 0.33},
+                "primary_switches": [
+                    {"driver": "ai_likelihood"},
+                    {"driver": "rewrite_smoothness"},
+                ],
+            },
+            "candidates": [],
+        },
+    },
+    {
+        "enabled": True,
+        "slots": [{"slot": 1}],
+        "estimated_human_after_completion": {"low": 57, "high": 61},
+    },
+)
+assert_test(
+    formula_gap_ceiling.get("primary_blocker") == "formula_driver_gap_unresolved"
+    and "ai_likelihood" in " ".join(formula_gap_ceiling.get("recommended_next_actions") or []),
+    "mitigation ceiling prioritizes unresolved formula-driver gap over author-evidence wording",
 )
 intake_layer = _build_author_evidence_intake_layer(
     {
@@ -5614,6 +5849,289 @@ unsafe_stale_blocker_override = _dominant_blocker_safe_progress_override(
 assert_test(
     unsafe_stale_blocker_override.get("allowed") is False,
     "dominant blocker gate still blocks authorship regression",
+)
+
+
+# ════════════════════════════════════════════════════════════════════════
+print(f"\n{'=' * 70}")
+print("16.10 AI AUTHORSHIP FOOTPRINT OBJECTIVE")
+print("=" * 70)
+
+def footprint_report(
+    *,
+    authorship=48,
+    ai_likelihood=0.48,
+    smoothness=0.46,
+    topk=52,
+    predictability=50,
+    discourse=0.30,
+    semantic=0.35,
+    expansion=0.25,
+    unsupported=90,
+    broad=80,
+    citation=70,
+    source=85,
+):
+    return {
+        "integrity_layers": {
+            "layers": {
+                "ai_authorship_risk": {"score": authorship},
+                "grounding_quality_risk": {"score": max(unsupported, broad, citation, source)},
+                "ai_transformation_risk": {"score": 50},
+                "human_contribution_signal": {"score": 50},
+            }
+        },
+        "ai_risk_badge": {
+            "ai_likelihood_score": ai_likelihood * 100,
+            "ai_components": {
+                "topk_pattern": topk,
+                "predictability": predictability,
+                "repetitive_sentence_structure": 42,
+            },
+            "writing_components": {
+                "unsupported_claim_risk": unsupported,
+                "broad_claim_risk": broad,
+                "citation_weakness_risk": citation,
+                "source_grounding_risk": source,
+            },
+            "transformation_classification": {
+                "features": {
+                    "ai_likelihood": ai_likelihood,
+                    "rewrite_smoothness": smoothness,
+                    "discourse_regularity_risk": discourse,
+                    "semantic_uniformity_risk": semantic,
+                    "outline_to_text_expansion": expansion,
+                }
+            },
+        },
+        "findings": {"critical": [], "high": [], "medium": [], "low": []},
+    }
+
+footprint_original = footprint_report()
+footprint_candidate = footprint_report(
+    authorship=39,
+    ai_likelihood=0.39,
+    smoothness=0.40,
+    topk=44,
+    predictability=41,
+    unsupported=95,
+    broad=85,
+    citation=75,
+    source=88,
+)
+profile = _footprint_profile(footprint_original)
+assert_test(
+    profile["authorship_footprint"] == 48
+    and profile["components"]["grounding"]["unsupported_claim_risk"] == 90,
+    "footprint profile extracts authorship and separate grounding buckets",
+)
+status = _footprint_delta_status(
+    footprint_original,
+    footprint_candidate,
+    text_changed=True,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    status["selectable"] is True
+    and status["achieved"] is False
+    and status["drop"] == 9,
+    "authorship footprint gate accepts safe partial drop above 20",
+)
+assert_test(
+    status["grounding_policy"] == "excluded_from_authorship_success",
+    "grounding risk is excluded from authorship success",
+)
+footprint_goal_candidate = footprint_report(authorship=19, ai_likelihood=0.18, smoothness=0.20, topk=18, predictability=19)
+goal_status = _footprint_delta_status(
+    footprint_original,
+    footprint_goal_candidate,
+    text_changed=True,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    goal_status["achieved"] is True and goal_status["reason"] == "authorship_20_achieved",
+    "authorship footprint below 20 is the only mitigation success condition",
+)
+regressed_candidate = footprint_report(authorship=55, ai_likelihood=0.55, smoothness=0.50, topk=60, predictability=58)
+regressed_status = _footprint_delta_status(
+    footprint_original,
+    regressed_candidate,
+    text_changed=True,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    regressed_status["selectable"] is False
+    and regressed_status["reason"] == "authorship_footprint_not_reduced",
+    "authorship footprint gate rejects authorship regression",
+)
+rank_safe_drop = _authorship_footprint_rank(status)
+rank_goal = _authorship_footprint_rank(goal_status)
+assert_test(
+    rank_goal > rank_safe_drop,
+    "authorship-first ranking prefers below-20 target achievement",
+)
+human_only_status = {
+    "selectable": True,
+    "human_shift_score": 99,
+    "authenticity_gate": {
+        "human_delta": 30,
+        "candidate_human": 85,
+        "ai_authorship_delta": -7,
+        "ai_transformation_delta": 10,
+    },
+    "authorship_footprint_gate": regressed_status,
+}
+human_only_rank = _goal_climb_candidate_rank(
+    human_only_status,
+    {"authorship_footprint_status": regressed_status},
+    candidate_ai=30,
+)
+assert_test(
+    human_only_rank[0] == 0,
+    "goal rank blocks Human-only gains when authorship footprint regresses",
+)
+
+
+# ════════════════════════════════════════════════════════════════════════
+print(f"\n{'=' * 70}")
+print("16.11 BLOCK-LEVEL DRIVER OPTIMIZER")
+print("=" * 70)
+
+block_optimizer_text = (
+    "Today education is changing rapidly and this highlights the importance of various skills. "
+    "It is important to note that students need to adapt because technology plays a crucial role. "
+    "Furthermore, this creates a significant impact on learning.\n\n"
+    "In SHBHCUT002 practice, learners still need to manage sectioning, guide control, and projection "
+    "before a cut is safe on a client. The teacher feedback helps them check the actual movement.\n\n"
+    "In conclusion, this shows that education must continue to evolve and support students in many ways."
+)
+block_plan = {
+    "driver_contract": {
+        "raw_formula": {"required_ai_raw_drop": 0.2},
+        "primary_switches": [
+            {"driver": "ai_likelihood", "target_feature_drop": 0.2},
+            {"driver": "rewrite_smoothness", "target_feature_drop": 0.1},
+        ],
+    },
+    "rewrite_controller_plan": {
+        "schema_version": "rewrite_controller_plan.v1",
+        "size_policy": {
+            "word_count": len(block_optimizer_text.split()),
+            "size_band": "short",
+            "max_recreate_blocks": 2,
+            "max_remove_blocks": 1,
+            "full_document_llm_rewrite_allowed": False,
+        },
+        "block_driver_map": [
+            {
+                "block_index": 0,
+                "block_id": "b001",
+                "role": "generic_claim_heavy",
+                "word_count": 35,
+                "protected_anchors": [],
+                "core_claims": ["Today education is changing rapidly."],
+                "citation_markers": [],
+                "ai_drag": 78,
+                "human_value": 20,
+                "remove_safety": "safe",
+                "recreate_priority": 58,
+                "action_options": ["repair", "recreate", "remove"],
+            },
+            {
+                "block_index": 1,
+                "block_id": "b002",
+                "role": "technical_process_rich",
+                "word_count": 32,
+                "protected_anchors": [{"text": "SHBHCUT002", "type": "acronym"}],
+                "core_claims": ["In SHBHCUT002 practice, learners still need sectioning."],
+                "citation_markers": [],
+                "ai_drag": 45,
+                "human_value": 80,
+                "remove_safety": "unsafe",
+                "recreate_priority": 56,
+                "action_options": ["preserve", "repair", "recreate"],
+            },
+            {
+                "block_index": 2,
+                "block_id": "b003",
+                "role": "conclusion_template_risk",
+                "word_count": 18,
+                "protected_anchors": [],
+                "core_claims": ["In conclusion, education must evolve."],
+                "citation_markers": [],
+                "ai_drag": 64,
+                "human_value": 25,
+                "remove_safety": "safe",
+                "recreate_priority": 50,
+                "action_options": ["repair", "recreate", "remove"],
+            },
+        ],
+        "block_action_options": {
+            "b001": ["repair", "recreate", "remove"],
+            "b002": ["preserve", "repair", "recreate"],
+            "b003": ["repair", "recreate", "remove"],
+        },
+        "human_80_driver_gap": {
+            "raw_formula": {"required_ai_raw_drop": 0.2},
+            "primary_switches": [
+                {"driver": "ai_likelihood", "target_feature_drop": 0.2},
+            ],
+        },
+    },
+}
+compiled_plan = _rewrite_controller_plan_from_report(block_optimizer_text, block_plan)
+assert_test(
+    compiled_plan.get("schema_version") == "rewrite_controller_plan.v1",
+    "rewrite controller plan is read from scanner output",
+)
+remove_utility = _block_optimizer_utility(compiled_plan["block_driver_map"][0])
+protected_utility = _block_optimizer_utility(compiled_plan["block_driver_map"][1])
+assert_test(
+    remove_utility.get("recommended_action") == "remove",
+    "block utility removes high-drag low-value safe blocks",
+)
+assert_test(
+    protected_utility.get("recommended_action") != "remove",
+    "block utility does not remove protected high-value blocks",
+)
+block_targets = _block_optimizer_targets(block_optimizer_text, block_plan, limit=4)
+assert_test(
+    block_targets and block_targets[0].get("recommended_action") in {"remove", "recreate", "repair"},
+    "block optimizer ranks actionable block targets",
+)
+block_candidates = _block_optimizer_candidates(block_optimizer_text, block_plan, limit=4)
+assert_test(
+    any(strategy.startswith("block_optimizer_") for strategy, _candidate, _meta in block_candidates),
+    "block optimizer emits deterministic block candidates",
+)
+assert_test(
+    all("SHBHCUT002" in candidate for _strategy, candidate, _meta in block_candidates),
+    "block optimizer candidates preserve protected anchors from other blocks",
+)
+regen_prompt = _block_regeneration_prompt(
+    block_optimizer_text,
+    block_plan,
+    [compiled_plan["block_driver_map"][1]],
+    candidate_count=1,
+)
+assert_test(
+    "Return only valid JSON" in regen_prompt and "full document" in regen_prompt,
+    "block regeneration prompt forbids full-document miracle rewrite",
+)
+variants = _extract_block_regeneration_variants(
+    '{"variants":[{"block_index":1,"replacement":"In [[DP_ANCHOR_001]] practice, learners check sectioning first. The issue is control, not just terminology.","reason":"shorter cadence"}]}',
+    [compiled_plan["block_driver_map"][1]],
+    block_optimizer_text,
+)
+assert_test(
+    bool(variants) and variants[0][0] == 1 and "SHBHCUT002" in variants[0][1],
+    "block regeneration parser restores protected anchors",
 )
 
 
