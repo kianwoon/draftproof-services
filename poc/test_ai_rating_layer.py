@@ -570,7 +570,8 @@ domain_rich_ai_report = DraftReport(
         },
     },
 )
-domain_rich_ai_layers = report_to_dict(domain_rich_ai_report)["integrity_layers"]["layers"]
+domain_rich_ai_json = report_to_dict(domain_rich_ai_report)
+domain_rich_ai_layers = domain_rich_ai_json["integrity_layers"]["layers"]
 assert_true(
     domain_rich_ai_layers["human_contribution_signal"]["score"] < 65,
     "domain/source anchors alone cannot inflate Human Contribution above strong when AI texture pressure is visible",
@@ -578,6 +579,39 @@ assert_true(
 assert_true(
     domain_rich_ai_layers["ai_transformation_risk"]["score"] > 35,
     "AI Transformation reflects visible authorship texture pressure instead of calibrated suppression only",
+)
+domain_rich_readiness = (
+    domain_rich_ai_json.get("scan_intelligence", {})
+    .get("human_contribution_contract", {})
+    .get("generation_readiness", {})
+)
+assert_true(
+    domain_rich_readiness.get("estimated_auto_reachable_human_contribution", 100) < 80
+    and domain_rich_readiness.get("requires_author_input_for_80") is True,
+    "scanner readiness does not promise Human 80 from domain-rich AI texture without real author evidence",
+)
+domain_rich_radar = (
+    domain_rich_ai_json.get("scan_intelligence", {})
+    .get("blocker_radar", {})
+)
+domain_rich_blocker_keys = [
+    item.get("key")
+    for item in domain_rich_radar.get("dominant_blockers", [])
+    if isinstance(item, dict)
+]
+assert_true(
+    domain_rich_radar.get("policy", {}).get("no_strategy_selected_by_scanner") is True,
+    "scanner blocker radar diagnoses score drivers without choosing repair/recreate/remove strategy",
+)
+assert_true(
+    "topk_pattern" in domain_rich_blocker_keys
+    and "unsupported_claim_risk" in domain_rich_blocker_keys,
+    "scanner blocker radar exposes dominant AI-texture and grounding blockers for downstream controller policy",
+)
+assert_true(
+    domain_rich_radar.get("controller_inputs", {}).get("has_texture_pressure")
+    and domain_rich_radar.get("controller_inputs", {}).get("has_evidence_gaps"),
+    "scanner blocker radar exposes controller inputs without making the controller decision",
 )
 industry = scan_json.get("industry_baseline", {})
 assert_equal(

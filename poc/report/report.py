@@ -2768,6 +2768,315 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         rows.sort(key=lambda item: item["start_char"])
         return rows
 
+    def _radar_severity(score: float) -> str:
+        score = max(0.0, min(100.0, float(score or 0.0)))
+        if score >= 85:
+            return "critical"
+        if score >= 70:
+            return "high"
+        if score >= 45:
+            return "medium"
+        if score > 0:
+            return "low"
+        return "clean"
+
+    def _radar_component_profile(key: str) -> Dict[str, str]:
+        profiles = {
+            "topk_pattern": {
+                "layer": "ai_authorship_risk",
+                "label": "Top-k predictability",
+                "diagnostic": "Token path is too statistically predictable.",
+            },
+            "predictability": {
+                "layer": "ai_authorship_risk",
+                "label": "Predictability",
+                "diagnostic": "Sentence wording follows a common probability path.",
+            },
+            "qualifying_text_ai_density": {
+                "layer": "ai_authorship_risk",
+                "label": "Qualifying text density",
+                "diagnostic": "Qualifying language is dense enough to look machine-shaped.",
+            },
+            "generic_assertion_risk": {
+                "layer": "ai_authorship_risk",
+                "label": "Generic assertion risk",
+                "diagnostic": "Claims are stated in reusable generic form.",
+            },
+            "burstiness_risk": {
+                "layer": "ai_authorship_risk",
+                "label": "Burstiness risk",
+                "diagnostic": "Sentence rhythm may be too even.",
+            },
+            "repeated_sentence_structure_risk": {
+                "layer": "ai_authorship_risk",
+                "label": "Repeated sentence structure",
+                "diagnostic": "Sentence structure repeats across the draft.",
+            },
+            "unsupported_claim_risk": {
+                "layer": "grounding_quality_risk",
+                "label": "Unsupported claim risk",
+                "diagnostic": "Claims need visible support, narrowing, or controller review.",
+            },
+            "broad_claim_risk": {
+                "layer": "grounding_quality_risk",
+                "label": "Broad claim risk",
+                "diagnostic": "Claims are wider than the visible support.",
+            },
+            "citation_weakness_risk": {
+                "layer": "grounding_quality_risk",
+                "label": "Citation weakness",
+                "diagnostic": "Source linkage is weak or not visible enough.",
+            },
+            "source_grounding_risk": {
+                "layer": "grounding_quality_risk",
+                "label": "Source grounding risk",
+                "diagnostic": "Source-to-claim connection is underdeveloped.",
+            },
+            "lived_detail_risk": {
+                "layer": "human_contribution_gap",
+                "label": "Lived/process detail gap",
+                "diagnostic": "Author-owned process detail is thin.",
+            },
+            "paragraph_progression_risk": {
+                "layer": "ai_transformation_risk",
+                "label": "Paragraph progression risk",
+                "diagnostic": "Paragraph movement may be too managed or generic.",
+            },
+            "ai_likelihood": {
+                "layer": "ai_authorship_risk",
+                "label": "AI likelihood",
+                "diagnostic": "Combined AI-authorship texture signal is elevated.",
+            },
+            "rewrite_smoothness": {
+                "layer": "ai_transformation_risk",
+                "label": "Rewrite smoothness",
+                "diagnostic": "Language is smooth in a way associated with transformation.",
+            },
+            "outline_to_text_expansion": {
+                "layer": "ai_transformation_risk",
+                "label": "Expansion pattern",
+                "diagnostic": "The draft expands ideas in an outline-to-prose pattern.",
+            },
+            "semantic_uniformity_risk": {
+                "layer": "ai_transformation_risk",
+                "label": "Semantic uniformity",
+                "diagnostic": "Meaning flow is too even across the draft.",
+            },
+            "discourse_regularity_risk": {
+                "layer": "ai_transformation_risk",
+                "label": "Discourse regularity",
+                "diagnostic": "Argument structure is too regular.",
+            },
+            "section_style_variance": {
+                "layer": "ai_transformation_risk",
+                "label": "Section style variance",
+                "diagnostic": "Style shifts across sections need review.",
+            },
+        }
+        return profiles.get(key, {
+            "layer": "scan_signal",
+            "label": key.replace("_", " ").title(),
+            "diagnostic": "Scanner metric requires review.",
+        })
+
+    def _radar_signal_matches(component_key: str, signal: Dict[str, Any]) -> bool:
+        title = str(signal.get("title") or "").lower()
+        key = str(signal.get("key") or "").lower()
+        if component_key == "topk_pattern":
+            return "topk" in title
+        if component_key == "predictability":
+            return "predictability" in title or key == "ai_likelihood"
+        if component_key == "generic_assertion_risk":
+            return "generic" in title or "assertion" in title
+        if component_key == "qualifying_text_ai_density":
+            return "qualifying" in title
+        if component_key == "burstiness_risk":
+            return "burst" in title
+        if component_key == "repeated_sentence_structure_risk":
+            return "repetitive" in title or "structure" in title
+        if component_key in {"unsupported_claim_risk", "broad_claim_risk"}:
+            return "unsupported" in title or "broad" in title or "claim" in title
+        if component_key in {"citation_weakness_risk", "source_grounding_risk"}:
+            return "citation" in title or "source" in title or "grounding" in title
+        if component_key == "lived_detail_risk":
+            return "specificity" in title or "lived" in title
+        if component_key == "rewrite_smoothness":
+            return key == "rewrite_smoothness" or "generic" in title or "smooth" in title
+        if component_key in {"semantic_uniformity_risk", "discourse_regularity_risk"}:
+            return "semantic" in title or "discourse" in title or key in {"semantic_drift", "authorship_risk"}
+        return False
+
+    def _blocker_radar(
+        badge: Dict[str, Any],
+        features: Dict[str, Any],
+        writing_components: Dict[str, Any],
+        segments: list,
+        paragraph_rows: list,
+    ) -> Dict[str, Any]:
+        """Scanner-owned blocker map.
+
+        This is deliberately diagnostic only. It reports what is dragging the
+        score, where it appears, and how confident/localized the signal is. It
+        does not choose repair, recreation, or removal; the rewrite controller
+        owns that policy decision.
+        """
+        badge = badge or {}
+        features = features or {}
+        writing_components = writing_components or {}
+        ai_components = badge.get("ai_components") or {}
+        total_sentences = max(1, len(segments or []))
+        calibration_confidence = _pct(features.get("calibration_confidence"))
+
+        metric_sources = [
+            ("ai_components", ai_components, {
+                "topk_pattern",
+                "predictability",
+                "qualifying_text_ai_density",
+                "generic_assertion_risk",
+                "burstiness_risk",
+                "repeated_sentence_structure_risk",
+            }),
+            ("writing_components", writing_components, {
+                "unsupported_claim_risk",
+                "broad_claim_risk",
+                "citation_weakness_risk",
+                "source_grounding_risk",
+                "lived_detail_risk",
+                "paragraph_progression_risk",
+            }),
+            ("transformation_features", features, {
+                "ai_likelihood",
+                "rewrite_smoothness",
+                "outline_to_text_expansion",
+                "semantic_uniformity_risk",
+                "discourse_regularity_risk",
+                "section_style_variance",
+            }),
+        ]
+
+        blockers = []
+        for source, metrics, keys in metric_sources:
+            for key in keys:
+                if key not in metrics:
+                    continue
+                score = _pct(metrics.get(key))
+                if score < 25:
+                    continue
+                profile = _radar_component_profile(key)
+                matched_segments = []
+                matched_paragraph_ids = set()
+                for segment in segments or []:
+                    signals = segment.get("signals") or []
+                    if any(_radar_signal_matches(key, signal) for signal in signals):
+                        sid = segment.get("sentence_id")
+                        if sid:
+                            matched_segments.append(sid)
+                        pid = segment.get("paragraph_id")
+                        if pid:
+                            matched_paragraph_ids.add(pid)
+                if matched_segments:
+                    footprint = len(set(matched_segments)) / total_sentences
+                    scope = (
+                        "localized"
+                        if footprint <= 0.25
+                        else "mixed"
+                        if footprint <= 0.60
+                        else "document_wide"
+                    )
+                else:
+                    footprint = 1.0 if score >= 45 else 0.0
+                    scope = "document_wide" if score >= 45 else "unlocalized"
+                    matched_paragraph_ids = {
+                        row.get("paragraph_id")
+                        for row in paragraph_rows or []
+                        if row.get("finding_count", 0) > 0
+                    }
+                flags = {
+                    "evidence_gap": key in {
+                        "unsupported_claim_risk",
+                        "broad_claim_risk",
+                        "citation_weakness_risk",
+                        "source_grounding_risk",
+                    },
+                    "source_dependency": key in {
+                        "citation_weakness_risk",
+                        "source_grounding_risk",
+                    },
+                    "texture_pressure": key in {
+                        "topk_pattern",
+                        "predictability",
+                        "qualifying_text_ai_density",
+                        "burstiness_risk",
+                        "repeated_sentence_structure_risk",
+                        "ai_likelihood",
+                        "rewrite_smoothness",
+                        "semantic_uniformity_risk",
+                        "discourse_regularity_risk",
+                    },
+                    "author_context_gap": key in {
+                        "lived_detail_risk",
+                        "unsupported_claim_risk",
+                        "broad_claim_risk",
+                    },
+                }
+                blockers.append({
+                    "key": key,
+                    "label": profile["label"],
+                    "layer": profile["layer"],
+                    "metric_source": source,
+                    "score": score,
+                    "severity": _radar_severity(score),
+                    "confidence": (
+                        "high"
+                        if score >= 70 and calibration_confidence >= 45
+                        else "medium"
+                        if score >= 45
+                        else "low"
+                    ),
+                    "scope": scope,
+                    "sentence_ids": sorted(set(matched_segments)),
+                    "paragraph_ids": sorted(pid for pid in matched_paragraph_ids if pid),
+                    "footprint_ratio": round(min(1.0, max(0.0, footprint)), 4),
+                    "diagnostic": profile["diagnostic"],
+                    "diagnostic_flags": flags,
+                })
+
+        blockers.sort(
+            key=lambda item: (
+                item["score"],
+                len(item.get("sentence_ids") or []),
+            ),
+            reverse=True,
+        )
+        layer_pressure = {}
+        for blocker in blockers:
+            layer = blocker["layer"]
+            layer_pressure[layer] = max(layer_pressure.get(layer, 0), blocker["score"])
+        return {
+            "schema_version": "blocker_radar.v1",
+            "policy": {
+                "scanner_role": "diagnose_only",
+                "controller_role": "choose repair, recreate_from_context, or remove/defer using this radar and rewrite gates",
+                "no_strategy_selected_by_scanner": True,
+            },
+            "calibration_confidence": calibration_confidence,
+            "dominant_blockers": blockers[:8],
+            "blockers": blockers,
+            "layer_pressure": layer_pressure,
+            "location_summary": {
+                "localized_count": sum(1 for item in blockers if item.get("scope") == "localized"),
+                "mixed_count": sum(1 for item in blockers if item.get("scope") == "mixed"),
+                "document_wide_count": sum(1 for item in blockers if item.get("scope") == "document_wide"),
+                "unlocalized_count": sum(1 for item in blockers if item.get("scope") == "unlocalized"),
+            },
+            "controller_inputs": {
+                "has_evidence_gaps": any(item["diagnostic_flags"]["evidence_gap"] for item in blockers),
+                "has_texture_pressure": any(item["diagnostic_flags"]["texture_pressure"] for item in blockers),
+                "has_author_context_gap": any(item["diagnostic_flags"]["author_context_gap"] for item in blockers),
+                "document_wide_pressure": any(item.get("scope") == "document_wide" and item.get("score", 0) >= 45 for item in blockers),
+            },
+        }
+
     def _unique_preserve(rows: list, value: str, kind: str, reason: str, priority: int) -> None:
         value = " ".join(str(value or "").split()).strip()
         if not value:
@@ -3307,24 +3616,50 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
 
         weak_keys = [item["key"] for item in subsignals if item["score"] < 45]
         medium_keys = [item["key"] for item in subsignals if 45 <= item["score"] < 70]
-        auto_gain_potential = min(35, len(weak_keys) * 6 + len(medium_keys) * 3)
+        # Auto reachability must be conservative. Domain terms, citations, and
+        # source-looking structure are not new human evidence; they only give
+        # bounded room to strengthen reasoning already present in the submission.
+        auto_safe_keys = {
+            "causal_reasoning",
+            "source_claim_ownership",
+            "local_constraint_awareness",
+            "natural_variance",
+        }
+        weak_auto_keys = [key for key in weak_keys if key in auto_safe_keys]
+        medium_auto_keys = [key for key in medium_keys if key in auto_safe_keys]
+        auto_gain_potential = min(
+            16,
+            len(weak_auto_keys) * 5 + len(medium_auto_keys) * 2,
+        )
         assume_author_evidence = os.environ.get(
             "DRAFTPROOF_ASSUME_AUTHOR_EVIDENCE",
             "1",
         ).strip().lower() not in {"0", "false", "no", "off"}
         evidence_gap_penalty = 0 if assume_author_evidence else 12 if grounding >= 65 else 5 if grounding >= 45 else 0
         implicit_evidence_gain = (
-            min(35, 18 + len(weak_keys) * 4)
+            min(
+                8,
+                process_markers * 0.30
+                + causal_markers * 0.70
+                + source_markers * 0.50,
+            )
             if assume_author_evidence
             else 0
         )
+        texture_pressure = max(ai_authorship, ai_transformation)
+        total_auto_gain = auto_gain_potential + implicit_evidence_gain - evidence_gap_penalty
+        if texture_pressure >= 60:
+            total_auto_gain = min(total_auto_gain, 8)
+        elif texture_pressure >= 45:
+            total_auto_gain = min(total_auto_gain, 12)
         auto_reachable = max(
             current_human,
-            min(100, current_human + auto_gain_potential + implicit_evidence_gain - evidence_gap_penalty),
+            min(100, current_human + total_auto_gain),
         )
+        author_input_gain = 20 if grounding >= 45 or weak_keys or medium_keys else 12
         with_author_input = min(
             100,
-            max(auto_reachable, current_human + auto_gain_potential + implicit_evidence_gain + 25),
+            max(auto_reachable, current_human + total_auto_gain + author_input_gain),
         )
 
         paragraph_levers = []
@@ -3365,16 +3700,14 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "estimated_auto_reachable_human_contribution": int(round(auto_reachable)),
             "estimated_with_author_input_human_contribution": int(round(with_author_input)),
             "assume_author_evidence_from_submission": assume_author_evidence,
-            "requires_author_input_for_80": (auto_reachable < 80 and not assume_author_evidence),
+            "requires_author_input_for_80": auto_reachable < 80,
             "user_evidence_footnote": (
                 "DraftProof can reconstruct from the submitted write-up, but you should keep ready any real notes, sources, examples, observations, or process evidence that support the claims if review is needed."
             ),
             "reason": (
-                "Human Contribution can be targeted through implicit author-evidence reconstruction from submitted claims; do not invent new facts."
-                if assume_author_evidence
-                else "Human Contribution above 80 likely needs real author evidence or source-specific grounding."
-                if auto_reachable < 80
-                else "Scanner signals suggest automatic regeneration may reach the target without new facts."
+                "Scanner signals suggest automatic regeneration may reach the target without new facts."
+                if auto_reachable >= 80
+                else "Human Contribution above 80 likely needs real author evidence, source-specific grounding, or stronger author-owned process context."
             ),
         }
         return {
@@ -3396,7 +3729,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "new personal observation",
                 "new citation or source evidence",
                 "new named institution, date, statistic, or example",
-            ] if (auto_reachable < 80 and not assume_author_evidence) else [],
+            ] if auto_reachable < 80 else [],
             "assumption_policy": {
                 "mode": (
                     "implicit_author_evidence"
@@ -3425,6 +3758,13 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         doc_findings = [_segment_signal(f) for f in document_level_findings]
         doc_findings.sort(key=lambda entry: entry.get("score", 0), reverse=True)
         preservation_inventory = _preservation_inventory(report.original_text or "")
+        blocker_radar = _blocker_radar(
+            badge,
+            features,
+            writing_components,
+            segments,
+            paragraph_rows,
+        )
         human_contract = _human_contribution_contract(
             report.original_text or "",
             segments,
@@ -3469,6 +3809,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "strongest_signals": transformation_signals[:3],
             },
             "integrity_layers": integrity_layers,
+            "blocker_radar": blocker_radar,
             "industry_baseline": industry_baseline,
             "human_contribution_contract": human_contract,
             "generation_handoff": generation_handoff,
@@ -3549,6 +3890,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "human_contribution_contract": human_contract,
                 "industry_baseline": industry_baseline,
                 "generation_handoff": generation_handoff,
+                "blocker_radar": blocker_radar,
                 "target_segment_ids": [
                     segment["segment_id"]
                     for segment in segments
