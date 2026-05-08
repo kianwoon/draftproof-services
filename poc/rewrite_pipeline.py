@@ -6346,10 +6346,10 @@ def _staged_reconstruction_candidate(
             ),
             temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.78")),
             max_tokens=int(os.environ.get("DRAFTPROOF_STAGED_SECTION_MAX_TOKENS", "1800")),
-            top_p=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_P"),
-            top_k=_int_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_K"),
-            presence_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_PRESENCE_PENALTY"),
-            frequency_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_FREQUENCY_PENALTY"),
+            top_p=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_P"),
+            top_k=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_K"),
+            presence_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "PRESENCE_PENALTY"),
+            frequency_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "FREQUENCY_PENALTY"),
         )
         call_count += 1
         body = _clean_section_candidate(response.content, str(section_plan.get("heading") or ""))
@@ -10947,10 +10947,10 @@ def run_rewrite_pipeline(
                                     system="Return only replacement text for [[MASK]].",
                                     temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.45")),
                                     max_tokens=int(os.environ.get("DRAFTPROOF_MASKED_SPAN_MAX_TOKENS", "1000")),
-                                    top_p=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_P"),
-                                    top_k=_int_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_K"),
-                                    presence_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_PRESENCE_PENALTY"),
-                                    frequency_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_FREQUENCY_PENALTY"),
+                                    top_p=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_P"),
+                                    top_k=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_K"),
+                                    presence_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "PRESENCE_PENALTY"),
+                                    frequency_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "FREQUENCY_PENALTY"),
                                 )
                                 llm_replacement = _clean_masked_span_replacement(response.content or "")
                                 if llm_replacement and llm_replacement not in replacements:
@@ -11443,6 +11443,10 @@ def run_rewrite_pipeline(
                                     ),
                                     temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.78")),
                                     max_tokens=int(os.environ.get("DRAFTPROOF_AUTHENTICITY_MAX_TOKENS", "6500")),
+                                    top_p=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_P"),
+                                    top_k=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_K"),
+                                    presence_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "PRESENCE_PENALTY"),
+                                    frequency_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "FREQUENCY_PENALTY"),
                                 )
                                 candidate = _clean_full_document_candidate(response.content, source_for_mitigation)
                         except Exception as exc:
@@ -11604,10 +11608,10 @@ def run_rewrite_pipeline(
                                     ),
                                     temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.45")),
                                     max_tokens=int(os.environ.get("DRAFTPROOF_MICRO_TEXTURE_MAX_TOKENS", "1200")),
-                                    top_p=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_P"),
-                                    top_k=_int_env_optional("DRAFTPROOF_RECONSTRUCTION_TOP_K"),
-                                    presence_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_PRESENCE_PENALTY"),
-                                    frequency_penalty=_float_env_optional("DRAFTPROOF_RECONSTRUCTION_FREQUENCY_PENALTY"),
+                                    top_p=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_P"),
+                                    top_k=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_K"),
+                                    presence_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "PRESENCE_PENALTY"),
+                                    frequency_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "FREQUENCY_PENALTY"),
                                 )
                                 replacement, clean_reason = _clean_micro_texture_candidate(
                                     repair_response.content,
