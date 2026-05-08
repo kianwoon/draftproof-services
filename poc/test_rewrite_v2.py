@@ -204,6 +204,9 @@ from rewrite_pipeline import (
     _paragraph_anchor_lock,
     _clean_source_sentence_candidate,
     _splice_paragraph,
+    _rewrite_sampling_profile,
+    _phase_sampling_arg,
+    _mitigation_sampling_policy_summary,
 )
 from llm.gateway import _model_capabilities
 from report import ReportBuilder, report_to_dict
@@ -1441,6 +1444,43 @@ assert_test(
     and _model_capabilities("qwen/qwen3-32b").get("top_k") is True,
     "model capability normalization disables top_k for OpenAI models only",
 )
+sampling_env_keys = [
+    "DRAFTPROOF_AI_SEARCH_TOP_P",
+    "DRAFTPROOF_AI_SEARCH_PRESENCE_PENALTY",
+    "DRAFTPROOF_AI_SEARCH_FREQUENCY_PENALTY",
+    "DRAFTPROOF_DRIVER_SUPPRESSION_TOP_P",
+]
+previous_sampling_env = {key: os.environ.get(key) for key in sampling_env_keys}
+for key in sampling_env_keys:
+    os.environ.pop(key, None)
+default_sampling = _rewrite_sampling_profile("DRAFTPROOF_AI_SEARCH")
+assert_test(
+    default_sampling["top_p"] == 0.82
+    and default_sampling["presence_penalty"] == 0.15
+    and default_sampling["frequency_penalty"] == 0.25,
+    "rewrite sampling profile does not collapse to temperature-only defaults",
+)
+assert_test(
+    _phase_sampling_arg("DRAFTPROOF_DRIVER_SUPPRESSION", "TOP_P") == 0.82,
+    "phase sampling inherits mitigation top_p when phase env is unset",
+)
+os.environ["DRAFTPROOF_DRIVER_SUPPRESSION_TOP_P"] = "0.91"
+assert_test(
+    _phase_sampling_arg("DRAFTPROOF_DRIVER_SUPPRESSION", "TOP_P") == 0.91,
+    "phase sampling env overrides inherited mitigation top_p",
+)
+policy_summary = _mitigation_sampling_policy_summary()
+assert_test(
+    policy_summary["ai_search_top_p"] == 0.82
+    and policy_summary["ai_search_presence_penalty"] == 0.15
+    and policy_summary["ai_search_frequency_penalty"] == 0.25,
+    "mitigation sampling policy summary exposes effective non-temperature controls",
+)
+for key, value in previous_sampling_env.items():
+    if value is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = value
 low_aggression = _repair_aggression_score(
     "Learners name the seven cutting steps. The guide can still disappear in their hands.",
     "Learners name the seven cutting steps. Still, the guide can disappear in their hands.",

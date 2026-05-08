@@ -155,6 +155,41 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _float_env_with_fallback(name: str, fallback: float) -> float:
+    value = _float_env_optional(name)
+    return float(value) if value is not None else float(fallback)
+
+
+def _rewrite_sampling_profile(prefix: str = "DRAFTPROOF_AI_SEARCH") -> dict:
+    """Effective default sampling controls for rewrite-generation calls.
+
+    Phase-specific calls may override these values, but they should not silently
+    collapse to temperature-only sampling when env vars are unset.
+    """
+    return {
+        "temperature": _float_env(f"{prefix}_TEMPERATURE", 0.45),
+        "top_p": _float_env_with_fallback(f"{prefix}_TOP_P", 0.82),
+        "top_k": _int_env_optional(f"{prefix}_TOP_K"),
+        "presence_penalty": _float_env_with_fallback(f"{prefix}_PRESENCE_PENALTY", 0.15),
+        "frequency_penalty": _float_env_with_fallback(f"{prefix}_FREQUENCY_PENALTY", 0.25),
+    }
+
+
+def _phase_sampling_arg(phase_prefix: str, key: str, fallback_prefix: str = "DRAFTPROOF_AI_SEARCH"):
+    env_name = f"{phase_prefix}_{key}"
+    fallback = _rewrite_sampling_profile(fallback_prefix)
+    if key == "TOP_K":
+        value = _int_env_optional(env_name)
+        return value if value is not None else fallback.get("top_k")
+    field = {
+        "TOP_P": "top_p",
+        "PRESENCE_PENALTY": "presence_penalty",
+        "FREQUENCY_PENALTY": "frequency_penalty",
+    }.get(key)
+    value = _float_env_optional(env_name)
+    return value if value is not None else fallback.get(field)
+
+
 def _float_env_optional(name: str) -> float | None:
     raw = os.environ.get(name)
     if raw is None or str(raw).strip() == "":
@@ -3036,8 +3071,13 @@ def _authorship_footprint_rank(
 
 
 def _mitigation_sampling_policy_summary() -> dict:
+    ai_search_sampling = _rewrite_sampling_profile("DRAFTPROOF_AI_SEARCH")
     return {
-        "ai_search_temperature": float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.45")),
+        "ai_search_temperature": ai_search_sampling["temperature"],
+        "ai_search_top_p": ai_search_sampling["top_p"],
+        "ai_search_top_k": ai_search_sampling["top_k"],
+        "ai_search_presence_penalty": ai_search_sampling["presence_penalty"],
+        "ai_search_frequency_penalty": ai_search_sampling["frequency_penalty"],
         "paragraph_component_temperature": float(os.environ.get("DRAFTPROOF_PARAGRAPH_COMPONENT_TEMPERATURE", "0.45")),
         "human_signal_amplification_temperature": float(os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45")),
         "author_reasoning_amplification_temperature": float(os.environ.get("DRAFTPROOF_AUTHOR_REASONING_AMPLIFICATION_TEMPERATURE", "0.45")),
@@ -15378,6 +15418,7 @@ def run_rewrite_pipeline(
                 search_summary["llm_reason"] = "no_llm_available"
         else:
             try:
+                ai_search_sampling = _rewrite_sampling_profile("DRAFTPROOF_AI_SEARCH")
                 gateway = LLMGateway(LLMConfig(
                     api_key=effective_key,
                     model=generator_model,
@@ -15385,7 +15426,11 @@ def run_rewrite_pipeline(
                     timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
                     max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
                     max_tokens=int(os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_TOKENS", "6500")),
-                    temperature=float(os.environ.get("DRAFTPROOF_AI_SEARCH_TEMPERATURE", "0.45")),
+                    temperature=ai_search_sampling["temperature"],
+                    top_p=ai_search_sampling["top_p"],
+                    top_k=ai_search_sampling["top_k"],
+                    presence_penalty=ai_search_sampling["presence_penalty"],
+                    frequency_penalty=ai_search_sampling["frequency_penalty"],
                 ))
                 gateway = _budget_gateway(gateway, "ai_search_llm")
                 paragraph_search_enabled = os.environ.get(
