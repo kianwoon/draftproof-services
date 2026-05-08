@@ -2134,19 +2134,24 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 else _clamp01(features.get("ai_likelihood"))
             )
         )
+        # Human Contribution is an authorship signal, not a domain-keyword score.
+        # Domain/source anchors help, but they must not overpower strong AI texture
+        # pressure such as high likelihood, smoothness, expansion, or semantic regularity.
         human_raw = (
-            _clamp01(features.get("human_anchor_score")) * 0.62
-            + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.23
+            _clamp01(features.get("human_anchor_score")) * 0.45
+            + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.20
             + (1.0 - max(
                 _clamp01(features.get("source_similarity")),
                 _clamp01(features.get("surface_similarity")),
-            )) * 0.15
+            )) * 0.10
         )
         ai_raw = (
-            calibrated_ai * 0.42
-            + _clamp01(features.get("rewrite_smoothness")) * 0.24
-            + _clamp01(features.get("outline_to_text_expansion")) * 0.18
-            + _clamp01(features.get("section_style_variance")) * 0.11
+            _clamp01(features.get("ai_likelihood")) * 0.55
+            + _clamp01(features.get("rewrite_smoothness")) * 0.25
+            + _clamp01(features.get("outline_to_text_expansion")) * 0.15
+            + _clamp01(features.get("semantic_uniformity_risk")) * 0.10
+            + _clamp01(features.get("discourse_regularity_risk")) * 0.05
+            + _clamp01(features.get("section_style_variance")) * 0.05
             + _clamp01(features.get("source_similarity")) * 0.05
         )
         total = human_raw + ai_raw

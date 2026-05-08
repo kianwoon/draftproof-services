@@ -161,12 +161,14 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
     patchwork = _tf_pct((features or {}).get("section_style_variance")) or 0.0
     source_similarity = _tf_pct((features or {}).get("source_similarity")) or 0.0
 
-    human_raw = human_anchor * 0.62 + natural_variance * 0.23 + semantic_originality * 0.15
+    human_raw = human_anchor * 0.45 + natural_variance * 0.20 + semantic_originality * 0.10
     ai_raw = (
-        ai_likelihood * 0.42
-        + rewrite_smoothness * 0.24
-        + expansion * 0.18
-        + patchwork * 0.11
+        (_tf_pct((features or {}).get("ai_likelihood")) or ai_likelihood) * 0.55
+        + rewrite_smoothness * 0.25
+        + expansion * 0.15
+        + (_tf_pct((features or {}).get("semantic_uniformity_risk")) or 0.0) * 0.10
+        + (_tf_pct((features or {}).get("discourse_regularity_risk")) or 0.0) * 0.05
+        + patchwork * 0.05
         + source_similarity * 0.05
     )
     total = max(human_raw + ai_raw, 1.0)

@@ -21,6 +21,7 @@ from detect.transformation import (
 )
 from detect.mitigation import build_ai_mitigation_plan
 from report.report import (
+    DraftReport,
     Finding,
     ReportBuilder,
     Tier as ReportTier,
@@ -519,6 +520,64 @@ assert_equal(
     intel.get("integrity_layers"),
     integrity_layers,
     "scan intelligence mirrors separated integrity layer contract",
+)
+domain_rich_ai_report = DraftReport(
+    overall_tier=ReportTier.MEDIUM,
+    finding_count=0,
+    findings_by_tier={},
+    original_text="Domain-rich but machine-shaped sample.",
+    ai_risk_badge={
+        "tier": "AMBER",
+        "ai_likelihood_score": 47.85,
+        "writing_quality_score": 39.17,
+        "ai_components": {
+            "topk_pattern": 80.83,
+            "predictability": 44.94,
+            "qualifying_text_ai_density": 44.11,
+        },
+        "writing_components": {
+            "domain_grounding_strength": 100.0,
+            "source_grounding_strength": 60.0,
+            "lived_detail_risk": 20.0,
+            "source_grounding_risk": 40.0,
+            "citation_weakness_risk": 50.0,
+            "unsupported_claim_risk": 70.0,
+            "broad_claim_risk": 65.0,
+        },
+        "transformation_classification": {
+            "code": "human_uncertain",
+            "label": "Human / uncertain pattern",
+            "confidence": "low",
+            "evidence": ["human anchor reduced AI certainty"],
+            "features": {
+                "ai_likelihood": 0.4785,
+                "human_anchor_score": 0.79,
+                "rewrite_smoothness": 0.4719,
+                "source_similarity": 0.0,
+                "surface_similarity": 0.0,
+                "outline_to_text_expansion": 0.2598,
+                "section_style_variance": 0.4334,
+                "semantic_uniformity_risk": 0.2913,
+                "discourse_regularity_risk": 0.0544,
+                "adjusted_ai_risk": 0.3084,
+                "calibrated_ai_risk": 0.1982,
+                "human_anchor_discount": 0.3555,
+                "signal_agreement_score": 0.1167,
+                "calibration_confidence": 0.5125,
+                "reporting_suppression": 0.4875,
+            },
+            "is_verdict": False,
+        },
+    },
+)
+domain_rich_ai_layers = report_to_dict(domain_rich_ai_report)["integrity_layers"]["layers"]
+assert_true(
+    domain_rich_ai_layers["human_contribution_signal"]["score"] < 65,
+    "domain/source anchors alone cannot inflate Human Contribution above strong when AI texture pressure is visible",
+)
+assert_true(
+    domain_rich_ai_layers["ai_transformation_risk"]["score"] > 35,
+    "AI Transformation reflects visible authorship texture pressure instead of calibrated suppression only",
 )
 industry = scan_json.get("industry_baseline", {})
 assert_equal(
