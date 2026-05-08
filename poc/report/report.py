@@ -2156,39 +2156,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         )
         total = human_raw + ai_raw
         if total <= 0:
-            uncapped_hcr = 50
+            hcr = 50
+            atr = 50
         else:
-            uncapped_hcr = int(round((human_raw / total) * 100))
-
-        ai_likelihood = _clamp01(features.get("ai_likelihood"))
-        rewrite_smoothness = _clamp01(features.get("rewrite_smoothness"))
-        semantic_uniformity = _clamp01(features.get("semantic_uniformity_risk"))
-        discourse_regularity = _clamp01(features.get("discourse_regularity_risk"))
-        expansion = _clamp01(features.get("outline_to_text_expansion"))
-        texture_pressure = max(ai_likelihood, rewrite_smoothness, semantic_uniformity, discourse_regularity, expansion)
-        cap_reasons: list[str] = []
-        hcr_cap = 100
-        if ai_raw >= 0.70:
-            hcr_cap = min(hcr_cap, 58)
-            cap_reasons.append("very_high_ai_raw_pressure")
-        elif ai_raw >= 0.58:
-            hcr_cap = min(hcr_cap, 65)
-            cap_reasons.append("high_ai_raw_pressure")
-        elif ai_raw >= 0.48:
-            hcr_cap = min(hcr_cap, 72)
-            cap_reasons.append("moderate_ai_raw_pressure")
-        if ai_likelihood >= 0.65 and rewrite_smoothness >= 0.55:
-            hcr_cap = min(hcr_cap, 60)
-            cap_reasons.append("high_likelihood_and_smoothness")
-        if ai_likelihood >= 0.45 and rewrite_smoothness >= 0.45 and semantic_uniformity >= 0.50:
-            hcr_cap = min(hcr_cap, 68)
-            cap_reasons.append("combined_texture_uniformity_pressure")
-        if texture_pressure >= 0.75 and uncapped_hcr >= 70:
-            hcr_cap = min(hcr_cap, 64)
-            cap_reasons.append("dominant_texture_pressure")
-        cap_applied = uncapped_hcr > hcr_cap
-        hcr = min(uncapped_hcr, hcr_cap)
-        atr = max(0, min(100, 100 - hcr))
+            hcr = int(round((human_raw / total) * 100))
+            atr = max(0, min(100, 100 - hcr))
 
         top_drivers = [row["label"].lower() for row in signals[:2] if row.get("score", 0) > 0]
         if atr >= 70:
@@ -2199,388 +2171,16 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             summary = "Mixed authorship pattern: human anchoring and AI transformation signals are both visible."
         if top_drivers:
             summary += " Main drivers: " + " and ".join(top_drivers) + "."
-        if cap_applied:
-            summary += " Human Contribution was capped because AI-side texture pressure remains visible."
 
         return {
             "human_contribution_ratio": hcr,
             "ai_transformation_ratio": atr,
-            "human_contribution_uncapped_ratio": uncapped_hcr,
-            "human_contribution_cap": {
-                "applied": cap_applied,
-                "cap": hcr_cap if hcr_cap < 100 else None,
-                "reasons": cap_reasons,
-                "ai_raw": round(ai_raw, 4),
-                "human_raw": round(human_raw, 4),
-                "texture_pressure": round(texture_pressure, 4),
-            },
             "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
             "calibrated_ai_risk": _pct(calibrated_ai),
             "human_anchor_discount": _pct(features.get("human_anchor_discount")),
             "calibration_confidence": _pct(features.get("calibration_confidence")),
             "reporting_suppression": _pct(features.get("reporting_suppression")),
             "summary": summary,
-        }
-
-    def _driver_contract(
-        features: Dict[str, Any],
-        contribution: Dict[str, Any],
-        *,
-        target_human: float = 80.0,
-    ) -> Dict[str, Any]:
-        """Expose the scanner-driver math the rewrite controller must optimize."""
-        features = features or {}
-        max_similarity = max(
-            _clamp01(features.get("source_similarity")),
-            _clamp01(features.get("surface_similarity")),
-        )
-        human_raw = (
-            _clamp01(features.get("human_anchor_score")) * 0.45
-            + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.20
-            + (1.0 - max_similarity) * 0.10
-        )
-        ai_driver_weights = {
-            "ai_likelihood": 0.55,
-            "rewrite_smoothness": 0.25,
-            "outline_to_text_expansion": 0.15,
-            "semantic_uniformity_risk": 0.10,
-            "discourse_regularity_risk": 0.05,
-            "section_style_variance": 0.05,
-            "source_similarity": 0.05,
-        }
-        ai_raw = sum(_clamp01(features.get(key)) * weight for key, weight in ai_driver_weights.items())
-        target_ratio = max(0.01, min(0.99, float(target_human) / 100.0))
-        required_ai_raw = human_raw * (1.0 - target_ratio) / target_ratio if human_raw > 0 else 0.0
-        required_ai_raw_drop = max(0.0, ai_raw - required_ai_raw)
-        remaining = required_ai_raw_drop
-        levers = []
-        for key, weight in sorted(ai_driver_weights.items(), key=lambda item: item[1], reverse=True):
-            current = _clamp01(features.get(key))
-            max_raw_drop = current * weight
-            target_raw_drop = min(remaining, max_raw_drop) if remaining > 0 else 0.0
-            target_feature_drop = min(current, target_raw_drop / weight) if weight > 0 else 0.0
-            remaining -= target_raw_drop
-            levers.append({
-                "driver": key,
-                "current": round(current, 4),
-                "weight": weight,
-                "max_raw_drop": round(max_raw_drop, 4),
-                "target_feature_drop": round(target_feature_drop, 4),
-                "target_raw_drop": round(target_raw_drop, 4),
-            })
-        primary_switches = [item for item in levers if item["target_feature_drop"] > 0][:4]
-        current_human = contribution.get("human_contribution_ratio")
-        return {
-            "schema_version": "driver_contract.v1",
-            "target_human_contribution": int(round(target_human)),
-            "current_human_contribution": current_human,
-            "current_ai_transformation": contribution.get("ai_transformation_ratio"),
-            "honesty_cap": contribution.get("human_contribution_cap") or {},
-            "raw_formula": {
-                "human_raw": round(human_raw, 4),
-                "ai_raw": round(ai_raw, 4),
-                "required_ai_raw_at_target": round(required_ai_raw, 4),
-                "required_ai_raw_drop": round(required_ai_raw_drop, 4),
-                "remaining_unallocated_raw_drop": round(max(0.0, remaining), 4),
-            },
-            "primary_switches": primary_switches,
-            "all_ai_driver_levers": levers,
-            "feasibility": {
-                "can_reach_target_by_ai_driver_elimination": remaining <= 0.0001,
-                "requires_material_driver_movement": required_ai_raw_drop >= 0.04,
-                "human_anchor_headroom": round(max(0.0, 1.0 - _clamp01(features.get("human_anchor_score"))), 4),
-            },
-            "controller_rule": (
-                "Rewrite candidates must move these drivers directly; domain anchors or citations alone "
-                "must not be treated as Human Contribution success."
-            ),
-        }
-
-    def _logical_blocks_for_controller(text: str) -> list[str]:
-        raw = str(text or "").strip()
-        if not raw:
-            return []
-        blocks = [p.strip() for p in _re.split(r"\n\s*\n", raw) if p.strip()]
-        if len(blocks) != 1:
-            return blocks
-        lines = [line.strip() for line in raw.splitlines() if line.strip()]
-        if len(lines) < 4:
-            return blocks
-        heading_like = sum(
-            1
-            for line in lines
-            if len(line.split()) <= 9 and not _re.search(r"[.!?:;]\s*$", line)
-        )
-        prose_like = sum(1 for line in lines if len(line.split()) >= 14)
-        return lines if heading_like >= 2 and prose_like >= 2 else blocks
-
-    def _controller_block_role(block: str, *, is_last: bool = False) -> str:
-        text = str(block or "")
-        words = max(1, len(text.split()))
-        citation_count = len(_re.findall(
-            r"(?:\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)|"
-            r"\b[A-Z][A-Za-z]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z]+)?\s*\(\d{4}\))",
-            text,
-        ))
-        first_person = len(_re.findall(r"\b(?:I|my|me|we|our)\b", text))
-        concrete = len(_re.findall(
-            r"\b(?:SHBHCUT\d+|CESE|Box Hill|HBB26|\d+(?:\.\d+)?%?|"
-            r"teacher|student|classroom|assessment|source|feedback|draft|practice|"
-            r"mannequin|client|sectioning|projection|scissor|comb)\b",
-            text,
-            _re.I,
-        ))
-        generic = len(_re.findall(
-            r"\b(?:important|significant|crucial|various|wide range|plays? a role|"
-            r"highlights?|underscores?|in today's world|as society|should|must|need(?:s)?|"
-            r"can|will|helps?|allows?|enables?|creates?)\b",
-            text,
-            _re.I,
-        ))
-        if len(text.split()) <= 9 and not _re.search(r"[.!?:;]\s*$", text):
-            return "required_heading"
-        if first_person >= 2 and concrete >= 4:
-            return "human_anchor_rich"
-        if citation_count >= 2 and first_person == 0:
-            return "source_summary_heavy"
-        if concrete >= 7 and first_person >= 1:
-            return "technical_process_rich"
-        if is_last or _re.search(r"^\s*(?:Conclusion|In conclusion|Overall|To conclude)\b", text, _re.I):
-            return "conclusion_template_risk"
-        if generic / max(words / 100.0, 1.0) >= 4.0:
-            return "generic_claim_heavy"
-        return "mixed"
-
-    def _controller_block_anchors(block: str, preservation_inventory: Dict[str, Any]) -> list:
-        source = str(block or "")
-        anchors = []
-        for anchor in (preservation_inventory or {}).get("anchors", []):
-            value = str((anchor or {}).get("text") or "").strip()
-            if value and value in source:
-                anchors.append({
-                    "text": value,
-                    "type": (anchor or {}).get("type"),
-                    "priority": (anchor or {}).get("priority"),
-                })
-        return anchors[:24]
-
-    def _controller_core_claims(block: str) -> list:
-        sentences = [
-            item.strip()
-            for item in _re.split(r"(?<=[.!?])\s+", str(block or "").strip())
-            if item.strip()
-        ]
-        claims = []
-        for sentence in sentences[:4]:
-            words = sentence.split()
-            if len(words) < 6:
-                continue
-            claims.append(" ".join(words[:34]) + ("..." if len(words) > 34 else ""))
-        return claims[:3]
-
-    def _rewrite_controller_plan(
-        text: str,
-        features: Dict[str, Any],
-        contribution: Dict[str, Any],
-        driver_contract: Dict[str, Any],
-        preservation_inventory: Dict[str, Any],
-        paragraph_rows: list | None = None,
-    ) -> Dict[str, Any]:
-        blocks = _logical_blocks_for_controller(text)
-        word_count = len(str(text or "").split())
-        if word_count <= 700:
-            size_band = "short"
-            max_recreate = 3
-            max_remove = 2
-        elif word_count <= 1800:
-            size_band = "medium"
-            max_recreate = 4
-            max_remove = 3
-        else:
-            size_band = "long"
-            max_recreate = 6
-            max_remove = 4
-        doc_ai_pressure = max(
-            _clamp01(features.get("ai_likelihood")),
-            _clamp01(features.get("rewrite_smoothness")),
-            _clamp01(features.get("semantic_uniformity_risk")),
-            _clamp01(features.get("discourse_regularity_risk")),
-        )
-        block_rows = []
-        for index, block in enumerate(blocks):
-            words = len(block.split())
-            paragraph_signal = (
-                paragraph_rows[index]
-                if isinstance(paragraph_rows, list) and index < len(paragraph_rows)
-                else {}
-            )
-            paragraph_finding_count = int((paragraph_signal or {}).get("finding_count") or 0)
-            paragraph_top_signal_score = max(
-                [
-                    float((signal or {}).get("score") or 0.0)
-                    for signal in ((paragraph_signal or {}).get("top_signals") or [])
-                    if isinstance(signal, dict)
-                ]
-                or [0.0]
-            )
-            role = _controller_block_role(block, is_last=index == len(blocks) - 1)
-            anchors = _controller_block_anchors(block, preservation_inventory)
-            citation_markers = [
-                item.get("text")
-                for item in anchors
-                if item.get("type") == "citation"
-            ]
-            protected_anchor_count = len([
-                item for item in anchors
-                if item.get("type") in {"citation", "quote", "year", "number", "acronym", "name_or_entity"}
-            ])
-            generic_hits = len(_re.findall(
-                r"\b(?:important|significant|crucial|various|wide range|plays? a role|"
-                r"highlights?|underscores?|should|must|need(?:s)?|can|will|"
-                r"helps?|allows?|enables?|creates?)\b",
-                block,
-                _re.I,
-            ))
-            connector_hits = len(_re.findall(
-                r"\b(?:Furthermore|Moreover|Additionally|In conclusion|This highlights|"
-                r"This underscores|It is important to note)\b",
-                block,
-                _re.I,
-            ))
-            concrete_hits = len(_re.findall(
-                r"\b(?:SHBHCUT\d+|CESE|Box Hill|HBB26|\d+(?:\.\d+)?%?|"
-                r"teacher|student|classroom|assessment|source|feedback|draft|practice|"
-                r"mannequin|client|sectioning|projection|scissor|comb)\b",
-                block,
-                _re.I,
-            ))
-            sentence_lengths = [
-                len(sentence.split())
-                for sentence in _re.split(r"(?<=[.!?])\s+", block)
-                if sentence.strip()
-            ]
-            rhythm_uniformity = 0.0
-            if len(sentence_lengths) >= 3:
-                mean = sum(sentence_lengths) / len(sentence_lengths)
-                variance = sum((length - mean) ** 2 for length in sentence_lengths) / len(sentence_lengths)
-                rhythm_uniformity = max(0.0, 1.0 - min(1.0, (variance ** 0.5) / 12.0))
-            scanner_finding_pressure = min(
-                35.0,
-                paragraph_finding_count * 7.0 + paragraph_top_signal_score * 0.22,
-            )
-            ai_drag = min(100.0, (
-                doc_ai_pressure * 45.0
-                + min(35.0, generic_hits / max(words / 90.0, 1.0) * 5.0)
-                + min(12.0, connector_hits * 4.0)
-                + rhythm_uniformity * 18.0
-                + scanner_finding_pressure
-            ))
-            if role == "mixed" and paragraph_finding_count >= 2 and generic_hits >= 3:
-                role = "generic_claim_heavy"
-            human_value = min(100.0, (
-                min(30.0, protected_anchor_count * 8.0)
-                + min(25.0, concrete_hits * 2.5)
-                + (20.0 if role in {"human_anchor_rich", "technical_process_rich", "source_summary_heavy"} else 0.0)
-                + (10.0 if citation_markers else 0.0)
-                + min(15.0, words / 10.0)
-            ))
-            required_meaning = bool(
-                protected_anchor_count
-                or citation_markers
-                or role in {"required_heading", "human_anchor_rich", "technical_process_rich", "source_summary_heavy"}
-            )
-            remove_safety = "unsafe" if required_meaning else (
-                "safe" if ai_drag >= 62.0 and human_value <= 35.0 and words >= 25 else "limited"
-            )
-            if required_meaning and (ai_drag >= 45.0 or paragraph_finding_count >= 2):
-                action_options = ["preserve", "repair", "recreate"]
-            elif remove_safety == "safe":
-                action_options = ["repair", "recreate", "remove"]
-            elif ai_drag >= 45.0:
-                action_options = ["repair", "recreate"]
-            else:
-                action_options = ["preserve", "repair"]
-            recreate_priority = max(0.0, ai_drag * 0.65 + human_value * 0.35 - (18.0 if remove_safety == "safe" else 0.0))
-            block_rows.append({
-                "block_index": index,
-                "block_id": f"b{index + 1:03d}",
-                "role": role,
-                "word_count": words,
-                "protected_anchors": anchors,
-                "core_claims": _controller_core_claims(block),
-                "citation_markers": citation_markers,
-                "ai_drag": round(ai_drag, 2),
-                "human_value": round(human_value, 2),
-                "remove_safety": remove_safety,
-                "recreate_priority": round(recreate_priority, 2),
-                "action_options": action_options,
-                "required_driver_movement": {
-                    "drivers": [
-                        switch.get("driver")
-                        for switch in (driver_contract.get("primary_switches") or [])[:4]
-                    ],
-                    "target_raw_drop": (driver_contract.get("raw_formula") or {}).get("required_ai_raw_drop"),
-                },
-                "scanner_pressure": {
-                    "finding_count": paragraph_finding_count,
-                    "top_signal_score": round(paragraph_top_signal_score, 2),
-                    "drag_added": round(scanner_finding_pressure, 2),
-                },
-                "preview": block[:220],
-            })
-        block_rows.sort(key=lambda item: item["block_index"])
-        action_options = {
-            row["block_id"]: row["action_options"]
-            for row in block_rows
-        }
-        driver_gap = {
-            "target_human_contribution": driver_contract.get("target_human_contribution", 80),
-            "current_human_contribution": contribution.get("human_contribution_ratio"),
-            "human_80_achieved": (
-                isinstance(contribution.get("human_contribution_ratio"), (int, float))
-                and float(contribution.get("human_contribution_ratio")) >= 80.0
-            ),
-            "raw_formula": driver_contract.get("raw_formula") or {},
-            "primary_switches": driver_contract.get("primary_switches") or [],
-            "top_block_drivers": sorted(
-                [
-                    {
-                        "block_id": row["block_id"],
-                        "block_index": row["block_index"],
-                        "role": row["role"],
-                        "ai_drag": row["ai_drag"],
-                        "human_value": row["human_value"],
-                        "recommended_action": (
-                            "remove"
-                            if row["remove_safety"] == "safe"
-                            else "recreate"
-                            if "recreate" in row["action_options"] and row["ai_drag"] >= 45
-                            else "repair"
-                        ),
-                    }
-                    for row in block_rows
-                ],
-                key=lambda item: item["ai_drag"],
-                reverse=True,
-            )[:8],
-        }
-        return {
-            "schema_version": "rewrite_controller_plan.v1",
-            "target_human_contribution": 80,
-            "size_policy": {
-                "word_count": word_count,
-                "size_band": size_band,
-                "max_recreate_blocks": max_recreate,
-                "max_remove_blocks": max_remove,
-                "full_document_llm_rewrite_allowed": False,
-            },
-            "block_driver_map": block_rows,
-            "block_action_options": action_options,
-            "human_80_driver_gap": driver_gap,
-            "controller_rule": (
-                "Choose repair, recreate, or remove per block from measured driver drag. "
-                "Do not use full-document rewrite as the first strategy."
-            ),
         }
 
     def _risk_label(score: int, *, high: int = 65, medium: int = 40) -> str:
@@ -4152,10 +3752,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         writing_components = badge.get("writing_components") or {}
         transformation_signals = _transformation_signal_rows(features)
         contribution = _transformation_contribution(features, transformation_signals)
-        driver_contract = _driver_contract(features, contribution)
-        if isinstance(transformation, dict):
-            transformation["estimated_contribution"] = contribution
-            transformation["driver_contract"] = driver_contract
         integrity_layers = _integrity_layers(badge, transformation, contribution)
         segments = _document_segments()
         paragraph_rows = _paragraph_map(segments)
@@ -4192,14 +3788,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             human_contract,
             industry_baseline,
         )
-        rewrite_controller_plan = _rewrite_controller_plan(
-            report.original_text or "",
-            features,
-            contribution,
-            driver_contract,
-            preservation_inventory,
-            paragraph_rows,
-        )
         return {
             "schema_version": "scan_intelligence.v1",
             "purpose": {
@@ -4217,7 +3805,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "transformation": {
                 "classification": transformation,
                 "contribution": contribution,
-                "driver_contract": driver_contract,
                 "core_signals": transformation_signals,
                 "strongest_signals": transformation_signals[:3],
             },
@@ -4225,11 +3812,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "blocker_radar": blocker_radar,
             "industry_baseline": industry_baseline,
             "human_contribution_contract": human_contract,
-            "driver_contract": driver_contract,
-            "rewrite_controller_plan": rewrite_controller_plan,
-            "block_driver_map": rewrite_controller_plan.get("block_driver_map") or [],
-            "block_action_options": rewrite_controller_plan.get("block_action_options") or {},
-            "human_80_driver_gap": rewrite_controller_plan.get("human_80_driver_gap") or {},
             "generation_handoff": generation_handoff,
             "calibration": {
                 "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
@@ -4306,11 +3888,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "rewrite_edit_briefs": None,
                 "preservation_inventory": preservation_inventory,
                 "human_contribution_contract": human_contract,
-                "driver_contract": driver_contract,
-                "rewrite_controller_plan": rewrite_controller_plan,
-                "block_driver_map": rewrite_controller_plan.get("block_driver_map") or [],
-                "block_action_options": rewrite_controller_plan.get("block_action_options") or {},
-                "human_80_driver_gap": rewrite_controller_plan.get("human_80_driver_gap") or {},
                 "industry_baseline": industry_baseline,
                 "generation_handoff": generation_handoff,
                 "blocker_radar": blocker_radar,
@@ -4622,11 +4199,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     result["ai_mitigation"] = ai_mitigation
     result["industry_baseline"] = industry_baseline
     result["generation_handoff"] = scan_intelligence.get("generation_handoff") or {}
-    result["driver_contract"] = scan_intelligence.get("driver_contract") or {}
-    result["rewrite_controller_plan"] = scan_intelligence.get("rewrite_controller_plan") or {}
-    result["block_driver_map"] = scan_intelligence.get("block_driver_map") or []
-    result["block_action_options"] = scan_intelligence.get("block_action_options") or {}
-    result["human_80_driver_gap"] = scan_intelligence.get("human_80_driver_gap") or {}
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 

@@ -494,49 +494,6 @@ assert_equal(
     generation_handoff,
     "scan JSON exposes top-level generation handoff",
 )
-driver_contract = scan_json.get("driver_contract", {})
-assert_equal(
-    driver_contract.get("schema_version"),
-    "driver_contract.v1",
-    "scan JSON exposes scanner-driver contract",
-)
-assert_equal(
-    intel.get("driver_contract"),
-    driver_contract,
-    "scan intelligence mirrors scanner-driver contract",
-)
-assert_true(
-    driver_contract.get("raw_formula", {}).get("required_ai_raw_drop") is not None
-    and driver_contract.get("primary_switches") is not None,
-    "driver contract exposes required raw AI drop and primary switches",
-)
-assert_equal(
-    intel.get("mitigation_inputs", {}).get("driver_contract"),
-    driver_contract,
-    "mitigation inputs carry scanner-driver contract for rewrite",
-)
-rewrite_controller_plan = scan_json.get("rewrite_controller_plan", {})
-assert_equal(
-    rewrite_controller_plan.get("schema_version"),
-    "rewrite_controller_plan.v1",
-    "scan JSON exposes block-level rewrite controller plan",
-)
-assert_true(
-    bool(scan_json.get("block_driver_map"))
-    and isinstance(scan_json.get("block_action_options"), dict)
-    and isinstance(scan_json.get("human_80_driver_gap"), dict),
-    "scan JSON exposes block driver map, block actions, and Human 80 gap",
-)
-assert_equal(
-    intel.get("rewrite_controller_plan"),
-    rewrite_controller_plan,
-    "scan intelligence mirrors rewrite controller plan",
-)
-assert_equal(
-    intel.get("mitigation_inputs", {}).get("rewrite_controller_plan"),
-    rewrite_controller_plan,
-    "mitigation inputs carry rewrite controller plan for rewrite",
-)
 integrity_layers = scan_json.get("integrity_layers", {})
 assert_equal(
     integrity_layers.get("schema_version"),
@@ -615,15 +572,9 @@ domain_rich_ai_report = DraftReport(
 )
 domain_rich_ai_json = report_to_dict(domain_rich_ai_report)
 domain_rich_ai_layers = domain_rich_ai_json["integrity_layers"]["layers"]
-domain_rich_contribution = domain_rich_ai_json["ai_risk_badge"]["transformation_classification"]["estimated_contribution"]
 assert_true(
     domain_rich_ai_layers["human_contribution_signal"]["score"] < 65,
     "domain/source anchors alone cannot inflate Human Contribution above strong when AI texture pressure is visible",
-)
-assert_true(
-    "human_contribution_cap" in domain_rich_contribution
-    and "ai_raw" in domain_rich_contribution.get("human_contribution_cap", {}),
-    "Human Contribution exposes honesty-cap diagnostics when domain-rich content has visible AI texture pressure",
 )
 assert_true(
     domain_rich_ai_layers["ai_transformation_risk"]["score"] > 35,
