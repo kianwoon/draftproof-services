@@ -1489,6 +1489,20 @@ def _is_weak_only(signals: Optional[Dict[str, Any]]) -> bool:
 def _estimate_in_text_source_grounding_strength(text: str) -> float:
     """Bounded source strength from in-text source relationships without a bibliography object."""
     text = text or ""
+    url_count = len(re.findall(r"\b(?:https?://|www\.|doi\.org/)\S+", text, flags=re.I))
+    has_reference_section = bool(re.search(
+        r"(?im)^\s*(?:references|reference list|bibliography|works cited|sources)\s*$",
+        text,
+    ))
+    reference_tail = ""
+    if has_reference_section:
+        parts = re.split(
+            r"(?im)^\s*(?:references|reference list|bibliography|works cited|sources)\s*$",
+            text,
+            maxsplit=1,
+        )
+        reference_tail = parts[-1] if len(parts) > 1 else ""
+    reference_years = len(re.findall(r"\b(?:19|20)\d{2}[a-z]?\b", reference_tail))
     parenthetical = len(re.findall(
         r"\((?:[A-Z][A-Za-z'’.-]+(?:\s+(?:&|and)\s+[A-Z][A-Za-z'’.-]+)?|[A-Z][A-Za-z'’.-]+\s+et\s+al\.?|[A-Z]{2,})\s*,?\s*(?:19|20)\d{2}[a-z]?\)",
         text,
@@ -1503,14 +1517,23 @@ def _estimate_in_text_source_grounding_strength(text: str) -> float:
         flags=re.I,
     ))
     citation_count = parenthetical + narrative
+    reference_signal = max(url_count, reference_years if has_reference_section else 0)
     if citation_count >= 6 and source_relations >= 4:
         return 0.70
     if citation_count >= 4 and source_relations >= 2:
         return 0.60
+    if reference_signal >= 3 and source_relations >= 2:
+        return 0.55
+    if has_reference_section and reference_signal >= 2:
+        return 0.50
     if citation_count >= 2 and source_relations >= 1:
         return 0.45
+    if reference_signal >= 1 and source_relations >= 1:
+        return 0.40
     if citation_count >= 1:
         return 0.35
+    if has_reference_section and reference_signal >= 1:
+        return 0.30
     return 0.0
 
 

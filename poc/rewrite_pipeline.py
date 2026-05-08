@@ -1071,7 +1071,57 @@ _SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS = {
 
 
 def _source_search_enabled() -> bool:
-    return _env_flag("DRAFTPROOF_SOURCE_SEARCH_ENABLED", False)
+    if _env_flag("DRAFTPROOF_SOURCE_SEARCH_ENABLED", False):
+        return True
+    if not _env_flag("DRAFTPROOF_SOURCE_SEARCH_AUTO_ENABLE_WITH_KEY", True):
+        return False
+    return bool(os.environ.get("TAVILY_API_KEY") or os.environ.get("DRAFTPROOF_TAVILY_API_KEY"))
+
+
+def _internet_reauthor_priority_status(report_dict: dict | None, source_text: str = "") -> dict:
+    """Decide when document-level reauthoring must not be starved by paragraph-component search."""
+    if not _env_flag("DRAFTPROOF_INTERNET_REAUTHOR_PRIORITY_FOR_SEVERE_BLOCKERS", True):
+        return {"prioritize": False, "reason": "disabled"}
+    if not _source_search_enabled():
+        return {"prioritize": False, "reason": "source_search_unavailable"}
+    badge = (report_dict or {}).get("ai_risk_badge") or {}
+    writing = badge.get("writing_components") or {}
+    ai_components = badge.get("ai_components") or {}
+
+    def num(mapping: dict, key: str) -> float:
+        try:
+            return float(mapping.get(key) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    blockers = {
+        "qualifying_text_ai_density": num(ai_components, "qualifying_text_ai_density"),
+        "generic_assertion_risk": num(ai_components, "generic_assertion_risk"),
+        "topk_pattern": num(ai_components, "topk_pattern"),
+        "unsupported_claim_risk": num(writing, "unsupported_claim_risk"),
+        "broad_claim_risk": num(writing, "broad_claim_risk"),
+        "source_grounding_risk": num(writing, "source_grounding_risk"),
+    }
+    severe_threshold = _float_env("DRAFTPROOF_INTERNET_REAUTHOR_PRIORITY_THRESHOLD", 85.0)
+    qualifying_threshold = _float_env("DRAFTPROOF_INTERNET_REAUTHOR_PRIORITY_QUALIFYING_THRESHOLD", 80.0)
+    severe_keys = [
+        key for key, value in blockers.items()
+        if value >= (qualifying_threshold if key == "qualifying_text_ai_density" else severe_threshold)
+    ]
+    if not severe_keys:
+        return {
+            "prioritize": False,
+            "reason": "no_severe_document_blocker",
+            "blockers": blockers,
+            "word_count": _text_word_count(source_text),
+        }
+    return {
+        "prioritize": True,
+        "reason": "severe_document_blocker",
+        "blockers": blockers,
+        "severe_keys": severe_keys,
+        "word_count": _text_word_count(source_text),
+    }
 
 
 def _source_search_keywords(text: str, limit: int = 10) -> list[str]:
@@ -1970,6 +2020,100 @@ def _build_source_grounding_search_layer(
     layer["errors"] = errors
     layer["status"] = "completed" if layer["results"] else "search_error"
     return layer
+
+
+def _source_grounding_repair_matches(
+    source_layer: dict | None,
+    usable_confidences: set[str] | list[str] | tuple[str, ...] | None = None,
+    *,
+    limit: int | None = None,
+) -> list[dict]:
+    """Return source-search results that can be safely mapped back to repair targets.
+
+    Source search and target generation can use different identifiers when the
+    target came from block-level decisions instead of claim extraction. The
+    paragraph index is the stable fallback; without it, a production run can
+    search successfully and still produce zero source repair candidates.
+    """
+    source_layer = source_layer or {}
+    allowed_confidences = {str(item) for item in (usable_confidences or []) if str(item)}
+    claim_targets = [
+        target for target in (source_layer.get("claim_targets") or [])
+        if isinstance(target, dict)
+    ]
+    targets_by_id = {
+        target.get("id"): target
+        for target in claim_targets
+        if target.get("id")
+    }
+    targets_by_paragraph: dict[int, dict] = {}
+    for target in claim_targets:
+        paragraph_index = _safe_index(target.get("paragraph_index"), -1)
+        if paragraph_index >= 0 and paragraph_index not in targets_by_paragraph:
+            targets_by_paragraph[paragraph_index] = target
+
+    matched: list[dict] = []
+    max_matches = max(0, int(limit)) if limit is not None else None
+    for result in (source_layer.get("results") or []):
+        if not isinstance(result, dict):
+            continue
+        confidence = str(result.get("source_confidence") or "")
+        if allowed_confidences and confidence not in allowed_confidences:
+            continue
+        target = targets_by_id.get(result.get("claim_id"))
+        if not target:
+            paragraph_index = _safe_index(result.get("paragraph_index"), -1)
+            target = targets_by_paragraph.get(paragraph_index)
+        if not target:
+            continue
+        result_with_target = dict(result)
+        result_with_target["_repair_target"] = target
+        matched.append(result_with_target)
+        if max_matches is not None and len(matched) >= max_matches:
+            break
+    return matched
+
+
+def _source_reference_entries_from_layer(source_layer: dict | None, *, limit: int = 3) -> list[str]:
+    """Build verifiable reference entries from accepted source-search results."""
+    source_layer = source_layer or {}
+    entries: list[str] = []
+    seen_urls: set[str] = set()
+    for result in source_layer.get("results") or []:
+        if not isinstance(result, dict):
+            continue
+        if str(result.get("source_confidence") or "") not in {"strong", "moderate"}:
+            continue
+        for source in result.get("sources") or []:
+            if not isinstance(source, dict):
+                continue
+            url = str(source.get("url") or "").strip()
+            if not url or url in seen_urls:
+                continue
+            title = re.sub(r"^\s*\[[^\]]+\]\s*", "", str(source.get("title") or "").strip())
+            title = re.sub(r"\s+", " ", title).strip(" .")
+            if not title:
+                title = url
+            entries.append(f"{title}. {url}")
+            seen_urls.add(url)
+            if len(entries) >= max(0, int(limit or 0)):
+                return entries
+    return entries
+
+
+def _source_reference_append_candidate(text: str, source_layer: dict | None, *, limit: int = 2) -> str:
+    """Append source references as a candidate, preserving the body unchanged."""
+    entries = _source_reference_entries_from_layer(source_layer, limit=limit)
+    if not entries:
+        return ""
+    body = (text or "").rstrip()
+    if re.search(r"(?im)^\s*(?:references|reference list|bibliography|works cited|sources)\s*$", body):
+        existing = body
+        missing = [entry for entry in entries if entry not in existing]
+        if not missing:
+            return ""
+        return existing + "\n" + "\n".join(missing)
+    return body + "\n\nReferences\n\n" + "\n".join(entries)
 
 
 def _load_author_evidence_answers() -> list[dict]:
@@ -12269,14 +12413,18 @@ def run_rewrite_pipeline(
                 ) != "0"
                 component_source_text = best_text if _best_ai_search_selectable() else search_source_text
                 component_base_text, component_base_repairs = _repair_candidate_source_damage(component_source_text)
+                internet_priority = _internet_reauthor_priority_status(original_report_dict, component_base_text)
                 paragraph_component_first = bool(
                     paragraph_search_enabled
                     and _env_flag("DRAFTPROOF_PARAGRAPH_COMPONENT_FIRST", True)
+                    and not internet_priority.get("prioritize")
                     and _text_word_count(component_base_text) >= int(_float_env(
                         "DRAFTPROOF_PARAGRAPH_COMPONENT_FIRST_MIN_WORDS",
                         450.0,
                     ))
                 )
+                if internet_priority.get("prioritize"):
+                    search_summary["internet_reauthor_priority"] = internet_priority
                 if _env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True):
                     source_layer = _build_source_grounding_search_layer(
                         component_base_text,
@@ -12292,19 +12440,17 @@ def run_rewrite_pipeline(
                         ).split(",")
                         if item.strip()
                     }
-                    claim_targets_by_id = {
-                        target.get("id"): target
-                        for target in (source_layer.get("claim_targets") or [])
-                        if isinstance(target, dict)
-                    }
-                    source_repair_results = [
-                        result for result in (source_layer.get("results") or [])
-                        if str(result.get("source_confidence") or "") in usable_confidences
-                        and claim_targets_by_id.get(result.get("claim_id"))
-                    ][: max(0, int(_float_env(
-                        "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TARGETS",
-                        float(_adaptive_budget_default(component_base_text, 1, 2)),
-                    )))]
+                    source_repair_results = _source_grounding_repair_matches(
+                        source_layer,
+                        usable_confidences,
+                        limit=max(
+                            0,
+                            int(_float_env(
+                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TARGETS",
+                                float(_adaptive_budget_default(component_base_text, 1, 2)),
+                            )),
+                        ),
+                    )
                     source_candidate_count = max(
                         1,
                         int(_float_env(
@@ -12333,6 +12479,31 @@ def run_rewrite_pipeline(
                             for result in source_repair_results
                         ],
                     }
+                    source_reference_candidate = _source_reference_append_candidate(
+                        component_base_text,
+                        source_layer,
+                        limit=int(_float_env("DRAFTPROOF_SOURCE_REFERENCE_APPEND_LIMIT", 2.0)),
+                    )
+                    if source_reference_candidate:
+                        _evaluate_ai_search_candidate(
+                            "source_reference_append",
+                            source_reference_candidate,
+                            deterministic=True,
+                            extra={
+                                "source_reference_append": True,
+                                "source_search_status": source_layer.get("status"),
+                                "source_result_count": len(source_layer.get("results") or []),
+                                "reference_entries": len(
+                                    _source_reference_entries_from_layer(
+                                        source_layer,
+                                        limit=int(_float_env(
+                                            "DRAFTPROOF_SOURCE_REFERENCE_APPEND_LIMIT",
+                                            2.0,
+                                        )),
+                                    )
+                                ),
+                            },
+                        )
                     if _env_flag("DRAFTPROOF_INTERNET_REINFORCED_REAUTHORING", True) and not paragraph_component_first:
                         internet_candidate_count = max(
                             1,
@@ -12589,10 +12760,10 @@ def run_rewrite_pipeline(
                         search_summary["topk_texture_repair"] = {
                             "enabled": False,
                             "reason": "deferred_after_paragraph_component_first",
-                        }
+                    }
                     for source_number, source_result in enumerate(source_repair_results, start=1):
-                        target = claim_targets_by_id.get(source_result.get("claim_id")) or {}
-                        paragraph_index = int(target.get("paragraph_index", 0) or 0)
+                        target = source_result.get("_repair_target") or {}
+                        paragraph_index = _safe_index(target.get("paragraph_index"), 0)
                         report_progress(
                             min(89, 78 + source_number),
                             (

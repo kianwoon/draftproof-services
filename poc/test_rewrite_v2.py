@@ -140,6 +140,7 @@ from rewrite_pipeline import (
     _score_drag_removal_status,
     _block_level_decisions,
     _adaptive_budget_default,
+    _internet_reauthor_priority_status,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
@@ -147,6 +148,9 @@ from rewrite_pipeline import (
     _source_grounding_claim_targets,
     _source_grounding_targets_from_block_decisions,
     _source_search_depth_status,
+    _source_grounding_repair_matches,
+    _source_reference_entries_from_layer,
+    _source_reference_append_candidate,
     _source_grounding_query,
     _normalize_tavily_results,
     _source_result_confidence,
@@ -3481,6 +3485,118 @@ assert_test(
     and decision_source_targets[0]["block_decision"]["decision"] == "reinforce_with_public_source"
     and decision_source_targets[0]["block_decision"]["fallback_if_failed"] == "remove_or_compress",
     "source search targets only reinforce-designated salvageable blocks",
+)
+source_repair_match_layer = {
+    "claim_targets": [
+        {
+            "id": "claim_target_1",
+            "paragraph_index": 0,
+            "claim": "Teachers help students judge online information.",
+            "query": "teacher guidance source evaluation students education research",
+        }
+    ],
+    "results": [
+        {
+            "claim_id": "block_decision_0",
+            "paragraph_index": 0,
+            "source_confidence": "moderate",
+            "sources": [{"title": "Source evaluation in education"}],
+        },
+        {
+            "claim_id": "unmatched",
+            "paragraph_index": 8,
+            "source_confidence": "moderate",
+            "sources": [{"title": "Unmatched"}],
+        },
+    ],
+}
+source_repair_matches = _source_grounding_repair_matches(
+    source_repair_match_layer,
+    {"moderate", "strong"},
+    limit=2,
+)
+source_reference_layer = {
+    "results": [
+        {
+            "source_confidence": "strong",
+            "sources": [
+                {
+                    "title": "[PDF] Teaching the 21st Century Learning Skills with the Critical Thinking Technique",
+                    "url": "https://files.eric.ed.gov/fulltext/EJ1385999.pdf",
+                },
+                {
+                    "title": "The integration of 21st century skills in the curriculum of education",
+                    "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11336407/",
+                },
+            ],
+        }
+    ]
+}
+source_reference_entries = _source_reference_entries_from_layer(source_reference_layer, limit=2)
+source_reference_candidate = _source_reference_append_candidate(
+    "Students need help judging information online.",
+    source_reference_layer,
+    limit=2,
+)
+assert_test(
+    len(source_repair_matches) == 1
+    and source_repair_matches[0]["_repair_target"]["id"] == "claim_target_1",
+    "source grounding repair maps search results back by paragraph when claim ids differ",
+)
+assert_test(
+    len(source_reference_entries) == 2
+    and "[PDF]" not in source_reference_entries[0]
+    and "References" in source_reference_candidate
+    and "https://files.eric.ed.gov/fulltext/EJ1385999.pdf" in source_reference_candidate,
+    "source search can create a verifiable reference-append candidate without inventing evidence",
+)
+previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
+try:
+    os.environ["DRAFTPROOF_SOURCE_SEARCH_ENABLED"] = "1"
+    severe_priority = _internet_reauthor_priority_status(
+        {
+            "ai_risk_badge": {
+                "writing_components": {
+                    "unsupported_claim_risk": 90.0,
+                    "broad_claim_risk": 70.0,
+                    "source_grounding_risk": 85.0,
+                },
+                "ai_components": {
+                    "generic_assertion_risk": 88.0,
+                    "topk_pattern": 87.0,
+                    "qualifying_text_ai_density": 82.0,
+                },
+            }
+        },
+        pruning_source,
+    )
+    mild_priority = _internet_reauthor_priority_status(
+        {
+            "ai_risk_badge": {
+                "writing_components": {
+                    "unsupported_claim_risk": 60.0,
+                    "broad_claim_risk": 55.0,
+                    "source_grounding_risk": 65.0,
+                },
+                "ai_components": {
+                    "generic_assertion_risk": 62.0,
+                    "topk_pattern": 64.0,
+                    "qualifying_text_ai_density": 62.0,
+                },
+            }
+        },
+        pruning_source,
+    )
+finally:
+    if previous_search_enabled is None:
+        os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_ENABLED", None)
+    else:
+        os.environ["DRAFTPROOF_SOURCE_SEARCH_ENABLED"] = previous_search_enabled
+assert_test(
+    severe_priority.get("prioritize") is True
+    and "unsupported_claim_risk" in severe_priority.get("severe_keys", [])
+    and mild_priority.get("prioritize") is False,
+    "severe document blockers force internet reauthoring before paragraph-component search can spend the LLM budget",
 )
 newline_structured_source = (
     "Inclusive Learning Design in Certificate III Hairdressing\n"

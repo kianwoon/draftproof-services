@@ -94,6 +94,18 @@ assert_true(
     _estimate_in_text_source_grounding_strength(source_relation_text) >= 0.60,
     "in-text source relationships create bounded source grounding strength without bibliography object",
 )
+reference_url_text = (
+    "Research on student judgement shows why source evaluation still matters in digital learning.\n\n"
+    "References\n\n"
+    "Teaching the 21st Century Learning Skills with the Critical Thinking Technique. "
+    "https://files.eric.ed.gov/fulltext/EJ1385999.pdf\n"
+    "The integration of 21st century skills in the curriculum of education. "
+    "https://pmc.ncbi.nlm.nih.gov/articles/PMC11336407/"
+)
+assert_true(
+    _estimate_in_text_source_grounding_strength(reference_url_text) >= 0.40,
+    "reference section with verifiable URLs counts as source grounding without inventing author evidence",
+)
 
 low_signal = derive_authorship_rating(
     ai_score=0.12,
