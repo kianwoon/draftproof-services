@@ -374,9 +374,9 @@ def _role_model(role: str, fallback_model: str | None = None) -> str | None:
     if model_lock:
         return model_lock
     role_env = {
-        "planner": ("DRAFTPROOF_PLANNER_MODEL", "PLANNER_MODEL", "planner_model", "LLM_PLANNER_MODEL"),
-        "generator": ("DRAFTPROOF_GENERATOR_MODEL", "GENERATOR_MODEL", "generator_model", "LLM_GENERATOR_MODEL"),
-        "retry": ("DRAFTPROOF_RETRY_MODEL", "RETRY_MODEL", "retry_model", "LLM_RETRY_MODEL"),
+        "planner": ("DRAFTPROOF_PLANNER_MODEL", "PLANNER_MODEL", "LLM_PLANNER_MODEL"),
+        "generator": ("DRAFTPROOF_GENERATOR_MODEL", "GENERATOR_MODEL", "LLM_GENERATOR_MODEL"),
+        "retry": ("DRAFTPROOF_RETRY_MODEL", "RETRY_MODEL", "LLM_RETRY_MODEL"),
     }.get(role, ())
     for name in role_env:
         value = os.environ.get(name)
@@ -401,9 +401,6 @@ def _retry_model_enabled() -> bool:
     return _env_flag("DRAFTPROOF_RETRY_MODEL_ENABLED", False) or _env_flag(
         "RETRY_MODEL_ENABLED",
         False,
-    ) or _env_flag(
-        "retry_model_enabled",
-        False,
     )
 
 
@@ -411,7 +408,6 @@ def _retry_model_max_calls() -> int:
     raw = (
         os.environ.get("DRAFTPROOF_RETRY_MODEL_MAX_CALLS")
         or os.environ.get("RETRY_MODEL_MAX_CALLS")
-        or os.environ.get("retry_model_max_calls")
     )
     try:
         return max(0, int(raw if raw is not None else "1"))

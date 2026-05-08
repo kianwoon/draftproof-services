@@ -4516,12 +4516,12 @@ os.environ["retry_model_enabled"] = "1"
 os.environ["retry_model_max_calls"] = "3"
 roles_lowercase = _llm_role_config("fallback-model")
 assert_test(
-    roles_lowercase["planner_model"] == "openai/gpt-4.1-mini"
-    and roles_lowercase["generator_model"] == "openai/gpt-5-mini"
-    and roles_lowercase["retry_model"] == "openai/gpt-5.2"
-    and roles_lowercase["retry_model_enabled"] is True
-    and roles_lowercase["retry_model_max_calls"] == 3,
-    "LLM role config accepts lowercase Koyeb model env names",
+    roles_lowercase["planner_model"] == "fallback-model"
+    and roles_lowercase["generator_model"] == "fallback-model"
+    and roles_lowercase["retry_model"] == "fallback-model"
+    and roles_lowercase["retry_model_enabled"] is False
+    and roles_lowercase["retry_model_max_calls"] == 0,
+    "LLM role config ignores lowercase env names; Koyeb env keys must be uppercase",
 )
 for name, value in saved_model_env.items():
     if value is None:
