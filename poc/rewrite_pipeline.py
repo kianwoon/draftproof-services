@@ -1388,6 +1388,91 @@ def _source_grounding_targets_from_block_decisions(
     return targets
 
 
+def _citation_reference_search_targets(
+    text: str,
+    report_dict: dict | None,
+    *,
+    limit: int = 3,
+) -> list[dict]:
+    """Create search targets from citation markers already present in the draft."""
+    if not text or limit <= 0:
+        return []
+    writing = ((report_dict or {}).get("ai_risk_badge") or {}).get("writing_components") or {}
+    citation_risk = float(writing.get("citation_weakness_risk") or 0.0)
+    source_risk = float(writing.get("source_grounding_risk") or 0.0)
+    if (
+        citation_risk < _float_env("DRAFTPROOF_CITATION_REFERENCE_SEARCH_MIN_CITATION_RISK", 45.0)
+        and source_risk < _float_env("DRAFTPROOF_CITATION_REFERENCE_SEARCH_MIN_SOURCE_RISK", 40.0)
+    ):
+        return []
+
+    paragraph_sentence_rows: list[dict] = []
+    for paragraph_index, paragraph in enumerate(_logical_paragraphs(text)):
+        for local_sentence_index, sentence in enumerate(_split_sentences(paragraph)):
+            paragraph_sentence_rows.append({
+                "sentence_global_index": len(paragraph_sentence_rows),
+                "paragraph_index": paragraph_index,
+                "sentence_index": local_sentence_index,
+                "sentence": sentence,
+                "paragraph_context": paragraph,
+            })
+    if not paragraph_sentence_rows:
+        return []
+    parenthetical_re = re.compile(r"\(([^()]*?(?:19|20)\d{2}[a-z]?[^()]*)\)")
+    narrative_re = re.compile(
+        r"\b([A-Z][A-Za-z'’.-]+(?:\s+(?:and|&|et\s+al\.?)\s+[A-Z][A-Za-z'’.-]+)*)\s*"
+        r"\(((?:19|20)\d{2}[a-z]?)\)"
+    )
+    targets: list[dict] = []
+    seen: set[str] = set()
+
+    def add_target(label: str, row: dict) -> None:
+        sentence = str(row.get("sentence") or "")
+        label = re.sub(r"\s+", " ", label or "").strip(" ;,")
+        if not label or not re.search(r"(?:19|20)\d{2}", label):
+            return
+        key = label.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        keywords = _source_search_keywords(sentence, limit=6)
+        query = f'"{label}" ' + " ".join(keywords)
+        targets.append({
+            "id": f"citation_ref_{len(targets) + 1}",
+            "paragraph_index": row.get("paragraph_index"),
+            "sentence_index": row.get("sentence_index"),
+            "sentence_global_index": row.get("sentence_global_index"),
+            "repair_scope": "sentence_window",
+            "paragraph_role": "citation_reference",
+            "claim": sentence.strip()[:420],
+            "query": query.strip(),
+            "target_preview": sentence.strip()[:360],
+            "paragraph_context": str(row.get("paragraph_context") or "").strip()[:900],
+            "why_needed": (
+                "The draft already contains this citation marker; search should complete or verify "
+                "the source instead of inventing a new grounding claim."
+            ),
+            "citation_label": label,
+            "scanner_context": {
+                "citation_weakness_risk": citation_risk,
+                "source_grounding_risk": source_risk,
+            },
+        })
+
+    for row in paragraph_sentence_rows:
+        sentence = str(row.get("sentence") or "")
+        for match in narrative_re.finditer(sentence):
+            add_target(f"{match.group(1)} {match.group(2)}", row)
+            if len(targets) >= limit:
+                return targets
+        for match in parenthetical_re.finditer(sentence):
+            for part in re.split(r";", match.group(1)):
+                add_target(part, row)
+                if len(targets) >= limit:
+                    return targets
+    return targets[:max(1, int(limit or 1))]
+
+
 def _tavily_search(
     query: str,
     *,
@@ -1547,6 +1632,8 @@ def _source_result_confidence(sources: list[dict]) -> str:
         return "strong"
     if quality in {"high", "medium_high"} and score >= 0.35:
         return "moderate"
+    if quality in {"high", "medium_high", "medium"} and score >= 0.35 and substantive_count >= 3:
+        return "moderate"
     if score >= 0.85 and quality not in {"low", "unknown"}:
         return "moderate"
     if score >= 0.25:
@@ -1580,6 +1667,8 @@ def _source_grounding_repair_prompt(
     candidate_count: int = 2,
 ) -> str:
     candidate_count = max(1, int(candidate_count or 1))
+    repair_scope = str(target.get("repair_scope") or "paragraph")
+    scoped_to_sentence = repair_scope == "sentence_window"
     safe_sources = []
     for source in (source_result.get("sources") or [])[:3]:
         if not isinstance(source, dict):
@@ -1592,9 +1681,30 @@ def _source_grounding_repair_prompt(
             "relevance_score": source.get("relevance_score"),
             "claim_keyword_overlap": source.get("claim_keyword_overlap"),
         })
+    scope_intro = (
+        "Repair one citation sentence by reinforcing a weak public/source-groundable claim. "
+        if scoped_to_sentence else
+        "Repair one paragraph by reinforcing a weak public/source-groundable claim. "
+    )
+    target_block = (
+        "PARAGRAPH CONTEXT:\n"
+        f"<PARAGRAPH_CONTEXT>\n{target.get('paragraph_context') or ''}\n</PARAGRAPH_CONTEXT>\n\n"
+        "TARGET SENTENCE:\n"
+        f"<TARGET_SENTENCE>\n{target.get('target_preview') or ''}\n</TARGET_SENTENCE>\n\n"
+        if scoped_to_sentence else
+        "TARGET PARAGRAPH:\n"
+        f"<TARGET_PARAGRAPH>\n{target.get('target_preview') or ''}\n</TARGET_PARAGRAPH>\n\n"
+    )
+    output_shape = (
+        "<CANDIDATE_1>\nreplacement sentence or two-sentence window only\n</CANDIDATE_1>\n"
+        "<CANDIDATE_2>\nreplacement sentence or two-sentence window only\n</CANDIDATE_2>\n"
+        if scoped_to_sentence else
+        "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
+        "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
+    )
     return (
         "DraftProof SOURCE_GROUNDING_REPAIR.\n"
-        "Repair one paragraph by reinforcing a weak public/source-groundable claim. "
+        f"{scope_intro}"
         "If the sources do not clearly support the claim, narrow the claim instead of forcing the source.\n\n"
         "Operating rule:\n"
         "- First try to reinforce the paragraph using only the provided source candidates.\n"
@@ -1605,6 +1715,8 @@ def _source_grounding_repair_prompt(
         "- Do not write 'Research shows', 'studies show', or 'evidence shows' unless the same sentence also names the source.\n"
         "- If naming the source would feel awkward, narrow the claim instead of adding source-attribution language.\n\n"
         f"Paragraph index: {target.get('paragraph_index')}.\n"
+        f"Sentence index: {target.get('sentence_index')}.\n"
+        f"Repair scope: {repair_scope}.\n"
         f"Paragraph role: {target.get('paragraph_role')}.\n"
         f"Source confidence: {source_result.get('source_confidence')}.\n"
         f"Claim to repair: {target.get('claim')}\n\n"
@@ -1626,11 +1738,9 @@ def _source_grounding_repair_prompt(
         "- Grounding Risk should drop\n"
         "- AI Authorship must not increase\n"
         "- AI Transformation, findings, review burden, and weighted severity must not increase\n\n"
-        "TARGET PARAGRAPH:\n"
-        f"<TARGET_PARAGRAPH>\n{target.get('target_preview') or ''}\n</TARGET_PARAGRAPH>\n\n"
+        f"{target_block}"
         f"Return exactly {candidate_count} alternatives using this format:\n"
-        "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
+        f"{output_shape}"
         "...continue until the requested candidate count.\n"
         "No commentary outside tags."
     )
@@ -1917,7 +2027,25 @@ def _build_source_grounding_search_layer(
         block_plan.get("block_decisions") or [],
         limit=max_queries,
     )
-    targets = block_decision_targets or _source_grounding_claim_targets(text, report_dict, limit=max_queries)
+    citation_reference_targets = _citation_reference_search_targets(
+        text,
+        report_dict,
+        limit=max_queries,
+    )
+    claim_targets = _source_grounding_claim_targets(text, report_dict, limit=max_queries)
+    targets = []
+    for target in [*block_decision_targets, *citation_reference_targets, *claim_targets]:
+        if not isinstance(target, dict):
+            continue
+        key = (target.get("citation_label") or target.get("claim") or target.get("query") or "").lower()
+        if key and any(
+            key == (existing.get("citation_label") or existing.get("claim") or existing.get("query") or "").lower()
+            for existing in targets
+        ):
+            continue
+        targets.append(target)
+        if len(targets) >= max_queries:
+            break
     depth_status = _source_search_depth_status(report_dict, len(targets))
     layer = {
         "enabled": True,
@@ -1927,7 +2055,14 @@ def _build_source_grounding_search_layer(
         "auto_apply": False,
         "claim_targets": targets,
         "results": [],
-        "target_source": "block_decisions" if block_decision_targets else "claim_targets",
+        "target_source": (
+            "block_decisions"
+            if block_decision_targets
+            else "citation_references"
+            if citation_reference_targets
+            else "claim_targets"
+        ),
+        "citation_reference_targets": citation_reference_targets,
         "block_decision_plan": {
             "enabled": block_plan.get("enabled"),
             "active_blockers": block_plan.get("active_blockers"),
@@ -2587,6 +2722,13 @@ def _dominant_blocker_gate_status(original_report: dict | None, candidate_report
         if key.strip()
     ]
     active_threshold = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_ACTIVE_THRESHOLD", 85.0)
+    original_human = _contribution_scores(original_report).get("human")
+    target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    if isinstance(original_human, (int, float)) and float(original_human) < target_human:
+        active_threshold = min(
+            active_threshold,
+            _float_env("DRAFTPROOF_DOMINANT_BLOCKER_TARGET_GAP_THRESHOLD", 65.0),
+        )
     min_drop = _float_env("DRAFTPROOF_DOMINANT_BLOCKER_MIN_DROP", 5.0)
     active_keys = [
         key for key in dominant_keys
@@ -2604,6 +2746,9 @@ def _dominant_blocker_gate_status(original_report: dict | None, candidate_report
         "required": required,
         "cleared": cleared,
         "active_keys": active_keys,
+        "active_threshold": active_threshold,
+        "target_human": target_human,
+        "original_human": original_human,
         "drops": drops,
         "max_drop": round(max_drop, 3),
         "regression": round(regression, 3),
@@ -4630,10 +4775,44 @@ def _authenticity_gate_status(
         and not ai_authorship_regressed
     )
     target_accept = crosses_target_human or strong_below_target_accept
+    target_gap_progress = bool(
+        crosses_target_human
+        or strong_below_target_accept
+        or (
+            isinstance(original_human, (int, float))
+            and float(original_human) < target_human
+            and (
+                (
+                    isinstance(human_delta, (int, float))
+                    and human_delta >= min_human_gain
+                )
+                or (
+                    isinstance(ai_transform_delta, (int, float))
+                    and ai_transform_delta >= min_ai_transformation_drop
+                )
+            )
+        )
+        or not (isinstance(original_human, (int, float)) and float(original_human) < target_human)
+    )
+    human_target_regressed = bool(
+        isinstance(original_human, (int, float))
+        and original_human < target_human
+        and isinstance(human_delta, (int, float))
+        and human_delta < 0
+    )
+    ai_transformation_target_regressed = bool(
+        isinstance(original_human, (int, float))
+        and original_human < target_human
+        and isinstance(ai_transform_delta, (int, float))
+        and ai_transform_delta < 0
+    )
     candidate_progress = bool(
         text_changed
         and (clears_human_shift_score or positive_human_shift)
         and not ai_authorship_regression_blocked
+        and not human_target_regressed
+        and not ai_transformation_target_regressed
+        and target_gap_progress
         and not critical_high_regressed
         and not review_regressed
         and not severity_regressed
@@ -4649,6 +4828,12 @@ def _authenticity_gate_status(
         reason = "unchanged_candidate"
     elif ai_authorship_regression_blocked:
         reason = "ai_authorship_regressed"
+    elif human_target_regressed:
+        reason = "human_target_regressed"
+    elif ai_transformation_target_regressed:
+        reason = "ai_transformation_target_regressed"
+    elif not target_gap_progress:
+        reason = "no_human_target_progress"
     elif not (clears_human_shift_score or positive_human_shift):
         reason = "human_shift_score_too_low"
     elif critical_high_regressed:
@@ -4690,7 +4875,10 @@ def _authenticity_gate_status(
         "strong_accept_min_ai_transform_drop": strong_accept_min_transform_drop,
         "strong_accept_min_shift": strong_accept_min_shift,
         "target_accept": target_accept,
+        "target_gap_progress": target_gap_progress,
         "candidate_progress": candidate_progress,
+        "human_target_regressed": human_target_regressed,
+        "ai_transformation_target_regressed": ai_transformation_target_regressed,
         "crosses_human_side": crosses_human_side,
         "human_shift_score": human_shift_score,
         "human_shift_components": human_shift.get("components"),
@@ -7512,6 +7700,29 @@ def _clean_paragraph_component_candidate(candidate: str, original_paragraph: str
         return "", f"paragraph_too_short {len(text)}<{max(80, int(orig_len * 0.55))}"
     if len(text) > int(orig_len * 1.55):
         return "", f"paragraph_too_long {len(text)}>{int(orig_len * 1.55)}"
+    return text, ""
+
+
+def _clean_source_sentence_candidate(candidate: str, original_sentence: str) -> tuple[str, str]:
+    text = str(candidate or "").strip()
+    if not text:
+        return "", "empty_candidate"
+    text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.I).strip()
+    text = re.sub(r"\s*```$", "", text).strip()
+    text = re.sub(r"^(?:replacement|rewritten)\s+(?:sentence|window)\s*:\s*", "", text, flags=re.I).strip()
+    paragraphs = _logical_paragraphs(text)
+    if not paragraphs:
+        return "", "empty_candidate"
+    text = " ".join(" ".join(p.split()) for p in paragraphs)
+    if text == " ".join(str(original_sentence or "").split()):
+        return "", "unchanged_sentence"
+    orig_len = max(1, len(str(original_sentence or "")))
+    min_len = max(40, int(orig_len * 0.45))
+    max_len = max(120, int(orig_len * 2.20))
+    if len(text) < min_len:
+        return "", f"sentence_window_too_short {len(text)}<{min_len}"
+    if len(text) > max_len:
+        return "", f"sentence_window_too_long {len(text)}>{max_len}"
     return text, ""
 
 
@@ -11266,6 +11477,8 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_INCREMENTAL_AUTHENTICITY", True)
                 and authenticity_status.get("candidate_progress")
                 and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("human_target_regressed")
+                and not authenticity_status.get("ai_transformation_target_regressed")
                 and not ai_score_regressed
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
@@ -12832,38 +13045,92 @@ def run_rewrite_pipeline(
                                 f"source_grounding_repair_p{paragraph_index + 1}"
                                 f"_c{candidate_number}"
                             )
+                            repair_scope = str(target.get("repair_scope") or "paragraph")
                             original_paragraph = (
                                 _logical_paragraphs(component_base_text)[paragraph_index]
                                 if paragraph_index < len(_logical_paragraphs(component_base_text))
                                 else target.get("target_preview") or ""
                             )
-                            paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
-                                raw_paragraph_candidate,
-                                original_paragraph,
-                            )
-                            if paragraph_reject:
-                                search_summary["candidates"].append({
-                                    "strategy": strategy,
-                                    "passed_local_checks": False,
-                                    "reason": paragraph_reject,
-                                    "source_grounding_repair": True,
-                                    "paragraph_index": paragraph_index,
-                                    "claim_id": source_result.get("claim_id"),
-                                    "source_confidence": source_result.get("source_confidence"),
-                                })
-                                continue
-                            patched_candidate = _splice_paragraph(
-                                component_base_text,
-                                paragraph_index,
-                                paragraph_candidate,
-                            )
+                            sentence_index = _safe_index(target.get("sentence_index"), -1)
+                            if repair_scope == "sentence_window" and sentence_index >= 0:
+                                paragraph_sentences = _split_sentences(original_paragraph)
+                                original_sentence = (
+                                    paragraph_sentences[sentence_index]
+                                    if sentence_index < len(paragraph_sentences)
+                                    else target.get("target_preview") or ""
+                                )
+                                sentence_candidate, sentence_reject = _clean_source_sentence_candidate(
+                                    raw_paragraph_candidate,
+                                    original_sentence,
+                                )
+                                if sentence_reject:
+                                    search_summary["candidates"].append({
+                                        "strategy": strategy,
+                                        "passed_local_checks": False,
+                                        "reason": sentence_reject,
+                                        "source_grounding_repair": True,
+                                        "repair_scope": repair_scope,
+                                        "paragraph_index": paragraph_index,
+                                        "sentence_index": sentence_index,
+                                        "claim_id": source_result.get("claim_id"),
+                                        "source_confidence": source_result.get("source_confidence"),
+                                    })
+                                    continue
+                                paragraph_candidate = _splice_sentence_window(
+                                    original_paragraph,
+                                    sentence_index,
+                                    sentence_index + 1,
+                                    sentence_candidate,
+                                )
+                                if paragraph_candidate == original_paragraph:
+                                    search_summary["candidates"].append({
+                                        "strategy": strategy,
+                                        "passed_local_checks": False,
+                                        "reason": "sentence_window_no_change",
+                                        "source_grounding_repair": True,
+                                        "repair_scope": repair_scope,
+                                        "paragraph_index": paragraph_index,
+                                        "sentence_index": sentence_index,
+                                        "claim_id": source_result.get("claim_id"),
+                                        "source_confidence": source_result.get("source_confidence"),
+                                    })
+                                    continue
+                                patched_candidate = _splice_paragraph(
+                                    component_base_text,
+                                    paragraph_index,
+                                    paragraph_candidate,
+                                )
+                            else:
+                                paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
+                                    raw_paragraph_candidate,
+                                    original_paragraph,
+                                )
+                                if paragraph_reject:
+                                    search_summary["candidates"].append({
+                                        "strategy": strategy,
+                                        "passed_local_checks": False,
+                                        "reason": paragraph_reject,
+                                        "source_grounding_repair": True,
+                                        "repair_scope": repair_scope,
+                                        "paragraph_index": paragraph_index,
+                                        "claim_id": source_result.get("claim_id"),
+                                        "source_confidence": source_result.get("source_confidence"),
+                                    })
+                                    continue
+                                patched_candidate = _splice_paragraph(
+                                    component_base_text,
+                                    paragraph_index,
+                                    paragraph_candidate,
+                                )
                             _evaluate_ai_search_candidate(
                                 strategy,
                                 patched_candidate,
                                 deterministic=False,
                                 extra={
                                     "source_grounding_repair": True,
+                                    "repair_scope": repair_scope,
                                     "paragraph_index": paragraph_index,
+                                    "sentence_index": sentence_index if repair_scope == "sentence_window" else None,
                                     "claim_id": source_result.get("claim_id"),
                                     "source_confidence": source_result.get("source_confidence"),
                                     "source_count": len(source_result.get("sources") or []),

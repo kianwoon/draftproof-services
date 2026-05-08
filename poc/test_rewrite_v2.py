@@ -147,6 +147,7 @@ from rewrite_pipeline import (
     _build_author_context_discovery_layer,
     _source_grounding_claim_targets,
     _source_grounding_targets_from_block_decisions,
+    _citation_reference_search_targets,
     _source_search_depth_status,
     _source_grounding_repair_matches,
     _source_reference_entries_from_layer,
@@ -178,6 +179,7 @@ from rewrite_pipeline import (
     _apply_finding_local_patches,
     _extract_paragraph_component_candidates,
     _clean_paragraph_component_candidate,
+    _clean_source_sentence_candidate,
     _splice_paragraph,
 )
 from report import ReportBuilder, report_to_dict
@@ -1037,8 +1039,8 @@ shift_original = make_shift_report(
 )
 shift_candidate = make_shift_report(
     ai_authorship=48,
-    human=68,
-    ai_transformation=32,
+    human=69,
+    ai_transformation=31,
     grounding=23,
     human_anchor=64,
     smoothness=42,
@@ -1083,8 +1085,8 @@ authenticity_regression_gate = _authenticity_gate_status(
     shift_original,
     make_shift_report(
         ai_authorship=48,
-        human=68,
-        ai_transformation=32,
+        human=69,
+        ai_transformation=31,
         grounding=23,
         human_anchor=64,
         smoothness=42,
@@ -1113,8 +1115,72 @@ negative_shift_gate = _authenticity_gate_status(
 )
 assert_test(
     not negative_shift_gate["success"]
-    and negative_shift_gate["reason"] == "human_shift_score_too_low",
+    and negative_shift_gate["reason"] == "human_target_regressed",
     "authenticity gate rejects AI drops that are outweighed by human-side regressions",
+)
+target_regression_gate = _authenticity_gate_status(
+    make_shift_report(
+        ai_authorship=48,
+        human=72,
+        ai_transformation=28,
+        grounding=50,
+        human_anchor=58,
+        smoothness=46,
+        semantic_uniformity=46,
+    ),
+    make_shift_report(
+        ai_authorship=46,
+        human=70,
+        ai_transformation=30,
+        grounding=44,
+        human_anchor=58,
+        smoothness=45,
+        semantic_uniformity=30,
+    ),
+    True,
+    original_review_burden=9,
+    candidate_review_burden=9,
+    original_weighted_severity=33,
+    candidate_weighted_severity=33,
+)
+assert_test(
+    not target_regression_gate["success"]
+    and not target_regression_gate["candidate_progress"]
+    and target_regression_gate["reason"] == "human_target_regressed"
+    and target_regression_gate["human_target_regressed"]
+    and target_regression_gate["ai_transformation_target_regressed"],
+    "authenticity gate blocks authorship-only wins that move away from the Human 80 target",
+)
+no_target_progress_gate = _authenticity_gate_status(
+    make_shift_report(
+        ai_authorship=48,
+        human=72,
+        ai_transformation=28,
+        grounding=50,
+        human_anchor=58,
+        smoothness=46,
+        semantic_uniformity=46,
+    ),
+    make_shift_report(
+        ai_authorship=46,
+        human=72,
+        ai_transformation=28,
+        grounding=44,
+        human_anchor=58,
+        smoothness=45,
+        semantic_uniformity=30,
+    ),
+    True,
+    original_review_burden=9,
+    candidate_review_burden=9,
+    original_weighted_severity=33,
+    candidate_weighted_severity=33,
+)
+assert_test(
+    not no_target_progress_gate["success"]
+    and not no_target_progress_gate["candidate_progress"]
+    and no_target_progress_gate["reason"] == "no_human_target_progress",
+    "authenticity gate blocks below-target candidates that do not increase Human or reduce AI Transformation",
 )
 major_gate_env = {
     "DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD": os.environ.get("DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD"),
@@ -3075,6 +3141,18 @@ assert_test(
     and _source_result_confidence(irrelevant_high_provider_tavily) == "very_weak",
     "source search does not treat high provider score with zero claim overlap as usable evidence",
 )
+citation_like_tavily = [
+    {
+        "source_quality": "medium",
+        "relevance_score": 0.37,
+        "claim_keyword_overlap": ["2024", "cast", "learning", "students"],
+        "substantive_claim_keyword_overlap": ["2024", "cast", "learning"],
+    }
+]
+assert_test(
+    _source_result_confidence(citation_like_tavily) == "moderate",
+    "citation-reference search treats medium sources with strong exact overlap as usable",
+)
 pruning_source = (
     "Students need structure because education can be confusing. This point is useful for the essay.\n\n"
     "Technology is changing education rapidly. It is important to consider that students can learn from many different sources. "
@@ -3275,6 +3353,50 @@ assert_test(
     dominant_source_clear["cleared"]
     and dominant_source_clear["drops"]["source_grounding_risk"] == 30.0,
     "dominant blocker gate counts source/broad blocker movement, not only unsupported claims",
+)
+dominant_target_gap_status = _dominant_blocker_gate_status(
+    {
+        "integrity_layers": {
+            "layers": {
+                "human_contribution_signal": {"score": 72},
+                "ai_transformation_risk": {"score": 28},
+            }
+        },
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 70.0,
+                "broad_claim_risk": 65.0,
+                "source_grounding_risk": 40.0,
+            },
+            "ai_components": {"topk_pattern": 81.56, "generic_assertion_risk": 25.0},
+        },
+    },
+    {
+        "integrity_layers": {
+            "layers": {
+                "human_contribution_signal": {"score": 70},
+                "ai_transformation_risk": {"score": 30},
+            }
+        },
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 40.0,
+                "broad_claim_risk": 65.0,
+                "source_grounding_risk": 40.0,
+            },
+            "ai_components": {"topk_pattern": 80.95, "generic_assertion_risk": 25.0},
+        },
+    },
+)
+assert_test(
+    dominant_target_gap_status["required"]
+    and dominant_target_gap_status["active_threshold"] == 65.0
+    and set(dominant_target_gap_status["active_keys"]) == {
+        "unsupported_claim_risk",
+        "broad_claim_risk",
+        "topk_pattern",
+    },
+    "dominant blocker gate lowers its active threshold while Human is below target",
 )
 human_target_search_status = _human_target_ai_search_status(
     {
@@ -3510,6 +3632,23 @@ source_repair_match_layer = {
         },
     ],
 }
+citation_reference_source_text = (
+    "Introductory sentence without citations.\n\n"
+    "Inclusive learning design supports diverse learners (CAST, 2024; Jwad et al., 2022). "
+    "Billett (2013) discusses practice-based learning."
+)
+citation_reference_targets = _citation_reference_search_targets(
+    citation_reference_source_text,
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "citation_weakness_risk": 50.0,
+                "source_grounding_risk": 40.0,
+            }
+        }
+    },
+    limit=3,
+)
 source_repair_matches = _source_grounding_repair_matches(
     source_repair_match_layer,
     {"moderate", "strong"},
@@ -3537,6 +3676,34 @@ source_reference_candidate = _source_reference_append_candidate(
     "Students need help judging information online.",
     source_reference_layer,
     limit=2,
+)
+assert_test(
+    len(citation_reference_targets) == 3
+    and citation_reference_targets[0]["paragraph_role"] == "citation_reference"
+    and citation_reference_targets[0]["repair_scope"] == "sentence_window"
+    and citation_reference_targets[0]["paragraph_index"] == 1
+    and citation_reference_targets[0]["sentence_index"] == 0
+    and "CAST" in citation_reference_targets[0]["query"]
+    and "2024" in citation_reference_targets[0]["query"]
+    and any("Billett" in target["query"] for target in citation_reference_targets),
+    "citation-reference search targets existing citation markers with real paragraph/sentence indexes",
+)
+source_sentence_candidate, source_sentence_reject = _clean_source_sentence_candidate(
+    "CAST's Universal Design for Learning guidance links learner variability to flexible learning goals and materials.",
+    "Inclusive learning design supports diverse learners (CAST, 2024; Jwad et al., 2022).",
+)
+assert_test(
+    source_sentence_candidate
+    and not source_sentence_reject
+    and _clean_paragraph_component_candidate(
+        source_sentence_candidate,
+        (
+            "Inclusive learning design supports diverse learners (CAST, 2024; Jwad et al., 2022). "
+            "Billett (2013) discusses practice-based learning. The paragraph continues with more teaching context. "
+            "It also connects demonstration, guided repetition, and learner variability across several classroom decisions."
+        ),
+    )[1].startswith("paragraph_too_short"),
+    "source citation repair can accept a sentence-window patch without requiring whole-paragraph length",
 )
 assert_test(
     len(source_repair_matches) == 1
