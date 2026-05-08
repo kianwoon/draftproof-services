@@ -122,6 +122,7 @@ from rewrite_pipeline import (
     _score_human_amplification_candidate,
     _content_pruning_candidates,
     _generic_assertion_compiler_candidates,
+    _radar_blocker_option_matrix,
     _blocker_operation_plan,
     _blocker_operation_candidates,
     _post_safe_win_target_push_candidates,
@@ -3493,6 +3494,79 @@ assert_test(
         short_document=True,
     ) == "adaptive_stop_after_deterministic_candidates",
     "short-document adaptive stop accepts safe deterministic progress with stale blocker override",
+)
+radar_option_matrix = _radar_blocker_option_matrix(
+    {
+        "scan_intelligence": {
+            "blocker_radar": {
+                "blockers": [
+                    {
+                        "key": "topk_pattern",
+                        "label": "Top-k predictability",
+                        "layer": "ai_authorship_risk",
+                        "score": 81,
+                        "severity": "high",
+                        "scope": "localized",
+                        "sentence_ids": ["s022"],
+                        "paragraph_ids": ["p003"],
+                        "diagnostic_flags": {
+                            "texture_pressure": True,
+                            "evidence_gap": False,
+                            "source_dependency": False,
+                            "author_context_gap": False,
+                        },
+                    },
+                    {
+                        "key": "unsupported_claim_risk",
+                        "label": "Unsupported claim risk",
+                        "layer": "grounding_quality_risk",
+                        "score": 70,
+                        "severity": "high",
+                        "scope": "document_wide",
+                        "sentence_ids": [],
+                        "paragraph_ids": ["p001", "p002"],
+                        "diagnostic_flags": {
+                            "texture_pressure": False,
+                            "evidence_gap": True,
+                            "source_dependency": False,
+                            "author_context_gap": True,
+                        },
+                    },
+                    {
+                        "key": "citation_weakness_risk",
+                        "label": "Citation weakness",
+                        "layer": "grounding_quality_risk",
+                        "score": 50,
+                        "severity": "medium",
+                        "scope": "document_wide",
+                        "sentence_ids": [],
+                        "paragraph_ids": ["p002"],
+                        "diagnostic_flags": {
+                            "texture_pressure": False,
+                            "evidence_gap": True,
+                            "source_dependency": True,
+                            "author_context_gap": False,
+                        },
+                    },
+                ]
+            }
+        }
+    }
+)
+radar_rows = {row["blocker_key"]: row for row in radar_option_matrix.get("options_by_blocker", [])}
+assert_test(
+    radar_option_matrix.get("policy", {}).get("owner") == "rewrite_controller"
+    and radar_option_matrix.get("policy", {}).get("primary_goal") == "human_contribution_above_80"
+    and radar_option_matrix.get("policy", {}).get("default_sequence") == ["repair", "recreate", "remove_or_defer"]
+    and radar_rows["topk_pattern"]["options"][0]["operation"] == "micro_topk_texture_repair"
+    and radar_rows["topk_pattern"]["options"][0]["goal"]["role"] == "enable_human_gain_by_capping_ai_authorship_and_transformation"
+    and "remove_or_defer" not in radar_rows["topk_pattern"]["controller_sequence"]
+    and radar_rows["unsupported_claim_risk"]["controller_sequence"] == ["repair", "recreate", "remove_or_defer"]
+    and radar_rows["unsupported_claim_risk"]["options"][0]["goal"]["role"] == "direct_human_contribution_gain"
+    and "candidate_human_contribution_increases_or_reaches_80" in radar_rows["unsupported_claim_risk"]["options"][0]["goal"]["acceptance_gate"]
+    and radar_rows["citation_weakness_risk"]["options"][0]["operation"] == "source_reinforce_or_citation_bridge"
+    and "max_5_source_searches" in radar_rows["citation_weakness_risk"]["options"][0]["requires"],
+    "radar option matrix lays goal-serving repair/recreate/remove choices by blocker without moving strategy into scanner",
 )
 blocker_plan = _blocker_operation_plan(
     pruning_source,

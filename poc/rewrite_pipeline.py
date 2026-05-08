@@ -3175,6 +3175,283 @@ def _adaptive_budget_default(source_text: str, short_value: int, long_value: int
     return str(long_value)
 
 
+def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
+    """Return scanner radar blockers, falling back to legacy component scores."""
+    if not isinstance(raw_json, dict):
+        return []
+    radar = (
+        ((raw_json.get("scan_intelligence") or {}).get("blocker_radar") or {})
+        if isinstance(raw_json.get("scan_intelligence"), dict)
+        else {}
+    )
+    blockers = radar.get("blockers") or radar.get("dominant_blockers") or []
+    if isinstance(blockers, list) and blockers:
+        return [item for item in blockers if isinstance(item, dict)]
+
+    fallback = []
+    for key, score in _blocker_scores(raw_json).items():
+        if not isinstance(score, (int, float)) or float(score) < 25.0:
+            continue
+        if key in {"topk_pattern", "predictability", "generic_assertion_risk"}:
+            layer = "ai_authorship_risk"
+            texture = True
+            evidence_gap = False
+            author_gap = False
+        elif key in {"unsupported_claim_risk", "broad_claim_risk", "source_grounding_risk"}:
+            layer = "grounding_quality_risk"
+            texture = False
+            evidence_gap = True
+            author_gap = key in {"unsupported_claim_risk", "broad_claim_risk"}
+        else:
+            layer = "human_contribution_gap"
+            texture = False
+            evidence_gap = False
+            author_gap = True
+        fallback.append({
+            "key": key,
+            "label": key.replace("_", " ").title(),
+            "layer": layer,
+            "score": float(score),
+            "severity": "high" if score >= 70 else "medium" if score >= 45 else "low",
+            "scope": "document_wide" if score >= 60 else "unlocalized",
+            "sentence_ids": [],
+            "paragraph_ids": [],
+            "diagnostic_flags": {
+                "evidence_gap": evidence_gap,
+                "source_dependency": key == "source_grounding_risk",
+                "texture_pressure": texture,
+                "author_context_gap": author_gap,
+            },
+        })
+    fallback.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    return fallback
+
+
+def _radar_repair_operation(key: str, flags: dict) -> dict:
+    if key in {"topk_pattern", "predictability"}:
+        return {
+            "operation": "micro_topk_texture_repair",
+            "requires": ["sentence_window", "authorship_cap_gate", "semantic_drift_check"],
+            "reason": "localized token-path pressure can usually be patched before broader regeneration",
+        }
+    if flags.get("texture_pressure"):
+        return {
+            "operation": "texture_or_structure_repair",
+            "requires": ["paragraph_window", "authorship_cap_gate", "semantic_drift_check"],
+            "reason": "texture pressure should be repaired with bounded rhythm/structure changes first",
+        }
+    if key in {"citation_weakness_risk", "source_grounding_risk"} or flags.get("source_dependency"):
+        return {
+            "operation": "source_reinforce_or_citation_bridge",
+            "requires": ["visible_source_or_search_result", "claim_source_alignment", "max_5_source_searches"],
+            "reason": "source-dependent gaps need evidence linkage before any style work",
+        }
+    if key in {"unsupported_claim_risk", "broad_claim_risk", "generic_assertion_risk"} or flags.get("evidence_gap"):
+        return {
+            "operation": "claim_narrow_or_support",
+            "requires": ["claim_scope_limit", "evidence_or_context_check", "no_new_author_facts"],
+            "reason": "broad or unsupported claims should be narrowed or supported before reconstruction",
+        }
+    if key == "lived_detail_risk" or flags.get("author_context_gap"):
+        return {
+            "operation": "confirmed_author_context_or_implied_reasoning",
+            "requires": ["submitted_context_or_user_answer", "no_fabricated_lived_detail"],
+            "reason": "author-context gaps can only be strengthened from confirmed or clearly implied context",
+        }
+    return {
+        "operation": "targeted_repair",
+        "requires": ["locality_gate", "semantic_drift_check"],
+        "reason": "start with the smallest controlled repair",
+    }
+
+
+def _radar_recreate_operation(key: str, flags: dict) -> dict:
+    if flags.get("source_dependency"):
+        operation = "recreate_block_from_context_with_source_reinforcement"
+        requires = ["origin_context", "source_result_or_existing_citation", "anchor_preservation", "scan_gate"]
+    elif flags.get("evidence_gap"):
+        operation = "recreate_block_with_narrowed_claims"
+        requires = ["origin_context", "claim_scope_limit", "anchor_preservation", "scan_gate"]
+    elif flags.get("texture_pressure"):
+        operation = "recreate_block_from_origin_context"
+        requires = ["origin_context", "anchor_preservation", "authorship_cap_gate", "scan_gate"]
+    else:
+        operation = "recreate_block_from_context"
+        requires = ["origin_context", "anchor_preservation", "scan_gate"]
+    return {
+        "operation": operation,
+        "requires": requires,
+        "reason": "use when local repair cannot move the blocker without regression",
+    }
+
+
+def _radar_remove_allowed(score: float, scope: str, flags: dict, key: str) -> bool:
+    if score < 60.0:
+        return False
+    if flags.get("evidence_gap") or flags.get("author_context_gap"):
+        return True
+    if key == "generic_assertion_risk" and scope in {"document_wide", "mixed", "unlocalized"}:
+        return True
+    return False
+
+
+def _radar_goal_role(phase: str, key: str, flags: dict) -> str:
+    if phase == "remove_or_defer":
+        return "last_resort_remove_score_drag_after_reinforce_or_recreate_fails"
+    if flags.get("evidence_gap") or flags.get("author_context_gap") or key in {
+        "unsupported_claim_risk",
+        "broad_claim_risk",
+        "citation_weakness_risk",
+        "source_grounding_risk",
+        "lived_detail_risk",
+    }:
+        return "direct_human_contribution_gain"
+    if flags.get("texture_pressure") or key in {"topk_pattern", "predictability", "ai_likelihood", "rewrite_smoothness"}:
+        return "enable_human_gain_by_capping_ai_authorship_and_transformation"
+    return "support_human_contribution_target"
+
+
+def _radar_goal_gate(phase: str) -> list[str]:
+    base = [
+        "candidate_human_contribution_increases_or_reaches_80",
+        "candidate_ai_authorship_does_not_increase",
+        "candidate_ai_transformation_does_not_increase",
+        "semantic_drift_false",
+        "anchor_loss_false",
+        "final_scan_required",
+    ]
+    if phase == "remove_or_defer":
+        return base + [
+            "meaning_preservation_accepts_compression_or_deletion",
+            "word_count_band_preserved",
+            "used_only_after_repair_or_recreate_failed",
+        ]
+    if phase == "recreate":
+        return base + [
+            "origin_context_preserved",
+            "no_new_author_facts_without_source_or_user_input",
+        ]
+    return base
+
+
+def _radar_blocker_options(blocker: dict, *, target_human: float = 80.0) -> dict:
+    key = str(blocker.get("key") or "")
+    score = float(blocker.get("score") or 0.0)
+    scope = str(blocker.get("scope") or "unlocalized")
+    flags = blocker.get("diagnostic_flags") if isinstance(blocker.get("diagnostic_flags"), dict) else {}
+    severity = str(blocker.get("severity") or ("high" if score >= 70 else "medium" if score >= 45 else "low"))
+
+    repair = _radar_repair_operation(key, flags)
+    recreate_allowed = bool(
+        score >= 45.0
+        and (
+            scope in {"mixed", "document_wide", "unlocalized"}
+            or flags.get("evidence_gap")
+            or flags.get("texture_pressure")
+        )
+    )
+    remove_allowed = _radar_remove_allowed(score, scope, flags, key)
+    options = [
+        {
+            "phase": "repair",
+            "allowed": True,
+            "operation": repair["operation"],
+            "requires": repair["requires"],
+            "priority": 1,
+            "last_resort": False,
+            "reason": repair["reason"],
+        },
+        {
+            "phase": "recreate",
+            "allowed": recreate_allowed,
+            **_radar_recreate_operation(key, flags),
+            "priority": 2,
+            "last_resort": False,
+        },
+        {
+            "phase": "remove_or_defer",
+            "allowed": remove_allowed,
+            "operation": "remove_or_compress_score_drag",
+            "requires": ["meaning_preservation_check", "word_count_band_check", "final_scan_gate"],
+            "priority": 3,
+            "last_resort": True,
+            "reason": "last resort for high score-drag content that cannot be safely reinforced or recreated",
+        },
+    ]
+    for option in options:
+        phase = option.get("phase", "")
+        option["goal"] = {
+            "primary_metric": "human_contribution",
+            "target_score": target_human,
+            "role": _radar_goal_role(phase, key, flags),
+            "acceptance_gate": _radar_goal_gate(phase),
+        }
+    return {
+        "blocker_key": key,
+        "label": blocker.get("label") or key.replace("_", " ").title(),
+        "layer": blocker.get("layer"),
+        "score": score,
+        "severity": severity,
+        "scope": scope,
+        "sentence_ids": blocker.get("sentence_ids") or [],
+        "paragraph_ids": blocker.get("paragraph_ids") or [],
+        "diagnostic_flags": flags,
+        "options": options,
+        "controller_sequence": [
+            option["phase"] for option in options if option.get("allowed")
+        ],
+    }
+
+
+def _radar_blocker_option_matrix(raw_json: dict | None, *, limit: int = 12) -> dict:
+    """Controller option matrix derived from scanner radar.
+
+    The scanner stays diagnostic-only. This function belongs to the rewrite
+    controller and lays out valid intervention phases for each radar blocker:
+    repair first, recreate from origin context second, remove/defer last.
+    """
+    blockers = _radar_blockers_for_controller(raw_json)
+    integrity = _integrity_scores(raw_json)
+    current_human = integrity.get("human")
+    target_human = 80.0
+    human_gap = (
+        max(0.0, target_human - float(current_human))
+        if isinstance(current_human, (int, float))
+        else None
+    )
+    rows = [
+        _radar_blocker_options(item, target_human=target_human)
+        for item in blockers[:max(1, int(limit or 1))]
+    ]
+    phase_counts = {"repair": 0, "recreate": 0, "remove_or_defer": 0}
+    for row in rows:
+        for option in row.get("options") or []:
+            if option.get("allowed"):
+                phase_counts[option["phase"]] = phase_counts.get(option["phase"], 0) + 1
+    return {
+        "schema_version": "radar_blocker_option_matrix.v1",
+        "source": "scan_intelligence.blocker_radar" if blockers else "none",
+        "policy": {
+            "owner": "rewrite_controller",
+            "scanner_role": "diagnose_only",
+            "primary_goal": "human_contribution_above_80",
+            "target_human_contribution": target_human,
+            "option_rule": "every option must serve the Human Contribution target and pass the final scan gate",
+            "default_sequence": ["repair", "recreate", "remove_or_defer"],
+            "remove_is_last_resort": True,
+            "source_search_max_calls_per_run": 5,
+            "must_rescan_after_each_kept_change": True,
+        },
+        "goal_state": {
+            "current_human_contribution": current_human,
+            "target_human_contribution": target_human,
+            "human_gap_to_target": human_gap,
+        },
+        "phase_counts": phase_counts,
+        "options_by_blocker": rows,
+    }
+
+
 def _blocker_operation_plan(
     source_text: str,
     raw_json: dict | None,
@@ -3280,6 +3557,7 @@ def _blocker_operation_plan(
         source_text,
         blockers=blockers,
     )
+    option_matrix = _radar_blocker_option_matrix(raw_json, limit=limit)
     return {
         "enabled": True,
         "kind": "blocker_operation_plan",
@@ -3287,6 +3565,7 @@ def _blocker_operation_plan(
         "active_blockers": active,
         "operations": selected_operations,
         "block_decisions": decisions,
+        "radar_option_matrix": option_matrix,
         "policy": [
             "reinforce source-worthy claims before removal when public evidence can help",
             "delete or compress score-dragging generic paragraphs before texture repair",
@@ -9349,6 +9628,7 @@ def run_rewrite_pipeline(
     )
     result.summary["llm_model_roles"] = llm_roles
     result.summary["ai_mitigation"] = ai_mitigation_contract
+    result.summary["radar_blocker_option_matrix"] = _radar_blocker_option_matrix(getattr(ctx, "raw_json", None))
     if ai_mitigation_needs_author:
         result.summary["ai_mitigation_blocked_auto_rewrite"] = not allow_auto_with_author_gaps
         if not allow_auto_with_author_gaps:
