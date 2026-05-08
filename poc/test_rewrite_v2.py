@@ -80,6 +80,7 @@ from rewrite_pipeline import (
     _human_shift_score,
     _goal_climb_candidate_rank,
     _authenticity_gate_status,
+    _human_target_regression_selection_block,
     _optimization_candidate_status,
     _select_best_optimization_candidate,
     _metric_repair_diagnosis,
@@ -1160,6 +1161,25 @@ assert_test(
     and target_regression_gate["human_target_regressed"]
     and target_regression_gate["ai_transformation_target_regressed"],
     "authenticity gate blocks authorship-only wins that move away from the Human 80 target",
+)
+target_regression_selection_block = _human_target_regression_selection_block(
+    {
+        "selectable": True,
+        "reason": "accepted_incremental_authenticity_progress",
+    },
+    {
+        **target_regression_gate,
+        "candidate_human": 70,
+        "human_delta": -2,
+        "ai_transformation_delta": -2,
+    },
+    target_human=80,
+)
+assert_test(
+    target_regression_selection_block["blocked"]
+    and target_regression_selection_block["reason"] == "human_target_regressed"
+    and target_regression_selection_block["human_target_guard_required"],
+    "selector-level Human target guard blocks fallback acceptance when Human and AI Transformation regress",
 )
 no_target_progress_gate = _authenticity_gate_status(
     make_shift_report(

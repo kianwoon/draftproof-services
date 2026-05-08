@@ -3421,6 +3421,64 @@ def _score_drag_removal_status(
     }
 
 
+def _human_target_regression_selection_block(
+    selection_status: dict | None,
+    authenticity_status: dict | None,
+    *,
+    target_human: float | None = None,
+) -> dict:
+    """Block selected fallback candidates that move away from the Human target.
+
+    The authenticity gate can record this failure, but final selection has
+    multiple fallback paths. This guard is intentionally selector-level so a
+    later fallback cannot accept a below-target candidate that lowers Human
+    Contribution or increases AI Transformation.
+    """
+    if not isinstance(selection_status, dict) or not selection_status.get("selectable"):
+        return {"blocked": False, "reason": "candidate_not_selectable"}
+    authenticity_status = authenticity_status or {}
+    target = float(
+        target_human
+        if isinstance(target_human, (int, float))
+        else _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    )
+    candidate_human = authenticity_status.get("candidate_human")
+    human_delta = authenticity_status.get("human_delta")
+    ai_transform_delta = authenticity_status.get("ai_transformation_delta")
+    candidate_below_human_target = bool(
+        isinstance(candidate_human, (int, float)) and float(candidate_human) < target
+    )
+    human_target_regressed_direct = bool(
+        candidate_below_human_target
+        and isinstance(human_delta, (int, float))
+        and float(human_delta) < 0.0
+    )
+    ai_transformation_target_regressed_direct = bool(
+        candidate_below_human_target
+        and isinstance(ai_transform_delta, (int, float))
+        and float(ai_transform_delta) < 0.0
+    )
+    blocked = bool(human_target_regressed_direct or ai_transformation_target_regressed_direct)
+    return {
+        "blocked": blocked,
+        "reason": (
+            "human_target_regressed"
+            if human_target_regressed_direct
+            else "ai_transformation_target_regressed"
+            if ai_transformation_target_regressed_direct
+            else ""
+        ),
+        "human_target_guard_required": blocked,
+        "candidate_below_human_target": candidate_below_human_target,
+        "target_human": target,
+        "candidate_human": candidate_human,
+        "human_delta": human_delta,
+        "ai_transformation_delta": ai_transform_delta,
+        "human_target_regressed_direct": human_target_regressed_direct,
+        "ai_transformation_target_regressed_direct": ai_transformation_target_regressed_direct,
+    }
+
+
 def _adaptive_budget_default(source_text: str, short_value: int, long_value: int) -> str:
     if _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_DOC_BUDGETS", True):
         threshold = int(_float_env("DRAFTPROOF_SHORT_DOC_WORD_THRESHOLD", 450.0))
@@ -12675,6 +12733,17 @@ def run_rewrite_pipeline(
                         selection_status.get("reason")
                         or "accepted_safe_progress_with_stale_dominant_blocker"
                     ),
+                })
+            human_target_block = _human_target_regression_selection_block(
+                selection_status,
+                authenticity_status,
+            )
+            if human_target_block.get("blocked"):
+                selection_status.update({
+                    "success": False,
+                    "selectable": False,
+                    "reason": human_target_block.get("reason"),
+                    **human_target_block,
                 })
             selection_status["authenticity_gate"] = authenticity_status
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
