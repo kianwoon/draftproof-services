@@ -25,6 +25,7 @@ from .db import (
     update_job_status,
     capture_credits,
     get_rewrite_job,
+    is_rewrite_canceled,
     claim_rewrite_job,
     update_rewrite_status,
     capture_rewrite_credits,
@@ -34,6 +35,10 @@ from celery.signals import worker_process_init
 from celery.exceptions import SoftTimeLimitExceeded
 
 logger = logging.getLogger(__name__)
+
+
+class RewriteCanceled(Exception):
+    """Raised inside a worker task when the user cancels a rewrite cooperatively."""
 
 
 def _pct_score(value) -> int:
@@ -941,6 +946,10 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             error=error,
         )
 
+    def raise_if_canceled() -> None:
+        if is_rewrite_canceled(rewrite_id):
+            raise RewriteCanceled()
+
     try:
         rewrite_job = claim_rewrite_job(rewrite_id)
         if not rewrite_job:
@@ -1079,6 +1088,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             }
 
             def report_rewrite_progress(percent: int, message: str) -> None:
+                raise_if_canceled()
                 normalized_percent = max(40, min(79, int(percent)))
                 now = time.monotonic()
                 if (
@@ -1106,6 +1116,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     last_rewrite_progress["db_percent"] = normalized_percent
                     last_rewrite_progress["db_updated_at"] = now
 
+            raise_if_canceled()
             result = run_rewrite_pipeline(
                 detect_json=report_json,
                 output_dir=tmpdir,
@@ -1118,6 +1129,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 base_url=settings.LLM_BASE_URL or None,
                 progress_callback=report_rewrite_progress,
             )
+            raise_if_canceled()
 
             if result["status"] in ("skipped", "clean"):
                 update_rewrite_status(
@@ -1143,6 +1155,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 progress_message="Preparing rewrite report",
             )
             publish_progress("processing", 80, "Preparing rewrite report")
+            raise_if_canceled()
             rw = result.get("result")
             md_path = result.get("md_path")
             pdf_path = result.get("pdf_path")
@@ -1199,9 +1212,11 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 progress_message="Uploading rewrite results",
             )
             publish_progress("processing", 92, "Uploading rewrite results")
+            raise_if_canceled()
             upload_rewrite_files(scan_id, md_text, pdf_bytes, rewrite_json, rewritten_text, debug_log)
 
         # 5. Capture credits
+        raise_if_canceled()
         user_id = scan_job.get("user_id", "") if scan_job else ""
         if user_id:
             capture_rewrite_credits(str(user_id), rewrite_id)
@@ -1231,6 +1246,10 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         )
         release_rewrite_credits(rewrite_id)
         return {"status": "failed", "error": "timeout"}
+    except RewriteCanceled:
+        logger.info("Rewrite %s canceled cooperatively; worker task exiting", rewrite_id)
+        publish_progress("canceled", None, "Rewrite canceled", "Rewrite canceled by user")
+        return {"status": "canceled"}
     except Exception as e:
         if self.request.retries < self.max_retries:
             update_rewrite_status(

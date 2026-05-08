@@ -138,6 +138,14 @@ def get_rewrite_job(job_id: str) -> Optional[dict]:
         return cur.fetchone()
 
 
+def is_rewrite_canceled(job_id: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM rewrite_jobs WHERE id = %s", (job_id,))
+        row = cur.fetchone()
+        return bool(row and row.get("status") == "canceled")
+
+
 def claim_rewrite_job(job_id: str) -> Optional[dict]:
     """Atomically move a rewrite job into processing if it has not run yet."""
     with get_conn() as conn:

@@ -233,18 +233,6 @@ async def cancel_rewrite(rewrite_id: str, user_id: str) -> dict | None:
         else:
             await session.commit()
 
-    try:
-        from app.services.celery_client import celery_app
-
-        await asyncio.to_thread(
-            celery_app.control.revoke,
-            rewrite_id,
-            terminate=True,
-            signal="SIGTERM",
-        )
-    except Exception as exc:
-        logger.info("Rewrite cancel requested; worker revoke was not applied for %s: %s", rewrite_id, exc)
-
     return await get_rewrite(rewrite_id, user_id)
 
 
