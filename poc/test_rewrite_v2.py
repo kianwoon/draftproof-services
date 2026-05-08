@@ -162,6 +162,7 @@ from rewrite_pipeline import (
     _internet_reinforced_reauthor_prompt,
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
+    _source_search_enabled,
     _plain_language_depolish_text,
     _final_score_drag_sentence_prune_text,
     _protected_anchor_brief_for_prompt,
@@ -182,9 +183,11 @@ from rewrite_pipeline import (
     _apply_finding_local_patches,
     _extract_paragraph_component_candidates,
     _clean_paragraph_component_candidate,
+    _paragraph_anchor_lock,
     _clean_source_sentence_candidate,
     _splice_paragraph,
 )
+from llm.gateway import _model_capabilities
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
 
@@ -1409,6 +1412,11 @@ assert_test(
     json.dumps(frozen_payload).count("SHBHCUT") == 0,
     "anchor lock freezes nested section context payloads",
 )
+assert_test(
+    _model_capabilities("openai/gpt-4.1-mini").get("top_k") is False
+    and _model_capabilities("qwen/qwen3-32b").get("top_k") is True,
+    "model capability normalization disables top_k for OpenAI models only",
+)
 low_aggression = _repair_aggression_score(
     "Learners name the seven cutting steps. The guide can still disappear in their hands.",
     "Learners name the seven cutting steps. Still, the guide can disappear in their hands.",
@@ -2565,6 +2573,10 @@ assert_test(
     and "target AI<=52.78" in paragraph_prompt
     and "Confirmed author anchors available before generation" in paragraph_prompt
     and "Each anchor may be used at most once" in paragraph_prompt
+    and "[[DP_ANCHOR_" in paragraph_prompt
+    and "Anchor placeholders required in replacement" in paragraph_prompt
+    and "Target replacement length" in paragraph_prompt
+    and "guidance, not a hard gate" in paragraph_prompt
     and "Return exactly 3 alternative replacement paragraphs" in paragraph_prompt,
     "paragraph component prompt passes score drivers, confirmed anchors, and scoped rewrite instruction",
 )
@@ -2628,6 +2640,41 @@ assert_test(
     clean_paragraph and not clean_reason,
     "paragraph component cleaner accepts a replacement paragraph",
 )
+anchor_locked_replacement, anchor_locked_reason = _clean_paragraph_component_candidate(
+    (
+        "Learners still need to connect [[DP_ANCHOR_001]] to the way they handle subsection control. "
+        "The point is practical: the code matters only if the learner can show where the guide moved."
+    ),
+    (
+        "Learners complete SHBHCUT004 while checking subsection control and guide movement across the "
+        "practical cutting task, then explain what changed before moving into the next section."
+    ),
+    _paragraph_anchor_lock({
+        "paragraph": (
+            "Learners complete SHBHCUT004 while checking subsection control and guide movement across the "
+            "practical cutting task, then explain what changed before moving into the next section."
+        ),
+    }),
+)
+missing_anchor_replacement, missing_anchor_reason = _clean_paragraph_component_candidate(
+    "Learners still need to connect the unit code to subsection control and explain what changed before moving into the next section.",
+    (
+        "Learners complete SHBHCUT004 while checking subsection control and guide movement across the "
+        "practical cutting task, then explain what changed before moving into the next section."
+    ),
+    _paragraph_anchor_lock({
+        "paragraph": (
+            "Learners complete SHBHCUT004 while checking subsection control and guide movement across the "
+            "practical cutting task, then explain what changed before moving into the next section."
+        ),
+    }),
+)
+assert_test(
+    "SHBHCUT004" in anchor_locked_replacement
+    and not anchor_locked_reason
+    and missing_anchor_reason.startswith("anchor_placeholder_lost"),
+    "paragraph generation anchor lock restores required anchors and rejects missing placeholders",
+)
 spliced = _splice_paragraph(paragraph_search_text, paragraph_targets[0]["index"], clean_paragraph)
 assert_test(
     clean_paragraph in spliced
@@ -2687,6 +2734,10 @@ assert_test(
     and "Confirmed author anchors available before generation" in amplification_prompt
     and "Human Contribution must increase by at least 2" in amplification_prompt
     and "AI Authorship must not increase" in amplification_prompt
+    and "[[DP_ANCHOR_" in amplification_prompt
+    and "Anchor placeholders required in replacement" in amplification_prompt
+    and "Target replacement length" in amplification_prompt
+    and "guidance, not a hard gate" in amplification_prompt
     and "invent new evidence" in amplification_prompt
     and "generic connectors" in amplification_prompt,
     "human signal amplification prompt enforces operation-level gate",
@@ -2711,7 +2762,10 @@ assert_test(
 reasoning_amplification_prompt = _author_reasoning_amplification_prompt(
     {
         "role": "generic_claim_heavy",
-        "paragraph": "Technology can help students learn, but it can also become a shortcut.",
+        "paragraph": (
+            "Learners complete SHBHCUT004 while checking subsection control and guide movement, "
+            "but the claim can become too broad if it is not tied to the practical task."
+        ),
         "drivers": {"generic_assertion_hits": 4, "word_count": 12},
         "previous_paragraph": "Students use AI tools and online platforms.",
         "next_paragraph": "Teachers need to check whether students understand the answer.",
@@ -2725,6 +2779,10 @@ assert_test(
     and "This is not evidence insertion" in reasoning_amplification_prompt
     and "do not write 'in my class'" in reasoning_amplification_prompt
     and "narrow one broad claim into a defensible condition" in reasoning_amplification_prompt
+    and "[[DP_ANCHOR_" in reasoning_amplification_prompt
+    and "Anchor placeholders required in replacement" in reasoning_amplification_prompt
+    and "Target replacement length" in reasoning_amplification_prompt
+    and "guidance, not a hard gate" in reasoning_amplification_prompt
     and "return exactly 2 alternatives" in reasoning_amplification_prompt,
     "author reasoning amplification prompt targets implied reasoning without fake context",
 )
@@ -3658,6 +3716,41 @@ assert_test(
     }) is False,
     "radar goal controller blocks zero-Human side wins while Human target is unmet",
 )
+stale_wrapper_scan = {
+    "document_context": {"word_count": 625},
+    "ai_risk_badge": {
+        "writing_components": {
+            "unsupported_claim_risk": 70.0,
+            "broad_claim_risk": 65.0,
+            "source_grounding_risk": 40.0,
+        },
+        "ai_components": {
+            "topk_pattern": 81.0,
+            "predictability": 45.0,
+        },
+    },
+}
+fresh_baseline_scan = {
+    **stale_wrapper_scan,
+    "integrity_layers": {
+        "layers": {
+            "human_contribution_signal": {"score": 54.0},
+            "ai_transformation_risk": {"score": 46.0},
+            "ai_authorship_risk": {"score": 48.0},
+            "grounding_quality_risk": {"score": 50.0},
+        }
+    },
+}
+stale_controller = _radar_goal_controller_status(stale_wrapper_scan)
+fresh_controller = _radar_goal_controller_status(fresh_baseline_scan)
+assert_test(
+    stale_controller.get("active") is False
+    and stale_controller.get("current_human_contribution") is None
+    and fresh_controller.get("active") is True
+    and fresh_controller.get("current_human_contribution") == 54.0
+    and _radar_goal_requires_human_progress(fresh_controller) is True,
+    "radar controller must be derived from the fresh baseline scan before selector gates run",
+)
 blocker_plan = _blocker_operation_plan(
     pruning_source,
     {
@@ -3866,8 +3959,8 @@ assert_test(
             "Billett (2013) discusses practice-based learning. The paragraph continues with more teaching context. "
             "It also connects demonstration, guided repetition, and learner variability across several classroom decisions."
         ),
-    )[1].startswith("paragraph_too_short"),
-    "source citation repair can accept a sentence-window patch without requiring whole-paragraph length",
+    )[0],
+    "paragraph component cleaner treats length as scanner-scored guidance rather than a hard rejection",
 )
 assert_test(
     len(source_repair_matches) == 1
@@ -4037,6 +4130,33 @@ assert_test(
     and source_layer.get("auto_apply") is False
     and any("must not be converted into author-owned" in item for item in source_layer.get("policy", [])),
     "source grounding search is optional and cannot fabricate author-owned context",
+)
+previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
+previous_search_auto = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_AUTO_ENABLE_WITH_KEY")
+previous_tavily_key = os.environ.get("TAVILY_API_KEY")
+try:
+    os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_ENABLED", None)
+    os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_AUTO_ENABLE_WITH_KEY", None)
+    os.environ["TAVILY_API_KEY"] = "dummy"
+    key_only_enabled = _source_search_enabled()
+    os.environ["DRAFTPROOF_SOURCE_SEARCH_ENABLED"] = "1"
+    explicit_enabled = _source_search_enabled()
+finally:
+    if previous_search_enabled is None:
+        os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_ENABLED", None)
+    else:
+        os.environ["DRAFTPROOF_SOURCE_SEARCH_ENABLED"] = previous_search_enabled
+    if previous_search_auto is None:
+        os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_AUTO_ENABLE_WITH_KEY", None)
+    else:
+        os.environ["DRAFTPROOF_SOURCE_SEARCH_AUTO_ENABLE_WITH_KEY"] = previous_search_auto
+    if previous_tavily_key is None:
+        os.environ.pop("TAVILY_API_KEY", None)
+    else:
+        os.environ["TAVILY_API_KEY"] = previous_tavily_key
+assert_test(
+    key_only_enabled is False and explicit_enabled is True,
+    "source search is opt-in and does not start spending Tavily calls just because a key exists",
 )
 previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
 previous_search_cap = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN")

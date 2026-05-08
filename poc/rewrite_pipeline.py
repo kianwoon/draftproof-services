@@ -221,6 +221,46 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
+_SOURCE_SEARCH_RUNTIME_BUDGET = {"calls": 0}
+
+
+def _reset_source_search_runtime_budget() -> None:
+    _SOURCE_SEARCH_RUNTIME_BUDGET["calls"] = 0
+
+
+def _source_search_max_calls_per_run() -> int:
+    return max(
+        0,
+        min(5, int(_float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN", 5.0))),
+    )
+
+
+def _source_search_calls_used() -> int:
+    try:
+        return int(_SOURCE_SEARCH_RUNTIME_BUDGET.get("calls") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _source_search_remaining_calls() -> int:
+    return max(0, _source_search_max_calls_per_run() - _source_search_calls_used())
+
+
+def _record_source_search_call() -> None:
+    _SOURCE_SEARCH_RUNTIME_BUDGET["calls"] = _source_search_calls_used() + 1
+
+
+def _run_full_scan_report_dict(scan_text: str) -> dict:
+    detect_runner = DetectionRunner()
+    detect_report = detect_runner.run_all(scan_text)
+    builder = ReportBuilder()
+    builder.add_detection_report(detect_report)
+    if detect_report.postprocess_results:
+        builder.add_postprocess_results(detect_report.postprocess_results)
+    builder.set_meta(scan_time=0, original_text=scan_text)
+    return report_to_dict(builder.build())
+
+
 def _allow_ai_search_llm_after_deterministic() -> bool:
     return _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", True)
 
@@ -1073,7 +1113,7 @@ _SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS = {
 def _source_search_enabled() -> bool:
     if _env_flag("DRAFTPROOF_SOURCE_SEARCH_ENABLED", False):
         return True
-    if not _env_flag("DRAFTPROOF_SOURCE_SEARCH_AUTO_ENABLE_WITH_KEY", True):
+    if not _env_flag("DRAFTPROOF_SOURCE_SEARCH_AUTO_ENABLE_WITH_KEY", False):
         return False
     return bool(os.environ.get("TAVILY_API_KEY") or os.environ.get("DRAFTPROOF_TAVILY_API_KEY"))
 
@@ -1501,6 +1541,7 @@ def _tavily_search(
         payload["exclude_domains"] = exclude_domains
     if include_domains:
         payload["include_domains"] = include_domains
+    _record_source_search_call()
     response = requests.post(
         "https://api.tavily.com/search",
         headers={
@@ -1645,6 +1686,23 @@ def _protected_anchor_brief_for_prompt(source_text: str, *, limit: int = 24) -> 
     """Return exact protected spans that generation prompts must preserve."""
     seen: set[str] = set()
     anchors: list[dict] = []
+    for value in sorted(_protected_code_anchor_set(source_text or ""), key=len, reverse=True):
+        actual = next(
+            (
+                match.group(0)
+                for match in re.finditer(r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b", source_text or "")
+                if match.group(0).lower() == value
+            ),
+            value.upper(),
+        )
+        if actual and actual not in seen:
+            seen.add(actual)
+            anchors.append({
+                "text": actual,
+                "reason": "code_anchor",
+            })
+            if len(anchors) >= max(1, int(limit or 1)):
+                return anchors
     for span in detect_protected_spans(source_text or ""):
         value = str(source_text or "")[span.start_char:span.end_char].strip()
         value = re.sub(r"\s+", " ", value)
@@ -1995,11 +2053,10 @@ def _build_source_grounding_search_layer(
 ) -> dict:
     if not _source_search_enabled():
         return {}
-    max_calls_per_run = max(
-        0,
-        min(5, int(_float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN", 5.0))),
-    )
-    if max_calls_per_run <= 0:
+    max_calls_per_run = _source_search_max_calls_per_run()
+    calls_used_before = _source_search_calls_used()
+    remaining_calls = _source_search_remaining_calls()
+    if max_calls_per_run <= 0 or remaining_calls <= 0:
         return {
             "enabled": True,
             "kind": "source_grounding_search",
@@ -2016,9 +2073,15 @@ def _build_source_grounding_search_layer(
                 "Search results may support public/source-grounded claims after user review.",
                 "Search results must not be converted into author-owned observations or lived experience.",
             ],
+            "call_accounting": {
+                "calls_used_before": calls_used_before,
+                "calls_used_after": _source_search_calls_used(),
+                "remaining_before": remaining_calls,
+                "remaining_after": _source_search_remaining_calls(),
+            },
         }
     requested_queries = max(1, int(max_queries or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_QUERIES", 2.0)))
-    max_queries = min(requested_queries, max_calls_per_run)
+    max_queries = min(requested_queries, remaining_calls)
     max_results = max(1, int(max_results or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_RESULTS", 3.0)))
     block_plan = _blocker_operation_plan(text, report_dict or {}, limit=max_queries)
     block_decision_targets = _source_grounding_targets_from_block_decisions(
@@ -2073,6 +2136,8 @@ def _build_source_grounding_search_layer(
             "max_queries": max_queries,
             "max_calls_per_run": max_calls_per_run,
             "hard_max_calls_per_run": 5,
+            "calls_used_before": calls_used_before,
+            "remaining_calls_before": remaining_calls,
             "search_depth": depth_status.get("search_depth"),
             "search_depth_source": depth_status.get("source"),
             "chunks_per_source": depth_status.get("chunks_per_source"),
@@ -2153,6 +2218,13 @@ def _build_source_grounding_search_layer(
                 "message": str(exc)[:240],
             })
     layer["errors"] = errors
+    layer["call_accounting"] = {
+        "calls_used_before": calls_used_before,
+        "calls_used_after": _source_search_calls_used(),
+        "remaining_before": remaining_calls,
+        "remaining_after": _source_search_remaining_calls(),
+        "calls_this_layer": max(0, _source_search_calls_used() - calls_used_before),
+    }
     layer["status"] = "completed" if layer["results"] else "search_error"
     return layer
 
@@ -2759,6 +2831,119 @@ def _dominant_blocker_gate_status(original_report: dict | None, candidate_report
     }
 
 
+def _human_formula_driver_status(original_report: dict | None, candidate_report: dict | None) -> dict:
+    """Track the actual transformation drivers behind Human Contribution.
+
+    Human Contribution is a ratio produced from human-anchor strength versus
+    AI-texture pressure. Grounding-only blocker drops can look useful while
+    leaving this formula almost unchanged, so Human-target mode needs a
+    separate gate on the formula drivers.
+    """
+    def features(report: dict | None) -> dict:
+        if not isinstance(report, dict):
+            return {}
+        badge = report.get("ai_risk_badge") or {}
+        transform = badge.get("transformation_classification") or {}
+        return transform.get("features") or {}
+
+    def fnum(mapping: dict, key: str) -> float:
+        value = mapping.get(key)
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def raw_parts(mapping: dict) -> dict:
+        max_similarity = max(
+            fnum(mapping, "source_similarity"),
+            fnum(mapping, "surface_similarity"),
+        )
+        human_raw = (
+            fnum(mapping, "human_anchor_score") * 0.45
+            + (1.0 - fnum(mapping, "rewrite_smoothness")) * 0.20
+            + (1.0 - max_similarity) * 0.10
+        )
+        ai_raw = (
+            fnum(mapping, "ai_likelihood") * 0.55
+            + fnum(mapping, "rewrite_smoothness") * 0.25
+            + fnum(mapping, "outline_to_text_expansion") * 0.15
+            + fnum(mapping, "semantic_uniformity_risk") * 0.10
+            + fnum(mapping, "discourse_regularity_risk") * 0.05
+            + fnum(mapping, "section_style_variance") * 0.05
+            + fnum(mapping, "source_similarity") * 0.05
+        )
+        return {"human_raw": human_raw, "ai_raw": ai_raw}
+
+    original_features = features(original_report)
+    candidate_features = features(candidate_report)
+    original_parts = raw_parts(original_features)
+    candidate_parts = raw_parts(candidate_features)
+    driver_keys = [
+        "ai_likelihood",
+        "rewrite_smoothness",
+        "outline_to_text_expansion",
+        "semantic_uniformity_risk",
+        "discourse_regularity_risk",
+        "section_style_variance",
+        "source_similarity",
+    ]
+    drops = {
+        key: round(fnum(original_features, key) - fnum(candidate_features, key), 4)
+        for key in driver_keys
+    }
+    regressions = {
+        key: round(abs(value), 4)
+        for key, value in drops.items()
+        if value < 0
+    }
+    ai_raw_drop = original_parts["ai_raw"] - candidate_parts["ai_raw"]
+    human_raw_gain = candidate_parts["human_raw"] - original_parts["human_raw"]
+    contribution = _contribution_scores(candidate_report)
+    original_contribution = _contribution_scores(original_report)
+    human_delta = (
+        float(contribution.get("human")) - float(original_contribution.get("human"))
+        if isinstance(contribution.get("human"), (int, float))
+        and isinstance(original_contribution.get("human"), (int, float))
+        else 0.0
+    )
+    target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
+    required = bool(
+        isinstance(original_contribution.get("human"), (int, float))
+        and float(original_contribution.get("human")) < target_human
+        and _env_flag("DRAFTPROOF_REQUIRE_HUMAN_FORMULA_DRIVER_PROGRESS", True)
+    )
+    min_ai_raw_drop = _float_env("DRAFTPROOF_HUMAN_FORMULA_MIN_AI_RAW_DROP", 0.04)
+    min_human_gain = _float_env("DRAFTPROOF_HUMAN_FORMULA_MIN_HUMAN_GAIN", 4.0)
+    max_driver_regression = _float_env("DRAFTPROOF_HUMAN_FORMULA_MAX_DRIVER_REGRESSION", 0.04)
+    total_regression = sum(regressions.values())
+    clears = bool(
+        not required
+        or float(human_delta) >= min_human_gain
+        or (
+            ai_raw_drop >= min_ai_raw_drop
+            and human_raw_gain >= -0.01
+            and total_regression <= max_driver_regression
+        )
+    )
+    return {
+        "required": required,
+        "cleared": clears,
+        "reason": "" if clears else "human_formula_drivers_not_reduced",
+        "human_delta": round(human_delta, 3),
+        "target_human": target_human,
+        "ai_raw_drop": round(ai_raw_drop, 4),
+        "human_raw_gain": round(human_raw_gain, 4),
+        "min_ai_raw_drop": min_ai_raw_drop,
+        "min_human_gain": min_human_gain,
+        "total_driver_regression": round(total_regression, 4),
+        "max_driver_regression": max_driver_regression,
+        "driver_drops": drops,
+        "driver_regressions": regressions,
+        "original_raw": {key: round(value, 4) for key, value in original_parts.items()},
+        "candidate_raw": {key: round(value, 4) for key, value in candidate_parts.items()},
+    }
+
+
 def _dominant_blocker_safe_progress_override(
     dominant_status: dict | None,
     authenticity_status: dict | None,
@@ -2975,6 +3160,34 @@ def _blocked_human_winner_repair_budget_override(adaptive_stop_reason: str) -> b
         "budget_exhausted_llm_calls",
         "budget_exhausted_candidate_scans",
     }
+
+
+def _blocked_human_winner_failed_formula_gate(candidate: dict | None) -> bool:
+    """Do not spend repair budget on candidates blocked by the Human formula drivers.
+
+    Finding-local repair can fix review burden or severity regressions. It cannot fix
+    a candidate class whose direct Human Contribution formula drivers moved the wrong
+    way, so running it after that gate is pure budget waste.
+    """
+    if not isinstance(candidate, dict):
+        return False
+    summary = candidate.get("summary")
+    if not isinstance(summary, dict):
+        return False
+    selection = summary.get("selection_status")
+    if not isinstance(selection, dict):
+        return False
+    formula_gate = selection.get("human_formula_driver_gate")
+    if not isinstance(formula_gate, dict):
+        return False
+    return bool(
+        selection.get("reason") == "human_formula_drivers_not_reduced"
+        or (
+            formula_gate.get("required")
+            and not formula_gate.get("cleared")
+            and formula_gate.get("reason") == "human_formula_drivers_not_reduced"
+        )
+    )
 
 
 def _post_safe_target_push_allows_deterministic_after_budget(adaptive_stop_reason: str) -> bool:
@@ -4047,6 +4260,17 @@ def _anchor_lock_mapping(anchors: list[str] | tuple[str, ...] | None) -> list[di
         {"placeholder": f"[[DP_ANCHOR_{index:03d}]]", "value": value}
         for index, value in enumerate(unique, start=1)
     ]
+
+
+def _anchor_values_from_brief(anchors: list[dict] | tuple[dict, ...] | None) -> list[str]:
+    values: list[str] = []
+    for item in anchors or []:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("text") or item.get("value") or "").strip()
+        if value and value not in values:
+            values.append(value)
+    return values
 
 
 def _freeze_anchor_text(text: str, mapping: list[dict] | None) -> str:
@@ -7931,12 +8155,48 @@ def _paragraph_component_prompt(
         if part
     )
     protected_anchors = _protected_anchor_brief_for_prompt(protected_source)
+    anchor_lock = _anchor_lock_mapping(_anchor_values_from_brief(protected_anchors))
+    frozen_target = _freeze_anchor_text(target.get("paragraph") or "", anchor_lock)
+    frozen_previous = _freeze_anchor_text(target.get("previous_paragraph") or "[none]", anchor_lock)
+    frozen_next = _freeze_anchor_text(target.get("next_paragraph") or "[none]", anchor_lock)
+    frozen_domain_anchors = _freeze_anchor_payload((target.get("domain_anchors") or [])[:16], anchor_lock)
+    required_placeholders = [
+        item["placeholder"]
+        for item in anchor_lock
+        if item.get("placeholder") and item["placeholder"] in frozen_target
+    ]
+    target_char_count = len(frozen_target)
+    min_char_count = max(80, int(target_char_count * _float_env("DRAFTPROOF_PARAGRAPH_COMPONENT_MIN_CHAR_RATIO", 0.35)))
+    max_char_count = max(
+        min_char_count,
+        int(target_char_count * _float_env("DRAFTPROOF_PARAGRAPH_COMPONENT_MAX_CHAR_RATIO", 1.25)),
+    )
+    if _text_word_count(frozen_target) >= 25:
+        min_char_count = max(min_char_count, 90)
+    min_word_count = 21 if _text_word_count(target.get("paragraph") or "") >= 25 else 0
+    min_word_rule = (
+        f"- Target replacement shape: more than {min_word_count - 1} words if possible, but scanner improvement overrides length.\n"
+        if min_word_count
+        else ""
+    )
     return (
         "DraftProof paragraph-component AI mitigation.\n"
         "Rewrite only the target paragraph.\n"
-        "Goal: reduce the final full-document AI score after this paragraph is patched back into the document.\n\n"
+        "Goal: improve the Human Contribution formula after this paragraph is patched back into the document.\n"
+        "This is formula-driver repair, not generic paraphrasing.\n\n"
         f"Measured success condition: reference AI={reference_ai}, required drop>={required_ai_drop}, target AI<={target_ai_score}.\n"
         "The candidate will be rescanned; do not make a mild paraphrase.\n\n"
+        "Direct Human Contribution formula drivers to protect:\n"
+        "- Lower AI likelihood by removing predictable, polished sentence routes.\n"
+        "- Lower rewrite smoothness by keeping natural unevenness, not by adding errors.\n"
+        "- Lower outline-to-text expansion by compressing over-explained claims; do not add explanatory bulk.\n"
+        "- Lower discourse regularity by avoiding neat claim -> explanation -> implication/conclusion cadence.\n"
+        "- Lower semantic uniformity by varying sentence purpose, but do not add new facts.\n"
+        "Hard fail patterns:\n"
+        "- adding extra explanation to sound clearer\n"
+        "- creating a more complete academic paragraph\n"
+        "- using broad setup sentences before the actual point\n"
+        "- ending with a tidy lesson, implication, or summary\n\n"
         f"{signal_brief}\n\n"
         + (f"{confirmed_author_anchors}\n\n" if confirmed_author_anchors else "")
         + f"Paragraph driver score: {target.get('score')}\n"
@@ -7946,19 +8206,25 @@ def _paragraph_component_prompt(
         + "\nProblem spans:\n"
         + "\n".join(f"- {s}" for s in (target.get("problem_spans") or [])[:10])
         + "\nDomain anchors already present nearby:\n"
-        + ", ".join(str(a) for a in (target.get("domain_anchors") or [])[:16])
+        + ", ".join(str(a) for a in frozen_domain_anchors)
         + "\n\nPrevious paragraph context:\n"
-        f"{target.get('previous_paragraph') or '[none]'}\n\n"
+        f"{frozen_previous}\n\n"
         "TARGET PARAGRAPH:\n"
-        f"<TARGET_PARAGRAPH>\n{target.get('paragraph') or ''}\n</TARGET_PARAGRAPH>\n\n"
+        f"<TARGET_PARAGRAPH>\n{frozen_target}\n</TARGET_PARAGRAPH>\n\n"
         "Next paragraph context:\n"
-        f"{target.get('next_paragraph') or '[none]'}\n\n"
+        f"{frozen_next}\n\n"
         "Rewrite rules:\n"
         "- Preserve all citations, years, numbers, names, unit codes, and source references.\n"
         "- Preserve every protected anchor exactly, including quoted phrases.\n"
         f"- Protected anchors: {json.dumps(protected_anchors, ensure_ascii=False)[:2200]}\n"
+        f"- Anchor placeholders required in replacement: {json.dumps(required_placeholders, ensure_ascii=False)}\n"
         "- If a protected quote is awkward, keep the quote exactly and rewrite around it.\n"
         "- Do not invent new evidence, sources, people, institutions, or events.\n"
+        "- Prefer deletion, compression, and reordering over adding new sentences.\n"
+        f"- Target replacement length: {min_char_count}-{max_char_count} characters after placeholders are restored. This is guidance, not a hard gate.\n"
+        + min_word_rule
+        +
+        "- Keep the replacement near the original length or shorter unless an anchor must be preserved.\n"
         "- Break generic assertion flow: avoid broad claims unless tied to the local haircutting/classroom process.\n"
         "- Start from concrete action, learner behavior, source relation, or assessment consequence before broad explanation.\n"
         "- Change paragraph architecture: reorder claim/example/source relation where meaning allows.\n"
@@ -7967,6 +8233,7 @@ def _paragraph_component_prompt(
         "- Change sentence openings and sentence routes. Do not polish with academic filler.\n"
         "- Keep author voice and first-person classroom observation where it already exists.\n"
         "- Remove duplicate fragments if present inside the target paragraph.\n"
+        "- Copy every required [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.\n"
         f"- Batch attempt {attempt_index}: make each option materially different from generic rephrasing.\n\n"
         f"Return exactly {candidate_count} alternative replacement paragraphs using this exact format:\n"
         "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
@@ -7974,6 +8241,50 @@ def _paragraph_component_prompt(
         "...continue until the requested candidate count.\n"
         "Do not include commentary outside the candidate tags."
     )
+
+
+def _paragraph_generation_anchor_context(target: dict | None) -> dict:
+    target = target or {}
+    protected_source = "\n\n".join(
+        part for part in [
+            target.get("previous_paragraph") or "",
+            target.get("paragraph") or "",
+            target.get("next_paragraph") or "",
+        ]
+        if part
+    )
+    protected_anchors = _protected_anchor_brief_for_prompt(protected_source)
+    anchor_lock = _anchor_lock_mapping(_anchor_values_from_brief(protected_anchors))
+    frozen_target = _freeze_anchor_text(target.get("paragraph") or "", anchor_lock)
+    target_placeholders = [
+        item["placeholder"]
+        for item in anchor_lock
+        if item.get("placeholder") and item["placeholder"] in frozen_target
+    ]
+    target_char_count = len(frozen_target)
+    min_char_count = max(
+        80,
+        int(target_char_count * _float_env("DRAFTPROOF_PARAGRAPH_COMPONENT_MIN_CHAR_RATIO", 0.35)),
+    )
+    max_char_count = max(
+        min_char_count,
+        int(target_char_count * _float_env("DRAFTPROOF_PARAGRAPH_COMPONENT_MAX_CHAR_RATIO", 1.25)),
+    )
+    if _text_word_count(frozen_target) >= 25:
+        min_char_count = max(min_char_count, 90)
+    min_word_count = 21 if _text_word_count(target.get("paragraph") or "") >= 25 else 0
+    return {
+        "protected_anchors": protected_anchors,
+        "anchor_lock": anchor_lock,
+        "frozen_target": frozen_target,
+        "frozen_previous": _freeze_anchor_text(target.get("previous_paragraph") or "[none]", anchor_lock),
+        "frozen_next": _freeze_anchor_text(target.get("next_paragraph") or "[none]", anchor_lock),
+        "frozen_domain_anchors": _freeze_anchor_payload((target.get("domain_anchors") or [])[:16], anchor_lock),
+        "required_placeholders": target_placeholders,
+        "min_char_count": min_char_count,
+        "max_char_count": max_char_count,
+        "min_word_count": min_word_count,
+    }
 
 
 def _human_signal_amplification_prompt(
@@ -7985,6 +8296,12 @@ def _human_signal_amplification_prompt(
     confirmed_author_anchors: str = "",
 ) -> str:
     role = str(target.get("role") or "mixed")
+    anchor_context = _paragraph_generation_anchor_context(target)
+    min_word_rule = (
+        f"Target replacement shape: more than {anchor_context['min_word_count'] - 1} words if possible, but scanner improvement overrides length.\n"
+        if anchor_context["min_word_count"]
+        else ""
+    )
     operation = {
         "source_summary_heavy": "add a source-to-practice bridge",
         "generic_claim_heavy": "narrow the claim with one author-reasoning trace",
@@ -8015,8 +8332,14 @@ def _human_signal_amplification_prompt(
         f"Controlled operation: {operation}.\n\n"
         f"Role-specific rule: {role_rule}\n\n"
         "Goal:\n"
-        "Increase authentic author contribution using reasoning already implied by this paragraph.\n"
+        "Increase authentic author contribution using reasoning already implied by this paragraph, while improving the formula drivers.\n"
         "Do not increase AI Authorship, AI Transformation, review burden, or severity.\n\n"
+        "Formula-driver constraints:\n"
+        "- Do not add explanatory bulk; expansion is a failure.\n"
+        "- Avoid neat claim -> explanation -> conclusion structure.\n"
+        "- Prefer one compressed sentence, one uneven sentence, or one deleted generic sentence over a smoother rewrite.\n"
+        "- Do not end with a polished implication sentence.\n"
+        "- Keep the paragraph close to the original length or shorter.\n\n"
         "Allowed:\n"
         "- connect a source claim to a teaching/practice decision already present in the context\n"
         "- add one limitation or condition already implied by the paragraph\n"
@@ -8038,14 +8361,20 @@ def _human_signal_amplification_prompt(
         "- semantic drift and anchor loss must be false\n\n"
         + (f"{confirmed_author_anchors}\n\n" if confirmed_author_anchors else "")
         + f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
+        f"Protected anchors: {json.dumps(anchor_context['protected_anchors'], ensure_ascii=False)[:2200]}\n"
+        f"Anchor placeholders required in replacement: {json.dumps(anchor_context['required_placeholders'], ensure_ascii=False)}\n"
+        f"Target replacement length: {anchor_context['min_char_count']}-{anchor_context['max_char_count']} characters after placeholders are restored. This is guidance, not a hard gate.\n"
+        + min_word_rule
+        +
+        "Copy every required [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.\n"
         "Domain anchors already present nearby:\n"
-        + ", ".join(str(a) for a in (target.get("domain_anchors") or [])[:16])
+        + ", ".join(str(a) for a in anchor_context["frozen_domain_anchors"])
         + "\n\nPrevious paragraph context:\n"
-        f"{target.get('previous_paragraph') or '[none]'}\n\n"
+        f"{anchor_context['frozen_previous']}\n\n"
         "TARGET PARAGRAPH:\n"
-        f"<TARGET_PARAGRAPH>\n{target.get('paragraph') or ''}\n</TARGET_PARAGRAPH>\n\n"
+        f"<TARGET_PARAGRAPH>\n{anchor_context['frozen_target']}\n</TARGET_PARAGRAPH>\n\n"
         "Next paragraph context:\n"
-        f"{target.get('next_paragraph') or '[none]'}\n\n"
+        f"{anchor_context['frozen_next']}\n\n"
         f"Attempt {attempt_index}: return exactly {candidate_count} alternatives using this format:\n"
         "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
         "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
@@ -8062,6 +8391,12 @@ def _author_reasoning_amplification_prompt(
     candidate_count: int = 3,
 ) -> str:
     role = str(target.get("role") or "mixed")
+    anchor_context = _paragraph_generation_anchor_context(target)
+    min_word_rule = (
+        f"Target replacement shape: more than {anchor_context['min_word_count'] - 1} words if possible, but scanner improvement overrides length.\n"
+        if anchor_context["min_word_count"]
+        else ""
+    )
     return (
         "DraftProof AUTHOR_REASONING_AMPLIFICATION_REPAIR.\n"
         "You are repairing one paragraph only.\n"
@@ -8070,6 +8405,12 @@ def _author_reasoning_amplification_prompt(
         "Increase Human Contribution using author reasoning that is already implied by the paragraph, "
         "without adding author evidence, lived experience, sources, dates, people, statistics, or new events.\n\n"
         "This is not evidence insertion. This is reasoning-shape repair.\n\n"
+        "Formula-driver constraints:\n"
+        "- Do not expand the paragraph to explain more.\n"
+        "- Do not make the paragraph more complete, balanced, or academic.\n"
+        "- Reduce neat discourse shape: avoid claim -> explanation -> conclusion.\n"
+        "- Prefer compression, deletion of broad setup, and rougher sequencing.\n"
+        "- Keep length close to the original or shorter.\n\n"
         "Allowed operations, choose one per candidate:\n"
         "- narrow one broad claim into a defensible condition\n"
         "- add one judgement about what the author would check, question, or prioritise\n"
@@ -8094,14 +8435,20 @@ def _author_reasoning_amplification_prompt(
         "- findings, review burden, and weighted severity must not increase\n"
         "- semantic drift must be false\n\n"
         f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
+        f"Protected anchors: {json.dumps(anchor_context['protected_anchors'], ensure_ascii=False)[:2200]}\n"
+        f"Anchor placeholders required in replacement: {json.dumps(anchor_context['required_placeholders'], ensure_ascii=False)}\n"
+        f"Target replacement length: {anchor_context['min_char_count']}-{anchor_context['max_char_count']} characters after placeholders are restored. This is guidance, not a hard gate.\n"
+        + min_word_rule
+        +
+        "Copy every required [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.\n"
         "Domain anchors already present nearby:\n"
-        + ", ".join(str(a) for a in (target.get("domain_anchors") or [])[:16])
+        + ", ".join(str(a) for a in anchor_context["frozen_domain_anchors"])
         + "\n\nPrevious paragraph context:\n"
-        f"{target.get('previous_paragraph') or '[none]'}\n\n"
+        f"{anchor_context['frozen_previous']}\n\n"
         "TARGET PARAGRAPH:\n"
-        f"<TARGET_PARAGRAPH>\n{target.get('paragraph') or ''}\n</TARGET_PARAGRAPH>\n\n"
+        f"<TARGET_PARAGRAPH>\n{anchor_context['frozen_target']}\n</TARGET_PARAGRAPH>\n\n"
         "Next paragraph context:\n"
-        f"{target.get('next_paragraph') or '[none]'}\n\n"
+        f"{anchor_context['frozen_next']}\n\n"
         f"Attempt {attempt_index}: return exactly {candidate_count} alternatives using this format:\n"
         "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
         "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
@@ -8141,25 +8488,49 @@ def _extract_paragraph_component_candidates(output: str, limit: int) -> list[str
     return [text]
 
 
-def _clean_paragraph_component_candidate(candidate: str, original_paragraph: str) -> tuple[str, str]:
+def _clean_paragraph_component_candidate(
+    candidate: str,
+    original_paragraph: str,
+    anchor_lock: list[dict] | None = None,
+) -> tuple[str, str]:
     text = str(candidate or "").strip()
     if not text:
         return "", "empty_candidate"
     text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.I).strip()
     text = re.sub(r"\s*```$", "", text).strip()
     text = re.sub(r"^(?:replacement|rewritten)\s+paragraph\s*:\s*", "", text, flags=re.I).strip()
+    missing_placeholders = [
+        item.get("placeholder")
+        for item in (anchor_lock or [])
+        if item.get("placeholder")
+        and item["placeholder"] in _freeze_anchor_text(original_paragraph, anchor_lock)
+        and item["placeholder"] not in text
+    ]
+    if missing_placeholders:
+        return "", "anchor_placeholder_lost:" + ",".join(str(item) for item in missing_placeholders)
+    text = _restore_anchor_placeholders(text, anchor_lock)
     paragraphs = _logical_paragraphs(text)
     if not paragraphs:
         return "", "empty_candidate"
     text = " ".join(" ".join(p.split()) for p in paragraphs)
     if text == " ".join(str(original_paragraph or "").split()):
         return "", "unchanged_paragraph"
-    orig_len = max(1, len(str(original_paragraph or "")))
-    if len(text) < max(80, int(orig_len * 0.55)):
-        return "", f"paragraph_too_short {len(text)}<{max(80, int(orig_len * 0.55))}"
-    if len(text) > int(orig_len * 1.55):
-        return "", f"paragraph_too_long {len(text)}>{int(orig_len * 1.55)}"
     return text, ""
+
+
+def _paragraph_anchor_lock(target: dict | None) -> list[dict]:
+    target = target or {}
+    protected_source = "\n\n".join(
+        part for part in [
+            target.get("previous_paragraph") or "",
+            target.get("paragraph") or "",
+            target.get("next_paragraph") or "",
+        ]
+        if part
+    )
+    return _anchor_lock_mapping(
+        _anchor_values_from_brief(_protected_anchor_brief_for_prompt(protected_source))
+    )
 
 
 def _clean_source_sentence_candidate(candidate: str, original_sentence: str) -> tuple[str, str]:
@@ -9631,6 +10002,7 @@ def run_rewrite_pipeline(
     Returns dict with paths and summary.
     """
     _load_local_env()
+    _reset_source_search_runtime_budget()
     llm_roles = _llm_role_config(model)
     generator_model = llm_roles.get("generator_model") or model
     retry_model = llm_roles.get("retry_model") or generator_model
@@ -9764,13 +10136,24 @@ def run_rewrite_pipeline(
     # Sanitize input text before rewrite (fix mojibake from PDF/docx extraction)
     text = sanitize_text(text)
 
-    pre_rewrite_badge = (ctx.raw_json or {}).get("ai_risk_badge") or {}
+    pre_rewrite_stage_timings: list[dict] = []
+    baseline_report_dict = ctx.raw_json
+    if _env_flag("DRAFTPROOF_FRESH_ORIGINAL_BASELINE", True):
+        report_progress(40, "Running baseline scan for rewrite controller")
+        scan_t0 = time.time()
+        baseline_report_dict = _run_full_scan_report_dict(text)
+        pre_rewrite_stage_timings.append({
+            "stage": "fresh_original_scan",
+            "seconds": round(time.time() - scan_t0, 3),
+        })
+
+    pre_rewrite_badge = (baseline_report_dict or {}).get("ai_risk_badge") or {}
     pre_rewrite_ai = pre_rewrite_badge.get("ai_likelihood_score")
-    ai_mitigation_contract = _ensure_ai_mitigation_contract(ctx.raw_json)
+    ai_mitigation_contract = _ensure_ai_mitigation_contract(baseline_report_dict)
     ai_mitigation_needs_author = _ai_mitigation_requires_user_input(ai_mitigation_contract)
     allow_auto_with_author_gaps = _env_flag("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS", True)
-    radar_goal_controller = _radar_goal_controller_status(getattr(ctx, "raw_json", None))
-    radar_option_matrix = radar_goal_controller.get("option_matrix") or _radar_blocker_option_matrix(getattr(ctx, "raw_json", None))
+    radar_goal_controller = _radar_goal_controller_status(baseline_report_dict)
+    radar_option_matrix = radar_goal_controller.get("option_matrix") or _radar_blocker_option_matrix(baseline_report_dict)
     ai_search_first = (
         (
             os.environ.get("DRAFTPROOF_AI_SEARCH_FIRST", "1") != "0"
@@ -9862,7 +10245,9 @@ def run_rewrite_pipeline(
             "Skipped automatic sentence/density rewrite because AI-Mitigation requires author-supplied grounding."
         )
     engine_elapsed = time.time() - t0
-    stage_timings = [{"stage": "rewrite_engine", "seconds": round(engine_elapsed, 3)}]
+    stage_timings = pre_rewrite_stage_timings + [
+        {"stage": "rewrite_engine", "seconds": round(engine_elapsed, 3)}
+    ]
     report_progress(74, "Building rewrite comparison")
 
     # ── Write output ────────────────────────────────────────────────
@@ -9894,6 +10279,10 @@ def run_rewrite_pipeline(
     if badge:
         result.summary["detect_ai_likelihood"] = badge.get("ai_likelihood_score", 0)
         result.summary["detect_writing_quality"] = badge.get("writing_quality_score", 0)
+    baseline_badge = (baseline_report_dict or {}).get("ai_risk_badge") or {}
+    if baseline_badge:
+        result.summary["baseline_detect_ai_likelihood"] = baseline_badge.get("ai_likelihood_score", 0)
+        result.summary["baseline_detect_writing_quality"] = baseline_badge.get("writing_quality_score", 0)
 
     # ── Final full detect scan ──────────────────────────────────────
     # If no text changed, do not re-scan. The detector has stochastic/heuristic
@@ -9912,7 +10301,7 @@ def run_rewrite_pipeline(
             if result.mp_result and result.mp_result.convergence_reason
             else "No automatic rewrite was applied"
         )
-        rewritten_report_dict = ctx.raw_json
+        rewritten_report_dict = baseline_report_dict
     else:
         # Text changed — run a single fresh full scan on the rewritten text.
         # The rewrite engine's targeted rescan reuses old scores for unchanged
@@ -9958,26 +10347,13 @@ def run_rewrite_pipeline(
         return float(score) if isinstance(score, (int, float)) else None
 
     def _full_scan_report_dict(scan_text: str) -> dict:
-        detect_runner = DetectionRunner()
-        detect_report = detect_runner.run_all(scan_text)
-        builder = ReportBuilder()
-        builder.add_detection_report(detect_report)
-        if detect_report.postprocess_results:
-            builder.add_postprocess_results(detect_report.postprocess_results)
-        builder.set_meta(scan_time=0, original_text=scan_text)
-        return report_to_dict(builder.build())
+        return _run_full_scan_report_dict(scan_text)
 
     # Rewrite candidate scans must be compared against a baseline produced by
     # the same scanner codepath. Otherwise a saved scan from an earlier scanner
     # phase can make a valid mitigation candidate look like a regression.
-    original_report_dict = ctx.raw_json
+    original_report_dict = baseline_report_dict
     if _env_flag("DRAFTPROOF_FRESH_ORIGINAL_BASELINE", True):
-        scan_t0 = time.time()
-        original_report_dict = _full_scan_report_dict(text)
-        stage_timings.append({
-            "stage": "fresh_original_scan",
-            "seconds": round(time.time() - scan_t0, 3),
-        })
         result.summary["comparison_baseline"] = "fresh_original_scan"
         saved_original_ai = _badge_ai(ctx.raw_json)
         fresh_original_ai = _badge_ai(original_report_dict)
@@ -10058,6 +10434,26 @@ def run_rewrite_pipeline(
         "original_weighted_severity": original_severity,
         "rewritten_weighted_severity": rewritten_severity,
     }
+
+    # The controller must use the same fresh baseline scan as the selector.
+    # The initial parsed context can be a lightweight wrapper with no integrity
+    # layers, which would make Human Contribution appear missing and allow
+    # zero-Human "safe" wins to pass.
+    fresh_radar_goal_controller = _radar_goal_controller_status(original_report_dict)
+    if fresh_radar_goal_controller.get("current_human_contribution") is not None:
+        radar_goal_controller = fresh_radar_goal_controller
+        radar_option_matrix = (
+            radar_goal_controller.get("option_matrix")
+            or _radar_blocker_option_matrix(original_report_dict)
+        )
+        result.summary["radar_goal_controller"] = {
+            key: value
+            for key, value in radar_goal_controller.items()
+            if key != "option_matrix"
+        }
+        result.summary["radar_blocker_option_matrix"] = radar_option_matrix
+        result.summary["radar_option_matrix"] = radar_option_matrix
+
     ai_first_min_drop = float(os.environ.get("DRAFTPROOF_AI_FIRST_MIN_DROP", "5.0"))
     ai_first_target = float(os.environ.get("DRAFTPROOF_AI_FIRST_TARGET", "60.0"))
     ai_first_required_min_ai = float(os.environ.get("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", "50.0"))
@@ -11651,7 +12047,7 @@ def run_rewrite_pipeline(
             reason = ""
             if elapsed >= float(search_budget["max_seconds"]):
                 reason = "budget_exhausted_time"
-            elif before_llm and int(search_summary.get("llm_calls") or 0) > int(search_budget["max_llm_calls"]):
+            elif before_llm and int(search_summary.get("llm_calls") or 0) >= int(search_budget["max_llm_calls"]):
                 reason = "budget_exhausted_llm_calls"
             elif len(search_summary.get("candidates", [])) >= int(search_budget["max_candidate_scans"]):
                 reason = "budget_exhausted_candidate_scans"
@@ -11851,6 +12247,7 @@ def run_rewrite_pipeline(
             candidate_integrity = _integrity_scores(candidate_report)
             blocker_status = _blocker_elimination_status(original_report_dict, candidate_report)
             dominant_blocker_status = _dominant_blocker_gate_status(original_report_dict, candidate_report)
+            human_formula_status = _human_formula_driver_status(original_report_dict, candidate_report)
             human_shift = _human_shift_score(
                 original_report_dict,
                 candidate_report,
@@ -11877,6 +12274,7 @@ def run_rewrite_pipeline(
                 "human_shift_components": human_shift.get("components"),
                 "blocker_elimination": blocker_status,
                 "dominant_blocker_gate": dominant_blocker_status,
+                "human_formula_driver_gate": human_formula_status,
                 "scan_scope": _scan_scope_summary(candidate_report),
             })
             selection_status = _ai_search_candidate_selection_status(
@@ -12162,7 +12560,11 @@ def run_rewrite_pipeline(
                                         "accepted_score_drag_removal"
                                         if score_drag_removal_selectable
                                         else (
-                                            "accepted_safe_authorship_suppression"
+                                            (
+                                                "accepted_incremental_human_target_progress"
+                                                if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                else "accepted_safe_authorship_suppression"
+                                            )
                                             if safe_authorship_suppression_selectable
                                             else "accepted_incremental_authenticity_progress"
                                         )
@@ -12204,6 +12606,19 @@ def run_rewrite_pipeline(
                     "reason": "dominant_blocker_not_reduced",
                     "dominant_blocker_required": True,
                 })
+            if (
+                selection_status.get("selectable")
+                and human_formula_status.get("required")
+                and not human_formula_status.get("cleared")
+                and not selection_status.get("human_primary_progress")
+                and not selection_status.get("post_safe_target_climb")
+            ):
+                selection_status.update({
+                    "success": False,
+                    "selectable": False,
+                    "reason": "human_formula_drivers_not_reduced",
+                    "human_formula_driver_required": True,
+                })
             elif dominant_blocker_progress_override.get("allowed"):
                 selection_status.update({
                     "dominant_blocker_required": True,
@@ -12215,6 +12630,7 @@ def run_rewrite_pipeline(
                 })
             selection_status["authenticity_gate"] = authenticity_status
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
+            selection_status["human_formula_driver_gate"] = human_formula_status
             selection_status["dominant_blocker_progress_override"] = dominant_blocker_progress_override
             selection_status["ai_score_regression_tolerance"] = ai_score_regression_tolerance
             selection_status["ai_score_regressed"] = ai_score_regressed
@@ -12779,6 +13195,7 @@ def run_rewrite_pipeline(
                                 paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
                                     raw_paragraph_candidate,
                                     target.get("paragraph") or "",
+                                    _paragraph_anchor_lock(target),
                                 )
                                 if paragraph_reject:
                                     search_summary["candidates"].append({
@@ -13148,7 +13565,38 @@ def run_rewrite_pipeline(
                 )
                 if internet_priority.get("prioritize"):
                     search_summary["internet_reauthor_priority"] = internet_priority
-                if _env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True):
+                source_components = (
+                    (original_report_dict.get("ai_risk_badge") or {}).get("writing_components") or {}
+                    if isinstance(original_report_dict, dict) else {}
+                )
+                source_grounding_for_search = max(
+                    float(source_components.get("source_grounding_risk") or 0.0),
+                    float(source_components.get("citation_weakness_risk") or 0.0),
+                )
+                source_repair_allowed = bool(
+                    _env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True)
+                    and (
+                        not human_target_search_status.get("active")
+                        or source_grounding_for_search >= _float_env(
+                            "DRAFTPROOF_SOURCE_REPAIR_MIN_SOURCE_BLOCKER_FOR_HUMAN_TARGET",
+                            65.0,
+                        )
+                    )
+                )
+                search_summary["source_grounding_repair_policy"] = {
+                    "enabled": bool(_env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True)),
+                    "allowed": source_repair_allowed,
+                    "source_grounding_or_citation_blocker": round(source_grounding_for_search, 3),
+                    "human_target_active": bool(human_target_search_status.get("active")),
+                    "min_source_blocker_for_human_target": _float_env(
+                        "DRAFTPROOF_SOURCE_REPAIR_MIN_SOURCE_BLOCKER_FOR_HUMAN_TARGET",
+                        65.0,
+                    ),
+                }
+                source_layer = {}
+                source_repair_results = []
+                source_candidate_count = 0
+                if source_repair_allowed:
                     source_layer = _build_source_grounding_search_layer(
                         component_base_text,
                         original_report_dict,
@@ -13393,261 +13841,268 @@ def run_rewrite_pipeline(
                                 deterministic=False,
                                 extra={"claim_narrowing_repair": True},
                             )
-                    elif paragraph_component_first:
+                if not source_repair_allowed:
+                    search_summary["source_grounding_repair"] = {
+                        "enabled": bool(_env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True)),
+                        "skipped": True,
+                        "reason": "deferred_because_human_target_requires_transformation_driver_repair",
+                        "source_grounding_or_citation_blocker": round(source_grounding_for_search, 3),
+                    }
+                    if paragraph_component_first:
                         search_summary["claim_narrowing_repair"] = {
                             "enabled": False,
                             "reason": "deferred_after_paragraph_component_first",
                         }
-                    if _env_flag("DRAFTPROOF_TOPK_TEXTURE_REPAIR", True) and not paragraph_component_first:
-                        texture_base_text = best_text if _best_ai_search_selectable() else component_base_text
-                        texture_base_report = best_report if _best_ai_search_selectable() else original_report_dict
-                        topk_candidate_count = max(
-                            1,
-                            int(_float_env(
-                                "DRAFTPROOF_TOPK_TEXTURE_CANDIDATES",
-                                float(_adaptive_budget_default(component_base_text, 1, 2)),
-                            )),
+                if _env_flag("DRAFTPROOF_TOPK_TEXTURE_REPAIR", True) and not paragraph_component_first:
+                    texture_base_text = best_text if _best_ai_search_selectable() else component_base_text
+                    texture_base_report = best_report if _best_ai_search_selectable() else original_report_dict
+                    topk_candidate_count = max(
+                        1,
+                        int(_float_env(
+                            "DRAFTPROOF_TOPK_TEXTURE_CANDIDATES",
+                            float(_adaptive_budget_default(component_base_text, 1, 2)),
+                        )),
+                    )
+                    search_summary["topk_texture_repair"] = {
+                        "enabled": True,
+                        "candidate_limit": topk_candidate_count,
+                        "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
+                    }
+                    try:
+                        prompt = _topk_texture_repair_prompt(
+                            texture_base_text,
+                            texture_base_report,
+                            candidate_count=topk_candidate_count,
                         )
-                        search_summary["topk_texture_repair"] = {
-                            "enabled": True,
-                            "candidate_limit": topk_candidate_count,
-                            "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
-                        }
-                        try:
-                            prompt = _topk_texture_repair_prompt(
-                                texture_base_text,
-                                texture_base_report,
-                                candidate_count=topk_candidate_count,
-                            )
-                            search_summary["llm_calls"] += 1
-                            response = gateway.chat(
-                                prompt,
-                                system=(
-                                    "You are DraftProof's top-k texture repair engine. "
-                                    "Patch predictable phrasing without adding facts. "
-                                    "Return only tagged full-document candidates."
-                                ),
-                                temperature=float(os.environ.get(
-                                    "DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
-                                    "0.45",
-                                )),
-                                max_tokens=int(os.environ.get(
-                                    "DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS",
-                                    "4800",
-                                )),
-                                top_p=_float_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_P"),
-                                top_k=_int_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_K"),
-                                presence_penalty=_float_env_optional(
-                                    "DRAFTPROOF_TOPK_TEXTURE_PRESENCE_PENALTY"
-                                ),
-                                frequency_penalty=_float_env_optional(
-                                    "DRAFTPROOF_TOPK_TEXTURE_FREQUENCY_PENALTY"
-                                ),
-                            )
-                            topk_outputs = _extract_paragraph_component_candidates(
-                                response.content,
-                                topk_candidate_count,
-                            )
-                        except Exception as exc:
+                        search_summary["llm_calls"] += 1
+                        response = gateway.chat(
+                            prompt,
+                            system=(
+                                "You are DraftProof's top-k texture repair engine. "
+                                "Patch predictable phrasing without adding facts. "
+                                "Return only tagged full-document candidates."
+                            ),
+                            temperature=float(os.environ.get(
+                                "DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
+                                "0.45",
+                            )),
+                            max_tokens=int(os.environ.get(
+                                "DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS",
+                                "4800",
+                            )),
+                            top_p=_float_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_P"),
+                            top_k=_int_env_optional("DRAFTPROOF_TOPK_TEXTURE_TOP_K"),
+                            presence_penalty=_float_env_optional(
+                                "DRAFTPROOF_TOPK_TEXTURE_PRESENCE_PENALTY"
+                            ),
+                            frequency_penalty=_float_env_optional(
+                                "DRAFTPROOF_TOPK_TEXTURE_FREQUENCY_PENALTY"
+                            ),
+                        )
+                        topk_outputs = _extract_paragraph_component_candidates(
+                            response.content,
+                            topk_candidate_count,
+                        )
+                    except Exception as exc:
+                        search_summary["candidates"].append({
+                            "strategy": "topk_texture_repair_batch",
+                            "passed_local_checks": False,
+                            "reason": f"llm_error {exc}",
+                            "topk_texture_repair": True,
+                        })
+                        topk_outputs = []
+                    for candidate_number, raw_candidate in enumerate(topk_outputs, start=1):
+                        candidate = _clean_full_document_candidate(
+                            raw_candidate,
+                            texture_base_text,
+                        )
+                        strategy = f"topk_texture_repair_c{candidate_number}"
+                        if not candidate:
                             search_summary["candidates"].append({
-                                "strategy": "topk_texture_repair_batch",
+                                "strategy": strategy,
                                 "passed_local_checks": False,
-                                "reason": f"llm_error {exc}",
+                                "reason": "empty_or_unchanged_candidate",
                                 "topk_texture_repair": True,
                             })
-                            topk_outputs = []
-                        for candidate_number, raw_candidate in enumerate(topk_outputs, start=1):
-                            candidate = _clean_full_document_candidate(
-                                raw_candidate,
-                                texture_base_text,
+                            continue
+                        _evaluate_ai_search_candidate(
+                            strategy,
+                            candidate,
+                            deterministic=False,
+                            extra={
+                                "topk_texture_repair": True,
+                                "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
+                            },
+                        )
+                elif paragraph_component_first:
+                    search_summary["topk_texture_repair"] = {
+                        "enabled": False,
+                        "reason": "deferred_after_paragraph_component_first",
+                    }
+                for source_number, source_result in enumerate(source_repair_results, start=1):
+                    target = source_result.get("_repair_target") or {}
+                    paragraph_index = _safe_index(target.get("paragraph_index"), 0)
+                    report_progress(
+                        min(89, 78 + source_number),
+                        (
+                            "Trying source-grounded reinforce/remove candidate "
+                            f"{source_number}/{len(source_repair_results)}"
+                        ),
+                    )
+                    try:
+                        prompt = _source_grounding_repair_prompt(
+                            target,
+                            source_result,
+                            candidate_count=source_candidate_count,
+                        )
+                        search_summary["llm_calls"] += 1
+                        response = gateway.chat(
+                            prompt,
+                            system=(
+                                "You are DraftProof's source-grounding repair engine. "
+                                "Use only provided source candidates and return tagged replacement paragraphs."
+                            ),
+                            temperature=float(os.environ.get(
+                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TEMPERATURE",
+                                "0.45",
+                            )),
+                            max_tokens=int(os.environ.get(
+                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_MAX_TOKENS",
+                                "2200",
+                            )),
+                            top_p=_float_env_optional("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TOP_P"),
+                            top_k=_int_env_optional("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TOP_K"),
+                            presence_penalty=_float_env_optional(
+                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_PRESENCE_PENALTY"
+                            ),
+                            frequency_penalty=_float_env_optional(
+                                "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_FREQUENCY_PENALTY"
+                            ),
+                        )
+                        source_outputs = _extract_paragraph_component_candidates(
+                            response.content,
+                            source_candidate_count,
+                        )
+                    except Exception as exc:
+                        search_summary["candidates"].append({
+                            "strategy": f"source_grounding_repair_p{paragraph_index + 1}_batch",
+                            "passed_local_checks": False,
+                            "reason": f"llm_error {exc}",
+                            "source_grounding_repair": True,
+                            "paragraph_index": paragraph_index,
+                            "claim_id": source_result.get("claim_id"),
+                            "source_confidence": source_result.get("source_confidence"),
+                        })
+                        continue
+                    if not source_outputs:
+                        search_summary["candidates"].append({
+                            "strategy": f"source_grounding_repair_p{paragraph_index + 1}_batch",
+                            "passed_local_checks": False,
+                            "reason": "empty_candidate_batch",
+                            "source_grounding_repair": True,
+                            "paragraph_index": paragraph_index,
+                            "claim_id": source_result.get("claim_id"),
+                            "source_confidence": source_result.get("source_confidence"),
+                        })
+                        continue
+                    for candidate_number, raw_paragraph_candidate in enumerate(source_outputs, start=1):
+                        strategy = (
+                            f"source_grounding_repair_p{paragraph_index + 1}"
+                            f"_c{candidate_number}"
+                        )
+                        repair_scope = str(target.get("repair_scope") or "paragraph")
+                        original_paragraph = (
+                            _logical_paragraphs(component_base_text)[paragraph_index]
+                            if paragraph_index < len(_logical_paragraphs(component_base_text))
+                            else target.get("target_preview") or ""
+                        )
+                        sentence_index = _safe_index(target.get("sentence_index"), -1)
+                        if repair_scope == "sentence_window" and sentence_index >= 0:
+                            paragraph_sentences = _split_sentences(original_paragraph)
+                            original_sentence = (
+                                paragraph_sentences[sentence_index]
+                                if sentence_index < len(paragraph_sentences)
+                                else target.get("target_preview") or ""
                             )
-                            strategy = f"topk_texture_repair_c{candidate_number}"
-                            if not candidate:
+                            sentence_candidate, sentence_reject = _clean_source_sentence_candidate(
+                                raw_paragraph_candidate,
+                                original_sentence,
+                            )
+                            if sentence_reject:
                                 search_summary["candidates"].append({
                                     "strategy": strategy,
                                     "passed_local_checks": False,
-                                    "reason": "empty_or_unchanged_candidate",
-                                    "topk_texture_repair": True,
-                                })
-                                continue
-                            _evaluate_ai_search_candidate(
-                                strategy,
-                                candidate,
-                                deterministic=False,
-                                extra={
-                                    "topk_texture_repair": True,
-                                    "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
-                                },
-                            )
-                    elif paragraph_component_first:
-                        search_summary["topk_texture_repair"] = {
-                            "enabled": False,
-                            "reason": "deferred_after_paragraph_component_first",
-                    }
-                    for source_number, source_result in enumerate(source_repair_results, start=1):
-                        target = source_result.get("_repair_target") or {}
-                        paragraph_index = _safe_index(target.get("paragraph_index"), 0)
-                        report_progress(
-                            min(89, 78 + source_number),
-                            (
-                                "Trying source-grounded reinforce/remove candidate "
-                                f"{source_number}/{len(source_repair_results)}"
-                            ),
-                        )
-                        try:
-                            prompt = _source_grounding_repair_prompt(
-                                target,
-                                source_result,
-                                candidate_count=source_candidate_count,
-                            )
-                            search_summary["llm_calls"] += 1
-                            response = gateway.chat(
-                                prompt,
-                                system=(
-                                    "You are DraftProof's source-grounding repair engine. "
-                                    "Use only provided source candidates and return tagged replacement paragraphs."
-                                ),
-                                temperature=float(os.environ.get(
-                                    "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TEMPERATURE",
-                                    "0.45",
-                                )),
-                                max_tokens=int(os.environ.get(
-                                    "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_MAX_TOKENS",
-                                    "2200",
-                                )),
-                                top_p=_float_env_optional("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TOP_P"),
-                                top_k=_int_env_optional("DRAFTPROOF_SOURCE_GROUNDING_REPAIR_TOP_K"),
-                                presence_penalty=_float_env_optional(
-                                    "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_PRESENCE_PENALTY"
-                                ),
-                                frequency_penalty=_float_env_optional(
-                                    "DRAFTPROOF_SOURCE_GROUNDING_REPAIR_FREQUENCY_PENALTY"
-                                ),
-                            )
-                            source_outputs = _extract_paragraph_component_candidates(
-                                response.content,
-                                source_candidate_count,
-                            )
-                        except Exception as exc:
-                            search_summary["candidates"].append({
-                                "strategy": f"source_grounding_repair_p{paragraph_index + 1}_batch",
-                                "passed_local_checks": False,
-                                "reason": f"llm_error {exc}",
-                                "source_grounding_repair": True,
-                                "paragraph_index": paragraph_index,
-                                "claim_id": source_result.get("claim_id"),
-                                "source_confidence": source_result.get("source_confidence"),
-                            })
-                            continue
-                        if not source_outputs:
-                            search_summary["candidates"].append({
-                                "strategy": f"source_grounding_repair_p{paragraph_index + 1}_batch",
-                                "passed_local_checks": False,
-                                "reason": "empty_candidate_batch",
-                                "source_grounding_repair": True,
-                                "paragraph_index": paragraph_index,
-                                "claim_id": source_result.get("claim_id"),
-                                "source_confidence": source_result.get("source_confidence"),
-                            })
-                            continue
-                        for candidate_number, raw_paragraph_candidate in enumerate(source_outputs, start=1):
-                            strategy = (
-                                f"source_grounding_repair_p{paragraph_index + 1}"
-                                f"_c{candidate_number}"
-                            )
-                            repair_scope = str(target.get("repair_scope") or "paragraph")
-                            original_paragraph = (
-                                _logical_paragraphs(component_base_text)[paragraph_index]
-                                if paragraph_index < len(_logical_paragraphs(component_base_text))
-                                else target.get("target_preview") or ""
-                            )
-                            sentence_index = _safe_index(target.get("sentence_index"), -1)
-                            if repair_scope == "sentence_window" and sentence_index >= 0:
-                                paragraph_sentences = _split_sentences(original_paragraph)
-                                original_sentence = (
-                                    paragraph_sentences[sentence_index]
-                                    if sentence_index < len(paragraph_sentences)
-                                    else target.get("target_preview") or ""
-                                )
-                                sentence_candidate, sentence_reject = _clean_source_sentence_candidate(
-                                    raw_paragraph_candidate,
-                                    original_sentence,
-                                )
-                                if sentence_reject:
-                                    search_summary["candidates"].append({
-                                        "strategy": strategy,
-                                        "passed_local_checks": False,
-                                        "reason": sentence_reject,
-                                        "source_grounding_repair": True,
-                                        "repair_scope": repair_scope,
-                                        "paragraph_index": paragraph_index,
-                                        "sentence_index": sentence_index,
-                                        "claim_id": source_result.get("claim_id"),
-                                        "source_confidence": source_result.get("source_confidence"),
-                                    })
-                                    continue
-                                paragraph_candidate = _splice_sentence_window(
-                                    original_paragraph,
-                                    sentence_index,
-                                    sentence_index + 1,
-                                    sentence_candidate,
-                                )
-                                if paragraph_candidate == original_paragraph:
-                                    search_summary["candidates"].append({
-                                        "strategy": strategy,
-                                        "passed_local_checks": False,
-                                        "reason": "sentence_window_no_change",
-                                        "source_grounding_repair": True,
-                                        "repair_scope": repair_scope,
-                                        "paragraph_index": paragraph_index,
-                                        "sentence_index": sentence_index,
-                                        "claim_id": source_result.get("claim_id"),
-                                        "source_confidence": source_result.get("source_confidence"),
-                                    })
-                                    continue
-                                patched_candidate = _splice_paragraph(
-                                    component_base_text,
-                                    paragraph_index,
-                                    paragraph_candidate,
-                                )
-                            else:
-                                paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
-                                    raw_paragraph_candidate,
-                                    original_paragraph,
-                                )
-                                if paragraph_reject:
-                                    search_summary["candidates"].append({
-                                        "strategy": strategy,
-                                        "passed_local_checks": False,
-                                        "reason": paragraph_reject,
-                                        "source_grounding_repair": True,
-                                        "repair_scope": repair_scope,
-                                        "paragraph_index": paragraph_index,
-                                        "claim_id": source_result.get("claim_id"),
-                                        "source_confidence": source_result.get("source_confidence"),
-                                    })
-                                    continue
-                                patched_candidate = _splice_paragraph(
-                                    component_base_text,
-                                    paragraph_index,
-                                    paragraph_candidate,
-                                )
-                            _evaluate_ai_search_candidate(
-                                strategy,
-                                patched_candidate,
-                                deterministic=False,
-                                extra={
+                                    "reason": sentence_reject,
                                     "source_grounding_repair": True,
                                     "repair_scope": repair_scope,
                                     "paragraph_index": paragraph_index,
-                                    "sentence_index": sentence_index if repair_scope == "sentence_window" else None,
+                                    "sentence_index": sentence_index,
                                     "claim_id": source_result.get("claim_id"),
                                     "source_confidence": source_result.get("source_confidence"),
-                                    "source_count": len(source_result.get("sources") or []),
-                                },
+                                })
+                                continue
+                            paragraph_candidate = _splice_sentence_window(
+                                original_paragraph,
+                                sentence_index,
+                                sentence_index + 1,
+                                sentence_candidate,
                             )
-                        if best_strategy and best_selection_status.get("selectable"):
-                            component_base_text = best_text
+                            if paragraph_candidate == original_paragraph:
+                                search_summary["candidates"].append({
+                                    "strategy": strategy,
+                                    "passed_local_checks": False,
+                                    "reason": "sentence_window_no_change",
+                                    "source_grounding_repair": True,
+                                    "repair_scope": repair_scope,
+                                    "paragraph_index": paragraph_index,
+                                    "sentence_index": sentence_index,
+                                    "claim_id": source_result.get("claim_id"),
+                                    "source_confidence": source_result.get("source_confidence"),
+                                })
+                                continue
+                            patched_candidate = _splice_paragraph(
+                                component_base_text,
+                                paragraph_index,
+                                paragraph_candidate,
+                            )
+                        else:
+                            paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
+                                raw_paragraph_candidate,
+                                original_paragraph,
+                            )
+                            if paragraph_reject:
+                                search_summary["candidates"].append({
+                                    "strategy": strategy,
+                                    "passed_local_checks": False,
+                                    "reason": paragraph_reject,
+                                    "source_grounding_repair": True,
+                                    "repair_scope": repair_scope,
+                                    "paragraph_index": paragraph_index,
+                                    "claim_id": source_result.get("claim_id"),
+                                    "source_confidence": source_result.get("source_confidence"),
+                                })
+                                continue
+                            patched_candidate = _splice_paragraph(
+                                component_base_text,
+                                paragraph_index,
+                                paragraph_candidate,
+                            )
+                        _evaluate_ai_search_candidate(
+                            strategy,
+                            patched_candidate,
+                            deterministic=False,
+                            extra={
+                                "source_grounding_repair": True,
+                                "repair_scope": repair_scope,
+                                "paragraph_index": paragraph_index,
+                                "sentence_index": sentence_index if repair_scope == "sentence_window" else None,
+                                "claim_id": source_result.get("claim_id"),
+                                "source_confidence": source_result.get("source_confidence"),
+                                "source_count": len(source_result.get("sources") or []),
+                            },
+                        )
+                    if best_strategy and best_selection_status.get("selectable"):
+                        component_base_text = best_text
 
                 if paragraph_search_enabled:
                     try:
@@ -13779,6 +14234,7 @@ def run_rewrite_pipeline(
                             paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
                                 raw_paragraph_candidate,
                                 target.get("paragraph") or "",
+                                _paragraph_anchor_lock(target),
                             )
                             if paragraph_reject:
                                 search_summary["candidates"].append({
@@ -13904,6 +14360,7 @@ def run_rewrite_pipeline(
                                 paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
                                     raw_paragraph_candidate,
                                     target.get("paragraph") or "",
+                                    _paragraph_anchor_lock(target),
                                 )
                                 if paragraph_reject:
                                     search_summary["candidates"].append({
@@ -14024,6 +14481,7 @@ def run_rewrite_pipeline(
                                 paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
                                     raw_paragraph_candidate,
                                     target.get("paragraph") or "",
+                                    _paragraph_anchor_lock(target),
                                 )
                                 if paragraph_reject:
                                     search_summary["candidates"].append({
@@ -14309,6 +14767,7 @@ def run_rewrite_pipeline(
                             paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
                                 raw_paragraph_candidate,
                                 target.get("paragraph") or "",
+                                _paragraph_anchor_lock(target),
                             )
                             if paragraph_reject:
                                 search_summary["candidates"].append({
@@ -14479,6 +14938,7 @@ def run_rewrite_pipeline(
                                 paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
                                     raw_paragraph_candidate,
                                     target.get("paragraph") or "",
+                                    _paragraph_anchor_lock(target),
                                 )
                                 if paragraph_reject:
                                     search_summary["candidates"].append({
@@ -14529,6 +14989,7 @@ def run_rewrite_pipeline(
                 if (
                     _env_flag("DRAFTPROOF_BLOCKED_HUMAN_WINNER_REPAIR", True)
                     and best_blocked_human_candidate
+                    and not _blocked_human_winner_failed_formula_gate(best_blocked_human_candidate)
                     and effective_key
                     and (
                         not adaptive_stop_reason
@@ -14814,6 +15275,11 @@ def run_rewrite_pipeline(
                 or "best_candidate_below_required_ai_drop"
             )
         search_summary["seconds"] = round(time.time() - search_started, 3)
+        search_summary["source_search_calls"] = _source_search_calls_used()
+        search_summary["source_search_budget"] = {
+            "max_calls_per_run": _source_search_max_calls_per_run(),
+            "remaining_calls": _source_search_remaining_calls(),
+        }
         result.summary["ai_mitigation_search"] = search_summary
         if search_summary.get("llm_calls"):
             result.summary["ai_search_llm_calls_used"] = search_summary["llm_calls"]
@@ -15483,12 +15949,24 @@ def run_rewrite_pipeline(
     )
     if author_context_discovery:
         result.summary["author_context_discovery"] = author_context_discovery
-    source_grounding_search = _build_source_grounding_search_layer(
-        rewritten_text,
-        rewritten_report_dict,
-    )
-    if source_grounding_search:
-        result.summary["source_grounding_search"] = source_grounding_search
+    if _env_flag("DRAFTPROOF_FINAL_SOURCE_GROUNDING_SEARCH", False):
+        source_grounding_search = _build_source_grounding_search_layer(
+            rewritten_text,
+            rewritten_report_dict,
+        )
+        if source_grounding_search:
+            result.summary["source_grounding_search"] = source_grounding_search
+    else:
+        result.summary["source_grounding_search"] = {
+            "enabled": False,
+            "reason": "disabled_final_guidance_search",
+        }
+    result.summary["source_search_calls_used"] = _source_search_calls_used()
+    result.summary["source_search_budget"] = {
+        "enabled": _source_search_enabled(),
+        "max_calls_per_run": _source_search_max_calls_per_run(),
+        "remaining_calls": _source_search_remaining_calls(),
+    }
     author_evidence_answers = _load_author_evidence_answers()
     author_evidence_integration = {
         "enabled": bool(author_evidence_intake),

@@ -84,6 +84,47 @@ _RETRYABLE_PATTERNS = [
 ]
 
 
+_MODEL_CAPABILITIES = {
+    "openai/gpt-4.1-mini": {
+        "top_k": False,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+    },
+    "openai/gpt-4o-mini": {
+        "top_k": False,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+    },
+    "openai/gpt-5-mini": {
+        "top_k": False,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+    },
+    "openai/gpt-5.4-nano": {
+        "top_k": False,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+    },
+}
+
+
+def _model_capabilities(model: str) -> dict:
+    normalized = str(model or "").strip().lower()
+    if normalized in _MODEL_CAPABILITIES:
+        return dict(_MODEL_CAPABILITIES[normalized])
+    if normalized.startswith("openai/") or normalized.startswith("gpt-"):
+        return {
+            "top_k": False,
+            "presence_penalty": True,
+            "frequency_penalty": True,
+        }
+    return {
+        "top_k": True,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+    }
+
+
 def _classify_error(error: Exception, attempt: int, max_retries: int) -> _RetryAction:
     """Decide whether to retry or fail based on error type and attempt count."""
     if attempt >= max_retries:
@@ -235,18 +276,40 @@ class LLMGateway:
         effective_frequency_penalty = (
             frequency_penalty if frequency_penalty is not None else self.frequency_penalty
         )
+        requested_sampling = {
+            "temperature": payload["temperature"],
+            "top_p": effective_top_p,
+            "top_k": effective_top_k,
+            "presence_penalty": effective_presence_penalty,
+            "frequency_penalty": effective_frequency_penalty,
+        }
+        caps = _model_capabilities(self.model)
         if effective_top_p is not None:
             payload["top_p"] = effective_top_p
-        if effective_top_k is not None:
+        if effective_top_k is not None and caps.get("top_k", True):
             payload["top_k"] = effective_top_k
         if effective_presence_penalty is not None:
             payload["presence_penalty"] = effective_presence_penalty
         if effective_frequency_penalty is not None:
             payload["frequency_penalty"] = effective_frequency_penalty
+        effective_sampling = {
+            key: payload[key]
+            for key in ("temperature", "top_p", "top_k", "presence_penalty", "frequency_penalty")
+            if key in payload
+        }
 
         headers = self._build_headers()
         prompt_chars = sum(len(m.get("content", "")) for m in messages)
-        logger.info(f"LLM request: url={url}, model={self.model}, messages={len(messages)}, prompt_chars={prompt_chars}, max_tokens={payload['max_tokens']}")
+        logger.info(
+            "LLM request: url=%s, model=%s, messages=%d, prompt_chars=%d, max_tokens=%s, requested_sampling=%s, effective_sampling=%s",
+            url,
+            self.model,
+            len(messages),
+            prompt_chars,
+            payload["max_tokens"],
+            json.dumps(requested_sampling, sort_keys=True),
+            json.dumps(effective_sampling, sort_keys=True),
+        )
 
         for attempt in range(1, self.max_retries + 1):
             try:
