@@ -125,6 +125,13 @@ def _extract_named_entities(text: str) -> Set[str]:
         # Check it's not a sentence start
         start = m.start()
         prefix = text[max(0, start - 3):start]
+        previous_text = text[:start]
+        previous_non_space = re.search(r"\S\s*$", previous_text)
+        if not previous_non_space:
+            continue
+        previous_char = previous_non_space.group(0).strip()
+        if previous_char in {".", "!", "?", "\n", "\r"} or "\n" in prefix:
+            continue
         if not re.search(r'[.!?]["\')\]]?\s*$', prefix):
             entities.add(word)
 
@@ -151,6 +158,11 @@ def _extract_quotes(text: str) -> Set[str]:
     strip_chars = '"“”\'‘’'
     for m in _QUOTE_RE.finditer(text):
         content = m.group().strip(strip_chars)
+        # Rhetorical question prompts in essays are not source quotes or
+        # evidence anchors; preserving their exact wording is too strict for
+        # rewrite drift control.
+        if content.strip().endswith("?"):
+            continue
         if len(content.split()) >= 3:
             quotes.add(m.group())
     return quotes

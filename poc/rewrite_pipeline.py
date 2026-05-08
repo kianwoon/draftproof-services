@@ -195,6 +195,27 @@ def _llm_call_budget_exhausted_before_send(optimistic_llm_calls: int, max_llm_ca
     return int(optimistic_llm_calls or 0) > int(max_llm_calls or 0)
 
 
+def _resolve_stage_llm_budget(
+    primary_env: str,
+    fallback_env: str | None = None,
+    *,
+    default: int = 0,
+) -> int:
+    """Resolve an LLM call budget with an explicit fallback env.
+
+    Several rewrite stages share the same user-visible budget intent. This
+    helper prevents a later stage from silently ignoring a cap that was set for
+    the broader rewrite/search controller.
+    """
+    for name in (primary_env, fallback_env):
+        if not name:
+            continue
+        value = _int_env_optional(name)
+        if value is not None:
+            return max(0, int(value))
+    return max(0, int(default))
+
+
 def _float_env_optional(name: str) -> float | None:
     raw = os.environ.get(name)
     if raw is None or str(raw).strip() == "":
@@ -6392,6 +6413,7 @@ def _staged_reconstruction_candidate(
     attempt_index: int,
     strategy: str,
     prior_attempts: list[dict] | None = None,
+    max_calls: int | None = None,
 ) -> tuple[str, dict]:
     """Generate a candidate through section prompts and deterministic assembly."""
     brief = _build_reconstruction_meaning_brief(source_text, raw_json)
@@ -6404,6 +6426,16 @@ def _staged_reconstruction_candidate(
     section_results: list[dict] = []
     call_count = 0
     for section_plan in section_plans:
+        if max_calls is not None and call_count >= max(0, int(max_calls)):
+            section_results.append({
+                "heading": section_plan.get("heading"),
+                "target_words": section_plan.get("target_words"),
+                "actual_words": 0,
+                "empty": True,
+                "skipped": True,
+                "skip_reason": "llm_call_budget_exhausted",
+            })
+            continue
         prompt = _staged_reconstruction_section_prompt(
             context_ledger,
             gate_controls,
@@ -6468,6 +6500,10 @@ def _staged_reconstruction_candidate(
         "reference_entries_preserved": len(references),
         "source_draft_included": False,
         "context_ledger_schema": context_ledger.get("schema_version"),
+        "max_calls": max_calls,
+        "budget_exhausted": bool(
+            max_calls is not None and call_count >= max(0, int(max_calls))
+        ),
     }
     return _clean_full_document_candidate(candidate, source_text), metadata
 
@@ -10642,6 +10678,34 @@ def run_rewrite_pipeline(
             authenticity_summary["reason"] = "no_llm_available"
         else:
             source_for_mitigation, source_repairs = _repair_candidate_source_damage(text)
+            authenticity_max_llm_calls = _resolve_stage_llm_budget(
+                "DRAFTPROOF_AUTHENTICITY_MAX_LLM_CALLS",
+                "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
+                default=int(_adaptive_budget_default(source_for_mitigation, 2, 4)),
+            )
+            authenticity_summary["budget"] = {
+                "max_llm_calls": authenticity_max_llm_calls,
+                "fallback_env": "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
+            }
+
+            def _auth_llm_remaining() -> int:
+                return max(
+                    0,
+                    int(authenticity_max_llm_calls)
+                    - int(authenticity_summary.get("llm_calls") or 0),
+                )
+
+            def _auth_llm_budget_exhausted(phase: str) -> bool:
+                if _auth_llm_remaining() > 0:
+                    return False
+                authenticity_summary["budget_exhausted"] = {
+                    "phase": phase,
+                    "reason": "budget_exhausted_llm_calls",
+                    "llm_calls": int(authenticity_summary.get("llm_calls") or 0),
+                    "max_llm_calls": int(authenticity_max_llm_calls),
+                }
+                return True
+
             if source_repairs:
                 authenticity_summary["source_repairs"] = source_repairs
             source_protected = detect_protected_spans(source_for_mitigation)
@@ -10990,7 +11054,7 @@ def run_rewrite_pipeline(
                         )
                         prompt, repair_info = _masked_span_repair_prompt(
                             current_masked_text,
-                            ctx.raw_json,
+                            original_report_dict,
                             exclude_sentence_indexes=masked_excluded,
                         )
                         window = repair_info.get("window") if isinstance(repair_info, dict) else {}
@@ -11284,10 +11348,14 @@ def run_rewrite_pipeline(
                     try:
                         prompt = _authenticity_mitigation_prompt(
                             source_for_mitigation,
-                            ctx.raw_json,
+                            original_report_dict,
                             ai_mitigation_contract,
                             attempt_index,
                         )
+                        if _auth_llm_budget_exhausted("authenticity_candidate"):
+                            candidate_eval["reason"] = "budget_exhausted_llm_calls"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            break
                         authenticity_summary["llm_calls"] += 1
                         response = gateway.chat(
                             prompt,
@@ -11486,27 +11554,36 @@ def run_rewrite_pipeline(
                             "passed_local_checks": False,
                             "model": generator_model,
                         }
+                        if _auth_llm_budget_exhausted("reconstruction_candidate"):
+                            candidate_eval["reason"] = "budget_exhausted_llm_calls"
+                            authenticity_summary["candidates"].append(candidate_eval)
+                            break
                         try:
                             if _env_flag("DRAFTPROOF_STAGED_REGENERATION", True):
                                 candidate, staged_info = _staged_reconstruction_candidate(
                                     gateway,
                                     source_for_mitigation,
-                                    ctx.raw_json,
+                                    original_report_dict,
                                     attempt_index=reconstruction_index,
                                     strategy=strategy,
                                     prior_attempts=authenticity_summary.get("candidates") or [],
+                                    max_calls=_auth_llm_remaining(),
                                 )
                                 candidate_eval["staged_generation"] = staged_info
                                 authenticity_summary["llm_calls"] += int(staged_info.get("llm_calls") or 0)
                             else:
                                 prompt = _reconstruction_mitigation_prompt(
                                     source_for_mitigation,
-                                    ctx.raw_json,
+                                    original_report_dict,
                                     ai_mitigation_contract,
                                     attempt_index=reconstruction_index,
                                     strategy=strategy,
                                     prior_attempts=authenticity_summary.get("candidates") or [],
                                 )
+                                if _auth_llm_budget_exhausted("reconstruction_candidate"):
+                                    candidate_eval["reason"] = "budget_exhausted_llm_calls"
+                                    authenticity_summary["candidates"].append(candidate_eval)
+                                    break
                                 authenticity_summary["llm_calls"] += 1
                                 response = gateway.chat(
                                     prompt,
@@ -11673,6 +11750,11 @@ def run_rewrite_pipeline(
                                     max_sentences=1,
                                     mode="authorship_suppression_repair",
                                 )
+                                if _auth_llm_budget_exhausted("post_generation_texture_repair"):
+                                    repaired_eval["reason"] = "budget_exhausted_llm_calls"
+                                    authenticity_summary["candidates"].append(repaired_eval)
+                                    continue
+                                authenticity_summary["llm_calls"] += 1
                                 repair_response = gateway.chat(
                                     repair_prompt,
                                     system=(
@@ -12438,11 +12520,46 @@ def run_rewrite_pipeline(
                 ),
                 drift_similarity=candidate_eval.get("drift_similarity"),
             )
+            candidate_finding_total = _finding_total(candidate_report)
+            review_burden_delta = candidate_review_burden - original_review_burden
+            weighted_severity_delta = candidate_weighted_severity - original_severity
+            finding_delta = candidate_finding_total - original_total
+            critical_high_delta = candidate_critical_high - saved_critical_high
+            ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
+            bounded_review_tradeoff = bool(
+                _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_BOUNDED_REVIEW_TRADEOFF", True)
+                and isinstance(ai_authorship_delta, (int, float))
+                and ai_authorship_delta >= _float_env(
+                    "DRAFTPROOF_BOUNDED_REVIEW_TRADEOFF_MIN_AUTHORSHIP_DROP",
+                    10.0,
+                )
+                and review_burden_delta <= _float_env(
+                    "DRAFTPROOF_BOUNDED_REVIEW_TRADEOFF_MAX_REVIEW_DELTA",
+                    1.0,
+                )
+                and weighted_severity_delta <= 0
+                and critical_high_delta <= 0
+                and finding_delta <= 0
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("human_target_regressed")
+                and not authenticity_status.get("ai_transformation_target_regressed")
+                and not ai_score_regressed
+            )
+            candidate_eval["quality_deltas"] = {
+                "review_burden_delta": review_burden_delta,
+                "weighted_severity_delta": weighted_severity_delta,
+                "finding_delta": finding_delta,
+                "critical_high_delta": critical_high_delta,
+            }
+            candidate_eval["bounded_review_tradeoff"] = bounded_review_tradeoff
             if (
                 selection_status.get("selectable")
                 and not _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_REVIEW_REGRESSION", False)
                 and (
-                    authenticity_status.get("review_burden_regressed")
+                    (
+                        authenticity_status.get("review_burden_regressed")
+                        and not bounded_review_tradeoff
+                    )
                     or authenticity_status.get("weighted_severity_regressed")
                     or authenticity_status.get("critical_high_regressed")
                     or (
@@ -12455,7 +12572,7 @@ def run_rewrite_pipeline(
                     )
                     or ai_score_regressed
                     or candidate_critical_high > saved_critical_high
-                    or _finding_total(candidate_report) > original_total
+                    or candidate_finding_total > original_total
                 )
             ):
                 selection_status.update({
@@ -12467,10 +12584,10 @@ def run_rewrite_pipeline(
                 candidate_eval=candidate_eval,
                 authenticity_status=authenticity_status,
                 ai_delta=ai_delta,
-                review_burden_delta=candidate_review_burden - original_review_burden,
-                weighted_severity_delta=candidate_weighted_severity - original_severity,
-                finding_delta=_finding_total(candidate_report) - original_total,
-                critical_high_delta=candidate_critical_high - saved_critical_high,
+                review_burden_delta=review_burden_delta,
+                weighted_severity_delta=weighted_severity_delta,
+                finding_delta=finding_delta,
+                critical_high_delta=critical_high_delta,
                 ai_score_regressed=ai_score_regressed,
             )
             if bounded_blocked_tradeoff.get("allowed"):
@@ -12526,7 +12643,6 @@ def run_rewrite_pipeline(
                     and candidate_critical_high <= saved_critical_high
                     and not authenticity_status.get("ai_authorship_regression_blocked")
                 )
-            ai_authorship_delta = authenticity_status.get("ai_authorship_delta")
             candidate_human_delta = authenticity_status.get("human_delta")
             candidate_ai_transform_delta = authenticity_status.get("ai_transformation_delta")
             safe_authorship_suppression_selectable = bool(
@@ -12552,8 +12668,11 @@ def run_rewrite_pipeline(
                 and candidate_ai_transform_delta >= 0.0
                 and isinstance(ai_delta, (int, float))
                 and ai_delta > 0.05
-                and _finding_total(candidate_report) <= original_total
-                and candidate_review_burden <= original_review_burden
+                and candidate_finding_total <= original_total
+                and (
+                    candidate_review_burden <= original_review_burden
+                    or bounded_review_tradeoff
+                )
                 and candidate_weighted_severity <= original_severity
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
@@ -12563,10 +12682,10 @@ def run_rewrite_pipeline(
                 authenticity_status=authenticity_status,
                 human_shift=human_shift,
                 ai_delta=ai_delta,
-                finding_delta=_finding_total(candidate_report) - original_total,
-                review_burden_delta=candidate_review_burden - original_review_burden,
-                weighted_severity_delta=candidate_weighted_severity - original_severity,
-                critical_high_delta=candidate_critical_high - saved_critical_high,
+                finding_delta=finding_delta,
+                review_burden_delta=review_burden_delta,
+                weighted_severity_delta=weighted_severity_delta,
+                critical_high_delta=critical_high_delta,
                 ai_score_regressed=ai_score_regressed,
             )
             score_drag_removal_selectable = bool(score_drag_status.get("allowed"))
@@ -12724,6 +12843,7 @@ def run_rewrite_pipeline(
                 and not dominant_blocker_status.get("cleared")
                 and not dominant_blocker_progress_override.get("allowed")
                 and not selection_status.get("score_drag_removal")
+                and not selection_status.get("safe_authorship_suppression")
             ):
                 selection_status.update({
                     "success": False,
@@ -13232,7 +13352,7 @@ def run_rewrite_pipeline(
                             break
                         llm_target_pool = _paragraph_component_targets(
                             llm_base_text,
-                            best_report if isinstance(best_report, dict) else ctx.raw_json,
+                            best_report if isinstance(best_report, dict) else original_report_dict,
                             limit=max(llm_target_limit * 4, llm_target_limit + len(llm_attempted_indexes)),
                         )
                         llm_targets = [
@@ -13280,7 +13400,7 @@ def run_rewrite_pipeline(
                             try:
                                 prompt = _human_signal_amplification_prompt(
                                     target,
-                                    ctx.raw_json,
+                                    original_report_dict,
                                     target_number,
                                     candidate_count=llm_candidate_limit,
                                     confirmed_author_anchors=confirmed_author_anchor_brief,
@@ -14276,7 +14396,7 @@ def run_rewrite_pipeline(
                     }
                     component_target_pool = _paragraph_component_targets(
                         component_base_text,
-                        ctx.raw_json,
+                        original_report_dict,
                         limit=max(paragraph_limit * 4, paragraph_limit + 8),
                     )
                     component_targets = [
@@ -14313,7 +14433,7 @@ def run_rewrite_pipeline(
                         try:
                             prompt = _paragraph_component_prompt(
                                 target,
-                                ctx.raw_json,
+                                original_report_dict,
                                 target_number,
                                 reference_ai=ai_search_reference,
                                 required_ai_drop=ai_first_min_drop,
@@ -14455,7 +14575,7 @@ def run_rewrite_pipeline(
                             try:
                                 prompt = _human_signal_amplification_prompt(
                                     target,
-                                    ctx.raw_json,
+                                    original_report_dict,
                                     amplify_number,
                                     candidate_count=amplify_candidates,
                                     confirmed_author_anchors=confirmed_author_anchor_brief,
@@ -14577,7 +14697,7 @@ def run_rewrite_pipeline(
                             try:
                                 prompt = _author_reasoning_amplification_prompt(
                                     target,
-                                    ctx.raw_json,
+                                    original_report_dict,
                                     reasoning_number,
                                     candidate_count=reasoning_candidates,
                                 )
@@ -14674,7 +14794,7 @@ def run_rewrite_pipeline(
                     try:
                         prompt = _ai_search_prompt(
                             search_source_text,
-                            ctx.raw_json,
+                            original_report_dict,
                             strategy,
                             reference_ai=ai_search_reference,
                             required_ai_drop=ai_first_min_drop,
@@ -14765,7 +14885,7 @@ def run_rewrite_pipeline(
                         try:
                             prompt = _ai_search_feedback_prompt(
                                 search_source_text,
-                                ctx.raw_json,
+                                original_report_dict,
                                 search_summary,
                                 feedback_index,
                             )
@@ -14829,7 +14949,7 @@ def run_rewrite_pipeline(
                     post_targets = [
                         target for target in _paragraph_component_targets(
                             best_text,
-                            ctx.raw_json,
+                            original_report_dict,
                             limit=max(post_target_limit, 1),
                         )
                         if str(target.get("role") or "") in post_roles
@@ -14861,7 +14981,7 @@ def run_rewrite_pipeline(
                         try:
                             prompt = _human_signal_amplification_prompt(
                                 target,
-                                ctx.raw_json,
+                                original_report_dict,
                                 post_number,
                                 candidate_count=post_candidate_limit,
                                 confirmed_author_anchors=confirmed_author_anchor_brief,
@@ -15001,7 +15121,7 @@ def run_rewrite_pipeline(
                         climb_targets = [
                             target for target in _paragraph_component_targets(
                                 climb_base_text,
-                                ctx.raw_json,
+                                original_report_dict,
                                 limit=max(climb_target_limit * 3, climb_target_limit),
                             )
                             if str(target.get("role") or "") in climb_roles
@@ -15032,7 +15152,7 @@ def run_rewrite_pipeline(
                             try:
                                 prompt = _human_signal_amplification_prompt(
                                     target,
-                                    ctx.raw_json,
+                                    original_report_dict,
                                     climb_round,
                                     candidate_count=climb_candidate_limit,
                                     confirmed_author_anchors=confirmed_author_anchor_brief,
@@ -15189,7 +15309,7 @@ def run_rewrite_pipeline(
                                 prompt = _blocked_human_candidate_repair_prompt(
                                     search_source_text,
                                     str(best_blocked_human_candidate.get("text") or ""),
-                                    ctx.raw_json,
+                                    original_report_dict,
                                     blocked_summary,
                                     repair_index,
                                 )

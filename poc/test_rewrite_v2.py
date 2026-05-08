@@ -192,6 +192,7 @@ from rewrite_pipeline import (
     _phase_sampling_arg,
     _mitigation_sampling_policy_summary,
     _llm_call_budget_exhausted_before_send,
+    _resolve_stage_llm_budget,
 )
 from llm.gateway import _model_capabilities
 from report import ReportBuilder, report_to_dict
@@ -2274,6 +2275,24 @@ however_drift = check_semantic_drift(
 assert_test(
     all("However" not in reason for reason in however_drift.reasons),
     "semantic drift does not treat However as a protected named entity",
+)
+education_heading_drift = check_semantic_drift(
+    "Education today should pay more attention to the learning process.",
+    "The learning process should receive more attention today.",
+    threshold=0.50,
+)
+assert_test(
+    all("Education" not in reason for reason in education_heading_drift.reasons),
+    "semantic drift does not treat sentence-start Education as a protected named entity",
+)
+rhetorical_quote_drift = check_semantic_drift(
+    'Schools should ask "What answer did the student give?" and then look at the process.',
+    "Schools should ask what answer the student gave and then look at the process.",
+    threshold=0.50,
+)
+assert_test(
+    all(not reason.startswith("quote_lost") for reason in rhetorical_quote_drift.reasons),
+    "semantic drift does not protect rhetorical question quote markers as source quotes",
 )
 
 ai_search_candidates = _ai_search_marked_grounding_candidates(
@@ -5724,6 +5743,38 @@ assert_test(
     unsafe_stale_blocker_override.get("allowed") is False,
     "dominant blocker gate still blocks authorship regression",
 )
+
+old_auth_budget = os.environ.get("DRAFTPROOF_AUTHENTICITY_MAX_LLM_CALLS")
+old_search_budget = os.environ.get("DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS")
+try:
+    os.environ.pop("DRAFTPROOF_AUTHENTICITY_MAX_LLM_CALLS", None)
+    os.environ["DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS"] = "0"
+    assert_test(
+        _resolve_stage_llm_budget(
+            "DRAFTPROOF_AUTHENTICITY_MAX_LLM_CALLS",
+            "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
+            default=4,
+        ) == 0,
+        "authenticity generation honors shared AI-search LLM kill switch",
+    )
+    os.environ["DRAFTPROOF_AUTHENTICITY_MAX_LLM_CALLS"] = "2"
+    assert_test(
+        _resolve_stage_llm_budget(
+            "DRAFTPROOF_AUTHENTICITY_MAX_LLM_CALLS",
+            "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
+            default=4,
+        ) == 2,
+        "stage-specific LLM budget overrides shared fallback budget",
+    )
+finally:
+    if old_auth_budget is None:
+        os.environ.pop("DRAFTPROOF_AUTHENTICITY_MAX_LLM_CALLS", None)
+    else:
+        os.environ["DRAFTPROOF_AUTHENTICITY_MAX_LLM_CALLS"] = old_auth_budget
+    if old_search_budget is None:
+        os.environ.pop("DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS", None)
+    else:
+        os.environ["DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS"] = old_search_budget
 
 
 # ════════════════════════════════════════════════════════════════════════
