@@ -1,6 +1,16 @@
 import { useEffect, useRef } from 'react';
 
-export default function ConfirmDialog({ open, title, message, confirmLabel = 'Delete', onConfirm, onCancel }) {
+export default function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel = 'Delete',
+  cancelLabel = 'Cancel',
+  confirmClassName = 'btn-danger',
+  hideCancel = false,
+  onConfirm,
+  onCancel,
+}) {
   const dialogRef = useRef(null);
 
   useEffect(() => {
@@ -24,8 +34,10 @@ export default function ConfirmDialog({ open, title, message, confirmLabel = 'De
         <h3 className="modal-title">{title}</h3>
         <p className="modal-message">{message}</p>
         <div className="modal-actions">
-          <button className="btn btn-secondary btn-small" onClick={onCancel}>Cancel</button>
-          <button className="btn btn-small btn-danger" ref={dialogRef} onClick={onConfirm}>{confirmLabel}</button>
+          {!hideCancel && (
+            <button className="btn btn-secondary btn-small" onClick={onCancel}>{cancelLabel}</button>
+          )}
+          <button className={`btn btn-small ${confirmClassName}`} ref={dialogRef} onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
     </div>

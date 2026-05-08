@@ -18,8 +18,9 @@ export default function Scan() {
   const [error, setError] = useState(null);
   const [serverError, setServerError] = useState(null);
   const [insufficientTokens, setInsufficientTokens] = useState(false);
+  const [authExpired, setAuthExpired] = useState(false);
   const navigate = useNavigate();
-  const { refreshBalance, balance } = useAuth();
+  const { refreshBalance, balance, logout } = useAuth();
   const abortRef = useRef(null);
   const eventSourceRef = useRef(null);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -27,6 +28,12 @@ export default function Scan() {
 
   // Cancel in-flight polling on unmount
   useEffect(() => {
+    const savedDraft = sessionStorage.getItem('draftproof_scan_draft');
+    if (savedDraft) {
+      setText(savedDraft);
+      sessionStorage.removeItem('draftproof_scan_draft');
+    }
+
     return () => {
       if (abortRef.current) {
         abortRef.current.abort();
@@ -35,6 +42,26 @@ export default function Scan() {
         eventSourceRef.current.close();
       }
     };
+  }, []);
+
+  const redirectToSignIn = useCallback(async () => {
+    if (text.trim()) {
+      sessionStorage.setItem('draftproof_scan_draft', text);
+    }
+    sessionStorage.setItem('auth_next', '/scan');
+    await logout?.();
+    navigate('/signin?error=Session expired. Please sign in again.', { replace: true });
+  }, [logout, navigate, text]);
+
+  const handleAuthExpired = useCallback(() => {
+    setBusy(false);
+    setShowProgress(false);
+    setProgressPercent(0);
+    setProgressMessage(null);
+    setStatus(null);
+    setError(null);
+    setServerError(null);
+    setAuthExpired(true);
   }, []);
 
   const updateProgress = useCallback((data) => {
@@ -160,12 +187,18 @@ export default function Scan() {
       if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
       const msg = err.response?.data?.detail || 'Scan failed';
       const httpStatus = err.response?.status;
+      const isAuthExpired = httpStatus === 401 || (
+        httpStatus === 403 &&
+        String(msg).toLowerCase().includes('not authenticated')
+      );
       const isInsufficient = httpStatus === 400 && (
         msg.toLowerCase().includes('insufficient') ||
         msg.toLowerCase().includes('no credit account') ||
         msg.toLowerCase().includes('purchase')
       );
-      if (isInsufficient) {
+      if (isAuthExpired) {
+        handleAuthExpired();
+      } else if (isInsufficient) {
         setShowProgress(false);
         setInsufficientTokens(true);
       } else if (httpStatus >= 400) {
@@ -280,6 +313,17 @@ export default function Scan() {
           confirmLabel="Buy tokens"
           onConfirm={() => navigate('/buy')}
           onCancel={() => setInsufficientTokens(false)}
+        />
+
+        <ConfirmDialog
+          open={authExpired}
+          title="Please sign in again"
+          message="Your session has expired. Sign in again to continue your scan. Your pasted text will be restored when you return."
+          confirmLabel="Sign in"
+          confirmClassName="btn-primary"
+          hideCancel
+          onConfirm={redirectToSignIn}
+          onCancel={redirectToSignIn}
         />
       </div>
     </main>
