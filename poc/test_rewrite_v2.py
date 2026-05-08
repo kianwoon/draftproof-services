@@ -81,6 +81,7 @@ from rewrite_pipeline import (
     _goal_climb_candidate_rank,
     _authenticity_gate_status,
     _human_target_regression_selection_block,
+    _human_formula_driver_status,
     _optimization_candidate_status,
     _select_best_optimization_candidate,
     _metric_repair_diagnosis,
@@ -1011,6 +1012,11 @@ def make_shift_report(
     human_anchor,
     smoothness,
     semantic_uniformity,
+    ai_likelihood=0,
+    expansion=0,
+    discourse=0,
+    section_style=0,
+    source_similarity=0,
     high_count=0,
 ):
     return {
@@ -1027,7 +1033,12 @@ def make_shift_report(
                 "features": {
                     "human_anchor_score": human_anchor / 100,
                     "rewrite_smoothness": smoothness / 100,
+                    "ai_likelihood": ai_likelihood / 100,
+                    "outline_to_text_expansion": expansion / 100,
                     "semantic_uniformity_risk": semantic_uniformity / 100,
+                    "discourse_regularity_risk": discourse / 100,
+                    "section_style_variance": section_style / 100,
+                    "source_similarity": source_similarity / 100,
                 }
             }
         },
@@ -1211,6 +1222,38 @@ assert_test(
     and not no_target_progress_gate["candidate_progress"]
     and no_target_progress_gate["reason"] == "no_human_target_progress",
     "authenticity gate blocks below-target candidates that do not increase Human or reduce AI Transformation",
+)
+formula_safe_partial_gate = _human_formula_driver_status(
+    make_shift_report(
+        ai_authorship=41,
+        human=55,
+        ai_transformation=45,
+        grounding=51,
+        human_anchor=60,
+        smoothness=60,
+        semantic_uniformity=60,
+        ai_likelihood=60,
+        expansion=40,
+        discourse=50,
+    ),
+    make_shift_report(
+        ai_authorship=37,
+        human=57,
+        ai_transformation=43,
+        grounding=39,
+        human_anchor=60,
+        smoothness=58,
+        semantic_uniformity=57,
+        ai_likelihood=56,
+        expansion=38,
+        discourse=49,
+    ),
+)
+assert_test(
+    formula_safe_partial_gate["cleared"]
+    and formula_safe_partial_gate["safe_partial_progress"]
+    and formula_safe_partial_gate["human_delta"] == 2,
+    "Human formula gate accepts safe partial progress when formula drivers improve below the 80 target",
 )
 major_gate_env = {
     "DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD": os.environ.get("DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD"),

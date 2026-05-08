@@ -2956,10 +2956,26 @@ def _human_formula_driver_status(original_report: dict | None, candidate_report:
     min_ai_raw_drop = _float_env("DRAFTPROOF_HUMAN_FORMULA_MIN_AI_RAW_DROP", 0.04)
     min_human_gain = _float_env("DRAFTPROOF_HUMAN_FORMULA_MIN_HUMAN_GAIN", 4.0)
     max_driver_regression = _float_env("DRAFTPROOF_HUMAN_FORMULA_MAX_DRIVER_REGRESSION", 0.04)
+    safe_min_ai_raw_drop = _float_env(
+        "DRAFTPROOF_HUMAN_FORMULA_SAFE_MIN_AI_RAW_DROP",
+        min_ai_raw_drop * 0.75,
+    )
+    safe_min_human_gain = _float_env(
+        "DRAFTPROOF_HUMAN_FORMULA_SAFE_MIN_HUMAN_GAIN",
+        1.0,
+    )
     total_regression = sum(regressions.values())
+    safe_partial_progress = bool(
+        required
+        and float(human_delta) >= safe_min_human_gain
+        and ai_raw_drop >= safe_min_ai_raw_drop
+        and human_raw_gain >= 0.0
+        and total_regression <= max_driver_regression
+    )
     clears = bool(
         not required
         or float(human_delta) >= min_human_gain
+        or safe_partial_progress
         or (
             ai_raw_drop >= min_ai_raw_drop
             and human_raw_gain >= -0.01
@@ -2976,6 +2992,9 @@ def _human_formula_driver_status(original_report: dict | None, candidate_report:
         "human_raw_gain": round(human_raw_gain, 4),
         "min_ai_raw_drop": min_ai_raw_drop,
         "min_human_gain": min_human_gain,
+        "safe_partial_progress": safe_partial_progress,
+        "safe_min_ai_raw_drop": round(safe_min_ai_raw_drop, 4),
+        "safe_min_human_gain": safe_min_human_gain,
         "total_driver_regression": round(total_regression, 4),
         "max_driver_regression": max_driver_regression,
         "driver_drops": drops,

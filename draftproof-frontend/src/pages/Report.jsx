@@ -365,7 +365,22 @@ function getOriginalDetectScan(rewriteReport) {
   return summary.detect_scan_original_saved || rewriteReport?.detect_scan_original_saved || null;
 }
 
+function isRewriteOriginalPreserved(rewriteReport) {
+  const summary = getRewritePayloadSummary(rewriteReport);
+  return Boolean(
+    rewriteReport?.status === 'original_preserved' ||
+    rewriteReport?.pipeline_status === 'original_preserved' ||
+    summary.status === 'original_preserved' ||
+    summary.pipeline_status === 'original_preserved' ||
+    summary.outcome === 'original_preserved' ||
+    summary.no_text_change
+  );
+}
+
 function getRewrittenDetectScan(rewriteReport) {
+  if (isRewriteOriginalPreserved(rewriteReport)) {
+    return getOriginalDetectScan(rewriteReport);
+  }
   const summary = getRewritePayloadSummary(rewriteReport);
   return summary.detect_scan_rewritten || rewriteReport?.detect_scan_rewritten || null;
 }
@@ -966,7 +981,7 @@ export default function Report() {
   const transformationSignalMetadata = getScanTransformationSignals(originalComparisonScan);
   const transformationSignals = buildTransformationSignals(transformation?.features, transformationSignalMetadata);
   const originalScanContributionSummary = getScanContributionSummary(originalComparisonScan);
-  const originalContributionOverride = originalScanContributionSummary || buildRewriteContributionOverride(rewriteResultSummary, 'original');
+  const originalContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'original') || originalScanContributionSummary;
   const transformationSummary = transformation
     ? mergeTransformationSummary(
       buildTransformationSummary(transformation.features, transformationSignals, originalContributionOverride),
@@ -982,7 +997,7 @@ export default function Report() {
     rewrittenTransformationSignalMetadata
   );
   const rewrittenScanContributionSummary = getScanContributionSummary(rewrittenScan);
-  const rewrittenContributionOverride = rewrittenScanContributionSummary || buildRewriteContributionOverride(rewriteResultSummary, 'rewritten');
+  const rewrittenContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'rewritten') || rewrittenScanContributionSummary;
   const rewrittenTransformationSummary = rewrittenTransformation
     ? mergeTransformationSummary(
       buildTransformationSummary(rewrittenTransformation.features, rewrittenTransformationSignals, rewrittenContributionOverride),
