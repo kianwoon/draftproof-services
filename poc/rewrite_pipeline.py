@@ -16362,7 +16362,13 @@ def run_rewrite_pipeline(
     else:
         result.summary["final_text"] = rewritten_text
         if ai_search_selected:
-            result.summary["outcome"] = "ai_mitigated"
+            final_human = _contribution_scores(rewritten_report_dict).get("human")
+            target_human = _float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0)
+            result.summary["outcome"] = (
+                "ai_mitigated"
+                if isinstance(final_human, (int, float)) and float(final_human) >= target_human
+                else "partially_improved"
+            )
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings

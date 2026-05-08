@@ -204,10 +204,9 @@ def build_transformation_features(
     source_similarity, surface_similarity = _similarity_features(similarity_summary)
 
     lived_anchor = 1.0 - clamp(layer3_input.lived_detail_risk)
-    source_anchor = clamp(layer3_input.source_grounding_strength)
     domain_anchor = clamp(layer3_input.domain_grounding_strength)
     human_anchor_score = clamp(
-        0.55 * lived_anchor + 0.25 * source_anchor + 0.20 * domain_anchor
+        0.80 * lived_anchor + 0.20 * domain_anchor
     )
 
     rewrite_smoothness = clamp(

@@ -107,6 +107,74 @@ assert_true(
     _estimate_in_text_source_grounding_strength(reference_url_text) >= 0.40,
     "reference section with verifiable URLs counts as source grounding without inventing author evidence",
 )
+high_texture_body = (
+    "Today's education system can seem caught between competing demands and rapid changes. "
+    "Students today are not waiting for knowledge to come from a textbook or a teacher. "
+    "They are already learning from YouTube, TikTok, online courses, search engines, AI tools, forums, and social media. "
+    "When information is everywhere, students may begin to believe that understanding is easy. "
+    "A short video can make a difficult skill look simple. "
+    "A polished post can hide years of practice. "
+    "An AI-generated answer can sound confident even when the student has not truly understood the topic. "
+    "Real learning is slower than that. "
+    "It is not always clean or exciting. Sometimes it is boring. Sometimes it is confusing. "
+    "A teacher is not just a person who gives information. "
+    "A teacher helps students slow down and think. "
+    "Education today should pay more attention to the learning process. "
+    "Drafts, mistakes, discussions, corrections, and reflections can reveal more than one perfect submission."
+)
+no_ref_layer3 = Layer3Scorer().score(build_layer3_input_from_text(
+    high_texture_body,
+    predictability=0.46,
+    topk_pattern=0.88,
+    generic_phrase_density=0.0,
+    citation_weakness_risk=0.50,
+    source_grounding_strength=0.30,
+    domain_grounding_strength=0.80,
+))
+with_ref_layer3 = Layer3Scorer().score(build_layer3_input_from_text(
+    high_texture_body,
+    predictability=0.46,
+    topk_pattern=0.88,
+    generic_phrase_density=0.0,
+    citation_weakness_risk=0.45,
+    source_grounding_strength=1.0,
+    domain_grounding_strength=1.0,
+))
+assert_true(
+    abs(no_ref_layer3.ai_likelihood_score - with_ref_layer3.ai_likelihood_score) <= 0.001,
+    "source-grounding strength does not lower AI authorship likelihood",
+)
+no_ref_transformation = classify_transformation_from_scan(
+    build_layer3_input_from_text(
+        high_texture_body,
+        predictability=0.46,
+        topk_pattern=0.88,
+        generic_phrase_density=0.0,
+        citation_weakness_risk=0.50,
+        source_grounding_strength=0.30,
+        domain_grounding_strength=0.80,
+    ),
+    no_ref_layer3,
+)
+with_ref_transformation = classify_transformation_from_scan(
+    build_layer3_input_from_text(
+        high_texture_body,
+        predictability=0.46,
+        topk_pattern=0.88,
+        generic_phrase_density=0.0,
+        citation_weakness_risk=0.45,
+        source_grounding_strength=1.0,
+        domain_grounding_strength=1.0,
+    ),
+    with_ref_layer3,
+)
+assert_true(
+    (
+        with_ref_transformation.features["human_anchor_score"]
+        - no_ref_transformation.features["human_anchor_score"]
+    ) <= 0.05,
+    "source references improve grounding quality without becoming a large human-authorship anchor",
+)
 
 low_signal = derive_authorship_rating(
     ai_score=0.12,

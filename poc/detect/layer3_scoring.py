@@ -1036,22 +1036,18 @@ def estimate_qualifying_text_ai_density(
     pred = clamp(predictability)
     generic_assertion = clamp(generic_assertion_risk)
     broad = clamp(broad_claim_risk)
-    unsupported = clamp(unsupported_claim_risk)
-    source_gap = 1.0 - clamp(source_grounding_strength)
     lived_gap = clamp(lived_detail_risk)
     formulaic = clamp(formulaic_progression_risk, default=estimate_formulaic_progression_risk(text))
     balanced = clamp(balanced_framing_risk, default=estimate_balanced_generic_framing_risk(text))
 
     score = weighted_average({
-        "topk_pattern": (topk, 0.18),
-        "predictability": (pred, 0.10),
-        "generic_assertion_risk": (generic_assertion, 0.16),
-        "unsupported_claim_risk": (unsupported, 0.14),
-        "source_grounding_risk": (source_gap, 0.12),
-        "broad_claim_risk": (broad, 0.10),
-        "lived_detail_risk": (lived_gap, 0.08),
-        "formulaic_progression": (formulaic, 0.06),
-        "balanced_framing": (balanced, 0.04),
+        "topk_pattern": (topk, 0.24),
+        "predictability": (pred, 0.14),
+        "generic_assertion_risk": (generic_assertion, 0.20),
+        "broad_claim_risk": (broad, 0.14),
+        "lived_detail_risk": (lived_gap, 0.10),
+        "formulaic_progression": (formulaic, 0.08),
+        "balanced_framing": (balanced, 0.06),
         "starter_density": (min(1.0, starter_density * 4.0), 0.02),
     })
 
@@ -1059,8 +1055,6 @@ def estimate_qualifying_text_ai_density(
         score += 0.04
     if qualifying_ratio >= 0.75:
         score += 0.03
-    if generic_assertion >= 0.80 and unsupported >= 0.75 and source_gap >= 0.65:
-        score += 0.06
     if topk >= 0.60 and generic_assertion >= 0.80:
         score += 0.05
     if contextual_density >= 0.45:
