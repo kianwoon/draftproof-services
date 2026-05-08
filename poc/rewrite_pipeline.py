@@ -175,6 +175,16 @@ def _int_env_optional(name: str) -> int | None:
         return None
 
 
+def _safe_index(value, default: int = -1) -> int:
+    """Parse indexes without treating zero as missing."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _load_local_env(env_path: str | None = None) -> list[str]:
     """Load simple KEY=VALUE pairs from repo .env without overriding exports."""
     if env_path is None:
@@ -280,6 +290,9 @@ def _score_human_amplification_candidate(
 def _role_model(role: str, fallback_model: str | None = None) -> str | None:
     """Resolve stage-specific LLM model names from env with legacy fallback."""
     role = (role or "").strip().lower()
+    model_lock = _rewrite_model_lock()
+    if model_lock:
+        return model_lock
     role_env = {
         "planner": ("DRAFTPROOF_PLANNER_MODEL", "PLANNER_MODEL", "planner_model", "LLM_PLANNER_MODEL"),
         "generator": ("DRAFTPROOF_GENERATOR_MODEL", "GENERATOR_MODEL", "generator_model", "LLM_GENERATOR_MODEL"),
@@ -292,6 +305,15 @@ def _role_model(role: str, fallback_model: str | None = None) -> str | None:
     if role == "retry":
         return _role_model("generator", fallback_model)
     return fallback_model or os.environ.get("LLM_MODEL")
+
+
+def _rewrite_model_lock() -> str | None:
+    """Optional hard lock for all rewrite LLM roles."""
+    raw = os.environ.get("DRAFTPROOF_REWRITE_MODEL_LOCK", "openai/gpt-4.1-mini")
+    value = str(raw or "").strip()
+    if not value or value.lower() in {"0", "off", "false", "none", "disabled"}:
+        return None
+    return value
 
 
 def _retry_model_enabled() -> bool:
@@ -1069,6 +1091,8 @@ def _source_search_keywords(text: str, limit: int = 10) -> list[str]:
 def _source_grounding_query(claim: str) -> str:
     claim_text = re.sub(r"\s+", " ", str(claim or "").strip())
     lower = claim_text.lower()
+    if any(term in lower for term in ("broader aims", "educational frameworks", "student development", "lifelong learning", "curiosity", "judgment", "judgement")):
+        return "21st century skills critical thinking lifelong learning student development education evidence research report"
     if any(term in lower for term in ("draft", "feedback", "discussion", "reflection", "improvement", "learning process")):
         return "formative assessment feedback learning process education evidence research study"
     if any(term in lower for term in ("trust", "accurate", "misleading", "sources", "information")):
@@ -1236,6 +1260,84 @@ def _source_grounding_claim_targets(
     return fallback
 
 
+def _source_grounding_targets_from_block_decisions(
+    text: str,
+    report_dict: dict | None,
+    block_decisions: list[dict],
+    *,
+    limit: int = 5,
+) -> list[dict]:
+    """Convert reinforce decisions into Tavily search targets.
+
+    Search budget should follow the block plan: only blocks marked as
+    salvageable public-source reinforcement targets get search slots.
+    """
+    paragraphs = _logical_paragraphs(text)
+    if not paragraphs:
+        return []
+    badge = (report_dict or {}).get("ai_risk_badge") or {}
+    writing = badge.get("writing_components") or {}
+    ai_components = badge.get("ai_components") or {}
+    targets: list[dict] = []
+    seen_indexes: set[int] = set()
+    for decision in block_decisions or []:
+        if not isinstance(decision, dict):
+            continue
+        if decision.get("decision") != "reinforce_with_public_source":
+            continue
+        index = _safe_index(decision.get("paragraph_index"), -1)
+        if index < 0 or index >= len(paragraphs) or index in seen_indexes:
+            continue
+        seen_indexes.add(index)
+        paragraph = paragraphs[index]
+        sentences = _split_sentences(paragraph) or [paragraph]
+        candidate_sentence = max(
+            sentences,
+            key=lambda sentence: (
+                len(re.findall(
+                    r"\b(?:should|must|need(?:s)?|important|significant|supports?|helps?|"
+                    r"allows?|enables?|creates?|means|shows?|suggests?|indicates?|changes?|"
+                    r"affects?|guides?|compare|trust|source|evidence)\b",
+                    sentence,
+                    flags=re.I,
+                )),
+                min(len(sentence.split()), 42),
+            ),
+        ).strip()
+        if len(candidate_sentence.split()) < 8:
+            candidate_sentence = paragraph[:260].strip()
+        targets.append({
+            "id": f"source_claim_{len(targets) + 1}",
+            "paragraph_index": index,
+            "paragraph_role": decision.get("role") or _paragraph_role(paragraph, {"source_gap": True}),
+            "claim": candidate_sentence[:420],
+            "query": _source_grounding_query(candidate_sentence),
+            "target_preview": paragraph[:360],
+            "why_needed": (
+                "The block planner marked this claim as salvageable through public-source reinforcement. "
+                "If support is weak, the fallback is narrow/remove rather than inventing evidence."
+            ),
+            "block_decision": {
+                key: decision.get(key)
+                for key in (
+                    "decision",
+                    "reason",
+                    "fallback_if_failed",
+                    "source_search_slot",
+                    "allowed_operations",
+                )
+            },
+            "scanner_context": {
+                "source_grounding_risk": writing.get("source_grounding_risk"),
+                "unsupported_claim_risk": writing.get("unsupported_claim_risk"),
+                "generic_assertion_risk": ai_components.get("generic_assertion_risk"),
+            },
+        })
+        if len(targets) >= max(1, limit):
+            break
+    return targets
+
+
 def _tavily_search(
     query: str,
     *,
@@ -1244,14 +1346,22 @@ def _tavily_search(
     timeout: float = 20.0,
     exclude_domains: list[str] | None = None,
     include_domains: list[str] | None = None,
+    search_depth: str | None = None,
+    chunks_per_source: int | None = None,
+    include_answer: bool | None = None,
 ) -> dict:
+    depth = str(search_depth or os.environ.get("DRAFTPROOF_SOURCE_SEARCH_DEPTH", "basic")).strip().lower()
+    if depth not in {"basic", "advanced"}:
+        depth = "basic"
     payload = {
         "query": query,
-        "search_depth": os.environ.get("DRAFTPROOF_SOURCE_SEARCH_DEPTH", "basic"),
+        "search_depth": depth,
         "max_results": max(1, min(int(max_results or 3), 10)),
-        "include_answer": False,
+        "include_answer": bool(include_answer) if include_answer is not None else False,
         "include_raw_content": False,
     }
+    if depth == "advanced" and chunks_per_source:
+        payload["chunks_per_source"] = max(1, min(int(chunks_per_source or 1), 5))
     if exclude_domains:
         payload["exclude_domains"] = exclude_domains
     if include_domains:
@@ -1267,6 +1377,52 @@ def _tavily_search(
     )
     response.raise_for_status()
     return response.json()
+
+
+def _source_search_depth_status(report_dict: dict | None, target_count: int) -> dict:
+    """Use advanced retrieval only when source grounding is severe enough to justify the cost."""
+    configured = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_DEPTH")
+    if configured:
+        depth = str(configured).strip().lower()
+        if depth not in {"basic", "advanced"}:
+            depth = "basic"
+        return {
+            "search_depth": depth,
+            "source": "env",
+            "chunks_per_source": (
+                max(1, min(int(_float_env("DRAFTPROOF_SOURCE_SEARCH_CHUNKS_PER_SOURCE", 3.0)), 5))
+                if depth == "advanced" else 0
+            ),
+            "include_answer": _env_flag("DRAFTPROOF_SOURCE_SEARCH_INCLUDE_ANSWER", depth == "advanced"),
+        }
+    if not _env_flag("DRAFTPROOF_SOURCE_SEARCH_AUTO_DEPTH", True):
+        return {"search_depth": "basic", "source": "auto_disabled", "chunks_per_source": 0, "include_answer": False}
+    writing = ((report_dict or {}).get("ai_risk_badge") or {}).get("writing_components") or {}
+    severe_source_gap = max(
+        float(writing.get("source_grounding_risk") or 0.0),
+        float(writing.get("unsupported_claim_risk") or 0.0),
+        float(writing.get("broad_claim_risk") or 0.0),
+    )
+    advanced_threshold = _float_env("DRAFTPROOF_SOURCE_SEARCH_ADVANCED_THRESHOLD", 70.0)
+    advanced_target_limit = int(_float_env("DRAFTPROOF_SOURCE_SEARCH_ADVANCED_MAX_TARGETS", 2.0))
+    if severe_source_gap >= advanced_threshold and int(target_count or 0) <= advanced_target_limit:
+        return {
+            "search_depth": "advanced",
+            "source": "adaptive_severe_source_gap",
+            "severe_source_gap": round(severe_source_gap, 3),
+            "chunks_per_source": max(
+                1,
+                min(int(_float_env("DRAFTPROOF_SOURCE_SEARCH_CHUNKS_PER_SOURCE", 3.0)), 5),
+            ),
+            "include_answer": _env_flag("DRAFTPROOF_SOURCE_SEARCH_INCLUDE_ANSWER", True),
+        }
+    return {
+        "search_depth": "basic",
+        "source": "adaptive_basic",
+        "severe_source_gap": round(severe_source_gap, 3),
+        "chunks_per_source": 0,
+        "include_answer": False,
+    }
 
 
 def _normalize_tavily_results(
@@ -1488,7 +1644,7 @@ def _internet_reinforced_reauthor_prompt(
     for index, paragraph in enumerate(paragraphs):
         target_matches = [
             target for target in (source_layer.get("claim_targets") or [])
-            if int(target.get("paragraph_index", -1) or -1) == index
+            if _safe_index(target.get("paragraph_index"), -1) == index
         ]
         block_inventory.append({
             "paragraph_index": index,
@@ -1679,9 +1835,40 @@ def _build_source_grounding_search_layer(
 ) -> dict:
     if not _source_search_enabled():
         return {}
-    max_queries = max(1, int(max_queries or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_QUERIES", 2.0)))
+    max_calls_per_run = max(
+        0,
+        min(5, int(_float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN", 5.0))),
+    )
+    if max_calls_per_run <= 0:
+        return {
+            "enabled": True,
+            "kind": "source_grounding_search",
+            "provider": os.environ.get("DRAFTPROOF_SOURCE_SEARCH_PROVIDER", "tavily"),
+            "status": "budget_exhausted",
+            "auto_apply": False,
+            "budget": {
+                "max_calls_per_run": 0,
+                "hard_max_calls_per_run": 5,
+            },
+            "claim_targets": [],
+            "results": [],
+            "policy": [
+                "Search results may support public/source-grounded claims after user review.",
+                "Search results must not be converted into author-owned observations or lived experience.",
+            ],
+        }
+    requested_queries = max(1, int(max_queries or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_QUERIES", 2.0)))
+    max_queries = min(requested_queries, max_calls_per_run)
     max_results = max(1, int(max_results or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_RESULTS", 3.0)))
-    targets = _source_grounding_claim_targets(text, report_dict, limit=max_queries)
+    block_plan = _blocker_operation_plan(text, report_dict or {}, limit=max_queries)
+    block_decision_targets = _source_grounding_targets_from_block_decisions(
+        text,
+        report_dict,
+        block_plan.get("block_decisions") or [],
+        limit=max_queries,
+    )
+    targets = block_decision_targets or _source_grounding_claim_targets(text, report_dict, limit=max_queries)
+    depth_status = _source_search_depth_status(report_dict, len(targets))
     layer = {
         "enabled": True,
         "kind": "source_grounding_search",
@@ -1690,6 +1877,22 @@ def _build_source_grounding_search_layer(
         "auto_apply": False,
         "claim_targets": targets,
         "results": [],
+        "target_source": "block_decisions" if block_decision_targets else "claim_targets",
+        "block_decision_plan": {
+            "enabled": block_plan.get("enabled"),
+            "active_blockers": block_plan.get("active_blockers"),
+            "block_decisions": block_plan.get("block_decisions"),
+        },
+        "budget": {
+            "requested_queries": requested_queries,
+            "max_queries": max_queries,
+            "max_calls_per_run": max_calls_per_run,
+            "hard_max_calls_per_run": 5,
+            "search_depth": depth_status.get("search_depth"),
+            "search_depth_source": depth_status.get("source"),
+            "chunks_per_source": depth_status.get("chunks_per_source"),
+            "include_answer": depth_status.get("include_answer"),
+        },
         "policy": [
             "Search results may support public/source-grounded claims after user review.",
             "Search results must not be converted into author-owned observations or lived experience.",
@@ -1740,6 +1943,9 @@ def _build_source_grounding_search_layer(
                 timeout=timeout,
                 exclude_domains=sorted(excluded_domains),
                 include_domains=included_domains,
+                search_depth=depth_status.get("search_depth"),
+                chunks_per_source=depth_status.get("chunks_per_source"),
+                include_answer=bool(depth_status.get("include_answer")),
             )
             sources = _normalize_tavily_results(
                 payload,
@@ -1751,6 +1957,7 @@ def _build_source_grounding_search_layer(
                 "claim_id": target.get("id"),
                 "paragraph_index": target.get("paragraph_index"),
                 "query": target.get("query"),
+                "search_depth": depth_status.get("search_depth"),
                 "source_confidence": _source_result_confidence(sources),
                 "sources": sources,
             })
@@ -2482,11 +2689,43 @@ def _blocked_human_winner_repair_budget_override(adaptive_stop_reason: str) -> b
 
 
 def _post_safe_target_push_allows_deterministic_after_budget(adaptive_stop_reason: str) -> bool:
-    """Let no-LLM target push run after the LLM call budget is exhausted."""
-    return bool(
-        _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_AFTER_LLM_BUDGET", True)
-        and str(adaptive_stop_reason or "") == "budget_exhausted_llm_calls"
-    )
+    """Let bounded no-LLM target push run after a budget stop when it cannot spend model calls."""
+    reason = str(adaptive_stop_reason or "")
+    if (
+        reason == "budget_exhausted_llm_calls"
+        and _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_AFTER_LLM_BUDGET", True)
+    ):
+        return True
+    if reason != "budget_exhausted_candidate_scans":
+        return False
+    if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_AFTER_SCAN_BUDGET", True):
+        return False
+    return _post_safe_target_push_scan_reserve(adaptive_stop_reason) > 0
+
+
+def _post_safe_target_push_scan_reserve(adaptive_stop_reason: str) -> int:
+    """Small candidate-scan reserve for safe target push after the normal scan budget is spent."""
+    if str(adaptive_stop_reason or "") != "budget_exhausted_candidate_scans":
+        return 0
+    try:
+        return max(
+            0,
+            int(_float_env("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_SCAN_RESERVE", 3.0)),
+        )
+    except (TypeError, ValueError):
+        return 3
+
+
+def _final_topk_texture_scan_reserve(adaptive_stop_reason: str) -> int:
+    """Tiny final texture reserve for an already selectable candidate under tight budget."""
+    if str(adaptive_stop_reason or "") != "budget_exhausted_candidate_scans":
+        return 0
+    if not _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_AFTER_SCAN_BUDGET", True):
+        return 0
+    try:
+        return max(0, int(_float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_SCAN_RESERVE", 1.0)))
+    except (TypeError, ValueError):
+        return 1
 
 
 def _blocked_winner_bounded_quality_tradeoff(
@@ -2562,15 +2801,21 @@ def _score_drag_removal_status(
     critical_high_delta: int,
     ai_score_regressed: bool,
 ) -> dict:
-    """Accept bounded removals/compressions that reduce review burden safely."""
+    """Classify bounded removals/compressions that reduce review burden safely.
+
+    Score-drag cleanup is useful, but it is not AI-Mitigation by itself. It can
+    only become selectable when explicitly enabled and when it also produces
+    material human-side movement. This prevents cleanup-only candidates from
+    being labelled as a successful rewrite.
+    """
     authenticity_status = authenticity_status or {}
     human_shift = human_shift or {}
     human_delta = authenticity_status.get("human_delta")
     authorship_delta = authenticity_status.get("ai_authorship_delta")
     transform_delta = authenticity_status.get("ai_transformation_delta")
-    min_human = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_HUMAN_DELTA", 0.0)
+    min_human = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_HUMAN_DELTA", 5.0)
     min_authorship = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_AUTHORSHIP_DELTA", 0.0)
-    min_transform = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_TRANSFORM_DELTA", 0.0)
+    min_transform = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_TRANSFORM_DELTA", 2.0)
     min_ai_drop = _float_env("DRAFTPROOF_SCORE_DRAG_MIN_AI_DROP", 0.05)
     min_finding_drop = int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_FINDING_DROP", 2.0))
     min_review_drop = int(_float_env("DRAFTPROOF_SCORE_DRAG_MIN_REVIEW_DROP", 1.0))
@@ -2588,7 +2833,7 @@ def _score_drag_removal_status(
         for value in (human_delta, authorship_delta, transform_delta, ai_delta)
     )
     allowed = bool(
-        _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SCORE_DRAG_REMOVAL", True)
+        _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SCORE_DRAG_REMOVAL", False)
         and numeric_ok
         and float(human_delta) >= min_human
         and float(authorship_delta) >= min_authorship
@@ -2623,6 +2868,8 @@ def _score_drag_removal_status(
         "min_review_burden_drop": min_review_drop,
         "min_weighted_severity_drop": min_severity_drop,
         "burden_reduced": burden_reduced,
+        "cleanup_only": bool(burden_reduced and not allowed),
+        "selectable_as_mitigation": allowed,
         "ignored_negative_human_shift": bool(
             isinstance(human_shift.get("score"), (int, float))
             and float(human_shift.get("score")) < 0
@@ -2738,19 +2985,134 @@ def _blocker_operation_plan(
         })
 
     operations.sort(key=lambda item: item["priority"], reverse=True)
+    selected_operations = operations[:max(1, int(limit or 1))]
+    decisions = _block_level_decisions(
+        selected_operations,
+        source_text,
+        blockers=blockers,
+    )
     return {
         "enabled": True,
         "kind": "blocker_operation_plan",
         "blockers": blockers,
         "active_blockers": active,
-        "operations": operations[:max(1, int(limit or 1))],
+        "operations": selected_operations,
+        "block_decisions": decisions,
         "policy": [
+            "reinforce source-worthy claims before removal when public evidence can help",
             "delete or compress score-dragging generic paragraphs before texture repair",
             "narrow unsupported/broad claims before adding sources or author language",
             "preserve protected anchors; never delete a protected paragraph automatically",
             "rank candidate selection by blocker elimination before cosmetic score movement",
         ],
     }
+
+
+def _block_level_decisions(
+    operations: list[dict],
+    source_text: str,
+    *,
+    blockers: dict | None = None,
+) -> list[dict]:
+    """Classify each risky block before candidate generation.
+
+    This is the control layer for the reinforce/remove architecture. It decides
+    whether a block is worth reinforcing, should be narrowed, should be
+    compressed/removed, or must be preserved/handled by the author.
+    """
+    blockers = blockers or {}
+    max_search_calls = max(
+        0,
+        min(5, int(_float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN", 5.0))),
+    )
+    search_reserved = 0
+    decisions: list[dict] = []
+    for op in operations or []:
+        paragraph_index = _safe_index(op.get("paragraph_index"), -1)
+        role = str(op.get("role") or "")
+        drivers = op.get("drivers") if isinstance(op.get("drivers"), dict) else {}
+        blocker_keys = set(op.get("blockers") or [])
+        word_count = int(op.get("word_count") or 0)
+        generic_density = float(op.get("generic_density") or 0.0)
+        generic_hits = int(drivers.get("generic_assertion_hits") or 0)
+        concrete_hits = int(drivers.get("concrete_anchor_hits") or 0)
+        source_gap = bool(drivers.get("source_gap"))
+        has_protected = bool(op.get("has_protected_anchor"))
+        has_reinforce_value = bool(
+            word_count >= 25
+            and (
+                concrete_hits >= 1
+                or role in {"source_summary_heavy", "generic_claim_heavy"}
+                or "source_grounding_risk" in blocker_keys
+                or "unsupported_claim_risk" in blocker_keys
+            )
+        )
+        heavy_generic_drag = bool(
+            generic_density >= 3.0
+            or generic_hits >= 4
+            or role == "conclusion_template_risk"
+        )
+
+        decision = "preserve"
+        reason = "no_high_value_operation"
+        uses_search = False
+        allowed_operations = ["preserve"]
+
+        if has_protected or role in {"human_anchor_rich", "technical_process_rich"}:
+            decision = "preserve_micro_repair"
+            reason = "protected_or_high_value_human_block"
+            allowed_operations = ["micro_texture_patch", "claim_narrow"]
+        elif source_gap and has_reinforce_value and search_reserved < max_search_calls:
+            decision = "reinforce_with_public_source"
+            reason = "source_gap_with_salvageable_claim"
+            uses_search = True
+            search_reserved += 1
+            allowed_operations = ["source_reinforce", "claim_narrow"]
+        elif source_gap and heavy_generic_drag and concrete_hits <= 1:
+            decision = "remove_or_compress"
+            reason = "unsupported_generic_score_drag"
+            allowed_operations = ["delete_paragraph", "compress_paragraph"]
+        elif "broad_claim_risk" in blocker_keys or "generic_assertion_risk" in blocker_keys:
+            decision = "claim_narrow"
+            reason = "broad_or_generic_claim_can_be_limited"
+            allowed_operations = ["claim_narrow", "compress_paragraph"]
+        elif "topk_pattern" in blocker_keys:
+            decision = "topk_texture_patch"
+            reason = "predictable_local_texture"
+            allowed_operations = ["micro_texture_patch"]
+        elif source_gap:
+            decision = "ask_author_context"
+            reason = "source_gap_not_safe_to_reinforce_or_remove"
+            allowed_operations = ["ask_author"]
+
+        decisions.append({
+            "paragraph_index": paragraph_index,
+            "decision": decision,
+            "reason": reason,
+            "role": role,
+            "blockers": sorted(blocker_keys),
+            "uses_source_search": uses_search,
+            "source_search_slot": search_reserved if uses_search else None,
+            "allowed_operations": allowed_operations,
+            "salvageable": decision in {
+                "reinforce_with_public_source",
+                "claim_narrow",
+                "topk_texture_patch",
+                "preserve_micro_repair",
+            },
+            "fallback_if_failed": (
+                "remove_or_compress"
+                if decision == "reinforce_with_public_source" and not has_protected
+                else "ask_author_context"
+                if decision in {"claim_narrow", "topk_texture_patch"}
+                else "preserve"
+            ),
+            "budget": {
+                "source_search_reserved": search_reserved,
+                "source_search_max": max_search_calls,
+            },
+        })
+    return decisions
 
 
 def _transformation_features(report_dict: dict | None) -> dict:
@@ -6644,6 +7006,16 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
     paragraphs = _logical_paragraphs(text)
     if not paragraphs:
         return []
+    total_words = max(1, _text_word_count(text))
+    average_paragraph_words = total_words / max(1, len(paragraphs))
+    configured_min_words = int(_float_env("DRAFTPROOF_PARAGRAPH_TARGET_MIN_WORDS", 45.0))
+    if _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_PARAGRAPH_TARGETS", False):
+        effective_min_words = max(
+            12,
+            min(configured_min_words, int(max(average_paragraph_words * 0.75, 12.0))),
+        )
+    else:
+        effective_min_words = configured_min_words
     briefs = (raw_json or {}).get("rewrite_edit_briefs") or []
     scored = []
     generic_re = re.compile(
@@ -6703,7 +7075,7 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
             and not _is_heading_like_paragraph(paragraphs[index + 1])
         ):
             continue
-        if len(words) < 45 and role != "conclusion_template_risk":
+        if len(words) < effective_min_words and role != "conclusion_template_risk":
             continue
         role_score_adjustment = {
             "generic_claim_heavy": 80.0,
@@ -7477,7 +7849,7 @@ def _generic_assertion_compiler_candidates(
     min_ratio = _float_env("DRAFTPROOF_GENERIC_ASSERTION_MIN_WORD_RATIO", 0.75)
     min_words = max(1, int(source_words * min_ratio))
     targets = _paragraph_component_targets(source_text, raw_json or {}, limit=max(limit * 3, 8))
-    targeted_indexes = {int(target.get("index", -1) or -1) for target in targets}
+    targeted_indexes = {_safe_index(target.get("index"), -1) for target in targets}
     for index, paragraph in enumerate(paragraphs):
         if index in targeted_indexes:
             continue
@@ -7650,6 +8022,11 @@ def _blocker_operation_candidates(
     min_words = max(1, int(source_words * _float_env("DRAFTPROOF_BLOCKER_OPERATION_MIN_WORD_RATIO", 0.60)))
     plan = _blocker_operation_plan(source_text, raw_json or {}, limit=max(limit * 2, 6))
     operations = plan.get("operations") or []
+    decision_by_index = {
+        _safe_index(decision.get("paragraph_index"), -1): decision
+        for decision in plan.get("block_decisions") or []
+        if isinstance(decision, dict)
+    }
     candidates: list[tuple[str, str, dict]] = []
     seen: set[str] = set()
 
@@ -7667,47 +8044,78 @@ def _blocker_operation_candidates(
     for op in operations:
         if len(candidates) >= max(1, limit):
             break
-        index = int(op.get("paragraph_index", -1) or -1)
+        index = _safe_index(op.get("paragraph_index"), -1)
         if index < 0 or index >= len(paragraphs):
             continue
         paragraph = paragraphs[index]
         operation = str(op.get("operation") or "")
+        decision = decision_by_index.get(index, {})
+        decision_name = str(decision.get("decision") or "")
+        allowed_operations = set(decision.get("allowed_operations") or [])
         has_protected = bool(op.get("has_protected_anchor"))
-        if operation in {"delete_or_compress", "compress_or_delete"} and not has_protected:
+        if (
+            operation in {"delete_or_compress", "compress_or_delete"}
+            and not has_protected
+            and decision_name == "remove_or_compress"
+            and "delete_paragraph" in allowed_operations
+        ):
             deleted = list(paragraphs)
             deleted.pop(index)
             add_candidate(
                 f"blocker_compiler_delete_p{index + 1}",
                 deleted,
-                {"operation": "delete_paragraph", "paragraph_index": index, "compiled_from": op},
+                {
+                    "operation": "delete_paragraph",
+                    "paragraph_index": index,
+                    "compiled_from": op,
+                    "block_decision": decision,
+                },
             )
         compressed_text = _compress_score_drag_paragraph(
             paragraph,
             max_remove=2 if operation in {"delete_or_compress", "compress_or_delete"} else 1,
         )
-        if compressed_text.strip() and compressed_text.strip() != paragraph.strip():
+        if (
+            compressed_text.strip()
+            and compressed_text.strip() != paragraph.strip()
+            and "compress_paragraph" in allowed_operations
+        ):
             compressed = list(paragraphs)
             compressed[index] = compressed_text
             add_candidate(
                 f"blocker_compiler_compress_p{index + 1}",
                 compressed,
-                {"operation": "compress_or_narrow_paragraph", "paragraph_index": index, "compiled_from": op},
+                {
+                    "operation": "compress_or_narrow_paragraph",
+                    "paragraph_index": index,
+                    "compiled_from": op,
+                    "block_decision": decision,
+                },
             )
         narrowed_text = _narrow_generic_claim_text(paragraph)
-        if narrowed_text.strip() and narrowed_text.strip() != paragraph.strip():
+        if (
+            narrowed_text.strip()
+            and narrowed_text.strip() != paragraph.strip()
+            and "claim_narrow" in allowed_operations
+        ):
             narrowed = list(paragraphs)
             narrowed[index] = narrowed_text
             add_candidate(
                 f"blocker_compiler_narrow_p{index + 1}",
                 narrowed,
-                {"operation": "claim_narrow", "paragraph_index": index, "compiled_from": op},
+                {
+                    "operation": "claim_narrow",
+                    "paragraph_index": index,
+                    "compiled_from": op,
+                    "block_decision": decision,
+                },
             )
 
     if len(candidates) < max(1, limit):
         combined = list(paragraphs)
         changed_indexes = []
         for op in operations:
-            index = int(op.get("paragraph_index", -1) or -1)
+            index = _safe_index(op.get("paragraph_index"), -1)
             if index < 0 or index >= len(combined) or bool(op.get("has_protected_anchor")):
                 continue
             if len(changed_indexes) >= 3:
@@ -8428,11 +8836,38 @@ def run_rewrite_pipeline(
         detect_result = run_detect(text, output_dir or "test_output", verbose=verbose)
         report = detect_result["report"]
 
-        from detect.base import DetectResult
+        from detect.base import DetectResult, Finding as DetectFinding
         by_scanner = {}
         for tier_findings in report.findings_by_tier.values():
             for f in tier_findings:
-                by_scanner.setdefault(f.scanner, []).append(f)
+                risk_level = getattr(f, "risk_level", None)
+                if not risk_level:
+                    risk_level = getattr(f, "adjusted_risk", None) or getattr(f, "raw_risk", None)
+                if not risk_level:
+                    tier_value = getattr(getattr(f, "tier", None), "value", None)
+                    risk_level = str(tier_value or "review").lower()
+                metadata = dict(getattr(f, "metadata", None) or {})
+                metadata.setdefault("scanner", getattr(f, "scanner", ""))
+                metadata.setdefault("category", getattr(f, "category", ""))
+                if getattr(f, "finding_id", ""):
+                    metadata.setdefault("finding_id", getattr(f, "finding_id", ""))
+                location = {}
+                if getattr(f, "sentence_id", ""):
+                    location["sentence_id"] = getattr(f, "sentence_id", "")
+                normalized_finding = DetectFinding(
+                    finding_type=str(getattr(f, "finding_type", None) or getattr(f, "title", "") or ""),
+                    risk_level=str(risk_level or "review").lower(),
+                    evidence_strength=str(metadata.get("evidence_strength") or "moderate"),
+                    detail=str(getattr(f, "detail", "") or ""),
+                    evidence=str(getattr(f, "evidence", "") or ""),
+                    recommendation=str(getattr(f, "recommendation", "") or ""),
+                    suggested_action_type=str(metadata.get("suggested_action_type") or "review"),
+                    location=location,
+                    metadata=metadata,
+                    signal_category=str(getattr(f, "signal_category", "") or ""),
+                    actionability=str(metadata.get("actionability") or ""),
+                )
+                by_scanner.setdefault(normalized_finding.metadata.get("scanner") or getattr(f, "scanner", ""), []).append(normalized_finding)
 
         detect_results = []
         for scanner, findings in by_scanner.items():
@@ -8756,6 +9191,17 @@ def run_rewrite_pipeline(
         len(ctx.raw_json.get("findings", {}).get("critical", []))
         + len(ctx.raw_json.get("findings", {}).get("high", []))
     )
+    original_critical_high_for_contract = (
+        len(original_report_dict.get("findings", {}).get("critical", []))
+        + len(original_report_dict.get("findings", {}).get("high", []))
+    )
+    if not (ctx.raw_json.get("findings") or {}):
+        saved_ai = original_ai
+        saved_total = original_total
+        saved_critical_high = original_critical_high_for_contract
+        result.summary["comparison_contract_source"] = "fresh_original_scan"
+    else:
+        result.summary["comparison_contract_source"] = "saved_original_scan"
     rewritten_critical_high = (
         len(rewritten_report_dict.get("findings", {}).get("critical", []))
         + len(rewritten_report_dict.get("findings", {}).get("high", []))
@@ -11048,9 +11494,30 @@ def run_rewrite_pipeline(
         def _run_post_safe_win_target_push(trigger_phase: str) -> None:
             nonlocal adaptive_stop_reason
             resumed_after_llm_budget = False
+            resumed_after_scan_budget = False
+            scan_reserve_added = 0
             if str(adaptive_stop_reason).startswith("budget_exhausted"):
                 if _post_safe_target_push_allows_deterministic_after_budget(adaptive_stop_reason):
-                    resumed_after_llm_budget = True
+                    budget_reason = str(adaptive_stop_reason or "")
+                    resumed_after_llm_budget = budget_reason == "budget_exhausted_llm_calls"
+                    resumed_after_scan_budget = budget_reason == "budget_exhausted_candidate_scans"
+                    if resumed_after_scan_budget:
+                        scan_reserve_added = _post_safe_target_push_scan_reserve(budget_reason)
+                        if scan_reserve_added > 0:
+                            previous_max = int(search_budget.get("max_candidate_scans") or 0)
+                            current_scans = len(search_summary.get("candidates", []))
+                            search_budget["max_candidate_scans"] = max(
+                                previous_max + scan_reserve_added,
+                                current_scans + scan_reserve_added,
+                            )
+                            search_summary["post_safe_target_push_scan_reserve"] = {
+                                "enabled": True,
+                                "trigger_phase": trigger_phase,
+                                "previous_max_candidate_scans": previous_max,
+                                "candidate_scans_before_reserve": current_scans,
+                                "reserve_added": scan_reserve_added,
+                                "max_candidate_scans": search_budget["max_candidate_scans"],
+                            }
                     adaptive_stop_reason = ""
                 else:
                     search_summary["post_safe_win_target_push"] = {
@@ -11132,6 +11599,8 @@ def run_rewrite_pipeline(
                 "accepted": False,
                 "accepted_strategy": None,
                 "rounds": [],
+                "resumed_after_scan_budget": resumed_after_scan_budget,
+                "scan_reserve_added": scan_reserve_added,
             }
             search_summary["post_safe_win_target_push"] = summary
             min_extra_gain = _float_env("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MIN_EXTRA_HUMAN_GAIN", 1.0)
@@ -11349,7 +11818,7 @@ def run_rewrite_pipeline(
                         )
                         llm_targets = [
                             target for target in llm_target_pool
-                            if int(target.get("index", -1) or -1) not in llm_attempted_indexes
+                            if _safe_index(target.get("index"), -1) not in llm_attempted_indexes
                         ][: max(0, min(llm_target_limit, llm_call_limit - llm_calls_used))]
                         llm_round_summary = {
                             "round": llm_round,
@@ -11379,7 +11848,7 @@ def run_rewrite_pipeline(
                             if llm_calls_used >= llm_call_limit:
                                 summary["llm_target_push"]["reason"] = "llm_call_limit_reached"
                                 break
-                            target_index = int(target.get("index", -1) or -1)
+                            target_index = _safe_index(target.get("index"), -1)
                             if target_index >= 0:
                                 llm_attempted_indexes.add(target_index)
                             report_progress(
@@ -11553,6 +12022,7 @@ def run_rewrite_pipeline(
             _run_post_safe_win_target_push("adaptive_stop")
 
         def _run_final_topk_texture_repair(trigger_phase: str) -> None:
+            nonlocal adaptive_stop_reason
             if not _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_REPAIR", True):
                 search_summary["final_topk_texture_repair"] = {
                     "enabled": False,
@@ -11615,6 +12085,28 @@ def run_rewrite_pipeline(
                 summary.update({"skipped": True, "reason": "texture_below_threshold"})
                 search_summary["final_topk_texture_repair"] = summary
                 return
+            scan_reserve_reason = str(adaptive_stop_reason or "")
+            if (
+                scan_reserve_reason != "budget_exhausted_candidate_scans"
+                and len(search_summary.get("candidates", [])) >= int(search_budget.get("max_candidate_scans") or 0)
+            ):
+                scan_reserve_reason = "budget_exhausted_candidate_scans"
+            scan_reserve = _final_topk_texture_scan_reserve(scan_reserve_reason)
+            if scan_reserve > 0:
+                previous_max = int(search_budget.get("max_candidate_scans") or 0)
+                current_scans = len(search_summary.get("candidates", []))
+                search_budget["max_candidate_scans"] = max(
+                    previous_max + scan_reserve,
+                    current_scans + scan_reserve,
+                )
+                adaptive_stop_reason = ""
+                summary["scan_reserve"] = {
+                    "enabled": True,
+                    "previous_max_candidate_scans": previous_max,
+                    "candidate_scans_before_reserve": current_scans,
+                    "reserve_added": scan_reserve,
+                    "max_candidate_scans": search_budget["max_candidate_scans"],
+                }
             search_summary["final_topk_texture_repair"] = summary
             try:
                 prompt = _topk_texture_repair_prompt(
@@ -13230,6 +13722,33 @@ def run_rewrite_pipeline(
 
                 if _best_ai_search_selectable():
                     _run_post_safe_win_target_push("pre_selection")
+                    if (
+                        _env_flag("DRAFTPROOF_FINAL_CLEANUP_AFTER_SCAN_BUDGET", True)
+                        and len(search_summary.get("candidates", [])) >= int(search_budget.get("max_candidate_scans") or 0)
+                    ):
+                        try:
+                            cleanup_reserve = max(
+                                0,
+                                int(_float_env("DRAFTPROOF_FINAL_CLEANUP_SCAN_RESERVE", 2.0)),
+                            )
+                        except (TypeError, ValueError):
+                            cleanup_reserve = 2
+                        if cleanup_reserve > 0:
+                            previous_max = int(search_budget.get("max_candidate_scans") or 0)
+                            current_scans = len(search_summary.get("candidates", []))
+                            search_budget["max_candidate_scans"] = max(
+                                previous_max + cleanup_reserve,
+                                current_scans + cleanup_reserve,
+                            )
+                            if str(adaptive_stop_reason or "") == "budget_exhausted_candidate_scans":
+                                adaptive_stop_reason = ""
+                            search_summary["final_cleanup_scan_reserve"] = {
+                                "enabled": True,
+                                "previous_max_candidate_scans": previous_max,
+                                "candidate_scans_before_reserve": current_scans,
+                                "reserve_added": cleanup_reserve,
+                                "max_candidate_scans": search_budget["max_candidate_scans"],
+                            }
                     if _env_flag("DRAFTPROOF_FINAL_DEPOLISH_CLEANUP", True):
                         depolished_text, depolish_repairs = _plain_language_depolish_text(best_text)
                         if depolish_repairs and depolished_text.strip() != best_text.strip():

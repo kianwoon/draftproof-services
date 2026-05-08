@@ -134,14 +134,19 @@ from rewrite_pipeline import (
     _should_track_blocked_human_winner,
     _blocked_human_winner_repair_budget_override,
     _post_safe_target_push_allows_deterministic_after_budget,
+    _post_safe_target_push_scan_reserve,
+    _final_topk_texture_scan_reserve,
     _blocked_winner_bounded_quality_tradeoff,
     _score_drag_removal_status,
+    _block_level_decisions,
     _adaptive_budget_default,
     _build_author_evidence_completion_layer,
     _build_mitigation_ceiling_diagnostics,
     _build_author_evidence_intake_layer,
     _build_author_context_discovery_layer,
     _source_grounding_claim_targets,
+    _source_grounding_targets_from_block_decisions,
+    _source_search_depth_status,
     _source_grounding_query,
     _normalize_tavily_results,
     _source_result_confidence,
@@ -2820,9 +2825,15 @@ assert_test(
 )
 assert_test(
     _post_safe_target_push_allows_deterministic_after_budget("budget_exhausted_llm_calls")
-    and not _post_safe_target_push_allows_deterministic_after_budget("budget_exhausted_candidate_scans")
+    and _post_safe_target_push_allows_deterministic_after_budget("budget_exhausted_candidate_scans")
     and not _post_safe_target_push_allows_deterministic_after_budget("budget_exhausted_time"),
-    "post-safe target push can still run deterministic candidates after LLM call budget exhaustion",
+    "post-safe target push has a bounded deterministic reserve after call/scan exhaustion",
+)
+assert_test(
+    _post_safe_target_push_scan_reserve("budget_exhausted_candidate_scans") == 3
+    and _post_safe_target_push_scan_reserve("budget_exhausted_llm_calls") == 0
+    and _final_topk_texture_scan_reserve("budget_exhausted_candidate_scans") == 1,
+    "target-push/final-texture reserves are tiny and budget-specific",
 )
 assert_test(
     _blocked_winner_bounded_quality_tradeoff(
@@ -2969,11 +2980,19 @@ assert_test(
 social_learning_query = _source_grounding_query(
     "They also learn from YouTube, social media, online courses, websites, AI tools, and people they follow online."
 )
+framework_query = _source_grounding_query(
+    "Integrating broader aims into traditional educational frameworks remains an unresolved tension."
+)
 assert_test(
     "social media" in social_learning_query
     and "AI tools" in social_learning_query
     and len(social_learning_query) < 260,
     "source grounding query converts broad claims into concise research search terms",
+)
+assert_test(
+    "21st century skills" in framework_query
+    and "lifelong learning" in framework_query,
+    "source grounding query maps broad curriculum-aim claims to evidence-friendly terms",
 )
 depolished_text, depolish_repairs = _plain_language_depolish_text(
     "Therefore, it is crucial for education to emphasize the learning journey, "
@@ -3401,11 +3420,67 @@ blocker_candidates = _blocker_operation_candidates(
 )
 assert_test(
     blocker_plan.get("operations")
+    and blocker_plan.get("block_decisions")
     and blocker_plan["operations"][0]["operation"] in {"delete_or_compress", "claim_narrow", "compress_or_delete"}
     and blocker_candidates
     and any(meta.get("operation") in {"delete_paragraph", "compress_or_narrow_paragraph", "claim_narrow"} for _s, _c, meta in blocker_candidates)
-    and all("operation_plan" in meta for _s, _c, meta in blocker_candidates),
-    "blocker compiler converts scanner blockers into hard delete/compress/narrow candidates",
+    and all("operation_plan" in meta and "block_decision" in meta for _s, _c, meta in blocker_candidates),
+    "blocker compiler converts scanner blockers into hard reinforce/remove/narrow decisions",
+)
+manual_decisions = _block_level_decisions(
+    [
+        {
+            "paragraph_index": 0,
+            "role": "generic_claim_heavy",
+            "blockers": ["unsupported_claim_risk", "source_grounding_risk"],
+            "word_count": 60,
+            "generic_density": 2.5,
+            "drivers": {
+                "source_gap": True,
+                "generic_assertion_hits": 3,
+                "concrete_anchor_hits": 1,
+            },
+        },
+        {
+            "paragraph_index": 1,
+            "role": "conclusion_template_risk",
+            "blockers": ["generic_assertion_risk"],
+            "word_count": 45,
+            "generic_density": 4.0,
+            "drivers": {
+                "source_gap": True,
+                "generic_assertion_hits": 5,
+                "concrete_anchor_hits": 0,
+            },
+        },
+    ],
+    pruning_source,
+)
+assert_test(
+    manual_decisions[0]["decision"] == "reinforce_with_public_source"
+    and manual_decisions[0]["fallback_if_failed"] == "remove_or_compress"
+    and manual_decisions[1]["decision"] == "remove_or_compress",
+    "block decisions reinforce salvageable claims first and remove unsalvageable drag as last resort",
+)
+decision_source_targets = _source_grounding_targets_from_block_decisions(
+    pruning_source,
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 90.0,
+                "source_grounding_risk": 90.0,
+            },
+            "ai_components": {"generic_assertion_risk": 90.0},
+        }
+    },
+    manual_decisions,
+    limit=5,
+)
+assert_test(
+    len(decision_source_targets) == 1
+    and decision_source_targets[0]["block_decision"]["decision"] == "reinforce_with_public_source"
+    and decision_source_targets[0]["block_decision"]["fallback_if_failed"] == "remove_or_compress",
+    "source search targets only reinforce-designated salvageable blocks",
 )
 newline_structured_source = (
     "Inclusive Learning Design in Certificate III Hairdressing\n"
@@ -3516,6 +3591,64 @@ assert_test(
     and any("must not be converted into author-owned" in item for item in source_layer.get("policy", [])),
     "source grounding search is optional and cannot fabricate author-owned context",
 )
+previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
+previous_search_cap = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN")
+previous_tavily_key = os.environ.get("TAVILY_API_KEY")
+try:
+    os.environ["DRAFTPROOF_SOURCE_SEARCH_ENABLED"] = "1"
+    os.environ["DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN"] = "9"
+    os.environ.pop("TAVILY_API_KEY", None)
+    capped_source_layer = _build_source_grounding_search_layer(
+        (
+            "Teachers guide students online. Students compare websites. AI tools affect drafting. "
+            "Online courses change revision. Social media shapes trust. Search engines create overload. "
+            "Classroom tests still matter. Feedback helps students judge sources."
+        ),
+        {"ai_risk_badge": {"writing_components": {"source_grounding_risk": 95.0}}},
+        max_queries=9,
+        max_results=1,
+    )
+finally:
+    if previous_search_enabled is None:
+        os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_ENABLED", None)
+    else:
+        os.environ["DRAFTPROOF_SOURCE_SEARCH_ENABLED"] = previous_search_enabled
+    if previous_search_cap is None:
+        os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN", None)
+    else:
+        os.environ["DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN"] = previous_search_cap
+    if previous_tavily_key is None:
+        os.environ.pop("TAVILY_API_KEY", None)
+    else:
+        os.environ["TAVILY_API_KEY"] = previous_tavily_key
+assert_test(
+    capped_source_layer.get("budget", {}).get("hard_max_calls_per_run") == 5
+    and capped_source_layer.get("budget", {}).get("max_calls_per_run") == 5
+    and len(capped_source_layer.get("claim_targets") or []) <= 5,
+    "source grounding search is hard-capped at five Tavily calls per run",
+)
+previous_source_depth = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_DEPTH")
+try:
+    os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_DEPTH", None)
+    advanced_depth = _source_search_depth_status(
+        {"ai_risk_badge": {"writing_components": {"source_grounding_risk": 95.0}}},
+        1,
+    )
+    basic_depth = _source_search_depth_status(
+        {"ai_risk_badge": {"writing_components": {"source_grounding_risk": 95.0}}},
+        4,
+    )
+finally:
+    if previous_source_depth is None:
+        os.environ.pop("DRAFTPROOF_SOURCE_SEARCH_DEPTH", None)
+    else:
+        os.environ["DRAFTPROOF_SOURCE_SEARCH_DEPTH"] = previous_source_depth
+assert_test(
+    advanced_depth.get("search_depth") == "advanced"
+    and advanced_depth.get("chunks_per_source") == 3
+    and basic_depth.get("search_depth") == "basic",
+    "source search uses adaptive advanced retrieval only for severe low-target grounding gaps",
+)
 pruning_candidates = _content_pruning_candidates(
     pruning_source,
     {"rewrite_edit_briefs": []},
@@ -3556,10 +3689,29 @@ score_drag_status = _score_drag_removal_status(
     ai_score_regressed=False,
 )
 assert_test(
-    score_drag_status.get("allowed")
+    not score_drag_status.get("allowed")
+    and score_drag_status.get("cleanup_only")
     and score_drag_status.get("ignored_negative_human_shift")
     and score_drag_status.get("finding_drop") == 3,
-    "score-drag removal accepts safe burden reduction even when aggregate Human Shift is negative",
+    "score-drag removal is cleanup-only when Human movement is not material",
+)
+score_drag_mitigation_status = _score_drag_removal_status(
+    authenticity_status={
+        "human_delta": 6.0,
+        "ai_authorship_delta": 1.0,
+        "ai_transformation_delta": 3.0,
+    },
+    human_shift={"score": 8.0},
+    ai_delta=0.5,
+    finding_delta=-3,
+    review_burden_delta=-1,
+    weighted_severity_delta=-4,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    not score_drag_mitigation_status.get("allowed"),
+    "score-drag mitigation remains disabled unless explicitly enabled",
 )
 valid_anchor_answers, rejected_anchor_answers = _validate_author_evidence_answers(
     intake_layer,
@@ -3688,6 +3840,7 @@ model_env_names = [
     "DRAFTPROOF_PLANNER_MODEL",
     "DRAFTPROOF_GENERATOR_MODEL",
     "DRAFTPROOF_RETRY_MODEL",
+    "DRAFTPROOF_REWRITE_MODEL_LOCK",
     "DRAFTPROOF_RETRY_MODEL_ENABLED",
     "DRAFTPROOF_RETRY_MODEL_MAX_CALLS",
     "PLANNER_MODEL",
@@ -3704,6 +3857,7 @@ model_env_names = [
 saved_model_env = {name: os.environ.get(name) for name in model_env_names}
 for name in model_env_names:
     os.environ.pop(name, None)
+os.environ["DRAFTPROOF_REWRITE_MODEL_LOCK"] = "0"
 os.environ["DRAFTPROOF_PLANNER_MODEL"] = "openai/gpt-4.1-mini"
 os.environ["DRAFTPROOF_GENERATOR_MODEL"] = "openai/gpt-5-mini"
 os.environ["DRAFTPROOF_RETRY_MODEL"] = "openai/gpt-5.2"
@@ -3731,6 +3885,15 @@ assert_test(
 os.environ.pop("DRAFTPROOF_PLANNER_MODEL", None)
 os.environ.pop("DRAFTPROOF_GENERATOR_MODEL", None)
 os.environ.pop("DRAFTPROOF_RETRY_MODEL", None)
+os.environ["DRAFTPROOF_REWRITE_MODEL_LOCK"] = "openai/gpt-4.1-mini"
+roles_locked = _llm_role_config("fallback-model")
+assert_test(
+    roles_locked["planner_model"] == "openai/gpt-4.1-mini"
+    and roles_locked["generator_model"] == "openai/gpt-4.1-mini"
+    and roles_locked["retry_model"] == "openai/gpt-4.1-mini",
+    "rewrite model lock forces all LLM roles to the approved model",
+)
+os.environ["DRAFTPROOF_REWRITE_MODEL_LOCK"] = "0"
 os.environ.pop("DRAFTPROOF_RETRY_MODEL_ENABLED", None)
 os.environ.pop("DRAFTPROOF_RETRY_MODEL_MAX_CALLS", None)
 os.environ["planner_model"] = "openai/gpt-4.1-mini"
@@ -4635,6 +4798,35 @@ assert_test(
         or paragraph_roles.index("human_anchor_rich") > 0
     ),
     "paragraph-component targeting prioritizes generic/conclusion blockers over human-anchor-rich paragraphs",
+)
+short_paragraph_target_text = (
+    "Students now use websites, AI tools, social media, and short videos when they study.\n\n"
+    "I think the harder part is deciding what to trust because not every answer shows its source or context.\n\n"
+    "Teachers still matter because they can slow the process down and ask students why an answer is useful.\n\n"
+    "Assessment also needs attention because polished work can hide weak understanding."
+)
+previous_adaptive_short_targets = os.environ.get("DRAFTPROOF_ADAPTIVE_SHORT_PARAGRAPH_TARGETS")
+try:
+    os.environ["DRAFTPROOF_ADAPTIVE_SHORT_PARAGRAPH_TARGETS"] = "1"
+    short_paragraph_targets = _paragraph_component_targets(
+        short_paragraph_target_text,
+        {
+            "ai_risk_badge": {
+                "writing_components": {"unsupported_claim_risk": 80.0, "source_grounding_risk": 70.0},
+                "ai_components": {"generic_assertion_risk": 65.0},
+            }
+        },
+        limit=4,
+    )
+finally:
+    if previous_adaptive_short_targets is None:
+        os.environ.pop("DRAFTPROOF_ADAPTIVE_SHORT_PARAGRAPH_TARGETS", None)
+    else:
+        os.environ["DRAFTPROOF_ADAPTIVE_SHORT_PARAGRAPH_TARGETS"] = previous_adaptive_short_targets
+assert_test(
+    len(short_paragraph_targets) >= 2
+    and all(len((target.get("paragraph") or "").split()) < 45 for target in short_paragraph_targets[:2]),
+    "paragraph-component targeting has opt-in short-paragraph adaptation instead of defaulting to expensive broad targeting",
 )
 code_anchor_loss_reason = _ai_search_protected_loss_reason(
     "The HBB26 group uses SHBHCUT006 with 6 learners.",
