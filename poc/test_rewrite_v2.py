@@ -123,6 +123,8 @@ from rewrite_pipeline import (
     _content_pruning_candidates,
     _generic_assertion_compiler_candidates,
     _radar_blocker_option_matrix,
+    _radar_goal_controller_status,
+    _radar_goal_requires_human_progress,
     _blocker_operation_plan,
     _blocker_operation_candidates,
     _post_safe_win_target_push_candidates,
@@ -1387,6 +1389,18 @@ assert_test(
     == "Keep SHBHCUT002 and SHBHCUT003 unchanged. Certificate III remains readable.",
     "anchor lock restores placeholders exactly after texture repair",
 )
+numeric_anchor_mapping = _anchor_lock_mapping(["0", "1", "7", "2017"])
+numeric_frozen = _freeze_anchor_text(
+    "0 to 180 degrees, 1 to 90 degrees, 7 procedures, CESE 2017",
+    numeric_anchor_mapping,
+)
+assert_test(
+    _restore_anchor_placeholders(numeric_frozen, numeric_anchor_mapping)
+    == "0 to 180 degrees, 1 to 90 degrees, 7 procedures, CESE 2017"
+    and "201[[DP_ANCHOR" not in numeric_frozen
+    and numeric_frozen.count("[[DP_ANCHOR_") >= 4,
+    "anchor lock freezes standalone numeric anchors without corrupting years or codes",
+)
 frozen_payload = _freeze_anchor_payload(
     {"anchors": ["SHBHCUT002"], "body": "SHBHCUT003 appears in context."},
     anchor_mapping,
@@ -2023,6 +2037,27 @@ assert_test(
     and "source_preview" not in json.dumps(section_plans)
     and "References" not in [row.get("heading") for row in section_plans],
     "staged section plan excludes source previews and reference heading from LLM-owned sections",
+)
+section_anchor_ledger = {
+    "generation_handoff": {
+        "document_profile": {"title": "Test"},
+        "section_generation_units": [
+            {
+                "section_id": "s1",
+                "heading": "Practice",
+                "target_words": {"ideal": 120},
+                "must_preserve_anchors": ["SHBHCUT003"],
+                "meaning_inventory": [
+                    {"anchors": ["0", "1", "7", "90 degrees"]},
+                ],
+            }
+        ],
+    }
+}
+section_anchor_plan = _staged_generation_section_plan(section_anchor_ledger, max_sections=1)[0]
+assert_test(
+    all(anchor in section_anchor_plan.get("must_preserve_anchors", []) for anchor in ["SHBHCUT003", "0", "1", "7", "90 degrees"]),
+    "staged section plan carries meaning-inventory anchors into anchor lock",
 )
 section_prompt = _staged_reconstruction_section_prompt(
     staged_ledger,
@@ -2833,6 +2868,32 @@ document_level_targets = _blocking_finding_targets(
         "Furthermore, CAST and Jwad et al. present multiple pathways for learning."
     ),
 )
+fragment_candidate = (
+    "In vocational courses like hairdressing, inclusive learning design can contribute to "
+    "expanding learners' access to varied educational formats. The traditional reliance on "
+    "a single teaching style has diminished as educators adapt to evolving needs."
+)
+fragment_targets = _blocking_finding_targets(
+    {
+        "findings": {
+            "critical": [],
+            "high": [{
+                "finding_id": "f100",
+                "title": "draft_evolution",
+                "category": "ai_generation",
+                "detail": "document-level jump",
+                "rewrite_context": {
+                    "target_sentence": (
+                        "In vocational courses like hairdressing, inclusive learning design can contribute to "
+                        "expanding learners' access to varied educational formats. The traditional reliance on a single teaching style"
+                    ),
+                },
+            }],
+            "medium": [],
+        },
+    },
+    candidate_text=fragment_candidate,
+)
 finding_local_prompt = _finding_local_repair_prompt(
     "AI tools always improve student learning when used in schools.",
     {"strategy": "paragraph_resequence", "human_delta": 9, "weighted_severity": 58},
@@ -2869,6 +2930,12 @@ assert_test(
     )
     and document_level_targets[0]["target_source"].startswith("paragraph_excerpt"),
     "blocking target extraction derives exact candidate sentence for document-level findings",
+)
+assert_test(
+    fragment_targets
+    and fragment_targets[0]["target_sentence"] == fragment_candidate
+    and fragment_targets[0]["target_source"] == "explicit_target_expanded_to_sentence",
+    "blocking target extraction expands scanner fragments to full candidate sentences",
 )
 assert_test(
     polished_finding_local_patches == [],
@@ -3495,9 +3562,15 @@ assert_test(
     ) == "adaptive_stop_after_deterministic_candidates",
     "short-document adaptive stop accepts safe deterministic progress with stale blocker override",
 )
-radar_option_matrix = _radar_blocker_option_matrix(
+radar_controller_status = _radar_goal_controller_status(
     {
+        "integrity_layers": {
+            "layers": {
+                "human_contribution_signal": {"score": 54},
+            }
+        },
         "scan_intelligence": {
+            "document": {"word_count": 625},
             "blocker_radar": {
                 "blockers": [
                     {
@@ -3553,20 +3626,37 @@ radar_option_matrix = _radar_blocker_option_matrix(
         }
     }
 )
+radar_option_matrix = radar_controller_status["option_matrix"]
 radar_rows = {row["blocker_key"]: row for row in radar_option_matrix.get("options_by_blocker", [])}
 assert_test(
     radar_option_matrix.get("policy", {}).get("owner") == "rewrite_controller"
     and radar_option_matrix.get("policy", {}).get("primary_goal") == "human_contribution_above_80"
-    and radar_option_matrix.get("policy", {}).get("default_sequence") == ["repair", "recreate", "remove_or_defer"]
-    and radar_rows["topk_pattern"]["options"][0]["operation"] == "micro_topk_texture_repair"
+    and radar_option_matrix.get("policy", {}).get("default_sequence") == ["repair_no_llm", "recreate_llm_tavily", "remove"]
+    and radar_rows["topk_pattern"]["options"][0]["operation"] == "deterministic_topk_texture_repair"
     and radar_rows["topk_pattern"]["options"][0]["goal"]["role"] == "enable_human_gain_by_capping_ai_authorship_and_transformation"
-    and "remove_or_defer" not in radar_rows["topk_pattern"]["controller_sequence"]
-    and radar_rows["unsupported_claim_risk"]["controller_sequence"] == ["repair", "recreate", "remove_or_defer"]
+    and "remove" not in radar_rows["topk_pattern"]["controller_sequence"]
+    and radar_rows["unsupported_claim_risk"]["controller_sequence"] == ["repair_no_llm", "recreate_llm_tavily", "remove"]
     and radar_rows["unsupported_claim_risk"]["options"][0]["goal"]["role"] == "direct_human_contribution_gain"
     and "candidate_human_contribution_increases_or_reaches_80" in radar_rows["unsupported_claim_risk"]["options"][0]["goal"]["acceptance_gate"]
-    and radar_rows["citation_weakness_risk"]["options"][0]["operation"] == "source_reinforce_or_citation_bridge"
-    and "max_5_source_searches" in radar_rows["citation_weakness_risk"]["options"][0]["requires"],
+    and radar_rows["citation_weakness_risk"]["options"][0]["operation"] == "deterministic_existing_source_bridge_or_narrow"
+    and "no_llm" in radar_rows["citation_weakness_risk"]["options"][0]["requires"]
+    and "tavily_max_5_searches" in radar_rows["citation_weakness_risk"]["options"][1]["requires"],
     "radar option matrix lays goal-serving repair/recreate/remove choices by blocker without moving strategy into scanner",
+)
+assert_test(
+    radar_controller_status.get("execute_before_local_rewrite") is True
+    and radar_controller_status.get("force_broad_reconstruction") is True
+    and radar_controller_status.get("document_size_class") == "short"
+    and radar_controller_status.get("max_recreate_blocks") == 2,
+    "radar goal controller drives execution before local repair and adapts recreate scope to content size",
+)
+assert_test(
+    _radar_goal_requires_human_progress(radar_controller_status) is True
+    and _radar_goal_requires_human_progress({
+        **radar_controller_status,
+        "current_human_contribution": 82,
+    }) is False,
+    "radar goal controller blocks zero-Human side wins while Human target is unmet",
 )
 blocker_plan = _blocker_operation_plan(
     pruning_source,

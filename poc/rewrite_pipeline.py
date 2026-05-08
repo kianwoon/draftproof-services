@@ -3230,37 +3230,37 @@ def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
 def _radar_repair_operation(key: str, flags: dict) -> dict:
     if key in {"topk_pattern", "predictability"}:
         return {
-            "operation": "micro_topk_texture_repair",
-            "requires": ["sentence_window", "authorship_cap_gate", "semantic_drift_check"],
-            "reason": "localized token-path pressure can usually be patched before broader regeneration",
+            "operation": "deterministic_topk_texture_repair",
+            "requires": ["no_llm", "sentence_window", "authorship_cap_gate", "semantic_drift_check"],
+            "reason": "try a deterministic local texture patch before spending LLM/Tavily budget",
         }
     if flags.get("texture_pressure"):
         return {
-            "operation": "texture_or_structure_repair",
-            "requires": ["paragraph_window", "authorship_cap_gate", "semantic_drift_check"],
-            "reason": "texture pressure should be repaired with bounded rhythm/structure changes first",
+            "operation": "deterministic_texture_or_structure_repair",
+            "requires": ["no_llm", "paragraph_window", "authorship_cap_gate", "semantic_drift_check"],
+            "reason": "try bounded deterministic rhythm/structure repair first",
         }
     if key in {"citation_weakness_risk", "source_grounding_risk"} or flags.get("source_dependency"):
         return {
-            "operation": "source_reinforce_or_citation_bridge",
-            "requires": ["visible_source_or_search_result", "claim_source_alignment", "max_5_source_searches"],
-            "reason": "source-dependent gaps need evidence linkage before any style work",
+            "operation": "deterministic_existing_source_bridge_or_narrow",
+            "requires": ["no_llm", "existing_visible_source_or_claim_narrowing", "no_new_source"],
+            "reason": "without LLM/Tavily, only bridge existing visible source links or narrow the claim",
         }
     if key in {"unsupported_claim_risk", "broad_claim_risk", "generic_assertion_risk"} or flags.get("evidence_gap"):
         return {
-            "operation": "claim_narrow_or_support",
-            "requires": ["claim_scope_limit", "evidence_or_context_check", "no_new_author_facts"],
-            "reason": "broad or unsupported claims should be narrowed or supported before reconstruction",
+            "operation": "deterministic_claim_narrow_or_compress",
+            "requires": ["no_llm", "claim_scope_limit", "no_new_author_facts"],
+            "reason": "broad or unsupported claims should be narrowed/compressed before reconstruction",
         }
     if key == "lived_detail_risk" or flags.get("author_context_gap"):
         return {
-            "operation": "confirmed_author_context_or_implied_reasoning",
-            "requires": ["submitted_context_or_user_answer", "no_fabricated_lived_detail"],
-            "reason": "author-context gaps can only be strengthened from confirmed or clearly implied context",
+            "operation": "deterministic_implied_reasoning_only",
+            "requires": ["no_llm", "submitted_context_only", "no_fabricated_lived_detail"],
+            "reason": "author-context gaps can only use confirmed or clearly implied submitted context without LLM/Tavily",
         }
     return {
-        "operation": "targeted_repair",
-        "requires": ["locality_gate", "semantic_drift_check"],
+        "operation": "deterministic_targeted_repair",
+        "requires": ["no_llm", "locality_gate", "semantic_drift_check"],
         "reason": "start with the smallest controlled repair",
     }
 
@@ -3296,7 +3296,7 @@ def _radar_remove_allowed(score: float, scope: str, flags: dict, key: str) -> bo
 
 
 def _radar_goal_role(phase: str, key: str, flags: dict) -> str:
-    if phase == "remove_or_defer":
+    if phase == "remove":
         return "last_resort_remove_score_drag_after_reinforce_or_recreate_fails"
     if flags.get("evidence_gap") or flags.get("author_context_gap") or key in {
         "unsupported_claim_risk",
@@ -3320,16 +3320,17 @@ def _radar_goal_gate(phase: str) -> list[str]:
         "anchor_loss_false",
         "final_scan_required",
     ]
-    if phase == "remove_or_defer":
+    if phase == "remove":
         return base + [
             "meaning_preservation_accepts_compression_or_deletion",
             "word_count_band_preserved",
-            "used_only_after_repair_or_recreate_failed",
+            "used_only_after_repair_no_llm_or_recreate_llm_tavily_failed",
         ]
-    if phase == "recreate":
+    if phase == "recreate_llm_tavily":
         return base + [
             "origin_context_preserved",
             "no_new_author_facts_without_source_or_user_input",
+            "tavily_search_calls_lte_5",
         ]
     return base
 
@@ -3353,7 +3354,7 @@ def _radar_blocker_options(blocker: dict, *, target_human: float = 80.0) -> dict
     remove_allowed = _radar_remove_allowed(score, scope, flags, key)
     options = [
         {
-            "phase": "repair",
+            "phase": "repair_no_llm",
             "allowed": True,
             "operation": repair["operation"],
             "requires": repair["requires"],
@@ -3362,14 +3363,15 @@ def _radar_blocker_options(blocker: dict, *, target_human: float = 80.0) -> dict
             "reason": repair["reason"],
         },
         {
-            "phase": "recreate",
+            "phase": "recreate_llm_tavily",
             "allowed": recreate_allowed,
             **_radar_recreate_operation(key, flags),
+            "requires": _radar_recreate_operation(key, flags)["requires"] + ["llm", "tavily_max_5_searches"],
             "priority": 2,
             "last_resort": False,
         },
         {
-            "phase": "remove_or_defer",
+            "phase": "remove",
             "allowed": remove_allowed,
             "operation": "remove_or_compress_score_drag",
             "requires": ["meaning_preservation_check", "word_count_band_check", "final_scan_gate"],
@@ -3407,8 +3409,8 @@ def _radar_blocker_option_matrix(raw_json: dict | None, *, limit: int = 12) -> d
     """Controller option matrix derived from scanner radar.
 
     The scanner stays diagnostic-only. This function belongs to the rewrite
-    controller and lays out valid intervention phases for each radar blocker:
-    repair first, recreate from origin context second, remove/defer last.
+    controller and lays out the only valid intervention phases for each radar
+    blocker: repair without LLM, recreate with LLM/Tavily, then remove.
     """
     blockers = _radar_blockers_for_controller(raw_json)
     integrity = _integrity_scores(raw_json)
@@ -3423,7 +3425,7 @@ def _radar_blocker_option_matrix(raw_json: dict | None, *, limit: int = 12) -> d
         _radar_blocker_options(item, target_human=target_human)
         for item in blockers[:max(1, int(limit or 1))]
     ]
-    phase_counts = {"repair": 0, "recreate": 0, "remove_or_defer": 0}
+    phase_counts = {"repair_no_llm": 0, "recreate_llm_tavily": 0, "remove": 0}
     for row in rows:
         for option in row.get("options") or []:
             if option.get("allowed"):
@@ -3437,7 +3439,7 @@ def _radar_blocker_option_matrix(raw_json: dict | None, *, limit: int = 12) -> d
             "primary_goal": "human_contribution_above_80",
             "target_human_contribution": target_human,
             "option_rule": "every option must serve the Human Contribution target and pass the final scan gate",
-            "default_sequence": ["repair", "recreate", "remove_or_defer"],
+            "default_sequence": ["repair_no_llm", "recreate_llm_tavily", "remove"],
             "remove_is_last_resort": True,
             "source_search_max_calls_per_run": 5,
             "must_rescan_after_each_kept_change": True,
@@ -3450,6 +3452,135 @@ def _radar_blocker_option_matrix(raw_json: dict | None, *, limit: int = 12) -> d
         "phase_counts": phase_counts,
         "options_by_blocker": rows,
     }
+
+
+def _radar_goal_controller_status(raw_json: dict | None) -> dict:
+    """Decide whether radar options must drive execution before local repair.
+
+    This is controller policy, not scanner policy. When the Human Contribution
+    gap is large, local sentence repair is not enough; the controller should
+    spend its budget on the goal-serving option ladder first.
+    """
+    matrix = _radar_blocker_option_matrix(raw_json)
+    goal = matrix.get("goal_state") or {}
+    document = (((raw_json or {}).get("scan_intelligence") or {}).get("document") or {}) if isinstance(raw_json, dict) else {}
+    word_count = document.get("word_count")
+    if not isinstance(word_count, (int, float)):
+        word_count = ((raw_json or {}).get("document_context") or {}).get("word_count") if isinstance(raw_json, dict) else None
+    if not isinstance(word_count, (int, float)):
+        source_text = ""
+        if isinstance(raw_json, dict):
+            source_text = (
+                raw_json.get("original_text")
+                or raw_json.get("input_text")
+                or raw_json.get("text")
+                or ""
+            )
+        word_count = _text_word_count(str(source_text)) if source_text else None
+    if isinstance(word_count, (int, float)):
+        if word_count < 700:
+            size_class = "short"
+            max_recreate_blocks = 2
+        elif word_count < 1800:
+            size_class = "medium"
+            max_recreate_blocks = 4
+        elif word_count < 3500:
+            size_class = "long"
+            max_recreate_blocks = 6
+        else:
+            size_class = "very_long"
+            max_recreate_blocks = 8
+    else:
+        size_class = "unknown"
+        max_recreate_blocks = 4
+    current_human = goal.get("current_human_contribution")
+    target_human = goal.get("target_human_contribution", 80.0)
+    human_gap = goal.get("human_gap_to_target")
+    try:
+        gap = float(human_gap)
+    except (TypeError, ValueError):
+        gap = 0.0
+    direct_gain_blockers = []
+    recreate_blockers = []
+    remove_blockers = []
+    for row in matrix.get("options_by_blocker") or []:
+        for option in row.get("options") or []:
+            if not option.get("allowed"):
+                continue
+            role = ((option.get("goal") or {}).get("role") or "")
+            phase = option.get("phase")
+            if role == "direct_human_contribution_gain":
+                direct_gain_blockers.append(row.get("blocker_key"))
+            if phase == "recreate_llm_tavily":
+                recreate_blockers.append(row.get("blocker_key"))
+            if phase == "remove":
+                remove_blockers.append(row.get("blocker_key"))
+    active = bool(
+        isinstance(current_human, (int, float))
+        and isinstance(target_human, (int, float))
+        and float(current_human) < float(target_human)
+        and gap >= _float_env("DRAFTPROOF_RADAR_GOAL_FIRST_MIN_GAP", 10.0)
+        and (direct_gain_blockers or recreate_blockers or remove_blockers)
+    )
+    execute_first = bool(
+        active
+        and _env_flag("DRAFTPROOF_RADAR_GOAL_FIRST", True)
+    )
+    force_broad_reconstruction = bool(
+        active
+        and recreate_blockers
+        and _env_flag("DRAFTPROOF_RADAR_FORCE_BROAD_RECONSTRUCTION", True)
+    )
+    return {
+        "schema_version": "radar_goal_controller_status.v1",
+        "active": active,
+        "execute_before_local_rewrite": execute_first,
+        "force_broad_reconstruction": force_broad_reconstruction,
+        "current_human_contribution": current_human,
+        "target_human_contribution": target_human,
+        "human_gap_to_target": gap,
+        "document_word_count": int(word_count) if isinstance(word_count, (int, float)) else None,
+        "document_size_class": size_class,
+        "max_recreate_blocks": max_recreate_blocks,
+        "size_policy": (
+            "short_doc_allows_whole_section_recreate"
+            if size_class == "short"
+            else "medium_doc_ranked_block_recreate"
+            if size_class == "medium"
+            else "long_doc_ranked_block_recreate_only"
+            if size_class in {"long", "very_long"}
+            else "unknown_size_ranked_block_recreate"
+        ),
+        "direct_gain_blockers": sorted(set(x for x in direct_gain_blockers if x)),
+        "recreate_blockers": sorted(set(x for x in recreate_blockers if x)),
+        "remove_blockers": sorted(set(x for x in remove_blockers if x)),
+        "reason": (
+            "Human Contribution gap requires radar option ladder before local sentence repair."
+            if execute_first
+            else "Radar option ladder does not need to override local repair first."
+        ),
+        "option_matrix": matrix,
+    }
+
+
+def _radar_goal_requires_human_progress(status: dict | None) -> bool:
+    """Require Human movement when the radar ladder is active.
+
+    Safe authorship suppression can be a useful intermediate signal, but it is
+    not enough to end a run whose active controller goal is Human Contribution
+    above 80. In that state, selectable candidates must either increase Human
+    Contribution or reach the target.
+    """
+    if not isinstance(status, dict) or not status.get("active"):
+        return False
+    current = status.get("current_human_contribution")
+    target = status.get("target_human_contribution", 80.0)
+    return bool(
+        isinstance(current, (int, float))
+        and isinstance(target, (int, float))
+        and float(current) < float(target)
+        and _env_flag("DRAFTPROOF_RADAR_GOAL_REQUIRES_HUMAN_PROGRESS", True)
+    )
 
 
 def _blocker_operation_plan(
@@ -3907,7 +4038,7 @@ def _anchor_lock_mapping(anchors: list[str] | tuple[str, ...] | None) -> list[di
     unique: list[str] = []
     for raw in anchors or []:
         value = str(raw or "").strip()
-        if len(value) < 4:
+        if len(value) < 4 and not re.fullmatch(r"\d+(?:\.\d+)?%?", value):
             continue
         if value not in unique:
             unique.append(value)
@@ -3924,7 +4055,11 @@ def _freeze_anchor_text(text: str, mapping: list[dict] | None) -> str:
         value = str(item.get("value") or "")
         placeholder = str(item.get("placeholder") or "")
         if value and placeholder:
-            frozen = re.sub(re.escape(value), placeholder, frozen)
+            if re.fullmatch(r"\d+(?:\.\d+)?%?", value):
+                pattern = rf"(?<![A-Za-z0-9_]){re.escape(value)}(?![A-Za-z0-9_])"
+            else:
+                pattern = re.escape(value)
+            frozen = re.sub(pattern, placeholder, frozen)
     return frozen
 
 
@@ -5637,6 +5772,21 @@ def _staged_generation_section_plan(context_ledger: dict, *, max_sections: int |
         unit for unit in handoff.get("section_generation_units") or []
         if isinstance(unit, dict) and unit.get("heading")
     ]
+    def section_required_anchors(unit: dict) -> list[str]:
+        anchors: list[str] = []
+        for value in unit.get("must_preserve_anchors") or []:
+            text = str(value or "").strip()
+            if text and text not in anchors:
+                anchors.append(text)
+        for point in unit.get("meaning_inventory") or []:
+            if not isinstance(point, dict):
+                continue
+            for value in point.get("anchors") or []:
+                text = str(value or "").strip()
+                if text and text not in anchors:
+                    anchors.append(text)
+        return anchors
+
     if handoff_units:
         title = ((handoff.get("document_profile") or {}).get("title") or "").strip()
         selected_units = handoff_units[:max_sections]
@@ -5658,7 +5808,7 @@ def _staged_generation_section_plan(context_ledger: dict, *, max_sections: int |
                 "heading": unit.get("heading"),
                 "target_words": ((unit.get("target_words") or {}).get("ideal") or (unit.get("target_words") or {}).get("max") or 180),
                 "target_word_band": unit.get("target_words") or {},
-                "must_preserve_anchors": unit.get("must_preserve_anchors") or [],
+                "must_preserve_anchors": section_required_anchors(unit),
                 "citation_keys_used": unit.get("citation_keys_used") or [],
                 "claim_inventory_slice": unit.get("meaning_inventory") or [],
                 "target_signal_slice": unit.get("detector_risks_to_reduce") or [],
@@ -5666,7 +5816,7 @@ def _staged_generation_section_plan(context_ledger: dict, *, max_sections: int |
                     "section_id": unit.get("section_id"),
                     "role": unit.get("role"),
                     "citation_keys_used": unit.get("citation_keys_used") or [],
-                    "must_preserve_anchors": unit.get("must_preserve_anchors") or [],
+                    "must_preserve_anchors": section_required_anchors(unit),
                     "generation_instruction": unit.get("generation_instruction") or {},
                 }],
             }
@@ -7352,6 +7502,12 @@ def _exact_blocking_target_from_context(
         target = target or evidence
     target = " ".join(str(target or "").split()).strip()
     if target and (not candidate_text or target in candidate_text):
+        expanded = _expand_fragment_to_candidate_sentence(candidate_text, target)
+        if expanded:
+            return expanded, (
+                "explicit_target_expanded_to_sentence"
+                if expanded != target else "explicit_target"
+            )
         return target, "explicit_target"
 
     excerpt = str(context.get("paragraph_excerpt") or "")
@@ -7386,6 +7542,30 @@ def _exact_blocking_target_from_context(
         if exact(sentence):
             return sentence, "paragraph_excerpt_sentence"
     return "", ""
+
+
+def _expand_fragment_to_candidate_sentence(candidate_text: str, fragment: str) -> str:
+    """Return the full candidate sentence that contains a scanner fragment."""
+    candidate = " ".join(str(candidate_text or "").split()).strip()
+    needle = " ".join(str(fragment or "").split()).strip()
+    if not candidate or not needle or needle not in candidate:
+        return ""
+    start = candidate.find(needle)
+    end = start + len(needle)
+    sentences = _sentences_from_excerpt(candidate)
+    cursor = 0
+    overlapping: list[str] = []
+    for sentence in sentences:
+        sentence_start = candidate.find(sentence, cursor)
+        if sentence_start < 0:
+            continue
+        sentence_end = sentence_start + len(sentence)
+        cursor = sentence_end
+        if sentence_end > start and sentence_start < end:
+            overlapping.append(sentence)
+    if overlapping:
+        return " ".join(overlapping)
+    return needle
 
 
 def _blocking_finding_targets(
@@ -9589,12 +9769,23 @@ def run_rewrite_pipeline(
     ai_mitigation_contract = _ensure_ai_mitigation_contract(ctx.raw_json)
     ai_mitigation_needs_author = _ai_mitigation_requires_user_input(ai_mitigation_contract)
     allow_auto_with_author_gaps = _env_flag("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS", True)
+    radar_goal_controller = _radar_goal_controller_status(getattr(ctx, "raw_json", None))
+    radar_option_matrix = radar_goal_controller.get("option_matrix") or _radar_blocker_option_matrix(getattr(ctx, "raw_json", None))
     ai_search_first = (
-        os.environ.get("DRAFTPROOF_AI_SEARCH_FIRST", "1") != "0"
-        and isinstance(pre_rewrite_ai, (int, float))
-        and pre_rewrite_ai >= _float_env("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", 50.0)
-        and (not ai_mitigation_needs_author or allow_auto_with_author_gaps)
-    )
+        (
+            os.environ.get("DRAFTPROOF_AI_SEARCH_FIRST", "1") != "0"
+            and isinstance(pre_rewrite_ai, (int, float))
+            and pre_rewrite_ai >= _float_env("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", 50.0)
+        )
+        or bool(radar_goal_controller.get("execute_before_local_rewrite"))
+    ) and (not ai_mitigation_needs_author or allow_auto_with_author_gaps)
+    if radar_goal_controller.get("execute_before_local_rewrite"):
+        report_progress(40, "Radar goal ladder selected before local sentence repair")
+        print(
+            "  Radar goal-first mode: "
+            f"Human gap {radar_goal_controller.get('human_gap_to_target')} "
+            f"with direct blockers {radar_goal_controller.get('direct_gain_blockers')}"
+        )
     rewrite_config = None
     if ai_search_first:
         rewrite_config = RewriteConfig(
@@ -9628,7 +9819,12 @@ def run_rewrite_pipeline(
     )
     result.summary["llm_model_roles"] = llm_roles
     result.summary["ai_mitigation"] = ai_mitigation_contract
-    result.summary["radar_blocker_option_matrix"] = _radar_blocker_option_matrix(getattr(ctx, "raw_json", None))
+    result.summary["radar_blocker_option_matrix"] = radar_option_matrix
+    result.summary["radar_goal_controller"] = {
+        key: value
+        for key, value in radar_goal_controller.items()
+        if key != "option_matrix"
+    }
     if ai_mitigation_needs_author:
         result.summary["ai_mitigation_blocked_auto_rewrite"] = not allow_auto_with_author_gaps
         if not allow_auto_with_author_gaps:
@@ -9896,12 +10092,21 @@ def run_rewrite_pipeline(
             authenticity_candidate_limit = 0
         if _env_flag("DRAFTPROOF_REGENERATION_FIRST", True):
             authenticity_candidate_limit = 0
+        radar_force_reconstruction = bool(
+            radar_goal_controller.get("force_broad_reconstruction")
+        )
+        radar_requires_human_progress = _radar_goal_requires_human_progress(
+            radar_goal_controller
+        )
         authenticity_summary = {
             "enabled": True,
             "selected": False,
             "candidate_limit": authenticity_candidate_limit,
             "llm_calls": 0,
             "model_roles": llm_roles,
+            "radar_goal_first": bool(radar_goal_controller.get("execute_before_local_rewrite")),
+            "radar_force_reconstruction": radar_force_reconstruction,
+            "radar_requires_human_progress": radar_requires_human_progress,
             "reference": {
                 "ai": original_ai,
                 "writing_quality": original_wq,
@@ -10704,11 +10909,13 @@ def run_rewrite_pipeline(
                             small_shift_under_target
                             and os.environ.get("DRAFTPROOF_RECONSTRUCTION_AFTER_SMALL_SHIFT", "1") != "0"
                         )
+                        or radar_force_reconstruction
                     )
                     and os.environ.get("DRAFTPROOF_RECONSTRUCTION_MITIGATION", "1") != "0"
                     and not (
                         masked_optimizer_ran
                         and _env_flag("DRAFTPROOF_MASKED_SPAN_SKIP_BROAD_REGEN", True)
+                        and not radar_force_reconstruction
                     )
                 )
                 if reconstruction_enabled:
@@ -11801,6 +12008,11 @@ def run_rewrite_pipeline(
             candidate_ai_transform_delta = authenticity_status.get("ai_transformation_delta")
             safe_authorship_suppression_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_SEARCH_ACCEPT_SAFE_AUTHORSHIP_SUPPRESSION", True)
+                and not (
+                    _radar_goal_requires_human_progress(radar_goal_controller)
+                    and isinstance(candidate_human_delta, (int, float))
+                    and candidate_human_delta <= 0.0
+                )
                 and isinstance(human_shift.get("score"), (int, float))
                 and float(human_shift.get("score")) >= _float_env(
                     "DRAFTPROOF_SAFE_AUTHORSHIP_SUPPRESSION_MIN_HUMAN_SHIFT",
@@ -12008,6 +12220,24 @@ def run_rewrite_pipeline(
             selection_status["ai_score_regressed"] = ai_score_regressed
             selection_status["human_shift_score"] = human_shift.get("score")
             selection_status["human_shift_components"] = human_shift.get("components")
+            if (
+                _radar_goal_requires_human_progress(radar_goal_controller)
+                and selection_status.get("selectable")
+                and not selection_status.get("human_primary_progress")
+                and not selection_status.get("human_signal_amplification")
+                and not selection_status.get("post_safe_target_climb")
+                and not selection_status.get("score_drag_removal")
+                and not (
+                    isinstance(candidate_human_delta, (int, float))
+                    and candidate_human_delta > 0.0
+                )
+            ):
+                selection_status.update({
+                    "success": False,
+                    "selectable": False,
+                    "reason": "radar_goal_requires_human_progress",
+                    "radar_goal_requires_human_progress": True,
+                })
             candidate_eval["selection_status"] = selection_status
             original_human_value = _contribution_scores(original_report_dict).get("human")
             candidate_human_value = candidate_contribution.get("human")
