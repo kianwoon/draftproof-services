@@ -32,7 +32,7 @@ from rewrite.guards import detect_protected_spans, check_semantic_drift
 from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
 from detect.run import DetectionRunner
-from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
+from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, _sentence_has_concrete_or_context
 from report.report import ReportBuilder, report_to_dict
 from llm.gateway import LLMGateway, LLMConfig
 from detect.mitigation import build_ai_mitigation_plan
@@ -2855,6 +2855,347 @@ def _apply_post_topk_patches(text: str, patches: list[dict]) -> tuple[str, list[
     if not applied:
         return text, []
     return _join_logical_paragraphs(paragraphs), applied
+
+
+_POST_TOPK_TEMPLATE_OPENING_RE = re.compile(
+    r"^\s*(?:in\s+(?:conclusion|summary|the\s+end)|overall|therefore|thus|"
+    r"this\s+(?:shows|highlights|demonstrates|underscores|means)|"
+    r"it\s+is\s+(?:important|essential|crucial)\s+to\s+(?:note|understand|consider))\b",
+    re.I,
+)
+
+_POST_TOPK_LOW_VALUE_PARAGRAPH_RE = re.compile(
+    r"\b(?:in\s+the\s+end|overall|in\s+conclusion|real\s+work\s+of|"
+    r"important|essential|crucial|significant|changing\s+world|system|"
+    r"students?\s+(?:need|should|must)|teachers?\s+(?:need|should|must))\b",
+    re.I,
+)
+
+
+def _post_topk_sentence_contextual(sentence: str) -> bool:
+    sentence = str(sentence or "").strip()
+    if not sentence:
+        return False
+    return bool(
+        _sentence_has_concrete_or_context(sentence)
+        or _GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.search(sentence)
+        or _PARAGRAPH_CITATION_RE.search(sentence)
+    )
+
+
+def _post_topk_sentence_driver_score(sentence: str) -> float:
+    sentence = str(sentence or "").strip()
+    if not sentence:
+        return 0.0
+    score = _generic_assertion_sentence_score(sentence)
+    if not _post_topk_sentence_contextual(sentence):
+        score += 5.0
+    if _POST_TOPK_TEMPLATE_OPENING_RE.search(sentence):
+        score += 4.0
+    if len(_split_sentences(sentence)) == 1 and _text_word_count(sentence) >= 24:
+        score += 1.5
+    return round(score, 3)
+
+
+def _post_topk_driver_map(text: str, raw_json: dict | None) -> dict:
+    paragraphs = _logical_paragraphs(text)
+    rows = []
+    generic_sentence_count = 0
+    total_sentence_count = 0
+    protected = detect_protected_spans(text)
+
+    def paragraph_has_protected(index: int) -> bool:
+        before = _join_logical_paragraphs(paragraphs[:index])
+        start = len(before) + (2 if before else 0)
+        end = start + len(paragraphs[index])
+        return any(span.start_char >= start and span.end_char <= end for span in protected)
+
+    role_sequence = []
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        sentences = _split_sentences(paragraph)
+        sentence_rows = []
+        generic_scores = []
+        contextual_count = 0
+        for sentence_index, sentence in enumerate(sentences):
+            contextual = _post_topk_sentence_contextual(sentence)
+            driver_score = _post_topk_sentence_driver_score(sentence)
+            total_sentence_count += 1
+            if not contextual:
+                generic_sentence_count += 1
+            else:
+                contextual_count += 1
+            generic_scores.append(driver_score)
+            sentence_rows.append({
+                "sentence_index": sentence_index,
+                "text": sentence,
+                "word_count": _text_word_count(sentence),
+                "contextual": contextual,
+                "driver_score": driver_score,
+                "protected": bool(_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.search(sentence)),
+            })
+        drivers = {
+            "generic_assertion_hits": len(_GENERIC_ASSERTION_TERMS_RE.findall(paragraph)),
+            "concrete_anchor_hits": contextual_count,
+            "source_gap": not bool(_PARAGRAPH_CITATION_RE.search(paragraph)),
+            "word_count": _text_word_count(paragraph),
+        }
+        role = _paragraph_role(paragraph, drivers, is_last=paragraph_index == len(paragraphs) - 1)
+        role_sequence.append(role)
+        generic_ratio = (
+            sum(1 for row in sentence_rows if not row["contextual"]) / max(len(sentence_rows), 1)
+        )
+        low_value = bool(
+            not paragraph_has_protected(paragraph_index)
+            and contextual_count == 0
+            and (
+                generic_ratio >= 0.65
+                or role in {"conclusion_template_risk", "generic_claim_heavy"}
+                or _POST_TOPK_LOW_VALUE_PARAGRAPH_RE.search(paragraph)
+            )
+        )
+        rows.append({
+            "paragraph_index": paragraph_index,
+            "paragraph": paragraph,
+            "role": role,
+            "word_count": _text_word_count(paragraph),
+            "sentence_count": len(sentences),
+            "generic_sentence_ratio": round(generic_ratio, 3),
+            "max_sentence_driver_score": max(generic_scores or [0.0]),
+            "paragraph_driver_score": round(sum(generic_scores) + generic_ratio * 10.0, 3),
+            "has_protected_anchor": paragraph_has_protected(paragraph_index),
+            "low_value_generic_block": low_value,
+            "sentences": sentence_rows,
+        })
+    repeated_role_runs = 0
+    previous = None
+    for role in role_sequence:
+        if role and role == previous:
+            repeated_role_runs += 1
+        previous = role
+    profile = _strict_ai_safe_band_status(raw_json).get("profile") if isinstance(raw_json, dict) else {}
+    return {
+        "kind": "post_topk_driver_map",
+        "profile": profile or {},
+        "paragraph_count": len(paragraphs),
+        "sentence_count": total_sentence_count,
+        "generic_sentence_count": generic_sentence_count,
+        "generic_sentence_ratio": round(generic_sentence_count / max(total_sentence_count, 1), 3),
+        "repeated_paragraph_role_runs": repeated_role_runs,
+        "paragraphs": sorted(rows, key=lambda item: float(item.get("paragraph_driver_score") or 0.0), reverse=True),
+    }
+
+
+def _post_topk_convergence_candidates(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 10,
+) -> list[tuple[str, str, dict]]:
+    """Build stronger post-Top-k candidates from document-wide driver movement.
+
+    The Top-k rebuild already solved token-route risk. This phase is allowed to
+    shorten or collapse generic material when the remaining strict blockers are
+    authorship/transformation/proxy drivers.
+    """
+    if not _env_flag("DRAFTPROOF_POST_TOPK_CONVERGENCE_OPTIMIZER", True):
+        return []
+    strict = _strict_ai_safe_band_status(raw_json)
+    profile = strict.get("profile") or {}
+    if float(profile.get("topk_calibrated_risk", 100.0)) >= _safe_topk_calibrated_limit():
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 2:
+        return []
+    driver_map = _post_topk_driver_map(source_text, raw_json)
+    source_words = _text_word_count(source_text)
+    min_words = max(30, int(source_words * _float_env("DRAFTPROOF_POST_TOPK_MIN_WORD_RATIO", 0.35)))
+    candidates: list[tuple[str, str, dict]] = []
+    seen: set[str] = {str(source_text or "").strip()}
+
+    def add(strategy: str, next_paragraphs: list[str], meta: dict) -> None:
+        cleaned_paragraphs = [paragraph.strip() for paragraph in next_paragraphs if paragraph and paragraph.strip()]
+        candidate = _join_logical_paragraphs(cleaned_paragraphs)
+        normalized = candidate.strip()
+        if not normalized or normalized in seen:
+            return
+        if _text_word_count(candidate) < min_words:
+            return
+        seen.add(normalized)
+        candidates.append((
+            strategy,
+            candidate,
+            {
+                **meta,
+                "post_topk_convergence": True,
+                "post_topk_driver_map": {
+                    "generic_sentence_ratio": driver_map.get("generic_sentence_ratio"),
+                    "generic_sentence_count": driver_map.get("generic_sentence_count"),
+                    "sentence_count": driver_map.get("sentence_count"),
+                    "repeated_paragraph_role_runs": driver_map.get("repeated_paragraph_role_runs"),
+                },
+            },
+        ))
+
+    sentence_targets = []
+    paragraph_rows = {
+        int(row.get("paragraph_index", -1)): row
+        for row in driver_map.get("paragraphs") or []
+        if isinstance(row, dict)
+    }
+    for row in driver_map.get("paragraphs") or []:
+        paragraph_index = int(row.get("paragraph_index", -1))
+        if paragraph_index < 0 or paragraph_index >= len(paragraphs):
+            continue
+        for sentence_row in row.get("sentences") or []:
+            if sentence_row.get("protected"):
+                continue
+            sentence_targets.append((
+                float(sentence_row.get("driver_score") or 0.0),
+                paragraph_index,
+                int(sentence_row.get("sentence_index", 0) or 0),
+                bool(sentence_row.get("contextual")),
+                sentence_row.get("text") or "",
+            ))
+    sentence_targets.sort(reverse=True)
+
+    removable_targets = [
+        item for item in sentence_targets
+        if item[0] >= _float_env("DRAFTPROOF_POST_TOPK_SENTENCE_DRIVER_MIN", 4.0)
+        and not item[3]
+    ]
+    if not removable_targets:
+        removable_targets = [
+            item for item in sentence_targets
+            if item[0] >= _float_env("DRAFTPROOF_POST_TOPK_CONTEXTUAL_SENTENCE_DRIVER_MIN", 7.5)
+        ]
+
+    for fraction in (0.18, 0.28, 0.40):
+        if len(candidates) >= max(1, limit):
+            break
+        remove_count = max(1, int(math.ceil(len(removable_targets) * fraction)))
+        remove_pairs = {
+            (paragraph_index, sentence_index)
+            for _score, paragraph_index, sentence_index, _contextual, _sentence in removable_targets[:remove_count]
+        }
+        if not remove_pairs:
+            continue
+        next_paragraphs = []
+        removed = []
+        for paragraph_index, paragraph in enumerate(paragraphs):
+            sentences = _split_sentences(paragraph)
+            kept = []
+            for sentence_index, sentence in enumerate(sentences):
+                if (paragraph_index, sentence_index) in remove_pairs and len(sentences) - len([
+                    pair for pair in remove_pairs if pair[0] == paragraph_index
+                ]) >= 1:
+                    removed.append({"paragraph_index": paragraph_index, "sentence_index": sentence_index})
+                    continue
+                kept.append(sentence)
+            if kept:
+                next_paragraphs.append(_narrow_generic_claim_text(" ".join(kept).strip()))
+        add(
+            f"post_topk_generic_assertion_collapse_{int(fraction * 100)}",
+            next_paragraphs,
+            {
+                "operation": "generic_assertion_collapse",
+                "removed_sentence_count": len(removed),
+                "removed_sentences": removed[:20],
+            },
+        )
+
+    high_drag_rows = [
+        row for row in driver_map.get("paragraphs") or []
+        if not row.get("has_protected_anchor")
+        and float(row.get("generic_sentence_ratio") or 0.0) >= 0.60
+        and int(row.get("sentence_count") or 0) >= 2
+    ]
+    for row in high_drag_rows[:3]:
+        if len(candidates) >= max(1, limit):
+            break
+        paragraph_index = int(row.get("paragraph_index", -1))
+        if paragraph_index < 0 or paragraph_index >= len(paragraphs):
+            continue
+        paragraph = paragraphs[paragraph_index]
+        compressed = _compress_score_drag_paragraph(
+            paragraph,
+            max_remove=max(1, min(3, int(row.get("sentence_count") or 1) - 1)),
+        )
+        if compressed.strip() and compressed.strip() != paragraph.strip():
+            next_paragraphs = list(paragraphs)
+            next_paragraphs[paragraph_index] = compressed
+            add(
+                f"post_topk_structure_de_template_p{paragraph_index + 1}",
+                next_paragraphs,
+                {
+                    "operation": "structure_de_template",
+                    "paragraph_index": paragraph_index,
+                    "paragraph_role": row.get("role"),
+                },
+            )
+
+    low_value_rows = [
+        row for row in driver_map.get("paragraphs") or []
+        if row.get("low_value_generic_block")
+        and not row.get("has_protected_anchor")
+        and int(row.get("word_count") or 0) >= 12
+    ]
+    for remove_count in (1, 2, 3):
+        if len(candidates) >= max(1, limit):
+            break
+        indexes = {
+            int(row.get("paragraph_index", -1))
+            for row in low_value_rows[:remove_count]
+            if int(row.get("paragraph_index", -1)) >= 0
+        }
+        if not indexes or len(indexes) >= len(paragraphs):
+            continue
+        next_paragraphs = [
+            paragraph for index, paragraph in enumerate(paragraphs)
+            if index not in indexes
+        ]
+        add(
+            f"post_topk_last_resort_remove_{remove_count}",
+            next_paragraphs,
+            {
+                "operation": "last_resort_remove",
+                "removed_paragraph_indexes": sorted(indexes),
+            },
+        )
+
+    if len(candidates) < max(1, limit) and len(paragraphs) >= 4:
+        next_paragraphs = []
+        merged_indexes = []
+        skip_next = False
+        for index, paragraph in enumerate(paragraphs):
+            if skip_next:
+                skip_next = False
+                continue
+            row = paragraph_rows.get(index, {})
+            next_row = paragraph_rows.get(index + 1, {})
+            if (
+                index + 1 < len(paragraphs)
+                and not row.get("has_protected_anchor")
+                and not next_row.get("has_protected_anchor")
+                and int(row.get("sentence_count") or 0) <= 2
+                and int(next_row.get("sentence_count") or 0) <= 2
+                and (
+                    float(row.get("generic_sentence_ratio") or 0.0) >= 0.50
+                    or float(next_row.get("generic_sentence_ratio") or 0.0) >= 0.50
+                )
+            ):
+                next_paragraphs.append(_narrow_generic_claim_text(f"{paragraph} {paragraphs[index + 1]}"))
+                merged_indexes.append([index, index + 1])
+                skip_next = True
+            else:
+                next_paragraphs.append(paragraph)
+        if merged_indexes:
+            add(
+                "post_topk_paragraph_merge_de_template",
+                next_paragraphs,
+                {"operation": "paragraph_merge_de_template", "merged_paragraph_indexes": merged_indexes},
+            )
+
+    return candidates[:max(1, limit)]
 
 
 def _extract_topk_route_patch_candidates(response_text: str, *, max_candidates: int = 2) -> list[list[dict]]:
@@ -14508,9 +14849,9 @@ def run_rewrite_pipeline(
                 return
 
             try:
-                scan_reserve = max(0, int(_float_env("DRAFTPROOF_POST_TOPK_SCAN_RESERVE", 8.0)))
+                scan_reserve = max(0, int(_float_env("DRAFTPROOF_POST_TOPK_SCAN_RESERVE", 12.0)))
             except (TypeError, ValueError):
-                scan_reserve = 8
+                scan_reserve = 12
             if scan_reserve > 0:
                 previous_max = int(search_budget.get("max_candidate_scans") or 0)
                 current_scans = len(search_summary.get("candidates", []))
@@ -14526,12 +14867,29 @@ def run_rewrite_pipeline(
                     int(search_summary.get("llm_calls") or 0) + llm_reserve,
                 )
 
-            max_scans = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_MAX_CANDIDATE_SCANS", 8.0)))
+            max_scans = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_MAX_CANDIDATE_SCANS", 12.0)))
+            driver_map = _post_topk_driver_map(best_text, best_report)
             summary = {
                 "enabled": True,
                 "trigger_phase": trigger_phase,
                 "base_strategy": best_strategy,
                 "base_strict_safe_band": base_strict,
+                "driver_map": {
+                    "generic_sentence_ratio": driver_map.get("generic_sentence_ratio"),
+                    "generic_sentence_count": driver_map.get("generic_sentence_count"),
+                    "sentence_count": driver_map.get("sentence_count"),
+                    "repeated_paragraph_role_runs": driver_map.get("repeated_paragraph_role_runs"),
+                    "top_blocks": [
+                        {
+                            "paragraph_index": row.get("paragraph_index"),
+                            "role": row.get("role"),
+                            "generic_sentence_ratio": row.get("generic_sentence_ratio"),
+                            "paragraph_driver_score": row.get("paragraph_driver_score"),
+                            "low_value_generic_block": row.get("low_value_generic_block"),
+                        }
+                        for row in (driver_map.get("paragraphs") or [])[:6]
+                    ],
+                },
                 "candidate_count": 0,
                 "scanned": 0,
                 "selected": False,
@@ -14551,6 +14909,10 @@ def run_rewrite_pipeline(
                 seen.add(normalized)
                 candidates.append((strategy, normalized, meta or {}))
 
+            convergence_candidates = _post_topk_convergence_candidates(best_text, best_report, limit=8)
+            summary["convergence_candidate_count"] = len(convergence_candidates)
+            for strategy, candidate_text, meta in convergence_candidates:
+                add_candidate(strategy, candidate_text, {**meta, "post_topk_optimizer": True})
             for strategy, candidate_text, meta in _generic_assertion_compiler_candidates(best_text, best_report, limit=3):
                 add_candidate(f"post_topk_{strategy}", candidate_text, {**meta, "post_topk_optimizer": True})
             for strategy, candidate_text, meta in _blocker_operation_candidates(best_text, best_report, limit=3):
@@ -14604,6 +14966,10 @@ def run_rewrite_pipeline(
             base_critical_high = _critical_high_count(best_report)
             selected = None
             selected_rank = None
+            partial_selected = None
+            partial_selected_rank = None
+            best_diagnostic = None
+            best_diagnostic_rank = None
 
             def num(value, default=0.0) -> float:
                 return float(value) if isinstance(value, (int, float)) else float(default)
@@ -14714,6 +15080,54 @@ def run_rewrite_pipeline(
                     base_severity - _weighted_severity(candidate_report),
                     -num(_badge_ai(candidate_report), 999.0),
                 )
+                diagnostic_rank = (
+                    num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")),
+                    num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")),
+                    num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")),
+                    num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")),
+                    num(base_profile.get("topk_calibrated_risk")) - num(after_profile.get("topk_calibrated_risk")),
+                    -len(reject_reasons),
+                    -num(_badge_ai(candidate_report), 999.0),
+                )
+                if best_diagnostic_rank is None or diagnostic_rank > best_diagnostic_rank:
+                    best_diagnostic_rank = diagnostic_rank
+                    best_diagnostic = {
+                        "strategy": strategy,
+                        "rank": diagnostic_rank,
+                        "reject_reasons": reject_reasons,
+                        "strict_ai_safe_band": after_strict,
+                        "ai": candidate_eval.get("ai"),
+                        "human_contribution": candidate_eval.get("human_contribution"),
+                        "ai_authorship": candidate_eval.get("ai_authorship"),
+                        "ai_transformation": candidate_eval.get("ai_transformation"),
+                        "external_ai_flag_risk": after_profile.get("external_ai_flag_risk"),
+                        "generic_assertion_risk": after_profile.get("generic_assertion_risk"),
+                        "topk_calibrated_risk": after_profile.get("topk_calibrated_risk"),
+                    }
+                hard_reject_reasons = [
+                    reason for reason in reject_reasons
+                    if reason != "strict_safe_band_not_reached"
+                ]
+                partial_driver_moved = bool(
+                    num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")) > 0.25
+                    or num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")) > 0.25
+                    or num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")) > 0.25
+                    or num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")) > 0.25
+                )
+                if (
+                    not hard_reject_reasons
+                    and not after_strict.get("achieved")
+                    and partial_driver_moved
+                    and (partial_selected_rank is None or diagnostic_rank > partial_selected_rank)
+                ):
+                    partial_selected_rank = diagnostic_rank
+                    partial_selected = {
+                        "strategy": strategy,
+                        "text": candidate_text,
+                        "report": candidate_report,
+                        "eval": candidate_eval,
+                        "rank": diagnostic_rank,
+                    }
                 if not reject_reasons and (selected_rank is None or rank > selected_rank):
                     selected_rank = rank
                     selected = {
@@ -14756,9 +15170,53 @@ def run_rewrite_pipeline(
                     "selected_ai": best_ai,
                     "selected_strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
                 })
+            elif partial_selected:
+                best_text = partial_selected["text"]
+                best_report = partial_selected["report"]
+                best_ai = _badge_ai(best_report)
+                best_strategy = partial_selected["strategy"]
+                partial_eval = partial_selected["eval"]
+                partial_gate = partial_eval.get("ai_footprint_gate") or {}
+                best_selection_status = {
+                    **(partial_eval.get("selection_status") or {}),
+                    "selectable": True,
+                    "success": True,
+                    "reason": "accepted_post_topk_partial_safe_band",
+                    "post_topk_optimizer": True,
+                    "strict_ai_safe_band_achieved": False,
+                    "ai_footprint_mitigation": False,
+                    "partial_ai_footprint_mitigation": True,
+                    "topk_safe_band_achieved": True,
+                    "ai_footprint_gate": partial_gate,
+                    "ai_footprint_outcome_class": partial_gate.get("outcome_class") or "partially_ai_mitigated",
+                }
+                best_human_shift_rank = _goal_climb_candidate_rank(
+                    best_selection_status,
+                    partial_eval,
+                    candidate_ai=best_ai,
+                    candidate_review_burden=_review_burden(best_report),
+                    candidate_weighted_severity=_weighted_severity(best_report),
+                    candidate_finding_total=_finding_total(best_report),
+                    original_review_burden=original_review_burden,
+                    original_weighted_severity=original_severity,
+                    original_finding_total=original_total,
+                )
+                best_semantic_review_required = False
+                best_drift_reasons = []
+                _record_best_attempt()
+                summary.update({
+                    "selected": True,
+                    "selected_partial": True,
+                    "selected_strategy": best_strategy,
+                    "selected_ai": best_ai,
+                    "selected_strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
+                    "reason": "accepted_best_non_regressing_partial_candidate",
+                })
             else:
                 summary["reason"] = "no_candidate_reached_strict_safe_band"
                 summary["best_preserved_strategy"] = best_strategy
+                summary["best_rejected_candidate"] = best_diagnostic
+                summary["remaining_strict_safe_band_drivers"] = base_strict.get("remaining") or []
 
         deterministic_only = (
             bool(ai_search_first)

@@ -176,6 +176,8 @@ from rewrite_pipeline import (
     _topk_masked_route_prompt,
     _extract_topk_route_patch_candidates,
     _apply_topk_route_patches,
+    _post_topk_driver_map,
+    _post_topk_convergence_candidates,
     _extract_post_topk_patch_candidates,
     _apply_post_topk_patches,
     _phase_sampling_arg,
@@ -1292,6 +1294,43 @@ assert_test(
     and len(post_topk_applied) == 1
     and "narrower paragraph" in post_topk_text,
     "post-Top-k JSON patch candidates parse and apply paragraph-local replacements",
+)
+post_topk_generic_source = (
+    "Education is changing rapidly. This highlights the importance of helping students develop important skills. "
+    "Teachers should support learning in many different ways.\n\n"
+    "Students use YouTube, TikTok, AI tools, search engines, and online courses before they ask a teacher. "
+    "That creates a problem of what to trust.\n\n"
+    "In conclusion, education should prepare students for a changing world. "
+    "This shows that teachers play a crucial role in student success."
+)
+post_topk_generic_report = make_footprint_report(
+    ai_authorship=50,
+    human=45,
+    ai_transformation=55,
+    grounding=45,
+    human_anchor=30,
+    smoothness=35,
+    semantic_uniformity=49,
+    ai_likelihood=50,
+    topk_pattern=64,
+    topk_calibrated_risk=21,
+    generic_assertion_risk=90,
+    unsupported_claim_risk=25,
+    broad_claim_risk=15,
+    discourse=27,
+)
+post_topk_driver_map = _post_topk_driver_map(post_topk_generic_source, post_topk_generic_report)
+post_topk_convergence_candidates = _post_topk_convergence_candidates(
+    post_topk_generic_source,
+    post_topk_generic_report,
+    limit=6,
+)
+assert_test(
+    post_topk_driver_map["generic_sentence_ratio"] > 0
+    and post_topk_convergence_candidates
+    and any(meta.get("post_topk_convergence") for _s, _c, meta in post_topk_convergence_candidates)
+    and any("This highlights the importance" not in candidate for _s, candidate, _m in post_topk_convergence_candidates),
+    "post-Top-k convergence optimizer builds stronger document-wide generic-collapse candidates",
 )
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {
