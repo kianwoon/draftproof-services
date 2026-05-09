@@ -229,6 +229,7 @@ def _ai_search_selected_by_final_safety_gate(
             "score_drag_removal",
             "ai_footprint_mitigation",
             "partial_ai_footprint_mitigation",
+            "topk_blocker_progress",
             "safe_partial_quality_improvement",
         )
     )
@@ -286,6 +287,11 @@ def _rewrite_sampling_profile(prefix: str = "DRAFTPROOF_AI_SEARCH") -> dict:
 def _phase_sampling_arg(phase_prefix: str, key: str, fallback_prefix: str = "DRAFTPROOF_AI_SEARCH"):
     env_name = f"{phase_prefix}_{key}"
     fallback = _rewrite_sampling_profile(fallback_prefix)
+    phase_defaults = {
+        ("DRAFTPROOF_TOPK_ROUTE", "TOP_P"): 0.72,
+        ("DRAFTPROOF_TOPK_ROUTE", "PRESENCE_PENALTY"): 0.10,
+        ("DRAFTPROOF_TOPK_ROUTE", "FREQUENCY_PENALTY"): 0.35,
+    }
     if key == "TOP_K":
         value = _int_env_optional(env_name)
         return value if value is not None else fallback.get("top_k")
@@ -295,7 +301,11 @@ def _phase_sampling_arg(phase_prefix: str, key: str, fallback_prefix: str = "DRA
         "FREQUENCY_PENALTY": "frequency_penalty",
     }.get(key)
     value = _float_env_optional(env_name)
-    return value if value is not None else fallback.get(field)
+    if value is not None:
+        return value
+    if (phase_prefix, key) in phase_defaults:
+        return phase_defaults[(phase_prefix, key)]
+    return fallback.get(field)
 
 
 def _phase_chat_sampling_kwargs(
@@ -2241,6 +2251,343 @@ def _topk_texture_repair_prompt(
     )
 
 
+def _topk_optimizer_sentence_limit(text: str) -> int:
+    words = _text_word_count(text)
+    if words <= 700:
+        return int(_float_env("DRAFTPROOF_TOPK_ROUTE_SHORT_SENTENCES", 8.0))
+    if words <= 1800:
+        return int(_float_env("DRAFTPROOF_TOPK_ROUTE_MEDIUM_SENTENCES", 12.0))
+    return int(_float_env("DRAFTPROOF_TOPK_ROUTE_LONG_SENTENCES", 20.0))
+
+
+def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None = None) -> dict:
+    """Rank sentence/token routes that directly drive top-k saturation."""
+    limit = max(1, int(limit or _topk_optimizer_sentence_limit(text)))
+    predictability = (report_dict or {}).get("predictability") or {}
+    source_rows = predictability.get("all_sentences") or predictability.get("sentences") or []
+    rows: list[dict] = []
+    for index, item in enumerate(source_rows):
+        if not isinstance(item, dict):
+            continue
+        sentence = str(item.get("sentence") or item.get("text") or "").strip()
+        if not sentence:
+            continue
+        top10 = float(item.get("top10_ratio") or item.get("top_10_ratio") or item.get("top10") or 0.0)
+        top50 = float(item.get("top50_ratio") or item.get("top_50_ratio") or item.get("top50") or 0.0)
+        risk = float(item.get("predictability_risk") or item.get("risk") or item.get("score") or 0.0)
+        spans = [
+            str(span).strip()
+            for span in (item.get("predictable_token_spans") or [])
+            if str(span).strip()
+        ][:6]
+        tokens = [
+            token for token in (item.get("top_predicted_tokens") or [])
+            if isinstance(token, dict)
+        ][:10]
+        generic_opening = bool(re.search(
+            r"^(?:The|This|These|It|Another|One of|In addition|At the same time|Despite|However|In conclusion|Overall)\b",
+            sentence,
+            re.I,
+        ))
+        rows.append({
+            "sentence_id": item.get("sentence_id") or f"s{index + 1:03d}",
+            "sentence_index": index,
+            "paragraph_id": item.get("paragraph_id") or "",
+            "sentence": sentence,
+            "top10_ratio": round(top10, 4),
+            "top50_ratio": round(top50, 4),
+            "predictability_risk": round(risk, 4),
+            "predictable_token_spans": spans,
+            "top_predicted_tokens": tokens,
+            "drivers": {
+                "generic_opening": generic_opening,
+                "high_top10": top10 >= 0.65,
+                "span_count": len(spans),
+            },
+            "route_score": round(top10 * 0.55 + top50 * 0.20 + risk * 0.20 + (0.05 if generic_opening else 0.0), 4),
+        })
+    rows.sort(key=lambda row: row["route_score"], reverse=True)
+    selected = rows[:limit]
+    return {
+        "enabled": True,
+        "limit": limit,
+        "saturated": float(_blocker_scores(report_dict).get("topk_pattern", 0.0) or 0.0) >= _float_env(
+            "DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD",
+            90.0,
+        ),
+        "topk_pattern": _blocker_scores(report_dict).get("topk_pattern"),
+        "targets": selected,
+        "target_sentence_ids": [row.get("sentence_id") for row in selected],
+    }
+
+
+def _deterministic_topk_route_sentence(sentence: str) -> tuple[str, list[str]]:
+    """Make local route changes that attack predictability without adding facts."""
+    original = str(sentence or "").strip()
+    candidate = original
+    operations: list[str] = []
+
+    strong_routes = [
+        (
+            r"^One of the biggest strengths of (?P<subject>.+?) is (?P<claim>[^.]+)\.$",
+            lambda m: f"{m.group('claim').strip().capitalize()} is where {m.group('subject').strip()} still carries weight.",
+            "ranked_claim_route_strong",
+        ),
+        (
+            r"^(?P<subject>The [^.]{3,80}?) has one of the largest (?P<asset>[^.]{3,80}?) in the world and is home to many (?P<group>[^.]+)\.$",
+            lambda m: (
+                f"Large {m.group('asset').strip()}, many {m.group('group').strip()}, and global reach: "
+                f"that is part of {m.group('subject').strip().lower()}'s position."
+            ),
+            "largest_asset_route",
+        ),
+        (
+            r"^(?P<subject>.+?) was founded in (?P<year>\d{4}) after (?P<event>[^.]+)\.$",
+            lambda m: (
+                f"{m.group('year')} matters here: {m.group('event').strip()}, "
+                f"and {m.group('subject').strip()} began from that break."
+            ),
+            "founding_date_route",
+        ),
+        (
+            r"^Millions of people from different countries moved to (?P<place>.+?) in search of better opportunities and a new life\.$",
+            lambda m: (
+                f"Better work, safety, a new life: those hopes brought millions of people from different countries "
+                f"to {m.group('place').strip()}."
+            ),
+            "migration_motive_route",
+        ),
+        (
+            r"^In addition to (?P<context>.+?), (?P<subject>.+?) has a strong cultural influence\.$",
+            lambda m: (
+                f"Culture is another route of influence for {m.group('subject').strip()}, "
+                f"beyond {m.group('context').strip()}."
+            ),
+            "culture_influence_route",
+        ),
+        (
+            r"^The country was built on ideas such as (?P<ideas>[^.]+)\.$",
+            lambda m: (
+                f"Ideas such as {m.group('ideas').strip()} sat near the centre of how the country described itself."
+            ),
+            "idea_list_route",
+        ),
+        (
+            r"^At the same time, (?P<subject>.+?) has also created challenges related to (?P<issues>[^.]+)\.$",
+            lambda m: f"Still, {m.group('subject').strip()} also brings harder questions: {m.group('issues').strip()}.",
+            "challenge_list_route",
+        ),
+        (
+            r"^The (?P<movement>[^.]{3,80} Movement) was an important period that aimed to (?P<aim>[^.]+)\.$",
+            lambda m: f"The {m.group('movement').strip()} had a direct aim: {m.group('aim').strip()}.",
+            "movement_aim_route",
+        ),
+    ]
+    for pattern, replacement, op in strong_routes:
+        match = re.match(pattern, candidate, flags=re.I)
+        if match:
+            updated = replacement(match)
+            if updated and updated != candidate:
+                candidate = updated
+                operations.append(op)
+                break
+
+    replacements = [
+        (r"^The ([A-Z][A-Za-z ]{2,60}) is often described as ", r"\1 is often described this way: ", "opening_route"),
+        (r"^It has shaped ", r"Its influence reaches into ", "pronoun_opening_route"),
+        (r"^The country has ", r"Inside the country, there is ", "country_opening_route"),
+        (r"^One of the biggest strengths of ([^,]+) is ", r"For \1, one clear strength is ", "ranked_claim_route"),
+        (r"^Another important feature of ([^,]+) is ", r"Another part of \1 is ", "feature_route"),
+        (r"^In addition to ", r"Beyond ", "connector_remove"),
+        (r"^At the same time, ", r"Still, ", "connector_shorten"),
+        (r"^Despite its success, ", r"That success has limits. ", "fragment_route"),
+        (r"^However, ", r"But ", "connector_plain"),
+        (r"^In conclusion, ", r"Taken together, ", "conclusion_route"),
+        (r"\bis known for\b", "is often linked with", "bland_verb_route"),
+        (r"\bplays a major role in\b", "matters in", "formula_route"),
+        (r"\bhas a strong influence\b", "carries influence", "bland_verb_route"),
+        (r"\bhas become one of the\b", "now works as one of the", "formula_route"),
+        (r"\bThis has led to\b", "That leaves", "formula_route"),
+        (r"\bThis is why\b", "That is where", "formula_route"),
+    ]
+    for pattern, replacement, op in replacements:
+        updated = re.sub(pattern, replacement, candidate, count=1, flags=re.I)
+        if updated != candidate:
+            candidate = updated
+            operations.append(op)
+    if candidate == original:
+        comma_parts = candidate.split(",", 1)
+        if len(comma_parts) == 2 and 8 <= len(candidate.split()) <= 32:
+            candidate = f"{comma_parts[1].strip()} {comma_parts[0].strip().lower()}."
+            candidate = re.sub(r"\.\.$", ".", candidate)
+            operations.append("clause_route_flip")
+    candidate = re.sub(r"\s{2,}", " ", candidate).strip()
+    return (candidate, operations) if candidate != original else (original, [])
+
+
+def _splice_sentences_by_text(text: str, replacements: dict[str, str]) -> str:
+    candidate = str(text or "")
+    for original, replacement in replacements.items():
+        if original and replacement and original != replacement and original in candidate:
+            candidate = candidate.replace(original, replacement, 1)
+    return candidate
+
+
+def _topk_route_optimizer_candidates(
+    text: str,
+    report_dict: dict | None,
+    *,
+    limit: int | None = None,
+) -> list[tuple[str, str, dict]]:
+    repair_map = _topk_repair_map(text, report_dict, limit=limit)
+    if not repair_map.get("saturated"):
+        return []
+    expanded_limit = int(_float_env(
+        "DRAFTPROOF_TOPK_ROUTE_EXPANDED_SENTENCES",
+        max(float(repair_map.get("limit") or 1), min(48.0, float(len(_split_sentences(text)) or 1))),
+    ))
+    expanded_map = _topk_repair_map(text, report_dict, limit=expanded_limit)
+    targets = repair_map.get("targets") or []
+    candidate_rows: list[tuple[str, str, dict]] = []
+    batches = [(targets, 0.35, "small"), (targets, 0.65, "medium"), (targets, 1.0, "full")]
+    expanded_targets = [
+        row for row in (expanded_map.get("targets") or [])
+        if float(row.get("top10_ratio") or 0.0) >= _float_env("DRAFTPROOF_TOPK_ROUTE_EXPANDED_MIN_TOP10", 0.62)
+    ]
+    if len(expanded_targets) > len(targets):
+        batches.append((expanded_targets, 1.0, "expanded"))
+    for batch_targets, fraction, label in batches:
+        take = max(1, min(len(batch_targets), math.ceil(len(batch_targets) * fraction)))
+        replacements: dict[str, str] = {}
+        operations: list[dict] = []
+        for target in batch_targets[:take]:
+            sentence = str(target.get("sentence") or "")
+            if not sentence:
+                continue
+            replacement, ops = _deterministic_topk_route_sentence(sentence)
+            if ops and replacement != sentence:
+                replacements[sentence] = replacement
+                operations.append({
+                    "sentence_id": target.get("sentence_id"),
+                    "sentence_index": target.get("sentence_index"),
+                    "operations": ops,
+                    "top10_ratio": target.get("top10_ratio"),
+                })
+        candidate = _splice_sentences_by_text(text, replacements)
+        if candidate != text and operations:
+            candidate_rows.append((
+                f"topk_route_optimizer_{label}",
+                candidate,
+                {
+                    "topk_route_optimizer": True,
+                    "stage": "deterministic_route_edits",
+                    "target_count": take,
+                    "applied_count": len(operations),
+                    "operations": operations,
+                },
+            ))
+    return candidate_rows
+
+
+def _topk_masked_route_prompt(
+    text: str,
+    report_dict: dict | None,
+    *,
+    candidate_count: int = 2,
+) -> str:
+    repair_map = _topk_repair_map(text, report_dict)
+    payload = {
+        "topk_pattern": repair_map.get("topk_pattern"),
+        "target_sentence_ids": repair_map.get("target_sentence_ids"),
+        "targets": repair_map.get("targets"),
+        "protected_anchors": _protected_anchor_brief_for_prompt(text),
+    }
+    return (
+        "DraftProof TOPK_ROUTE_OPTIMIZER.\n"
+        "Repair only the listed high top-k sentences. Return JSON patches, not a full document.\n\n"
+        "Goal:\n"
+        "- reduce top_10_ratio / topk_pattern by changing sentence routes\n"
+        "- preserve facts, anchors, dates, names, and core claims\n"
+        "- use detector-first texture: mild roughness, fragments, clause movement, less predictable openings\n"
+        "- break repeated claim -> explanation -> implication routes\n"
+        "- mix rhythm: short sentence, longer explanation, small follow-up where useful\n\n"
+        "Preferred operations:\n"
+        "- replace predictable openings with concrete route changes\n"
+        "- remove generic connectors instead of replacing them with polished connectors\n"
+        "- split over-smooth sentences when meaning remains intact\n"
+        "- move a clause to the front only when it lowers the predictable opening\n\n"
+        "Forbidden:\n"
+        "- no new facts, citations, statistics, examples, or personal experience\n"
+        "- no full-document rewrite\n"
+        "- no anchor mutation\n"
+        "- no smoother academic polish\n\n"
+        "- do not use Furthermore, Moreover, Additionally, In conclusion, It is important to note, This demonstrates, This underscores, plays a crucial role, significant impact\n\n"
+        "Return valid JSON only:\n"
+        "{\n"
+        '  "candidates": [\n'
+        '    {"patches": [{"sentence_id": "s001", "original_sentence": "...", "replacement_sentence": "..."}]}\n'
+        "  ]\n"
+        "}\n\n"
+        f"Return exactly {max(1, int(candidate_count or 1))} candidates.\n"
+        f"REPAIR MAP:\n{json.dumps(payload, ensure_ascii=False)[:12000]}"
+    )
+
+
+def _extract_topk_route_patch_candidates(response_text: str, *, max_candidates: int = 2) -> list[list[dict]]:
+    text = str(response_text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+    try:
+        data = json.loads(text)
+    except Exception:
+        match = re.search(r"\{.*\}", text, flags=re.S)
+        if not match:
+            return []
+        try:
+            data = json.loads(match.group(0))
+        except Exception:
+            return []
+    rows = data.get("candidates") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        return []
+    candidates: list[list[dict]] = []
+    for row in rows[:max(1, max_candidates)]:
+        patches = row.get("patches") if isinstance(row, dict) else None
+        if not isinstance(patches, list):
+            continue
+        clean = []
+        for patch in patches:
+            if not isinstance(patch, dict):
+                continue
+            original = str(patch.get("original_sentence") or "").strip()
+            replacement = str(patch.get("replacement_sentence") or "").strip()
+            if original and replacement and original != replacement:
+                clean.append({
+                    "sentence_id": patch.get("sentence_id"),
+                    "original_sentence": original,
+                    "replacement_sentence": replacement,
+                })
+        if clean:
+            candidates.append(clean)
+    return candidates
+
+
+def _apply_topk_route_patches(text: str, patches: list[dict]) -> tuple[str, list[dict]]:
+    candidate = str(text or "")
+    applied = []
+    for patch in patches or []:
+        original = str(patch.get("original_sentence") or "").strip()
+        replacement = str(patch.get("replacement_sentence") or "").strip()
+        if not original or not replacement or original == replacement:
+            continue
+        if original not in candidate:
+            continue
+        candidate = candidate.replace(original, replacement, 1)
+        applied.append(patch)
+    return candidate, applied
+
+
 def _build_source_grounding_search_layer(
     text: str,
     report_dict: dict | None,
@@ -3044,13 +3391,18 @@ def _ai_footprint_gate_status(
         "discourse_regularity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_DISCOURSE_DROP", 1.0),
         "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_MIN_DROP", 1.5),
     }
+    active_topk_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
+    if before_flat.get("topk_pattern", 0.0) >= active_topk_threshold:
+        thresholds["topk_pattern"] = max(
+            thresholds["topk_pattern"],
+            _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0),
+        )
     material_primary = [
         key for key in primary_keys
         if drops.get(key, 0.0) >= thresholds.get(key, 1.0)
     ]
     material_proxy = drops.get("external_ai_flag_risk", 0.0) >= thresholds["external_ai_flag_risk"]
     texture_blockers = []
-    active_topk_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
     if (
         before_flat.get("topk_pattern", 0.0) >= active_topk_threshold
         and drops.get("topk_pattern", 0.0) < thresholds["topk_pattern"]
@@ -4768,17 +5120,21 @@ def _goal_climb_candidate_rank(
         "partially_ai_mitigated": 3,
         "cleanup_improved": 1,
     }.get(footprint_outcome, 0)
+    if status.get("topk_blocker_progress"):
+        footprint_priority = max(footprint_priority, 2)
     footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
     external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"), 0.0)
     topk_drop = num(footprint_drops.get("topk_pattern"), 0.0)
     ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"), 0.0)
+    ai_authorship_drop = num(gate.get("ai_authorship_delta"), ai_authorship_delta)
 
     return (
         1 if status.get("selectable") else 0,
         footprint_priority,
-        external_flag_drop,
-        ai_likelihood_drop,
         topk_drop,
+        ai_authorship_drop,
+        ai_likelihood_drop,
+        external_flag_drop,
         rewrite_smoothness_reduction,
         1 if candidate_human >= target_human else 0,
         1 if candidate_human >= stage_target else 0,
@@ -12602,6 +12958,19 @@ def run_rewrite_pipeline(
                 "deterministic_source_integrity_repair",
                 search_source_text,
             ))
+        topk_route_enabled = _env_flag("DRAFTPROOF_TOPK_ROUTE_OPTIMIZER", True)
+        topk_route_map = (
+            _topk_repair_map(search_source_text, original_report_dict)
+            if topk_route_enabled else {"enabled": False, "targets": []}
+        )
+        topk_route_candidates = (
+            _topk_route_optimizer_candidates(search_source_text, original_report_dict)
+            if topk_route_enabled else []
+        )
+        deterministic_candidates.extend(
+            (strategy, candidate)
+            for strategy, candidate, _meta in topk_route_candidates
+        )
         blocker_operation_candidates = _blocker_operation_candidates(
             search_source_text,
             original_report_dict,
@@ -12645,6 +13014,18 @@ def run_rewrite_pipeline(
                 "enabled": _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True),
                 "before": _ai_footprint_profile(original_report_dict),
                 "objective": "reduce_authorship_texture_drivers_before_cleanup",
+            },
+            "topk_route_optimizer": {
+                "enabled": topk_route_enabled,
+                "repair_map": topk_route_map,
+                "deterministic_candidate_count": len(topk_route_candidates),
+                "deterministic_candidates": [
+                    {
+                        "strategy": strategy,
+                        **meta,
+                    }
+                    for strategy, _candidate, meta in topk_route_candidates
+                ],
             },
             "llm_calls": 0,
             "selected": False,
@@ -13239,6 +13620,44 @@ def run_rewrite_pipeline(
                 and candidate_weighted_severity <= original_severity
                 and not ai_score_regressed
             )
+            footprint_drops = ai_footprint_gate.get("drops") if isinstance(ai_footprint_gate.get("drops"), dict) else {}
+            topk_texture_blocked = bool(
+                any(
+                    str(blocker.get("driver") or "") == "topk_pattern"
+                    for blocker in (ai_footprint_gate.get("texture_blockers") or [])
+                    if isinstance(blocker, dict)
+                )
+            )
+            topk_blocker_progress_selectable = bool(
+                _env_flag("DRAFTPROOF_ACCEPT_TOPK_BLOCKER_PROGRESS", True)
+                and topk_texture_blocked
+                and ai_footprint_gate.get("safety_clean")
+                and float(footprint_drops.get("topk_pattern") or 0.0) >= _float_env(
+                    "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_DROP",
+                    1.5,
+                )
+                and float(footprint_drops.get("ai_likelihood") or 0.0) >= _float_env(
+                    "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_AI_LIKELIHOOD_DROP",
+                    1.0,
+                )
+                and isinstance(ai_authorship_delta, (int, float))
+                and ai_authorship_delta >= _float_env(
+                    "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_AUTHORSHIP_DROP",
+                    1.0,
+                )
+                and isinstance(candidate_ai_transform_delta, (int, float))
+                and candidate_ai_transform_delta >= _float_env(
+                    "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_TRANSFORMATION_DROP",
+                    0.0,
+                )
+                and candidate_critical_high <= saved_critical_high
+                and candidate_finding_total <= original_total
+                and candidate_review_burden <= original_review_burden
+                and candidate_weighted_severity <= original_severity
+                and not ai_score_regressed
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("critical_high_regressed")
+            )
             score_drag_status = _score_drag_removal_status(
                 authenticity_status=authenticity_status,
                 human_shift=human_shift,
@@ -13332,6 +13751,13 @@ def run_rewrite_pipeline(
                 and candidate_critical_high <= saved_critical_high + blocker_critical_high_tolerance
                 and not authenticity_status.get("ai_authorship_regression_blocked")
             )
+            if topk_blocker_progress_selectable:
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "reason": "accepted_topk_blocker_progress",
+                    "topk_blocker_progress": True,
+                })
             if (
                 not selection_status.get("selectable")
                 and (
@@ -13340,6 +13766,7 @@ def run_rewrite_pipeline(
                     human_primary_selectable
                     or
                     ai_footprint_selectable
+                    or topk_blocker_progress_selectable
                     or
                     incremental_authenticity_selectable
                     or human_amplification_selectable
@@ -13359,34 +13786,38 @@ def run_rewrite_pipeline(
                             "accepted_human_primary_progress"
                             if human_primary_selectable
                             else (
-                                "accepted_ai_footprint_mitigation"
-                                if ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"
-                                else (
-                                    "accepted_partial_ai_footprint_mitigation"
-                                    if ai_footprint_selectable
+                                    "accepted_ai_footprint_mitigation"
+                                    if ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"
                                     else (
-                                        "accepted_human_signal_amplification"
-                                        if human_amplification_selectable
+                                        "accepted_partial_ai_footprint_mitigation"
+                                        if ai_footprint_selectable
                                         else (
-                                            "accepted_post_safe_target_climb"
-                                            if post_safe_target_climb_selectable
+                                            "accepted_topk_blocker_progress"
+                                            if topk_blocker_progress_selectable
                                             else (
-                                                "accepted_score_drag_removal"
-                                                if score_drag_removal_selectable
+                                                "accepted_human_signal_amplification"
+                                                if human_amplification_selectable
                                                 else (
-                                                    "accepted_safe_partial_quality_improvement"
-                                                    if safe_partial_quality_selectable
+                                                    "accepted_post_safe_target_climb"
+                                                    if post_safe_target_climb_selectable
                                                     else (
-                                                        (
-                                                            "accepted_incremental_human_target_progress"
-                                                            if _radar_goal_requires_human_progress(radar_goal_controller)
-                                                            else "accepted_safe_authorship_suppression"
+                                                        "accepted_score_drag_removal"
+                                                        if score_drag_removal_selectable
+                                                        else (
+                                                            "accepted_safe_partial_quality_improvement"
+                                                            if safe_partial_quality_selectable
+                                                            else (
+                                                                (
+                                                                    "accepted_incremental_human_target_progress"
+                                                                    if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                                    else "accepted_safe_authorship_suppression"
+                                                                )
+                                                                if safe_authorship_suppression_selectable
+                                                                else "accepted_incremental_authenticity_progress"
+                                                            )
                                                         )
-                                                        if safe_authorship_suppression_selectable
-                                                        else "accepted_incremental_authenticity_progress"
                                                     )
                                                 )
-                                            )
                                         )
                                     )
                                 )
@@ -13397,6 +13828,7 @@ def run_rewrite_pipeline(
                     "human_primary_progress": bool(human_primary_selectable),
                     "ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"),
                     "partial_ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "partially_ai_mitigated"),
+                    "topk_blocker_progress": bool(topk_blocker_progress_selectable),
                     "cleanup_improved": bool(safe_partial_quality_selectable and ai_footprint_outcome == "cleanup_improved"),
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
                     "human_signal_amplification": bool(human_amplification_selectable),
@@ -13426,6 +13858,7 @@ def run_rewrite_pipeline(
                 and not selection_status.get("safe_authorship_suppression")
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
+                and not selection_status.get("topk_blocker_progress")
                 and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
@@ -13442,6 +13875,7 @@ def run_rewrite_pipeline(
                 and not selection_status.get("post_safe_target_climb")
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
+                and not selection_status.get("topk_blocker_progress")
                 and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
@@ -13475,6 +13909,7 @@ def run_rewrite_pipeline(
                 and ai_footprint_outcome == "ai_footprint_blocked_by_texture"
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
+                and not selection_status.get("topk_blocker_progress")
                 and _env_flag("DRAFTPROOF_BLOCK_TEXTURE_STALLED_AI_FOOTPRINT", True)
             ):
                 selection_status.update({
@@ -14446,6 +14881,81 @@ def run_rewrite_pipeline(
                 ) != "0"
                 component_source_text = best_text if _best_ai_search_selectable() else search_source_text
                 component_base_text, component_base_repairs = _repair_candidate_source_damage(component_source_text)
+                if _env_flag("DRAFTPROOF_TOPK_ROUTE_OPTIMIZER", True):
+                    route_base_report = best_report if _best_ai_search_selectable() else original_report_dict
+                    route_map = _topk_repair_map(component_base_text, route_base_report)
+                    topk_summary = search_summary.setdefault("topk_route_optimizer", {})
+                    topk_summary.update({
+                        "enabled": True,
+                        "llm_stage_enabled": True,
+                        "llm_repair_map": route_map,
+                    })
+                    if route_map.get("saturated"):
+                        try:
+                            route_candidate_count = max(
+                                1,
+                                int(_float_env(
+                                    "DRAFTPROOF_TOPK_ROUTE_LLM_CANDIDATES",
+                                    float(_adaptive_budget_default(component_base_text, 1, 2)),
+                                )),
+                            )
+                            prompt = _topk_masked_route_prompt(
+                                component_base_text,
+                                route_base_report,
+                                candidate_count=route_candidate_count,
+                            )
+                            search_summary["llm_calls"] += 1
+                            response = gateway.chat(
+                                prompt,
+                                system=(
+                                    "You are DraftProof's token-route optimizer. "
+                                    "Return only JSON sentence patches for high top-k routes."
+                                ),
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_TOPK_ROUTE",
+                                    temperature_env="DRAFTPROOF_TOPK_ROUTE_TEMPERATURE",
+                                    temperature_default=0.35,
+                                    max_tokens_env="DRAFTPROOF_TOPK_ROUTE_MAX_TOKENS",
+                                    max_tokens_default=3200,
+                                ),
+                            )
+                            patch_sets = _extract_topk_route_patch_candidates(
+                                response.content,
+                                max_candidates=route_candidate_count,
+                            )
+                            topk_summary["llm_candidate_count"] = len(patch_sets)
+                            for route_index, patches in enumerate(patch_sets, start=1):
+                                candidate, applied = _apply_topk_route_patches(component_base_text, patches)
+                                strategy = f"topk_route_masked_c{route_index}"
+                                if not applied or candidate == component_base_text:
+                                    search_summary["candidates"].append({
+                                        "strategy": strategy,
+                                        "passed_local_checks": False,
+                                        "reason": "no_topk_route_patch_applied",
+                                        "topk_route_optimizer": True,
+                                    })
+                                    continue
+                                _evaluate_ai_search_candidate(
+                                    strategy,
+                                    candidate,
+                                    deterministic=False,
+                                    extra={
+                                        "topk_route_optimizer": True,
+                                        "stage": "masked_span_regeneration",
+                                        "applied_topk_route_patches": applied,
+                                        "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
+                                    },
+                                )
+                        except Exception as exc:
+                            search_summary["candidates"].append({
+                                "strategy": "topk_route_masked_batch",
+                                "passed_local_checks": False,
+                                "reason": f"llm_error {exc}",
+                                "topk_route_optimizer": True,
+                            })
+                            topk_summary["llm_error"] = str(exc)
+                    else:
+                        topk_summary["llm_stage_skipped"] = "topk_not_saturated"
                 internet_priority = _internet_reauthor_priority_status(original_report_dict, component_base_text)
                 paragraph_component_first = bool(
                     paragraph_search_enabled
@@ -17073,10 +17583,24 @@ def run_rewrite_pipeline(
         ),
     )
     result.summary["ai_footprint_gate"] = final_ai_footprint_gate
+    final_footprint_before = final_ai_footprint_gate.get("before", {}) or {}
+    final_footprint_after = final_ai_footprint_gate.get("after", {}) or {}
+    final_footprint_drops = final_ai_footprint_gate.get("drops") or {}
+    final_before_authorship = final_footprint_before.get("authorship_footprint") or {}
+    final_after_authorship = final_footprint_after.get("authorship_footprint") or {}
     result.summary.setdefault("detect_scores", {}).update({
-        "external_ai_flag_risk_before": final_ai_footprint_gate.get("before", {}).get("external_ai_flag_risk"),
-        "external_ai_flag_risk_after": final_ai_footprint_gate.get("after", {}).get("external_ai_flag_risk"),
-        "external_ai_flag_risk_drop": (final_ai_footprint_gate.get("drops") or {}).get("external_ai_flag_risk"),
+        "external_ai_flag_risk_before": final_footprint_before.get("external_ai_flag_risk"),
+        "external_ai_flag_risk_after": final_footprint_after.get("external_ai_flag_risk"),
+        "external_ai_flag_risk_drop": final_footprint_drops.get("external_ai_flag_risk"),
+        "topk_pattern_before": final_before_authorship.get("topk_pattern"),
+        "topk_pattern_after": final_after_authorship.get("topk_pattern"),
+        "topk_pattern_drop": final_footprint_drops.get("topk_pattern"),
+        "rewrite_smoothness_before": final_before_authorship.get("rewrite_smoothness"),
+        "rewrite_smoothness_after": final_after_authorship.get("rewrite_smoothness"),
+        "rewrite_smoothness_drop": final_footprint_drops.get("rewrite_smoothness"),
+        "ai_likelihood_driver_before": final_before_authorship.get("ai_likelihood"),
+        "ai_likelihood_driver_after": final_after_authorship.get("ai_likelihood"),
+        "ai_likelihood_driver_drop": final_footprint_drops.get("ai_likelihood"),
         "ai_footprint_outcome_class": final_ai_footprint_gate.get("outcome_class"),
         "remaining_ai_footprint_drivers": final_ai_footprint_gate.get("remaining_ai_footprint_drivers"),
     })
@@ -17089,6 +17613,11 @@ def run_rewrite_pipeline(
             "ai_score": report_dict.get("ai_score") or badge.get("ai_likelihood_score"),
             "writing_score": report_dict.get("writing_score") or badge.get("writing_quality_score"),
             "ai_risk_badge": badge,
+            "topk_repair_map": _topk_repair_map(
+                report_dict.get("document_context", {}).get("original_text", "")
+                if isinstance(report_dict.get("document_context"), dict) else "",
+                report_dict,
+            ) if (badge.get("ai_components") or {}).get("topk_pattern") else {},
             "scan_intelligence": report_dict.get("scan_intelligence") or {},
             "integrity_layers": report_dict.get("integrity_layers") or {},
             "overall_tier": report_dict.get("overall_tier", "?"),
@@ -17105,11 +17634,22 @@ def run_rewrite_pipeline(
         result.summary["final_text"] = rewritten_text
         if ai_search_selected:
             ai_footprint_outcome = str(final_ai_footprint_gate.get("outcome_class") or "")
+            texture_blockers = [
+                blocker for blocker in (final_ai_footprint_gate.get("texture_blockers") or [])
+                if isinstance(blocker, dict)
+            ]
+            topk_still_blocked = any(
+                str(blocker.get("driver") or "") == "topk_pattern"
+                for blocker in texture_blockers
+            )
             result.summary["outcome"] = {
                 "ai_mitigated": "ai_mitigated",
                 "partially_ai_mitigated": "partially_ai_mitigated",
                 "cleanup_improved": "cleanup_improved",
-            }.get(ai_footprint_outcome, "partially_improved")
+            }.get(
+                ai_footprint_outcome,
+                "topk_blocked" if topk_still_blocked else "partially_improved",
+            )
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings

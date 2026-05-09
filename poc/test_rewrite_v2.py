@@ -168,6 +168,12 @@ from rewrite_pipeline import (
     _internet_reinforced_reauthor_prompt,
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
+    _topk_repair_map,
+    _topk_route_optimizer_candidates,
+    _topk_masked_route_prompt,
+    _extract_topk_route_patch_candidates,
+    _apply_topk_route_patches,
+    _phase_sampling_arg,
     _source_search_enabled,
     _plain_language_depolish_text,
     _final_score_drag_sentence_prune_text,
@@ -1097,7 +1103,7 @@ footprint_partial = make_footprint_report(
     smoothness=68,
     semantic_uniformity=61,
     ai_likelihood=64,
-    topk_pattern=94,
+    topk_pattern=90,
     generic_assertion_risk=64,
     unsupported_claim_risk=88,
     broad_claim_risk=84,
@@ -4533,6 +4539,67 @@ assert_test(
     and "topk_pattern must drop" in topk_texture_prompt
     and "Do not add new facts" in topk_texture_prompt,
     "targeted claim narrowing and top-k texture prompts attack remaining blockers directly",
+)
+topk_route_report = {
+    "ai_risk_badge": {
+        "ai_components": {"topk_pattern": 100.0, "predictability": 50.0},
+        "writing_components": {},
+    },
+    "predictability": {
+        "all_sentences": [
+            {
+                "sentence_id": "s001",
+                "sentence": "The United States is often described as one of the most influential countries in modern history.",
+                "top10_ratio": 0.75,
+                "top50_ratio": 0.875,
+                "predictability_risk": 0.56,
+                "predictable_token_spans": ["States is", "described as one of the most"],
+                "top_predicted_tokens": [{"token": "of", "rank": 1, "probability": 0.9, "top10": True}],
+            },
+            {
+                "sentence_id": "s002",
+                "sentence": "It has shaped global politics, economics, technology, entertainment, and education for many decades.",
+                "top10_ratio": 0.65,
+                "top50_ratio": 0.94,
+                "predictability_risk": 0.54,
+                "predictable_token_spans": ["for many decades"],
+            },
+        ]
+    },
+}
+topk_route_map = _topk_repair_map(
+    "The United States is often described as one of the most influential countries in modern history. "
+    "It has shaped global politics, economics, technology, entertainment, and education for many decades.",
+    topk_route_report,
+    limit=2,
+)
+topk_route_candidates = _topk_route_optimizer_candidates(
+    "The United States is often described as one of the most influential countries in modern history. "
+    "It has shaped global politics, economics, technology, entertainment, and education for many decades.",
+    topk_route_report,
+    limit=2,
+)
+topk_mask_prompt = _topk_masked_route_prompt("The United States is often described as one country.", topk_route_report, candidate_count=1)
+topk_patch_sets = _extract_topk_route_patch_candidates(
+    '{"candidates":[{"patches":[{"sentence_id":"s001","original_sentence":"The United States is often described as one country.","replacement_sentence":"One common description of the United States is that it is one country."}]}]}',
+    max_candidates=1,
+)
+topk_patched_text, topk_applied = _apply_topk_route_patches(
+    "The United States is often described as one country.",
+    topk_patch_sets[0],
+)
+assert_test(
+    topk_route_map["saturated"]
+    and topk_route_map["targets"][0]["predictable_token_spans"]
+    and topk_route_candidates
+    and "often described as" not in topk_route_candidates[0][1]
+    and "Return valid JSON only" in topk_mask_prompt
+    and "claim -> explanation -> implication" in topk_mask_prompt
+    and _phase_sampling_arg("DRAFTPROOF_TOPK_ROUTE", "TOP_P") == 0.72
+    and _phase_sampling_arg("DRAFTPROOF_TOPK_ROUTE", "FREQUENCY_PENALTY") == 0.35
+    and topk_applied
+    and topk_patched_text.startswith("One common description"),
+    "top-k route optimizer builds repair map, deterministic candidates, JSON patch candidates, and phase sampling controls",
 )
 previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
 previous_tavily_key = os.environ.get("TAVILY_API_KEY")
