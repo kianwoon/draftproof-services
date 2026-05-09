@@ -72,6 +72,7 @@ from rewrite_pipeline import (
     _ai_footprint_profile,
     _ai_footprint_gate_status,
     _strict_ai_safe_band_status,
+    _topk_rebuild_fallback_rank,
     _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
     _allow_ai_search_llm_after_deterministic,
@@ -1274,6 +1275,42 @@ assert_test(
         "external_ai_flag_risk",
     ],
     "post-Top-k strict safe band requires authorship, transformation, and external proxy after Top-k is safe",
+)
+topk_near_miss_a = make_footprint_report(
+    ai_authorship=50,
+    human=45,
+    ai_transformation=55,
+    grounding=55,
+    human_anchor=30,
+    smoothness=35,
+    semantic_uniformity=48,
+    ai_likelihood=50,
+    topk_pattern=69,
+    topk_calibrated_risk=26.3,
+    generic_assertion_risk=90,
+    unsupported_claim_risk=25,
+    broad_claim_risk=15,
+    discourse=30,
+)
+topk_near_miss_b = make_footprint_report(
+    ai_authorship=50,
+    human=45,
+    ai_transformation=55,
+    grounding=55,
+    human_anchor=30,
+    smoothness=35,
+    semantic_uniformity=48,
+    ai_likelihood=50,
+    topk_pattern=70,
+    topk_calibrated_risk=27.4,
+    generic_assertion_risk=90,
+    unsupported_claim_risk=25,
+    broad_claim_risk=15,
+    discourse=30,
+)
+assert_test(
+    _topk_rebuild_fallback_rank(topk_near_miss_a) > _topk_rebuild_fallback_rank(topk_near_miss_b),
+    "Top-k rebuild fallback keeps the better near-miss instead of the later worse round",
 )
 post_topk_patch_payload = json.dumps({
     "candidates": [

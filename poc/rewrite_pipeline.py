@@ -4044,6 +4044,26 @@ def _strict_ai_safe_band_status(report_dict: dict | None) -> dict:
     }
 
 
+def _topk_rebuild_fallback_rank(report_dict: dict | None) -> tuple:
+    """Rank Top-k rebuild attempts even when none reached the safe band.
+
+    This prevents a later patch round with worse calibrated Top-k from
+    overwriting an earlier, better near-miss candidate.
+    """
+    profile = _strict_ai_safe_band_status(report_dict).get("profile") or {}
+    topk_value = profile.get("topk_calibrated_risk")
+    if not isinstance(topk_value, (int, float)):
+        return ()
+    return (
+        1 if float(topk_value) < _safe_topk_calibrated_limit() else 0,
+        -float(topk_value),
+        -float(profile.get("external_ai_flag_risk") or 0.0),
+        -float(profile.get("ai_authorship") or 0.0),
+        -float(profile.get("ai_transformation") or 0.0),
+        -float(profile.get("rewrite_smoothness") or 0.0),
+    )
+
+
 def _ai_footprint_gate_status(
     original_report: dict | None,
     candidate_report: dict | None,
@@ -16325,10 +16345,10 @@ def run_rewrite_pipeline(
                     try:
                         planned_patch_rounds_for_reserve = max(1, int(_float_env(
                             "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
-                            4.0,
+                            3.0,
                         )))
                     except (TypeError, ValueError):
-                        planned_patch_rounds_for_reserve = 4
+                        planned_patch_rounds_for_reserve = 3
                     try:
                         planned_extra_safe_rounds_for_reserve = max(0, int(_float_env(
                             "DRAFTPROOF_TOPK_SAFE_BAND_EXTRA_SAFE_ROUNDS",
@@ -16412,6 +16432,9 @@ def run_rewrite_pipeline(
                                 best_safe_text = None
                                 best_safe_report = None
                                 best_safe_rank = None
+                                best_topk_text = snapshot_text
+                                best_topk_report = snapshot_report
+                                best_topk_rank = _topk_rebuild_fallback_rank(snapshot_report)
 
                                 def _topk_safe_rank(report_dict: dict | None) -> tuple:
                                     strict_status = _strict_ai_safe_band_status(report_dict)
@@ -16437,10 +16460,10 @@ def run_rewrite_pipeline(
                                 try:
                                     max_patch_rounds = max(1, int(_float_env(
                                         "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
-                                        4.0,
+                                        3.0,
                                     )))
                                 except (TypeError, ValueError):
-                                    max_patch_rounds = 4
+                                    max_patch_rounds = 3
                                 try:
                                     extra_safe_rounds = max(0, int(_float_env(
                                         "DRAFTPROOF_TOPK_SAFE_BAND_EXTRA_SAFE_ROUNDS",
@@ -16498,6 +16521,11 @@ def run_rewrite_pipeline(
                                         "topk_calibrated_risk": patched_ai.get("topk_calibrated_risk"),
                                         "topk_safe_band": patched_ai.get("topk_safe_band"),
                                     })
+                                    fallback_rank = _topk_rebuild_fallback_rank(candidate_patch_report)
+                                    if fallback_rank and (not best_topk_rank or fallback_rank > best_topk_rank):
+                                        best_topk_text = candidate_to_eval
+                                        best_topk_report = candidate_patch_report
+                                        best_topk_rank = fallback_rank
                                     safe_rank = _topk_safe_rank(candidate_patch_report)
                                     if safe_rank and (best_safe_rank is None or safe_rank > best_safe_rank):
                                         best_safe_text = candidate_to_eval
@@ -16512,6 +16540,10 @@ def run_rewrite_pipeline(
                                     candidate_to_eval = best_safe_text
                                     candidate_patch_report = best_safe_report
                                     safe_band_summary["selected_best_safe_rank"] = list(best_safe_rank or [])
+                                elif best_topk_text and best_topk_report:
+                                    candidate_to_eval = best_topk_text
+                                    candidate_patch_report = best_topk_report
+                                    safe_band_summary["selected_best_topk_fallback_rank"] = list(best_topk_rank or [])
                                 _evaluate_ai_search_candidate(
                                     "topk_safe_band_rebuild",
                                     candidate_to_eval,
