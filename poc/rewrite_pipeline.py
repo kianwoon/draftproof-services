@@ -158,16 +158,26 @@ def _safe_partial_quality_improvement_status(
     min_ai_drop = _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_AI_DROP", 0.20)
     min_authorship_drop = _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_AUTHORSHIP_DROP", 1.0)
     min_human_shift = _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_HUMAN_SHIFT", 0.5)
+    score_improved = num(ai_delta) >= min_ai_drop
+    quality_only_min_ai_drop = _float_env(
+        "DRAFTPROOF_SAFE_PARTIAL_QUALITY_ONLY_MIN_AI_DROP",
+        0.0,
+    )
     quality_improved = bool(
         ai_authorship_delta >= min_authorship_drop
         or num(finding_delta) <= -1.0
+        or num(review_burden_delta) <= -1.0
         or num(weighted_severity_delta) <= -1.0
     )
+    quality_only_improved = bool(
+        quality_improved
+        and num(ai_delta) >= quality_only_min_ai_drop
+    )
     allowed = bool(
-        num(ai_delta) >= min_ai_drop
+        (score_improved or quality_only_improved)
         and human_delta >= 0.0
         and ai_transform_delta >= 0.0
-        and human_shift_score >= min_human_shift
+        and (human_shift_score >= min_human_shift or quality_only_improved)
         and quality_improved
         and not ai_score_regressed
         and num(finding_delta) <= 0.0
@@ -186,6 +196,9 @@ def _safe_partial_quality_improvement_status(
         "reason": "" if allowed else "safe_partial_threshold_not_met",
         "ai_delta": round(num(ai_delta), 3),
         "min_ai_drop": min_ai_drop,
+        "score_improved": score_improved,
+        "quality_only_min_ai_drop": quality_only_min_ai_drop,
+        "quality_only_improved": quality_only_improved,
         "human_delta": round(human_delta, 3),
         "ai_authorship_delta": round(ai_authorship_delta, 3),
         "min_authorship_drop": min_authorship_drop,

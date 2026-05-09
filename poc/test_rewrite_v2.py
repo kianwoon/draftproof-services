@@ -977,6 +977,29 @@ assert_test(
     safe_partial_status["allowed"],
     "safe partial quality gate keeps small rescanned improvements instead of returning unchanged text",
 )
+safe_quality_only_status = _safe_partial_quality_improvement_status(
+    {
+        "human_delta": 0.0,
+        "ai_authorship_delta": 0.0,
+        "ai_transformation_delta": 0.0,
+        "ai_authorship_regression_blocked": False,
+        "critical_high_regressed": False,
+        "review_burden_regressed": False,
+        "weighted_severity_regressed": False,
+    },
+    {"score": 0.019},
+    ai_delta=0.10,
+    finding_delta=-2,
+    review_burden_delta=-3,
+    weighted_severity_delta=-5,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    safe_quality_only_status["allowed"]
+    and safe_quality_only_status["quality_only_improved"],
+    "safe partial quality gate keeps finding/review/severity reductions even when AI drop is tiny",
+)
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {
         "selectable": True,
