@@ -1119,6 +1119,29 @@ partial_gate = _ai_footprint_gate_status(
     critical_high_delta=0,
     ai_score_regressed=False,
 )
+footprint_stalled_topk = make_footprint_report(
+    ai_authorship=57,
+    human=39,
+    ai_transformation=61,
+    grounding=34,
+    human_anchor=22,
+    smoothness=51,
+    semantic_uniformity=39,
+    ai_likelihood=57,
+    topk_pattern=100,
+    generic_assertion_risk=65,
+    unsupported_claim_risk=20,
+    broad_claim_risk=75,
+    discourse=14,
+)
+stalled_topk_gate = _ai_footprint_gate_status(
+    footprint_original,
+    footprint_stalled_topk,
+    review_burden_delta=-7,
+    weighted_severity_delta=-17,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
 assert_test(
     cleanup_gate["outcome_class"] == "cleanup_improved"
     and not cleanup_gate["material_driver_moved"],
@@ -1129,6 +1152,12 @@ assert_test(
     and partial_gate["material_driver_moved"]
     and partial_gate["drops"]["external_ai_flag_risk"] > cleanup_gate["drops"]["external_ai_flag_risk"],
     "AI-footprint gate recognizes material authorship/texture movement",
+)
+assert_test(
+    stalled_topk_gate["outcome_class"] == "ai_footprint_blocked_by_texture"
+    and not stalled_topk_gate["material_driver_moved"]
+    and stalled_topk_gate["texture_blockers"],
+    "AI-footprint gate blocks mitigation claims when top-k remains pinned and smoothness regresses",
 )
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {

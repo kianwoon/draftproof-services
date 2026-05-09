@@ -3045,6 +3045,33 @@ def _ai_footprint_gate_status(
         if drops.get(key, 0.0) >= thresholds.get(key, 1.0)
     ]
     material_proxy = drops.get("external_ai_flag_risk", 0.0) >= thresholds["external_ai_flag_risk"]
+    texture_blockers = []
+    active_topk_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
+    if (
+        before_flat.get("topk_pattern", 0.0) >= active_topk_threshold
+        and drops.get("topk_pattern", 0.0) < thresholds["topk_pattern"]
+    ):
+        texture_blockers.append({
+            "driver": "topk_pattern",
+            "reason": "active_topk_pattern_not_reduced",
+            "before": round(float(before_flat.get("topk_pattern", 0.0)), 3),
+            "after": round(float(after_flat.get("topk_pattern", 0.0)), 3),
+            "drop": drops.get("topk_pattern", 0.0),
+            "required_drop": thresholds["topk_pattern"],
+        })
+    smoothness_regression_limit = _float_env("DRAFTPROOF_AI_FOOTPRINT_MAX_SMOOTHNESS_REGRESSION", 1.0)
+    if (
+        before_flat.get("topk_pattern", 0.0) >= active_topk_threshold
+        and drops.get("rewrite_smoothness", 0.0) < -smoothness_regression_limit
+    ):
+        texture_blockers.append({
+            "driver": "rewrite_smoothness",
+            "reason": "smoothness_regressed_while_topk_pinned",
+            "before": round(float(before_flat.get("rewrite_smoothness", 0.0)), 3),
+            "after": round(float(after_flat.get("rewrite_smoothness", 0.0)), 3),
+            "drop": drops.get("rewrite_smoothness", 0.0),
+            "max_regression": smoothness_regression_limit,
+        })
     safety_clean = bool(
         not ai_score_regressed
         and float(review_burden_delta or 0.0) <= 0.0
@@ -3064,11 +3091,13 @@ def _ai_footprint_gate_status(
         safety_clean
         and all(float(after_flat.get(key, 0.0)) <= limit for key, limit in safe_band_thresholds.items())
     )
-    material_driver_moved = bool(material_primary and material_proxy and safety_clean)
+    material_driver_moved = bool(material_primary and material_proxy and safety_clean and not texture_blockers)
     if safe_band and material_primary:
         outcome_class = "ai_mitigated"
     elif material_driver_moved:
         outcome_class = "partially_ai_mitigated"
+    elif material_primary and material_proxy and safety_clean and texture_blockers:
+        outcome_class = "ai_footprint_blocked_by_texture"
     elif safety_clean and (
         float(review_burden_delta or 0.0) < 0.0
         or float(weighted_severity_delta or 0.0) < 0.0
@@ -3094,6 +3123,7 @@ def _ai_footprint_gate_status(
         "drops": drops,
         "material_primary_drivers": material_primary,
         "material_proxy_drop": material_proxy,
+        "texture_blockers": texture_blockers,
         "material_driver_moved": material_driver_moved,
         "safety_clean": safety_clean,
         "safe_band": safe_band,
@@ -12826,8 +12856,16 @@ def run_rewrite_pipeline(
                 candidate_eval.update(extra)
             ignore_search_budget = bool(
                 extra
-                and extra.get("blocked_human_winner_repair")
-                and _blocked_human_winner_repair_budget_override(adaptive_stop_reason)
+                and (
+                    (
+                        extra.get("blocked_human_winner_repair")
+                        and _blocked_human_winner_repair_budget_override(adaptive_stop_reason)
+                    )
+                    or (
+                        extra.get("final_topk_texture_repair_budget_override")
+                        and _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_AFTER_BUDGET", True)
+                    )
+                )
             )
             if not ignore_search_budget and _search_budget_exhausted("candidate_scan"):
                 if not search_summary.get("budget_exhausted_candidate_recorded"):
@@ -13427,6 +13465,19 @@ def run_rewrite_pipeline(
                     "selectable": False,
                     "reason": human_target_block.get("reason"),
                     **human_target_block,
+                })
+            if (
+                selection_status.get("selectable")
+                and ai_footprint_outcome == "ai_footprint_blocked_by_texture"
+                and not selection_status.get("ai_footprint_mitigation")
+                and not selection_status.get("partial_ai_footprint_mitigation")
+                and _env_flag("DRAFTPROOF_BLOCK_TEXTURE_STALLED_AI_FOOTPRINT", True)
+            ):
+                selection_status.update({
+                    "success": False,
+                    "selectable": False,
+                    "reason": "ai_footprint_texture_blocker_not_reduced",
+                    "ai_footprint_texture_blocked": True,
                 })
             selection_status["authenticity_gate"] = authenticity_status
             selection_status["ai_footprint_gate"] = ai_footprint_gate
@@ -14205,13 +14256,37 @@ def run_rewrite_pipeline(
                 }
             search_summary["final_topk_texture_repair"] = summary
             try:
+                use_budget_override_gateway = bool(
+                    str(adaptive_stop_reason or "").startswith("budget_exhausted")
+                    and _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_AFTER_BUDGET", True)
+                    and effective_key
+                )
                 prompt = _topk_texture_repair_prompt(
                     best_text,
                     best_report,
                     candidate_count=candidate_limit,
                 )
                 search_summary["llm_calls"] += 1
-                response = gateway.chat(
+                topk_gateway = gateway
+                if use_budget_override_gateway:
+                    topk_gateway = LLMGateway(LLMConfig(
+                        api_key=effective_key,
+                        model=generator_model,
+                        base_url=base_url,
+                        timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
+                        max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
+                        max_tokens=int(os.environ.get(
+                            "DRAFTPROOF_FINAL_TOPK_TEXTURE_MAX_TOKENS",
+                            os.environ.get("DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS", "4800"),
+                        )),
+                        temperature=float(os.environ.get(
+                            "DRAFTPROOF_FINAL_TOPK_TEXTURE_TEMPERATURE",
+                            os.environ.get("DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE", "0.45"),
+                        )),
+                    ))
+                    summary["ran_after_search_budget"] = True
+                    summary["search_budget_reason"] = adaptive_stop_reason
+                response = topk_gateway.chat(
                     prompt,
                     system=(
                         "You are DraftProof's final top-k texture repair engine. "
@@ -14272,6 +14347,7 @@ def run_rewrite_pipeline(
                     extra={
                         "topk_texture_repair": True,
                         "final_topk_texture_repair": True,
+                        "final_topk_texture_repair_budget_override": bool(use_budget_override_gateway),
                         "base_strategy": best_strategy,
                     },
                 )
