@@ -227,6 +227,8 @@ def _ai_search_selected_by_final_safety_gate(
             "human_signal_amplification",
             "safe_authorship_suppression",
             "score_drag_removal",
+            "ai_footprint_mitigation",
+            "partial_ai_footprint_mitigation",
             "safe_partial_quality_improvement",
         )
     )
@@ -2898,6 +2900,210 @@ def _blocker_scores(report_dict: dict | None) -> dict:
     }
 
 
+def _ai_footprint_profile(report_dict: dict | None) -> dict:
+    """Build rewrite-only AI-footprint buckets from existing scanner fields."""
+    if not isinstance(report_dict, dict):
+        return {
+            "authorship_footprint": {},
+            "structural_footprint": {},
+            "semantic_footprint": {},
+            "grounding_footprint": {},
+            "external_ai_flag_risk": 0.0,
+        }
+    badge = report_dict.get("ai_risk_badge") or {}
+    ai_components = badge.get("ai_components") or {}
+    writing_components = badge.get("writing_components") or {}
+    integrity = _integrity_scores(report_dict)
+    contribution = _contribution_scores(report_dict)
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    def feature(key: str, default=0.0) -> float:
+        value = _feature_percent(report_dict, key)
+        return num(value, default)
+
+    authorship = {
+        "ai_authorship": num(integrity.get("ai_authorship")),
+        "ai_likelihood": feature("ai_likelihood", num(badge.get("ai_likelihood_score"))),
+        "topk_pattern": num(ai_components.get("topk_pattern")),
+        "predictability": num(ai_components.get("predictability")),
+        "rewrite_smoothness": feature("rewrite_smoothness"),
+    }
+    structural = {
+        "ai_transformation": num(contribution.get("ai_transformation")),
+        "discourse_regularity": feature("discourse_regularity_risk"),
+        "sentence_rhythm_uniformity": num(ai_components.get("sentence_rhythm_uniformity")),
+        "paragraph_symmetry": num(ai_components.get("paragraph_symmetry")),
+    }
+    semantic = {
+        "semantic_uniformity": feature("semantic_uniformity_risk"),
+        "expansion_pattern": feature("outline_to_text_expansion"),
+        "source_similarity": feature("source_similarity"),
+        "surface_similarity": feature("surface_similarity"),
+        "generic_assertion_risk": num(ai_components.get("generic_assertion_risk")),
+    }
+    grounding = {
+        "unsupported_claim_risk": num(writing_components.get("unsupported_claim_risk")),
+        "broad_claim_risk": num(writing_components.get("broad_claim_risk")),
+        "citation_weakness_risk": num(writing_components.get("citation_weakness_risk")),
+        "source_grounding_risk": num(writing_components.get("source_grounding_risk")),
+    }
+    risk = (
+        authorship["ai_authorship"] * 0.20
+        + structural["ai_transformation"] * 0.18
+        + authorship["ai_likelihood"] * 0.16
+        + authorship["topk_pattern"] * 0.14
+        + authorship["rewrite_smoothness"] * 0.12
+        + semantic["semantic_uniformity"] * 0.08
+        + structural["discourse_regularity"] * 0.05
+        + semantic["generic_assertion_risk"] * 0.03
+        + grounding["unsupported_claim_risk"] * 0.025
+        + grounding["broad_claim_risk"] * 0.015
+    )
+    return {
+        "authorship_footprint": {key: round(value, 3) for key, value in authorship.items()},
+        "structural_footprint": {key: round(value, 3) for key, value in structural.items()},
+        "semantic_footprint": {key: round(value, 3) for key, value in semantic.items()},
+        "grounding_footprint": {key: round(value, 3) for key, value in grounding.items()},
+        "external_ai_flag_risk": round(risk, 3),
+    }
+
+
+def _ai_footprint_gate_status(
+    original_report: dict | None,
+    candidate_report: dict | None,
+    *,
+    review_burden_delta: int | float = 0,
+    weighted_severity_delta: int | float = 0,
+    critical_high_delta: int | float = 0,
+    ai_score_regressed: bool = False,
+) -> dict:
+    """Classify whether a candidate moved real AI-footprint drivers.
+
+    Grounding is present in the proxy because external detectors often react to
+    broad unsupported prose, but grounding alone never grants mitigation status.
+    Authorship/texture movement must exist for partial or full AI mitigation.
+    """
+    before = _ai_footprint_profile(original_report)
+    after = _ai_footprint_profile(candidate_report)
+
+    def flat(profile: dict) -> dict:
+        merged = {}
+        for bucket in (
+            "authorship_footprint",
+            "structural_footprint",
+            "semantic_footprint",
+            "grounding_footprint",
+        ):
+            values = profile.get(bucket) or {}
+            if isinstance(values, dict):
+                merged.update(values)
+        merged["external_ai_flag_risk"] = profile.get("external_ai_flag_risk", 0.0)
+        return merged
+
+    before_flat = flat(before)
+    after_flat = flat(after)
+    driver_keys = [
+        "ai_authorship",
+        "ai_transformation",
+        "ai_likelihood",
+        "topk_pattern",
+        "rewrite_smoothness",
+        "semantic_uniformity",
+        "discourse_regularity",
+        "generic_assertion_risk",
+        "unsupported_claim_risk",
+        "broad_claim_risk",
+        "external_ai_flag_risk",
+    ]
+    drops = {
+        key: round(float(before_flat.get(key, 0.0)) - float(after_flat.get(key, 0.0)), 3)
+        for key in driver_keys
+    }
+    primary_keys = [
+        "ai_authorship",
+        "ai_transformation",
+        "ai_likelihood",
+        "topk_pattern",
+        "rewrite_smoothness",
+        "semantic_uniformity",
+        "discourse_regularity",
+    ]
+    thresholds = {
+        "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_AUTHORSHIP_DROP", 1.0),
+        "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_TRANSFORMATION_DROP", 1.0),
+        "ai_likelihood": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_LIKELIHOOD_DROP", 1.0),
+        "topk_pattern": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_TOPK_DROP", 2.0),
+        "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SMOOTHNESS_DROP", 1.0),
+        "semantic_uniformity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SEMANTIC_DROP", 1.0),
+        "discourse_regularity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_DISCOURSE_DROP", 1.0),
+        "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_MIN_DROP", 1.5),
+    }
+    material_primary = [
+        key for key in primary_keys
+        if drops.get(key, 0.0) >= thresholds.get(key, 1.0)
+    ]
+    material_proxy = drops.get("external_ai_flag_risk", 0.0) >= thresholds["external_ai_flag_risk"]
+    safety_clean = bool(
+        not ai_score_regressed
+        and float(review_burden_delta or 0.0) <= 0.0
+        and float(weighted_severity_delta or 0.0) <= 0.0
+        and float(critical_high_delta or 0.0) <= 0.0
+        and drops.get("ai_authorship", 0.0) >= 0.0
+        and drops.get("ai_transformation", 0.0) >= 0.0
+    )
+    safe_band_thresholds = {
+        "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
+        "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
+        "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
+        "topk_pattern": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TOPK", 60.0),
+        "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_SMOOTHNESS", 55.0),
+    }
+    safe_band = bool(
+        safety_clean
+        and all(float(after_flat.get(key, 0.0)) <= limit for key, limit in safe_band_thresholds.items())
+    )
+    material_driver_moved = bool(material_primary and material_proxy and safety_clean)
+    if safe_band and material_primary:
+        outcome_class = "ai_mitigated"
+    elif material_driver_moved:
+        outcome_class = "partially_ai_mitigated"
+    elif safety_clean and (
+        float(review_burden_delta or 0.0) < 0.0
+        or float(weighted_severity_delta or 0.0) < 0.0
+        or drops.get("generic_assertion_risk", 0.0) > 0.0
+        or drops.get("unsupported_claim_risk", 0.0) > 0.0
+        or drops.get("broad_claim_risk", 0.0) > 0.0
+    ):
+        outcome_class = "cleanup_improved"
+    else:
+        outcome_class = "no_ai_footprint_improvement"
+    remaining = [
+        {
+            "driver": key,
+            "value": round(float(after_flat.get(key, 0.0)), 3),
+            "safe_band": round(float(limit), 3),
+        }
+        for key, limit in safe_band_thresholds.items()
+        if float(after_flat.get(key, 0.0)) > float(limit)
+    ]
+    return {
+        "before": before,
+        "after": after,
+        "drops": drops,
+        "material_primary_drivers": material_primary,
+        "material_proxy_drop": material_proxy,
+        "material_driver_moved": material_driver_moved,
+        "safety_clean": safety_clean,
+        "safe_band": safe_band,
+        "outcome_class": outcome_class,
+        "remaining_ai_footprint_drivers": remaining,
+        "thresholds": thresholds,
+        "safe_band_thresholds": safe_band_thresholds,
+    }
+
+
 def _human_target_ai_search_status(report_dict: dict | None) -> dict:
     """Allow mitigation search below the AI-risk threshold when Human is still below target."""
     if not _env_flag("DRAFTPROOF_AI_SEARCH_FOR_HUMAN_TARGET", True):
@@ -3284,7 +3490,13 @@ def _ai_search_adaptive_stop_reason(
     if not isinstance(selection_status, dict) or not selection_status.get("selectable"):
         return ""
     if selection_status.get("safe_partial_quality_improvement"):
+        footprint_gate = selection_status.get("ai_footprint_gate") or {}
+        if not footprint_gate.get("material_driver_moved"):
+            return ""
         return f"adaptive_stop_after_safe_partial_quality_{phase}"
+    footprint_gate = selection_status.get("ai_footprint_gate") or {}
+    if footprint_gate.get("outcome_class") in {"ai_mitigated", "partially_ai_mitigated"}:
+        return f"adaptive_stop_after_ai_footprint_{phase}"
     dominant = selection_status.get("dominant_blocker_gate") or {}
     if (
         dominant.get("required")
@@ -3339,15 +3551,19 @@ def _should_track_blocked_human_winner(
     human_delta: float,
     ai_delta: float,
     authenticity_status: dict | None,
+    ai_footprint_gate: dict | None = None,
 ) -> bool:
     """Track promising Human/AI candidates that failed only late safety gates."""
     if not isinstance(selection_status, dict) or selection_status.get("selectable"):
         return False
     authenticity_status = authenticity_status or {}
+    ai_footprint_gate = ai_footprint_gate if isinstance(ai_footprint_gate, dict) else {}
     min_human_gain = _float_env("DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_HUMAN_GAIN", 1.0)
-    if float(human_delta or 0.0) < min_human_gain:
-        return False
     if authenticity_status.get("ai_authorship_regression_blocked"):
+        return False
+    material_footprint = bool(ai_footprint_gate.get("material_driver_moved"))
+    human_promising = float(human_delta or 0.0) >= min_human_gain
+    if not human_promising and not material_footprint:
         return False
     if authenticity_status.get("critical_high_regressed"):
         return True
@@ -3363,6 +3579,8 @@ def _should_track_blocked_human_winner(
     min_authorship_drop = _float_env("DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_AUTHORSHIP_DROP", 2.0)
     min_transform_drop = _float_env("DRAFTPROOF_BLOCKED_HUMAN_REPAIR_MIN_TRANSFORM_DROP", 0.0)
     return bool(
+        material_footprint
+        or
         float(ai_delta or 0.0) >= min_ai_drop
         or ai_authorship_drop >= min_authorship_drop
         or ai_transform_drop >= min_transform_drop
@@ -3393,6 +3611,9 @@ def _blocked_human_winner_failed_formula_gate(candidate: dict | None) -> bool:
         return False
     selection = summary.get("selection_status")
     if not isinstance(selection, dict):
+        return False
+    footprint_gate = selection.get("ai_footprint_gate")
+    if isinstance(footprint_gate, dict) and footprint_gate.get("material_driver_moved"):
         return False
     formula_gate = selection.get("human_formula_driver_gate")
     if not isinstance(formula_gate, dict):
@@ -4502,18 +4723,37 @@ def _goal_climb_candidate_rank(
     finding_reduction = num(original_finding_total, 0.0) - num(candidate_finding_total, 0.0)
     semantic_uniformity_reduction = num(components.get("semantic_uniformity_reduction"), 0.0)
     rewrite_smoothness_reduction = num(components.get("rewrite_smoothness_reduction"), 0.0)
+    footprint_gate = status.get("ai_footprint_gate") if isinstance(status.get("ai_footprint_gate"), dict) else {}
+    footprint_outcome = str(
+        status.get("ai_footprint_outcome_class")
+        or footprint_gate.get("outcome_class")
+        or ""
+    )
+    footprint_priority = {
+        "ai_mitigated": 4,
+        "partially_ai_mitigated": 3,
+        "cleanup_improved": 1,
+    }.get(footprint_outcome, 0)
+    footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
+    external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"), 0.0)
+    topk_drop = num(footprint_drops.get("topk_pattern"), 0.0)
+    ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"), 0.0)
 
     return (
         1 if status.get("selectable") else 0,
-        1 if human_shift > 0 else 0,
+        footprint_priority,
+        external_flag_drop,
+        ai_likelihood_drop,
+        topk_drop,
+        rewrite_smoothness_reduction,
         1 if candidate_human >= target_human else 0,
         1 if candidate_human >= stage_target else 0,
+        1 if human_shift > 0 else 0,
         human_shift,
         human_delta,
         ai_authorship_delta,
         ai_transform_delta,
         semantic_uniformity_reduction,
-        rewrite_smoothness_reduction,
         review_reduction,
         severity_reduction,
         finding_reduction,
@@ -12367,6 +12607,11 @@ def run_rewrite_pipeline(
             "target_ai_score": ai_search_target_score,
             "reference_ai_meets_threshold": ai_search_reference_meets_threshold,
             "human_target_search": human_target_search_status,
+            "ai_footprint_gate": {
+                "enabled": _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True),
+                "before": _ai_footprint_profile(original_report_dict),
+                "objective": "reduce_authorship_texture_drivers_before_cleanup",
+            },
             "llm_calls": 0,
             "selected": False,
             "candidates": [],
@@ -12930,6 +13175,28 @@ def run_rewrite_pipeline(
                 safe_partial_quality_status.get("allowed")
             )
             candidate_eval["safe_partial_quality_improvement"] = safe_partial_quality_status
+            ai_footprint_gate = _ai_footprint_gate_status(
+                original_report_dict,
+                candidate_report,
+                review_burden_delta=review_burden_delta,
+                weighted_severity_delta=weighted_severity_delta,
+                critical_high_delta=critical_high_delta,
+                ai_score_regressed=ai_score_regressed,
+            )
+            candidate_eval["ai_footprint_gate"] = ai_footprint_gate
+            ai_footprint_outcome = str(ai_footprint_gate.get("outcome_class") or "")
+            ai_footprint_selectable = bool(
+                _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True)
+                and ai_footprint_outcome in {"ai_mitigated", "partially_ai_mitigated"}
+                and ai_footprint_gate.get("safety_clean")
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("critical_high_regressed")
+                and candidate_critical_high <= saved_critical_high
+                and candidate_finding_total <= original_total
+                and candidate_review_burden <= original_review_burden
+                and candidate_weighted_severity <= original_severity
+                and not ai_score_regressed
+            )
             score_drag_status = _score_drag_removal_status(
                 authenticity_status=authenticity_status,
                 human_shift=human_shift,
@@ -13030,6 +13297,8 @@ def run_rewrite_pipeline(
                     or
                     human_primary_selectable
                     or
+                    ai_footprint_selectable
+                    or
                     incremental_authenticity_selectable
                     or human_amplification_selectable
                     or safe_authorship_suppression_selectable
@@ -13048,25 +13317,33 @@ def run_rewrite_pipeline(
                             "accepted_human_primary_progress"
                             if human_primary_selectable
                             else (
-                                "accepted_human_signal_amplification"
-                                if human_amplification_selectable
+                                "accepted_ai_footprint_mitigation"
+                                if ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"
                                 else (
-                                    "accepted_post_safe_target_climb"
-                                    if post_safe_target_climb_selectable
+                                    "accepted_partial_ai_footprint_mitigation"
+                                    if ai_footprint_selectable
                                     else (
-                                        "accepted_score_drag_removal"
-                                        if score_drag_removal_selectable
+                                        "accepted_human_signal_amplification"
+                                        if human_amplification_selectable
                                         else (
-                                            "accepted_safe_partial_quality_improvement"
-                                            if safe_partial_quality_selectable
+                                            "accepted_post_safe_target_climb"
+                                            if post_safe_target_climb_selectable
                                             else (
-                                                (
-                                                    "accepted_incremental_human_target_progress"
-                                                    if _radar_goal_requires_human_progress(radar_goal_controller)
-                                                    else "accepted_safe_authorship_suppression"
+                                                "accepted_score_drag_removal"
+                                                if score_drag_removal_selectable
+                                                else (
+                                                    "accepted_safe_partial_quality_improvement"
+                                                    if safe_partial_quality_selectable
+                                                    else (
+                                                        (
+                                                            "accepted_incremental_human_target_progress"
+                                                            if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                            else "accepted_safe_authorship_suppression"
+                                                        )
+                                                        if safe_authorship_suppression_selectable
+                                                        else "accepted_incremental_authenticity_progress"
+                                                    )
                                                 )
-                                                if safe_authorship_suppression_selectable
-                                                else "accepted_incremental_authenticity_progress"
                                             )
                                         )
                                     )
@@ -13076,6 +13353,9 @@ def run_rewrite_pipeline(
                     ),
                     "blocker_elimination": bool(blocker_elimination_selectable),
                     "human_primary_progress": bool(human_primary_selectable),
+                    "ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"),
+                    "partial_ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "partially_ai_mitigated"),
+                    "cleanup_improved": bool(safe_partial_quality_selectable and ai_footprint_outcome == "cleanup_improved"),
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
                     "human_signal_amplification": bool(human_amplification_selectable),
                     "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
@@ -13102,6 +13382,8 @@ def run_rewrite_pipeline(
                 and not dominant_blocker_progress_override.get("allowed")
                 and not selection_status.get("score_drag_removal")
                 and not selection_status.get("safe_authorship_suppression")
+                and not selection_status.get("ai_footprint_mitigation")
+                and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
@@ -13116,6 +13398,8 @@ def run_rewrite_pipeline(
                 and not human_formula_status.get("cleared")
                 and not selection_status.get("human_primary_progress")
                 and not selection_status.get("post_safe_target_climb")
+                and not selection_status.get("ai_footprint_mitigation")
+                and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
@@ -13145,6 +13429,8 @@ def run_rewrite_pipeline(
                     **human_target_block,
                 })
             selection_status["authenticity_gate"] = authenticity_status
+            selection_status["ai_footprint_gate"] = ai_footprint_gate
+            selection_status["ai_footprint_outcome_class"] = ai_footprint_outcome
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
             selection_status["human_formula_driver_gate"] = human_formula_status
             selection_status["dominant_blocker_progress_override"] = dominant_blocker_progress_override
@@ -13158,6 +13444,8 @@ def run_rewrite_pipeline(
                 and not selection_status.get("human_primary_progress")
                 and not selection_status.get("human_signal_amplification")
                 and not selection_status.get("post_safe_target_climb")
+                and not selection_status.get("ai_footprint_mitigation")
+                and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("score_drag_removal")
                 and not selection_status.get("safe_partial_quality_improvement")
                 and not (
@@ -13185,6 +13473,7 @@ def run_rewrite_pipeline(
                 human_delta=human_delta_for_blocked,
                 ai_delta=ai_delta,
                 authenticity_status=authenticity_status,
+                ai_footprint_gate=ai_footprint_gate,
             ):
                 saved_ch_delta = max(0, int(candidate_critical_high or 0) - int(saved_critical_high or 0))
                 blocked_rank = (
@@ -13215,6 +13504,7 @@ def run_rewrite_pipeline(
                             "weighted_severity": candidate_weighted_severity,
                             "critical_high_findings": candidate_critical_high,
                             "saved_critical_high": saved_critical_high,
+                            "ai_footprint_gate": ai_footprint_gate,
                             "selection_status": selection_status,
                         },
                     }
@@ -15699,6 +15989,8 @@ def run_rewrite_pipeline(
                     search_summary.update({
                         "selected": True,
                         "selected_strategy": best_strategy,
+                        "selected_outcome_class": best_selection_status.get("ai_footprint_outcome_class"),
+                        "selected_ai_footprint_gate": best_selection_status.get("ai_footprint_gate"),
                         "previous_ai": previous_ai,
                         "selected_ai": rewritten_ai,
                         "selected_ai_delta_vs_reference": (
@@ -15742,6 +16034,8 @@ def run_rewrite_pipeline(
             search_summary.update({
                 "selected": True,
                 "selected_strategy": best_strategy,
+                "selected_outcome_class": best_selection_status.get("ai_footprint_outcome_class"),
+                "selected_ai_footprint_gate": best_selection_status.get("ai_footprint_gate"),
                 "previous_ai": previous_ai,
                 "selected_ai": rewritten_ai,
                 "selected_ai_delta_vs_reference": (
@@ -16676,6 +16970,27 @@ def run_rewrite_pipeline(
     if author_evidence_integration.get("enabled"):
         result.summary["author_evidence_integration"] = author_evidence_integration
 
+    final_ai_footprint_gate = _ai_footprint_gate_status(
+        original_report_dict,
+        rewritten_report_dict,
+        review_burden_delta=_review_burden(rewritten_report_dict) - original_review_burden,
+        weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
+        critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
+        ai_score_regressed=bool(
+            isinstance(original_ai, (int, float))
+            and isinstance(rewritten_ai, (int, float))
+            and rewritten_ai > original_ai + _float_env("DRAFTPROOF_AI_SEARCH_AI_SCORE_REGRESSION_TOLERANCE", 0.25)
+        ),
+    )
+    result.summary["ai_footprint_gate"] = final_ai_footprint_gate
+    result.summary.setdefault("detect_scores", {}).update({
+        "external_ai_flag_risk_before": final_ai_footprint_gate.get("before", {}).get("external_ai_flag_risk"),
+        "external_ai_flag_risk_after": final_ai_footprint_gate.get("after", {}).get("external_ai_flag_risk"),
+        "external_ai_flag_risk_drop": (final_ai_footprint_gate.get("drops") or {}).get("external_ai_flag_risk"),
+        "ai_footprint_outcome_class": final_ai_footprint_gate.get("outcome_class"),
+        "remaining_ai_footprint_drivers": final_ai_footprint_gate.get("remaining_ai_footprint_drivers"),
+    })
+
     # Extract only the fields needed for comparison (not full report dicts)
     def _extract_scan_summary(report_dict):
         badge = report_dict.get("ai_risk_badge") or {}
@@ -16699,13 +17014,12 @@ def run_rewrite_pipeline(
     else:
         result.summary["final_text"] = rewritten_text
         if ai_search_selected:
-            final_human = _contribution_scores(rewritten_report_dict).get("human")
-            target_human = _float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0)
-            result.summary["outcome"] = (
-                "ai_mitigated"
-                if isinstance(final_human, (int, float)) and float(final_human) >= target_human
-                else "partially_improved"
-            )
+            ai_footprint_outcome = str(final_ai_footprint_gate.get("outcome_class") or "")
+            result.summary["outcome"] = {
+                "ai_mitigated": "ai_mitigated",
+                "partially_ai_mitigated": "partially_ai_mitigated",
+                "cleanup_improved": "cleanup_improved",
+            }.get(ai_footprint_outcome, "partially_improved")
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings
@@ -16737,8 +17051,8 @@ def run_rewrite_pipeline(
 
     if summary.get("rollback_applied") or summary.get("no_text_change"):
         pipeline_status = "original_preserved"
-    elif summary.get("outcome") == "partially_improved":
-        pipeline_status = "partially_improved"
+    elif summary.get("outcome") in {"partially_improved", "partially_ai_mitigated", "cleanup_improved"}:
+        pipeline_status = summary.get("outcome")
     else:
         pipeline_status = "rewritten"
 

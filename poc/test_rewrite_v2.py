@@ -68,6 +68,8 @@ from rewrite_pipeline import (
     _ai_search_prompt,
     _ai_search_feedback_prompt,
     _safe_partial_quality_improvement_status,
+    _ai_footprint_profile,
+    _ai_footprint_gate_status,
     _ai_search_selected_by_final_safety_gate,
     _allow_ai_search_llm_after_deterministic,
     _load_local_env,
@@ -1008,10 +1010,131 @@ assert_test(
     ),
     "final rollback gate preserves selected safe partial quality improvements",
 )
+def make_footprint_report(
+    *,
+    ai_authorship,
+    human,
+    ai_transformation,
+    grounding,
+    human_anchor,
+    smoothness,
+    semantic_uniformity,
+    ai_likelihood,
+    topk_pattern,
+    generic_assertion_risk,
+    unsupported_claim_risk,
+    broad_claim_risk,
+    discourse,
+):
+    return {
+        "integrity_layers": {
+            "layers": {
+                "ai_authorship_risk": {"score": ai_authorship},
+                "human_contribution_signal": {"score": human},
+                "ai_transformation_risk": {"score": ai_transformation},
+                "grounding_quality_risk": {"score": grounding},
+            }
+        },
+        "ai_risk_badge": {
+            "ai_likelihood_score": ai_likelihood,
+            "ai_components": {
+                "topk_pattern": topk_pattern,
+                "generic_assertion_risk": generic_assertion_risk,
+            },
+            "writing_components": {
+                "unsupported_claim_risk": unsupported_claim_risk,
+                "broad_claim_risk": broad_claim_risk,
+            },
+            "transformation_classification": {
+                "features": {
+                    "human_anchor_score": human_anchor / 100,
+                    "rewrite_smoothness": smoothness / 100,
+                    "ai_likelihood": ai_likelihood / 100,
+                    "semantic_uniformity_risk": semantic_uniformity / 100,
+                    "discourse_regularity_risk": discourse / 100,
+                }
+            },
+        },
+        "findings": {"critical": [], "high": [], "medium": [], "low": []},
+    }
+
+footprint_original = make_footprint_report(
+    ai_authorship=61,
+    human=39,
+    ai_transformation=61,
+    grounding=55,
+    human_anchor=22,
+    smoothness=74,
+    semantic_uniformity=66,
+    ai_likelihood=70,
+    topk_pattern=100,
+    generic_assertion_risk=65,
+    unsupported_claim_risk=90,
+    broad_claim_risk=85,
+    discourse=40,
+)
+footprint_cleanup = make_footprint_report(
+    ai_authorship=61,
+    human=39,
+    ai_transformation=61,
+    grounding=52,
+    human_anchor=22,
+    smoothness=74,
+    semantic_uniformity=66,
+    ai_likelihood=70,
+    topk_pattern=100,
+    generic_assertion_risk=65,
+    unsupported_claim_risk=88,
+    broad_claim_risk=85,
+    discourse=40,
+)
+footprint_partial = make_footprint_report(
+    ai_authorship=58,
+    human=42,
+    ai_transformation=57,
+    grounding=52,
+    human_anchor=24,
+    smoothness=68,
+    semantic_uniformity=61,
+    ai_likelihood=64,
+    topk_pattern=94,
+    generic_assertion_risk=64,
+    unsupported_claim_risk=88,
+    broad_claim_risk=84,
+    discourse=36,
+)
+cleanup_gate = _ai_footprint_gate_status(
+    footprint_original,
+    footprint_cleanup,
+    review_burden_delta=-2,
+    weighted_severity_delta=-4,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+partial_gate = _ai_footprint_gate_status(
+    footprint_original,
+    footprint_partial,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    cleanup_gate["outcome_class"] == "cleanup_improved"
+    and not cleanup_gate["material_driver_moved"],
+    "AI-footprint gate separates review cleanup from mitigation movement",
+)
+assert_test(
+    partial_gate["outcome_class"] == "partially_ai_mitigated"
+    and partial_gate["material_driver_moved"]
+    and partial_gate["drops"]["external_ai_flag_risk"] > cleanup_gate["drops"]["external_ai_flag_risk"],
+    "AI-footprint gate recognizes material authorship/texture movement",
+)
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {
         "selectable": True,
         "safe_partial_quality_improvement": True,
+        "ai_footprint_gate": cleanup_gate,
         "dominant_blocker_gate": {"required": True, "cleared": False},
         "authenticity_gate": {
             "human_delta": 0.0,
@@ -1023,8 +1146,21 @@ safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     short_document=False,
 )
 assert_test(
-    safe_partial_stop_reason == "adaptive_stop_after_safe_partial_quality_claim_narrowing",
-    "adaptive stop accepts safe partial quality wins without continuing expensive candidate loops",
+    safe_partial_stop_reason == "",
+    "adaptive stop does not stop on cleanup-only wins while AI-footprint drivers are unchanged",
+)
+partial_footprint_stop_reason = _ai_search_adaptive_stop_reason(
+    {
+        "selectable": True,
+        "partial_ai_footprint_mitigation": True,
+        "ai_footprint_gate": partial_gate,
+    },
+    phase="claim_narrowing",
+    short_document=False,
+)
+assert_test(
+    partial_footprint_stop_reason == "adaptive_stop_after_ai_footprint_claim_narrowing",
+    "adaptive stop can stop after real AI-footprint movement",
 )
 meaningful_search_status = _ai_search_candidate_selection_status(57.78, 52.50, True)
 assert_test(
@@ -1092,6 +1228,12 @@ def make_shift_report(
     discourse=0,
     section_style=0,
     source_similarity=0,
+    topk_pattern=0,
+    predictability=0,
+    generic_assertion_risk=0,
+    unsupported_claim_risk=0,
+    broad_claim_risk=0,
+    source_grounding_risk=0,
     high_count=0,
 ):
     return {
@@ -1115,7 +1257,18 @@ def make_shift_report(
                     "section_style_variance": section_style / 100,
                     "source_similarity": source_similarity / 100,
                 }
-            }
+            },
+            "ai_likelihood_score": ai_likelihood,
+            "ai_components": {
+                "topk_pattern": topk_pattern,
+                "predictability": predictability,
+                "generic_assertion_risk": generic_assertion_risk,
+            },
+            "writing_components": {
+                "unsupported_claim_risk": unsupported_claim_risk,
+                "broad_claim_risk": broad_claim_risk,
+                "source_grounding_risk": source_grounding_risk,
+            },
         },
         "findings": {
             "critical": [],

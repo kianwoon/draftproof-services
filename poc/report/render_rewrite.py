@@ -370,14 +370,25 @@ def render_rewrite_report(
             improved=improved,
             converged=converged,
         )
+        outcome = str(summary.get("outcome") or "")
         if ai_first_kept:
             result_label = "AI Mitigated"
+        elif outcome == "ai_mitigated":
+            result_label = "AI Mitigated"
+        elif outcome == "partially_ai_mitigated":
+            result_label = "Partially AI Mitigated"
+        elif outcome == "cleanup_improved":
+            result_label = "Cleanup Improved"
 
         lines.append("### Result")
         lines.append("")
         lines.append(f"**{result_label}**")
         lines.append("")
-        if ai_first_kept:
+        if outcome == "cleanup_improved":
+            lines.append("Review burden reduced, but AI-footprint signals are still high. Do not treat this as detector-safe mitigation.")
+        elif outcome == "partially_ai_mitigated":
+            lines.append("AI-footprint signals reduced, but the result is still not guaranteed to pass external detectors.")
+        elif outcome == "ai_mitigated" or ai_first_kept:
             lines.append(
                 "AI likelihood improved enough to keep the rewrite. Writing-quality or lower-severity changes are follow-up work."
             )
@@ -400,6 +411,15 @@ def render_rewrite_report(
         lines.append("| Metric | Original | Final Output | Change |")
         lines.append("|--------|----------|--------------|--------|")
         lines.append(f"| **AI Likelihood** | `{orig_ai:.2f}%` | `{new_ai:.2f}%` | `{ai_delta:+.2f}%` |")
+        footprint_gate = summary.get("ai_footprint_gate") or {}
+        footprint_drops = footprint_gate.get("drops") or {}
+        footprint_before = (footprint_gate.get("before") or {}).get("external_ai_flag_risk")
+        footprint_after = (footprint_gate.get("after") or {}).get("external_ai_flag_risk")
+        if isinstance(footprint_before, (int, float)) and isinstance(footprint_after, (int, float)):
+            lines.append(
+                f"| **External AI Flag Proxy** | `{float(footprint_before):.2f}%` | "
+                f"`{float(footprint_after):.2f}%` | `{float(footprint_drops.get('external_ai_flag_risk') or 0.0):+.2f}% drop` |"
+            )
         orig_authorship = _authorship_label(orig_scan)
         new_authorship = _authorship_label(new_scan)
         if orig_authorship or new_authorship:
