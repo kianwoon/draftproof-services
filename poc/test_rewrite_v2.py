@@ -68,6 +68,7 @@ from rewrite_pipeline import (
     _ai_search_prompt,
     _ai_search_feedback_prompt,
     _safe_partial_quality_improvement_status,
+    _ai_search_selected_by_final_safety_gate,
     _allow_ai_search_llm_after_deterministic,
     _load_local_env,
     _repair_candidate_source_damage,
@@ -999,6 +1000,13 @@ assert_test(
     safe_quality_only_status["allowed"]
     and safe_quality_only_status["quality_only_improved"],
     "safe partial quality gate keeps finding/review/severity reductions even when AI drop is tiny",
+)
+assert_test(
+    _ai_search_selected_by_final_safety_gate(
+        True,
+        {"safe_partial_quality_improvement": True},
+    ),
+    "final rollback gate preserves selected safe partial quality improvements",
 )
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {

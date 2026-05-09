@@ -213,6 +213,25 @@ def _safe_partial_quality_improvement_status(
     }
 
 
+def _ai_search_selected_by_final_safety_gate(
+    ai_search_selected: bool,
+    selection_status: dict | None,
+) -> bool:
+    """Return true when AI-search selection should bypass legacy AI-first rollback."""
+    if not ai_search_selected or not isinstance(selection_status, dict):
+        return False
+    return any(
+        bool(selection_status.get(key))
+        for key in (
+            "authenticity_incremental",
+            "human_signal_amplification",
+            "safe_authorship_suppression",
+            "score_drag_removal",
+            "safe_partial_quality_improvement",
+        )
+    )
+
+
 def _clear_stale_rollback_for_kept_ai_mitigation(summary: dict, source: str) -> None:
     """Clear an earlier density/sentence rollback once AI mitigation is kept."""
     if not isinstance(summary, dict):
@@ -15977,18 +15996,9 @@ def run_rewrite_pipeline(
     ai_first_delta = ai_first_gate["delta"]
     ai_first_success = ai_first_gate["success"]
     ai_first_required = ai_first_gate["required"]
-    ai_search_selected_by_authenticity = bool(
-        ai_search_selected
-        and (
-            (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
-             .get("authenticity_incremental"))
-            or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
-                .get("human_signal_amplification"))
-            or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
-                .get("safe_authorship_suppression"))
-            or (((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
-                .get("score_drag_removal"))
-        )
+    ai_search_selected_by_authenticity = _ai_search_selected_by_final_safety_gate(
+        ai_search_selected,
+        (result.summary.get("ai_mitigation_search") or {}).get("selection_status"),
     )
     if (
         ai_first_required
