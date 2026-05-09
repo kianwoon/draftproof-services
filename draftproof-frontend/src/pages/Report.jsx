@@ -1239,6 +1239,21 @@ export default function Report() {
     calibratedAuthorshipRisk: rewrittenCalibratedAuthorshipRisk,
     fallbackScore: rewrittenAiScore,
   });
+  const rewrittenAuthorshipTone = getAuthorshipTone(rewrittenAuthorshipRating);
+  const rewrittenAuthorshipRatingFullLabel = rewrittenAuthorshipRating.label || rewrittenBadge.authorship_rating_label || null;
+  const rewrittenAuthorshipRatingLabel = rewrittenAuthorshipRating.short_label || rewrittenAuthorshipRatingFullLabel;
+  const originalColumnRatingBadge = {
+    caption: 'Original Rating',
+    label: authorshipRatingLabel,
+    fullLabel: authorshipRatingFullLabel,
+    tone: authorshipTone,
+  };
+  const rewrittenColumnRatingBadge = {
+    caption: 'Rewritten Rating',
+    label: rewrittenAuthorshipRatingLabel,
+    fullLabel: rewrittenAuthorshipRatingFullLabel,
+    tone: rewrittenAuthorshipTone,
+  };
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
   const submittedContent = buildSubmittedContentModel(report);
@@ -1422,7 +1437,7 @@ export default function Report() {
     </div>
   );
 
-  const renderTransformationDetails = (variant, pattern, summary, signals, variantAiScore, pairedSignals = null) => {
+  const renderTransformationDetails = (variant, pattern, summary, signals, variantAiScore, pairedSignals = null, ratingBadge = null) => {
     const comparisonSignals = pairedSignals
       ? pairedSignals.map((pair) => ({
         ...(pair[variant] || {
@@ -1443,6 +1458,19 @@ export default function Report() {
           <div>
             <span>{variant === 'rewritten' ? 'Rewritten Scan' : 'Original Scan'}</span>
             <strong>{pattern?.label || (variant === 'rewritten' ? 'Rewritten contribution pattern' : 'Pattern analysis')}</strong>
+            {ratingBadge?.label && (
+              <div
+                className="transformation-column-rating"
+                style={{
+                  '--rating-color': ratingBadge.tone?.color || '#334155',
+                  '--rating-bg': ratingBadge.tone?.bg || '#f8fafc',
+                }}
+                title={ratingBadge.fullLabel || ratingBadge.label}
+              >
+                <span>{ratingBadge.caption}</span>
+                <b>{ratingBadge.label}</b>
+              </div>
+            )}
           </div>
           <em>{formatMetricPercent(variantAiScore, 1)}</em>
         </div>
@@ -1580,8 +1608,8 @@ export default function Report() {
       <div className="transformation-chart">
         {hasRewriteSignalComparison ? (
           <div className="transformation-comparison-grid">
-            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore, pairedTransformationSignals)}
-            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, transformationRewrittenScore, pairedTransformationSignals)}
+            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore, pairedTransformationSignals, originalColumnRatingBadge)}
+            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, transformationRewrittenScore, pairedTransformationSignals, rewrittenColumnRatingBadge)}
           </div>
         ) : (
           renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore)

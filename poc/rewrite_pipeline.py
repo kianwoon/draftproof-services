@@ -15860,7 +15860,7 @@ def run_rewrite_pipeline(
                     1,
                     int(_float_env(
                         "DRAFTPROOF_FINAL_TOPK_TEXTURE_CANDIDATES",
-                        float(_adaptive_budget_default(best_text, 1, 2)),
+                        float(_adaptive_budget_default(best_text, 3, 4)),
                     )),
                 )
             except (TypeError, ValueError):

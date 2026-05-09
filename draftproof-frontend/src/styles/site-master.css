@@ -4243,6 +4243,46 @@ th {
   line-height: 1.2;
 }
 
+.transformation-column-rating {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 24px;
+  gap: .38rem;
+  margin-top: .48rem;
+  padding: .24rem .5rem;
+  color: var(--rating-color, #334155);
+  background: color-mix(in srgb, var(--rating-bg, #f8fafc) 88%, white);
+  border: 1px solid color-mix(in srgb, var(--rating-color, #334155) 28%, transparent);
+  border-radius: 999px;
+  line-height: 1;
+  vertical-align: top;
+}
+
+.transformation-detail-head .transformation-column-rating span {
+  display: inline;
+  color: #64748b;
+  font-size: .6rem;
+  font-weight: 900;
+  letter-spacing: .06em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.transformation-column-rating b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--rating-color, #334155);
+  font-size: .7rem;
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .transformation-detail-head em {
   flex: 0 0 auto;
   color: #b45309;
