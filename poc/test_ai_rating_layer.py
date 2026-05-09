@@ -527,8 +527,8 @@ assert_true(
 )
 scan_markdown = render_markdown(scan_report)
 assert_true(
-    "| Core Signal | Score | What It Means |" in scan_markdown,
-    "PDF markdown includes transformation signal descriptions",
+    'class="dp-core-bars"' in scan_markdown and "Core Signals" in scan_markdown,
+    "PDF markdown includes the executive transformation signal chart",
 )
 assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],

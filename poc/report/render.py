@@ -8,6 +8,7 @@ Produces a structured report with:
   5. APPENDIX — full sentence tables in collapsible sections
 """
 
+from html import escape
 from typing import Optional
 
 from detect.transformation import TRANSFORMATION_SIGNAL_METADATA, transformation_signal_metadata
@@ -83,6 +84,46 @@ _FILTER_CODES = {
     "StructuralFilter": "SF",
 }
 
+_SIGNAL_CHART_ORDER = [
+    "adjusted_ai_risk",
+    "ai_likelihood",
+    "calibrated_ai_risk",
+    "calibration_confidence",
+    "discourse_regularity_risk",
+    "outline_to_text_expansion",
+    "citation_grounding_risk",
+    "human_anchor_score",
+    "human_anchor_discount",
+    "paraphrase_transformation_risk",
+    "section_style_variance",
+    "reporting_suppression",
+    "rewrite_smoothness",
+    "semantic_uniformity_risk",
+    "signal_agreement_score",
+    "source_similarity",
+    "surface_similarity",
+]
+
+_SIGNAL_CHART_COLORS = {
+    "ai_likelihood": "#c2410c",
+    "adjusted_ai_risk": "#c2410c",
+    "calibrated_ai_risk": "#c2410c",
+    "citation_grounding_risk": "#c2410c",
+    "human_anchor_score": "#16a34a",
+    "human_anchor_discount": "#16a34a",
+    "rewrite_smoothness": "#4f46e5",
+    "outline_to_text_expansion": "#4f46e5",
+    "discourse_regularity_risk": "#4f46e5",
+    "source_similarity": "#0891b2",
+    "surface_similarity": "#0891b2",
+    "paraphrase_transformation_risk": "#0891b2",
+    "semantic_uniformity_risk": "#7c3aed",
+    "section_style_variance": "#2563eb",
+    "signal_agreement_score": "#0f766e",
+    "calibration_confidence": "#0f766e",
+    "reporting_suppression": "#64748b",
+}
+
 # ── Layman labels for AI Likelihood components ──────────────────────────
 _AI_COMPONENT_LABELS = {
     "predictability": ("Predictability", "How predictable the word choices are — higher means the text reads like statistically common patterns"),
@@ -141,11 +182,11 @@ def _transformation_signals(features: dict) -> list[dict]:
 
 def _transformation_contribution_summary(features: dict, signals: list[dict]) -> dict:
     human_anchor = _tf_pct((features or {}).get("human_anchor_score")) or 0.0
+    grounding_quality = 100.0 - (_tf_pct((features or {}).get("citation_grounding_risk")) or 0.0)
     semantic_originality = 100.0 - max(
         _tf_pct((features or {}).get("source_similarity")) or 0.0,
         _tf_pct((features or {}).get("surface_similarity")) or 0.0,
     )
-    natural_variance = 100.0 - (_tf_pct((features or {}).get("rewrite_smoothness")) or 0.0)
 
     ai_likelihood = (
         _tf_pct((features or {}).get("calibrated_ai_risk"))
@@ -159,16 +200,16 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
     rewrite_smoothness = _tf_pct((features or {}).get("rewrite_smoothness")) or 0.0
     expansion = _tf_pct((features or {}).get("outline_to_text_expansion")) or 0.0
     patchwork = _tf_pct((features or {}).get("section_style_variance")) or 0.0
+    grounding_risk = _tf_pct((features or {}).get("citation_grounding_risk")) or 0.0
     source_similarity = _tf_pct((features or {}).get("source_similarity")) or 0.0
 
-    human_raw = human_anchor * 0.45 + natural_variance * 0.20 + semantic_originality * 0.10
+    human_raw = human_anchor * 0.55 + grounding_quality * 0.25 + semantic_originality * 0.20
     ai_raw = (
-        (_tf_pct((features or {}).get("ai_likelihood")) or ai_likelihood) * 0.55
-        + rewrite_smoothness * 0.25
+        ai_likelihood * 0.35
+        + rewrite_smoothness * 0.20
         + expansion * 0.15
-        + (_tf_pct((features or {}).get("semantic_uniformity_risk")) or 0.0) * 0.10
-        + (_tf_pct((features or {}).get("discourse_regularity_risk")) or 0.0) * 0.05
-        + patchwork * 0.05
+        + grounding_risk * 0.15
+        + patchwork * 0.10
         + source_similarity * 0.05
     )
     total = max(human_raw + ai_raw, 1.0)
@@ -179,7 +220,7 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
         row["label"].lower()
         for row in signals
         if row.get("key") != "human_anchor_score"
-    ][:2]
+    ][:4]
 
     if atr >= 70:
         summary = "AI transformation dominates this scan pattern."
@@ -202,6 +243,222 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
         "reporting_suppression": round(_tf_pct((features or {}).get("reporting_suppression")) or 0.0),
         "summary": summary,
     }
+
+
+def _signal_chart_rows(features: dict) -> list[dict]:
+    rows_by_key = {row["key"]: row for row in _transformation_signals(features)}
+    ordered = []
+    for key in _SIGNAL_CHART_ORDER:
+        row = rows_by_key.get(key)
+        if row:
+            ordered.append(row)
+    ordered.extend(
+        row
+        for row in rows_by_key.values()
+        if row.get("key") not in _SIGNAL_CHART_ORDER
+    )
+    return ordered
+
+
+def _summary_stat_html(label: str, value: str, *, color: str = "#111827", extra_class: str = "") -> str:
+    return (
+        f'<div class="dp-summary-stat {extra_class}">'
+        f'<span class="dp-summary-value" style="color:{color}">{escape(str(value))}</span>'
+        f'<span class="dp-summary-label">{escape(label)}</span>'
+        "</div>"
+    )
+
+
+def _executive_signal_chart_html(
+    report: DraftReport,
+    data: dict,
+    *,
+    n_critical: int,
+    n_high: int,
+    n_medium: int,
+    n_low: int,
+    total: int,
+) -> str:
+    badge = report.ai_risk_badge or {}
+    transformation = badge.get("transformation_classification") or {}
+    features = transformation.get("features") or {}
+    rows = _signal_chart_rows(features)
+    if not badge or not transformation or not rows:
+        return ""
+
+    badge_tier = badge.get("tier", "")
+    tier_label = _BADGE_TIER_LABELS.get(badge_tier, badge_tier or report.overall_tier.value.title())
+    tier_color = {
+        "GREEN": "#15803d",
+        "AMBER": "#ca8a04",
+        "ORANGE": "#b45309",
+        "RED": "#b91c1c",
+    }.get(badge_tier, "#334155")
+    tier_bg = {
+        "GREEN": "#ecfdf5",
+        "AMBER": "#fefce8",
+        "ORANGE": "#fff7ed",
+        "RED": "#fef2f2",
+    }.get(badge_tier, "#f8fafc")
+
+    rating = _authorship_rating_from_badge(badge)
+    rating_label = (
+        rating.get("short_label")
+        or rating.get("label")
+        or badge.get("authorship_rating_label")
+        or "Not Rated"
+    )
+    ai_score = _tf_pct(badge.get("ai_likelihood_score")) or 0.0
+    writing_score = _tf_pct(badge.get("writing_quality_score")) or 0.0
+    contribution = _transformation_contribution_summary(features, rows)
+
+    stats = [
+        (
+            '<div class="dp-summary-stat dp-risk-stat" style="background:'
+            f'{tier_bg};border-color:{tier_color}33">'
+            f'<span class="dp-risk-icon" style="color:{tier_color}">◌</span>'
+            '<span>'
+            f'<span class="dp-summary-value" style="color:{tier_color}">{escape(tier_label)}</span>'
+            '<span class="dp-summary-label">Risk Tier</span>'
+            '</span></div>'
+        ),
+        _summary_stat_html("Total Findings", str(total)),
+        _summary_stat_html("Authorship Rating", rating_label, color=tier_color),
+        _summary_stat_html("AI Score", f"{ai_score:.2f}%", color=tier_color),
+        _summary_stat_html("Writing Score", f"{writing_score:.2f}%", color="#4f46e5"),
+    ]
+    severity_stats = [
+        ("Critical", n_critical, "#b91c1c"),
+        ("High", n_high, "#b91c1c"),
+        ("Medium", n_medium, "#b45309"),
+        ("Low", n_low, "#15803d"),
+    ]
+    for label, count, color in severity_stats:
+        if count:
+            stats.append(_summary_stat_html(label, str(count), color=color))
+
+    confidence = transformation.get("confidence")
+    pills = []
+    if confidence:
+        pills.append(f"{str(confidence).title()} Confidence")
+    pills.append("Not A Verdict")
+
+    adjustment_chips = [
+        f"Calibrated AI risk {contribution['calibrated_ai_risk']}%",
+        f"Human anchor discount {contribution['human_anchor_discount']}%",
+        f"Calibration confidence {contribution['calibration_confidence']}%",
+        f"Reporting suppression {contribution['reporting_suppression']}%",
+    ]
+
+    evidence = transformation.get("evidence") or []
+    doc_ctx = data.get("document_context", {}) if isinstance(data, dict) else {}
+    confidence_note = ""
+    if doc_ctx:
+        word_count = doc_ctx.get("word_count", 0)
+        sent_count = doc_ctx.get("sentence_count", 0)
+        if word_count < 250 or sent_count < 10:
+            confidence_note = (
+                f"Low sample confidence: {word_count} words / {sent_count} sentences. "
+                "Document-level scores are unstable."
+            )
+        elif word_count >= 800 or sent_count >= 25:
+            confidence_note = (
+                f"Medium-high sample confidence: {word_count} words / {sent_count} sentences."
+            )
+        else:
+            confidence_note = (
+                f"Medium sample confidence: {word_count} words / {sent_count} sentences."
+            )
+
+    html = [
+        '<div class="dp-executive-chart">',
+        '<div class="dp-summary-bar">',
+        *stats,
+        '</div>',
+        '<section class="dp-signal-card">',
+        '<header class="dp-signal-header">',
+        '<div class="dp-signal-title-row">',
+        '<div class="dp-signal-icon">⇄</div>',
+        '<div>',
+        '<span class="dp-kicker">Transformation Pattern</span>',
+        f'<h3>{escape(transformation.get("label") or "Pattern analysis")}</h3>',
+        '<div class="dp-pill-row">',
+        ''.join(f'<span>{escape(pill)}</span>' for pill in pills),
+        '</div>',
+        '</div>',
+        '</div>',
+        '<div class="dp-ai-score">',
+        '<span>AI Score</span>',
+        f'<strong>{ai_score:.1f}%</strong>',
+        '</div>',
+        '</header>',
+        '<div class="dp-scan-head">',
+        '<div>',
+        '<span>Original Scan</span>',
+        f'<strong>{escape(transformation.get("label") or "Pattern analysis")}</strong>',
+        '</div>',
+        f'<em>{ai_score:.1f}%</em>',
+        '</div>',
+        '<div class="dp-ratio-card">',
+        '<div class="dp-ratio-copy">',
+        '<span>Estimated Contribution</span>',
+        f'<p>{escape(contribution["summary"])}</p>',
+        '<div class="dp-chip-row">',
+        ''.join(f'<strong>{escape(chip)}</strong>' for chip in adjustment_chips),
+        '</div>',
+        '</div>',
+        '<div class="dp-ratio-bars">',
+        '<div class="dp-ratio-row">',
+        '<span>Human Contribution</span>',
+        f'<strong>{contribution["hcr"]}%</strong>',
+        '<div class="dp-bar-track">',
+        f'<div class="dp-ratio-fill dp-human" style="width:{contribution["hcr"]}%"></div>',
+        '</div></div>',
+        '<div class="dp-ratio-row">',
+        '<span>AI Transformation</span>',
+        f'<strong>{contribution["atr"]}%</strong>',
+        '<div class="dp-bar-track">',
+        f'<div class="dp-ratio-fill dp-ai" style="width:{contribution["atr"]}%"></div>',
+        '</div></div>',
+        '</div>',
+        '</div>',
+        '<h3 class="dp-core-heading">Core Signals</h3>',
+        '<div class="dp-core-bars">',
+    ]
+
+    for row in rows:
+        key = row["key"]
+        score = max(0, min(100, row.get("score") or 0))
+        color = _SIGNAL_CHART_COLORS.get(key, "#0f766e")
+        html.extend([
+            '<div class="dp-core-row">',
+            '<div class="dp-core-label">',
+            f'<span>{escape(row["label"])}</span>',
+            f'<strong>{score:.0f}%</strong>',
+            '</div>',
+            '<div class="dp-bar-track">',
+            f'<div class="dp-core-fill" style="width:{score:.0f}%;background:{color}"></div>',
+            '</div>',
+            '</div>',
+        ])
+
+    html.extend([
+        '</div>',
+    ])
+    if evidence:
+        html.extend([
+            '<div class="dp-evidence-row">',
+            ''.join(f'<span>{escape(str(item))}</span>' for item in evidence[:3]),
+            '</div>',
+        ])
+    if confidence_note:
+        html.append(f'<p class="dp-confidence-note">{escape(confidence_note)}</p>')
+    html.extend([
+        '</section>',
+        '</div>',
+        '',
+    ])
+    return "\n".join(html)
 
 # ── Tier display config ──────────────────────────────────────────────
 
@@ -573,446 +830,38 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     lines.append("## Executive Summary")
     lines.append("")
 
-    # AI Risk Badge
-    if report.ai_risk_badge:
-        badge = report.ai_risk_badge
-        badge_tier = badge.get("tier", "")
-
-        # ── AI Generation Likelihood ──
-        ai_score = badge.get("ai_likelihood_score", 0)
-        shield_colors = {
-            "GREEN": "green",
-            "AMBER": "yellow",
-            "ORANGE": "orange",
-            "RED": "red",
-        }
-        shield_color = shield_colors.get(badge_tier, "lightgrey")
-        badge_tier_label = _BADGE_TIER_LABELS.get(badge_tier, badge_tier)
-
-        lines.append("### AI Generation Likelihood")
-        lines.append("")
-        lines.append(f"![{badge_tier_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{badge_tier_label.replace(' ', '_')}-{shield_color})")
-        lines.append("")
-        lines.append(f"- **Score**: `{ai_score:.2f}%`")
-        rating = _authorship_rating_from_badge(badge)
-        if rating:
-            lines.append(f"- **Authorship Rating**: **{rating.get('label', '')}**")
-            if rating.get("summary"):
-                lines.append(f"- **Rating Meaning**: {rating.get('summary')}")
-            if rating.get("confidence"):
-                lines.append(f"- **Rating Confidence**: `{str(rating.get('confidence')).title()}`")
-            if rating.get("disclaimer"):
-                lines.append(f"- **Important**: {rating.get('disclaimer')}")
-
-        cluster_boost = badge.get("ai_cluster_boost", 0)
-        cluster_name = badge.get("ai_cluster_name")
-        if cluster_name:
-            lines.append(f"- **Cluster**: {cluster_name} (+`{cluster_boost:.1f}%`)")
-
-        ai_components = badge.get("ai_components", {})
-        if ai_components:
-            non_zero = {k: v for k, v in ai_components.items() if v > 0}
-            if non_zero:
-                lines.append("")
-                lines.append("| Signal | Score | What It Means |")
-                lines.append("|--------|------:|---------------|")
-                for comp_name, comp_val in non_zero.items():
-                    label, desc = _AI_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
-                    lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
-
-        lines.append("")
-        lines.append("### Integrity Layer Split")
-        lines.append("")
-        lines.append("- **Policy**: Grounding weakness is reported as writing-integrity risk, not direct evidence of AI authorship.")
-        wq_components_for_split = badge.get("writing_components", {}) or {}
-        grounding_score = (
-            _tf_pct(wq_components_for_split.get("source_grounding_risk") or 0) * 0.30
-            + _tf_pct(wq_components_for_split.get("citation_weakness_risk") or 0) * 0.25
-            + _tf_pct(wq_components_for_split.get("unsupported_claim_risk") or 0) * 0.20
-            + _tf_pct(wq_components_for_split.get("broad_claim_risk") or 0) * 0.15
-            + _tf_pct(wq_components_for_split.get("lived_detail_risk") or 0) * 0.10
-        )
-        transformation_for_split = badge.get("transformation_classification") or {}
-        contribution_for_split = _transformation_contribution_summary(
-            transformation_for_split.get("features") or {},
-            _transformation_signals(transformation_for_split.get("features") or {}),
-        )
-        ai_band = "High AI" if ai_score >= 50 else "Low AI"
-        grounding_band = "Weakly grounded" if grounding_score >= 50 else "Well grounded"
-        lines.append("")
-        lines.append("| Layer | Score | Meaning |")
-        lines.append("|-------|------:|---------|")
-        lines.append(f"| AI Authorship Risk | `{ai_score:.1f}%` | Token, rhythm, discourse, and template-like authorship signals |")
-        lines.append(f"| AI Transformation Risk | `{contribution_for_split['atr']}%` | Rewrite/paraphrase/expansion pattern signals |")
-        lines.append(f"| Grounding Quality Risk | `{grounding_score:.1f}%` | Citation, evidence, unsupported claim, and specificity signals |")
-        lines.append(f"| Human Contribution Signal | `{contribution_for_split['hcr']}%` | Human anchoring and author-owned reasoning signals |")
-        lines.append("")
-        lines.append(f"**Combined Interpretation:** {ai_band} / {grounding_band}")
-
-        # ── Writing Quality Risk ──
-        wq_tier = badge.get("writing_quality_tier", "LOW")
-        wq_score = badge.get("writing_quality_score", 0)
-        wq_labels = {
-            "LOW": "Clean",
-            "LIGHT_REVIEW": "Light Review",
-            "REVIEW": "Review",
-            "HIGH_REVIEW": "Heavy Review",
-        }
-        wq_colors = {
-            "LOW": "green",
-            "LIGHT_REVIEW": "yellow",
-            "REVIEW": "orange",
-            "HIGH_REVIEW": "red",
-        }
-        wq_label = wq_labels.get(wq_tier, wq_tier)
-        wq_color = wq_colors.get(wq_tier, "lightgrey")
-
-        lines.append("")
-        lines.append("### Writing Quality Risk")
-        lines.append("")
-        lines.append(f"![{wq_label}](https://img.shields.io/badge/Quality-{wq_label.replace(' ', '_')}-{wq_color})")
-        lines.append("")
-        lines.append(f"- **Score**: `{wq_score:.2f}%`")
-
-        wq_components = badge.get("writing_components", {})
-        if wq_components:
-            non_zero = {k: v for k, v in wq_components.items() if v > 0}
-            if non_zero:
-                lines.append("")
-                lines.append("| Signal | Score | What It Means |")
-                lines.append("|--------|------:|---------------|")
-                for comp_name, comp_val in non_zero.items():
-                    label, desc = _WQ_COMPONENT_LABELS.get(comp_name, (comp_name, ""))
-                    lines.append(f"| {label} | `{comp_val:.1f}%` | {desc} |")
-
-        transformation = badge.get("transformation_classification") or {}
-        transformation_features = transformation.get("features") or {}
-        transformation_rows = _transformation_signals(transformation_features)
-        if transformation and transformation_rows:
-            contribution = _transformation_contribution_summary(
-                transformation_features,
-                transformation_rows,
-            )
-            lines.append("")
-            lines.append("### Transformation Pattern")
-            lines.append("")
-            if transformation.get("label"):
-                lines.append(f"- **Pattern**: **{transformation.get('label')}**")
-            if transformation.get("confidence"):
-                lines.append(f"- **Pattern Confidence**: `{str(transformation.get('confidence')).title()}`")
-            lines.append("- **Important**: This is a transformation-pattern estimate, not an authorship verdict.")
-            lines.append("")
-            lines.append("| Contribution Estimate | Ratio |")
-            lines.append("|-----------------------|------:|")
-            lines.append(f"| Human Contribution Ratio (HCR) | `{contribution['hcr']}%` |")
-            lines.append(f"| AI Transformation Ratio (ATR) | `{contribution['atr']}%` |")
-            lines.append(f"| Adjusted AI Risk | `{contribution['adjusted_ai_risk']}%` |")
-            lines.append(f"| Calibrated AI Risk | `{contribution['calibrated_ai_risk']}%` |")
-            lines.append(f"| Human Anchor Discount | `{contribution['human_anchor_discount']}%` |")
-            lines.append(f"| Calibration Confidence | `{contribution['calibration_confidence']}%` |")
-            lines.append(f"| Reporting Suppression | `{contribution['reporting_suppression']}%` |")
-            lines.append("")
-            lines.append(f"> **Summary:** {contribution['summary']}")
-            lines.append("")
-            lines.append("| Core Signal | Score | What It Means |")
-            lines.append("|-------------|------:|---------------|")
-            for row in transformation_rows:
-                lines.append(f"| {row['label']} | `{row['score']:.0f}%` | {row['description']} |")
-            evidence = transformation.get("evidence") or []
-            if evidence:
-                lines.append("")
-                lines.append(f"**Evidence Drivers:** {', '.join(str(item) for item in evidence[:3])}")
-            lines.append("")
-
-        # ── Combined Recommendation ──
-        review_priority = badge.get("review_priority", "")
-        if review_priority and review_priority != "clean":
-            priority_labels = {
-                "high_ai_concern": "High AI-generation concern",
-                "serious_review": "Serious review needed",
-                "ai_review": "AI-style patterns detected",
-                "possible_humanised_ai": "Possible humanised AI or weak grounding",
-                "strong_review": "Review strongly recommended",
-                "mild_review": "Some patterns worth reviewing",
-                "writing_review": "Not AI-like, but writing quality needs improvement",
-                "note": "Minor quality concerns",
-            }
-            lines.append("")
-            lines.append("### Recommendation")
-            lines.append("")
-            lines.append(priority_labels.get(review_priority, review_priority))
-
-        lines.append("")
-
-    # Build bar strings
-    max_n = max(n_critical, n_high, n_medium, n_low, 1)
-    def _bar(count):
-        bar_w = round(count / max_n * 15) if max_n else 0
-        return "#" * bar_w + "-" * (15 - bar_w)
-
-    # Build scanner rows
-    scanners_present = set()
-    for findings_list in fb.values():
-        for f in findings_list:
-            scanners_present.add(f.scanner)
-    scanner_rows = []
-    for scanner in sorted(scanners_present):
-        count = _count_by_scanner(fb, scanner)
-        hc = _high_count_by_scanner(fb, scanner)
-        code = _SCANNER_CODES.get(scanner, scanner)
-        score_str = _scanner_score(report, scanner)
-        scanner_rows.append((code, count, hc, score_str))
-
-    # Metrics table — use badge tier if available, otherwise finding-based tier
-    display_tier = tier.value.upper()
-    display_emoji = emoji
-    if report.ai_risk_badge:
-        badge_tier_val = report.ai_risk_badge.get("tier", "")
-        if badge_tier_val:
-            display_tier = _BADGE_TIER_LABELS.get(badge_tier_val, badge_tier_val)
-            badge_emoji_map = {"GREEN": "[ok]", "AMBER": "[!]", "ORANGE": "[!!]", "RED": "[!!!]"}
-            display_emoji = badge_emoji_map.get(badge_tier_val, emoji)
-
-    lines.append("| Metric | Value |")
-    lines.append("|--------|-------|")
-    lines.append(f"| **Integrity Tier** | **{display_tier}** |")
-    lines.append(f"| **Total Findings** | **{total}** |")
-    lines.append(f"| Scan Time | `{report.scan_time_seconds:.1f}s` |")
-    if report.generated_at:
-        lines.append(f"| Generated | {report.generated_at} |")
-
-    # Severity counts inline
-    sev_parts = []
-    if n_critical: sev_parts.append(f"{n_critical} Critical")
-    if n_high: sev_parts.append(f"{n_high} High")
-    if n_medium: sev_parts.append(f"{n_medium} Medium")
-    if n_low: sev_parts.append(f"{n_low} Low")
-    if sev_parts:
-        lines.append(f"| **Breakdown** | {' / '.join(sev_parts)} |")
-    lines.append("")
-
-    # Scanner results table
-    if scanner_rows:
-        lines.append("| Src | Found | H/C | Score |")
-        lines.append("|-----|-------|-----|-------|")
-        for code, count, hc, score_str in scanner_rows:
-            lines.append(f"| {code} | {count} | {hc} | {score_str} |")
-        lines.append("")
-
-    # Risk gauges — suppressed when Layer 3 badge is present (cluster analysis replaces it)
-    if not report.ai_risk_badge:
-        signal_lines = []
-        if report.predictability:
-            p = report.predictability
-            signal_lines.append(f"- **Predictability**: {_risk_gauge(p.overall_risk)}")
-            if p.generic_phrases_found:
-                phrases = ", ".join(f"`{ph}`" for ph in p.generic_phrases_found[:5])
-                signal_lines.append(f"- **Generic Phrases**: {phrases}")
-            dist_parts = [f"{k}: {v}" for k, v in p.risk_distribution.items()]
-            signal_lines.append(f"- **Distribution**: {' | '.join(dist_parts)}")
-
-        # Check for specificity and AI signals in findings
-        for fl in fb.values():
-            for f in fl:
-                if f.title == "low_specificity" and f.metadata:
-                    adjusted_risk = f.metadata.get("adjusted_specificity_concern",
-                                                   f.metadata.get("adjusted_specificity_risk"))
-                    raw_risk = f.metadata.get("raw_specificity_concern",
-                                              f.metadata.get("raw_specificity_risk",
-                                              f.metadata.get("specificity_risk", 0)))
-                    spec_score = f.metadata.get("raw_specificity_score",
-                                                f.metadata.get("specificity_score", 0))
-                    dg_level = f.metadata.get("domain_grounding_level", "")
-                    dg_idx = f.metadata.get("domain_grounding_index", "")
-
-                    if adjusted_risk is not None and abs(adjusted_risk - raw_risk) > 0.05:
-                        signal_lines.append(
-                            f"- **Specificity**: `{adjusted_risk:.0%}` adjusted "
-                            f"(raw concern: `{raw_risk:.0%}`)"
-                        )
-                        adj = f.metadata.get("adjustment", {})
-                        if adj.get("reason"):
-                            signal_lines.append(f"  - _Reason: {adj['reason']}_")
-                    else:
-                        signal_lines.append(f"- **Specificity Risk**: `{spec_score:.0%}`")
-
-                    if dg_idx:
-                        signal_lines.append(
-                            f"- **Domain Grounding**: index `{dg_idx:.2f}`, level `{dg_level}`"
-                        )
-                if "ai_generation_likelihood" in f.title and f.metadata:
-                    ai_lik = f.metadata.get("ai_likelihood", 0)
-                    if ai_lik:
-                        signal_lines.append(f"- **AI Likelihood**: `{ai_lik:.1%}`")
-
-        if signal_lines:
-            lines.append("### Risk Gauges")
-            lines.append("")
-            for sl in signal_lines:
-                lines.append(sl)
-            lines.append("")
-
-    if report.similarity:
-        s = report.similarity
-        lines.append(f"- **Similarity Risk**: `{_pct(s.overall_risk)}`")
-        dist_parts = [f"{k}: {v}" for k, v in s.risk_distribution.items()]
-        lines.append(f"- **Distribution**: {' | '.join(dist_parts)}")
-        lines.append("")
-
-    if report.citation:
-        c = report.citation
-        lines.append(f"- **Citation Style**: `{c.citation_style}`")
-        lines.append(f"- **In-text**: {c.in_text_count} | **Bibliography**: {c.bib_entry_count}")
-        lines.append("")
-
-    # Verdict — use badge tier when available
-    if report.ai_risk_badge:
-        badge_tier_val = report.ai_risk_badge.get("tier", "")
-        badge_score = report.ai_risk_badge.get("ai_likelihood_score", 0)
-        verdict_map = {
-            "GREEN": f"Low risk across all clusters (score: {badge_score:.1f}%). Text appears ready for submission.",
-            "AMBER": f"Moderate concerns detected (score: {badge_score:.1f}%). Review flagged areas before submission.",
-            "ORANGE": f"Elevated integrity risk (score: {badge_score:.1f}%). Multiple clusters show aligned patterns — review recommended.",
-            "RED": f"High integrity risk (score: {badge_score:.1f}%). Strong evidence across independent clusters — thorough review recommended before submission.",
-        }
-        verdict = verdict_map.get(badge_tier_val, _verdict(tier, total))
+    signal_chart = _executive_signal_chart_html(
+        report,
+        data,
+        n_critical=n_critical,
+        n_high=n_high,
+        n_medium=n_medium,
+        n_low=n_low,
+        total=total,
+    )
+    if signal_chart:
+        lines.append(signal_chart)
     else:
-        verdict = _verdict(tier, total)
-    lines.append(f"> **Verdict:** {verdict}")
-    lines.append("")
+        display_tier = tier.value.upper()
+        if report.ai_risk_badge:
+            badge_tier_val = report.ai_risk_badge.get("tier", "")
+            if badge_tier_val:
+                display_tier = _BADGE_TIER_LABELS.get(badge_tier_val, badge_tier_val)
 
-    # Primary action — promoted above all findings
-    action_summary = data.get("actionable_summary", {})
-    pa = action_summary.get("primary_action", "")
-    if pa and pa != "review_only":
-        # Build specific label from actual findings, not generic text
-        pa_labels = {
-            "add_citations": "Add citations for uncited claims",
-            "improve_specificity": "Strengthen specificity with concrete details",
-            "reduce_formulaic_language": "Reduce formulaic phrasing",
-            "address_findings": "Address flagged findings",
-        }
-        # Enhance "address_findings" with the actual finding title
-        if pa == "address_findings":
-            auto_fixable = action_summary.get("auto_fixable", [])
-            if auto_fixable:
-                first = auto_fixable[0]
-                finding_title = first.get("title", "").replace("_", " ")
-                finding_id = first.get("finding_id", "")
-                pa_labels["address_findings"] = (
-                    f"Address {finding_title} ({finding_id})"
-                )
-        lines.append(f"> **Primary Action:** {pa_labels.get(pa, pa.replace('_', ' ').title())}")
-        # Secondary action: show review-level items or manual-required citations
-        manual_req = action_summary.get("manual_required", [])
-        review_only = action_summary.get("review_only", [])
-        if pa != "add_citations" and manual_req:
-            cite_manual = [e for e in manual_req if "citation" in e.get("title", "").lower()]
-            if cite_manual:
-                titles = [e.get("title", "").replace("_", " ") for e in cite_manual[:2]]
-                lines.append(f"> **Secondary Action:** Add citation for {', '.join(titles)}")
-        if review_only:
-            titles = [r.get("title", "").replace("_", " ") for r in review_only[:2]]
-            lines.append(f"> **Review:** {', '.join(titles)} — no immediate fix needed")
-        lines.append("")
-
-    # Tier derivation audit — use badge tier reason
-    if report.ai_risk_badge:
-        badge_tier = report.ai_risk_badge.get("tier", "")
-        badge_score = report.ai_risk_badge.get("ai_likelihood_score", 0)
-        badge_reasons = report.ai_risk_badge.get("reasons", [])
-        badge_guardrails = report.ai_risk_badge.get("guardrails", [])
-
-        tier_explanation = {
-            "GREEN": "Low risk across all clusters. No significant concerns detected.",
-            "AMBER": "Moderate concern in grounding quality. Review recommended.",
-            "ORANGE": "Elevated risk — two clusters aligned or blended score above threshold.",
-            "RED": "High risk — aligned evidence across independent clusters indicates writing process concerns.",
-        }
-        explanation = tier_explanation.get(badge_tier, "")
-        badge_tier_display = _BADGE_TIER_LABELS.get(badge_tier, badge_tier)
-        rating = _authorship_rating_from_badge(report.ai_risk_badge)
-        if rating.get("label"):
-            lines.append(
-                f"> **Tier Reason:** {rating.get('label')} at {badge_score:.1f}% "
-                f"(Tier {badge_tier_display}) — {rating.get('summary') or explanation}"
-            )
-        else:
-            lines.append(f"> **Tier Reason:** Tier {badge_tier_display} at {badge_score:.1f}% — {explanation}")
-        if rating.get("caution_notes"):
-            lines.append(f"> **Rating Notes:** {' '.join(rating.get('caution_notes') or [])}")
-        if badge_reasons:
-            readable = [r.replace("_", " ") for r in badge_reasons]
-            lines.append(f"> **Triggers:** {', '.join(readable)}")
-        if badge_guardrails:
-            readable = [g.replace("_", " ") for g in badge_guardrails]
-            lines.append(f"> **Guardrails applied:** {', '.join(readable)}")
-        lines.append("")
-    elif report.overall_tier_reason:
-        lines.append(f"> **Tier Reason:** {report.overall_tier_reason}")
-        lines.append("")
-    if report.raw_overall_tier != report.adjusted_overall_tier:
-        if not report.ai_risk_badge:
-            lines.append(f"> **Tier Adjustment:** Raw `{report.raw_overall_tier.upper()}` -> Adjusted `{report.adjusted_overall_tier.upper()}`")
-            lines.append("")
-
-    # Axis scores — suppressed when badge is present (badge cluster view replaces this)
-    if not report.ai_risk_badge:
-        axis_scores = data.get("axis_scores")
-        if axis_scores:
-            axis_labels = {
-                "predictability": "Predictability",
-                "similarity": "Similarity",
-                "citation": "Citation",
-                "specificity": "Specificity",
-                "domain_grounding": "Domain Grounding",
-            }
-            axis_icons = {"clear": "[OK]", "review": "[~]", "attention": "[!]", "strong": "[*]", "moderate": "[+]", "weak": "[-]"}
-            parts = []
-            for key, label in axis_labels.items():
-                val = axis_scores.get(key, "clear")
-                icon = axis_icons.get(val, "[?]")
-                parts.append(f"{label}: {icon} {val}")
-            lines.append(f"> **Signal Axes:** {'  |  '.join(parts)}")
-            lines.append("")
-
-    # Reason codes — suppressed when badge is present
-    if not report.ai_risk_badge:
-        reason_codes = data.get("reason_codes")
-        if reason_codes:
-            code_labels = {
-                "no_high_or_critical_findings": "No high/critical findings",
-                "low_ai_pattern_score": "Low AI pattern score",
-                "strong_domain_grounding": "Strong domain grounding",
-                "mostly_review_only_findings": "Mostly review-only findings",
-                "predictability_unconfirmed": "Predictability unconfirmed",
-                "rewrite_not_recommended": "Rewrite not recommended",
-            }
-            readable = [code_labels.get(c, c) for c in reason_codes]
-            lines.append(f"> **Tier Rationale:** {'; '.join(readable)}")
-            lines.append("")
-
-    # Short-text confidence warning
-    doc_ctx = data.get("document_context", {})
-    word_count = doc_ctx.get("word_count", 0)
-    sent_count = doc_ctx.get("sentence_count", 0)
-    if word_count >= 800 or sent_count >= 25:
-        lines.append(
-            f"> **Sample Confidence:** Medium-High — {word_count} words / "
-            f"{sent_count} sentences. Enough body text for reliable document-level signals."
-        )
-        lines.append("")
-    elif word_count < 250 or sent_count < 10:
-        lines.append(
-            f"> **Sample Confidence:** Low — only {word_count} words / "
-            f"{sent_count} sentences. Document-level scores are unstable."
-        )
-        lines.append("")
-    else:
-        lines.append(
-            f"> **Sample Confidence:** Medium — {word_count} words / "
-            f"{sent_count} sentences. Enough for advisory signals, but results remain advisory."
-        )
+        lines.append("| Metric | Value |")
+        lines.append("|--------|-------|")
+        lines.append(f"| **Integrity Tier** | **{display_tier}** |")
+        lines.append(f"| **Total Findings** | **{total}** |")
+        lines.append(f"| Scan Time | `{report.scan_time_seconds:.1f}s` |")
+        if report.generated_at:
+            lines.append(f"| Generated | {report.generated_at} |")
+        sev_parts = []
+        if n_critical: sev_parts.append(f"{n_critical} Critical")
+        if n_high: sev_parts.append(f"{n_high} High")
+        if n_medium: sev_parts.append(f"{n_medium} Medium")
+        if n_low: sev_parts.append(f"{n_low} Low")
+        if sev_parts:
+            lines.append(f"| **Breakdown** | {' / '.join(sev_parts)} |")
         lines.append("")
 
     # ── 2. FINDINGS BY SEVERITY ───────────────────────────────────
