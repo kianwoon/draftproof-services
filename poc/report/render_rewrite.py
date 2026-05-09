@@ -379,6 +379,8 @@ def render_rewrite_report(
             result_label = "Partially AI Mitigated"
         elif outcome == "cleanup_improved":
             result_label = "Cleanup Improved"
+        elif outcome == "topk_blocked":
+            result_label = "Top-k Blocked"
 
         lines.append("### Result")
         lines.append("")
@@ -388,6 +390,8 @@ def render_rewrite_report(
             lines.append("Review burden reduced, but AI-footprint signals are still high. Do not treat this as detector-safe mitigation.")
         elif outcome == "partially_ai_mitigated":
             lines.append("AI-footprint signals reduced, but the result is still not guaranteed to pass external detectors.")
+        elif outcome == "topk_blocked":
+            lines.append("Top-k predictability remains above the safe mark, so this rewrite is not detector-safe mitigation yet.")
         elif outcome == "ai_mitigated" or ai_first_kept:
             lines.append(
                 "AI likelihood improved enough to keep the rewrite. Writing-quality or lower-severity changes are follow-up work."
@@ -419,6 +423,15 @@ def render_rewrite_report(
             lines.append(
                 f"| **External AI Flag Proxy** | `{float(footprint_before):.2f}%` | "
                 f"`{float(footprint_after):.2f}%` | `{float(footprint_drops.get('external_ai_flag_risk') or 0.0):+.2f}% drop` |"
+            )
+        footprint_before_authorship = (footprint_gate.get("before") or {}).get("authorship_footprint") or {}
+        footprint_after_authorship = (footprint_gate.get("after") or {}).get("authorship_footprint") or {}
+        topk_before = footprint_before_authorship.get("topk_pattern")
+        topk_after = footprint_after_authorship.get("topk_pattern")
+        if isinstance(topk_before, (int, float)) and isinstance(topk_after, (int, float)):
+            lines.append(
+                f"| **Top-k Predictability** | `{float(topk_before):.2f}%` | "
+                f"`{float(topk_after):.2f}%` | `{float(footprint_drops.get('topk_pattern') or 0.0):+.2f}% drop` |"
             )
         orig_authorship = _authorship_label(orig_scan)
         new_authorship = _authorship_label(new_scan)

@@ -269,6 +269,18 @@ def _float_env_with_fallback(name: str, fallback: float) -> float:
     return float(value) if value is not None else float(fallback)
 
 
+TOPK_SAFE_LIMIT = 25.0
+
+
+def _safe_topk_limit() -> float:
+    """Hard product ceiling for Top-k mitigation safety.
+
+    Top-k above this level is an active AI footprint blocker, regardless of
+    other cleanup wins. This is product logic, not an environment knob.
+    """
+    return TOPK_SAFE_LIMIT
+
+
 def _rewrite_sampling_profile(prefix: str = "DRAFTPROOF_AI_SEARCH") -> dict:
     """Effective default sampling controls for rewrite-generation calls.
 
@@ -3463,7 +3475,7 @@ def _ai_footprint_gate_status(
             thresholds["topk_pattern"],
             _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0),
         )
-    safe_topk_limit = _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TOPK", 25.0)
+    safe_topk_limit = _safe_topk_limit()
     material_primary = [
         key for key in primary_keys
         if drops.get(key, 0.0) >= thresholds.get(key, 1.0)
@@ -14920,7 +14932,7 @@ def run_rewrite_pipeline(
             except (TypeError, ValueError):
                 max_rounds = 3
             target_drop = _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0)
-            safe_topk = _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TOPK", 25.0)
+            safe_topk = _safe_topk_limit()
             active_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
             reserve = max(
                 0,

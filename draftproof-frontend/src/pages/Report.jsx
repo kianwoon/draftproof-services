@@ -1466,23 +1466,27 @@ export default function Report() {
       : '';
   const rewriteBandTitle = rewriteOutcome === 'ai_mitigated'
     ? 'AI-Mitigation accepted'
+    : rewriteOutcome === 'topk_blocked'
+      ? 'Top-k blocker remains'
     : rewriteOutcome === 'suggestion_only'
       ? 'Original preserved'
       : rewriteOutcomeText || 'Rewrite complete';
   const rewriteBandDetail = rewriteOutcome === 'ai_mitigated'
     ? 'A candidate passed the mitigation gate and was kept.'
+    : rewriteOutcome === 'topk_blocked'
+      ? 'Top-k predictability is still above the safe mark, so this is not detector-safe mitigation.'
     : rewriteOutcome === 'suggestion_only'
       ? 'No candidate passed the rewrite gate; review the guidance before trying again.'
       : rewriteResultSummary?.ai_mitigation_selected
         ? 'A mitigation candidate was selected after scanning.'
         : 'Rewrite finished and the result is ready to review.';
   const rewriteCompletionBand = hasRewriteResult ? (
-    <div className={`report-rewrite-summary-bar${rewriteOutcome === 'suggestion_only' ? ' is-preserved' : ''}${rewriteOutcome === 'ai_mitigated' ? ' is-mitigated' : ''}`}>
+    <div className={`report-rewrite-summary-bar${rewriteOutcome === 'suggestion_only' ? ' is-preserved' : ''}${rewriteOutcome === 'topk_blocked' ? ' is-blocked' : ''}${rewriteOutcome === 'ai_mitigated' ? ' is-mitigated' : ''}`}>
       <div className="rewrite-summary-icon" aria-hidden="true">
         <span>
           <svg width="42" height="42" viewBox="0 0 42 42" fill="none">
             <circle cx="21" cy="21" r="15" fill="currentColor"/>
-            {rewriteOutcome === 'suggestion_only' ? (
+            {rewriteOutcome === 'suggestion_only' || rewriteOutcome === 'topk_blocked' ? (
               <path d="M15 15l12 12M27 15L15 27" stroke="#fff" strokeWidth="3" strokeLinecap="round"/>
             ) : (
               <path d="M14 21.5l4.5 4.5L28.5 16" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"/>

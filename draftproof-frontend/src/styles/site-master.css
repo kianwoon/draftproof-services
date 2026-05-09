@@ -3894,6 +3894,30 @@ th {
   border-left-color: #fed7aa;
 }
 
+.report-rewrite-summary-bar.is-blocked {
+  border-color: #fecaca;
+  background: linear-gradient(90deg, #fef2f2 0%, #fff7f7 100%);
+  box-shadow: 0 12px 30px rgba(220, 38, 38, .08);
+}
+
+.report-rewrite-summary-bar.is-blocked .rewrite-summary-icon {
+  color: #dc2626;
+  background: radial-gradient(circle, rgba(220,38,38,.13) 0 36%, transparent 37% 100%);
+  border-color: rgba(220, 38, 38, .14);
+}
+
+.report-rewrite-summary-bar.is-blocked .rewrite-summary-icon span {
+  background: #fee2e2;
+}
+
+.report-rewrite-summary-bar.is-blocked .rewrite-summary-kicker {
+  color: #b91c1c;
+}
+
+.report-rewrite-summary-bar.is-blocked .rewrite-summary-stat {
+  border-left-color: #fecaca;
+}
+
 .rewrite-summary-icon {
   display: grid;
   place-items: center;

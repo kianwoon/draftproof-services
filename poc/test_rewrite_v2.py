@@ -70,6 +70,7 @@ from rewrite_pipeline import (
     _safe_partial_quality_improvement_status,
     _ai_footprint_profile,
     _ai_footprint_gate_status,
+    _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
     _allow_ai_search_llm_after_deterministic,
     _load_local_env,
@@ -1195,6 +1196,10 @@ assert_test(
     and not stalled_topk_gate["material_driver_moved"]
     and stalled_topk_gate["texture_blockers"],
     "AI-footprint gate blocks mitigation claims when top-k remains pinned and smoothness regresses",
+)
+assert_test(
+    _safe_topk_limit() == 25.0,
+    "Top-k safe mark is fixed at 25 and is not an environment tuning knob",
 )
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {
