@@ -14172,6 +14172,7 @@ def run_rewrite_pipeline(
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
+                and not selection_status.get("topk_safe_band_achieved")
                 and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
@@ -14189,6 +14190,7 @@ def run_rewrite_pipeline(
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
+                and not selection_status.get("topk_safe_band_achieved")
                 and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
@@ -14210,7 +14212,7 @@ def run_rewrite_pipeline(
                 selection_status,
                 authenticity_status,
             )
-            if human_target_block.get("blocked"):
+            if human_target_block.get("blocked") and not selection_status.get("topk_safe_band_achieved"):
                 selection_status.update({
                     "success": False,
                     "selectable": False,
@@ -14223,6 +14225,7 @@ def run_rewrite_pipeline(
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
+                and not selection_status.get("topk_safe_band_achieved")
                 and _env_flag("DRAFTPROOF_BLOCK_TEXTURE_STALLED_AI_FOOTPRINT", True)
             ):
                 selection_status.update({
@@ -14251,6 +14254,7 @@ def run_rewrite_pipeline(
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("score_drag_removal")
                 and not selection_status.get("safe_partial_quality_improvement")
+                and not selection_status.get("topk_safe_band_achieved")
                 and not (
                     isinstance(candidate_human_delta, (int, float))
                     and candidate_human_delta > 0.0
@@ -15532,6 +15536,7 @@ def run_rewrite_pipeline(
                                         "applied_topk_safe_band_patches": applied,
                                     },
                                 )
+                                safe_band_summary["selected"] = bool(best_strategy == "topk_safe_band_rebuild")
                         except Exception as exc:
                             safe_band_summary["error"] = str(exc)
                             search_summary["candidates"].append({
