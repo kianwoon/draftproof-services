@@ -2216,7 +2216,11 @@ def _topk_texture_repair_prompt(
         "- break balanced sentence rhythm\n"
         "- remove polished connectors\n"
         "- vary sentence length lightly\n"
+        "- use one or two short fragments where a full polished sentence is too predictable\n"
+        "- move a qualifier or contrast to the front of a sentence when it preserves meaning\n"
+        "- replace bland verbs such as is/has/plays/supports/shapes with more specific plain verbs already implied by the sentence\n"
         "- patch only high-risk sentences or adjacent clauses\n\n"
+        "If topk_pattern is 90 or higher, light polishing is not enough. Make visible local route changes in the target sentences while keeping the same facts.\n\n"
         "Hard rule:\n"
         "- Do not add new facts, citations, statistics, examples, institutions, names, dates, or author experiences.\n"
         "- Preserve claim scope after narrowing.\n"
@@ -14256,8 +14260,15 @@ def run_rewrite_pipeline(
                 }
             search_summary["final_topk_texture_repair"] = summary
             try:
+                next_llm_call_exceeds_budget = _llm_call_budget_exhausted_before_send(
+                    int(search_summary.get("llm_calls") or 0) + 1,
+                    int(search_budget.get("max_llm_calls") or 0),
+                )
                 use_budget_override_gateway = bool(
-                    str(adaptive_stop_reason or "").startswith("budget_exhausted")
+                    (
+                        str(adaptive_stop_reason or "").startswith("budget_exhausted")
+                        or next_llm_call_exceeds_budget
+                    )
                     and _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_AFTER_BUDGET", True)
                     and effective_key
                 )
@@ -14281,11 +14292,14 @@ def run_rewrite_pipeline(
                         )),
                         temperature=float(os.environ.get(
                             "DRAFTPROOF_FINAL_TOPK_TEXTURE_TEMPERATURE",
-                            os.environ.get("DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE", "0.45"),
+                            os.environ.get("DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE", "0.78"),
                         )),
                     ))
                     summary["ran_after_search_budget"] = True
-                    summary["search_budget_reason"] = adaptive_stop_reason
+                    summary["search_budget_reason"] = (
+                        adaptive_stop_reason
+                        or "final_topk_texture_llm_call_reserve"
+                    )
                 response = topk_gateway.chat(
                     prompt,
                     system=(
@@ -14298,7 +14312,7 @@ def run_rewrite_pipeline(
                         temperature_env="DRAFTPROOF_FINAL_TOPK_TEXTURE_TEMPERATURE",
                         temperature_default=float(os.environ.get(
                             "DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
-                            "0.45",
+                            "0.78",
                         )),
                         max_tokens_env="DRAFTPROOF_FINAL_TOPK_TEXTURE_MAX_TOKENS",
                         max_tokens_default=int(os.environ.get(
@@ -14746,7 +14760,7 @@ def run_rewrite_pipeline(
                             **_phase_chat_sampling_kwargs(
                                 "DRAFTPROOF_TOPK_TEXTURE",
                                 temperature_env="DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
-                                temperature_default=0.45,
+                                temperature_default=0.78,
                                 max_tokens_env="DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS",
                                 max_tokens_default=4800,
                             ),
