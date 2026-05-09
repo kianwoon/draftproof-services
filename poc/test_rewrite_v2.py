@@ -977,6 +977,24 @@ assert_test(
     safe_partial_status["allowed"],
     "safe partial quality gate keeps small rescanned improvements instead of returning unchanged text",
 )
+safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
+    {
+        "selectable": True,
+        "safe_partial_quality_improvement": True,
+        "dominant_blocker_gate": {"required": True, "cleared": False},
+        "authenticity_gate": {
+            "human_delta": 0.0,
+            "ai_authorship_delta": 1.0,
+            "ai_transformation_delta": 0.0,
+        },
+    },
+    phase="claim_narrowing",
+    short_document=False,
+)
+assert_test(
+    safe_partial_stop_reason == "adaptive_stop_after_safe_partial_quality_claim_narrowing",
+    "adaptive stop accepts safe partial quality wins without continuing expensive candidate loops",
+)
 meaningful_search_status = _ai_search_candidate_selection_status(57.78, 52.50, True)
 assert_test(
     meaningful_search_status["selectable"],

@@ -3251,6 +3251,8 @@ def _ai_search_adaptive_stop_reason(
         return ""
     if not isinstance(selection_status, dict) or not selection_status.get("selectable"):
         return ""
+    if selection_status.get("safe_partial_quality_improvement"):
+        return f"adaptive_stop_after_safe_partial_quality_{phase}"
     dominant = selection_status.get("dominant_blocker_gate") or {}
     if (
         dominant.get("required")
@@ -10795,6 +10797,40 @@ def run_rewrite_pipeline(
         (ai_mitigation_needs_author or ai_authorship_mitigation_needed)
         and os.environ.get("DRAFTPROOF_AUTHENTICITY_MITIGATION", "1") != "0"
     )
+    skip_authenticity_prepass = bool(
+        authenticity_enabled
+        and os.environ.get("DRAFTPROOF_AI_MITIGATION_SEARCH", "1") != "0"
+        and _env_flag("DRAFTPROOF_SKIP_AUTHENTICITY_PREPASS_WHEN_AI_SEARCH", True)
+    )
+    if skip_authenticity_prepass:
+        authenticity_enabled = False
+        result.summary["authenticity_mitigation"] = {
+            "enabled": False,
+            "selected": False,
+            "reason": "skipped_for_ai_search_controller",
+            "policy": "DRAFTPROOF_SKIP_AUTHENTICITY_PREPASS_WHEN_AI_SEARCH",
+            "would_have_run_for": {
+                "ai_mitigation_needs_author": bool(ai_mitigation_needs_author),
+                "ai_authorship_mitigation_needed": bool(ai_authorship_mitigation_needed),
+            },
+        }
+        result.summary["generation_layer"] = {
+            "schema_version": "generation_layer.v1",
+            "mode": "ai_search_controller_first",
+            "goal": "safe measured improvement",
+            "selected": False,
+            "selection_reason": "skipped_for_ai_search_controller",
+            "llm_calls": 0,
+            "model_roles": llm_roles,
+        }
+        stage_timings.append({
+            "stage": "authenticity_mitigation",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "reason": "skipped_for_ai_search_controller",
+        })
     if authenticity_enabled:
         mitigation_started = time.time()
         try:
