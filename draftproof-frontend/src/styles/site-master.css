@@ -4067,6 +4067,75 @@ th {
   line-height: 1;
 }
 
+.transformation-authorship-seal {
+  position: relative;
+  display: grid;
+  justify-items: end;
+  align-content: center;
+  flex: 0 0 clamp(150px, 22vw, 220px);
+  min-height: 92px;
+  padding: .9rem 1rem;
+  color: var(--rating-color, #b45309);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--rating-bg, #fff7ed) 88%, white), white);
+  border: 2px solid color-mix(in srgb, var(--rating-color, #b45309) 62%, transparent);
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .76);
+  text-align: right;
+}
+
+.transformation-authorship-seal::before,
+.transformation-authorship-seal::after {
+  content: "";
+  position: absolute;
+  inset: .42rem;
+  border: 1px solid color-mix(in srgb, var(--rating-color, #b45309) 32%, transparent);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.transformation-authorship-seal::after {
+  inset: .68rem;
+  border-style: dashed;
+  opacity: .55;
+}
+
+.transformation-authorship-seal span {
+  position: relative;
+  z-index: 1;
+  color: #64748b;
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .1em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.transformation-authorship-seal strong {
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+  margin-top: .28rem;
+  color: var(--rating-color, #b45309);
+  font-size: clamp(1.28rem, 2.5vw, 2rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: .98;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.transformation-authorship-seal em {
+  position: relative;
+  z-index: 1;
+  margin-top: .42rem;
+  color: #475569;
+  font-size: .75rem;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
 .transformation-meta-row {
   display: flex;
   flex-wrap: wrap;
@@ -5059,6 +5128,12 @@ th {
   .transformation-header {
     flex-direction: column;
     padding: 1rem;
+  }
+  .transformation-authorship-seal {
+    justify-items: start;
+    width: 100%;
+    min-height: 82px;
+    text-align: left;
   }
   .transformation-chart {
     padding: 1rem;

@@ -387,9 +387,14 @@ def _executive_signal_chart_html(
         '</div>',
         '</div>',
         '</div>',
-        '<div class="dp-ai-score">',
-        '<span>AI Score</span>',
-        f'<strong>{ai_score:.1f}%</strong>',
+        (
+            '<div class="dp-rating-seal" style="'
+            f'--rating-color:{tier_color};--rating-bg:{tier_bg};'
+            f'color:{tier_color};border-color:{tier_color};background:{tier_bg}">'
+        ),
+        '<span>Authorship Rating</span>',
+        f'<strong>{escape(rating_label)}</strong>',
+        f'<em>{ai_score:.1f}% AI score</em>',
         '</div>',
         '</header>',
         '<div class="dp-scan-head">',

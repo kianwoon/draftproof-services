@@ -1311,13 +1311,22 @@ export default function Report() {
             </div>
           </div>
         </div>
-        <div className="transformation-ai-score">
-          <span>AI Score</span>
-          <strong>
-            {hasRewriteSignalComparison
-              ? `${formatMetricPercent(transformationOriginalScore, 1)} -> ${formatMetricPercent(transformationRewrittenScore, 1)}`
-              : formatMetricPercent(transformationOriginalScore, 1)}
+        <div
+          className="transformation-authorship-seal"
+          style={{
+            '--rating-color': tier.color,
+            '--rating-bg': tier.bg,
+          }}
+        >
+          <span>Authorship Rating</span>
+          <strong title={authorshipRatingFullLabel || authorshipRatingLabel || undefined}>
+            {authorshipRatingLabel || 'Not Rated'}
           </strong>
+          <em>
+            {hasRewriteSignalComparison
+              ? `${formatMetricPercent(transformationOriginalScore, 1)} -> ${formatMetricPercent(transformationRewrittenScore, 1)} AI score`
+              : `${formatMetricPercent(transformationOriginalScore, 1)} AI score`}
+          </em>
         </div>
       </div>
       <div className="transformation-chart">

@@ -261,6 +261,47 @@ img[src^="https://img.shields.io"] { height: 18px; }
     line-height: 1;
 }
 
+.dp-rating-seal {
+    position: relative;
+    min-width: 104pt;
+    max-width: 142pt;
+    min-height: 54pt;
+    padding: 9pt 10pt;
+    border: 2pt solid #b45309;
+    border-radius: 7pt;
+    text-align: right;
+}
+
+.dp-rating-seal span {
+    display: block;
+    color: #64748b;
+    font-size: 6.5pt;
+    font-weight: 800;
+    letter-spacing: .08em;
+    line-height: 1.1;
+    text-transform: uppercase;
+}
+
+.dp-rating-seal strong {
+    display: block;
+    margin-top: 3pt;
+    color: inherit;
+    font-size: 18pt;
+    font-weight: 900;
+    line-height: .98;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+}
+
+.dp-rating-seal em {
+    display: block;
+    margin-top: 4pt;
+    color: #475569;
+    font-size: 7.3pt;
+    font-style: normal;
+    font-weight: 800;
+}
+
 .dp-scan-head {
     display: flex;
     justify-content: space-between;
