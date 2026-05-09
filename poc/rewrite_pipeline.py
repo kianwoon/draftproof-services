@@ -4294,6 +4294,19 @@ def _final_topk_texture_scan_reserve(adaptive_stop_reason: str) -> int:
         return 1
 
 
+def _topk_safe_band_scan_reserve() -> int:
+    """Reserve scans for the emergency safe-band rebuild path.
+
+    This path is only active when Top-k is the hard blocker. It needs a few
+    internal rescans for snapshot + patch rounds; otherwise it can stop just
+    above the 25 calibrated safe band and rollback the whole rewrite.
+    """
+    try:
+        return max(0, int(_float_env("DRAFTPROOF_TOPK_SAFE_BAND_SCAN_RESERVE", 8.0)))
+    except (TypeError, ValueError):
+        return 8
+
+
 def _blocked_winner_bounded_quality_tradeoff(
     *,
     candidate_eval: dict | None,
@@ -15367,6 +15380,19 @@ def run_rewrite_pipeline(
                         "selected": False,
                         "stages": [],
                     })
+                    reserve = _topk_safe_band_scan_reserve()
+                    if reserve > 0 and not safe_band_summary.get("scan_reserve_added"):
+                        previous_max = int(search_budget.get("max_candidate_scans") or 0)
+                        current_scans = len(search_summary.get("candidates", []))
+                        search_budget["max_candidate_scans"] = max(
+                            previous_max + reserve,
+                            current_scans + reserve,
+                        )
+                        safe_band_summary["scan_reserve_added"] = {
+                            "reserve_added": reserve,
+                            "previous_max_candidate_scans": previous_max,
+                            "new_max_candidate_scans": search_budget["max_candidate_scans"],
+                        }
                     route_base_report = best_report if _best_ai_search_selectable() else original_report_dict
                     route_base_text = best_text if _best_ai_search_selectable() else component_base_text
                     base_ai_components = (((route_base_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
@@ -15408,10 +15434,10 @@ def run_rewrite_pipeline(
                                 try:
                                     max_patch_rounds = max(1, int(_float_env(
                                         "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
-                                        2.0,
+                                        4.0,
                                     )))
                                 except (TypeError, ValueError):
-                                    max_patch_rounds = 2
+                                    max_patch_rounds = 4
                                 for patch_round in range(1, max_patch_rounds + 1):
                                     current_ai = (((candidate_patch_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
                                     if isinstance(current_ai.get("topk_calibrated_risk"), (int, float)) and float(current_ai.get("topk_calibrated_risk")) < _safe_topk_calibrated_limit():
