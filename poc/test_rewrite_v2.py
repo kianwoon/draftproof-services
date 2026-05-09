@@ -67,6 +67,7 @@ from rewrite_pipeline import (
     _source_repair_brief,
     _ai_search_prompt,
     _ai_search_feedback_prompt,
+    _safe_partial_quality_improvement_status,
     _allow_ai_search_llm_after_deterministic,
     _load_local_env,
     _repair_candidate_source_damage,
@@ -953,6 +954,28 @@ assert_test(
     and not tiny_search_status["selectable"]
     and tiny_search_status["reason"] == "best_candidate_below_required_ai_drop",
     "AI search tracks tiny score drops without selecting them as mitigation success",
+)
+safe_partial_status = _safe_partial_quality_improvement_status(
+    {
+        "human_delta": 0.0,
+        "ai_authorship_delta": 1.0,
+        "ai_transformation_delta": 0.0,
+        "ai_authorship_regression_blocked": False,
+        "critical_high_regressed": False,
+        "review_burden_regressed": False,
+        "weighted_severity_regressed": False,
+    },
+    {"score": 1.119},
+    ai_delta=0.27,
+    finding_delta=-1,
+    review_burden_delta=0,
+    weighted_severity_delta=-1,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    safe_partial_status["allowed"],
+    "safe partial quality gate keeps small rescanned improvements instead of returning unchanged text",
 )
 meaningful_search_status = _ai_search_candidate_selection_status(57.78, 52.50, True)
 assert_test(

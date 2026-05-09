@@ -126,6 +126,80 @@ def _ai_search_candidate_selection_status(
     return status
 
 
+def _safe_partial_quality_improvement_status(
+    authenticity_status: dict | None,
+    human_shift: dict | None,
+    *,
+    ai_delta: float | int,
+    finding_delta: int | float,
+    review_burden_delta: int | float,
+    weighted_severity_delta: int | float,
+    critical_high_delta: int | float,
+    ai_score_regressed: bool,
+) -> dict:
+    """Accept small, safe movement when the larger mitigation gate is not met.
+
+    This is intentionally not a success label. It prevents the rewrite pipeline
+    from returning unchanged text after finding a rescanned candidate that
+    reduces AI/authorship or review burden without any quality regression.
+    """
+    if not _env_flag("DRAFTPROOF_ACCEPT_SAFE_PARTIAL_QUALITY_IMPROVEMENT", True):
+        return {"allowed": False, "reason": "disabled"}
+    authenticity_status = authenticity_status if isinstance(authenticity_status, dict) else {}
+    human_shift = human_shift if isinstance(human_shift, dict) else {}
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    human_delta = num(authenticity_status.get("human_delta"))
+    ai_authorship_delta = num(authenticity_status.get("ai_authorship_delta"))
+    ai_transform_delta = num(authenticity_status.get("ai_transformation_delta"))
+    human_shift_score = num(human_shift.get("score"))
+    min_ai_drop = _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_AI_DROP", 0.20)
+    min_authorship_drop = _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_AUTHORSHIP_DROP", 1.0)
+    min_human_shift = _float_env("DRAFTPROOF_SAFE_PARTIAL_MIN_HUMAN_SHIFT", 0.5)
+    quality_improved = bool(
+        ai_authorship_delta >= min_authorship_drop
+        or num(finding_delta) <= -1.0
+        or num(weighted_severity_delta) <= -1.0
+    )
+    allowed = bool(
+        num(ai_delta) >= min_ai_drop
+        and human_delta >= 0.0
+        and ai_transform_delta >= 0.0
+        and human_shift_score >= min_human_shift
+        and quality_improved
+        and not ai_score_regressed
+        and num(finding_delta) <= 0.0
+        and num(review_burden_delta) <= 0.0
+        and num(weighted_severity_delta) <= 0.0
+        and num(critical_high_delta) <= 0.0
+        and not authenticity_status.get("ai_authorship_regression_blocked")
+        and not authenticity_status.get("critical_high_regressed")
+        and not authenticity_status.get("review_burden_regressed")
+        and not authenticity_status.get("weighted_severity_regressed")
+        and not authenticity_status.get("human_target_regressed")
+        and not authenticity_status.get("ai_transformation_target_regressed")
+    )
+    return {
+        "allowed": allowed,
+        "reason": "" if allowed else "safe_partial_threshold_not_met",
+        "ai_delta": round(num(ai_delta), 3),
+        "min_ai_drop": min_ai_drop,
+        "human_delta": round(human_delta, 3),
+        "ai_authorship_delta": round(ai_authorship_delta, 3),
+        "min_authorship_drop": min_authorship_drop,
+        "ai_transformation_delta": round(ai_transform_delta, 3),
+        "human_shift_score": round(human_shift_score, 3),
+        "min_human_shift": min_human_shift,
+        "quality_improved": quality_improved,
+        "finding_delta": finding_delta,
+        "review_burden_delta": review_burden_delta,
+        "weighted_severity_delta": weighted_severity_delta,
+        "critical_high_delta": critical_high_delta,
+    }
+
+
 def _clear_stale_rollback_for_kept_ai_mitigation(summary: dict, source: str) -> None:
     """Clear an earlier density/sentence rollback once AI mitigation is kept."""
     if not isinstance(summary, dict):
@@ -12774,6 +12848,20 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
             )
+            safe_partial_quality_status = _safe_partial_quality_improvement_status(
+                authenticity_status,
+                human_shift,
+                ai_delta=ai_delta,
+                finding_delta=finding_delta,
+                review_burden_delta=review_burden_delta,
+                weighted_severity_delta=weighted_severity_delta,
+                critical_high_delta=critical_high_delta,
+                ai_score_regressed=ai_score_regressed,
+            )
+            safe_partial_quality_selectable = bool(
+                safe_partial_quality_status.get("allowed")
+            )
+            candidate_eval["safe_partial_quality_improvement"] = safe_partial_quality_status
             score_drag_status = _score_drag_removal_status(
                 authenticity_status=authenticity_status,
                 human_shift=human_shift,
@@ -12877,6 +12965,7 @@ def run_rewrite_pipeline(
                     incremental_authenticity_selectable
                     or human_amplification_selectable
                     or safe_authorship_suppression_selectable
+                    or safe_partial_quality_selectable
                     or score_drag_removal_selectable
                     or post_safe_target_climb_selectable
                 )
@@ -12900,13 +12989,17 @@ def run_rewrite_pipeline(
                                         "accepted_score_drag_removal"
                                         if score_drag_removal_selectable
                                         else (
-                                            (
-                                                "accepted_incremental_human_target_progress"
-                                                if _radar_goal_requires_human_progress(radar_goal_controller)
-                                                else "accepted_safe_authorship_suppression"
+                                            "accepted_safe_partial_quality_improvement"
+                                            if safe_partial_quality_selectable
+                                            else (
+                                                (
+                                                    "accepted_incremental_human_target_progress"
+                                                    if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                    else "accepted_safe_authorship_suppression"
+                                                )
+                                                if safe_authorship_suppression_selectable
+                                                else "accepted_incremental_authenticity_progress"
                                             )
-                                            if safe_authorship_suppression_selectable
-                                            else "accepted_incremental_authenticity_progress"
                                         )
                                     )
                                 )
@@ -12918,6 +13011,7 @@ def run_rewrite_pipeline(
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
                     "human_signal_amplification": bool(human_amplification_selectable),
                     "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
+                    "safe_partial_quality_improvement": bool(safe_partial_quality_selectable),
                     "score_drag_removal": bool(score_drag_removal_selectable),
                     "post_safe_target_climb": bool(post_safe_target_climb_selectable),
                 })
@@ -12940,6 +13034,7 @@ def run_rewrite_pipeline(
                 and not dominant_blocker_progress_override.get("allowed")
                 and not selection_status.get("score_drag_removal")
                 and not selection_status.get("safe_authorship_suppression")
+                and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
                     "success": False,
@@ -12953,6 +13048,7 @@ def run_rewrite_pipeline(
                 and not human_formula_status.get("cleared")
                 and not selection_status.get("human_primary_progress")
                 and not selection_status.get("post_safe_target_climb")
+                and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
                     "success": False,
@@ -12995,6 +13091,7 @@ def run_rewrite_pipeline(
                 and not selection_status.get("human_signal_amplification")
                 and not selection_status.get("post_safe_target_climb")
                 and not selection_status.get("score_drag_removal")
+                and not selection_status.get("safe_partial_quality_improvement")
                 and not (
                     isinstance(candidate_human_delta, (int, float))
                     and candidate_human_delta > 0.0
