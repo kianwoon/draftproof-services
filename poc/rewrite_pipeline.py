@@ -16322,7 +16322,7 @@ def run_rewrite_pipeline(
                                 **_phase_chat_sampling_kwargs(
                                     "DRAFTPROOF_TOPK_SAFE_BAND_REBUILD",
                                     temperature_env="DRAFTPROOF_TOPK_SAFE_BAND_REBUILD_TEMPERATURE",
-                                    temperature_default=0.9,
+                                    temperature_default=0.45,
                                     max_tokens_env="DRAFTPROOF_TOPK_SAFE_BAND_REBUILD_MAX_TOKENS",
                                     max_tokens_default=2200,
                                 ),
@@ -16341,6 +16341,31 @@ def run_rewrite_pipeline(
                                 candidate_patch_report = snapshot_report
                                 applied = []
                                 patch_rounds = []
+                                best_safe_text = None
+                                best_safe_report = None
+                                best_safe_rank = None
+
+                                def _topk_safe_rank(report_dict: dict | None) -> tuple:
+                                    strict_status = _strict_ai_safe_band_status(report_dict)
+                                    profile = strict_status.get("profile") or {}
+                                    topk_value = profile.get("topk_calibrated_risk")
+                                    if not isinstance(topk_value, (int, float)) or float(topk_value) >= _safe_topk_calibrated_limit():
+                                        return ()
+                                    return (
+                                        1 if strict_status.get("achieved") else 0,
+                                        -float(profile.get("external_ai_flag_risk") or 0.0),
+                                        -float(profile.get("ai_authorship") or 0.0),
+                                        -float(profile.get("ai_transformation") or 0.0),
+                                        -float(profile.get("ai_likelihood") or 0.0),
+                                        -float(profile.get("topk_calibrated_risk") or 0.0),
+                                        -float(profile.get("rewrite_smoothness") or 0.0),
+                                    )
+
+                                snapshot_safe_rank = _topk_safe_rank(snapshot_report)
+                                if snapshot_safe_rank:
+                                    best_safe_text = snapshot_text
+                                    best_safe_report = snapshot_report
+                                    best_safe_rank = snapshot_safe_rank
                                 try:
                                     max_patch_rounds = max(1, int(_float_env(
                                         "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
@@ -16348,16 +16373,26 @@ def run_rewrite_pipeline(
                                     )))
                                 except (TypeError, ValueError):
                                     max_patch_rounds = 4
+                                try:
+                                    extra_safe_rounds = max(0, int(_float_env(
+                                        "DRAFTPROOF_TOPK_SAFE_BAND_EXTRA_SAFE_ROUNDS",
+                                        1.0,
+                                    )))
+                                except (TypeError, ValueError):
+                                    extra_safe_rounds = 1
+                                safe_rounds_used = 0
                                 for patch_round in range(1, max_patch_rounds + 1):
                                     current_ai = (((candidate_patch_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
                                     if isinstance(current_ai.get("topk_calibrated_risk"), (int, float)) and float(current_ai.get("topk_calibrated_risk")) < _safe_topk_calibrated_limit():
-                                        patch_rounds.append({
-                                            "round": patch_round,
-                                            "skipped": True,
-                                            "reason": "topk_safe_band_reached",
-                                            "topk_calibrated_risk": current_ai.get("topk_calibrated_risk"),
-                                        })
-                                        break
+                                        if safe_rounds_used >= extra_safe_rounds:
+                                            patch_rounds.append({
+                                                "round": patch_round,
+                                                "skipped": True,
+                                                "reason": "topk_safe_band_reached",
+                                                "topk_calibrated_risk": current_ai.get("topk_calibrated_risk"),
+                                            })
+                                            break
+                                        safe_rounds_used += 1
                                     search_summary["llm_calls"] += 1
                                     patch_response = gateway.chat(
                                         _topk_safe_band_sentence_patch_prompt(candidate_to_eval, candidate_patch_report),
@@ -16368,7 +16403,7 @@ def run_rewrite_pipeline(
                                         **_phase_chat_sampling_kwargs(
                                             "DRAFTPROOF_TOPK_SAFE_BAND_PATCH",
                                             temperature_env="DRAFTPROOF_TOPK_SAFE_BAND_PATCH_TEMPERATURE",
-                                            temperature_default=0.85,
+                                            temperature_default=0.35,
                                             max_tokens_env="DRAFTPROOF_TOPK_SAFE_BAND_PATCH_MAX_TOKENS",
                                             max_tokens_default=2600,
                                         ),
@@ -16395,11 +16430,20 @@ def run_rewrite_pipeline(
                                         "topk_calibrated_risk": patched_ai.get("topk_calibrated_risk"),
                                         "topk_safe_band": patched_ai.get("topk_safe_band"),
                                     })
+                                    safe_rank = _topk_safe_rank(candidate_patch_report)
+                                    if safe_rank and (best_safe_rank is None or safe_rank > best_safe_rank):
+                                        best_safe_text = candidate_to_eval
+                                        best_safe_report = candidate_patch_report
+                                        best_safe_rank = safe_rank
                                 safe_band_summary["patch_rounds"] = patch_rounds
                                 safe_band_summary["patch_candidate_count"] = sum(
                                     int(row.get("patch_candidate_count") or 0) for row in patch_rounds
                                 )
                                 safe_band_summary["applied_patch_count"] = len(applied)
+                                if best_safe_text and best_safe_report:
+                                    candidate_to_eval = best_safe_text
+                                    candidate_patch_report = best_safe_report
+                                    safe_band_summary["selected_best_safe_rank"] = list(best_safe_rank or [])
                                 _evaluate_ai_search_candidate(
                                     "topk_safe_band_rebuild",
                                     candidate_to_eval,
