@@ -4491,6 +4491,14 @@ th {
   color: #0f766e;
 }
 
+.transformation-bar-row.is-missing {
+  opacity: .68;
+}
+
+.transformation-bar-row.is-missing .transformation-bar-label {
+  color: #64748b;
+}
+
 .transformation-bar-label strong {
   color: var(--navy-950);
   font-weight: 900;

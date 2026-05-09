@@ -206,6 +206,28 @@ function sortTransformationSignalsForComparison(signals = []) {
   });
 }
 
+function buildPairedTransformationSignals(originalSignals = [], rewrittenSignals = []) {
+  const originalByKey = new Map(originalSignals.filter((signal) => signal?.key).map((signal) => [signal.key, signal]));
+  const rewrittenByKey = new Map(rewrittenSignals.filter((signal) => signal?.key).map((signal) => [signal.key, signal]));
+  const originalOrder = sortTransformationSignalsForComparison(originalSignals).map((signal) => signal.key);
+  const rewrittenOnlyOrder = sortTransformationSignalsForComparison(rewrittenSignals)
+    .map((signal) => signal.key)
+    .filter((key) => !originalByKey.has(key));
+
+  return [...originalOrder, ...rewrittenOnlyOrder].map((key) => {
+    const original = originalByKey.get(key);
+    const rewritten = rewrittenByKey.get(key);
+    const reference = original || rewritten || {};
+    return {
+      key,
+      label: reference.label || TRANSFORMATION_SIGNAL_LABELS[key] || key.replaceAll('_', ' '),
+      description: reference.description || TRANSFORMATION_SIGNAL_DESCRIPTIONS[key] || 'Scanner signal used to interpret the transformation pattern.',
+      original,
+      rewritten,
+    };
+  });
+}
+
 function getTransformationSignalImprovement(signal, baselineSignal) {
   if (!signal || !baselineSignal) return null;
   const direction = TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION[signal.key];
@@ -1155,6 +1177,9 @@ export default function Report() {
     hasRewriteResult &&
     (rewrittenTransformation || rewrittenTransformationSummary)
   );
+  const pairedTransformationSignals = hasRewriteSignalComparison
+    ? buildPairedTransformationSignals(transformationSignals, rewrittenTransformationSignals)
+    : null;
   const transformationOriginalScore = hasRewriteSignalComparison
     ? (rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk ?? originalComparisonAiScore)
     : originalComparisonAiScore;
@@ -1303,8 +1328,20 @@ export default function Report() {
     </div>
   );
 
-  const renderTransformationDetails = (variant, pattern, summary, signals, variantAiScore) => {
-    const comparisonSignals = sortTransformationSignalsForComparison(signals);
+  const renderTransformationDetails = (variant, pattern, summary, signals, variantAiScore, pairedSignals = null) => {
+    const comparisonSignals = pairedSignals
+      ? pairedSignals.map((pair) => ({
+        ...(pair[variant] || {
+          key: pair.key,
+          label: pair.label,
+          description: pair.description,
+          value: null,
+          isMissing: true,
+        }),
+        pairedLabel: pair.label,
+        pairedDescription: pair.description,
+      }))
+      : sortTransformationSignalsForComparison(signals);
 
     return (
       <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
@@ -1355,23 +1392,28 @@ export default function Report() {
                 const baselineSignal = variant === 'rewritten'
                   ? transformationSignals.find((item) => item.key === signal.key)
                   : null;
-                const improvement = getTransformationSignalImprovement(signal, baselineSignal);
+                const improvement = signal.isMissing ? null : getTransformationSignalImprovement(signal, baselineSignal);
                 const improvementCopy = improvement
                   ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%.`
                   : '';
-                const tooltip = [signal.description, improvementCopy].filter(Boolean).join(' ');
+                const tooltip = [
+                  signal.pairedDescription || signal.description,
+                  signal.isMissing ? 'Signal not present in this scan.' : improvementCopy,
+                ].filter(Boolean).join(' ');
+                const valueLabel = signal.isMissing ? '—' : `${signal.value.toFixed(0)}%`;
+                const barWidth = signal.isMissing ? 0 : signal.value;
 
                 return (
                   <div
                     key={`${variant}-${signal.key}`}
-                    className={`transformation-bar-row${improvement ? ' is-improved' : ''}`}
+                    className={`transformation-bar-row${improvement ? ' is-improved' : ''}${signal.isMissing ? ' is-missing' : ''}`}
                     data-tooltip={tooltip}
                     tabIndex={0}
-                    aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.label}: ${signal.value.toFixed(0)}%. ${tooltip}`}
+                    aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.pairedLabel || signal.label}: ${valueLabel}. ${tooltip}`}
                     title={tooltip}
                   >
                     <div className="transformation-bar-label">
-                      <span className="transformation-bar-name">{signal.label}</span>
+                      <span className="transformation-bar-name">{signal.pairedLabel || signal.label}</span>
                       <span
                         className={`transformation-improvement-slot${improvement ? ' is-visible' : ''}`}
                         aria-label={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
@@ -1383,12 +1425,12 @@ export default function Report() {
                           </svg>
                         )}
                       </span>
-                      <strong>{signal.value.toFixed(0)}%</strong>
+                      <strong>{valueLabel}</strong>
                     </div>
                     <div className="transformation-bar-track" aria-hidden="true">
                       <div
                         className={`transformation-bar-fill transformation-bar-${signal.key}`}
-                        style={{ width: `${signal.value}%` }}
+                        style={{ width: `${barWidth}%` }}
                       />
                     </div>
                   </div>
@@ -1444,8 +1486,8 @@ export default function Report() {
       <div className="transformation-chart">
         {hasRewriteSignalComparison ? (
           <div className="transformation-comparison-grid">
-            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore)}
-            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, transformationRewrittenScore)}
+            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore, pairedTransformationSignals)}
+            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, transformationRewrittenScore, pairedTransformationSignals)}
           </div>
         ) : (
           renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore)
