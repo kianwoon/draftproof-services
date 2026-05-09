@@ -4786,9 +4786,9 @@ def _topk_safe_band_scan_reserve() -> int:
     above the 25 calibrated safe band and rollback the whole rewrite.
     """
     try:
-        return max(0, int(_float_env("DRAFTPROOF_TOPK_SAFE_BAND_SCAN_RESERVE", 8.0)))
+        return max(0, int(_float_env("DRAFTPROOF_TOPK_SAFE_BAND_SCAN_RESERVE", 16.0)))
     except (TypeError, ValueError):
-        return 8
+        return 16
 
 
 def _blocked_winner_bounded_quality_tradeoff(
@@ -5005,6 +5005,10 @@ def _adaptive_budget_default(source_text: str, short_value: int, long_value: int
         if _text_word_count(source_text) <= threshold:
             return str(short_value)
     return str(long_value)
+
+
+def _ai_search_llm_hard_cap() -> int:
+    return max(1, int(_float_env("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", 10.0)))
 
 
 def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
@@ -13854,17 +13858,21 @@ def run_rewrite_pipeline(
         search_budget = {
             "max_seconds": _float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_SECONDS",
-                float(_adaptive_budget_default(search_source_text, 180, 300)),
+                float(_adaptive_budget_default(search_source_text, 210, 420)),
             ),
             "max_llm_calls": int(_float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
-                float(_adaptive_budget_default(search_source_text, 4, 5)),
+                float(_adaptive_budget_default(search_source_text, 6, 8)),
             )),
             "max_candidate_scans": int(_float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_CANDIDATE_SCANS",
-                float(_adaptive_budget_default(search_source_text, 24, 36)),
+                float(_adaptive_budget_default(search_source_text, 40, 60)),
             )),
         }
+        search_budget["max_llm_calls"] = min(
+            int(search_budget["max_llm_calls"]),
+            _ai_search_llm_hard_cap(),
+        )
         search_summary["budget"] = search_budget
 
         def _best_ai_search_selectable() -> bool:
@@ -14862,9 +14870,12 @@ def run_rewrite_pipeline(
             except (TypeError, ValueError):
                 llm_reserve = 2
             if llm_reserve > 0:
-                search_budget["max_llm_calls"] = max(
-                    int(search_budget.get("max_llm_calls") or 0),
-                    int(search_summary.get("llm_calls") or 0) + llm_reserve,
+                search_budget["max_llm_calls"] = min(
+                    _ai_search_llm_hard_cap(),
+                    max(
+                        int(search_budget.get("max_llm_calls") or 0),
+                        int(search_summary.get("llm_calls") or 0) + llm_reserve,
+                    ),
                 )
 
             max_scans = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_MAX_CANDIDATE_SCANS", 12.0)))
@@ -16291,18 +16302,35 @@ def run_rewrite_pipeline(
                         "stages": [],
                     })
                     try:
-                        llm_reserve = max(0, int(_float_env(
-                            "DRAFTPROOF_TOPK_SAFE_BAND_LLM_RESERVE",
-                            3.0,
+                        planned_patch_rounds_for_reserve = max(1, int(_float_env(
+                            "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
+                            4.0,
                         )))
                     except (TypeError, ValueError):
-                        llm_reserve = 3
+                        planned_patch_rounds_for_reserve = 4
+                    try:
+                        planned_extra_safe_rounds_for_reserve = max(0, int(_float_env(
+                            "DRAFTPROOF_TOPK_SAFE_BAND_EXTRA_SAFE_ROUNDS",
+                            1.0,
+                        )))
+                    except (TypeError, ValueError):
+                        planned_extra_safe_rounds_for_reserve = 1
+                    try:
+                        llm_reserve = max(0, int(_float_env(
+                            "DRAFTPROOF_TOPK_SAFE_BAND_LLM_RESERVE",
+                            float(1 + planned_patch_rounds_for_reserve + planned_extra_safe_rounds_for_reserve),
+                        )))
+                    except (TypeError, ValueError):
+                        llm_reserve = 1 + planned_patch_rounds_for_reserve + planned_extra_safe_rounds_for_reserve
                     if llm_reserve > 0 and not safe_band_summary.get("llm_reserve_added"):
                         previous_llm_max = int(search_budget.get("max_llm_calls") or 0)
                         current_llm_calls = int(search_summary.get("llm_calls") or 0)
-                        search_budget["max_llm_calls"] = max(
-                            previous_llm_max,
-                            current_llm_calls + llm_reserve,
+                        search_budget["max_llm_calls"] = min(
+                            _ai_search_llm_hard_cap(),
+                            max(
+                                previous_llm_max,
+                                current_llm_calls + llm_reserve,
+                            ),
                         )
                         safe_band_summary["llm_reserve_added"] = {
                             "reserve_added": llm_reserve,
