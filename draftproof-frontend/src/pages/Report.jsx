@@ -336,18 +336,18 @@ function deriveCalibratedAuthorshipRating(score) {
   if (score == null || Number.isNaN(Number(score))) return null;
   const percent = metricValue(score);
   if (percent >= 60) {
-    return { label: 'AI-Generated / AI-Paraphrased Signals', short_label: 'AI Signals', code: 'ai_generated_signals' };
+    return { label: 'Strong AI-Style Signal', short_label: 'Strong AI Signal', code: 'ai_generated_signals' };
   }
   if (percent >= 45) {
-    return { label: 'Likely AI', short_label: 'Likely AI', code: 'likely_ai' };
+    return { label: 'Likely AI-Assisted', short_label: 'Likely AI-Assisted', code: 'likely_ai' };
   }
   if (percent >= 32) {
-    return { label: 'Possible AI-Assisted', short_label: 'Possible AI', code: 'possible_ai_assisted' };
+    return { label: 'Possible AI-Assisted', short_label: 'Possible AI-Assisted', code: 'possible_ai_assisted' };
   }
   if (percent >= 20) {
-    return { label: 'Unlikely AI', short_label: 'Unlikely AI', code: 'unlikely_ai' };
+    return { label: 'Unlikely AI-Assisted', short_label: 'Unlikely AI-Assisted', code: 'unlikely_ai' };
   }
-  return { label: 'Low AI Signal', short_label: 'Low Signal', code: 'low_ai_signal' };
+  return { label: 'Good', short_label: 'Good', code: 'low_ai_signal' };
 }
 
 function getAuthorshipTone(rating = {}) {

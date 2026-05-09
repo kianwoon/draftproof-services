@@ -275,23 +275,23 @@ def _authorship_rating_from_calibrated_risk(score) -> dict:
         return {}
     if calibrated_score >= 60:
         return {
-            "label": "AI-Generated / AI-Paraphrased Signals",
-            "short_label": "AI Signals",
+            "label": "Strong AI-Style Signal",
+            "short_label": "Strong AI Signal",
             "code": "ai_generated_signals",
             "score": calibrated_score,
         }
     if calibrated_score >= 45:
-        return {"label": "Likely AI", "short_label": "Likely AI", "code": "likely_ai", "score": calibrated_score}
+        return {"label": "Likely AI-Assisted", "short_label": "Likely AI-Assisted", "code": "likely_ai", "score": calibrated_score}
     if calibrated_score >= 32:
         return {
             "label": "Possible AI-Assisted",
-            "short_label": "Possible AI",
+            "short_label": "Possible AI-Assisted",
             "code": "possible_ai_assisted",
             "score": calibrated_score,
         }
     if calibrated_score >= 20:
-        return {"label": "Unlikely AI", "short_label": "Unlikely AI", "code": "unlikely_ai", "score": calibrated_score}
-    return {"label": "Low AI Signal", "short_label": "Low Signal", "code": "low_ai_signal", "score": calibrated_score}
+        return {"label": "Unlikely AI-Assisted", "short_label": "Unlikely AI-Assisted", "code": "unlikely_ai", "score": calibrated_score}
+    return {"label": "Good", "short_label": "Good", "code": "low_ai_signal", "score": calibrated_score}
 
 
 def _authorship_rating_tone(rating: dict) -> dict:
