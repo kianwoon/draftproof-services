@@ -13862,7 +13862,7 @@ def run_rewrite_pipeline(
             ),
             "max_llm_calls": int(_float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
-                float(_adaptive_budget_default(search_source_text, 6, 8)),
+                float(_adaptive_budget_default(search_source_text, 8, 10)),
             )),
             "max_candidate_scans": int(_float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_CANDIDATE_SCANS",
@@ -15898,10 +15898,23 @@ def run_rewrite_pipeline(
                 }
             search_summary["final_topk_texture_repair"] = summary
             try:
+                current_llm_calls = int(search_summary.get("llm_calls") or 0)
+                hard_llm_cap = _ai_search_llm_hard_cap()
+                if current_llm_calls >= hard_llm_cap:
+                    summary.update({
+                        "skipped": True,
+                        "reason": "llm_hard_cap_reached",
+                        "llm_calls": current_llm_calls,
+                        "hard_llm_cap": hard_llm_cap,
+                    })
+                    return
                 next_llm_call_exceeds_budget = _llm_call_budget_exhausted_before_send(
-                    int(search_summary.get("llm_calls") or 0) + 1,
+                    current_llm_calls + 1,
                     int(search_budget.get("max_llm_calls") or 0),
                 )
+                if next_llm_call_exceeds_budget and int(search_budget.get("max_llm_calls") or 0) < hard_llm_cap:
+                    search_budget["max_llm_calls"] = min(hard_llm_cap, current_llm_calls + 1)
+                    next_llm_call_exceeds_budget = False
                 use_budget_override_gateway = bool(
                     (
                         str(adaptive_stop_reason or "").startswith("budget_exhausted")
@@ -15909,6 +15922,7 @@ def run_rewrite_pipeline(
                     )
                     and _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_AFTER_BUDGET", True)
                     and effective_key
+                    and current_llm_calls < hard_llm_cap
                 )
                 prompt = _topk_texture_repair_prompt(
                     best_text,

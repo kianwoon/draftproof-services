@@ -210,6 +210,7 @@ from rewrite_pipeline import (
     _phase_chat_sampling_kwargs,
     _mitigation_sampling_policy_summary,
     _llm_call_budget_exhausted_before_send,
+    _ai_search_llm_hard_cap,
     _resolve_stage_llm_budget,
 )
 import llm.gateway as llm_gateway_module
@@ -2003,6 +2004,21 @@ assert_test(
     not _llm_call_budget_exhausted_before_send(2, 2)
     and _llm_call_budget_exhausted_before_send(3, 2),
     "LLM budget guard allows the final permitted call after optimistic pre-send increment",
+)
+old_hard_cap = os.environ.get("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS")
+try:
+    os.environ.pop("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", None)
+    default_hard_cap = _ai_search_llm_hard_cap()
+    os.environ["DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS"] = "10"
+    explicit_hard_cap = _ai_search_llm_hard_cap()
+finally:
+    if old_hard_cap is None:
+        os.environ.pop("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", None)
+    else:
+        os.environ["DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS"] = old_hard_cap
+assert_test(
+    default_hard_cap == 10 and explicit_hard_cap == 10,
+    "AI search hard LLM cap defaults to and honors the 10-call ceiling",
 )
 for key, value in previous_sampling_env.items():
     if value is None:
