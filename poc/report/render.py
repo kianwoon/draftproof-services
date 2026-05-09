@@ -85,7 +85,6 @@ _FILTER_CODES = {
 }
 
 _SIGNAL_CHART_ORDER = [
-    "topk_pattern",
     "adjusted_ai_risk",
     "ai_likelihood",
     "calibrated_ai_risk",
@@ -258,17 +257,10 @@ def _signal_chart_rows(features: dict, badge: dict | None = None) -> list[dict]:
             "description": description,
             "score": topk_score,
         }
-    ordered = []
-    for key in _SIGNAL_CHART_ORDER:
-        row = rows_by_key.get(key)
-        if row:
-            ordered.append(row)
-    ordered.extend(
-        row
-        for row in rows_by_key.values()
-        if row.get("key") not in _SIGNAL_CHART_ORDER
+    return sorted(
+        rows_by_key.values(),
+        key=lambda row: (-(row.get("score") or 0), _SIGNAL_CHART_ORDER.index(row["key"]) if row.get("key") in _SIGNAL_CHART_ORDER else len(_SIGNAL_CHART_ORDER), row.get("label") or ""),
     )
-    return ordered
 
 
 def _summary_stat_html(label: str, value: str, *, color: str = "#111827", extra_class: str = "") -> str:

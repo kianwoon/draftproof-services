@@ -166,8 +166,6 @@ const TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION = {
   human_anchor_discount: 'higher',
 };
 
-const FEATURED_TRANSFORMATION_SIGNAL_KEYS = ['topk_calibrated_risk', 'topk_pattern_raw'];
-
 function buildTransformationSignals(features = {}, suppliedSignals = []) {
   const suppliedByKey = new Map(
     (Array.isArray(suppliedSignals) ? suppliedSignals : [])
@@ -195,13 +193,8 @@ function buildTransformationSignals(features = {}, suppliedSignals = []) {
 
 function sortTransformationSignalsForComparison(signals = []) {
   return [...signals].sort((a, b) => {
-    const aFeatured = FEATURED_TRANSFORMATION_SIGNAL_KEYS.indexOf(a.key);
-    const bFeatured = FEATURED_TRANSFORMATION_SIGNAL_KEYS.indexOf(b.key);
-    if (aFeatured !== -1 || bFeatured !== -1) {
-      if (aFeatured === -1) return 1;
-      if (bFeatured === -1) return -1;
-      if (aFeatured !== bFeatured) return aFeatured - bFeatured;
-    }
+    const scoreDelta = Number(b.value || 0) - Number(a.value || 0);
+    if (Math.abs(scoreDelta) >= 0.01) return scoreDelta;
 
     const labelCompare = String(a.label || '').localeCompare(String(b.label || ''), undefined, {
       sensitivity: 'base',
