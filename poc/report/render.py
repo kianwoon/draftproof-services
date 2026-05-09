@@ -269,6 +269,52 @@ def _summary_stat_html(label: str, value: str, *, color: str = "#111827", extra_
     )
 
 
+def _authorship_rating_from_calibrated_risk(score) -> dict:
+    calibrated_score = _tf_pct(score)
+    if calibrated_score is None:
+        return {}
+    if calibrated_score >= 60:
+        return {
+            "label": "AI-Generated / AI-Paraphrased Signals",
+            "short_label": "AI Signals",
+            "code": "ai_generated_signals",
+            "score": calibrated_score,
+        }
+    if calibrated_score >= 45:
+        return {"label": "Likely AI", "short_label": "Likely AI", "code": "likely_ai", "score": calibrated_score}
+    if calibrated_score >= 32:
+        return {
+            "label": "Possible AI-Assisted",
+            "short_label": "Possible AI",
+            "code": "possible_ai_assisted",
+            "score": calibrated_score,
+        }
+    if calibrated_score >= 20:
+        return {"label": "Unlikely AI", "short_label": "Unlikely AI", "code": "unlikely_ai", "score": calibrated_score}
+    return {"label": "Low AI Signal", "short_label": "Low Signal", "code": "low_ai_signal", "score": calibrated_score}
+
+
+def _authorship_rating_tone(rating: dict) -> dict:
+    code = str((rating or {}).get("code") or (rating or {}).get("short_label") or (rating or {}).get("label") or "").lower()
+    if "low_ai_signal" in code or "low signal" in code:
+        return {"color": "#15803d", "bg": "#f0fdf4"}
+    if "unlikely" in code:
+        return {"color": "#0f766e", "bg": "#f0fdfa"}
+    if "possible" in code:
+        return {"color": "#b45309", "bg": "#fff7ed"}
+    if "likely" in code:
+        return {"color": "#c2410c", "bg": "#fff7ed"}
+    if "generated" in code or "signals" in code:
+        return {"color": "#b91c1c", "bg": "#fef2f2"}
+    return {"color": "#334155", "bg": "#f8fafc"}
+
+
+def _display_authorship_rating_from_badge(badge: dict) -> dict:
+    features = (((badge or {}).get("transformation_classification") or {}).get("features") or {})
+    calibrated = _authorship_rating_from_calibrated_risk(features.get("calibrated_ai_risk"))
+    return calibrated or _authorship_rating_from_badge(badge)
+
+
 def _executive_signal_chart_html(
     report: DraftReport,
     data: dict,
@@ -301,13 +347,15 @@ def _executive_signal_chart_html(
         "RED": "#fef2f2",
     }.get(badge_tier, "#f8fafc")
 
-    rating = _authorship_rating_from_badge(badge)
+    rating = _display_authorship_rating_from_badge(badge)
     rating_label = (
         rating.get("short_label")
         or rating.get("label")
         or badge.get("authorship_rating_label")
         or "Not Rated"
     )
+    rating_tone = _authorship_rating_tone(rating)
+    calibrated_score = _tf_pct(features.get("calibrated_ai_risk"))
     ai_score = _tf_pct(badge.get("ai_likelihood_score")) or 0.0
     writing_score = _tf_pct(badge.get("writing_quality_score")) or 0.0
     contribution = _transformation_contribution_summary(features, rows)
@@ -323,8 +371,8 @@ def _executive_signal_chart_html(
             '</span></div>'
         ),
         _summary_stat_html("Total Findings", str(total)),
-        _summary_stat_html("Authorship Rating", rating_label, color=tier_color),
-        _summary_stat_html("AI Score", f"{ai_score:.2f}%", color=tier_color),
+        _summary_stat_html("Authorship Rating", rating_label, color=rating_tone["color"]),
+        _summary_stat_html("Raw AI-Style Signal", f"{ai_score:.2f}%", color=tier_color),
         _summary_stat_html("Writing Score", f"{writing_score:.2f}%", color="#4f46e5"),
     ]
     severity_stats = [
@@ -389,12 +437,12 @@ def _executive_signal_chart_html(
         '</div>',
         (
             '<div class="dp-rating-seal" style="'
-            f'--rating-color:{tier_color};--rating-bg:{tier_bg};'
-            f'color:{tier_color};border-color:{tier_color};background:{tier_bg}">'
+            f'--rating-color:{rating_tone["color"]};--rating-bg:{rating_tone["bg"]};'
+            f'color:{rating_tone["color"]};border-color:{rating_tone["color"]};background:{rating_tone["bg"]}">'
         ),
         '<span>Authorship Rating</span>',
         f'<strong>{escape(rating_label)}</strong>',
-        f'<em>{ai_score:.1f}% AI score</em>',
+        f'<em>{(calibrated_score if calibrated_score is not None else ai_score):.0f}% calibrated risk</em>',
         '</div>',
         '</header>',
         '<div class="dp-scan-head">',
@@ -796,7 +844,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _ab = report.ai_risk_badge
         _abt = _ab.get("tier", "")
         _abs = _ab.get("ai_likelihood_score", 0)
-        _rating = _authorship_rating_from_badge(_ab)
+        _rating = _display_authorship_rating_from_badge(_ab)
         _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)

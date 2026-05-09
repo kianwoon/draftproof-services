@@ -332,6 +332,44 @@ function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiCompon
   return { label: 'Low AI Signal', short_label: 'Low Signal' };
 }
 
+function deriveCalibratedAuthorshipRating(score) {
+  if (score == null || Number.isNaN(Number(score))) return null;
+  const percent = metricValue(score);
+  if (percent >= 60) {
+    return { label: 'AI-Generated / AI-Paraphrased Signals', short_label: 'AI Signals', code: 'ai_generated_signals' };
+  }
+  if (percent >= 45) {
+    return { label: 'Likely AI', short_label: 'Likely AI', code: 'likely_ai' };
+  }
+  if (percent >= 32) {
+    return { label: 'Possible AI-Assisted', short_label: 'Possible AI', code: 'possible_ai_assisted' };
+  }
+  if (percent >= 20) {
+    return { label: 'Unlikely AI', short_label: 'Unlikely AI', code: 'unlikely_ai' };
+  }
+  return { label: 'Low AI Signal', short_label: 'Low Signal', code: 'low_ai_signal' };
+}
+
+function getAuthorshipTone(rating = {}) {
+  const code = String(rating.code || rating.short_label || rating.label || '').toLowerCase();
+  if (code.includes('low_signal') || code.includes('low signal')) {
+    return { color: '#15803d', bg: '#f0fdf4' };
+  }
+  if (code.includes('unlikely')) {
+    return { color: '#0f766e', bg: '#f0fdfa' };
+  }
+  if (code.includes('possible')) {
+    return { color: '#b45309', bg: '#fff7ed' };
+  }
+  if (code.includes('likely')) {
+    return { color: '#c2410c', bg: '#fff7ed' };
+  }
+  if (code.includes('generated') || code.includes('signals')) {
+    return { color: '#b91c1c', bg: '#fef2f2' };
+  }
+  return { color: '#334155', bg: '#f8fafc' };
+}
+
 function formatSignedDelta(original, next) {
   if (original == null || next == null) return '—';
   const delta = Number(next) - Number(original);
@@ -1009,13 +1047,17 @@ export default function Report() {
       }
     : null;
   const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
-  const authorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
+  const calibratedAuthorshipRisk = clampPercent(transformation?.features?.calibrated_ai_risk);
+  const rawAuthorshipSignal = aiScore;
+  const storedAuthorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
     badge.tier || report.tier,
     writingScore,
     badge.ai_components,
     badge.writing_components
   ) || {};
+  const authorshipRating = deriveCalibratedAuthorshipRating(calibratedAuthorshipRisk) || storedAuthorshipRating;
+  const authorshipTone = getAuthorshipTone(authorshipRating);
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
@@ -1159,16 +1201,16 @@ export default function Report() {
       </div>
       {authorshipRatingLabel && (
         <div className="report-stat">
-          <span className="report-stat-value" style={{ color: tier.color }} title={authorshipRatingFullLabel || authorshipRatingLabel}>
+          <span className="report-stat-value" style={{ color: authorshipTone.color }} title={authorshipRatingFullLabel || authorshipRatingLabel}>
             {authorshipRatingLabel}
           </span>
           <span className="report-stat-label">Authorship Rating</span>
         </div>
       )}
-      {aiScore != null && (
+      {rawAuthorshipSignal != null && (
         <div className="report-stat">
-          <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(aiScore, 2)}</span>
-          <span className="report-stat-label">AI Score</span>
+          <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(rawAuthorshipSignal, 2)}</span>
+          <span className="report-stat-label">Raw AI-Style Signal</span>
         </div>
       )}
       {writingScore != null && (
@@ -1314,8 +1356,8 @@ export default function Report() {
         <div
           className="transformation-authorship-seal"
           style={{
-            '--rating-color': tier.color,
-            '--rating-bg': tier.bg,
+            '--rating-color': authorshipTone.color,
+            '--rating-bg': authorshipTone.bg,
           }}
         >
           <span>Authorship Rating</span>
@@ -1323,9 +1365,9 @@ export default function Report() {
             {authorshipRatingLabel || 'Not Rated'}
           </strong>
           <em>
-            {hasRewriteSignalComparison
-              ? `${formatMetricPercent(transformationOriginalScore, 1)} -> ${formatMetricPercent(transformationRewrittenScore, 1)} AI score`
-              : `${formatMetricPercent(transformationOriginalScore, 1)} AI score`}
+            {calibratedAuthorshipRisk != null
+              ? `${formatMetricPercent(calibratedAuthorshipRisk, 0)} calibrated risk`
+              : `${formatMetricPercent(transformationOriginalScore, 1)} raw signal`}
           </em>
         </div>
       </div>
