@@ -16290,6 +16290,25 @@ def run_rewrite_pipeline(
                         "selected": False,
                         "stages": [],
                     })
+                    try:
+                        llm_reserve = max(0, int(_float_env(
+                            "DRAFTPROOF_TOPK_SAFE_BAND_LLM_RESERVE",
+                            3.0,
+                        )))
+                    except (TypeError, ValueError):
+                        llm_reserve = 3
+                    if llm_reserve > 0 and not safe_band_summary.get("llm_reserve_added"):
+                        previous_llm_max = int(search_budget.get("max_llm_calls") or 0)
+                        current_llm_calls = int(search_summary.get("llm_calls") or 0)
+                        search_budget["max_llm_calls"] = max(
+                            previous_llm_max,
+                            current_llm_calls + llm_reserve,
+                        )
+                        safe_band_summary["llm_reserve_added"] = {
+                            "reserve_added": llm_reserve,
+                            "previous_max_llm_calls": previous_llm_max,
+                            "new_max_llm_calls": search_budget["max_llm_calls"],
+                        }
                     reserve = _topk_safe_band_scan_reserve()
                     if reserve > 0 and not safe_band_summary.get("scan_reserve_added"):
                         previous_max = int(search_budget.get("max_candidate_scans") or 0)
