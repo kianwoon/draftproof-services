@@ -24,6 +24,7 @@ from detect.transformation import (
     classify_transformation_from_scan,
     transformation_signal_metadata,
 )
+from detect.topk_calibration import calibrate_topk_risk
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -52,6 +53,27 @@ _RISK_LEVEL_TO_TIER = {
     "medium": Tier.MEDIUM,
     "low": Tier.LOW,
 }
+
+
+def _topk_calibration_fields_for_summary(
+    pred_summary: Any,
+    raw_topk_pattern: Any,
+    criterion_scores: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    details = {}
+    if criterion_scores and "topk_predictability" in criterion_scores:
+        cs = criterion_scores["topk_predictability"]
+        details = cs.get("details", {}) if isinstance(cs, dict) else getattr(cs, "details", {}) or {}
+    eligible_sentence_count = 0
+    if pred_summary is not None:
+        sentences = getattr(pred_summary, "sentences", None)
+        if isinstance(sentences, list):
+            eligible_sentence_count = sum(1 for item in sentences if item)
+    return calibrate_topk_risk(
+        raw_topk_pattern,
+        avg_top10_ratio=(details or {}).get("avg_top10_ratio"),
+        eligible_sentence_count=eligible_sentence_count,
+    )
 
 
 # ── Findings (unified across scanners) ──────────────────────────────
@@ -1369,6 +1391,17 @@ class ReportBuilder:
             similarity_summary=self._sim_summary,
         )
 
+        ai_components = {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()}
+        topk_calibration = _topk_calibration_fields_for_summary(
+            self._pred_summary,
+            ai_components.get("topk_pattern"),
+            self._summaries.get("criterion_scores"),
+        )
+        ai_components.update(topk_calibration)
+        # Compatibility: topk_pattern remains the raw scanner score. The
+        # calibrated risk is a separate safe-band gate.
+        ai_components.setdefault("topk_pattern", topk_calibration.get("topk_pattern_raw", 0.0))
+
         ai_risk_badge = {
             # AI Generation (Phase 1)
             "tier": layer3.tier.value,
@@ -1378,7 +1411,7 @@ class ReportBuilder:
             "authorship_rating_code": layer3.authorship_rating.get("code"),
             "ai_cluster_boost": round(layer3.ai_cluster_boost * 100, 2) if layer3.ai_cluster_boost else 0,
             "ai_cluster_name": layer3.ai_cluster_name,
-            "ai_components": {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()},
+            "ai_components": ai_components,
 
             # Writing Quality (Phase 2)
             "writing_quality_tier": layer3.writing_quality_tier.value,
@@ -2784,8 +2817,18 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         profiles = {
             "topk_pattern": {
                 "layer": "ai_authorship_risk",
-                "label": "Top-k predictability",
-                "diagnostic": "Token path is too statistically predictable.",
+                "label": "Raw Top-k predictability",
+                "diagnostic": "Raw GPT-2 token path is statistically predictable.",
+            },
+            "topk_pattern_raw": {
+                "layer": "ai_authorship_risk",
+                "label": "Raw Top-k predictability",
+                "diagnostic": "Raw GPT-2 token path is statistically predictable.",
+            },
+            "topk_calibrated_risk": {
+                "layer": "ai_authorship_risk",
+                "label": "Calibrated Top-k risk",
+                "diagnostic": "Calibrated token-route risk is above the product safe band.",
             },
             "predictability": {
                 "layer": "ai_authorship_risk",
@@ -2882,7 +2925,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     def _radar_signal_matches(component_key: str, signal: Dict[str, Any]) -> bool:
         title = str(signal.get("title") or "").lower()
         key = str(signal.get("key") or "").lower()
-        if component_key == "topk_pattern":
+        if component_key in {"topk_pattern", "topk_pattern_raw", "topk_calibrated_risk"}:
             return "topk" in title
         if component_key == "predictability":
             return "predictability" in title or key == "ai_likelihood"
@@ -2930,6 +2973,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         metric_sources = [
             ("ai_components", ai_components, {
                 "topk_pattern",
+                "topk_pattern_raw",
+                "topk_calibrated_risk",
                 "predictability",
                 "qualifying_text_ai_density",
                 "generic_assertion_risk",
@@ -3004,6 +3049,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                     },
                     "texture_pressure": key in {
                         "topk_pattern",
+                        "topk_pattern_raw",
+                        "topk_calibrated_risk",
                         "predictability",
                         "qualifying_text_ai_density",
                         "burstiness_risk",
@@ -3750,7 +3797,33 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         transformation = badge.get("transformation_classification") or {}
         features = transformation.get("features") or {}
         writing_components = badge.get("writing_components") or {}
+        ai_components = badge.get("ai_components") or {}
         transformation_signals = _transformation_signal_rows(features)
+        for key, label, description in (
+            (
+                "topk_pattern_raw",
+                "Raw Top-k Predictability",
+                "Raw GPT-2 token-route concentration. Diagnostic only; not the safe-band gate.",
+            ),
+            (
+                "topk_calibrated_risk",
+                "Calibrated Top-k Risk",
+                "Calibrated risk from raw GPT-2 Top-k. Safe-band target: below 25%.",
+            ),
+        ):
+            value = ai_components.get(key)
+            if isinstance(value, (int, float)) and not any(row.get("key") == key for row in transformation_signals):
+                transformation_signals.append({
+                    "key": key,
+                    "label": label,
+                    "description": description,
+                    "family": "ai_authorship_risk",
+                    "higher_score_means": "higher token-route risk",
+                    "score": round(max(0.0, min(100.0, float(value))), 2),
+                    "raw_score": round(max(0.0, min(100.0, float(value))) / 100.0, 4),
+                    "metric_source": "ai_components",
+                })
+        transformation_signals.sort(key=lambda item: item["score"], reverse=True)
         contribution = _transformation_contribution(features, transformation_signals)
         integrity_layers = _integrity_layers(badge, transformation, contribution)
         segments = _document_segments()

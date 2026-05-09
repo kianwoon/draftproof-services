@@ -36,6 +36,7 @@ from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
 from report.report import ReportBuilder, report_to_dict
 from llm.gateway import LLMGateway, LLMConfig
 from detect.mitigation import build_ai_mitigation_plan
+from detect.topk_calibration import TOPK_CALIBRATED_SAFE_LIMIT, calibrate_topk_risk
 
 
 def _metric_decimal(value, default=0.0):
@@ -269,16 +270,21 @@ def _float_env_with_fallback(name: str, fallback: float) -> float:
     return float(value) if value is not None else float(fallback)
 
 
-TOPK_SAFE_LIMIT = 25.0
+TOPK_SAFE_LIMIT = TOPK_CALIBRATED_SAFE_LIMIT
+
+
+def _safe_topk_calibrated_limit() -> float:
+    """Hard product ceiling for calibrated Top-k mitigation safety.
+
+    Raw GPT-2 Top-k remains diagnostic. Safe-band decisions use the fixed
+    calibrated risk scale and are not environment-tuned.
+    """
+    return TOPK_SAFE_LIMIT
 
 
 def _safe_topk_limit() -> float:
-    """Hard product ceiling for Top-k mitigation safety.
-
-    Top-k above this level is an active AI footprint blocker, regardless of
-    other cleanup wins. This is product logic, not an environment knob.
-    """
-    return TOPK_SAFE_LIMIT
+    """Compatibility alias for older tests/callers."""
+    return _safe_topk_calibrated_limit()
 
 
 def _rewrite_sampling_profile(prefix: str = "DRAFTPROOF_AI_SEARCH") -> dict:
@@ -2242,14 +2248,14 @@ def _topk_texture_repair_prompt(
         "- move a qualifier or contrast to the front of a sentence when it preserves meaning\n"
         "- replace bland verbs such as is/has/plays/supports/shapes with more specific plain verbs already implied by the sentence\n"
         "- patch only high-risk sentences or adjacent clauses\n\n"
-        f"If topk_pattern is {_safe_topk_limit():.0f} or higher, light polishing is not enough. Make visible route changes in the target sentences while keeping the same facts.\n\n"
+        f"If calibrated Top-k risk is {_safe_topk_calibrated_limit():.0f} or higher, light polishing is not enough. Make visible route changes in the target sentences while keeping the same facts.\n\n"
         "Hard rule:\n"
         "- Do not add new facts, citations, statistics, examples, institutions, names, dates, or author experiences.\n"
         "- Preserve claim scope after narrowing.\n"
         "- Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
         "- Do not rewrite into smoother academic prose.\n\n"
         "Acceptance target:\n"
-        f"- topk_pattern must move below {_safe_topk_limit():.0f}; smaller drops are diagnostic only\n"
+        f"- calibrated Top-k risk must move below {_safe_topk_calibrated_limit():.0f}; raw Top-k is diagnostic only\n"
         "- predictability should drop\n"
         "- AI Authorship must not increase\n"
         "- unsupported/broad claims must not regress\n\n"
@@ -2320,14 +2326,22 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
         })
     rows.sort(key=lambda row: row["route_score"], reverse=True)
     selected = rows[:limit]
+    ai_components = ((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
+    raw_topk = _blocker_scores(report_dict).get("topk_pattern")
+    calibrated_topk = ai_components.get("topk_calibrated_risk")
+    if not isinstance(calibrated_topk, (int, float)):
+        calibrated_topk = calibrate_topk_risk(raw_topk, eligible_sentence_count=3).get("topk_calibrated_risk")
     return {
         "enabled": True,
         "limit": limit,
-        "saturated": float(_blocker_scores(report_dict).get("topk_pattern", 0.0) or 0.0) >= _float_env(
+        "saturated": float(raw_topk or 0.0) >= _float_env(
             "DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD",
             90.0,
         ),
-        "topk_pattern": _blocker_scores(report_dict).get("topk_pattern"),
+        "topk_pattern": raw_topk,
+        "topk_pattern_raw": ai_components.get("topk_pattern_raw", raw_topk),
+        "topk_calibrated_risk": calibrated_topk,
+        "topk_safe_band": ai_components.get("topk_safe_band"),
         "targets": selected,
         "target_sentence_ids": [row.get("sentence_id") for row in selected],
     }
@@ -2534,8 +2548,8 @@ def _topk_route_optimizer_candidates(
     limit: int | None = None,
 ) -> list[tuple[str, str, dict]]:
     repair_map = _topk_repair_map(text, report_dict, limit=limit)
-    topk_value = float(repair_map.get("topk_pattern") or 0.0)
-    if topk_value < _safe_topk_limit():
+    topk_value = float(repair_map.get("topk_calibrated_risk") or 0.0)
+    if topk_value < _safe_topk_calibrated_limit():
         return []
     expanded_limit = int(_float_env(
         "DRAFTPROOF_TOPK_ROUTE_EXPANDED_SENTENCES",
@@ -2649,6 +2663,84 @@ def _topk_masked_route_prompt(
     )
 
 
+def _topk_safe_band_snapshot_prompt(text: str, report_dict: dict | None) -> str:
+    ai_components = (((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+    contribution = _contribution_scores(report_dict)
+    current_signals = json.dumps({
+        "raw_topk": ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")),
+        "topk_calibrated_risk": ai_components.get("topk_calibrated_risk"),
+        "ai_transformation": contribution.get("ai_transformation"),
+        "human_contribution": contribution.get("human"),
+    }, ensure_ascii=False)
+    return (
+        "DraftProof TOPK_SAFE_BAND_REBUILD.\n"
+        "The current document is saturated on GPT-2 Top-k token-route predictability. "
+        "A normal smooth essay will fail. Rebuild the submission as rough annotated prose.\n\n"
+        "Objective:\n"
+        "- lower calibrated Top-k risk below 25 after scanning\n"
+        "- preserve the topic and main claims\n"
+        "- reduce smooth textbook cadence\n"
+        "- do not copy source sentence structure\n\n"
+        "Current signals:\n"
+        f"{current_signals}\n\n"
+        "Required texture:\n"
+        "- 8 to 12 compact snapshot blocks\n"
+        "- each block starts with a concrete anchor: date, place, named event, law, institution, company, person, technology, object, or movement\n"
+        "- include at least 10 prose sentences of 8-18 words so the scanner has eligible prose\n"
+        "- use uneven rhythm: short sentence, colon route, rough contrast, then move on\n"
+        "- use stable public facts already implied by the source topic; no invented statistics\n"
+        "- avoid generic openings: The topic is, It is important, One of the, In conclusion, Overall\n"
+        "- avoid smooth claim -> explanation -> implication paragraphs\n"
+        "- 280 to 560 words is acceptable when it reaches the Top-k safe band\n\n"
+        "Sentence texture examples:\n"
+        "Original: Better wages for some workers, harder discipline for many others.\n"
+        "Route: Five dollars a day sounded generous; the stopwatch told another story.\n"
+        "Original: It challenged sheriffs, buses, lunch counters, voting offices, landlords, school boards, and presidents.\n"
+        "Route: Sheriffs, buses, lunch counters, voting offices, landlords, school boards, presidents: all were pulled into the fight.\n"
+        "Original: The Civil War was not just blue uniforms against grey uniforms.\n"
+        "Route: Blue uniforms versus grey uniforms is the small version.\n\n"
+        "Return only the rewritten prose. No explanation.\n\n"
+        "SOURCE DOCUMENT:\n"
+        f"{str(text or '')[:12000]}"
+    )
+
+
+def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
+    rows = []
+    for row in (_topk_repair_map(candidate_text, candidate_report, limit=14).get("targets") or []):
+        sentence = str(row.get("sentence") or "").strip()
+        if not sentence:
+            continue
+        rows.append({
+            "sentence_id": row.get("sentence_id"),
+            "sentence": sentence,
+            "top10_ratio": row.get("top10_ratio"),
+            "predictable_token_spans": row.get("predictable_token_spans") or [],
+        })
+    return (
+        "DraftProof TOPK_SAFE_BAND_SENTENCE_PATCH.\n"
+        "Patch these high Top-k sentences after the snapshot rebuild. Preserve meaning, but use lower-predictability routing.\n\n"
+        "Allowed:\n"
+        "- fragments, colon routes, sharper nouns, rough contrast, compact human note style\n"
+        "- tiny stable details only when directly implied by the sentence or public context\n"
+        "- replace smooth textbook phrasing with less predictable human phrasing\n\n"
+        "Forbidden:\n"
+        "- generic essay polish\n"
+        "- new statistics or citations\n"
+        "- changing the document topic\n\n"
+        "Examples:\n"
+        "Original: Better wages for some workers, harder discipline for many others.\n"
+        "Replacement: Five dollars a day sounded generous; the stopwatch told another story.\n"
+        "Original: It challenged sheriffs, buses, lunch counters, voting offices, landlords, school boards, and presidents.\n"
+        "Replacement: Sheriffs, buses, lunch counters, voting offices, landlords, school boards, presidents: all were pulled into the fight.\n"
+        "Original: The Civil War was not just blue uniforms against grey uniforms.\n"
+        "Replacement: Blue uniforms versus grey uniforms is the small version.\n\n"
+        "Return valid JSON only:\n"
+        '{"patches":[{"original_sentence":"...","replacement_sentence":"..."}]}\n\n'
+        f"SENTENCES:\n{json.dumps(rows, ensure_ascii=False)[:12000]}"
+    )
+
+
 def _extract_topk_route_patch_candidates(response_text: str, *, max_candidates: int = 2) -> list[list[dict]]:
     text = str(response_text or "").strip()
     if text.startswith("```"):
@@ -2664,7 +2756,10 @@ def _extract_topk_route_patch_candidates(response_text: str, *, max_candidates: 
             data = json.loads(match.group(0))
         except Exception:
             return []
-    rows = data.get("candidates") if isinstance(data, dict) else data
+    if isinstance(data, dict) and isinstance(data.get("patches"), list):
+        rows = [data]
+    else:
+        rows = data.get("candidates") if isinstance(data, dict) else data
     if not isinstance(rows, list):
         return []
     candidates: list[list[dict]] = []
@@ -3363,6 +3458,8 @@ def _blocker_scores(report_dict: dict | None) -> dict:
         "lived_detail_risk": num(writing, "lived_detail_risk"),
         "generic_assertion_risk": num(ai, "generic_assertion_risk"),
         "topk_pattern": num(ai, "topk_pattern"),
+        "topk_pattern_raw": num(ai, "topk_pattern_raw") or num(ai, "topk_pattern"),
+        "topk_calibrated_risk": num(ai, "topk_calibrated_risk"),
         "predictability": num(ai, "predictability"),
     }
 
@@ -3390,10 +3487,22 @@ def _ai_footprint_profile(report_dict: dict | None) -> dict:
         value = _feature_percent(report_dict, key)
         return num(value, default)
 
+    topk_raw = num(ai_components.get("topk_pattern_raw"), num(ai_components.get("topk_pattern")))
+    topk_calibrated = num(ai_components.get("topk_calibrated_risk"), -1.0)
+    if topk_calibrated < 0.0:
+        topk_calibrated = float(
+            calibrate_topk_risk(
+                topk_raw,
+                eligible_sentence_count=3,
+            ).get("topk_calibrated_risk", topk_raw)
+        )
+
     authorship = {
         "ai_authorship": num(integrity.get("ai_authorship")),
         "ai_likelihood": feature("ai_likelihood", num(badge.get("ai_likelihood_score"))),
-        "topk_pattern": num(ai_components.get("topk_pattern")),
+        "topk_pattern_raw": topk_raw,
+        "topk_calibrated_risk": topk_calibrated,
+        "topk_pattern": topk_raw,
         "predictability": num(ai_components.get("predictability")),
         "rewrite_smoothness": feature("rewrite_smoothness"),
     }
@@ -3420,7 +3529,7 @@ def _ai_footprint_profile(report_dict: dict | None) -> dict:
         authorship["ai_authorship"] * 0.20
         + structural["ai_transformation"] * 0.18
         + authorship["ai_likelihood"] * 0.16
-        + authorship["topk_pattern"] * 0.14
+        + authorship["topk_calibrated_risk"] * 0.14
         + authorship["rewrite_smoothness"] * 0.12
         + semantic["semantic_uniformity"] * 0.08
         + structural["discourse_regularity"] * 0.05
@@ -3475,7 +3584,9 @@ def _ai_footprint_gate_status(
         "ai_authorship",
         "ai_transformation",
         "ai_likelihood",
+        "topk_calibrated_risk",
         "topk_pattern",
+        "topk_pattern_raw",
         "rewrite_smoothness",
         "semantic_uniformity",
         "discourse_regularity",
@@ -3492,7 +3603,7 @@ def _ai_footprint_gate_status(
         "ai_authorship",
         "ai_transformation",
         "ai_likelihood",
-        "topk_pattern",
+        "topk_calibrated_risk",
         "rewrite_smoothness",
         "semantic_uniformity",
         "discourse_regularity",
@@ -3501,19 +3612,19 @@ def _ai_footprint_gate_status(
         "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_AUTHORSHIP_DROP", 1.0),
         "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_TRANSFORMATION_DROP", 1.0),
         "ai_likelihood": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_LIKELIHOOD_DROP", 1.0),
-        "topk_pattern": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_TOPK_DROP", 2.0),
+        "topk_calibrated_risk": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_TOPK_DROP", 2.0),
         "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SMOOTHNESS_DROP", 1.0),
         "semantic_uniformity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SEMANTIC_DROP", 1.0),
         "discourse_regularity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_DISCOURSE_DROP", 1.0),
         "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_MIN_DROP", 1.5),
     }
     active_topk_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
-    if before_flat.get("topk_pattern", 0.0) >= active_topk_threshold:
-        thresholds["topk_pattern"] = max(
-            thresholds["topk_pattern"],
+    if before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0)) >= active_topk_threshold:
+        thresholds["topk_calibrated_risk"] = max(
+            thresholds["topk_calibrated_risk"],
             _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0),
         )
-    safe_topk_limit = _safe_topk_limit()
+    safe_topk_limit = _safe_topk_calibrated_limit()
     material_primary = [
         key for key in primary_keys
         if drops.get(key, 0.0) >= thresholds.get(key, 1.0)
@@ -3521,28 +3632,32 @@ def _ai_footprint_gate_status(
     material_proxy = drops.get("external_ai_flag_risk", 0.0) >= thresholds["external_ai_flag_risk"]
     texture_blockers = []
     if (
-        before_flat.get("topk_pattern", 0.0) >= active_topk_threshold
-        and drops.get("topk_pattern", 0.0) < thresholds["topk_pattern"]
+        before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0)) >= active_topk_threshold
+        and drops.get("topk_calibrated_risk", 0.0) < thresholds["topk_calibrated_risk"]
     ):
         texture_blockers.append({
-            "driver": "topk_pattern",
+            "driver": "topk_calibrated_risk",
             "reason": "active_topk_pattern_not_reduced",
-            "before": round(float(before_flat.get("topk_pattern", 0.0)), 3),
-            "after": round(float(after_flat.get("topk_pattern", 0.0)), 3),
-            "drop": drops.get("topk_pattern", 0.0),
-            "required_drop": thresholds["topk_pattern"],
+            "before": round(float(before_flat.get("topk_calibrated_risk", 0.0)), 3),
+            "after": round(float(after_flat.get("topk_calibrated_risk", 0.0)), 3),
+            "raw_before": round(float(before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0))), 3),
+            "raw_after": round(float(after_flat.get("topk_pattern_raw", after_flat.get("topk_pattern", 0.0))), 3),
+            "drop": drops.get("topk_calibrated_risk", 0.0),
+            "required_drop": thresholds["topk_calibrated_risk"],
         })
-    if float(after_flat.get("topk_pattern", 0.0)) > safe_topk_limit:
+    if float(after_flat.get("topk_calibrated_risk", 0.0)) > safe_topk_limit:
         texture_blockers.append({
-            "driver": "topk_pattern",
-            "reason": "topk_above_safe_level",
-            "before": round(float(before_flat.get("topk_pattern", 0.0)), 3),
-            "after": round(float(after_flat.get("topk_pattern", 0.0)), 3),
+            "driver": "topk_calibrated_risk",
+            "reason": "topk_calibrated_above_safe_level",
+            "before": round(float(before_flat.get("topk_calibrated_risk", 0.0)), 3),
+            "after": round(float(after_flat.get("topk_calibrated_risk", 0.0)), 3),
+            "raw_before": round(float(before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0))), 3),
+            "raw_after": round(float(after_flat.get("topk_pattern_raw", after_flat.get("topk_pattern", 0.0))), 3),
             "required_max": round(float(safe_topk_limit), 3),
         })
     smoothness_regression_limit = _float_env("DRAFTPROOF_AI_FOOTPRINT_MAX_SMOOTHNESS_REGRESSION", 1.0)
     if (
-        before_flat.get("topk_pattern", 0.0) >= active_topk_threshold
+        before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0)) >= active_topk_threshold
         and drops.get("rewrite_smoothness", 0.0) < -smoothness_regression_limit
     ):
         texture_blockers.append({
@@ -3565,7 +3680,7 @@ def _ai_footprint_gate_status(
         "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
         "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
         "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
-        "topk_pattern": safe_topk_limit,
+        "topk_calibrated_risk": safe_topk_limit,
         "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_SMOOTHNESS", 55.0),
     }
     safe_band = bool(
@@ -5249,7 +5364,7 @@ def _goal_climb_candidate_rank(
         footprint_priority = max(footprint_priority, 2)
     footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
     external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"), 0.0)
-    topk_drop = num(footprint_drops.get("topk_pattern"), 0.0)
+    topk_drop = num(footprint_drops.get("topk_calibrated_risk"), 0.0)
     ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"), 0.0)
     ai_authorship_drop = num(gate.get("ai_authorship_delta"), ai_authorship_delta)
 
@@ -10889,7 +11004,7 @@ def _enrich_report_authorship_schema(report_dict: dict) -> dict:
 
     ai_components = badge.get("ai_components") or {}
     has_density = isinstance(ai_components, dict) and "qualifying_text_ai_density" in ai_components
-    if badge.get("authorship_rating") and has_density:
+    if badge.get("authorship_rating") and has_density and "topk_calibrated_risk" in ai_components:
         return report_dict
 
     text = report_dict.get("input_text") or report_dict.get("original_text") or ""
@@ -10909,6 +11024,13 @@ def _enrich_report_authorship_schema(report_dict: dict) -> dict:
         domain_grounding_strength=_metric_decimal(writing_components.get("domain_grounding_strength")),
     )
     layer3 = Layer3Scorer().score(layer3_input)
+    enriched_ai_components = {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()}
+    enriched_ai_components.update(
+        calibrate_topk_risk(
+            enriched_ai_components.get("topk_pattern"),
+            eligible_sentence_count=max(3, len(_split_sentences(text))),
+        )
+    )
 
     enriched = dict(report_dict)
     enriched_badge = dict(badge)
@@ -10920,7 +11042,7 @@ def _enrich_report_authorship_schema(report_dict: dict) -> dict:
         "authorship_rating_code": layer3.authorship_rating.get("code"),
         "ai_cluster_boost": round(layer3.ai_cluster_boost * 100, 2) if layer3.ai_cluster_boost else 0,
         "ai_cluster_name": layer3.ai_cluster_name,
-        "ai_components": {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()},
+        "ai_components": enriched_ai_components,
         "writing_quality_tier": layer3.writing_quality_tier.value,
         "writing_quality_score": round(layer3.writing_quality_score * 100, 2),
         "writing_components": {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()},
@@ -13364,6 +13486,7 @@ def run_rewrite_pipeline(
             }
             if extra:
                 candidate_eval.update(extra)
+            topk_safe_band_rebuild = bool(extra and extra.get("topk_safe_band_rebuild"))
             ignore_search_budget = bool(
                 extra
                 and (
@@ -13428,8 +13551,9 @@ def run_rewrite_pipeline(
                     candidate_eval["reason"] = anchor_echo_rejection
                     search_summary["candidates"].append(candidate_eval)
                     return
-            if len(candidate) < min_chars:
-                candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{min_chars}"
+            effective_min_chars = 200 if topk_safe_band_rebuild else min_chars
+            if len(candidate) < effective_min_chars:
+                candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{effective_min_chars}"
                 search_summary["candidates"].append(candidate_eval)
                 return
             if len(candidate) > max_chars:
@@ -13447,6 +13571,13 @@ def run_rewrite_pipeline(
                 candidate_eval["drift_reasons"] = drift.reasons[:10]
                 if repair_notes and _source_repair_drift_false_positive(candidate, drift.reasons):
                     candidate_eval["drift_relaxed_for_source_repair"] = True
+                    candidate_eval["drift_reasons_relaxed"] = drift.reasons[:5]
+                elif topk_safe_band_rebuild and float(drift.similarity or 0.0) >= _float_env(
+                    "DRAFTPROOF_TOPK_SAFE_BAND_REBUILD_MIN_DRIFT_SIMILARITY",
+                    0.50,
+                ):
+                    candidate_eval["semantic_review_required"] = True
+                    candidate_eval["drift_scan_relaxed_for_topk_safe_band_rebuild"] = True
                     candidate_eval["drift_reasons_relaxed"] = drift.reasons[:5]
                 elif _ai_search_drift_false_positive(candidate, drift.reasons, drift.similarity):
                     candidate_eval["drift_relaxed_for_ai_search"] = True
@@ -13748,7 +13879,7 @@ def run_rewrite_pipeline(
             footprint_drops = ai_footprint_gate.get("drops") if isinstance(ai_footprint_gate.get("drops"), dict) else {}
             topk_texture_blocked = bool(
                 any(
-                    str(blocker.get("driver") or "") == "topk_pattern"
+                    str(blocker.get("driver") or "") in {"topk_calibrated_risk", "topk_pattern"}
                     for blocker in (ai_footprint_gate.get("texture_blockers") or [])
                     if isinstance(blocker, dict)
                 )
@@ -13757,7 +13888,7 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_ACCEPT_TOPK_BLOCKER_PROGRESS", True)
                 and topk_texture_blocked
                 and ai_footprint_gate.get("safety_clean")
-                and float(footprint_drops.get("topk_pattern") or 0.0) >= _float_env(
+                and float(footprint_drops.get("topk_calibrated_risk") or 0.0) >= _float_env(
                     "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_DROP",
                     1.5,
                 )
@@ -14769,16 +14900,17 @@ def run_rewrite_pipeline(
                 }
                 return
             blockers = _blocker_scores(best_report)
-            min_topk = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_TOPK", _safe_topk_limit())
+            min_topk = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_TOPK", _safe_topk_calibrated_limit())
             min_predictability = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_PREDICTABILITY", 75.0)
             min_generic = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_GENERIC_ASSERTION", 70.0)
             active = {
-                "topk_pattern": float(blockers.get("topk_pattern") or 0.0),
+                "topk_calibrated_risk": float(blockers.get("topk_calibrated_risk") or 0.0),
+                "topk_pattern_raw": float(blockers.get("topk_pattern_raw", blockers.get("topk_pattern")) or 0.0),
                 "predictability": float(blockers.get("predictability") or 0.0),
                 "generic_assertion_risk": float(blockers.get("generic_assertion_risk") or 0.0),
             }
             should_run = (
-                active["topk_pattern"] >= min_topk
+                active["topk_calibrated_risk"] >= min_topk
                 or active["predictability"] >= min_predictability
                 or active["generic_assertion_risk"] >= min_generic
             )
@@ -14799,7 +14931,7 @@ def run_rewrite_pipeline(
                 "base_strategy": best_strategy,
                 "blockers_before": blockers,
                 "thresholds": {
-                    "topk_pattern": min_topk,
+                    "topk_calibrated_risk": min_topk,
                     "predictability": min_predictability,
                     "generic_assertion_risk": min_generic,
                 },
@@ -14970,7 +15102,7 @@ def run_rewrite_pipeline(
             except (TypeError, ValueError):
                 max_rounds = 3
             target_drop = _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0)
-            safe_topk = _safe_topk_limit()
+            safe_topk = _safe_topk_calibrated_limit()
             active_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
             reserve = max(
                 0,
@@ -15013,9 +15145,9 @@ def run_rewrite_pipeline(
                 topk_before = (
                     (gate_before_round.get("after") or {})
                     .get("authorship_footprint", {})
-                    .get("topk_pattern")
+                    .get("topk_calibrated_risk")
                 )
-                topk_drop_before = (gate_before_round.get("drops") or {}).get("topk_pattern")
+                topk_drop_before = (gate_before_round.get("drops") or {}).get("topk_calibrated_risk")
                 round_summary = {
                     "round": round_index,
                     "base_strategy": best_strategy,
@@ -15063,11 +15195,11 @@ def run_rewrite_pipeline(
                     "selected_strategy_after": best_strategy,
                     "selected_changed": best_strategy != before_strategy,
                     "topk_drop_after": (
-                        (gate_after_round.get("drops") or {}).get("topk_pattern")
+                        (gate_after_round.get("drops") or {}).get("topk_calibrated_risk")
                         if isinstance(gate_after_round, dict) else None
                     ),
                     "topk_after": (
-                        ((gate_after_round.get("after") or {}).get("authorship_footprint") or {}).get("topk_pattern")
+                        ((gate_after_round.get("after") or {}).get("authorship_footprint") or {}).get("topk_calibrated_risk")
                         if isinstance(gate_after_round, dict) else None
                     ),
                 })
@@ -15229,6 +15361,129 @@ def run_rewrite_pipeline(
                             topk_summary["llm_error"] = str(exc)
                     else:
                         topk_summary["llm_stage_skipped"] = "topk_not_saturated"
+                if _env_flag("DRAFTPROOF_TOPK_SAFE_BAND_REBUILD", True):
+                    safe_band_summary = search_summary.setdefault("topk_safe_band_rebuild", {
+                        "enabled": True,
+                        "selected": False,
+                        "stages": [],
+                    })
+                    route_base_report = best_report if _best_ai_search_selectable() else original_report_dict
+                    route_base_text = best_text if _best_ai_search_selectable() else component_base_text
+                    base_ai_components = (((route_base_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+                    base_topk_calibrated = base_ai_components.get("topk_calibrated_risk")
+                    if isinstance(base_topk_calibrated, (int, float)) and float(base_topk_calibrated) < _safe_topk_calibrated_limit():
+                        safe_band_summary["skipped"] = True
+                        safe_band_summary["reason"] = "topk_safe_band_already_reached"
+                    elif not _search_budget_exhausted("topk_safe_band_rebuild"):
+                        try:
+                            search_summary["llm_calls"] += 1
+                            snapshot_response = gateway.chat(
+                                _topk_safe_band_snapshot_prompt(route_base_text, route_base_report),
+                                system=(
+                                    "You are DraftProof's safe-band Top-k rebuild controller. "
+                                    "Return only rewritten prose."
+                                ),
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_TOPK_SAFE_BAND_REBUILD",
+                                    temperature_env="DRAFTPROOF_TOPK_SAFE_BAND_REBUILD_TEMPERATURE",
+                                    temperature_default=0.9,
+                                    max_tokens_env="DRAFTPROOF_TOPK_SAFE_BAND_REBUILD_MAX_TOKENS",
+                                    max_tokens_default=2200,
+                                ),
+                            )
+                            snapshot_text = _clean_full_document_candidate(snapshot_response.content, route_base_text)
+                            safe_band_summary["snapshot_words"] = _text_word_count(snapshot_text)
+                            if snapshot_text:
+                                snapshot_report = _full_scan_report_dict(snapshot_text)
+                                snapshot_ai = (((snapshot_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+                                safe_band_summary["snapshot_scan"] = {
+                                    "topk_pattern_raw": snapshot_ai.get("topk_pattern_raw", snapshot_ai.get("topk_pattern")),
+                                    "topk_calibrated_risk": snapshot_ai.get("topk_calibrated_risk"),
+                                    "topk_safe_band": snapshot_ai.get("topk_safe_band"),
+                                }
+                                candidate_to_eval = snapshot_text
+                                candidate_patch_report = snapshot_report
+                                applied = []
+                                patch_rounds = []
+                                try:
+                                    max_patch_rounds = max(1, int(_float_env(
+                                        "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
+                                        2.0,
+                                    )))
+                                except (TypeError, ValueError):
+                                    max_patch_rounds = 2
+                                for patch_round in range(1, max_patch_rounds + 1):
+                                    current_ai = (((candidate_patch_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+                                    if isinstance(current_ai.get("topk_calibrated_risk"), (int, float)) and float(current_ai.get("topk_calibrated_risk")) < _safe_topk_calibrated_limit():
+                                        patch_rounds.append({
+                                            "round": patch_round,
+                                            "skipped": True,
+                                            "reason": "topk_safe_band_reached",
+                                            "topk_calibrated_risk": current_ai.get("topk_calibrated_risk"),
+                                        })
+                                        break
+                                    search_summary["llm_calls"] += 1
+                                    patch_response = gateway.chat(
+                                        _topk_safe_band_sentence_patch_prompt(candidate_to_eval, candidate_patch_report),
+                                        system=(
+                                            "You are DraftProof's Top-k sentence route patcher. "
+                                            "Return only valid JSON patches."
+                                        ),
+                                        **_phase_chat_sampling_kwargs(
+                                            "DRAFTPROOF_TOPK_SAFE_BAND_PATCH",
+                                            temperature_env="DRAFTPROOF_TOPK_SAFE_BAND_PATCH_TEMPERATURE",
+                                            temperature_default=0.85,
+                                            max_tokens_env="DRAFTPROOF_TOPK_SAFE_BAND_PATCH_MAX_TOKENS",
+                                            max_tokens_default=2600,
+                                        ),
+                                    )
+                                    patch_sets = _extract_topk_route_patch_candidates(patch_response.content, max_candidates=1)
+                                    round_applied = []
+                                    if patch_sets:
+                                        patched_text, round_applied = _apply_topk_route_patches(candidate_to_eval, patch_sets[0])
+                                    else:
+                                        patched_text = candidate_to_eval
+                                    patch_rounds.append({
+                                        "round": patch_round,
+                                        "patch_candidate_count": len(patch_sets),
+                                        "applied_patch_count": len(round_applied),
+                                    })
+                                    if not round_applied or patched_text == candidate_to_eval:
+                                        break
+                                    candidate_to_eval = patched_text
+                                    applied.extend(round_applied)
+                                    candidate_patch_report = _full_scan_report_dict(candidate_to_eval)
+                                    patched_ai = (((candidate_patch_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+                                    patch_rounds[-1].update({
+                                        "topk_pattern_raw": patched_ai.get("topk_pattern_raw", patched_ai.get("topk_pattern")),
+                                        "topk_calibrated_risk": patched_ai.get("topk_calibrated_risk"),
+                                        "topk_safe_band": patched_ai.get("topk_safe_band"),
+                                    })
+                                safe_band_summary["patch_rounds"] = patch_rounds
+                                safe_band_summary["patch_candidate_count"] = sum(
+                                    int(row.get("patch_candidate_count") or 0) for row in patch_rounds
+                                )
+                                safe_band_summary["applied_patch_count"] = len(applied)
+                                _evaluate_ai_search_candidate(
+                                    "topk_safe_band_rebuild",
+                                    candidate_to_eval,
+                                    deterministic=False,
+                                    extra={
+                                        "topk_safe_band_rebuild": True,
+                                        "snapshot_topk_scan": safe_band_summary.get("snapshot_scan"),
+                                        "applied_topk_safe_band_patches": applied,
+                                    },
+                                )
+                        except Exception as exc:
+                            safe_band_summary["error"] = str(exc)
+                            search_summary["candidates"].append({
+                                "strategy": "topk_safe_band_rebuild",
+                                "passed_local_checks": False,
+                                "reason": f"llm_error {exc}",
+                                "topk_safe_band_rebuild": True,
+                            })
+                else:
+                    search_summary["topk_safe_band_rebuild"] = {"enabled": False, "reason": "disabled"}
                 internet_priority = _internet_reauthor_priority_status(original_report_dict, component_base_text)
                 paragraph_component_first = bool(
                     paragraph_search_enabled
@@ -17859,18 +18114,19 @@ def run_rewrite_pipeline(
     final_after_authorship_for_acceptance = (
         (final_ai_footprint_gate.get("after") or {}).get("authorship_footprint") or {}
     )
-    final_topk_for_acceptance = final_after_authorship_for_acceptance.get("topk_pattern")
+    final_topk_for_acceptance = final_after_authorship_for_acceptance.get("topk_calibrated_risk")
+    final_topk_raw_for_acceptance = final_after_authorship_for_acceptance.get("topk_pattern_raw")
     if (
         rewritten_text != text
         and isinstance(final_topk_for_acceptance, (int, float))
-        and float(final_topk_for_acceptance) >= _safe_topk_limit()
+        and float(final_topk_for_acceptance) >= _safe_topk_calibrated_limit()
     ):
         attempted_text = rewritten_text
         attempted_report_dict = rewritten_report_dict
         attempted_sentence_comparison = sentence_comparison
         reason = (
-            f"topk_safe_band_failed {float(final_topk_for_acceptance):.2f}>="
-            f"{_safe_topk_limit():.2f}"
+            f"topk_calibrated_safe_band_failed {float(final_topk_for_acceptance):.2f}>="
+            f"{_safe_topk_calibrated_limit():.2f}"
         )
         rewritten_text = text
         rewritten_report_dict = original_report_dict
@@ -17893,8 +18149,12 @@ def run_rewrite_pipeline(
         result.summary["outcome"] = "topk_blocked"
         result.summary["topk_acceptance_gate"] = {
             "accepted": False,
-            "safe_limit": _safe_topk_limit(),
-            "attempted_topk": round(float(final_topk_for_acceptance), 3),
+            "safe_limit": _safe_topk_calibrated_limit(),
+            "attempted_topk_calibrated_risk": round(float(final_topk_for_acceptance), 3),
+            "attempted_topk_pattern_raw": (
+                round(float(final_topk_raw_for_acceptance), 3)
+                if isinstance(final_topk_raw_for_acceptance, (int, float)) else None
+            ),
             "reason": reason,
         }
         result.summary.setdefault("detect_scores", {}).update({
@@ -17916,7 +18176,11 @@ def run_rewrite_pipeline(
             "attempted_findings": _finding_total(attempted_report_dict),
             "attempted_review_burden": _review_burden(attempted_report_dict),
             "attempted_weighted_severity": _weighted_severity(attempted_report_dict),
-            "attempted_topk_pattern": round(float(final_topk_for_acceptance), 3),
+            "attempted_topk_calibrated_risk": round(float(final_topk_for_acceptance), 3),
+            "attempted_topk_pattern": (
+                round(float(final_topk_raw_for_acceptance), 3)
+                if isinstance(final_topk_raw_for_acceptance, (int, float)) else None
+            ),
             "rollback_reason": reason,
         })
         sentence_comparison = []
@@ -17938,9 +18202,12 @@ def run_rewrite_pipeline(
         "external_ai_flag_risk_before": final_footprint_before.get("external_ai_flag_risk"),
         "external_ai_flag_risk_after": final_footprint_after.get("external_ai_flag_risk"),
         "external_ai_flag_risk_drop": final_footprint_drops.get("external_ai_flag_risk"),
-        "topk_pattern_before": final_before_authorship.get("topk_pattern"),
-        "topk_pattern_after": final_after_authorship.get("topk_pattern"),
-        "topk_pattern_drop": final_footprint_drops.get("topk_pattern"),
+        "topk_pattern_raw_before": final_before_authorship.get("topk_pattern_raw"),
+        "topk_pattern_raw_after": final_after_authorship.get("topk_pattern_raw"),
+        "topk_pattern_raw_drop": final_footprint_drops.get("topk_pattern_raw"),
+        "topk_calibrated_risk_before": final_before_authorship.get("topk_calibrated_risk"),
+        "topk_calibrated_risk_after": final_after_authorship.get("topk_calibrated_risk"),
+        "topk_calibrated_risk_drop": final_footprint_drops.get("topk_calibrated_risk"),
         "rewrite_smoothness_before": final_before_authorship.get("rewrite_smoothness"),
         "rewrite_smoothness_after": final_after_authorship.get("rewrite_smoothness"),
         "rewrite_smoothness_drop": final_footprint_drops.get("rewrite_smoothness"),
@@ -17985,7 +18252,7 @@ def run_rewrite_pipeline(
                 if isinstance(blocker, dict)
             ]
             topk_still_blocked = any(
-                str(blocker.get("driver") or "") == "topk_pattern"
+                str(blocker.get("driver") or "") in {"topk_calibrated_risk", "topk_pattern"}
                 for blocker in texture_blockers
             )
             result.summary["outcome"] = {

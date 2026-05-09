@@ -54,6 +54,7 @@ from rewrite.rewrite import (
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
+from detect.topk_calibration import calibrate_topk_risk
 from rewrite_pipeline import (
     run_rewrite_pipeline,
     _build_aligned_sentence_comparison,
@@ -1028,6 +1029,7 @@ def make_footprint_report(
     semantic_uniformity,
     ai_likelihood,
     topk_pattern,
+    topk_calibrated_risk=None,
     generic_assertion_risk,
     unsupported_claim_risk,
     broad_claim_risk,
@@ -1046,6 +1048,12 @@ def make_footprint_report(
             "ai_likelihood_score": ai_likelihood,
             "ai_components": {
                 "topk_pattern": topk_pattern,
+                "topk_pattern_raw": topk_pattern,
+                "topk_calibrated_risk": (
+                    topk_calibrated_risk
+                    if topk_calibrated_risk is not None
+                    else calibrate_topk_risk(topk_pattern, eligible_sentence_count=3)["topk_calibrated_risk"]
+                ),
                 "generic_assertion_risk": generic_assertion_risk,
             },
             "writing_components": {
@@ -1105,6 +1113,7 @@ footprint_partial = make_footprint_report(
     semantic_uniformity=61,
     ai_likelihood=64,
     topk_pattern=20,
+    topk_calibrated_risk=18,
     generic_assertion_risk=64,
     unsupported_claim_risk=88,
     broad_claim_risk=84,
@@ -1120,6 +1129,7 @@ footprint_topk_still_unsafe = make_footprint_report(
     semantic_uniformity=61,
     ai_likelihood=64,
     topk_pattern=90,
+    topk_calibrated_risk=62,
     generic_assertion_risk=64,
     unsupported_claim_risk=88,
     broad_claim_risk=84,
@@ -1159,6 +1169,7 @@ footprint_stalled_topk = make_footprint_report(
     semantic_uniformity=39,
     ai_likelihood=57,
     topk_pattern=100,
+    topk_calibrated_risk=100,
     generic_assertion_risk=65,
     unsupported_claim_risk=20,
     broad_claim_risk=75,
@@ -1186,10 +1197,10 @@ assert_test(
 assert_test(
     unsafe_topk_gate["outcome_class"] == "ai_footprint_blocked_by_texture"
     and any(
-        blocker.get("reason") == "topk_above_safe_level"
+        blocker.get("reason") == "topk_calibrated_above_safe_level"
         for blocker in unsafe_topk_gate["texture_blockers"]
     ),
-    "AI-footprint gate blocks mitigation while final top-k remains above the safe level",
+    "AI-footprint gate blocks mitigation while calibrated Top-k remains above the safe level",
 )
 assert_test(
     stalled_topk_gate["outcome_class"] == "ai_footprint_blocked_by_texture"
@@ -1199,7 +1210,19 @@ assert_test(
 )
 assert_test(
     _safe_topk_limit() == 25.0,
-    "Top-k safe mark is fixed at 25 and is not an environment tuning knob",
+    "Calibrated Top-k safe mark is fixed at 25 and is not an environment tuning knob",
+)
+calibrated_mid = calibrate_topk_risk(67.37, eligible_sentence_count=30)
+calibrated_high = calibrate_topk_risk(90.0, eligible_sentence_count=30)
+calibrated_non_prose = calibrate_topk_risk(10.0, eligible_sentence_count=0)
+assert_test(
+    calibrated_mid["topk_pattern_raw"] == 67.37
+    and calibrated_mid["topk_calibrated_risk"] < 25
+    and calibrated_mid["topk_safe_band"] is True
+    and calibrated_high["topk_calibrated_risk"] >= 25
+    and calibrated_high["topk_safe_band"] is False
+    and calibrated_non_prose["topk_safe_band"] is False,
+    "Top-k calibration gates safe band on calibrated risk, not raw GPT-2 Top-k",
 )
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {
@@ -4572,7 +4595,7 @@ topk_texture_prompt = _topk_texture_repair_prompt(
 assert_test(
     "weaken absolute claims" in claim_narrowing_prompt
     and "unsupported_claim_risk must drop" in claim_narrowing_prompt
-    and "topk_pattern must drop" in topk_texture_prompt
+    and "calibrated Top-k risk must move below" in topk_texture_prompt
     and "Do not add new facts" in topk_texture_prompt,
     "targeted claim narrowing and top-k texture prompts attack remaining blockers directly",
 )

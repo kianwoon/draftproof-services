@@ -25,6 +25,8 @@ const SEVERITY_CONFIG = {
 
 const SIGNAL_COLORS = {
   topk_pattern: '#be123c',
+  topk_pattern_raw: '#be123c',
+  topk_calibrated_risk: '#e11d48',
   ai_likelihood: '#9a3412',
   adjusted_ai_risk: '#dc2626',
   calibrated_ai_risk: '#b91c1c',
@@ -75,7 +77,9 @@ function clampPercent(value) {
 }
 
 const TRANSFORMATION_SIGNAL_LABELS = {
-  topk_pattern: 'Top-k predictability',
+  topk_pattern: 'Raw Top-k predictability',
+  topk_pattern_raw: 'Raw Top-k predictability',
+  topk_calibrated_risk: 'Calibrated Top-k risk',
   ai_likelihood: 'AI likelihood',
   adjusted_ai_risk: 'Adjusted AI risk',
   calibrated_ai_risk: 'Calibrated AI risk',
@@ -96,7 +100,9 @@ const TRANSFORMATION_SIGNAL_LABELS = {
 };
 
 const TRANSFORMATION_SIGNAL_DESCRIPTIONS = {
-  topk_pattern: 'How often the writing follows highly predictable next-token routes. Target: below 25%. Lower is safer and less likely to look machine-routed.',
+  topk_pattern: 'Raw GPT-2 token-route concentration. Diagnostic only; the safe-band gate uses calibrated Top-k risk.',
+  topk_pattern_raw: 'Raw GPT-2 token-route concentration. Diagnostic only; the safe-band gate uses calibrated Top-k risk.',
+  topk_calibrated_risk: 'Calibrated risk from raw GPT-2 Top-k. Target: below 25%. Lower is safer and less likely to look machine-routed.',
   ai_likelihood: 'Statistical AI-style signal based on predictability, token concentration, generic phrasing, and sentence regularity.',
   adjusted_ai_risk: 'AI likelihood after reducing certainty for strong human anchoring and calibration checks.',
   calibrated_ai_risk: 'Final calibrated authorship risk after thresholding, signal agreement, and reporting safeguards.',
@@ -117,6 +123,8 @@ const TRANSFORMATION_SIGNAL_DESCRIPTIONS = {
 };
 
 const TRANSFORMATION_SIGNAL_ORDER = [
+  'topk_calibrated_risk',
+  'topk_pattern_raw',
   'topk_pattern',
   'ai_likelihood',
   'adjusted_ai_risk',
@@ -139,6 +147,8 @@ const TRANSFORMATION_SIGNAL_ORDER = [
 
 const TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION = {
   topk_pattern: 'lower',
+  topk_pattern_raw: 'lower',
+  topk_calibrated_risk: 'lower',
   ai_likelihood: 'lower',
   adjusted_ai_risk: 'lower',
   calibrated_ai_risk: 'lower',
@@ -156,7 +166,7 @@ const TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION = {
   human_anchor_discount: 'higher',
 };
 
-const FEATURED_TRANSFORMATION_SIGNAL_KEYS = ['topk_pattern'];
+const FEATURED_TRANSFORMATION_SIGNAL_KEYS = ['topk_calibrated_risk', 'topk_pattern_raw'];
 
 function buildTransformationSignals(features = {}, suppliedSignals = []) {
   const suppliedByKey = new Map(
@@ -496,24 +506,24 @@ function getScanAiComponents(scan) {
 
 function getScanTransformationSignals(scan) {
   const coreSignals = getScanIntelligence(scan).transformation?.core_signals || [];
-  const topkPattern = clampPercent(getScanAiComponents(scan).topk_pattern);
-
-  if (topkPattern == null || coreSignals.some((signal) => signal?.key === 'topk_pattern')) {
-    return coreSignals;
-  }
-
-  return [
-    ...coreSignals,
-    {
-      key: 'topk_pattern',
-      label: TRANSFORMATION_SIGNAL_LABELS.topk_pattern,
-      description: TRANSFORMATION_SIGNAL_DESCRIPTIONS.topk_pattern,
+  const aiComponents = getScanAiComponents(scan);
+  const appended = [...coreSignals];
+  [
+    ['topk_calibrated_risk', clampPercent(aiComponents.topk_calibrated_risk)],
+    ['topk_pattern_raw', clampPercent(aiComponents.topk_pattern_raw ?? aiComponents.topk_pattern)],
+  ].forEach(([key, score]) => {
+    if (score == null || appended.some((signal) => signal?.key === key)) return;
+    appended.push({
+      key,
+      label: TRANSFORMATION_SIGNAL_LABELS[key],
+      description: TRANSFORMATION_SIGNAL_DESCRIPTIONS[key],
       family: 'ai_authorship_risk',
-      higher_score_means: 'more predictable token routes',
-      score: topkPattern,
+      higher_score_means: key === 'topk_calibrated_risk' ? 'higher calibrated token-route risk' : 'more predictable raw token routes',
+      score,
       metric_source: 'ai_components',
-    },
-  ];
+    });
+  });
+  return appended;
 }
 
 function getScanContributionSummary(scan) {

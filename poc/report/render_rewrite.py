@@ -426,12 +426,19 @@ def render_rewrite_report(
             )
         footprint_before_authorship = (footprint_gate.get("before") or {}).get("authorship_footprint") or {}
         footprint_after_authorship = (footprint_gate.get("after") or {}).get("authorship_footprint") or {}
-        topk_before = footprint_before_authorship.get("topk_pattern")
-        topk_after = footprint_after_authorship.get("topk_pattern")
+        topk_raw_before = footprint_before_authorship.get("topk_pattern_raw", footprint_before_authorship.get("topk_pattern"))
+        topk_raw_after = footprint_after_authorship.get("topk_pattern_raw", footprint_after_authorship.get("topk_pattern"))
+        if isinstance(topk_raw_before, (int, float)) and isinstance(topk_raw_after, (int, float)):
+            lines.append(
+                f"| **Raw Top-k Predictability** | `{float(topk_raw_before):.2f}%` | "
+                f"`{float(topk_raw_after):.2f}%` | `{float(footprint_drops.get('topk_pattern_raw') or 0.0):+.2f}% drop` |"
+            )
+        topk_before = footprint_before_authorship.get("topk_calibrated_risk")
+        topk_after = footprint_after_authorship.get("topk_calibrated_risk")
         if isinstance(topk_before, (int, float)) and isinstance(topk_after, (int, float)):
             lines.append(
-                f"| **Top-k Predictability** | `{float(topk_before):.2f}%` | "
-                f"`{float(topk_after):.2f}%` | `{float(footprint_drops.get('topk_pattern') or 0.0):+.2f}% drop` |"
+                f"| **Calibrated Top-k Risk** | `{float(topk_before):.2f}%` | "
+                f"`{float(topk_after):.2f}%` | `{float(footprint_drops.get('topk_calibrated_risk') or 0.0):+.2f}% drop` |"
             )
         orig_authorship = _authorship_label(orig_scan)
         new_authorship = _authorship_label(new_scan)
