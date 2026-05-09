@@ -12,8 +12,13 @@ from app.config import UPLOAD_DIR
 from app.models.db import async_session, ScanJob, CreditAccount, CreditReservation
 
 
+FREE_SCAN_WORD_LIMIT = 300
+
+
 def _scan_cost(word_count: int) -> int:
-    """1 token per 1,000 words (ceiling). 1–1000 = 1, 1001–2000 = 2, etc."""
+    """Free through 300 words, then 1 token per started 1,000 words."""
+    if word_count <= FREE_SCAN_WORD_LIMIT:
+        return 0
     return max(1, -(-word_count // 1000))
 
 
@@ -54,9 +59,10 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
         )
         session.add(job)
 
-        # Reserve tokens based on word count
+        # Reserve tokens based on word count. Short scans are free and should
+        # not require an existing credit account.
         cost = _scan_cost(word_count)
-        if user_id:
+        if user_id and cost > 0:
             uid = uuid.UUID(user_id)
             result = await session.execute(
                 select(CreditAccount).where(CreditAccount.user_id == uid).with_for_update()

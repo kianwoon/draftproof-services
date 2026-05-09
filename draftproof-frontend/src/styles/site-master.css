@@ -2933,6 +2933,16 @@ th {
   font-weight: 400;
 }
 
+.scan-pricing-note {
+  margin: -6px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--green);
+  background: rgba(58, 168, 118, .08);
+  color: var(--green-dark);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .scan-textarea {
   width: 100%;
   min-height: 420px;

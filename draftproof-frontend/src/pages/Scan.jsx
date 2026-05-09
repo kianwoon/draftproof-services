@@ -7,6 +7,7 @@ import CodeTexture from '../components/CodeTexture';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
+const FREE_SCAN_WORD_LIMIT = 300;
 
 export default function Scan() {
   const [text, setText] = useState('');
@@ -24,7 +25,7 @@ export default function Scan() {
   const abortRef = useRef(null);
   const eventSourceRef = useRef(null);
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
-  const tokensRequired = wordCount > 0 ? Math.max(1, Math.ceil(wordCount / 1000)) : 0;
+  const tokensRequired = wordCount > FREE_SCAN_WORD_LIMIT ? Math.max(1, Math.ceil(wordCount / 1000)) : 0;
 
   // Cancel in-flight polling on unmount
   useEffect(() => {
@@ -235,7 +236,7 @@ export default function Scan() {
           <div className="app-hero-stat">
             <span>Available balance</span>
             <strong>{balance === null ? 'Checking' : `${balance} token${balance === 1 ? '' : 's'}`}</strong>
-            <small>1 token per 1,000 words</small>
+            <small>Free through 300 words</small>
           </div>
         </section>
 
@@ -245,6 +246,10 @@ export default function Scan() {
               Document text
               <span>Paste plain text from your paper, report, or essay.</span>
             </label>
+            <p className="scan-pricing-note">
+              Scans with 300 words or fewer are free. Token billing starts at
+              301 words.
+            </p>
             <textarea
               id="scan-text"
               className="scan-textarea"
@@ -258,6 +263,9 @@ export default function Scan() {
             />
             <div className="scan-meta-row">
               <span>{wordCount.toLocaleString()} word{wordCount !== 1 ? 's' : ''}</span>
+              {wordCount > 0 && tokensRequired === 0 && (
+                <strong>Free scan</strong>
+              )}
               {tokensRequired > 0 && (
                 <strong>
                   {tokensRequired} token{tokensRequired !== 1 ? 's' : ''} required
