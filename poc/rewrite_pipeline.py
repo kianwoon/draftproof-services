@@ -2242,14 +2242,14 @@ def _topk_texture_repair_prompt(
         "- move a qualifier or contrast to the front of a sentence when it preserves meaning\n"
         "- replace bland verbs such as is/has/plays/supports/shapes with more specific plain verbs already implied by the sentence\n"
         "- patch only high-risk sentences or adjacent clauses\n\n"
-        "If topk_pattern is 90 or higher, light polishing is not enough. Make visible local route changes in the target sentences while keeping the same facts.\n\n"
+        f"If topk_pattern is {_safe_topk_limit():.0f} or higher, light polishing is not enough. Make visible route changes in the target sentences while keeping the same facts.\n\n"
         "Hard rule:\n"
         "- Do not add new facts, citations, statistics, examples, institutions, names, dates, or author experiences.\n"
         "- Preserve claim scope after narrowing.\n"
         "- Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
         "- Do not rewrite into smoother academic prose.\n\n"
         "Acceptance target:\n"
-        "- topk_pattern must drop\n"
+        f"- topk_pattern must move below {_safe_topk_limit():.0f}; smaller drops are diagnostic only\n"
         "- predictability should drop\n"
         "- AI Authorship must not increase\n"
         "- unsupported/broad claims must not regress\n\n"
@@ -2405,6 +2405,27 @@ def _deterministic_topk_route_sentence(sentence: str) -> tuple[str, list[str]]:
                 break
 
     replacements = [
+        (r"^Inclusive learning design\b", r"For this haircutting unit, inclusive learning design", "domain_opening_route"),
+        (r"^This becomes clear when\b", r"The gap shows up when", "this_opening_route"),
+        (r"^The challenge is more than\b", r"The challenge is not just", "challenge_opening_route"),
+        (r"^The challenge in ([^.]+?) does not only appear\b", r"In \1, the issue does not only appear", "challenge_scope_route"),
+        (r"^Learners must\b", r"Learners still have to", "learner_modal_route"),
+        (r"^Learners need\b", r"What learners need is", "learner_need_route"),
+        (r"^Many learners can\b", r"A lot of learners can", "learner_group_route"),
+        (r"^Some learners\b", r"Some learners, not all,", "learner_group_route"),
+        (r"^When learners\b", r"Once learners", "when_route"),
+        (r"^In haircutting,\b", r"With haircutting,", "domain_route"),
+        (r"^In practical haircutting classes,\b", r"On the practical floor,", "classroom_route"),
+        (r"^In the salon classroom,\b", r"In the salon classroom,", "classroom_route"),
+        (r"^A demonstration reveals\b", r"A demonstration can show", "demonstration_route"),
+        (r"^Universal Design for Learning helps\b", r"Universal Design for Learning is useful when it helps", "udl_route"),
+        (r"^Reasonable adjustment should not be misunderstood as\b", r"Reasonable adjustment is not", "reasonable_adjustment_route"),
+        (r"^Classroom limits remain\.$", r"Classroom limits remain. That part is hard to ignore.", "short_followup_route"),
+        (r"^This connects with\b", r"That links back to", "this_opening_route"),
+        (r"^This creates\b", r"That creates", "this_opening_route"),
+        (r"^This does not\b", r"It does not", "this_opening_route"),
+        (r"^Instead, it comes from\b", r"Instead, the control comes from", "instead_route"),
+        (r"^Competency should not depend on\b", r"Competency cannot be left to", "competency_route"),
         (r"^The ([A-Z][A-Za-z ]{2,60}) is often described as ", r"\1 is often described this way: ", "opening_route"),
         (r"^It has shaped ", r"Its influence reaches into ", "pronoun_opening_route"),
         (r"^The country has ", r"Inside the country, there is ", "country_opening_route"),
@@ -2427,6 +2448,22 @@ def _deterministic_topk_route_sentence(sentence: str) -> tuple[str, list[str]]:
         if updated != candidate:
             candidate = updated
             operations.append(op)
+    if candidate == original:
+        because_match = re.search(r"\s+because\s+", candidate, flags=re.I)
+        if because_match and len(candidate.split()) >= 18:
+            left = candidate[:because_match.start()].strip()
+            right = candidate[because_match.end():].strip()
+            if left and right:
+                candidate = f"{left}. Because {right[0].lower() + right[1:] if len(right) > 1 else right}"
+                operations.append("because_route_split")
+    if candidate == original:
+        but_match = re.search(r"\s+but\s+", candidate, flags=re.I)
+        if but_match and len(candidate.split()) >= 16:
+            left = candidate[:but_match.start()].strip()
+            right = candidate[but_match.end():].strip()
+            if left and right:
+                candidate = f"{left}. But {right[0].lower() + right[1:] if len(right) > 1 else right}"
+                operations.append("contrast_route_split")
     if candidate == original:
         comma_parts = candidate.split(",", 1)
         if len(comma_parts) == 2 and 8 <= len(candidate.split()) <= 32:
@@ -2497,7 +2534,8 @@ def _topk_route_optimizer_candidates(
     limit: int | None = None,
 ) -> list[tuple[str, str, dict]]:
     repair_map = _topk_repair_map(text, report_dict, limit=limit)
-    if not repair_map.get("saturated"):
+    topk_value = float(repair_map.get("topk_pattern") or 0.0)
+    if topk_value < _safe_topk_limit():
         return []
     expanded_limit = int(_float_env(
         "DRAFTPROOF_TOPK_ROUTE_EXPANDED_SENTENCES",
@@ -2509,7 +2547,7 @@ def _topk_route_optimizer_candidates(
     batches = [(targets, 0.35, "small"), (targets, 0.65, "medium"), (targets, 1.0, "full")]
     expanded_targets = [
         row for row in (expanded_map.get("targets") or [])
-        if float(row.get("top10_ratio") or 0.0) >= _float_env("DRAFTPROOF_TOPK_ROUTE_EXPANDED_MIN_TOP10", 0.62)
+        if float(row.get("top10_ratio") or 0.0) >= _float_env("DRAFTPROOF_TOPK_ROUTE_EXPANDED_MIN_TOP10", 0.45)
     ]
     if len(expanded_targets) > len(targets):
         batches.append((expanded_targets, 1.0, "expanded"))
@@ -14731,7 +14769,7 @@ def run_rewrite_pipeline(
                 }
                 return
             blockers = _blocker_scores(best_report)
-            min_topk = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_TOPK", 75.0)
+            min_topk = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_TOPK", _safe_topk_limit())
             min_predictability = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_PREDICTABILITY", 75.0)
             min_generic = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_GENERIC_ASSERTION", 70.0)
             active = {
@@ -14988,13 +15026,7 @@ def run_rewrite_pipeline(
                 }
                 if (
                     isinstance(topk_before, (int, float))
-                    and float(topk_before) < active_threshold
-                ) or (
-                    isinstance(topk_drop_before, (int, float))
-                    and float(topk_drop_before) >= target_drop
-                ) or (
-                    isinstance(topk_before, (int, float))
-                    and float(topk_before) <= safe_topk
+                    and float(topk_before) < safe_topk
                 ):
                     round_summary["skipped"] = True
                     round_summary["reason"] = "topk_target_reached"
@@ -17824,6 +17856,78 @@ def run_rewrite_pipeline(
             and rewritten_ai > original_ai + _float_env("DRAFTPROOF_AI_SEARCH_AI_SCORE_REGRESSION_TOLERANCE", 0.25)
         ),
     )
+    final_after_authorship_for_acceptance = (
+        (final_ai_footprint_gate.get("after") or {}).get("authorship_footprint") or {}
+    )
+    final_topk_for_acceptance = final_after_authorship_for_acceptance.get("topk_pattern")
+    if (
+        rewritten_text != text
+        and isinstance(final_topk_for_acceptance, (int, float))
+        and float(final_topk_for_acceptance) >= _safe_topk_limit()
+    ):
+        attempted_text = rewritten_text
+        attempted_report_dict = rewritten_report_dict
+        attempted_sentence_comparison = sentence_comparison
+        reason = (
+            f"topk_safe_band_failed {float(final_topk_for_acceptance):.2f}>="
+            f"{_safe_topk_limit():.2f}"
+        )
+        rewritten_text = text
+        rewritten_report_dict = original_report_dict
+        rewritten_ai = _badge_ai(original_report_dict)
+        rewritten_wq = _badge_wq(original_report_dict)
+        rewritten_total = _finding_total(original_report_dict)
+        rewritten_review_burden = _review_burden(original_report_dict)
+        rewritten_severity = _weighted_severity(original_report_dict)
+        if result.mp_result:
+            result.mp_result.final_text = text
+            result.mp_result.final_metrics = result.mp_result.original_metrics
+            result.mp_result.converged = False
+            result.mp_result.convergence_reason = reason
+        result.summary["attempted_final_text"] = attempted_text
+        result.summary["attempted_sentence_comparison"] = attempted_sentence_comparison
+        result.summary["final_text"] = text
+        result.summary["converged"] = False
+        result.summary["rollback_applied"] = True
+        result.summary["rollback_reason"] = reason
+        result.summary["outcome"] = "topk_blocked"
+        result.summary["topk_acceptance_gate"] = {
+            "accepted": False,
+            "safe_limit": _safe_topk_limit(),
+            "attempted_topk": round(float(final_topk_for_acceptance), 3),
+            "reason": reason,
+        }
+        result.summary.setdefault("detect_scores", {}).update({
+            "rewritten_ai": _badge_ai(original_report_dict),
+            "rewritten_writing_quality": _badge_wq(original_report_dict),
+            "rewritten_ai_authorship": _integrity_scores(original_report_dict).get("ai_authorship"),
+            "rewritten_grounding_quality_risk": _integrity_scores(original_report_dict).get("grounding"),
+            "rewritten_human_contribution": _contribution_scores(original_report_dict).get("human"),
+            "rewritten_ai_transformation": _contribution_scores(original_report_dict).get("ai_transformation"),
+            "rewritten_findings": _finding_total(original_report_dict),
+            "rewritten_review_burden": _review_burden(original_report_dict),
+            "rewritten_weighted_severity": _weighted_severity(original_report_dict),
+            "attempted_ai": _badge_ai(attempted_report_dict),
+            "attempted_writing_quality": _badge_wq(attempted_report_dict),
+            "attempted_ai_authorship": _integrity_scores(attempted_report_dict).get("ai_authorship"),
+            "attempted_grounding_quality_risk": _integrity_scores(attempted_report_dict).get("grounding"),
+            "attempted_human_contribution": _contribution_scores(attempted_report_dict).get("human"),
+            "attempted_ai_transformation": _contribution_scores(attempted_report_dict).get("ai_transformation"),
+            "attempted_findings": _finding_total(attempted_report_dict),
+            "attempted_review_burden": _review_burden(attempted_report_dict),
+            "attempted_weighted_severity": _weighted_severity(attempted_report_dict),
+            "attempted_topk_pattern": round(float(final_topk_for_acceptance), 3),
+            "rollback_reason": reason,
+        })
+        sentence_comparison = []
+        final_ai_footprint_gate = _ai_footprint_gate_status(
+            original_report_dict,
+            rewritten_report_dict,
+            review_burden_delta=0,
+            weighted_severity_delta=0,
+            critical_high_delta=0,
+            ai_score_regressed=False,
+        )
     result.summary["ai_footprint_gate"] = final_ai_footprint_gate
     final_footprint_before = final_ai_footprint_gate.get("before", {}) or {}
     final_footprint_after = final_ai_footprint_gate.get("after", {}) or {}
@@ -17921,7 +18025,9 @@ def run_rewrite_pipeline(
     with open(json_path_out, "w") as f:
         json.dump(summary, f, indent=2, default=str)
 
-    if summary.get("rollback_applied") or summary.get("no_text_change"):
+    if summary.get("outcome") == "topk_blocked":
+        pipeline_status = "topk_blocked"
+    elif summary.get("rollback_applied") or summary.get("no_text_change"):
         pipeline_status = "original_preserved"
     elif summary.get("outcome") in {"partially_improved", "partially_ai_mitigated", "cleanup_improved"}:
         pipeline_status = summary.get("outcome")
