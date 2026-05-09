@@ -450,6 +450,25 @@ function deriveCalibratedAuthorshipRating(score, topkPatternScore = null, topkCa
   };
 }
 
+function formatAuthorshipSealDetail({
+  rating = {},
+  topkPatternScore = null,
+  topkCalibratedRisk = null,
+  calibratedAuthorshipRisk = null,
+  fallbackScore = null,
+}) {
+  if (rating.topk_strong_signal && topkPatternScore != null && rating.supporting_signal) {
+    return `${formatMetricPercent(topkPatternScore, 0)} top-k · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${rating.supporting_signal.label.toLowerCase()}`;
+  }
+  if (rating.topk_escalated && (topkCalibratedRisk != null || topkPatternScore != null)) {
+    return `${formatMetricPercent(topkCalibratedRisk ?? topkPatternScore, 0)} top-k signal`;
+  }
+  if (calibratedAuthorshipRisk != null) {
+    return `${formatMetricPercent(calibratedAuthorshipRisk, 0)} calibrated risk`;
+  }
+  return `${formatMetricPercent(fallbackScore, 1)} raw signal`;
+}
+
 function getAuthorshipTone(rating = {}) {
   const code = String(rating.code || rating.short_label || rating.label || '').toLowerCase();
   if (code.includes('low_signal') || code.includes('low signal')) {
@@ -1169,9 +1188,13 @@ export default function Report() {
       }
     : null;
   const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
+  const rewrittenWritingScore = rewrittenScan.writing_score ?? rewrittenBadge.writing_quality_score ?? null;
   const calibratedAuthorshipRisk = clampPercent(transformation?.features?.calibrated_ai_risk);
   const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern_raw ?? originalComparisonBadge.ai_components?.topk_pattern);
   const topkCalibratedRisk = clampPercent(originalComparisonBadge.ai_components?.topk_calibrated_risk);
+  const rewrittenCalibratedAuthorshipRisk = clampPercent(rewrittenTransformation?.features?.calibrated_ai_risk);
+  const rewrittenTopkPatternScore = clampPercent(rewrittenBadge.ai_components?.topk_pattern_raw ?? rewrittenBadge.ai_components?.topk_pattern);
+  const rewrittenTopkCalibratedRisk = clampPercent(rewrittenBadge.ai_components?.topk_calibrated_risk);
   const rawAuthorshipSignal = aiScore;
   const storedAuthorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
@@ -1189,13 +1212,33 @@ export default function Report() {
   const authorshipTone = getAuthorshipTone(authorshipRating);
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
-  const authorshipSealDetail = authorshipRating.topk_strong_signal && topkPatternScore != null && authorshipRating.supporting_signal
-    ? `${formatMetricPercent(topkPatternScore, 0)} top-k · ${formatMetricPercent(authorshipRating.supporting_signal.score, 0)} ${authorshipRating.supporting_signal.label.toLowerCase()}`
-    : authorshipRating.topk_escalated && (topkCalibratedRisk != null || topkPatternScore != null)
-      ? `${formatMetricPercent(topkCalibratedRisk ?? topkPatternScore, 0)} top-k signal`
-    : calibratedAuthorshipRisk != null
-      ? `${formatMetricPercent(calibratedAuthorshipRisk, 0)} calibrated risk`
-      : `${formatMetricPercent(originalComparisonAiScore, 1)} raw signal`;
+  const authorshipSealDetail = formatAuthorshipSealDetail({
+    rating: authorshipRating,
+    topkPatternScore,
+    topkCalibratedRisk,
+    calibratedAuthorshipRisk,
+    fallbackScore: originalComparisonAiScore,
+  });
+  const rewrittenStoredAuthorshipRating = rewrittenBadge.authorship_rating || deriveAuthorshipRatingFallback(
+    rewrittenAiScore,
+    rewrittenBadge.tier || badge.tier || report.tier,
+    rewrittenWritingScore,
+    rewrittenBadge.ai_components,
+    rewrittenBadge.writing_components
+  ) || {};
+  const rewrittenAuthorshipRating = deriveCalibratedAuthorshipRating(
+    rewrittenCalibratedAuthorshipRisk,
+    rewrittenTopkPatternScore,
+    rewrittenTopkCalibratedRisk,
+    rewrittenTransformation?.features
+  ) || rewrittenStoredAuthorshipRating;
+  const rewrittenAuthorshipSealDetail = formatAuthorshipSealDetail({
+    rating: rewrittenAuthorshipRating,
+    topkPatternScore: rewrittenTopkPatternScore,
+    topkCalibratedRisk: rewrittenTopkCalibratedRisk,
+    calibratedAuthorshipRisk: rewrittenCalibratedAuthorshipRisk,
+    fallbackScore: rewrittenAiScore,
+  });
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
   const submittedContent = buildSubmittedContentModel(report);
@@ -1219,6 +1262,15 @@ export default function Report() {
     hasRewriteResult &&
     (rewrittenTransformation || rewrittenTransformationSummary)
   );
+  const sealAuthorshipRating = hasRewriteSignalComparison && rewrittenAuthorshipRating
+    ? rewrittenAuthorshipRating
+    : authorshipRating;
+  const sealAuthorshipTone = getAuthorshipTone(sealAuthorshipRating);
+  const sealAuthorshipFullLabel = sealAuthorshipRating.label || (hasRewriteSignalComparison ? rewrittenBadge.authorship_rating_label : badge.authorship_rating_label) || null;
+  const sealAuthorshipLabel = sealAuthorshipRating.short_label || sealAuthorshipFullLabel;
+  const sealAuthorshipDetail = hasRewriteSignalComparison
+    ? rewrittenAuthorshipSealDetail
+    : authorshipSealDetail;
   const pairedTransformationSignals = hasRewriteSignalComparison
     ? buildPairedTransformationSignals(transformationSignals, rewrittenTransformationSignals)
     : null;
@@ -1512,16 +1564,16 @@ export default function Report() {
         <div
           className="transformation-authorship-seal"
           style={{
-            '--rating-color': authorshipTone.color,
-            '--rating-bg': authorshipTone.bg,
+            '--rating-color': sealAuthorshipTone.color,
+            '--rating-bg': sealAuthorshipTone.bg,
           }}
         >
-          <span>Authorship Rating</span>
-          <strong title={authorshipRatingFullLabel || authorshipRatingLabel || undefined}>
-            {authorshipRatingLabel || 'Not Rated'}
+          <span>{hasRewriteSignalComparison ? 'Rewritten Outcome' : 'Authorship Rating'}</span>
+          <strong title={sealAuthorshipFullLabel || sealAuthorshipLabel || undefined}>
+            {sealAuthorshipLabel || 'Not Rated'}
           </strong>
           <em>
-            {authorshipSealDetail}
+            {sealAuthorshipDetail}
           </em>
         </div>
       </div>

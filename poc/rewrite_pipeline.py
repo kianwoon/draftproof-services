@@ -15818,6 +15818,13 @@ def run_rewrite_pipeline(
                     "trigger_phase": trigger_phase,
                 }
                 return
+            existing_summary = search_summary.get("final_topk_texture_repair")
+            if (
+                isinstance(existing_summary, dict)
+                and existing_summary.get("enabled")
+                and not existing_summary.get("skipped")
+            ):
+                return
             if not effective_key:
                 search_summary["final_topk_texture_repair"] = {
                     "enabled": False,
@@ -16531,6 +16538,8 @@ def run_rewrite_pipeline(
                     and bool(best_selection_status.get("topk_safe_band_achieved"))
                 ):
                     _run_post_topk_ai_safe_band_optimizer("after_topk_safe_band_rebuild")
+                    if not _strict_ai_safe_band_status(best_report).get("achieved"):
+                        _run_final_topk_texture_repair("after_post_topk_optimizer")
                 internet_priority = _internet_reauthor_priority_status(original_report_dict, component_base_text)
                 paragraph_component_first = bool(
                     paragraph_search_enabled
