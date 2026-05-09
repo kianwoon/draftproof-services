@@ -5375,6 +5375,8 @@ def _goal_climb_candidate_rank(
     }.get(footprint_outcome, 0)
     if status.get("topk_blocker_progress"):
         footprint_priority = max(footprint_priority, 2)
+    if status.get("topk_safe_band_achieved"):
+        footprint_priority = max(footprint_priority, 5)
     footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
     external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"), 0.0)
     topk_drop = num(footprint_drops.get("topk_calibrated_risk"), 0.0)
@@ -13927,6 +13929,20 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
             )
+            candidate_after_authorship = (
+                (ai_footprint_gate.get("after") or {}).get("authorship_footprint") or {}
+            )
+            candidate_topk_calibrated = candidate_after_authorship.get("topk_calibrated_risk")
+            topk_safe_band_rebuild_selectable = bool(
+                topk_safe_band_rebuild
+                and isinstance(candidate_topk_calibrated, (int, float))
+                and float(candidate_topk_calibrated) < _safe_topk_calibrated_limit()
+                and candidate_critical_high <= saved_critical_high
+                and candidate_finding_total <= original_total
+                and candidate_review_burden <= original_review_burden
+                and candidate_weighted_severity <= original_severity
+                and not authenticity_status.get("critical_high_regressed")
+            )
             score_drag_status = _score_drag_removal_status(
                 authenticity_status=authenticity_status,
                 human_shift=human_shift,
@@ -14039,6 +14055,15 @@ def run_rewrite_pipeline(
                     "reason": "accepted_topk_blocker_progress",
                     "topk_blocker_progress": True,
                 })
+            if topk_safe_band_rebuild_selectable:
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "reason": "accepted_topk_safe_band_rebuild",
+                    "topk_safe_band_rebuild": True,
+                    "topk_safe_band_achieved": True,
+                    "topk_calibrated_risk": round(float(candidate_topk_calibrated), 3),
+                })
             if (
                 not selection_status.get("selectable")
                 and (
@@ -14048,6 +14073,7 @@ def run_rewrite_pipeline(
                     or
                     ai_footprint_selectable
                     or topk_blocker_progress_selectable
+                    or topk_safe_band_rebuild_selectable
                     or
                     incremental_authenticity_selectable
                     or human_amplification_selectable
@@ -14076,25 +14102,29 @@ def run_rewrite_pipeline(
                                             "accepted_topk_blocker_progress"
                                             if topk_blocker_progress_selectable
                                             else (
-                                                "accepted_human_signal_amplification"
-                                                if human_amplification_selectable
+                                                "accepted_topk_safe_band_rebuild"
+                                                if topk_safe_band_rebuild_selectable
                                                 else (
-                                                    "accepted_post_safe_target_climb"
-                                                    if post_safe_target_climb_selectable
+                                                    "accepted_human_signal_amplification"
+                                                    if human_amplification_selectable
                                                     else (
-                                                        "accepted_score_drag_removal"
-                                                        if score_drag_removal_selectable
+                                                        "accepted_post_safe_target_climb"
+                                                        if post_safe_target_climb_selectable
                                                         else (
-                                                            "accepted_safe_partial_quality_improvement"
-                                                            if safe_partial_quality_selectable
+                                                            "accepted_score_drag_removal"
+                                                            if score_drag_removal_selectable
                                                             else (
-                                                                (
-                                                                    "accepted_incremental_human_target_progress"
-                                                                    if _radar_goal_requires_human_progress(radar_goal_controller)
-                                                                    else "accepted_safe_authorship_suppression"
+                                                                "accepted_safe_partial_quality_improvement"
+                                                                if safe_partial_quality_selectable
+                                                                else (
+                                                                    (
+                                                                        "accepted_incremental_human_target_progress"
+                                                                        if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                                        else "accepted_safe_authorship_suppression"
+                                                                    )
+                                                                    if safe_authorship_suppression_selectable
+                                                                    else "accepted_incremental_authenticity_progress"
                                                                 )
-                                                                if safe_authorship_suppression_selectable
-                                                                else "accepted_incremental_authenticity_progress"
                                                             )
                                                         )
                                                     )
@@ -14110,6 +14140,8 @@ def run_rewrite_pipeline(
                     "ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"),
                     "partial_ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "partially_ai_mitigated"),
                     "topk_blocker_progress": bool(topk_blocker_progress_selectable),
+                    "topk_safe_band_rebuild": bool(topk_safe_band_rebuild_selectable),
+                    "topk_safe_band_achieved": bool(topk_safe_band_rebuild_selectable),
                     "cleanup_improved": bool(safe_partial_quality_selectable and ai_footprint_outcome == "cleanup_improved"),
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
                     "human_signal_amplification": bool(human_amplification_selectable),
