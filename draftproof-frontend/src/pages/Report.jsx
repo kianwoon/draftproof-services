@@ -24,6 +24,7 @@ const SEVERITY_CONFIG = {
 };
 
 const SIGNAL_COLORS = {
+  topk_pattern: '#be123c',
   ai_likelihood: '#9a3412',
   adjusted_ai_risk: '#dc2626',
   calibrated_ai_risk: '#b91c1c',
@@ -74,6 +75,7 @@ function clampPercent(value) {
 }
 
 const TRANSFORMATION_SIGNAL_LABELS = {
+  topk_pattern: 'Top-k predictability',
   ai_likelihood: 'AI likelihood',
   adjusted_ai_risk: 'Adjusted AI risk',
   calibrated_ai_risk: 'Calibrated AI risk',
@@ -94,6 +96,7 @@ const TRANSFORMATION_SIGNAL_LABELS = {
 };
 
 const TRANSFORMATION_SIGNAL_DESCRIPTIONS = {
+  topk_pattern: 'How often the writing follows highly predictable next-token routes. Target: below 25%. Lower is safer and less likely to look machine-routed.',
   ai_likelihood: 'Statistical AI-style signal based on predictability, token concentration, generic phrasing, and sentence regularity.',
   adjusted_ai_risk: 'AI likelihood after reducing certainty for strong human anchoring and calibration checks.',
   calibrated_ai_risk: 'Final calibrated authorship risk after thresholding, signal agreement, and reporting safeguards.',
@@ -114,6 +117,7 @@ const TRANSFORMATION_SIGNAL_DESCRIPTIONS = {
 };
 
 const TRANSFORMATION_SIGNAL_ORDER = [
+  'topk_pattern',
   'ai_likelihood',
   'adjusted_ai_risk',
   'calibrated_ai_risk',
@@ -134,6 +138,7 @@ const TRANSFORMATION_SIGNAL_ORDER = [
 ];
 
 const TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION = {
+  topk_pattern: 'lower',
   ai_likelihood: 'lower',
   adjusted_ai_risk: 'lower',
   calibrated_ai_risk: 'lower',
@@ -150,6 +155,8 @@ const TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION = {
   human_anchor_score: 'higher',
   human_anchor_discount: 'higher',
 };
+
+const FEATURED_TRANSFORMATION_SIGNAL_KEYS = ['topk_pattern'];
 
 function buildTransformationSignals(features = {}, suppliedSignals = []) {
   const suppliedByKey = new Map(
@@ -178,6 +185,14 @@ function buildTransformationSignals(features = {}, suppliedSignals = []) {
 
 function sortTransformationSignalsForComparison(signals = []) {
   return [...signals].sort((a, b) => {
+    const aFeatured = FEATURED_TRANSFORMATION_SIGNAL_KEYS.indexOf(a.key);
+    const bFeatured = FEATURED_TRANSFORMATION_SIGNAL_KEYS.indexOf(b.key);
+    if (aFeatured !== -1 || bFeatured !== -1) {
+      if (aFeatured === -1) return 1;
+      if (bFeatured === -1) return -1;
+      if (aFeatured !== bFeatured) return aFeatured - bFeatured;
+    }
+
     const labelCompare = String(a.label || '').localeCompare(String(b.label || ''), undefined, {
       sensitivity: 'base',
     });
@@ -449,8 +464,30 @@ function getScanIntelligence(scan) {
   return scan?.scan_intelligence || scan?.results_json?.scan_intelligence || {};
 }
 
+function getScanAiComponents(scan) {
+  return scan?.ai_risk_badge?.ai_components || scan?.results_json?.ai_risk_badge?.ai_components || {};
+}
+
 function getScanTransformationSignals(scan) {
-  return getScanIntelligence(scan).transformation?.core_signals || [];
+  const coreSignals = getScanIntelligence(scan).transformation?.core_signals || [];
+  const topkPattern = clampPercent(getScanAiComponents(scan).topk_pattern);
+
+  if (topkPattern == null || coreSignals.some((signal) => signal?.key === 'topk_pattern')) {
+    return coreSignals;
+  }
+
+  return [
+    ...coreSignals,
+    {
+      key: 'topk_pattern',
+      label: TRANSFORMATION_SIGNAL_LABELS.topk_pattern,
+      description: TRANSFORMATION_SIGNAL_DESCRIPTIONS.topk_pattern,
+      family: 'ai_authorship_risk',
+      higher_score_means: 'more predictable token routes',
+      score: topkPattern,
+      metric_source: 'ai_components',
+    },
+  ];
 }
 
 function getScanContributionSummary(scan) {
