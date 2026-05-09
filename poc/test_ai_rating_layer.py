@@ -29,7 +29,7 @@ from report.report import (
     report_to_dict,
 )
 from detect.semantic_shape import SemanticShapeDetector
-from report.render import _authorship_rating_from_badge, render_markdown
+from report.render import _authorship_rating_from_badge, _display_authorship_rating_from_badge, render_markdown
 
 
 def assert_equal(actual, expected, message):
@@ -327,6 +327,27 @@ assert_equal(
     render_density_fallback["label"],
     "AI-Generated / AI-Paraphrased Signals",
     "detect PDF renderer escalates dense qualifying-text AI profile from old score fields",
+)
+
+render_topk_calibrated_floor = _display_authorship_rating_from_badge({
+    "ai_likelihood_score": 47.85,
+    "ai_components": {
+        "topk_pattern": 80.83,
+    },
+    "transformation_classification": {
+        "features": {
+            "calibrated_ai_risk": 19.82,
+        },
+    },
+})
+assert_equal(
+    render_topk_calibrated_floor["label"],
+    "Likely AI-Assisted",
+    "high top-k predictability floors the calibrated display rating above Good",
+)
+assert_true(
+    render_topk_calibrated_floor.get("topk_escalated"),
+    "top-k calibrated floor is exposed for page/PDF seal copy",
 )
 
 scored = Layer3Scorer().score(

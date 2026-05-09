@@ -347,22 +347,48 @@ function deriveAuthorshipRatingFallback(score, tierValue, writingScore, aiCompon
   return { label: 'Low AI Signal', short_label: 'Low Signal' };
 }
 
-function deriveCalibratedAuthorshipRating(score) {
-  if (score == null || Number.isNaN(Number(score))) return null;
-  const percent = metricValue(score);
-  if (percent >= 60) {
-    return { label: 'Strong AI-Style Signal', short_label: 'Strong AI Signal', code: 'ai_generated_signals' };
+const CALIBRATED_AUTHORSHIP_LEVELS = [
+  { min: 60, level: 4, label: 'Strong AI-Style Signal', short_label: 'Strong AI Signal', code: 'ai_generated_signals' },
+  { min: 45, level: 3, label: 'Likely AI-Assisted', short_label: 'Likely AI-Assisted', code: 'likely_ai' },
+  { min: 32, level: 2, label: 'Possible AI-Assisted', short_label: 'Possible AI-Assisted', code: 'possible_ai_assisted' },
+  { min: 20, level: 1, label: 'Unlikely AI-Assisted', short_label: 'Unlikely AI-Assisted', code: 'unlikely_ai' },
+  { min: 0, level: 0, label: 'Good', short_label: 'Good', code: 'low_ai_signal' },
+];
+
+function ratingForCalibratedPercent(percent) {
+  const rating = CALIBRATED_AUTHORSHIP_LEVELS.find((item) => percent >= item.min) || CALIBRATED_AUTHORSHIP_LEVELS.at(-1);
+  return { ...rating };
+}
+
+function deriveCalibratedAuthorshipRating(score, topkPatternScore = null) {
+  const calibratedPercent = clampPercent(score);
+  const topkPercent = clampPercent(topkPatternScore);
+  let rating = calibratedPercent == null ? null : ratingForCalibratedPercent(calibratedPercent);
+
+  const applyTopkFloor = (floor) => {
+    if (!rating || rating.level < floor.level) {
+      rating = {
+        ...floor,
+        topk_escalated: true,
+        topk_score: topkPercent,
+      };
+    }
+  };
+
+  if (topkPercent != null) {
+    if (topkPercent >= 80) {
+      applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'likely_ai'));
+    } else if (topkPercent >= 70) {
+      applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'possible_ai_assisted'));
+    }
   }
-  if (percent >= 45) {
-    return { label: 'Likely AI-Assisted', short_label: 'Likely AI-Assisted', code: 'likely_ai' };
-  }
-  if (percent >= 32) {
-    return { label: 'Possible AI-Assisted', short_label: 'Possible AI-Assisted', code: 'possible_ai_assisted' };
-  }
-  if (percent >= 20) {
-    return { label: 'Unlikely AI-Assisted', short_label: 'Unlikely AI-Assisted', code: 'unlikely_ai' };
-  }
-  return { label: 'Good', short_label: 'Good', code: 'low_ai_signal' };
+
+  if (!rating) return null;
+  return {
+    ...rating,
+    score: calibratedPercent,
+    topk_score: rating.topk_score ?? topkPercent,
+  };
 }
 
 function getAuthorshipTone(rating = {}) {
@@ -1085,6 +1111,7 @@ export default function Report() {
     : null;
   const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
   const calibratedAuthorshipRisk = clampPercent(transformation?.features?.calibrated_ai_risk);
+  const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern);
   const rawAuthorshipSignal = aiScore;
   const storedAuthorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
@@ -1093,10 +1120,15 @@ export default function Report() {
     badge.ai_components,
     badge.writing_components
   ) || {};
-  const authorshipRating = deriveCalibratedAuthorshipRating(calibratedAuthorshipRisk) || storedAuthorshipRating;
+  const authorshipRating = deriveCalibratedAuthorshipRating(calibratedAuthorshipRisk, topkPatternScore) || storedAuthorshipRating;
   const authorshipTone = getAuthorshipTone(authorshipRating);
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
+  const authorshipSealDetail = authorshipRating.topk_escalated && topkPatternScore != null
+    ? `${formatMetricPercent(topkPatternScore, 0)} top-k signal`
+    : calibratedAuthorshipRisk != null
+      ? `${formatMetricPercent(calibratedAuthorshipRisk, 0)} calibrated risk`
+      : `${formatMetricPercent(originalComparisonAiScore, 1)} raw signal`;
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
   const submittedContent = buildSubmittedContentModel(report);
@@ -1402,9 +1434,7 @@ export default function Report() {
             {authorshipRatingLabel || 'Not Rated'}
           </strong>
           <em>
-            {calibratedAuthorshipRisk != null
-              ? `${formatMetricPercent(calibratedAuthorshipRisk, 0)} calibrated risk`
-              : `${formatMetricPercent(transformationOriginalScore, 1)} raw signal`}
+            {authorshipSealDetail}
           </em>
         </div>
       </div>

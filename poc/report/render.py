@@ -85,6 +85,7 @@ _FILTER_CODES = {
 }
 
 _SIGNAL_CHART_ORDER = [
+    "topk_pattern",
     "adjusted_ai_risk",
     "ai_likelihood",
     "calibrated_ai_risk",
@@ -105,6 +106,7 @@ _SIGNAL_CHART_ORDER = [
 ]
 
 _SIGNAL_CHART_COLORS = {
+    "topk_pattern": "#be123c",
     "ai_likelihood": "#c2410c",
     "adjusted_ai_risk": "#c2410c",
     "calibrated_ai_risk": "#c2410c",
@@ -245,8 +247,17 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
     }
 
 
-def _signal_chart_rows(features: dict) -> list[dict]:
+def _signal_chart_rows(features: dict, badge: dict | None = None) -> list[dict]:
     rows_by_key = {row["key"]: row for row in _transformation_signals(features)}
+    topk_score = _tf_pct(((badge or {}).get("ai_components") or {}).get("topk_pattern"))
+    if topk_score is not None and "topk_pattern" not in rows_by_key:
+        label, description = _AI_COMPONENT_LABELS["topk_pattern"]
+        rows_by_key["topk_pattern"] = {
+            "key": "topk_pattern",
+            "label": label,
+            "description": description,
+            "score": topk_score,
+        }
     ordered = []
     for key in _SIGNAL_CHART_ORDER:
         row = rows_by_key.get(key)
@@ -269,29 +280,56 @@ def _summary_stat_html(label: str, value: str, *, color: str = "#111827", extra_
     )
 
 
-def _authorship_rating_from_calibrated_risk(score) -> dict:
+_CALIBRATED_AUTHORSHIP_LEVELS = [
+    {
+        "min": 60,
+        "level": 4,
+        "label": "Strong AI-Style Signal",
+        "short_label": "Strong AI Signal",
+        "code": "ai_generated_signals",
+    },
+    {"min": 45, "level": 3, "label": "Likely AI-Assisted", "short_label": "Likely AI-Assisted", "code": "likely_ai"},
+    {
+        "min": 32,
+        "level": 2,
+        "label": "Possible AI-Assisted",
+        "short_label": "Possible AI-Assisted",
+        "code": "possible_ai_assisted",
+    },
+    {"min": 20, "level": 1, "label": "Unlikely AI-Assisted", "short_label": "Unlikely AI-Assisted", "code": "unlikely_ai"},
+    {"min": 0, "level": 0, "label": "Good", "short_label": "Good", "code": "low_ai_signal"},
+]
+
+
+def _rating_for_calibrated_score(score: float) -> dict:
+    for rating in _CALIBRATED_AUTHORSHIP_LEVELS:
+        if score >= rating["min"]:
+            return dict(rating)
+    return dict(_CALIBRATED_AUTHORSHIP_LEVELS[-1])
+
+
+def _authorship_rating_from_calibrated_risk(score, topk_score=None) -> dict:
     calibrated_score = _tf_pct(score)
-    if calibrated_score is None:
+    topk_score = _tf_pct(topk_score)
+    rating = _rating_for_calibrated_score(calibrated_score) if calibrated_score is not None else {}
+
+    def _apply_topk_floor(floor_code: str) -> None:
+        nonlocal rating
+        floor = next((dict(item) for item in _CALIBRATED_AUTHORSHIP_LEVELS if item["code"] == floor_code), {})
+        if floor and (not rating or rating.get("level", -1) < floor["level"]):
+            rating = {**floor, "topk_escalated": True, "topk_score": topk_score}
+
+    if topk_score is not None:
+        if topk_score >= 80:
+            _apply_topk_floor("likely_ai")
+        elif topk_score >= 70:
+            _apply_topk_floor("possible_ai_assisted")
+
+    if not rating:
         return {}
-    if calibrated_score >= 60:
-        return {
-            "label": "Strong AI-Style Signal",
-            "short_label": "Strong AI Signal",
-            "code": "ai_generated_signals",
-            "score": calibrated_score,
-        }
-    if calibrated_score >= 45:
-        return {"label": "Likely AI-Assisted", "short_label": "Likely AI-Assisted", "code": "likely_ai", "score": calibrated_score}
-    if calibrated_score >= 32:
-        return {
-            "label": "Possible AI-Assisted",
-            "short_label": "Possible AI-Assisted",
-            "code": "possible_ai_assisted",
-            "score": calibrated_score,
-        }
-    if calibrated_score >= 20:
-        return {"label": "Unlikely AI-Assisted", "short_label": "Unlikely AI-Assisted", "code": "unlikely_ai", "score": calibrated_score}
-    return {"label": "Good", "short_label": "Good", "code": "low_ai_signal", "score": calibrated_score}
+    rating["score"] = calibrated_score
+    rating["topk_score"] = rating.get("topk_score", topk_score)
+    return rating
 
 
 def _authorship_rating_tone(rating: dict) -> dict:
@@ -311,7 +349,8 @@ def _authorship_rating_tone(rating: dict) -> dict:
 
 def _display_authorship_rating_from_badge(badge: dict) -> dict:
     features = (((badge or {}).get("transformation_classification") or {}).get("features") or {})
-    calibrated = _authorship_rating_from_calibrated_risk(features.get("calibrated_ai_risk"))
+    topk_score = ((badge or {}).get("ai_components") or {}).get("topk_pattern")
+    calibrated = _authorship_rating_from_calibrated_risk(features.get("calibrated_ai_risk"), topk_score)
     return calibrated or _authorship_rating_from_badge(badge)
 
 
@@ -328,7 +367,7 @@ def _executive_signal_chart_html(
     badge = report.ai_risk_badge or {}
     transformation = badge.get("transformation_classification") or {}
     features = transformation.get("features") or {}
-    rows = _signal_chart_rows(features)
+    rows = _signal_chart_rows(features, badge)
     if not badge or not transformation or not rows:
         return ""
 
@@ -356,6 +395,13 @@ def _executive_signal_chart_html(
     )
     rating_tone = _authorship_rating_tone(rating)
     calibrated_score = _tf_pct(features.get("calibrated_ai_risk"))
+    topk_score = _tf_pct((badge.get("ai_components") or {}).get("topk_pattern"))
+    if rating.get("topk_escalated") and topk_score is not None:
+        rating_detail = f"{topk_score:.0f}% top-k signal"
+    elif calibrated_score is not None:
+        rating_detail = f"{calibrated_score:.0f}% calibrated risk"
+    else:
+        rating_detail = f"{(_tf_pct(badge.get('ai_likelihood_score')) or 0.0):.0f}% raw signal"
     ai_score = _tf_pct(badge.get("ai_likelihood_score")) or 0.0
     writing_score = _tf_pct(badge.get("writing_quality_score")) or 0.0
     contribution = _transformation_contribution_summary(features, rows)
@@ -442,7 +488,7 @@ def _executive_signal_chart_html(
         ),
         '<span>Authorship Rating</span>',
         f'<strong>{escape(rating_label)}</strong>',
-        f'<em>{(calibrated_score if calibrated_score is not None else ai_score):.0f}% calibrated risk</em>',
+        f'<em>{escape(rating_detail)}</em>',
         '</div>',
         '</header>',
         '<div class="dp-scan-head">',
