@@ -385,25 +385,57 @@ function ratingForCalibratedPercent(percent) {
   return { ...rating };
 }
 
-function deriveCalibratedAuthorshipRating(score, topkPatternScore = null) {
+function strongestSupportingAiShapeSignal(signals = {}) {
+  const candidates = [
+    ['ai_likelihood', 'AI likelihood', signals.ai_likelihood],
+    ['semantic_uniformity_risk', 'Semantic uniformity', signals.semantic_uniformity_risk],
+    ['section_style_variance', 'Patchwork variance', signals.section_style_variance],
+    ['rewrite_smoothness', 'Rewrite smoothness', signals.rewrite_smoothness],
+    ['outline_to_text_expansion', 'Expansion pattern', signals.outline_to_text_expansion],
+    ['discourse_regularity_risk', 'Discourse regularity', signals.discourse_regularity_risk],
+  ]
+    .map(([key, label, value]) => ({ key, label, score: clampPercent(value) }))
+    .filter((signal) => signal.score != null);
+
+  return candidates.find((signal) => signal.score >= 50) || null;
+}
+
+function deriveCalibratedAuthorshipRating(score, topkPatternScore = null, topkCalibratedRisk = null, supportingSignals = {}) {
   const calibratedPercent = clampPercent(score);
   const topkPercent = clampPercent(topkPatternScore);
+  const topkRiskPercent = clampPercent(topkCalibratedRisk);
+  const supportingSignal = strongestSupportingAiShapeSignal(supportingSignals);
   let rating = calibratedPercent == null ? null : ratingForCalibratedPercent(calibratedPercent);
 
-  const applyTopkFloor = (floor) => {
+  const applyTopkFloor = (floor, extra = {}) => {
     if (!rating || rating.level < floor.level) {
       rating = {
         ...floor,
         topk_escalated: true,
         topk_score: topkPercent,
+        topk_calibrated_risk: topkRiskPercent,
+        supporting_signal: supportingSignal,
+        ...extra,
       };
     }
   };
 
-  if (topkPercent != null) {
-    if (topkPercent >= 80) {
+  if (
+    topkPercent != null &&
+    topkRiskPercent != null &&
+    topkPercent >= 90 &&
+    topkRiskPercent >= 90 &&
+    supportingSignal
+  ) {
+    applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'ai_generated_signals'), {
+      topk_strong_signal: true,
+    });
+  }
+
+  if (topkPercent != null || topkRiskPercent != null) {
+    if (topkPercent >= 80 || (topkRiskPercent != null && topkRiskPercent >= 80)) {
       applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'likely_ai'));
-    } else if (topkPercent >= 70) {
+    } else if (topkPercent >= 70 || (topkRiskPercent != null && topkRiskPercent >= 70)) {
       applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'possible_ai_assisted'));
     }
   }
@@ -413,6 +445,8 @@ function deriveCalibratedAuthorshipRating(score, topkPatternScore = null) {
     ...rating,
     score: calibratedPercent,
     topk_score: rating.topk_score ?? topkPercent,
+    topk_calibrated_risk: rating.topk_calibrated_risk ?? topkRiskPercent,
+    supporting_signal: rating.supporting_signal ?? supportingSignal,
   };
 }
 
@@ -1136,7 +1170,8 @@ export default function Report() {
     : null;
   const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
   const calibratedAuthorshipRisk = clampPercent(transformation?.features?.calibrated_ai_risk);
-  const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern);
+  const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern_raw ?? originalComparisonBadge.ai_components?.topk_pattern);
+  const topkCalibratedRisk = clampPercent(originalComparisonBadge.ai_components?.topk_calibrated_risk);
   const rawAuthorshipSignal = aiScore;
   const storedAuthorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
@@ -1145,12 +1180,19 @@ export default function Report() {
     badge.ai_components,
     badge.writing_components
   ) || {};
-  const authorshipRating = deriveCalibratedAuthorshipRating(calibratedAuthorshipRisk, topkPatternScore) || storedAuthorshipRating;
+  const authorshipRating = deriveCalibratedAuthorshipRating(
+    calibratedAuthorshipRisk,
+    topkPatternScore,
+    topkCalibratedRisk,
+    transformation?.features
+  ) || storedAuthorshipRating;
   const authorshipTone = getAuthorshipTone(authorshipRating);
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
-  const authorshipSealDetail = authorshipRating.topk_escalated && topkPatternScore != null
-    ? `${formatMetricPercent(topkPatternScore, 0)} top-k signal`
+  const authorshipSealDetail = authorshipRating.topk_strong_signal && topkPatternScore != null && authorshipRating.supporting_signal
+    ? `${formatMetricPercent(topkPatternScore, 0)} top-k · ${formatMetricPercent(authorshipRating.supporting_signal.score, 0)} ${authorshipRating.supporting_signal.label.toLowerCase()}`
+    : authorshipRating.topk_escalated && (topkCalibratedRisk != null || topkPatternScore != null)
+      ? `${formatMetricPercent(topkCalibratedRisk ?? topkPatternScore, 0)} top-k signal`
     : calibratedAuthorshipRisk != null
       ? `${formatMetricPercent(calibratedAuthorshipRisk, 0)} calibrated risk`
       : `${formatMetricPercent(originalComparisonAiScore, 1)} raw signal`;

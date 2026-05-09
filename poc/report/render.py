@@ -105,6 +105,7 @@ _SIGNAL_CHART_ORDER = [
 ]
 
 _SIGNAL_CHART_COLORS = {
+    "topk_calibrated_risk": "#e11d48",
     "topk_pattern": "#be123c",
     "ai_likelihood": "#c2410c",
     "adjusted_ai_risk": "#c2410c",
@@ -128,7 +129,8 @@ _SIGNAL_CHART_COLORS = {
 # ── Layman labels for AI Likelihood components ──────────────────────────
 _AI_COMPONENT_LABELS = {
     "predictability": ("Predictability", "How predictable the word choices are — higher means the text reads like statistically common patterns"),
-    "topk_pattern": ("Common Word Patterns", "How many words are among the most statistically likely choices — AI models heavily favour these"),
+    "topk_calibrated_risk": ("Calibrated Top-k Risk", "Calibrated risk from raw token-route concentration. Lower is safer and less likely to look machine-routed."),
+    "topk_pattern": ("Raw Top-k Predictability", "Raw token-route concentration. Diagnostic only; calibrated Top-k risk controls the safe-band gate."),
     "generic_phrase_density": ("Generic Phrases", "Density of overused filler phrases commonly found in templated or AI-generated writing"),
     "burstiness_risk": ("Uniform Sentence Length", "How similar sentence lengths are across the text — human writing naturally varies more"),
     "repeated_sentence_structure_risk": ("Repeated Sentence Openings", "How often sentences start with the same or similar phrases"),
@@ -248,7 +250,17 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
 
 def _signal_chart_rows(features: dict, badge: dict | None = None) -> list[dict]:
     rows_by_key = {row["key"]: row for row in _transformation_signals(features)}
-    topk_score = _tf_pct(((badge or {}).get("ai_components") or {}).get("topk_pattern"))
+    ai_components = (badge or {}).get("ai_components") or {}
+    topk_calibrated_score = _tf_pct(ai_components.get("topk_calibrated_risk"))
+    if topk_calibrated_score is not None and "topk_calibrated_risk" not in rows_by_key:
+        label, description = _AI_COMPONENT_LABELS["topk_calibrated_risk"]
+        rows_by_key["topk_calibrated_risk"] = {
+            "key": "topk_calibrated_risk",
+            "label": label,
+            "description": description,
+            "score": topk_calibrated_score,
+        }
+    topk_score = _tf_pct(ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")))
     if topk_score is not None and "topk_pattern" not in rows_by_key:
         label, description = _AI_COMPONENT_LABELS["topk_pattern"]
         rows_by_key["topk_pattern"] = {
@@ -300,27 +312,62 @@ def _rating_for_calibrated_score(score: float) -> dict:
     return dict(_CALIBRATED_AUTHORSHIP_LEVELS[-1])
 
 
-def _authorship_rating_from_calibrated_risk(score, topk_score=None) -> dict:
+def _strongest_supporting_ai_shape_signal(features: dict | None) -> dict | None:
+    for key, label in [
+        ("ai_likelihood", "AI likelihood"),
+        ("semantic_uniformity_risk", "Semantic uniformity"),
+        ("section_style_variance", "Patchwork variance"),
+        ("rewrite_smoothness", "Rewrite smoothness"),
+        ("outline_to_text_expansion", "Expansion pattern"),
+        ("discourse_regularity_risk", "Discourse regularity"),
+    ]:
+        signal_score = _tf_pct((features or {}).get(key))
+        if signal_score is not None and signal_score >= 50:
+            return {"key": key, "label": label, "score": signal_score}
+    return None
+
+
+def _authorship_rating_from_calibrated_risk(score, topk_score=None, topk_calibrated_risk=None, features: dict | None = None) -> dict:
     calibrated_score = _tf_pct(score)
     topk_score = _tf_pct(topk_score)
+    topk_calibrated_score = _tf_pct(topk_calibrated_risk)
+    supporting_signal = _strongest_supporting_ai_shape_signal(features)
     rating = _rating_for_calibrated_score(calibrated_score) if calibrated_score is not None else {}
 
-    def _apply_topk_floor(floor_code: str) -> None:
+    def _apply_topk_floor(floor_code: str, **extra) -> None:
         nonlocal rating
         floor = next((dict(item) for item in _CALIBRATED_AUTHORSHIP_LEVELS if item["code"] == floor_code), {})
         if floor and (not rating or rating.get("level", -1) < floor["level"]):
-            rating = {**floor, "topk_escalated": True, "topk_score": topk_score}
+            rating = {
+                **floor,
+                "topk_escalated": True,
+                "topk_score": topk_score,
+                "topk_calibrated_risk": topk_calibrated_score,
+                "supporting_signal": supporting_signal,
+                **extra,
+            }
 
-    if topk_score is not None:
-        if topk_score >= 80:
+    if (
+        topk_score is not None
+        and topk_calibrated_score is not None
+        and topk_score >= 90
+        and topk_calibrated_score >= 90
+        and supporting_signal
+    ):
+        _apply_topk_floor("ai_generated_signals", topk_strong_signal=True)
+
+    if topk_score is not None or topk_calibrated_score is not None:
+        if (topk_score is not None and topk_score >= 80) or (topk_calibrated_score is not None and topk_calibrated_score >= 80):
             _apply_topk_floor("likely_ai")
-        elif topk_score >= 70:
+        elif (topk_score is not None and topk_score >= 70) or (topk_calibrated_score is not None and topk_calibrated_score >= 70):
             _apply_topk_floor("possible_ai_assisted")
 
     if not rating:
         return {}
     rating["score"] = calibrated_score
     rating["topk_score"] = rating.get("topk_score", topk_score)
+    rating["topk_calibrated_risk"] = rating.get("topk_calibrated_risk", topk_calibrated_score)
+    rating["supporting_signal"] = rating.get("supporting_signal", supporting_signal)
     return rating
 
 
@@ -341,8 +388,14 @@ def _authorship_rating_tone(rating: dict) -> dict:
 
 def _display_authorship_rating_from_badge(badge: dict) -> dict:
     features = (((badge or {}).get("transformation_classification") or {}).get("features") or {})
-    topk_score = ((badge or {}).get("ai_components") or {}).get("topk_pattern")
-    calibrated = _authorship_rating_from_calibrated_risk(features.get("calibrated_ai_risk"), topk_score)
+    ai_components = (badge or {}).get("ai_components") or {}
+    topk_score = ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern"))
+    calibrated = _authorship_rating_from_calibrated_risk(
+        features.get("calibrated_ai_risk"),
+        topk_score,
+        ai_components.get("topk_calibrated_risk"),
+        features,
+    )
     return calibrated or _authorship_rating_from_badge(badge)
 
 
@@ -387,9 +440,14 @@ def _executive_signal_chart_html(
     )
     rating_tone = _authorship_rating_tone(rating)
     calibrated_score = _tf_pct(features.get("calibrated_ai_risk"))
-    topk_score = _tf_pct((badge.get("ai_components") or {}).get("topk_pattern"))
-    if rating.get("topk_escalated") and topk_score is not None:
-        rating_detail = f"{topk_score:.0f}% top-k signal"
+    ai_components = badge.get("ai_components") or {}
+    topk_score = _tf_pct(ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")))
+    topk_calibrated_score = _tf_pct(ai_components.get("topk_calibrated_risk"))
+    if rating.get("topk_strong_signal") and topk_score is not None and rating.get("supporting_signal"):
+        support = rating["supporting_signal"]
+        rating_detail = f"{topk_score:.0f}% top-k · {support['score']:.0f}% {support['label'].lower()}"
+    elif rating.get("topk_escalated") and (topk_calibrated_score is not None or topk_score is not None):
+        rating_detail = f"{(topk_calibrated_score if topk_calibrated_score is not None else topk_score):.0f}% top-k signal"
     elif calibrated_score is not None:
         rating_detail = f"{calibrated_score:.0f}% calibrated risk"
     else:

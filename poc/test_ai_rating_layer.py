@@ -350,6 +350,32 @@ assert_true(
     "top-k calibrated floor is exposed for page/PDF seal copy",
 )
 
+render_strong_topk_stack = _display_authorship_rating_from_badge({
+    "ai_likelihood_score": 60.9,
+    "ai_components": {
+        "topk_pattern_raw": 100.0,
+        "topk_calibrated_risk": 100.0,
+    },
+    "transformation_classification": {
+        "features": {
+            "ai_likelihood": 60.9,
+            "semantic_uniformity_risk": 56.0,
+            "rewrite_smoothness": 48.0,
+            "outline_to_text_expansion": 41.0,
+            "calibrated_ai_risk": 40.0,
+        },
+    },
+})
+assert_equal(
+    render_strong_topk_stack["short_label"],
+    "Strong AI Signal",
+    "raw and calibrated top-k convergence with supporting AI shape escalates to Strong AI Signal",
+)
+assert_true(
+    render_strong_topk_stack.get("topk_strong_signal"),
+    "strong top-k escalation is exposed for page/PDF seal copy",
+)
+
 scored = Layer3Scorer().score(
     Layer3Input(
         predictability=0.58,
