@@ -2433,6 +2433,51 @@ def _splice_sentences_by_text(text: str, replacements: dict[str, str]) -> str:
     return candidate
 
 
+def _remove_sentences_by_text(text: str, sentences: list[str]) -> str:
+    candidate = str(text or "")
+    for sentence in sentences or []:
+        target = str(sentence or "").strip()
+        if not target or target not in candidate:
+            continue
+        candidate = candidate.replace(target, "", 1)
+    candidate = re.sub(r"[ \t]{2,}", " ", candidate)
+    candidate = re.sub(r"\n{3,}", "\n\n", candidate)
+    candidate = re.sub(r"(?m)^[ \t]+", "", candidate)
+    return candidate.strip()
+
+
+def _topk_low_value_removal_allowed(sentence: str, row: dict | None = None) -> bool:
+    """Last-resort top-k pruning for generic high-predictability sentences."""
+    value = str(sentence or "").strip()
+    if len(value.split()) < 10:
+        return False
+    if re.search(r"\b\d{4}\b|https?://|www\.|\[[^\]]+\]|\([^)]*\d{4}[^)]*\)", value):
+        return False
+    top10 = float((row or {}).get("top10_ratio") or 0.0)
+    if top10 < _float_env("DRAFTPROOF_TOPK_ROUTE_REMOVAL_MIN_TOP10", 0.66):
+        return False
+    lower = value.lower()
+    generic_route = bool(re.search(
+        r"^(?:this|these|it|another|one of|in addition|at the same time|despite|however|overall|taken together|critics argue|many people|the country)\b",
+        value,
+        re.I,
+    ))
+    generic_phrase = any(
+        phrase in lower
+        for phrase in (
+            "in many ways",
+            "significant influence",
+            "important role",
+            "major role",
+            "complex and influential",
+            "different languages and traditions",
+            "not equally shared",
+            "side by side",
+        )
+    )
+    return generic_route or generic_phrase
+
+
 def _topk_route_optimizer_candidates(
     text: str,
     report_dict: dict | None,
@@ -2486,6 +2531,27 @@ def _topk_route_optimizer_candidates(
                     "operations": operations,
                 },
             ))
+    removable_targets = [
+        row for row in expanded_targets
+        if _topk_low_value_removal_allowed(str(row.get("sentence") or ""), row)
+    ]
+    max_remove = max(0, int(_float_env("DRAFTPROOF_TOPK_ROUTE_REMOVAL_MAX_SENTENCES", 3.0)))
+    if max_remove > 0 and removable_targets:
+        for take in range(1, min(max_remove, len(removable_targets)) + 1):
+            removed_sentences = [str(row.get("sentence") or "") for row in removable_targets[:take]]
+            candidate = _remove_sentences_by_text(text, removed_sentences)
+            if candidate and candidate != text:
+                candidate_rows.append((
+                    f"topk_route_optimizer_remove_low_value_{take}",
+                    candidate,
+                    {
+                        "topk_route_optimizer": True,
+                        "stage": "low_value_topk_sentence_removal",
+                        "removed_count": take,
+                        "removed_sentence_ids": [row.get("sentence_id") for row in removable_targets[:take]],
+                        "removed_top10": [row.get("top10_ratio") for row in removable_targets[:take]],
+                    },
+                ))
     return candidate_rows
 
 
@@ -13751,6 +13817,18 @@ def run_rewrite_pipeline(
                 and candidate_critical_high <= saved_critical_high + blocker_critical_high_tolerance
                 and not authenticity_status.get("ai_authorship_regression_blocked")
             )
+            if ai_footprint_selectable:
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "reason": (
+                        "accepted_ai_footprint_mitigation"
+                        if ai_footprint_outcome == "ai_mitigated"
+                        else "accepted_partial_ai_footprint_mitigation"
+                    ),
+                    "ai_footprint_mitigation": bool(ai_footprint_outcome == "ai_mitigated"),
+                    "partial_ai_footprint_mitigation": bool(ai_footprint_outcome == "partially_ai_mitigated"),
+                })
             if topk_blocker_progress_selectable:
                 selection_status.update({
                     "success": True,
@@ -14809,6 +14887,148 @@ def run_rewrite_pipeline(
             ])
             summary["accepted_count"] = max(0, accepted_after - accepted_before)
             summary["selected_strategy_after"] = best_strategy
+
+        def _run_iterative_topk_route_optimizer(trigger_phase: str) -> None:
+            """Run bounded deterministic top-k route rounds against the current best candidate."""
+            nonlocal adaptive_stop_reason
+            if not _env_flag("DRAFTPROOF_ITERATIVE_TOPK_ROUTE_OPTIMIZER", True):
+                search_summary["iterative_topk_route_optimizer"] = {
+                    "enabled": False,
+                    "reason": "disabled",
+                    "trigger_phase": trigger_phase,
+                }
+                return
+            if not _best_ai_search_selectable() or not isinstance(best_report, dict):
+                search_summary["iterative_topk_route_optimizer"] = {
+                    "enabled": True,
+                    "skipped": True,
+                    "reason": "no_selectable_base",
+                    "trigger_phase": trigger_phase,
+                }
+                return
+            try:
+                max_rounds = max(1, int(_float_env("DRAFTPROOF_ITERATIVE_TOPK_ROUTE_ROUNDS", 3.0)))
+            except (TypeError, ValueError):
+                max_rounds = 3
+            target_drop = _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0)
+            safe_topk = _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TOPK", 60.0)
+            active_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
+            reserve = max(
+                0,
+                int(_float_env(
+                    "DRAFTPROOF_ITERATIVE_TOPK_ROUTE_SCAN_RESERVE",
+                    float(max_rounds * 4),
+                )),
+            )
+            if reserve > 0:
+                previous_max = int(search_budget.get("max_candidate_scans") or 0)
+                current_scans = len(search_summary.get("candidates", []))
+                search_budget["max_candidate_scans"] = max(
+                    previous_max + reserve,
+                    current_scans + reserve,
+                )
+            if str(adaptive_stop_reason or "").startswith("budget_exhausted"):
+                adaptive_stop_reason = ""
+            summary = {
+                "enabled": True,
+                "trigger_phase": trigger_phase,
+                "max_rounds": max_rounds,
+                "target_drop": target_drop,
+                "safe_topk": safe_topk,
+                "active_threshold": active_threshold,
+                "scan_reserve_added": reserve,
+                "base_strategy": best_strategy,
+                "rounds": [],
+            }
+            for round_index in range(1, max_rounds + 1):
+                if not isinstance(best_report, dict):
+                    break
+                gate_before_round = _ai_footprint_gate_status(
+                    original_report_dict,
+                    best_report,
+                    review_burden_delta=_review_burden(best_report) - original_review_burden,
+                    weighted_severity_delta=_weighted_severity(best_report) - original_severity,
+                    critical_high_delta=_critical_high_count(best_report) - saved_critical_high,
+                    ai_score_regressed=False,
+                )
+                topk_before = (
+                    (gate_before_round.get("after") or {})
+                    .get("authorship_footprint", {})
+                    .get("topk_pattern")
+                )
+                topk_drop_before = (gate_before_round.get("drops") or {}).get("topk_pattern")
+                round_summary = {
+                    "round": round_index,
+                    "base_strategy": best_strategy,
+                    "topk_before": topk_before,
+                    "topk_drop_before": topk_drop_before,
+                    "candidate_count": 0,
+                    "selected_strategy_before": best_strategy,
+                }
+                if (
+                    isinstance(topk_before, (int, float))
+                    and float(topk_before) < active_threshold
+                ) or (
+                    isinstance(topk_drop_before, (int, float))
+                    and float(topk_drop_before) >= target_drop
+                ) or (
+                    isinstance(topk_before, (int, float))
+                    and float(topk_before) <= safe_topk
+                ):
+                    round_summary["skipped"] = True
+                    round_summary["reason"] = "topk_target_reached"
+                    summary["rounds"].append(round_summary)
+                    break
+                round_candidates = _topk_route_optimizer_candidates(best_text, best_report)
+                round_summary["candidate_count"] = len(round_candidates)
+                if not round_candidates:
+                    round_summary["reason"] = "no_route_candidates"
+                    summary["rounds"].append(round_summary)
+                    break
+                before_strategy = best_strategy
+                before_gate = gate_before_round
+                for candidate_index, (strategy, candidate, meta) in enumerate(round_candidates, start=1):
+                    if _search_budget_exhausted("iterative_topk_route_optimizer"):
+                        round_summary["reason"] = adaptive_stop_reason or "budget_exhausted"
+                        break
+                    _evaluate_ai_search_candidate(
+                        f"iterative_{strategy}_r{round_index}_c{candidate_index}",
+                        candidate,
+                        deterministic=True,
+                        extra={
+                            **(meta or {}),
+                            "iterative_topk_route_optimizer": True,
+                            "topk_route_round": round_index,
+                            "base_strategy": before_strategy,
+                        },
+                    )
+                gate_after_round = (
+                    best_selection_status.get("ai_footprint_gate")
+                    if isinstance(best_selection_status, dict) else None
+                )
+                round_summary.update({
+                    "selected_strategy_after": best_strategy,
+                    "selected_changed": best_strategy != before_strategy,
+                    "topk_drop_after": (
+                        (gate_after_round.get("drops") or {}).get("topk_pattern")
+                        if isinstance(gate_after_round, dict) else None
+                    ),
+                    "topk_after": (
+                        ((gate_after_round.get("after") or {}).get("authorship_footprint") or {}).get("topk_pattern")
+                        if isinstance(gate_after_round, dict) else None
+                    ),
+                })
+                summary["rounds"].append(round_summary)
+                if best_strategy == before_strategy:
+                    break
+                if before_gate == gate_after_round:
+                    break
+            summary["selected_strategy_after"] = best_strategy
+            summary["selected_gate_after"] = (
+                best_selection_status.get("ai_footprint_gate")
+                if isinstance(best_selection_status, dict) else None
+            )
+            search_summary["iterative_topk_route_optimizer"] = summary
 
         post_safe_summary = search_summary.get("post_safe_win_target_push")
         post_safe_human = (
@@ -16561,6 +16781,7 @@ def run_rewrite_pipeline(
                             },
                         )
                     _run_final_topk_texture_repair("pre_selection_after_depolish")
+                    _run_iterative_topk_route_optimizer("pre_selection_after_final_topk_texture")
                     previous_ai = rewritten_ai
                     rewritten_text = best_text
                     rewritten_report_dict = best_report
