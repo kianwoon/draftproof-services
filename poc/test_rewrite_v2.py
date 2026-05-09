@@ -71,6 +71,7 @@ from rewrite_pipeline import (
     _safe_partial_quality_improvement_status,
     _ai_footprint_profile,
     _ai_footprint_gate_status,
+    _strict_ai_safe_band_status,
     _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
     _allow_ai_search_llm_after_deterministic,
@@ -175,6 +176,8 @@ from rewrite_pipeline import (
     _topk_masked_route_prompt,
     _extract_topk_route_patch_candidates,
     _apply_topk_route_patches,
+    _extract_post_topk_patch_candidates,
+    _apply_post_topk_patches,
     _phase_sampling_arg,
     _source_search_enabled,
     _plain_language_depolish_text,
@@ -1223,6 +1226,72 @@ assert_test(
     and calibrated_high["topk_safe_band"] is False
     and calibrated_non_prose["topk_safe_band"] is False,
     "Top-k calibration gates safe band on calibrated risk, not raw GPT-2 Top-k",
+)
+strict_safe_report = make_footprint_report(
+    ai_authorship=34,
+    human=66,
+    ai_transformation=34,
+    grounding=40,
+    human_anchor=40,
+    smoothness=30,
+    semantic_uniformity=30,
+    ai_likelihood=34,
+    topk_pattern=60,
+    topk_calibrated_risk=18,
+    generic_assertion_risk=20,
+    unsupported_claim_risk=20,
+    broad_claim_risk=20,
+    discourse=20,
+)
+strict_blocked_report = make_footprint_report(
+    ai_authorship=51,
+    human=44,
+    ai_transformation=56,
+    grounding=58,
+    human_anchor=30,
+    smoothness=38,
+    semantic_uniformity=40,
+    ai_likelihood=51,
+    topk_pattern=60,
+    topk_calibrated_risk=18,
+    generic_assertion_risk=90,
+    unsupported_claim_risk=25,
+    broad_claim_risk=15,
+    discourse=30,
+)
+strict_safe_status = _strict_ai_safe_band_status(strict_safe_report)
+strict_blocked_status = _strict_ai_safe_band_status(strict_blocked_report)
+assert_test(
+    strict_safe_status["achieved"]
+    and not strict_safe_status["remaining"]
+    and not strict_blocked_status["achieved"]
+    and [item["driver"] for item in strict_blocked_status["remaining"]] == [
+        "ai_authorship",
+        "ai_transformation",
+        "external_ai_flag_risk",
+    ],
+    "post-Top-k strict safe band requires authorship, transformation, and external proxy after Top-k is safe",
+)
+post_topk_patch_payload = json.dumps({
+    "candidates": [
+        {
+            "reason": "compress broad claim",
+            "patches": [
+                {"paragraph_index": 1, "replacement": "This narrower paragraph keeps the point but removes broad reusable claims."}
+            ],
+        }
+    ]
+})
+post_topk_patches = _extract_post_topk_patch_candidates(post_topk_patch_payload)
+post_topk_text, post_topk_applied = _apply_post_topk_patches(
+    "Heading\n\nThis is the first paragraph.\n\nThis paragraph contains a broad reusable claim that should be narrowed.",
+    post_topk_patches[0]["patches"],
+)
+assert_test(
+    len(post_topk_patches) == 1
+    and len(post_topk_applied) == 1
+    and "narrower paragraph" in post_topk_text,
+    "post-Top-k JSON patch candidates parse and apply paragraph-local replacements",
 )
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {

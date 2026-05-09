@@ -2741,6 +2741,122 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
     )
 
 
+def _post_topk_ai_safe_band_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
+    ai_components = (((candidate_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+    contribution = _contribution_scores(candidate_report or {})
+    integrity = _integrity_scores(candidate_report or {})
+    strict_status = _strict_ai_safe_band_status(candidate_report)
+    targets = _paragraph_component_targets(candidate_text, candidate_report or {}, limit=5)
+    target_payload = [
+        {
+            "paragraph_index": target.get("index"),
+            "role": target.get("role"),
+            "score": target.get("score"),
+            "drivers": target.get("drivers"),
+            "paragraph": target.get("paragraph"),
+        }
+        for target in targets
+    ]
+    return (
+        "DraftProof POST_TOPK_AI_SAFE_BAND_OPTIMIZER.\n"
+        "The document already passed calibrated Top-k. Do not break that.\n"
+        "Return only JSON. No markdown.\n\n"
+        "Hard success target:\n"
+        "- topk_calibrated_risk must stay below 25\n"
+        "- ai_authorship must move toward 35 or lower\n"
+        "- ai_transformation must move toward 35 or lower\n"
+        "- external_ai_flag_risk must move toward 35 or lower\n"
+        "- no new facts, citations, people, dates, institutions, or examples\n\n"
+        "Allowed operations:\n"
+        "- remove one low-value generic assertion sentence\n"
+        "- narrow a broad reusable claim into a smaller condition\n"
+        "- compress over-clean explanation\n"
+        "- make one paragraph less symmetric by changing sentence purpose/order\n\n"
+        "Forbidden operations:\n"
+        "- do not rewrite the whole document\n"
+        "- do not add evidence or author context\n"
+        "- do not make the prose smoother or more academic\n"
+        "- do not use generic connectors\n"
+        "- do not change names, numbers, citations, years, or quoted text\n\n"
+        "Current scores:\n"
+        f"{json.dumps({'ai_components': ai_components, 'contribution': contribution, 'integrity': integrity, 'strict_safe_band': strict_status}, ensure_ascii=False)[:3500]}\n\n"
+        "Patch only these candidate paragraphs:\n"
+        f"{json.dumps(target_payload, ensure_ascii=False)[:9000]}\n\n"
+        "Return schema:\n"
+        "{\n"
+        "  \"candidates\": [\n"
+        "    {\n"
+        "      \"reason\": \"short reason\",\n"
+        "      \"patches\": [\n"
+        "        {\"paragraph_index\": 0, \"replacement\": \"replacement paragraph\"}\n"
+        "      ]\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Return at most 2 candidates. Each candidate may patch at most 2 paragraphs."
+    )
+
+
+def _extract_post_topk_patch_candidates(response_text: str, *, max_candidates: int = 2) -> list[dict]:
+    text = str(response_text or "").strip()
+    if not text:
+        return []
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
+    text = re.sub(r"\s*```$", "", text).strip()
+    try:
+        payload = json.loads(text)
+    except Exception:
+        match = re.search(r"\{.*\}", text, flags=re.S)
+        if not match:
+            return []
+        try:
+            payload = json.loads(match.group(0))
+        except Exception:
+            return []
+    rows = payload.get("candidates") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return []
+    candidates = []
+    for row in rows[:max(1, max_candidates)]:
+        if not isinstance(row, dict):
+            continue
+        patches = row.get("patches")
+        if not isinstance(patches, list):
+            continue
+        cleaned = []
+        for patch in patches[:2]:
+            if not isinstance(patch, dict):
+                continue
+            index = patch.get("paragraph_index")
+            replacement = str(patch.get("replacement") or "").strip()
+            if not isinstance(index, int) or not replacement:
+                continue
+            cleaned.append({"paragraph_index": index, "replacement": replacement})
+        if cleaned:
+            candidates.append({"reason": row.get("reason"), "patches": cleaned})
+    return candidates
+
+
+def _apply_post_topk_patches(text: str, patches: list[dict]) -> tuple[str, list[dict]]:
+    paragraphs = _logical_paragraphs(text)
+    applied = []
+    for patch in patches or []:
+        index = patch.get("paragraph_index")
+        replacement = str(patch.get("replacement") or "").strip()
+        if not isinstance(index, int) or index < 0 or index >= len(paragraphs):
+            continue
+        cleaned, reason = _clean_paragraph_component_candidate(replacement, paragraphs[index])
+        if reason or not cleaned:
+            continue
+        if cleaned.strip() == paragraphs[index].strip():
+            continue
+        paragraphs[index] = cleaned
+        applied.append({"paragraph_index": index, "replacement_words": _text_word_count(cleaned)})
+    if not applied:
+        return text, []
+    return _join_logical_paragraphs(paragraphs), applied
+
+
 def _extract_topk_route_patch_candidates(response_text: str, *, max_candidates: int = 2) -> list[list[dict]]:
     text = str(response_text or "").strip()
     if text.startswith("```"):
@@ -3546,6 +3662,47 @@ def _ai_footprint_profile(report_dict: dict | None) -> dict:
     }
 
 
+def _ai_footprint_flatten(profile: dict | None) -> dict:
+    merged = {}
+    profile = profile or {}
+    for bucket in (
+        "authorship_footprint",
+        "structural_footprint",
+        "semantic_footprint",
+        "grounding_footprint",
+    ):
+        values = profile.get(bucket) or {}
+        if isinstance(values, dict):
+            merged.update(values)
+    merged["external_ai_flag_risk"] = profile.get("external_ai_flag_risk", 0.0)
+    return merged
+
+
+def _strict_ai_safe_band_status(report_dict: dict | None) -> dict:
+    flat = _ai_footprint_flatten(_ai_footprint_profile(report_dict))
+    thresholds = {
+        "topk_calibrated_risk": _safe_topk_calibrated_limit(),
+        "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
+        "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
+        "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
+    }
+    remaining = [
+        {
+            "driver": key,
+            "value": round(float(flat.get(key, 0.0)), 3),
+            "safe_band": round(float(limit), 3),
+        }
+        for key, limit in thresholds.items()
+        if float(flat.get(key, 0.0)) > float(limit)
+    ]
+    return {
+        "achieved": not remaining,
+        "profile": flat,
+        "thresholds": thresholds,
+        "remaining": remaining,
+    }
+
+
 def _ai_footprint_gate_status(
     original_report: dict | None,
     candidate_report: dict | None,
@@ -3564,22 +3721,8 @@ def _ai_footprint_gate_status(
     before = _ai_footprint_profile(original_report)
     after = _ai_footprint_profile(candidate_report)
 
-    def flat(profile: dict) -> dict:
-        merged = {}
-        for bucket in (
-            "authorship_footprint",
-            "structural_footprint",
-            "semantic_footprint",
-            "grounding_footprint",
-        ):
-            values = profile.get(bucket) or {}
-            if isinstance(values, dict):
-                merged.update(values)
-        merged["external_ai_flag_risk"] = profile.get("external_ai_flag_risk", 0.0)
-        return merged
-
-    before_flat = flat(before)
-    after_flat = flat(after)
+    before_flat = _ai_footprint_flatten(before)
+    after_flat = _ai_footprint_flatten(after)
     driver_keys = [
         "ai_authorship",
         "ai_transformation",
@@ -14344,6 +14487,279 @@ def run_rewrite_pipeline(
                 _record_best_attempt()
             search_summary["candidates"].append(candidate_eval)
 
+        def _run_post_topk_ai_safe_band_optimizer(trigger_phase: str) -> None:
+            nonlocal best_text, best_report, best_ai, best_strategy, best_selection_status
+            nonlocal best_human_shift_rank, best_semantic_review_required, best_drift_reasons
+            if not _env_flag("DRAFTPROOF_POST_TOPK_AI_SAFE_BAND_OPTIMIZER", True):
+                search_summary["post_topk_optimizer"] = {"enabled": False, "reason": "disabled"}
+                return
+            if not _best_ai_search_selectable() or not isinstance(best_report, dict):
+                search_summary["post_topk_optimizer"] = {"enabled": True, "skipped": True, "reason": "no_selectable_base"}
+                return
+            base_strict = _strict_ai_safe_band_status(best_report)
+            base_profile = base_strict.get("profile") or {}
+            if float(base_profile.get("topk_calibrated_risk", 100.0)) >= _safe_topk_calibrated_limit():
+                search_summary["post_topk_optimizer"] = {
+                    "enabled": True,
+                    "skipped": True,
+                    "reason": "base_topk_not_safe",
+                    "base_strict_safe_band": base_strict,
+                }
+                return
+
+            try:
+                scan_reserve = max(0, int(_float_env("DRAFTPROOF_POST_TOPK_SCAN_RESERVE", 8.0)))
+            except (TypeError, ValueError):
+                scan_reserve = 8
+            if scan_reserve > 0:
+                previous_max = int(search_budget.get("max_candidate_scans") or 0)
+                current_scans = len(search_summary.get("candidates", []))
+                search_budget["max_candidate_scans"] = max(previous_max + scan_reserve, current_scans + scan_reserve)
+
+            try:
+                llm_reserve = max(0, int(_float_env("DRAFTPROOF_POST_TOPK_LLM_RESERVE", 2.0)))
+            except (TypeError, ValueError):
+                llm_reserve = 2
+            if llm_reserve > 0:
+                search_budget["max_llm_calls"] = max(
+                    int(search_budget.get("max_llm_calls") or 0),
+                    int(search_summary.get("llm_calls") or 0) + llm_reserve,
+                )
+
+            max_scans = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_MAX_CANDIDATE_SCANS", 8.0)))
+            summary = {
+                "enabled": True,
+                "trigger_phase": trigger_phase,
+                "base_strategy": best_strategy,
+                "base_strict_safe_band": base_strict,
+                "candidate_count": 0,
+                "scanned": 0,
+                "selected": False,
+                "selected_strategy": None,
+                "scan_reserve_added": scan_reserve,
+                "llm_reserve_added": llm_reserve,
+            }
+            search_summary["post_topk_optimizer"] = summary
+
+            candidates: list[tuple[str, str, dict]] = []
+            seen: set[str] = {str(best_text or "").strip()}
+
+            def add_candidate(strategy: str, candidate_text: str, meta: dict | None = None) -> None:
+                normalized = str(candidate_text or "").strip()
+                if not normalized or normalized in seen:
+                    return
+                seen.add(normalized)
+                candidates.append((strategy, normalized, meta or {}))
+
+            for strategy, candidate_text, meta in _generic_assertion_compiler_candidates(best_text, best_report, limit=3):
+                add_candidate(f"post_topk_{strategy}", candidate_text, {**meta, "post_topk_optimizer": True})
+            for strategy, candidate_text, meta in _blocker_operation_candidates(best_text, best_report, limit=3):
+                add_candidate(f"post_topk_{strategy}", candidate_text, {**meta, "post_topk_optimizer": True})
+            for strategy, candidate_text, meta in _content_pruning_candidates(best_text, best_report, limit=2):
+                add_candidate(f"post_topk_{strategy}", candidate_text, {**meta, "post_topk_optimizer": True})
+
+            if (
+                _env_flag("DRAFTPROOF_POST_TOPK_LLM_PATCHES", True)
+                and int(search_summary.get("llm_calls") or 0) < int(search_budget.get("max_llm_calls") or 0)
+            ):
+                try:
+                    search_summary["llm_calls"] += 1
+                    response = gateway.chat(
+                        _post_topk_ai_safe_band_patch_prompt(best_text, best_report),
+                        system=(
+                            "You are DraftProof's post-Top-k strict safe-band optimizer. "
+                            "Return only valid JSON paragraph patches."
+                        ),
+                        **_phase_chat_sampling_kwargs(
+                            "DRAFTPROOF_POST_TOPK",
+                            temperature_env="DRAFTPROOF_POST_TOPK_TEMPERATURE",
+                            temperature_default=0.35,
+                            max_tokens_env="DRAFTPROOF_POST_TOPK_MAX_TOKENS",
+                            max_tokens_default=2200,
+                        ),
+                    )
+                    patch_candidates = _extract_post_topk_patch_candidates(response.content, max_candidates=2)
+                    summary["llm_patch_candidate_count"] = len(patch_candidates)
+                    for index, patch_candidate in enumerate(patch_candidates, start=1):
+                        patched_text, applied = _apply_post_topk_patches(best_text, patch_candidate.get("patches") or [])
+                        if applied and patched_text.strip() != best_text.strip():
+                            add_candidate(
+                                f"post_topk_llm_patch_c{index}",
+                                patched_text,
+                                {
+                                    "post_topk_optimizer": True,
+                                    "llm_patch": True,
+                                    "llm_reason": patch_candidate.get("reason"),
+                                    "applied_post_topk_patches": applied,
+                                },
+                            )
+                except Exception as exc:
+                    summary["llm_error"] = str(exc)
+
+            summary["candidate_count"] = len(candidates)
+            base_protected = detect_protected_spans(best_text)
+            base_review_burden = _review_burden(best_report)
+            base_severity = _weighted_severity(best_report)
+            base_finding_total = _finding_total(best_report)
+            base_critical_high = _critical_high_count(best_report)
+            selected = None
+            selected_rank = None
+
+            def num(value, default=0.0) -> float:
+                return float(value) if isinstance(value, (int, float)) else float(default)
+
+            for strategy, candidate_text, meta in candidates[:max_scans]:
+                if _search_budget_exhausted("post_topk_optimizer"):
+                    break
+                candidate_eval = {
+                    "strategy": strategy,
+                    "deterministic": not bool(meta.get("llm_patch")),
+                    "post_topk_optimizer": True,
+                    "passed_local_checks": False,
+                    **meta,
+                }
+                if _ai_candidate_quality_reject_reason(candidate_text):
+                    candidate_eval["reason"] = _ai_candidate_quality_reject_reason(candidate_text)
+                    search_summary["candidates"].append(candidate_eval)
+                    continue
+                protected_loss = _ai_search_protected_loss_reason(best_text, candidate_text, base_protected)
+                if protected_loss:
+                    candidate_eval["reason"] = "protected_span_lost " + protected_loss
+                    search_summary["candidates"].append(candidate_eval)
+                    continue
+                drift = check_semantic_drift(best_text, candidate_text, threshold=0.15)
+                candidate_eval["drift_similarity"] = round(drift.similarity, 3)
+                if not drift.accepted:
+                    candidate_eval["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
+                    candidate_eval["drift_reasons"] = drift.reasons[:10]
+                    search_summary["candidates"].append(candidate_eval)
+                    continue
+                candidate_eval["passed_local_checks"] = True
+                try:
+                    scan_t0 = time.time()
+                    candidate_report = _full_scan_report_dict(candidate_text)
+                    candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
+                except Exception as exc:
+                    candidate_eval["passed_local_checks"] = False
+                    candidate_eval["reason"] = f"candidate_scan_error {exc}"
+                    search_summary["candidates"].append(candidate_eval)
+                    continue
+
+                after_strict = _strict_ai_safe_band_status(candidate_report)
+                after_profile = after_strict.get("profile") or {}
+                gate = _ai_footprint_gate_status(
+                    original_report_dict,
+                    candidate_report,
+                    review_burden_delta=_review_burden(candidate_report) - original_review_burden,
+                    weighted_severity_delta=_weighted_severity(candidate_report) - original_severity,
+                    critical_high_delta=_critical_high_count(candidate_report) - saved_critical_high,
+                    ai_score_regressed=False,
+                )
+                candidate_eval.update({
+                    "ai": _badge_ai(candidate_report),
+                    "human_contribution": _contribution_scores(candidate_report).get("human"),
+                    "ai_transformation": _contribution_scores(candidate_report).get("ai_transformation"),
+                    "ai_authorship": _integrity_scores(candidate_report).get("ai_authorship"),
+                    "findings": _finding_total(candidate_report),
+                    "review_burden": _review_burden(candidate_report),
+                    "weighted_severity": _weighted_severity(candidate_report),
+                    "critical_high_findings": _critical_high_count(candidate_report),
+                    "strict_ai_safe_band": after_strict,
+                    "ai_footprint_gate": gate,
+                })
+                reject_reasons = []
+                if num(after_profile.get("topk_calibrated_risk"), 100.0) >= _safe_topk_calibrated_limit():
+                    reject_reasons.append("topk_calibrated_regressed_or_unsafe")
+                for key in ("ai_authorship", "ai_transformation", "external_ai_flag_risk"):
+                    if num(after_profile.get(key)) > num(base_profile.get(key)) + 0.001:
+                        reject_reasons.append(f"{key}_regressed")
+                if _finding_total(candidate_report) > base_finding_total:
+                    reject_reasons.append("findings_regressed")
+                if _review_burden(candidate_report) > base_review_burden:
+                    reject_reasons.append("review_burden_regressed")
+                if _weighted_severity(candidate_report) > base_severity:
+                    reject_reasons.append("weighted_severity_regressed")
+                if _critical_high_count(candidate_report) > base_critical_high:
+                    reject_reasons.append("critical_high_regressed")
+                if not after_strict.get("achieved"):
+                    reject_reasons.append("strict_safe_band_not_reached")
+
+                candidate_eval["post_topk_reject_reasons"] = reject_reasons
+                candidate_eval["selection_status"] = {
+                    "selectable": not reject_reasons,
+                    "success": not reject_reasons,
+                    "reason": "accepted_post_topk_strict_safe_band" if not reject_reasons else reject_reasons[0],
+                    "post_topk_optimizer": True,
+                    "strict_ai_safe_band_achieved": bool(after_strict.get("achieved")),
+                    "ai_footprint_gate": gate,
+                    "ai_footprint_outcome_class": gate.get("outcome_class"),
+                    "topk_safe_band_achieved": True,
+                    "human_shift_score": _human_shift_score(
+                        original_report_dict,
+                        candidate_report,
+                        drift_similarity=candidate_eval.get("drift_similarity"),
+                        review_burden_delta=_review_burden(candidate_report) - original_review_burden,
+                        weighted_severity_delta=_weighted_severity(candidate_report) - original_severity,
+                    ).get("score"),
+                }
+                summary["scanned"] += 1
+                search_summary["candidates"].append(candidate_eval)
+                rank = (
+                    1 if after_strict.get("achieved") else 0,
+                    num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")),
+                    num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")),
+                    num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")),
+                    num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")),
+                    base_review_burden - _review_burden(candidate_report),
+                    base_severity - _weighted_severity(candidate_report),
+                    -num(_badge_ai(candidate_report), 999.0),
+                )
+                if not reject_reasons and (selected_rank is None or rank > selected_rank):
+                    selected_rank = rank
+                    selected = {
+                        "strategy": strategy,
+                        "text": candidate_text,
+                        "report": candidate_report,
+                        "eval": candidate_eval,
+                        "rank": rank,
+                    }
+
+            if selected:
+                best_text = selected["text"]
+                best_report = selected["report"]
+                best_ai = _badge_ai(best_report)
+                best_strategy = selected["strategy"]
+                best_selection_status = selected["eval"].get("selection_status") or {}
+                best_selection_status.update({
+                    "ai_footprint_mitigation": True,
+                    "partial_ai_footprint_mitigation": False,
+                    "topk_safe_band_achieved": True,
+                    "strict_ai_safe_band_achieved": True,
+                })
+                best_human_shift_rank = _goal_climb_candidate_rank(
+                    best_selection_status,
+                    selected["eval"],
+                    candidate_ai=best_ai,
+                    candidate_review_burden=_review_burden(best_report),
+                    candidate_weighted_severity=_weighted_severity(best_report),
+                    candidate_finding_total=_finding_total(best_report),
+                    original_review_burden=original_review_burden,
+                    original_weighted_severity=original_severity,
+                    original_finding_total=original_total,
+                )
+                best_semantic_review_required = False
+                best_drift_reasons = []
+                _record_best_attempt()
+                summary.update({
+                    "selected": True,
+                    "selected_strategy": best_strategy,
+                    "selected_ai": best_ai,
+                    "selected_strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
+                })
+            else:
+                summary["reason"] = "no_candidate_reached_strict_safe_band"
+                summary["best_preserved_strategy"] = best_strategy
+
         deterministic_only = (
             bool(ai_search_first)
             and not _allow_ai_search_llm_after_deterministic()
@@ -15547,6 +15963,11 @@ def run_rewrite_pipeline(
                             })
                 else:
                     search_summary["topk_safe_band_rebuild"] = {"enabled": False, "reason": "disabled"}
+                if (
+                    _best_ai_search_selectable()
+                    and bool(best_selection_status.get("topk_safe_band_achieved"))
+                ):
+                    _run_post_topk_ai_safe_band_optimizer("after_topk_safe_band_rebuild")
                 internet_priority = _internet_reauthor_priority_status(original_report_dict, component_base_text)
                 paragraph_component_first = bool(
                     paragraph_search_enabled
@@ -18256,6 +18677,13 @@ def run_rewrite_pipeline(
             ai_score_regressed=False,
         )
     result.summary["ai_footprint_gate"] = final_ai_footprint_gate
+    final_strict_safe_band = _strict_ai_safe_band_status(rewritten_report_dict)
+    result.summary["strict_ai_safe_band_achieved"] = bool(final_strict_safe_band.get("achieved"))
+    result.summary["remaining_strict_safe_band_drivers"] = final_strict_safe_band.get("remaining") or []
+    post_topk_summary = (result.summary.get("ai_mitigation_search") or {}).get("post_topk_optimizer")
+    if isinstance(post_topk_summary, dict):
+        result.summary["post_topk_optimizer"] = post_topk_summary
+        result.summary["selected_post_topk_strategy"] = post_topk_summary.get("selected_strategy")
     final_footprint_before = final_ai_footprint_gate.get("before", {}) or {}
     final_footprint_after = final_ai_footprint_gate.get("after", {}) or {}
     final_footprint_drops = final_ai_footprint_gate.get("drops") or {}
