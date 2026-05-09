@@ -1103,6 +1103,21 @@ footprint_partial = make_footprint_report(
     smoothness=68,
     semantic_uniformity=61,
     ai_likelihood=64,
+    topk_pattern=20,
+    generic_assertion_risk=64,
+    unsupported_claim_risk=88,
+    broad_claim_risk=84,
+    discourse=36,
+)
+footprint_topk_still_unsafe = make_footprint_report(
+    ai_authorship=57,
+    human=42,
+    ai_transformation=57,
+    grounding=52,
+    human_anchor=24,
+    smoothness=68,
+    semantic_uniformity=61,
+    ai_likelihood=64,
     topk_pattern=90,
     generic_assertion_risk=64,
     unsupported_claim_risk=88,
@@ -1120,6 +1135,14 @@ cleanup_gate = _ai_footprint_gate_status(
 partial_gate = _ai_footprint_gate_status(
     footprint_original,
     footprint_partial,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+unsafe_topk_gate = _ai_footprint_gate_status(
+    footprint_original,
+    footprint_topk_still_unsafe,
     review_burden_delta=0,
     weighted_severity_delta=0,
     critical_high_delta=0,
@@ -1158,6 +1181,14 @@ assert_test(
     and partial_gate["material_driver_moved"]
     and partial_gate["drops"]["external_ai_flag_risk"] > cleanup_gate["drops"]["external_ai_flag_risk"],
     "AI-footprint gate recognizes material authorship/texture movement",
+)
+assert_test(
+    unsafe_topk_gate["outcome_class"] == "ai_footprint_blocked_by_texture"
+    and any(
+        blocker.get("reason") == "topk_above_safe_level"
+        for blocker in unsafe_topk_gate["texture_blockers"]
+    ),
+    "AI-footprint gate blocks mitigation while final top-k remains above the safe level",
 )
 assert_test(
     stalled_topk_gate["outcome_class"] == "ai_footprint_blocked_by_texture"

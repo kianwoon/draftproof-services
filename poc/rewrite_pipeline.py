@@ -3463,6 +3463,7 @@ def _ai_footprint_gate_status(
             thresholds["topk_pattern"],
             _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0),
         )
+    safe_topk_limit = _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TOPK", 25.0)
     material_primary = [
         key for key in primary_keys
         if drops.get(key, 0.0) >= thresholds.get(key, 1.0)
@@ -3480,6 +3481,14 @@ def _ai_footprint_gate_status(
             "after": round(float(after_flat.get("topk_pattern", 0.0)), 3),
             "drop": drops.get("topk_pattern", 0.0),
             "required_drop": thresholds["topk_pattern"],
+        })
+    if float(after_flat.get("topk_pattern", 0.0)) > safe_topk_limit:
+        texture_blockers.append({
+            "driver": "topk_pattern",
+            "reason": "topk_above_safe_level",
+            "before": round(float(before_flat.get("topk_pattern", 0.0)), 3),
+            "after": round(float(after_flat.get("topk_pattern", 0.0)), 3),
+            "required_max": round(float(safe_topk_limit), 3),
         })
     smoothness_regression_limit = _float_env("DRAFTPROOF_AI_FOOTPRINT_MAX_SMOOTHNESS_REGRESSION", 1.0)
     if (
@@ -3506,7 +3515,7 @@ def _ai_footprint_gate_status(
         "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
         "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
         "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
-        "topk_pattern": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TOPK", 60.0),
+        "topk_pattern": safe_topk_limit,
         "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_SMOOTHNESS", 55.0),
     }
     safe_band = bool(
@@ -14911,7 +14920,7 @@ def run_rewrite_pipeline(
             except (TypeError, ValueError):
                 max_rounds = 3
             target_drop = _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0)
-            safe_topk = _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TOPK", 60.0)
+            safe_topk = _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TOPK", 25.0)
             active_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
             reserve = max(
                 0,
