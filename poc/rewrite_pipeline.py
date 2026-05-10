@@ -323,14 +323,12 @@ def _post_selection_ai_density_breaker_candidates(
     candidates: list[tuple[str, str, dict]] = []
     seen = {str(current_text or "").strip()}
     limit = max(1, int(limit or 1))
-    source_words = max(1, _text_word_count(current_text))
-    min_words = max(1, int(source_words * 0.60))
 
     def add(strategy: str, candidate: str, meta: dict) -> None:
         if len(candidates) >= limit:
             return
         normalized = str(candidate or "").strip()
-        if not normalized or normalized in seen or _text_word_count(normalized) < min_words:
+        if not normalized or normalized in seen:
             return
         seen.add(normalized)
         candidates.append((strategy, normalized, {**meta, "post_selection_ai_density_breaker_candidate": True}))
