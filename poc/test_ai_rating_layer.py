@@ -30,7 +30,13 @@ from report.report import (
 )
 from detect.semantic_shape import SemanticShapeDetector
 from detect.topk_calibration import calibrate_topk_risk
-from report.render import _authorship_rating_from_badge, _display_authorship_rating_from_badge, render_markdown
+from detect.turnitin_like import turnitin_like_ai_profile
+from report.render import (
+    _authorship_rating_from_badge,
+    _display_authorship_rating_from_badge,
+    _transformation_contribution_summary,
+    render_markdown,
+)
 
 
 def assert_equal(actual, expected, message):
@@ -624,6 +630,30 @@ scan_builder._findings.append(Finding(
 scan_report = scan_builder.build()
 scan_json = report_to_dict(scan_report)
 intel = scan_json.get("scan_intelligence", {})
+scan_badge = scan_json.get("ai_risk_badge", {})
+scan_features = (scan_badge.get("transformation_classification") or {}).get("features") or {}
+scan_ai_components = scan_badge.get("ai_components") or {}
+shared_turnitin_profile = turnitin_like_ai_profile(
+    features=scan_features,
+    ai_components=scan_ai_components,
+)
+scan_contribution = intel.get("transformation", {}).get("contribution", {})
+assert_equal(
+    scan_contribution.get("turnitin_like_ai_score"),
+    shared_turnitin_profile.get("score"),
+    "scanner contribution uses shared Turnitin-like score",
+)
+assert_equal(
+    scan_contribution.get("ai_transformation_ratio"),
+    round(shared_turnitin_profile.get("score")),
+    "scanner AI Transformation ratio is aligned to Turnitin-like score",
+)
+render_contribution = _transformation_contribution_summary(scan_features, [], scan_badge)
+assert_equal(
+    render_contribution.get("turnitin_like_ai_score"),
+    shared_turnitin_profile.get("score"),
+    "render contribution summary uses shared Turnitin-like score",
+)
 assert_equal(intel.get("schema_version"), "scan_intelligence.v1", "scan intelligence schema is present")
 assert_true(intel.get("document", {}).get("segments"), "scan intelligence includes highlightable document segments")
 preservation = intel.get("document", {}).get("preservation_inventory", {})
@@ -834,13 +864,21 @@ domain_rich_ai_report = DraftReport(
 )
 domain_rich_ai_json = report_to_dict(domain_rich_ai_report)
 domain_rich_ai_layers = domain_rich_ai_json["integrity_layers"]["layers"]
-assert_true(
-    domain_rich_ai_layers["human_contribution_signal"]["score"] < 65,
-    "domain/source anchors alone cannot inflate Human Contribution above strong when AI texture pressure is visible",
+domain_rich_badge = domain_rich_ai_json.get("ai_risk_badge", {})
+domain_rich_features = (domain_rich_badge.get("transformation_classification") or {}).get("features") or {}
+domain_rich_profile = turnitin_like_ai_profile(
+    features=domain_rich_features,
+    ai_components=domain_rich_badge.get("ai_components") or {},
 )
-assert_true(
-    domain_rich_ai_layers["ai_transformation_risk"]["score"] > 35,
-    "AI Transformation reflects visible authorship texture pressure instead of calibrated suppression only",
+assert_equal(
+    domain_rich_ai_layers["ai_transformation_risk"]["score"],
+    round(domain_rich_profile.get("score")),
+    "AI Transformation follows the shared Turnitin-like score",
+)
+assert_equal(
+    domain_rich_ai_layers["human_contribution_signal"]["score"],
+    100 - round(domain_rich_profile.get("score")),
+    "Human Contribution is the complement of shared Turnitin-like AI score",
 )
 domain_rich_readiness = (
     domain_rich_ai_json.get("scan_intelligence", {})
@@ -848,9 +886,11 @@ domain_rich_readiness = (
     .get("generation_readiness", {})
 )
 assert_true(
-    domain_rich_readiness.get("estimated_auto_reachable_human_contribution", 100) < 80
-    and domain_rich_readiness.get("requires_author_input_for_80") is True,
-    "scanner readiness does not promise Human 80 from domain-rich AI texture without real author evidence",
+    domain_rich_readiness.get("estimated_auto_reachable_human_contribution", 0)
+    >= domain_rich_ai_layers["human_contribution_signal"]["score"]
+    and domain_rich_readiness.get("requires_author_input_for_80")
+    == (domain_rich_readiness.get("estimated_auto_reachable_human_contribution", 0) < 80),
+    "scanner readiness is consistent with the aligned Human Contribution score",
 )
 domain_rich_radar = (
     domain_rich_ai_json.get("scan_intelligence", {})

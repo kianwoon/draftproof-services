@@ -38,6 +38,10 @@ from report.report import ReportBuilder, report_to_dict
 from llm.gateway import LLMGateway, LLMConfig
 from detect.mitigation import build_ai_mitigation_plan
 from detect.topk_calibration import TOPK_CALIBRATED_SAFE_LIMIT, calibrate_topk_risk
+from detect.turnitin_like import (
+    TURNITIN_LIKE_COMPONENT_WEIGHTS,
+    turnitin_like_ai_profile_from_report,
+)
 
 
 def _metric_decimal(value, default=0.0):
@@ -4573,78 +4577,9 @@ def _ai_footprint_profile(report_dict: dict | None) -> dict:
     }
 
 
-TURNITIN_LIKE_COMPONENT_WEIGHTS = {
-    "ai_likelihood": 0.45,
-    "topk_calibrated_risk": 0.20,
-    "semantic_uniformity": 0.12,
-    "rewrite_smoothness": 0.10,
-    "patchwork_expansion": 0.08,
-    "signal_agreement": 0.05,
-}
-
-
 def _turnitin_like_ai_profile(report_dict: dict | None) -> dict:
     """Rewrite-only Turnitin-like score proxy from existing scanner fields."""
-    if not isinstance(report_dict, dict):
-        empty_components = {key: 0.0 for key in TURNITIN_LIKE_COMPONENT_WEIGHTS}
-        return {
-            "version": "turnitin_like_rewrite_v1",
-            "score": 0.0,
-            "components": empty_components,
-            "weighted_components": {key: 0.0 for key in TURNITIN_LIKE_COMPONENT_WEIGHTS},
-            "human_anchor_suppression": 0.0,
-            "raw_positive_score": 0.0,
-            "weights": dict(TURNITIN_LIKE_COMPONENT_WEIGHTS),
-        }
-    badge = report_dict.get("ai_risk_badge") or {}
-    ai_components = badge.get("ai_components") or {}
-
-    def num(value, default=0.0) -> float:
-        return float(value) if isinstance(value, (int, float)) else float(default)
-
-    def feature(key: str, default=0.0) -> float:
-        value = _feature_percent(report_dict, key)
-        return num(value, default)
-
-    topk_raw = num(ai_components.get("topk_pattern_raw"), num(ai_components.get("topk_pattern")))
-    topk_calibrated = num(ai_components.get("topk_calibrated_risk"), -1.0)
-    if topk_calibrated < 0.0:
-        topk_calibrated = float(
-            calibrate_topk_risk(
-                topk_raw,
-                eligible_sentence_count=3,
-            ).get("topk_calibrated_risk", topk_raw)
-        )
-    patchwork_expansion = max(
-        feature("outline_to_text_expansion"),
-        feature("section_style_variance"),
-    )
-    components = {
-        "ai_likelihood": feature("ai_likelihood", num(badge.get("ai_likelihood_score"))),
-        "topk_calibrated_risk": topk_calibrated,
-        "semantic_uniformity": feature("semantic_uniformity_risk"),
-        "rewrite_smoothness": feature("rewrite_smoothness"),
-        "patchwork_expansion": patchwork_expansion,
-        "signal_agreement": feature("signal_agreement_score"),
-    }
-    human_anchor_suppression = feature("human_anchor_discount")
-    if human_anchor_suppression <= 0.0:
-        human_anchor_suppression = min(45.0, feature("human_anchor_score") * 0.45)
-    weighted_components = {
-        key: round(float(components[key]) * float(weight), 3)
-        for key, weight in TURNITIN_LIKE_COMPONENT_WEIGHTS.items()
-    }
-    raw_positive_score = sum(weighted_components.values())
-    score = max(0.0, min(100.0, raw_positive_score - human_anchor_suppression))
-    return {
-        "version": "turnitin_like_rewrite_v1",
-        "score": round(score, 3),
-        "components": {key: round(float(value), 3) for key, value in components.items()},
-        "weighted_components": weighted_components,
-        "human_anchor_suppression": round(float(human_anchor_suppression), 3),
-        "raw_positive_score": round(float(raw_positive_score), 3),
-        "weights": dict(TURNITIN_LIKE_COMPONENT_WEIGHTS),
-    }
+    return turnitin_like_ai_profile_from_report(report_dict)
 
 
 def _turnitin_like_component_drops(before: dict | None, after: dict | None) -> dict:

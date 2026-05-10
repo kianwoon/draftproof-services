@@ -25,6 +25,7 @@ from detect.transformation import (
     transformation_signal_metadata,
 )
 from detect.topk_calibration import calibrate_topk_risk
+from detect.turnitin_like import turnitin_like_ai_profile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -2167,7 +2168,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         rows.sort(key=lambda item: item["score"], reverse=True)
         return rows
 
-    def _transformation_contribution(features: Dict[str, Any], signals: list) -> Dict[str, Any]:
+    def _transformation_contribution(
+        features: Dict[str, Any],
+        signals: list,
+        ai_components: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         calibrated_ai = (
             _clamp01(features.get("calibrated_ai_risk"))
             if features.get("calibrated_ai_risk") is not None
@@ -2177,33 +2182,13 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 else _clamp01(features.get("ai_likelihood"))
             )
         )
-        # Human Contribution is an authorship signal, not a domain-keyword score.
-        # Domain/source anchors help, but they must not overpower strong AI texture
-        # pressure such as high likelihood, smoothness, expansion, or semantic regularity.
-        human_raw = (
-            _clamp01(features.get("human_anchor_score")) * 0.45
-            + (1.0 - _clamp01(features.get("rewrite_smoothness"))) * 0.20
-            + (1.0 - max(
-                _clamp01(features.get("source_similarity")),
-                _clamp01(features.get("surface_similarity")),
-            )) * 0.10
+        turnitin_profile = turnitin_like_ai_profile(
+            features=features,
+            ai_components=ai_components or {},
         )
-        ai_raw = (
-            _clamp01(features.get("ai_likelihood")) * 0.55
-            + _clamp01(features.get("rewrite_smoothness")) * 0.25
-            + _clamp01(features.get("outline_to_text_expansion")) * 0.15
-            + _clamp01(features.get("semantic_uniformity_risk")) * 0.10
-            + _clamp01(features.get("discourse_regularity_risk")) * 0.05
-            + _clamp01(features.get("section_style_variance")) * 0.05
-            + _clamp01(features.get("source_similarity")) * 0.05
-        )
-        total = human_raw + ai_raw
-        if total <= 0:
-            hcr = 50
-            atr = 50
-        else:
-            hcr = int(round((human_raw / total) * 100))
-            atr = max(0, min(100, 100 - hcr))
+        atr = int(round(float(turnitin_profile.get("score") or 0.0)))
+        atr = max(0, min(100, atr))
+        hcr = 100 - atr
 
         top_drivers = [row["label"].lower() for row in signals[:2] if row.get("score", 0) > 0]
         if atr >= 70:
@@ -2223,6 +2208,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "human_anchor_discount": _pct(features.get("human_anchor_discount")),
             "calibration_confidence": _pct(features.get("calibration_confidence")),
             "reporting_suppression": _pct(features.get("reporting_suppression")),
+            "turnitin_like_ai_score": round(float(turnitin_profile.get("score") or 0.0), 3),
+            "turnitin_like_components": turnitin_profile.get("components") or {},
+            "turnitin_like_weighted_components": turnitin_profile.get("weighted_components") or {},
+            "turnitin_like_human_anchor_suppression": turnitin_profile.get("human_anchor_suppression"),
+            "turnitin_like_score_version": turnitin_profile.get("version"),
             "summary": summary,
         }
 
@@ -2388,6 +2378,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         def subscore(key: str) -> int:
             return _industry_component_score((subsignals.get(key) or {}).get("score"))
 
+        turnitin_profile = turnitin_like_ai_profile(
+            features=features,
+            ai_components=ai_components,
+        )
+
         positive_authorship = [
             {
                 "key": "human_anchor",
@@ -2420,7 +2415,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             {
                 "key": "token_predictability",
                 "score": _industry_component_score(
-                    ai_components.get("topk_pattern"),
+                    ai_components.get("topk_calibrated_risk"),
                     ai_components.get("token_predictability"),
                     features.get("ai_likelihood"),
                     badge.get("ai_likelihood_score"),
@@ -2547,10 +2542,12 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "positive_human_signal_is_not_inverse_ai_only": True,
             },
             "score_formula": {
+                "turnitin_like_ai_score": "0.45*ai_likelihood + 0.20*topk_calibrated_risk + 0.12*semantic_uniformity + 0.10*rewrite_smoothness + 0.08*patchwork_expansion + 0.05*signal_agreement - human_anchor_suppression",
                 "ai_authorship_risk": "token_predictability + burstiness_regularization + discourse_shape_regularization + semantic_uniformity + template_phrase_signal + rewrite_smoothness + similarity - human_anchor - authorship_friction - local_irregularity",
                 "grounding_quality_risk": "source_grounding + citation_weakness + unsupported_claim + broad_claim",
                 "human_contribution_signal": "lived_process_detail + domain_cognition + causal_reasoning + source_claim_ownership + local_constraint_awareness + natural_variance",
             },
+            "turnitin_like_ai_score": turnitin_profile,
             "layers": {
                 "ai_authorship_risk": {
                     "score": _industry_component_score(ai_authorship_layer.get("score")),
@@ -3834,7 +3831,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                     "metric_source": "ai_components",
                 })
         transformation_signals.sort(key=lambda item: item["score"], reverse=True)
-        contribution = _transformation_contribution(features, transformation_signals)
+        contribution = _transformation_contribution(features, transformation_signals, ai_components)
         integrity_layers = _integrity_layers(badge, transformation, contribution)
         segments = _document_segments()
         paragraph_rows = _paragraph_map(segments)
@@ -4027,6 +4024,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 _transformation_signal_rows(
                     (((report.ai_risk_badge or {}).get("transformation_classification") or {}).get("features") or {})
                 ),
+                (report.ai_risk_badge or {}).get("ai_components") or {},
             ),
         ),
         "document_context": {

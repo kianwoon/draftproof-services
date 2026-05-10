@@ -12,6 +12,7 @@ from html import escape
 from typing import Optional
 
 from detect.transformation import TRANSFORMATION_SIGNAL_METADATA, transformation_signal_metadata
+from detect.turnitin_like import turnitin_like_ai_profile
 
 from .report import DraftReport, Tier, TIER_ICON, report_to_dict
 
@@ -183,14 +184,7 @@ def _transformation_signals(features: dict) -> list[dict]:
     return sorted(rows, key=lambda row: row["score"], reverse=True)
 
 
-def _transformation_contribution_summary(features: dict, signals: list[dict]) -> dict:
-    human_anchor = _tf_pct((features or {}).get("human_anchor_score")) or 0.0
-    grounding_quality = 100.0 - (_tf_pct((features or {}).get("citation_grounding_risk")) or 0.0)
-    semantic_originality = 100.0 - max(
-        _tf_pct((features or {}).get("source_similarity")) or 0.0,
-        _tf_pct((features or {}).get("surface_similarity")) or 0.0,
-    )
-
+def _transformation_contribution_summary(features: dict, signals: list[dict], badge: dict | None = None) -> dict:
     ai_likelihood = (
         _tf_pct((features or {}).get("calibrated_ai_risk"))
         if (features or {}).get("calibrated_ai_risk") is not None
@@ -200,24 +194,13 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
             else _tf_pct((features or {}).get("ai_likelihood"))
         )
     ) or 0.0
-    rewrite_smoothness = _tf_pct((features or {}).get("rewrite_smoothness")) or 0.0
-    expansion = _tf_pct((features or {}).get("outline_to_text_expansion")) or 0.0
-    patchwork = _tf_pct((features or {}).get("section_style_variance")) or 0.0
-    grounding_risk = _tf_pct((features or {}).get("citation_grounding_risk")) or 0.0
-    source_similarity = _tf_pct((features or {}).get("source_similarity")) or 0.0
-
-    human_raw = human_anchor * 0.55 + grounding_quality * 0.25 + semantic_originality * 0.20
-    ai_raw = (
-        ai_likelihood * 0.35
-        + rewrite_smoothness * 0.20
-        + expansion * 0.15
-        + grounding_risk * 0.15
-        + patchwork * 0.10
-        + source_similarity * 0.05
+    turnitin_profile = turnitin_like_ai_profile(
+        features=features or {},
+        ai_components=(badge or {}).get("ai_components") or {},
     )
-    total = max(human_raw + ai_raw, 1.0)
-    hcr = round((human_raw / total) * 100)
-    atr = 100 - hcr
+    atr = round(float(turnitin_profile.get("score") or 0.0))
+    atr = max(0, min(100, atr))
+    hcr = 100 - atr
 
     top_drivers = [
         row["label"].lower()
@@ -244,6 +227,10 @@ def _transformation_contribution_summary(features: dict, signals: list[dict]) ->
         "human_anchor_discount": round(_tf_pct((features or {}).get("human_anchor_discount")) or 0.0),
         "calibration_confidence": round(_tf_pct((features or {}).get("calibration_confidence")) or 0.0),
         "reporting_suppression": round(_tf_pct((features or {}).get("reporting_suppression")) or 0.0),
+        "turnitin_like_ai_score": round(float(turnitin_profile.get("score") or 0.0), 3),
+        "turnitin_like_components": turnitin_profile.get("components") or {},
+        "turnitin_like_weighted_components": turnitin_profile.get("weighted_components") or {},
+        "turnitin_like_human_anchor_suppression": turnitin_profile.get("human_anchor_suppression"),
         "summary": summary,
     }
 
@@ -548,7 +535,7 @@ def _executive_signal_chart_html(
         rating_detail = f"{(_tf_pct(badge.get('ai_likelihood_score')) or 0.0):.0f}% raw signal"
     ai_score = _tf_pct(badge.get("ai_likelihood_score")) or 0.0
     writing_score = _tf_pct(badge.get("writing_quality_score")) or 0.0
-    contribution = _transformation_contribution_summary(features, rows)
+    contribution = _transformation_contribution_summary(features, rows, badge)
 
     stats = [
         (
