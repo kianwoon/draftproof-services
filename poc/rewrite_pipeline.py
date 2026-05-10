@@ -7133,6 +7133,31 @@ def _ai_search_llm_hard_cap(source_text: str = "", report_dict: dict | None = No
     return max(1, min(10, policy_cap))
 
 
+def _effective_ai_search_budget_policy(
+    policy: dict,
+    phase_budget_contract: dict,
+    max_llm_calls: int,
+) -> dict:
+    """Return the budget policy as actually enforced by the controller.
+
+    The planner may request more calls for saturated cases, but production
+    reports must not make that look like the executable cap. Keep the requested
+    values for diagnostics and expose capped values as the active policy.
+    """
+    effective = dict(policy or {})
+    requested_phase = dict(effective.get("phase_budget") or {})
+    effective["requested_max_llm_calls"] = int(effective.get("max_llm_calls") or 0)
+    effective["max_llm_calls"] = int(max_llm_calls or 0)
+    effective["requested_phase_budget"] = requested_phase
+    effective["phase_budget"] = {
+        key: int(value)
+        for key, value in (phase_budget_contract or {}).items()
+        if key != "total_llm_hard_cap"
+    }
+    effective["phase_budget_total"] = sum(int(value) for value in effective["phase_budget"].values())
+    return effective
+
+
 def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
     """Return scanner radar blockers, falling back to legacy component scores."""
     if not isinstance(raw_json, dict):
@@ -18228,8 +18253,13 @@ def run_rewrite_pipeline(
             int(search_budget["max_llm_calls"]),
             hard_llm_cap,
         )
-        search_summary["budget"] = search_budget
         phase_budget_contract = _strict_safe_phase_budget_contract(hard_llm_cap, search_source_text, original_report_dict)
+        search_budget["policy"] = _effective_ai_search_budget_policy(
+            budget_policy,
+            phase_budget_contract,
+            int(search_budget["max_llm_calls"]),
+        )
+        search_summary["budget"] = search_budget
         phase_budget_used = {
             key: 0
             for key in phase_budget_contract
@@ -23430,6 +23460,8 @@ def run_rewrite_pipeline(
             }
             result.summary["formula_convergence_controller"] = stored_convergence_result
             result.summary["block_driver_map"] = stored_convergence_result.get("block_driver_map")
+            result.summary["geometry_risk_map"] = stored_convergence_result.get("geometry_risk_map")
+            result.summary["feasibility_estimator"] = stored_convergence_result.get("feasibility_estimator")
             result.summary["formula_convergence_passes"] = stored_convergence_result.get("formula_convergence_passes")
             result.summary["selected_formula_portfolio_candidate"] = (
                 stored_convergence_result.get("selected_formula_portfolio_candidate")

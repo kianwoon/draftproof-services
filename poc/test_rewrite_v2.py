@@ -86,6 +86,7 @@ from rewrite_pipeline import (
     _topk_near_miss_partial_keep_decision,
     _selection_status_topk_safe,
     _strict_safe_phase_budget_contract,
+    _effective_ai_search_budget_policy,
     _strict_safe_candidate_rank,
     _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
@@ -2695,6 +2696,18 @@ assert_test(
     and default_hard_cap == 10
     and explicit_hard_cap == 10,
     "AI search hard LLM cap defaults to the production cap and honors explicit overrides",
+)
+effective_policy = _effective_ai_search_budget_policy(
+    saturated_medium_policy,
+    _strict_safe_phase_budget_contract(10, "word " * 900, saturated_topk_report),
+    10,
+)
+assert_test(
+    effective_policy["requested_max_llm_calls"] == 17
+    and effective_policy["max_llm_calls"] == 10
+    and effective_policy["requested_phase_budget"]["topk_safe_band_rebuild"] == 12
+    and effective_policy["phase_budget_total"] == 10,
+    "logged AI-search policy exposes requested budget separately from the enforced 10-call cap",
 )
 medium_topk_prompt = _topk_safe_band_snapshot_prompt(
     "The United States has many strengths and challenges. " * 90,
