@@ -135,6 +135,64 @@ def _ai_search_candidate_selection_status(
     return status
 
 
+def _safe_partial_final_progress_status(
+    *,
+    text_changed: bool,
+    original_ai,
+    rewritten_ai,
+    original_total: int,
+    rewritten_total: int,
+    original_review_burden: int,
+    rewritten_review_burden: int,
+    original_weighted_severity: int,
+    rewritten_weighted_severity: int,
+    original_critical_high: int,
+    rewritten_critical_high: int,
+    ai_regression_tolerance: float = 0.25,
+) -> dict:
+    """Keep useful final full-scan progress instead of rolling back on cliff gates."""
+    ai_drop = (
+        float(original_ai) - float(rewritten_ai)
+        if isinstance(original_ai, (int, float)) and isinstance(rewritten_ai, (int, float))
+        else None
+    )
+    regressions: list[str] = []
+    if isinstance(ai_drop, (int, float)) and ai_drop < -float(ai_regression_tolerance):
+        regressions.append("ai_score_regressed")
+    if rewritten_review_burden > original_review_burden:
+        regressions.append("review_burden_regressed")
+    if rewritten_weighted_severity > original_weighted_severity:
+        regressions.append("weighted_severity_regressed")
+    if rewritten_critical_high > original_critical_high:
+        regressions.append("critical_high_regressed")
+    if rewritten_total > original_total and rewritten_review_burden >= original_review_burden:
+        regressions.append("findings_regressed_without_review_gain")
+    improvements = {
+        "ai_score_drop": round(ai_drop, 3) if isinstance(ai_drop, (int, float)) else None,
+        "finding_drop": int(original_total) - int(rewritten_total),
+        "review_burden_drop": int(original_review_burden) - int(rewritten_review_burden),
+        "weighted_severity_drop": int(original_weighted_severity) - int(rewritten_weighted_severity),
+        "critical_high_drop": int(original_critical_high) - int(rewritten_critical_high),
+    }
+    material = bool(
+        (isinstance(ai_drop, (int, float)) and ai_drop >= 0.5)
+        or improvements["finding_drop"] >= 1
+        or improvements["review_burden_drop"] >= 1
+        or improvements["weighted_severity_drop"] >= 1
+        or improvements["critical_high_drop"] >= 1
+    )
+    allowed = bool(text_changed and material and not regressions)
+    return {
+        "allowed": allowed,
+        "reason": "safe_partial_final_progress" if allowed else "no_safe_partial_final_progress",
+        "text_changed": bool(text_changed),
+        "material": material,
+        "regressions": regressions,
+        "improvements": improvements,
+        "ai_regression_tolerance": ai_regression_tolerance,
+    }
+
+
 def _safe_partial_quality_improvement_status(
     authenticity_status: dict | None,
     human_shift: dict | None,
@@ -24548,11 +24606,27 @@ def run_rewrite_pipeline(
         ai_search_selected,
         (result.summary.get("ai_mitigation_search") or {}).get("selection_status"),
     )
+    final_safe_partial_progress = _safe_partial_final_progress_status(
+        text_changed=rewritten_text != text,
+        original_ai=original_ai,
+        rewritten_ai=rewritten_ai,
+        original_total=original_total,
+        rewritten_total=rewritten_total,
+        original_review_burden=original_review_burden,
+        rewritten_review_burden=rewritten_review_burden,
+        original_weighted_severity=original_severity,
+        rewritten_weighted_severity=rewritten_severity,
+        original_critical_high=_critical_high_count(original_report_dict),
+        rewritten_critical_high=_critical_high_count(rewritten_report_dict),
+        ai_regression_tolerance=ai_regression_tolerance,
+    )
+    result.summary["safe_partial_final_progress_gate"] = final_safe_partial_progress
     if (
         ai_first_required
         and not ai_first_success
         and not authenticity_mitigation_selected
         and not ai_search_selected_by_authenticity
+        and not final_safe_partial_progress.get("allowed")
     ):
         delta_text = f"{ai_first_delta:.2f}" if isinstance(ai_first_delta, (int, float)) else "unknown"
         regression_reasons.append(
@@ -24571,6 +24645,26 @@ def run_rewrite_pipeline(
                 f"ai_first_gate_failed {ai_first_reference}->{rewritten_ai}"
             ],
         }
+    elif (
+        ai_first_required
+        and not ai_first_success
+        and final_safe_partial_progress.get("allowed")
+    ):
+        result.summary["ai_first_mitigation"] = {
+            "kept": True,
+            "partial": True,
+            "reference_ai": ai_first_reference,
+            "rewritten_ai": rewritten_ai,
+            "ai_delta": round(ai_first_delta, 3) if isinstance(ai_first_delta, (int, float)) else None,
+            "min_drop": ai_first_min_drop,
+            "target": ai_first_target,
+            "required_min_ai": ai_first_required_min_ai,
+            "reason": "legacy_ai_first_min_drop_missed_but_safe_partial_progress_kept",
+            "safe_partial_final_progress": final_safe_partial_progress,
+        }
+        result.summary.setdefault("saved_contract_notes", []).append(
+            "Kept safe partial progress even though the legacy 5-point AI-first drop was missed; strict detector-safe status is still not claimed."
+        )
     if ai_first_success:
         hard_regression_reasons = []
         soft_regression_reasons = []
@@ -24789,6 +24883,20 @@ def run_rewrite_pipeline(
                 target=ai_first_target,
                 required_min_ai=ai_first_required_min_ai,
             )
+            cp_safe_partial_progress = _safe_partial_final_progress_status(
+                text_changed=checkpoint.get("text") != text,
+                original_ai=original_ai,
+                rewritten_ai=cp_ai,
+                original_total=original_total,
+                rewritten_total=cp_total,
+                original_review_burden=original_review_burden,
+                rewritten_review_burden=cp_review_burden,
+                original_weighted_severity=original_severity,
+                rewritten_weighted_severity=cp_severity,
+                original_critical_high=original_critical_high,
+                rewritten_critical_high=cp_critical_high,
+                ai_regression_tolerance=ai_regression_tolerance,
+            )
             if (
                 cp_ai_regressed
                 or cp_total > original_total
@@ -24797,7 +24905,11 @@ def run_rewrite_pipeline(
                 or cp_critical_high > original_critical_high
                 or cp_violates_saved_contract
                 or not cp_improved
-                or (cp_ai_first_gate["required"] and not cp_ai_first_gate["success"])
+                or (
+                    cp_ai_first_gate["required"]
+                    and not cp_ai_first_gate["success"]
+                    and not cp_safe_partial_progress.get("allowed")
+                )
             ):
                 continue
 
@@ -25312,7 +25424,11 @@ def run_rewrite_pipeline(
         and isinstance(final_topk_for_acceptance, (int, float))
         and float(final_topk_for_acceptance) >= topk_acceptance_limit
         and not topk_near_miss_keep_decision.get("allowed")
-        and (selected_topk_blocker_progress or selected_turnitin_like_progress)
+        and (
+            selected_topk_blocker_progress
+            or selected_turnitin_like_progress
+            or final_safe_partial_progress.get("allowed")
+        )
         and float(_review_burden(rewritten_report_dict) - original_review_burden) <= 0.0
         and float(_weighted_severity(rewritten_report_dict) - original_severity) <= 0.0
         and float(_critical_high_count(rewritten_report_dict) - saved_critical_high) <= 0.0
@@ -25320,6 +25436,9 @@ def run_rewrite_pipeline(
         topk_near_miss_keep_decision = {
             "allowed": True,
             "reason": (
+                "safe_partial_final_progress"
+                if final_safe_partial_progress.get("allowed")
+                else
                 "selector_accepted_turnitin_like_progress"
                 if selected_turnitin_like_progress
                 else "selector_accepted_topk_blocker_progress"

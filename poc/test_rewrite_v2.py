@@ -65,6 +65,7 @@ from rewrite_pipeline import (
     _clear_stale_rollback_for_kept_ai_mitigation,
     _ai_search_fast_accept_reason,
     _ai_search_candidate_selection_status,
+    _safe_partial_final_progress_status,
     _review_marker_notes,
     _ai_candidate_quality_reject_reason,
     _source_repair_brief,
@@ -1081,6 +1082,39 @@ assert_test(
     and not tiny_search_status["selectable"]
     and tiny_search_status["reason"] == "best_candidate_below_required_ai_drop",
     "AI search tracks tiny score drops without selecting them as mitigation success",
+)
+final_safe_partial = _safe_partial_final_progress_status(
+    text_changed=True,
+    original_ai=54.62,
+    rewritten_ai=51.81,
+    original_total=67,
+    rewritten_total=57,
+    original_review_burden=54,
+    rewritten_review_burden=45,
+    original_weighted_severity=133,
+    rewritten_weighted_severity=114,
+    original_critical_high=3,
+    rewritten_critical_high=2,
+)
+final_unsafe_partial = _safe_partial_final_progress_status(
+    text_changed=True,
+    original_ai=54.62,
+    rewritten_ai=51.81,
+    original_total=67,
+    rewritten_total=57,
+    original_review_burden=54,
+    rewritten_review_burden=55,
+    original_weighted_severity=133,
+    rewritten_weighted_severity=114,
+    original_critical_high=3,
+    rewritten_critical_high=2,
+)
+assert_test(
+    final_safe_partial["allowed"]
+    and final_safe_partial["improvements"]["ai_score_drop"] == 2.81
+    and not final_unsafe_partial["allowed"]
+    and "review_burden_regressed" in final_unsafe_partial["regressions"],
+    "final rollback keeps safe partial progress even when the legacy 5-point AI drop is missed",
 )
 safe_partial_status = _safe_partial_quality_improvement_status(
     {
