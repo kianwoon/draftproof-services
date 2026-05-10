@@ -98,7 +98,6 @@ def _ai_first_gate_status(
 _AI_DENSITY_CANONICAL_FACT_RE = re.compile(
     r"(?:\b\d{3,4}\b|https?://|www\.|\[[^\]]+\]|\([^)]*\d{4}[^)]*\)|"
     r"\b[A-Z]{2,}[A-Z0-9-]{2,}\b)",
-    re.I,
 )
 
 _AI_DENSITY_GENERIC_RE = re.compile(
