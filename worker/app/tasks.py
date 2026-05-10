@@ -608,6 +608,8 @@ def _build_rewrite_debug_log(
         }
 
     log_data = {
+        "debug_export_version": "rewrite_controller_debug_passthrough_v2",
+        "debug_export_source": "worker.app.tasks._build_rewrite_debug_log",
         "rewrite_id": rewrite_id,
         "scan_id": scan_id,
         "status": rewrite_json.get("status"),
