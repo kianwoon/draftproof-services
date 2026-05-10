@@ -1509,11 +1509,65 @@ suppression_only_candidate = make_footprint_report(
     signal_agreement=60,
 )
 suppression_only_gap = _formula_gap_contract(turnitin_formula_original, suppression_only_candidate)
+suppression_only_gate = _turnitin_like_ai_gate_status(
+    turnitin_formula_original,
+    suppression_only_candidate,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
 assert_test(
     suppression_only_gap["weighted_driver_drops"]["human_anchor_suppression"]["gain"] == 9.0
     and suppression_only_gap["score_drop"] == 9.0
     and suppression_only_gap["positive_ai_burden"]["before"] == suppression_only_gap["positive_ai_burden"]["after"],
     "Human Anchor suppression reduces the Turnitin-like score one-for-one when positive drivers are unchanged",
+)
+assert_test(
+    suppression_only_gate["outcome_class"] == "anchor_only_partial"
+    and suppression_only_gate["selected_candidate_gain_source"] == "human_anchor_suppression"
+    and not suppression_only_gate["positive_burden_gate"]["passed"]
+    and suppression_only_gate["positive_ai_burden_drop"] == 0.0,
+    "Turnitin-like gate labels Human Anchor-only gains separately from AI-footprint mitigation",
+)
+positive_burden_candidate = make_footprint_report(
+    ai_authorship=48,
+    human=38,
+    ai_transformation=47,
+    grounding=45,
+    human_anchor=18,
+    smoothness=50,
+    semantic_uniformity=47,
+    ai_likelihood=60,
+    topk_pattern=55,
+    topk_calibrated_risk=25,
+    generic_assertion_risk=40,
+    qualifying_text_ai_density=35,
+    unsupported_claim_risk=30,
+    broad_claim_risk=30,
+    discourse=26,
+    expansion=20,
+    section_style=35,
+    signal_agreement=50,
+)
+positive_burden_gate = _turnitin_like_ai_gate_status(
+    turnitin_formula_original,
+    positive_burden_candidate,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    positive_burden_gate["positive_burden_gate"]["passed"]
+    and positive_burden_gate["selected_candidate_gain_source"] == "positive_burden_reduction"
+    and positive_burden_gate["outcome_class"] in {"ai_mitigated", "partially_ai_mitigated"},
+    "Turnitin-like gate recognizes positive AI-burden reduction even when Human Anchor does not improve",
+)
+assert_test(
+    _turnitin_like_candidate_rank(positive_burden_gate)
+    > _turnitin_like_candidate_rank(suppression_only_gate),
+    "Turnitin-like rank prefers positive-burden movement over Human Anchor-only score drops",
 )
 portfolio_plan = _formula_portfolio_plan(
     turnitin_formula_original,

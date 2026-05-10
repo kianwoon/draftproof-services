@@ -4785,9 +4785,17 @@ def _turnitin_like_ai_gate_status(
     ai_before = _ai_footprint_flatten(_ai_footprint_profile(original_report))
     ai_after = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
     score_drop = float(drops.get("turnitin_like_ai_score") or 0.0)
+    positive_ai_burden_before = float(before.get("raw_positive_score") or 0.0)
+    positive_ai_burden_after = float(after.get("raw_positive_score") or 0.0)
+    positive_ai_burden_drop = positive_ai_burden_before - positive_ai_burden_after
+    human_anchor_suppression_gain = float(drops.get("human_anchor_suppression") or 0.0)
     min_drop = _float_env("DRAFTPROOF_TURNITIN_LIKE_MIN_DROP", 1.0)
     target_score = TURNITIN_LIKE_TARGET_AI_SCORE
     major_backfire_limit = _float_env("DRAFTPROOF_TURNITIN_LIKE_MAJOR_COMPONENT_BACKFIRE", 8.0)
+    positive_burden_min_drop = _float_env("DRAFTPROOF_POSITIVE_AI_BURDEN_MIN_DROP", 4.0)
+    ai_likelihood_material_drop = _float_env("DRAFTPROOF_POSITIVE_BURDEN_AI_LIKELIHOOD_DROP", 3.0)
+    topk_material_drop = _float_env("DRAFTPROOF_POSITIVE_BURDEN_TOPK_DROP", 8.0)
+    smoothness_material_drop = _float_env("DRAFTPROOF_POSITIVE_BURDEN_SMOOTHNESS_DROP", 3.0)
     component_backfires = [
         {
             "driver": key,
@@ -4809,6 +4817,47 @@ def _turnitin_like_ai_gate_status(
         })
     ai_authorship_drop = float(ai_before.get("ai_authorship", 0.0)) - float(ai_after.get("ai_authorship", 0.0))
     ai_transformation_drop = float(ai_before.get("ai_transformation", 0.0)) - float(ai_after.get("ai_transformation", 0.0))
+    discourse_regularity_drop = (
+        float(ai_before.get("discourse_regularity", 0.0))
+        - float(ai_after.get("discourse_regularity", 0.0))
+    )
+    positive_component_regressions = [
+        {
+            "driver": key,
+            "drop": round(float(drops.get(key) or 0.0), 3),
+            "reason": "positive_driver_regressed",
+        }
+        for key in ("rewrite_smoothness", "patchwork_expansion")
+        if float(drops.get(key) or 0.0) < 0.0
+    ]
+    if discourse_regularity_drop < 0.0:
+        positive_component_regressions.append({
+            "driver": "discourse_regularity",
+            "drop": round(discourse_regularity_drop, 3),
+            "reason": "discourse_geometry_regressed",
+        })
+    material_positive_driver_moved = bool(
+        float(drops.get("ai_likelihood") or 0.0) >= ai_likelihood_material_drop
+        or float(drops.get("topk_calibrated_risk") or 0.0) >= topk_material_drop
+        or float(drops.get("rewrite_smoothness") or 0.0) >= smoothness_material_drop
+    )
+    positive_burden_gate = bool(
+        positive_ai_burden_drop >= positive_burden_min_drop
+        and material_positive_driver_moved
+        and not positive_component_regressions
+    )
+    if positive_burden_gate:
+        selected_candidate_gain_source = (
+            "mixed"
+            if human_anchor_suppression_gain > 0.0
+            else "positive_burden_reduction"
+        )
+    elif human_anchor_suppression_gain > 0.0 and score_drop > 0.0:
+        selected_candidate_gain_source = "human_anchor_suppression"
+    elif score_drop > 0.0:
+        selected_candidate_gain_source = "cleanup_only"
+    else:
+        selected_candidate_gain_source = "none"
     safety_clean = bool(
         not ai_score_regressed
         and float(review_burden_delta or 0.0) <= 0.0
@@ -4820,12 +4869,21 @@ def _turnitin_like_ai_gate_status(
     )
     improved = bool(score_drop >= min_drop)
     score_target_met = bool(float(after.get("score", 100.0)) < target_score)
-    achieved = bool(safety_clean and improved and score_target_met)
-    partial = bool(safety_clean and improved and not achieved)
+    achieved = bool(safety_clean and improved and score_target_met and positive_burden_gate)
+    partial = bool(safety_clean and improved and not achieved and positive_burden_gate)
+    anchor_only_partial = bool(
+        safety_clean
+        and improved
+        and not achieved
+        and not positive_burden_gate
+        and human_anchor_suppression_gain > 0.0
+    )
     if achieved:
         outcome = "ai_mitigated"
     elif partial:
         outcome = "partially_ai_mitigated"
+    elif anchor_only_partial:
+        outcome = "anchor_only_partial"
     elif safety_clean and not improved and (
         float(review_burden_delta or 0.0) < 0.0
         or float(weighted_severity_delta or 0.0) < 0.0
@@ -4843,6 +4901,24 @@ def _turnitin_like_ai_gate_status(
         "component_drops": drops,
         "remaining_turnitin_like_drivers": _remaining_turnitin_like_drivers(after),
         "component_backfires": component_backfires,
+        "selected_candidate_gain_source": selected_candidate_gain_source,
+        "positive_ai_burden_before": round(positive_ai_burden_before, 3),
+        "positive_ai_burden_after": round(positive_ai_burden_after, 3),
+        "positive_ai_burden_drop": round(positive_ai_burden_drop, 3),
+        "human_anchor_suppression_gain": round(human_anchor_suppression_gain, 3),
+        "positive_burden_gate": {
+            "passed": positive_burden_gate,
+            "positive_ai_burden_drop": round(positive_ai_burden_drop, 3),
+            "required_positive_ai_burden_drop": round(float(positive_burden_min_drop), 3),
+            "material_positive_driver_moved": material_positive_driver_moved,
+            "required_driver_drop": {
+                "ai_likelihood": round(float(ai_likelihood_material_drop), 3),
+                "topk_calibrated_risk": round(float(topk_material_drop), 3),
+                "rewrite_smoothness": round(float(smoothness_material_drop), 3),
+            },
+            "positive_component_regressions": positive_component_regressions,
+            "discourse_regularity_drop": round(discourse_regularity_drop, 3),
+        },
         "ai_authorship_drop": round(ai_authorship_drop, 3),
         "ai_transformation_drop": round(ai_transformation_drop, 3),
         "safety_clean": safety_clean,
@@ -4857,6 +4933,10 @@ def _turnitin_like_ai_gate_status(
             "target_score": round(float(target_score), 3),
             "min_drop": round(float(min_drop), 3),
             "major_component_backfire": round(float(major_backfire_limit), 3),
+            "positive_ai_burden_min_drop": round(float(positive_burden_min_drop), 3),
+            "ai_likelihood_material_drop": round(float(ai_likelihood_material_drop), 3),
+            "topk_material_drop": round(float(topk_material_drop), 3),
+            "smoothness_material_drop": round(float(smoothness_material_drop), 3),
         },
     }
 
@@ -4870,9 +4950,12 @@ def _turnitin_like_candidate_rank(
 ) -> tuple:
     gate = gate if isinstance(gate, dict) else {}
     drops = gate.get("component_drops") if isinstance(gate.get("component_drops"), dict) else {}
+    positive_gate = gate.get("positive_burden_gate") if isinstance(gate.get("positive_burden_gate"), dict) else {}
     return (
         1 if gate.get("safe_band") else 0,
         1 if gate.get("safety_clean") else 0,
+        1 if positive_gate.get("passed") else 0,
+        float(gate.get("positive_ai_burden_drop") or 0.0),
         float(gate.get("score_drop") or 0.0),
         float(drops.get("ai_likelihood") or 0.0),
         float(drops.get("topk_calibrated_risk") or 0.0),
@@ -15362,6 +15445,9 @@ def _formula_convergence_candidate_public(row: dict | None) -> dict:
             "score_drop": gate.get("score_drop"),
             "outcome_class": gate.get("outcome_class"),
             "component_drops": gate.get("component_drops"),
+            "selected_candidate_gain_source": gate.get("selected_candidate_gain_source"),
+            "positive_ai_burden_drop": gate.get("positive_ai_burden_drop"),
+            "positive_burden_gate": gate.get("positive_burden_gate"),
         },
         "anti_smoothing_guard": row.get("anti_smoothing_guard"),
         "fact_inventory_contract": row.get("fact_inventory_contract"),
@@ -15690,6 +15776,8 @@ def _formula_convergence_controller(
                 reject_reasons.append(str(anti_smoothing.get("reason") or "anti_smoothing_guard_failed"))
             if num(contract_vs_current.get("score_drop"), 0.0) <= 0.05:
                 reject_reasons.append("no_safe_formula_drop")
+            if str(turnitin_gate.get("outcome_class") or "") == "anchor_only_partial":
+                reject_reasons.append("anchor_only_without_positive_burden")
             if review_delta > 0:
                 reject_reasons.append("review_burden_regressed")
             if severity_delta > 0:
@@ -19524,6 +19612,14 @@ def run_rewrite_pipeline(
             candidate_eval["multi_signal_contract"] = multi_signal_contract
             ai_footprint_outcome = str(ai_footprint_gate.get("outcome_class") or "")
             footprint_drops = ai_footprint_gate.get("drops") if isinstance(ai_footprint_gate.get("drops"), dict) else {}
+            positive_burden_gate_status = (
+                turnitin_like_gate.get("positive_burden_gate")
+                if isinstance(turnitin_like_gate.get("positive_burden_gate"), dict)
+                else {}
+            )
+            positive_burden_gate_passed = bool(positive_burden_gate_status.get("passed"))
+            if candidate_eval.get("human_signal_amplification") and not positive_burden_gate_passed:
+                human_amplification_selectable = False
             if candidate_eval.get("human_anchor_amplifier"):
                 anchor_deltas = (
                     human_anchor_contract.get("deltas")
@@ -19541,6 +19637,7 @@ def run_rewrite_pipeline(
                 lived_drop = float(anchor_deltas.get("lived_detail_risk") or 0.0)
                 human_anchor_amplification_selectable = bool(
                     _env_flag("DRAFTPROOF_ACCEPT_HUMAN_ANCHOR_AMPLIFIER", True)
+                    and positive_burden_gate_passed
                     and (
                         lived_drop >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_MIN_LIVED_DROP", 15.0)
                         or anchor_gain >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_MIN_SCORE_GAIN", 8.0)
@@ -19574,6 +19671,7 @@ def run_rewrite_pipeline(
                 )
                 candidate_eval["human_anchor_amplifier_status"] = {
                     "selectable": human_anchor_amplification_selectable,
+                    "positive_burden_gate_passed": positive_burden_gate_passed,
                     "human_raw_gain": round(human_raw_gain, 3),
                     "human_anchor_gain": round(anchor_gain, 3),
                     "lived_detail_risk_drop": round(lived_drop, 3),
@@ -19601,6 +19699,11 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_TURNITIN_LIKE_GATE_ENABLED", True)
                 and turnitin_like_gate.get("safety_clean")
                 and turnitin_like_gate.get("improved")
+                and str(turnitin_like_gate.get("outcome_class") or "") in {
+                    "ai_mitigated",
+                    "partially_ai_mitigated",
+                }
+                and positive_burden_gate_passed
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
@@ -19622,7 +19725,7 @@ def run_rewrite_pipeline(
                 and ai_footprint_gate.get("safety_clean")
                 and float(footprint_drops.get("topk_calibrated_risk") or 0.0) >= _float_env(
                     "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_DROP",
-                    1.5,
+                    8.0,
                 )
                 and float(footprint_drops.get("ai_likelihood") or 0.0) >= _float_env(
                     "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_AI_LIKELIHOOD_DROP",
@@ -19638,6 +19741,7 @@ def run_rewrite_pipeline(
                     "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_TRANSFORMATION_DROP",
                     0.0,
                 )
+                and positive_burden_gate_passed
                 and candidate_critical_high <= saved_critical_high
                 and candidate_finding_total <= original_total
                 and candidate_review_burden <= original_review_burden
@@ -20044,6 +20148,11 @@ def run_rewrite_pipeline(
             selection_status["ai_footprint_gate"] = ai_footprint_gate
             selection_status["ai_footprint_outcome_class"] = ai_footprint_outcome
             selection_status["turnitin_like_ai_gate"] = turnitin_like_gate
+            selection_status["selected_candidate_gain_source"] = turnitin_like_gate.get("selected_candidate_gain_source")
+            selection_status["positive_ai_burden_before"] = turnitin_like_gate.get("positive_ai_burden_before")
+            selection_status["positive_ai_burden_after"] = turnitin_like_gate.get("positive_ai_burden_after")
+            selection_status["positive_ai_burden_drop"] = turnitin_like_gate.get("positive_ai_burden_drop")
+            selection_status["positive_burden_gate"] = turnitin_like_gate.get("positive_burden_gate")
             selection_status["formula_gap_contract"] = formula_gap_contract
             selection_status["formula_gap_rank"] = candidate_eval["formula_gap_rank"]
             selection_status["multi_signal_contract"] = multi_signal_contract
@@ -20079,6 +20188,18 @@ def run_rewrite_pipeline(
                     "selectable": False,
                     "reason": "radar_goal_requires_human_progress",
                     "radar_goal_requires_human_progress": True,
+                })
+            if (
+                selection_status.get("selectable")
+                and turnitin_like_gate.get("selected_candidate_gain_source") == "human_anchor_suppression"
+                and not positive_burden_gate_passed
+                and not turnitin_like_gate.get("safe_band")
+            ):
+                selection_status.update({
+                    "success": False,
+                    "selectable": False,
+                    "reason": "anchor_only_without_positive_burden",
+                    "anchor_only_partial": True,
                 })
             candidate_eval["selection_status"] = selection_status
             original_human_value = _contribution_scores(original_report_dict).get("human")
@@ -25254,6 +25375,18 @@ def run_rewrite_pipeline(
         (final_turnitin_like_gate.get("after") or {}).get("components")
     )
     result.summary["turnitin_like_component_drops"] = final_turnitin_like_gate.get("component_drops")
+    result.summary["selected_candidate_gain_source"] = final_turnitin_like_gate.get("selected_candidate_gain_source")
+    result.summary["positive_ai_burden_before"] = final_turnitin_like_gate.get("positive_ai_burden_before")
+    result.summary["positive_ai_burden_after"] = final_turnitin_like_gate.get("positive_ai_burden_after")
+    result.summary["positive_ai_burden_drop"] = final_turnitin_like_gate.get("positive_ai_burden_drop")
+    result.summary["positive_burden_gate"] = final_turnitin_like_gate.get("positive_burden_gate")
+    result.summary["anchor_gain_not_enough"] = bool(
+        final_turnitin_like_gate.get("selected_candidate_gain_source") == "human_anchor_suppression"
+        and not ((final_turnitin_like_gate.get("positive_burden_gate") or {}).get("passed"))
+    )
+    result.summary["positive_burden_still_high"] = bool(
+        not ((final_turnitin_like_gate.get("positive_burden_gate") or {}).get("passed"))
+    )
     result.summary["remaining_turnitin_like_drivers"] = (
         final_turnitin_like_gate.get("remaining_turnitin_like_drivers") or []
     )
@@ -25344,6 +25477,22 @@ def run_rewrite_pipeline(
             "additional_anchor_sentences_needed": final_human_anchor_contract.get("additional_anchor_sentences_needed"),
         }
     ] if not final_human_anchor_contract.get("achieved_next_band") else []
+    final_topk_repair_map = _topk_repair_map(rewritten_text, rewritten_report_dict)
+    final_block_driver_map = _formula_block_driver_map(rewritten_text, rewritten_report_dict)
+    final_blocks = [
+        row for row in (final_block_driver_map.get("blocks") or [])
+        if isinstance(row, dict)
+    ]
+    result.summary["canonical_fact_preserved_count"] = len(final_topk_repair_map.get("exempted_targets") or [])
+    result.summary["generic_blocks_targeted"] = len([
+        row for row in final_blocks
+        if row.get("recommended_portfolio_action") in {"compress", "texture_rebuild", "remove_candidate"}
+        and float(row.get("generic_density") or 0.0) > 0.0
+    ])
+    result.summary["template_blocks_targeted"] = len([
+        row for row in final_blocks
+        if int(row.get("template_connector_hits") or 0) > 0
+    ])
     final_strict_safe_band = _strict_ai_safe_band_status(rewritten_report_dict)
     result.summary["strict_ai_safe_band_achieved"] = bool(final_strict_safe_band.get("achieved"))
     result.summary["remaining_strict_safe_band_drivers"] = final_strict_safe_band.get("remaining") or []
@@ -25387,6 +25536,13 @@ def run_rewrite_pipeline(
                 "turnitin_like_ai_score": turnitin_row.get("score_after"),
                 "turnitin_like_ai_score_drop": turnitin_row.get("score_drop"),
                 "turnitin_like_outcome_class": turnitin_row.get("outcome_class"),
+                "selected_candidate_gain_source": turnitin_row.get("selected_candidate_gain_source"),
+                "positive_ai_burden_drop": turnitin_row.get("positive_ai_burden_drop"),
+                "positive_burden_gate_passed": (
+                    (turnitin_row.get("positive_burden_gate") or {}).get("passed")
+                    if isinstance(turnitin_row.get("positive_burden_gate"), dict)
+                    else False
+                ),
                 "ai_authorship": profile.get("ai_authorship"),
                 "ai_transformation": profile.get("ai_transformation"),
                 "qualifying_text_ai_density": profile.get("qualifying_text_ai_density"),
@@ -25398,6 +25554,8 @@ def run_rewrite_pipeline(
             key=lambda item: (
                 1 if item.get("strict_ai_safe_band_achieved") else 0,
                 1 if item.get("formula_target_met") else 0,
+                1 if item.get("positive_burden_gate_passed") else 0,
+                float(item.get("positive_ai_burden_drop") if isinstance(item.get("positive_ai_burden_drop"), (int, float)) else -999.0),
                 float(item.get("formula_score_drop") if isinstance(item.get("formula_score_drop"), (int, float)) else -999.0),
                 float(item.get("formula_drop_efficiency") if isinstance(item.get("formula_drop_efficiency"), (int, float)) else -999.0),
                 -float(item.get("formula_score") if isinstance(item.get("formula_score"), (int, float)) else 999.0),
@@ -25454,7 +25612,12 @@ def run_rewrite_pipeline(
             "Turnitin-like AI score "
             f"{final_turnitin_like_gate.get('score_after')} is not below "
             f"{final_turnitin_like_gate.get('target_score')}; "
-            "dominant drivers: "
+            + (
+                "Human Anchor gain did not count as mitigation because positive AI burden did not move enough; "
+                if result.summary.get("anchor_gain_not_enough")
+                else ""
+            )
+            + "dominant drivers: "
             + ", ".join(
                 str(row.get("driver"))
                 for row in (final_turnitin_like_gate.get("remaining_turnitin_like_drivers") or [])[:4]
