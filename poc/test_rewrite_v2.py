@@ -58,6 +58,7 @@ from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
 from rewrite_pipeline import (
     run_rewrite_pipeline,
+    TOPK_SAFE_BAND_FULL_DOCUMENT_REBUILD_ENABLED,
     _build_aligned_sentence_comparison,
     _ai_first_gate_status,
     _ai_search_marked_grounding_candidates,
@@ -2923,7 +2924,8 @@ plain_topk_prompt = _topk_plain_spoken_snapshot_prompt(
     {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}},
 )
 assert_test(
-    "280 to 560 words" not in medium_topk_prompt
+    TOPK_SAFE_BAND_FULL_DOCUMENT_REBUILD_ENABLED is False
+    and "280 to 560 words" not in medium_topk_prompt
     and "rough annotated prose" not in medium_topk_prompt
     and "short country profile" in medium_topk_prompt
     and "no metaphors" in plain_topk_prompt
@@ -2934,7 +2936,7 @@ assert_test(
     )
     and _topk_safe_band_patch_rounds_default("word " * 900, saturated_topk_report) == 10
     and _topk_safe_band_snapshot_max_tokens_default("word " * 900) == 3600,
-    "Top-k safe-band rebuild uses document-sized prose, not compressed snapshot fragments",
+    "Top-k full-document safe-band rebuild is disabled; bounded patch prompts keep edit-budget controls",
 )
 with open(os.path.join(os.path.dirname(__file__), "rewrite_pipeline.py"), "r", encoding="utf-8") as fp:
     rewrite_pipeline_source = fp.read()

@@ -44,6 +44,8 @@ from detect.turnitin_like import (
     turnitin_like_ai_profile_from_report,
 )
 
+TOPK_SAFE_BAND_FULL_DOCUMENT_REBUILD_ENABLED = False
+
 
 def _metric_decimal(value, default=0.0):
     if not isinstance(value, (int, float)):
@@ -22005,7 +22007,10 @@ def run_rewrite_pipeline(
                             topk_summary["llm_error"] = str(exc)
                     else:
                         topk_summary["llm_stage_skipped"] = "topk_not_saturated"
-                if _env_flag("DRAFTPROOF_TOPK_SAFE_BAND_REBUILD", True):
+                if (
+                    TOPK_SAFE_BAND_FULL_DOCUMENT_REBUILD_ENABLED
+                    and _env_flag("DRAFTPROOF_TOPK_SAFE_BAND_REBUILD", True)
+                ):
                     safe_band_summary = search_summary.setdefault("topk_safe_band_rebuild", {
                         "enabled": True,
                         "selected": False,
@@ -22341,7 +22346,11 @@ def run_rewrite_pipeline(
                                 "topk_safe_band_rebuild": True,
                             })
                 else:
-                    search_summary["topk_safe_band_rebuild"] = {"enabled": False, "reason": "disabled"}
+                    search_summary["topk_safe_band_rebuild"] = {
+                        "enabled": False,
+                        "reason": "full_document_rebuild_disabled_after_rollback",
+                        "bounded_alternative": "topk_route_optimizer",
+                    }
                 if (
                     _best_ai_search_selectable()
                     and bool(best_selection_status.get("topk_safe_band_achieved"))
