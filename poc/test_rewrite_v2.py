@@ -218,6 +218,7 @@ from rewrite_pipeline import (
     _phase_chat_sampling_kwargs,
     _mitigation_sampling_policy_summary,
     _llm_call_budget_exhausted_before_send,
+    _ai_search_budget_policy,
     _ai_search_llm_hard_cap,
     _resolve_stage_llm_budget,
 )
@@ -1374,12 +1375,12 @@ assert_test(
     }),
     "selector distinguishes Top-k-safe frontier from merely improved Top-k-blocked progress",
 )
-phase_contract = _strict_safe_phase_budget_contract(10)
+phase_contract = _strict_safe_phase_budget_contract(12, "word " * 900)
 phase_contract_lower = _strict_safe_phase_budget_contract(7)
 assert_test(
-    phase_contract["total_llm_hard_cap"] == 10
-    and phase_contract["topk_safe_band_rebuild"] == 4
-    and phase_contract["authorship_transformation_texture_controller"] == 4
+    phase_contract["total_llm_hard_cap"] == 12
+    and phase_contract["topk_safe_band_rebuild"] == 7
+    and phase_contract["authorship_transformation_texture_controller"] == 3
     and phase_contract["final_texture_proxy_repair"] == 2
     and phase_contract["emergency_diagnostic_reserve"] == 0
     and phase_contract["post_topk_strict_safe_optimizer"] == 0
@@ -2192,17 +2193,24 @@ assert_test(
 old_hard_cap = os.environ.get("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS")
 try:
     os.environ.pop("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", None)
-    default_hard_cap = _ai_search_llm_hard_cap()
+    short_policy = _ai_search_budget_policy("word " * 300)
+    medium_policy = _ai_search_budget_policy("word " * 900)
+    long_policy = _ai_search_budget_policy("word " * 2200)
+    default_hard_cap = _ai_search_llm_hard_cap("word " * 900)
     os.environ["DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS"] = "10"
-    explicit_hard_cap = _ai_search_llm_hard_cap()
+    explicit_hard_cap = _ai_search_llm_hard_cap("word " * 900)
 finally:
     if old_hard_cap is None:
         os.environ.pop("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", None)
     else:
         os.environ["DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS"] = old_hard_cap
 assert_test(
-    default_hard_cap == 10 and explicit_hard_cap == 10,
-    "AI search hard LLM cap defaults to and honors the 10-call ceiling",
+    short_policy["max_llm_calls"] == 6
+    and medium_policy["max_llm_calls"] == 12
+    and long_policy["max_llm_calls"] == 16
+    and default_hard_cap == 12
+    and explicit_hard_cap == 10,
+    "AI search hard LLM cap uses document-size defaults and honors explicit overrides",
 )
 for key, value in previous_sampling_env.items():
     if value is None:

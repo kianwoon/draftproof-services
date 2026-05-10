@@ -4459,9 +4459,9 @@ def _strict_ai_safe_band_status(report_dict: dict | None) -> dict:
 
 STRICT_SAFE_PHASE_BUDGET_CONTRACT = {
     "total_llm_hard_cap": 10,
-    "topk_safe_band_rebuild": 4,
-    "authorship_transformation_texture_controller": 4,
-    "final_texture_proxy_repair": 2,
+    "topk_safe_band_rebuild": 6,
+    "authorship_transformation_texture_controller": 3,
+    "final_texture_proxy_repair": 1,
     "emergency_diagnostic_reserve": 0,
     # Backward-compatible report key only. New work must spend against the
     # explicit authorship/transformation texture controller budget above.
@@ -4469,15 +4469,26 @@ STRICT_SAFE_PHASE_BUDGET_CONTRACT = {
 }
 
 
-def _strict_safe_phase_budget_contract(total_cap: int | None = None) -> dict:
+def _strict_safe_phase_budget_contract(total_cap: int | None = None, source_text: str = "") -> dict:
     """Fixed LLM budget split for strict-safe mitigation phases.
 
-    The split is intentionally not threshold-tuned by environment. Runtime may
-    lower the total cap, but no phase can borrow calls reserved for later phases.
+    Top-k is the entry condition for strict-safe mitigation, so it receives
+    the largest fixed reserve. Runtime may lower the total cap, but no phase
+    can borrow calls reserved for earlier prerequisite phases.
     """
-    cap = int(total_cap if isinstance(total_cap, int) else _ai_search_llm_hard_cap())
-    cap = max(0, min(cap, int(STRICT_SAFE_PHASE_BUDGET_CONTRACT["total_llm_hard_cap"])))
-    contract = dict(STRICT_SAFE_PHASE_BUDGET_CONTRACT)
+    policy = _ai_search_budget_policy(source_text)
+    policy_phase = policy.get("phase_budget") or {}
+    inferred_cap = int(policy.get("max_llm_calls") or STRICT_SAFE_PHASE_BUDGET_CONTRACT["total_llm_hard_cap"])
+    cap = int(total_cap if isinstance(total_cap, int) else _ai_search_llm_hard_cap(source_text))
+    cap = max(0, min(cap, inferred_cap))
+    contract = {
+        "total_llm_hard_cap": inferred_cap,
+        "topk_safe_band_rebuild": int(policy_phase.get("topk_safe_band_rebuild", 0)),
+        "authorship_transformation_texture_controller": int(policy_phase.get("authorship_transformation_texture_controller", 0)),
+        "final_texture_proxy_repair": int(policy_phase.get("final_texture_proxy_repair", 0)),
+        "emergency_diagnostic_reserve": 0,
+        "post_topk_strict_safe_optimizer": 0,
+    }
     contract["total_llm_hard_cap"] = cap
     overflow = sum(
         int(contract[key])
@@ -5579,8 +5590,59 @@ def _adaptive_budget_default(source_text: str, short_value: int, long_value: int
     return str(long_value)
 
 
-def _ai_search_llm_hard_cap() -> int:
-    return max(1, int(_float_env("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", 10.0)))
+def _ai_search_budget_policy(source_text: str = "") -> dict:
+    """Document-size budget policy for AI mitigation search.
+
+    Top-k is a prerequisite for strict-safe output. Medium and long documents
+    need enough calls reserved for Top-k before downstream texture work can be
+    useful.
+    """
+    words = _text_word_count(source_text)
+    if words <= 700:
+        return {
+            "word_count": words,
+            "size_band": "short",
+            "max_seconds": 120,
+            "max_llm_calls": 6,
+            "max_candidate_scans": 36,
+            "phase_budget": {
+                "topk_safe_band_rebuild": 4,
+                "authorship_transformation_texture_controller": 1,
+                "final_texture_proxy_repair": 1,
+            },
+        }
+    if words <= 1800:
+        return {
+            "word_count": words,
+            "size_band": "medium",
+            "max_seconds": 240,
+            "max_llm_calls": 12,
+            "max_candidate_scans": 64,
+            "phase_budget": {
+                "topk_safe_band_rebuild": 7,
+                "authorship_transformation_texture_controller": 3,
+                "final_texture_proxy_repair": 2,
+            },
+        }
+    return {
+        "word_count": words,
+        "size_band": "long",
+        "max_seconds": 420,
+        "max_llm_calls": 16,
+        "max_candidate_scans": 96,
+        "phase_budget": {
+            "topk_safe_band_rebuild": 9,
+            "authorship_transformation_texture_controller": 5,
+            "final_texture_proxy_repair": 2,
+        },
+    }
+
+
+def _ai_search_llm_hard_cap(source_text: str = "") -> int:
+    explicit = os.environ.get("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS")
+    if explicit is not None:
+        return max(1, int(_float_env("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", 10.0)))
+    return max(1, int(_ai_search_budget_policy(source_text).get("max_llm_calls") or 1))
 
 
 def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
@@ -14628,26 +14690,29 @@ def run_rewrite_pipeline(
         best_human_shift_rank: tuple = (-1, -9999.0, -9999.0)
         best_blocked_human_candidate: dict | None = None
         best_blocked_human_rank: tuple | None = None
+        budget_policy = _ai_search_budget_policy(search_source_text)
+        hard_llm_cap = _ai_search_llm_hard_cap(search_source_text)
         search_budget = {
             "max_seconds": _float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_SECONDS",
-                float(_adaptive_budget_default(search_source_text, 210, 420)),
+                float(budget_policy.get("max_seconds") or 420),
             ),
             "max_llm_calls": int(_float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_LLM_CALLS",
-                float(_adaptive_budget_default(search_source_text, 8, 10)),
+                float(budget_policy.get("max_llm_calls") or hard_llm_cap),
             )),
             "max_candidate_scans": int(_float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_CANDIDATE_SCANS",
-                float(_adaptive_budget_default(search_source_text, 40, 60)),
+                float(budget_policy.get("max_candidate_scans") or 60),
             )),
+            "policy": budget_policy,
         }
         search_budget["max_llm_calls"] = min(
             int(search_budget["max_llm_calls"]),
-            _ai_search_llm_hard_cap(),
+            hard_llm_cap,
         )
         search_summary["budget"] = search_budget
-        phase_budget_contract = _strict_safe_phase_budget_contract(_ai_search_llm_hard_cap())
+        phase_budget_contract = _strict_safe_phase_budget_contract(hard_llm_cap, search_source_text)
         phase_budget_used = {
             key: 0
             for key in phase_budget_contract
@@ -15745,7 +15810,7 @@ def run_rewrite_pipeline(
                 llm_reserve = 2
             if llm_reserve > 0:
                 search_budget["max_llm_calls"] = min(
-                    _ai_search_llm_hard_cap(),
+                    hard_llm_cap,
                     max(
                         int(search_budget.get("max_llm_calls") or 0),
                         int(search_summary.get("llm_calls") or 0) + llm_reserve,
@@ -16825,7 +16890,6 @@ def run_rewrite_pipeline(
             search_summary["final_topk_texture_repair"] = summary
             try:
                 current_llm_calls = int(search_summary.get("llm_calls") or 0)
-                hard_llm_cap = _ai_search_llm_hard_cap()
                 if current_llm_calls >= hard_llm_cap:
                     summary.update({
                         "skipped": True,
@@ -17272,7 +17336,7 @@ def run_rewrite_pipeline(
                         previous_llm_max = int(search_budget.get("max_llm_calls") or 0)
                         current_llm_calls = int(search_summary.get("llm_calls") or 0)
                         search_budget["max_llm_calls"] = min(
-                            _ai_search_llm_hard_cap(),
+                            hard_llm_cap,
                             max(
                                 previous_llm_max,
                                 current_llm_calls + llm_reserve,
@@ -19309,7 +19373,7 @@ def run_rewrite_pipeline(
             "max_calls_per_run": _source_search_max_calls_per_run(),
             "remaining_calls": _source_search_remaining_calls(),
         }
-        hard_llm_cap = _ai_search_llm_hard_cap()
+        hard_llm_cap = _ai_search_llm_hard_cap(search_source_text)
         if int(search_summary.get("llm_calls") or 0) > hard_llm_cap:
             search_summary["llm_calls_counter_correction"] = {
                 "reported_before_correction": int(search_summary.get("llm_calls") or 0),
