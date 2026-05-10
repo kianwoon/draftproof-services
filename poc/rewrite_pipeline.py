@@ -13655,6 +13655,342 @@ def _formula_portfolio_candidates(
     return candidates[:limit]
 
 
+def _human_anchor_suppression_frontier(
+    source_text: str,
+    report_dict: dict | None,
+    block_map: dict | None = None,
+) -> dict:
+    """Expose the live Human Anchor lever for formula convergence."""
+    profile = _turnitin_like_ai_profile(report_dict)
+    blockers = _blocker_scores(report_dict)
+    contract = _human_anchor_driver_contract(report_dict, text=source_text)
+    before = contract.get("before") if isinstance(contract.get("before"), dict) else {}
+    suppression = float(profile.get("human_anchor_suppression") or 0.0)
+    headroom = max(0.0, 45.0 - suppression)
+    lived_detail_risk = float(before.get("lived_detail_risk", blockers.get("lived_detail_risk", 0.0)) or 0.0)
+    domain_grounding = float(before.get("domain_grounding_strength", 0.0) or 0.0)
+    rows = []
+    for row in (block_map or {}).get("blocks") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("protected") or row.get("reference_section") or row.get("heading_like"):
+            continue
+        deficit = float(row.get("human_anchor_deficit") or 0.0)
+        potential = float(row.get("suppression_gain_potential") or 0.0)
+        if potential <= 0.0 and deficit <= 0.0:
+            continue
+        rows.append({
+            "block_index": row.get("block_index"),
+            "recommended_portfolio_action": row.get("recommended_portfolio_action"),
+            "human_anchor_deficit": round(deficit, 3),
+            "suppression_gain_potential": round(potential, 3),
+            "weighted_drag": row.get("weighted_drag"),
+            "remove_value_loss_risk": row.get("remove_value_loss_risk"),
+            "preview": row.get("preview"),
+        })
+    rows.sort(
+        key=lambda item: (
+            float(item.get("suppression_gain_potential") or 0.0),
+            float(item.get("human_anchor_deficit") or 0.0),
+            float(item.get("weighted_drag") or 0.0),
+        ),
+        reverse=True,
+    )
+    return {
+        "version": "human_anchor_suppression_frontier_v1",
+        "human_anchor_suppression": round(suppression, 3),
+        "suppression_headroom": round(headroom, 3),
+        "lived_detail_risk": round(lived_detail_risk, 3),
+        "domain_grounding_strength": round(domain_grounding, 3),
+        "required_suppression_gain_to_target": round(
+            min(headroom, max(0.0, float(profile.get("target_gap") or 0.0) + 3.0)),
+            3,
+        ),
+        "driver_contract": contract,
+        "candidate_blocks": rows[:8],
+        "blocker": (
+            "no_suppression_headroom"
+            if headroom <= 0.0
+            else "insufficient_lived_detail_density"
+            if lived_detail_risk >= 55.0
+            else "suppression_available_but_lived_detail_not_dominant"
+        ),
+    }
+
+
+def _anchor_sentence_for_paragraph(paragraph: str, variant: str = "process") -> str:
+    lower = str(paragraph or "").lower()
+    if any(term in lower for term in ("ai", "tool", "youtube", "tiktok", "online", "search")):
+        if variant == "limitation":
+            return "The limit I would place on this point is simple: the tool may give an answer, but the student still has to explain how they judged it."
+        return "In practice, the useful check is whether the student can explain the steps without leaning on the tool."
+    if any(term in lower for term in ("exam", "grade", "assessment", "test", "homework")):
+        if variant == "limitation":
+            return "This does not mean exams have no value; it means the result needs to be checked against the student's actual reasoning."
+        return "I would look at the work behind the result, because a correct answer can still hide weak understanding."
+    if any(term in lower for term in ("teacher", "class", "classroom", "school", "student")):
+        if variant == "limitation":
+            return "This depends on what the teacher can actually see in the student's work, not only on how polished the final response looks."
+        return "In a classroom, this is where the teacher has to notice whether the student is thinking or only repeating."
+    if variant == "limitation":
+        return "This point should be read as a limited judgement, not as a claim that every case will work the same way."
+    return "The practical issue is how this would be checked in the actual work, not only how clear the statement sounds."
+
+
+def _append_anchor_sentence(paragraph: str, *, variant: str = "process") -> str:
+    sentence = _anchor_sentence_for_paragraph(paragraph, variant=variant)
+    stripped = str(paragraph or "").strip()
+    if not stripped:
+        return sentence
+    if sentence.lower() in stripped.lower():
+        return stripped
+    return f"{stripped} {sentence}"
+
+
+def _human_anchor_suppression_frontier_candidates(
+    source_text: str,
+    report_dict: dict | None,
+    block_map: dict | None,
+    *,
+    limit: int = 4,
+) -> list[tuple[str, str, dict]]:
+    """Create formula candidates that move Human Anchor and AI burden together."""
+    if not _env_flag("DRAFTPROOF_HUMAN_ANCHOR_SUPPRESSION_FRONTIER", True):
+        return []
+    frontier = _human_anchor_suppression_frontier(source_text, report_dict, block_map)
+    if float(frontier.get("suppression_headroom") or 0.0) <= 0.0:
+        return []
+    if (
+        float(frontier.get("lived_detail_risk") or 0.0) < 55.0
+        and float(frontier.get("human_anchor_suppression") or 0.0) >= 25.0
+    ):
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 2:
+        return []
+    block_rows = [
+        row for row in (block_map or {}).get("blocks") or []
+        if isinstance(row, dict)
+    ]
+    by_index = {
+        int(row.get("block_index")): row
+        for row in block_rows
+        if isinstance(row.get("block_index"), int)
+    }
+    targets = [
+        row for row in frontier.get("candidate_blocks") or []
+        if isinstance(row, dict)
+        and isinstance(row.get("block_index"), int)
+        and 0 <= int(row.get("block_index")) < len(paragraphs)
+    ]
+    if not targets:
+        return []
+    limit = max(1, int(limit or 1))
+    source_norm = str(source_text or "").strip()
+    candidates: list[tuple[str, str, dict]] = []
+    seen = {source_norm}
+
+    def add(strategy: str, next_paragraphs: list[str], meta: dict) -> None:
+        if len(candidates) >= limit:
+            return
+        candidate = _join_logical_paragraphs(next_paragraphs)
+        normalized = candidate.strip()
+        if not normalized or normalized in seen or normalized == source_norm:
+            return
+        seen.add(normalized)
+        candidates.append((
+            strategy,
+            candidate,
+            {
+                **meta,
+                "human_anchor_suppression_frontier": True,
+                "frontier": frontier,
+            },
+        ))
+
+    for variant in ("process", "limitation"):
+        changed: list[int] = []
+        next_paragraphs = list(paragraphs)
+        for target in targets[:3]:
+            index = int(target["block_index"])
+            block = by_index.get(index, {})
+            if block.get("protected") or block.get("unique_core_claim") and variant == "process":
+                continue
+            replacement = _append_anchor_sentence(next_paragraphs[index], variant=variant)
+            if replacement != next_paragraphs[index]:
+                next_paragraphs[index] = replacement
+                changed.append(index)
+            if len(changed) >= 2:
+                break
+        if changed:
+            add(
+                f"human_anchor_{variant}_patch",
+                next_paragraphs,
+                {
+                    "operation": f"anchor_{variant}_reasoning_patch",
+                    "portfolio_operation": "human_anchor_suppression_gain",
+                    "paragraph_indexes": changed,
+                    "targeted_drivers": ["human_anchor_suppression", "lived_detail_risk"],
+                },
+            )
+
+    for target in targets[:3]:
+        index = int(target["block_index"])
+        block = by_index.get(index, {})
+        if block.get("protected"):
+            continue
+        compressed = _compress_score_drag_paragraph(paragraphs[index], max_remove=2)
+        replacement = _append_anchor_sentence(compressed, variant="process")
+        if replacement.strip() and replacement.strip() != paragraphs[index].strip():
+            next_paragraphs = list(paragraphs)
+            next_paragraphs[index] = replacement
+            add(
+                f"anchor_plus_texture_hybrid_p{index + 1}",
+                next_paragraphs,
+                {
+                    "operation": "anchor_plus_texture_hybrid",
+                    "portfolio_operation": "human_anchor_plus_texture_rebuild",
+                    "paragraph_index": index,
+                    "targeted_drivers": [
+                        "human_anchor_suppression",
+                        "ai_likelihood",
+                        "semantic_uniformity",
+                        "rewrite_smoothness",
+                    ],
+                },
+            )
+
+    removable = [
+        row for row in block_rows
+        if row.get("recommended_portfolio_action") == "remove_candidate"
+        and row.get("remove_value_loss_risk") == "low"
+        and not row.get("protected")
+        and not row.get("unique_core_claim")
+        and isinstance(row.get("block_index"), int)
+    ]
+    if removable:
+        remove_index = int(removable[0]["block_index"])
+        anchor_target = next(
+            (
+                int(row["block_index"])
+                for row in targets
+                if int(row["block_index"]) != remove_index
+            ),
+            0 if remove_index != 0 else min(1, len(paragraphs) - 1),
+        )
+        next_paragraphs = [
+            paragraph for idx, paragraph in enumerate(paragraphs)
+            if idx != remove_index
+        ]
+        adjusted_anchor_index = anchor_target - (1 if anchor_target > remove_index else 0)
+        if 0 <= adjusted_anchor_index < len(next_paragraphs):
+            next_paragraphs[adjusted_anchor_index] = _append_anchor_sentence(
+                next_paragraphs[adjusted_anchor_index],
+                variant="limitation",
+            )
+            add(
+                f"low_value_remove_anchor_p{remove_index + 1}",
+                next_paragraphs,
+                {
+                    "operation": "low_value_block_remove_plus_anchor",
+                    "portfolio_operation": "low_value_remove_plus_human_anchor",
+                    "removed_paragraph_index": remove_index,
+                    "anchor_paragraph_index": anchor_target,
+                    "targeted_drivers": [
+                        "human_anchor_suppression",
+                        "patchwork_expansion",
+                        "semantic_uniformity",
+                    ],
+                },
+            )
+
+    return candidates[:limit]
+
+
+def _formula_block_map_removal_candidates(
+    source_text: str,
+    block_map: dict | None,
+    *,
+    limit: int = 3,
+) -> list[tuple[str, str, dict]]:
+    """Remove low-value high-drag blocks identified by the formula block map."""
+    if not _env_flag("DRAFTPROOF_FORMULA_BLOCK_MAP_REMOVAL", True):
+        return []
+    paragraphs = _logical_paragraphs(source_text)
+    if len(paragraphs) < 3:
+        return []
+    removable = [
+        row for row in (block_map or {}).get("blocks") or []
+        if isinstance(row, dict)
+        and row.get("recommended_portfolio_action") == "remove_candidate"
+        and row.get("remove_value_loss_risk") == "low"
+        and not row.get("protected")
+        and not row.get("unique_core_claim")
+        and isinstance(row.get("block_index"), int)
+        and 0 <= int(row.get("block_index")) < len(paragraphs)
+    ]
+    removable.sort(
+        key=lambda row: (
+            float(row.get("weighted_drag") or 0.0),
+            float(row.get("generic_density") or 0.0),
+            float(row.get("human_anchor_deficit") or 0.0),
+        ),
+        reverse=True,
+    )
+    if not removable:
+        return []
+    limit = max(1, int(limit or 1))
+    source_norm = str(source_text or "").strip()
+    candidates: list[tuple[str, str, dict]] = []
+    seen = {source_norm}
+
+    def add(strategy: str, remove_indexes: list[int]) -> None:
+        indexes = sorted(set(remove_indexes))
+        if not indexes or len(indexes) >= len(paragraphs):
+            return
+        next_paragraphs = [
+            paragraph for idx, paragraph in enumerate(paragraphs)
+            if idx not in indexes
+        ]
+        candidate = _join_logical_paragraphs(next_paragraphs)
+        normalized = candidate.strip()
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        removed_rows = [
+            row for row in removable
+            if int(row.get("block_index")) in indexes
+        ]
+        candidates.append((
+            strategy,
+            candidate,
+            {
+                "operation": "formula_low_value_block_remove",
+                "portfolio_operation": "low_value_remove",
+                "removed_paragraph_indexes": indexes,
+                "removed_blocks": removed_rows,
+                "targeted_drivers": [
+                    "patchwork_expansion",
+                    "semantic_uniformity",
+                    "ai_likelihood",
+                    "rewrite_smoothness",
+                ],
+                "formula_block_map_removal": True,
+            },
+        ))
+
+    for row in removable[:limit]:
+        add(f"formula_low_value_block_remove_p{int(row['block_index']) + 1}", [int(row["block_index"])])
+        if len(candidates) >= limit:
+            return candidates[:limit]
+    if len(removable) >= 2 and len(candidates) < limit:
+        add(
+            "formula_low_value_block_remove_top2",
+            [int(row["block_index"]) for row in removable[:2]],
+        )
+    return candidates[:limit]
+
+
 def _formula_convergence_budget(source_text: str, budget: dict | None = None) -> dict:
     """Bound formula convergence by document size, not by a fixed global loop."""
     provided = budget if isinstance(budget, dict) else {}
@@ -13663,7 +13999,7 @@ def _formula_convergence_budget(source_text: str, budget: dict | None = None) ->
         defaults = {"max_passes": 2, "max_scans": 8, "max_llm_calls": 2}
         size_band = "300_700"
     elif words <= 1800:
-        defaults = {"max_passes": 3, "max_scans": 16, "max_llm_calls": 4}
+        defaults = {"max_passes": 4, "max_scans": 20, "max_llm_calls": 5}
         size_band = "700_1800"
     else:
         defaults = {"max_passes": 3, "max_scans": 20, "max_llm_calls": 6}
@@ -13737,11 +14073,15 @@ def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dic
         protected = bool(reference_section or heading_like or protected_numbers or protected_codes or url_count)
         unique_core_claim = bool(
             protected
-            or proper_like >= 2
             or re.search(r"\b(?:because|therefore|caused|led to|resulted|depends on|specific|particular)\b", stripped, re.I)
+            or (
+                proper_like >= 4
+                and re.search(r"\b(?:case|example|named|known as|called|located|founded|declared)\b", stripped, re.I)
+            )
         )
         generic_density = generic_hits / max(1, words / 20.0)
         anchor_density = anchor_hits / sentence_count
+        human_anchor_deficit = max(0.0, 1.0 - anchor_density)
         template_density = connector_hits / sentence_count
         length_share = words / total_words
         formula_drag = (
@@ -13757,24 +14097,46 @@ def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dic
             + min(8.0, max(0.0, 1.0 - anchor_density) * 3.0)
             + min(5.0, template_density * 3.0)
         )
+        suppression_gain_potential = min(
+            8.0,
+            human_anchor_deficit * 4.0
+            + min(3.0, generic_density * 0.8)
+            + min(2.0, length_share * 8.0),
+        )
+        if protected:
+            remove_value_loss_risk = "blocked"
+        elif unique_core_claim:
+            remove_value_loss_risk = "high"
+        elif words <= 120 and generic_density >= 1.0 and anchor_hits == 0:
+            remove_value_loss_risk = "low"
+        else:
+            remove_value_loss_risk = "medium"
         if not stripped:
             action = "preserve"
             remove_safety = "empty_block"
+            recommended_portfolio_action = "preserve"
         elif protected:
             action = "preserve"
             remove_safety = "protected_anchor_or_reference"
+            recommended_portfolio_action = "preserve"
         elif unique_core_claim and weighted_drag >= 12.0:
             action = "rebuild"
             remove_safety = "unique_core_claim_requires_replacement"
-        elif weighted_drag >= 15.0 and words <= 80:
+            recommended_portfolio_action = "texture_rebuild"
+        elif weighted_drag >= 12.0 and words <= 120 and remove_value_loss_risk != "high":
             action = "remove_candidate"
             remove_safety = "low_anchor_high_drag_no_protected_anchors"
+            recommended_portfolio_action = (
+                "remove_candidate" if remove_value_loss_risk == "low" else "compress"
+            )
         elif weighted_drag >= 10.0:
             action = "compress"
             remove_safety = "compress_before_remove"
+            recommended_portfolio_action = "anchor_amplify" if human_anchor_deficit >= 0.75 else "compress"
         else:
             action = "preserve"
             remove_safety = "low_estimated_drag"
+            recommended_portfolio_action = "anchor_amplify" if human_anchor_deficit >= 0.75 and weighted_drag >= 6.0 else "preserve"
         blocks.append({
             "block_index": index,
             "word_count": words,
@@ -13785,6 +14147,9 @@ def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dic
             "generic_density": round(generic_density, 3),
             "human_anchor_hits": anchor_hits,
             "human_anchor_density": round(anchor_density, 3),
+            "human_anchor_deficit": round(human_anchor_deficit, 3),
+            "lived_detail_gap": round(max(0.0, 1.0 - anchor_density) * 100.0, 3),
+            "suppression_gain_potential": round(suppression_gain_potential, 3),
             "template_connector_hits": connector_hits,
             "protected": protected,
             "protected_numbers": protected_numbers[:8],
@@ -13794,6 +14159,8 @@ def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dic
             "reference_section": reference_section,
             "unique_core_claim": unique_core_claim,
             "remove_safety": remove_safety,
+            "remove_value_loss_risk": remove_value_loss_risk,
+            "recommended_portfolio_action": recommended_portfolio_action,
             "dominant_formula_drivers": dominant_drivers,
             "preview": stripped[:220],
         })
@@ -13827,6 +14194,17 @@ def _formula_convergence_candidate_batch(
     blocker_candidates = _blocker_operation_candidates(current_text, current_report, limit=4)
     generic_candidates = _generic_assertion_compiler_candidates(current_text, current_report, limit=3)
     pruning_candidates = _content_pruning_candidates(current_text, current_report, limit=3)
+    anchor_frontier_candidates = _human_anchor_suppression_frontier_candidates(
+        current_text,
+        current_report,
+        block_map,
+        limit=4,
+    )
+    block_map_removal_candidates = _formula_block_map_removal_candidates(
+        current_text,
+        block_map,
+        limit=3,
+    )
     portfolio_candidates = _formula_portfolio_candidates(
         current_text,
         current_report,
@@ -13838,10 +14216,12 @@ def _formula_convergence_candidate_batch(
     )
     raw_candidates: list[tuple[str, str, dict]] = []
     raw_candidates.extend(portfolio_candidates)
+    raw_candidates.extend(block_map_removal_candidates)
     raw_candidates.extend(topk_candidates[:2])
     raw_candidates.extend(blocker_candidates[:2])
     raw_candidates.extend(generic_candidates[:2])
     raw_candidates.extend(pruning_candidates[:2])
+    raw_candidates.extend(anchor_frontier_candidates)
     normalized_seen = {str(current_text or "").strip()}
     candidates: list[tuple[str, str, dict]] = []
     for strategy, candidate, meta in raw_candidates:
@@ -13860,7 +14240,11 @@ def _formula_convergence_candidate_batch(
                     {
                         "block_index": row.get("block_index"),
                         "action": row.get("action"),
+                        "recommended_portfolio_action": row.get("recommended_portfolio_action"),
                         "weighted_drag": row.get("weighted_drag"),
+                        "human_anchor_deficit": row.get("human_anchor_deficit"),
+                        "suppression_gain_potential": row.get("suppression_gain_potential"),
+                        "remove_value_loss_risk": row.get("remove_value_loss_risk"),
                     }
                     for row in ((block_map or {}).get("top_blocks") or [])[:4]
                     if isinstance(row, dict)
@@ -13869,6 +14253,123 @@ def _formula_convergence_candidate_batch(
         ))
         if len(candidates) >= limit:
             break
+    return candidates
+
+
+def _formula_convergence_block_recreate_prompt(
+    current_text: str,
+    current_report: dict | None,
+    block_map: dict | None,
+) -> str:
+    """Prompt for formula-gap block recreation, scoped to top drag blocks."""
+    paragraphs = _logical_paragraphs(current_text)
+    profile = _turnitin_like_ai_profile(current_report)
+    plan = _formula_portfolio_plan(current_report, current_report)
+    target_blocks = []
+    for row in (block_map or {}).get("top_blocks") or []:
+        if len(target_blocks) >= 5:
+            break
+        if not isinstance(row, dict):
+            continue
+        index = row.get("block_index")
+        if not isinstance(index, int) or index < 0 or index >= len(paragraphs):
+            continue
+        if row.get("protected") or row.get("action") == "preserve":
+            continue
+        paragraph = paragraphs[index]
+        target_blocks.append({
+            "paragraph_index": index,
+            "recommended_action": row.get("action"),
+            "weighted_drag": row.get("weighted_drag"),
+            "generic_hits": row.get("generic_hits"),
+            "human_anchor_hits": row.get("human_anchor_hits"),
+            "remove_safety": row.get("remove_safety"),
+            "dominant_formula_drivers": row.get("dominant_formula_drivers"),
+            "protected_numbers": row.get("protected_numbers"),
+            "protected_code_anchors": row.get("protected_code_anchors"),
+            "paragraph": paragraph,
+        })
+    return (
+        "DraftProof FORMULA_CONVERGENCE_BLOCK_RECREATE.\n"
+        "Objective: reduce the total Turnitin-like AI formula score below 20 by changing only selected high-drag blocks.\n"
+        "Optimize both halves of the formula: reduce positive AI-driver burden and increase Human Anchor suppression.\n"
+        "Return only valid JSON. No markdown.\n\n"
+        "Hard rules:\n"
+        "- Patch selected paragraph blocks only; do not rewrite the whole document.\n"
+        "- Preserve protected numbers, code anchors, names, citation markers, and unique core claims.\n"
+        "- Do not add fake named events, fake people, fake dates, fake sources, or unsupported evidence claims.\n"
+        "- Use bounded implied context/process reasoning when it is already supported by the paragraph.\n"
+        "- Do not polish into a cleaner essay style. Avoid generic connectors and balanced claim-explain-conclude cadence.\n"
+        "- Each candidate may patch 1 to 3 paragraphs.\n\n"
+        "Target formula profile:\n"
+        f"{json.dumps({'profile': profile, 'portfolio_plan': plan}, ensure_ascii=False)[:6000]}\n\n"
+        "Patch targets:\n"
+        f"{json.dumps(target_blocks, ensure_ascii=False)[:12000]}\n\n"
+        "Allowed operation types:\n"
+        "- HUMAN_ANCHOR_SUPPRESSION_GAIN: add bounded process/context reasoning implied by the paragraph\n"
+        "- LIKELIHOOD_TEXTURE_REBUILD: rebuild cadence and phrasing route to reduce AI likelihood\n"
+        "- TOPK_ROUTE_REBUILD: change predictable token route while preserving meaning\n"
+        "- SEMANTIC_VARIANCE_RESTRUCTURE: change paragraph job/reasoning shape to reduce uniformity\n"
+        "- SMOOTHNESS_DEPOLISH: make the block less over-clean without errors or gimmicks\n"
+        "- PATCHWORK_COLLAPSE: compress expansion/style artifacts\n\n"
+        "Return schema:\n"
+        "{\n"
+        "  \"candidates\": [\n"
+        "    {\n"
+        "      \"reason\": \"short reason\",\n"
+        "      \"patches\": [\n"
+        "        {\"operation_type\": \"LIKELIHOOD_TEXTURE_REBUILD\", \"target_paragraph_index\": 0, \"expected_driver\": \"ai_likelihood\", \"replacement\": \"replacement paragraph\"}\n"
+        "      ]\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Return at most 3 candidates."
+    )
+
+
+def _formula_convergence_llm_patch_candidates(
+    current_text: str,
+    current_report: dict | None,
+    block_map: dict | None,
+    gateway: LLMGateway | None,
+    *,
+    max_candidates: int = 3,
+) -> list[tuple[str, str, dict]]:
+    if gateway is None or not _env_flag("DRAFTPROOF_FORMULA_CONVERGENCE_LLM_BLOCK_RECREATE", True):
+        return []
+    try:
+        response = gateway.chat(
+            _formula_convergence_block_recreate_prompt(current_text, current_report, block_map),
+            system=(
+                "You are DraftProof's formula convergence controller. "
+                "Return only JSON paragraph patches."
+            ),
+            **_phase_chat_sampling_kwargs(
+                "DRAFTPROOF_FORMULA_CONVERGENCE",
+                temperature_env="DRAFTPROOF_FORMULA_CONVERGENCE_TEMPERATURE",
+                temperature_default=0.45,
+                max_tokens_env="DRAFTPROOF_FORMULA_CONVERGENCE_MAX_TOKENS",
+                max_tokens_default=3200,
+            ),
+        )
+    except Exception:
+        return []
+    patch_sets = _extract_post_topk_patch_candidates(response.content, max_candidates=max_candidates)
+    candidates: list[tuple[str, str, dict]] = []
+    for index, patch_candidate in enumerate(patch_sets, start=1):
+        patched_text, applied = _apply_post_topk_patches(current_text, patch_candidate.get("patches") or [])
+        if not applied or patched_text.strip() == str(current_text or "").strip():
+            continue
+        candidates.append((
+            f"formula_convergence_llm_block_recreate_c{index}",
+            patched_text,
+            {
+                "formula_convergence_llm_block_recreate": True,
+                "llm_patch": True,
+                "llm_reason": patch_candidate.get("reason"),
+                "applied_formula_convergence_patches": applied,
+            },
+        ))
     return candidates
 
 
@@ -13925,6 +14426,7 @@ def _formula_convergence_controller(
     scan_func=None,
     candidate_builder=None,
     drift_checker=None,
+    llm_gateway: LLMGateway | None = None,
 ) -> dict:
     """Iteratively close the Turnitin-like formula gap from the current best.
 
@@ -13998,17 +14500,39 @@ def _formula_convergence_controller(
             break
         block_map = _formula_block_driver_map(best_text, best_report)
         last_block_map = block_map
+        anchor_frontier = _human_anchor_suppression_frontier(best_text, best_report, block_map)
         remaining_scans = max(0, max_scans - scans_used)
         batch_limit = max(1, min(remaining_scans, int(math.ceil(max_scans / max(1, max_passes)))))
         if candidate_builder:
             raw_batch = candidate_builder(best_text, best_report, pass_index, block_map)
         else:
+            deterministic_limit = batch_limit
+            if (
+                llm_gateway is not None
+                and llm_calls_used < int(resolved_budget.get("max_llm_calls") or 0)
+                and batch_limit > 2
+            ):
+                deterministic_limit = max(1, batch_limit - 2)
             raw_batch = _formula_convergence_candidate_batch(
                 best_text,
                 best_report,
                 block_map,
-                limit=batch_limit,
+                limit=deterministic_limit,
             )
+            if (
+                llm_gateway is not None
+                and llm_calls_used < int(resolved_budget.get("max_llm_calls") or 0)
+                and len(raw_batch) < remaining_scans
+            ):
+                llm_calls_used += 1
+                llm_candidates = _formula_convergence_llm_patch_candidates(
+                    best_text,
+                    best_report,
+                    block_map,
+                    llm_gateway,
+                    max_candidates=min(3, max(1, remaining_scans - len(raw_batch))),
+                )
+                raw_batch = list(raw_batch or []) + llm_candidates
         batch: list[tuple[str, str, dict]] = []
         seen = {best_text.strip()}
         for item in raw_batch or []:
@@ -14032,7 +14556,10 @@ def _formula_convergence_controller(
                 key: block_map.get(key)
                 for key in ("version", "block_count", "formula_score", "target_score", "remaining_gap", "dominant_formula_drivers", "top_blocks")
             },
+            "human_anchor_suppression_frontier": anchor_frontier,
             "candidate_count": len(batch),
+            "generated_candidates": len(raw_batch or []),
+            "llm_calls_used": llm_calls_used,
             "scanned": 0,
             "selected": False,
         }
@@ -14109,6 +14636,12 @@ def _formula_convergence_controller(
             review_delta = _report_review_burden(candidate_report) - _report_review_burden(best_report)
             severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(best_report)
             critical_delta = _critical_high_count(candidate_report) - _critical_high_count(best_report)
+            current_blockers = _blocker_scores(best_report)
+            candidate_blockers = _blocker_scores(candidate_report)
+            unsupported_claim_delta = (
+                float(candidate_blockers.get("unsupported_claim_risk") or 0.0)
+                - float(current_blockers.get("unsupported_claim_risk") or 0.0)
+            )
             turnitin_gate = _turnitin_like_ai_gate_status(
                 best_report,
                 candidate_report,
@@ -14146,6 +14679,16 @@ def _formula_convergence_controller(
                 and float(candidate_transformation) > float(current_transformation) + 0.001
             ):
                 reject_reasons.append("ai_transformation_regressed")
+            if (
+                candidate_eval.get("human_anchor_suppression_frontier")
+                or candidate_eval.get("human_anchor_amplifier")
+                or candidate_eval.get("portfolio_operation") in {
+                    "human_anchor_suppression_gain",
+                    "human_anchor_plus_texture_rebuild",
+                    "low_value_remove_plus_human_anchor",
+                }
+            ) and unsupported_claim_delta > 3.0:
+                reject_reasons.append("unsupported_claim_risk_regressed")
 
             selectable = not reject_reasons
             reason = "accepted_formula_convergence_step" if selectable else reject_reasons[0]
@@ -14160,6 +14703,7 @@ def _formula_convergence_controller(
                 "review_burden": _report_review_burden(candidate_report),
                 "weighted_severity": _report_weighted_severity(candidate_report),
                 "critical_high_findings": _critical_high_count(candidate_report),
+                "unsupported_claim_risk_delta": round(unsupported_claim_delta, 3),
                 "formula_gap_contract": contract_vs_current,
                 "formula_gap_contract_vs_original": contract_vs_original,
                 "turnitin_like_ai_gate": turnitin_gate,
@@ -14219,6 +14763,10 @@ def _formula_convergence_controller(
                 "selected": True,
                 "selected_strategy": selected_strategy,
                 "score_after": best_profile.get("score"),
+                "score_drop": round(
+                    num(pass_summary.get("score_before"), 0.0) - num(best_profile.get("score"), 0.0),
+                    3,
+                ),
                 "target_gap_after": best_profile.get("target_gap"),
                 "selected_candidate": _formula_convergence_candidate_public(selected_eval),
             })
@@ -14229,6 +14777,14 @@ def _formula_convergence_controller(
         else:
             pass_summary["reason"] = "no_safe_formula_movement"
             passes.append(pass_summary)
+            if (
+                pass_index < max_passes
+                and scans_used < max_scans
+                and llm_gateway is not None
+                and llm_calls_used < int(resolved_budget.get("max_llm_calls") or 0)
+            ):
+                stop_reason = ""
+                continue
             stop_reason = "no_safe_formula_movement"
             break
         passes.append(pass_summary)
@@ -14284,6 +14840,11 @@ def _formula_convergence_controller(
         "start_snapshot": report_snapshot(current_report),
         "final_snapshot": report_snapshot(best_report),
         "block_driver_map": last_block_map,
+        "human_anchor_suppression_frontier": _human_anchor_suppression_frontier(
+            best_text,
+            best_report,
+            last_block_map,
+        ),
         "formula_convergence_passes": passes,
         "candidates": public_candidates,
         "best_formula_frontier": best_frontier,
@@ -22395,10 +22956,29 @@ def run_rewrite_pipeline(
             report_progress(78, "Running formula convergence controller")
             convergence_t0 = time.time()
             try:
+                convergence_key = (
+                    api_key
+                    or os.environ.get("OPENROUTER_API_KEY")
+                    or os.environ.get("LLM_API_KEY")
+                )
+                convergence_gateway = (
+                    LLMGateway(LLMConfig(
+                        api_key=convergence_key,
+                        model=generator_model,
+                        base_url=base_url,
+                        timeout=int(os.environ.get("DRAFTPROOF_FORMULA_CONVERGENCE_TIMEOUT", "120")),
+                        max_retries=int(os.environ.get("DRAFTPROOF_FORMULA_CONVERGENCE_RETRIES", "1")),
+                        max_tokens=int(os.environ.get("DRAFTPROOF_FORMULA_CONVERGENCE_MAX_TOKENS", "3200")),
+                        temperature=float(os.environ.get("DRAFTPROOF_FORMULA_CONVERGENCE_TEMPERATURE", "0.45")),
+                    ))
+                    if convergence_key and _env_flag("DRAFTPROOF_FORMULA_CONVERGENCE_LLM_BLOCK_RECREATE", True)
+                    else None
+                )
                 convergence_result = _formula_convergence_controller(
                     rewritten_text,
                     rewritten_report_dict,
                     original_report_dict,
+                    llm_gateway=convergence_gateway,
                 )
             except Exception as exc:
                 convergence_result = {

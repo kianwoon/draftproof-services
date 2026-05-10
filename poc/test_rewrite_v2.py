@@ -156,9 +156,12 @@ from rewrite_pipeline import (
     _post_safe_win_target_push_candidates,
     _human_signal_construction_candidates,
     _human_anchor_amplifier_candidates,
+    _human_anchor_suppression_frontier,
+    _human_anchor_suppression_frontier_candidates,
     _formula_portfolio_candidates,
     _formula_block_driver_map,
     _formula_convergence_controller,
+    _formula_convergence_llm_patch_candidates,
     _human_anchor_driver_contract,
     _author_stance_thread_candidates,
     _human_target_ai_search_status,
@@ -7064,12 +7067,58 @@ block_driver_map = _formula_block_driver_map(
 )
 assert_test(
     block_driver_map["blocks"][0]["action"] in {"compress", "rebuild", "remove_candidate"}
+    and "human_anchor_deficit" in block_driver_map["blocks"][0]
+    and "suppression_gain_potential" in block_driver_map["blocks"][0]
+    and "recommended_portfolio_action" in block_driver_map["blocks"][0]
     and all(
         row["action"] == "preserve"
         for row in block_driver_map["blocks"][1:]
     )
     and block_driver_map["top_blocks"],
     "formula block driver map targets generic prose while preserving reference blocks",
+)
+frontier_text = (
+    "Students can use AI tools for homework. This creates a challenge for schools because answers can look complete.\n\n"
+    "Teachers need to understand the process. The education system must respond to these changes."
+)
+frontier_report = make_footprint_report(
+    ai_authorship=50,
+    human=50,
+    ai_transformation=50,
+    grounding=45,
+    human_anchor=22,
+    smoothness=50,
+    semantic_uniformity=55,
+    ai_likelihood=60,
+    topk_pattern=60,
+    topk_calibrated_risk=40,
+    generic_assertion_risk=55,
+    qualifying_text_ai_density=55,
+    unsupported_claim_risk=20,
+    broad_claim_risk=30,
+    discourse=35,
+    expansion=30,
+    section_style=30,
+    signal_agreement=40,
+)
+frontier_map = _formula_block_driver_map(frontier_text, frontier_report)
+frontier = _human_anchor_suppression_frontier(frontier_text, frontier_report, frontier_map)
+frontier_candidates = _human_anchor_suppression_frontier_candidates(
+    frontier_text,
+    frontier_report,
+    frontier_map,
+    limit=4,
+)
+assert_test(
+    frontier["suppression_headroom"] > 0
+    and frontier["candidate_blocks"]
+    and bool(frontier_candidates)
+    and all(meta.get("human_anchor_suppression_frontier") for _strategy, _candidate, meta in frontier_candidates)
+    and any(
+        "human_anchor_suppression" in (meta.get("targeted_drivers") or [])
+        for _strategy, _candidate, meta in frontier_candidates
+    ),
+    "human anchor suppression frontier exposes headroom and creates portfolio candidates",
 )
 convergence_current_text = (
     "Schools can feel predictable. Students need judgement in class. "
@@ -7188,6 +7237,83 @@ assert_test(
         for row in convergence_result["candidates"]
     ),
     "formula convergence controller rejects one-signal movement when total formula score worsens",
+)
+unsupported_regression_text = (
+    "Schools can feel uneven. In practice, students need judgement when a quick answer hides the work. "
+    "Teachers still guide the process."
+)
+unsupported_regression_report = make_footprint_report(
+    ai_authorship=48,
+    human=52,
+    ai_transformation=48,
+    grounding=45,
+    human_anchor=42,
+    smoothness=45,
+    semantic_uniformity=45,
+    ai_likelihood=52,
+    topk_pattern=55,
+    topk_calibrated_risk=24,
+    generic_assertion_risk=42,
+    qualifying_text_ai_density=42,
+    unsupported_claim_risk=44,
+    broad_claim_risk=30,
+    discourse=28,
+    expansion=30,
+    section_style=30,
+    signal_agreement=40,
+)
+unsupported_result = _formula_convergence_controller(
+    convergence_current_text,
+    convergence_current_report,
+    convergence_current_report,
+    {"max_passes": 1, "max_scans": 2, "max_llm_calls": 0},
+    scan_func=lambda _text: unsupported_regression_report,
+    candidate_builder=lambda _text, _report, _pass, _map: [
+        (
+            "anchor_unsupported_backfire",
+            unsupported_regression_text,
+            {"human_anchor_suppression_frontier": True},
+        )
+    ],
+    drift_checker=fake_formula_convergence_drift,
+)
+assert_test(
+    not unsupported_result["selected"]
+    and unsupported_result["candidates"][0]["reason"] == "unsupported_claim_risk_regressed",
+    "formula convergence rejects Human Anchor candidates that regress unsupported-claim risk",
+)
+
+class FakeFormulaGateway:
+    def chat(self, *_args, **_kwargs):
+        return SimpleNamespace(content=json.dumps({
+            "candidates": [
+                {
+                    "reason": "replace one high-drag paragraph",
+                    "patches": [
+                        {
+                            "operation_type": "LIKELIHOOD_TEXTURE_REBUILD",
+                            "target_paragraph_index": 0,
+                            "expected_driver": "ai_likelihood",
+                            "replacement": "Schools can feel uneven. In class, students need judgement when a quick answer hides the work. Teachers still guide the process."
+                        }
+                    ],
+                }
+            ]
+        }))
+
+llm_patch_candidates = _formula_convergence_llm_patch_candidates(
+    convergence_current_text,
+    convergence_current_report,
+    _formula_block_driver_map(convergence_current_text, convergence_current_report),
+    FakeFormulaGateway(),
+    max_candidates=2,
+)
+assert_test(
+    bool(llm_patch_candidates)
+    and llm_patch_candidates[0][0].startswith("formula_convergence_llm_block_recreate")
+    and llm_patch_candidates[0][2].get("formula_convergence_llm_block_recreate")
+    and "quick answer hides the work" in llm_patch_candidates[0][1],
+    "formula convergence LLM block recreate returns JSON paragraph patch candidates",
 )
 stance_candidates = _author_stance_thread_candidates(
     target_push_text,
