@@ -2361,11 +2361,17 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
             token for token in (item.get("top_predicted_tokens") or [])
             if isinstance(token, dict)
         ][:10]
-        generic_opening = bool(re.search(
-            r"^(?:The|This|These|It|Another|One of|In addition|At the same time|Despite|However|In conclusion|Overall)\b",
-            sentence,
-            re.I,
-        ))
+        classification = _topk_sentence_route_classification(sentence, {
+            "top10_ratio": top10,
+            "top50_ratio": top50,
+            "predictability_risk": risk,
+            "predictable_token_spans": spans,
+        })
+        generic_opening = bool(classification.get("generic_opening"))
+        actionable = bool(classification.get("actionable"))
+        route_score = top10 * 0.55 + top50 * 0.20 + risk * 0.20 + (0.05 if generic_opening else 0.0)
+        if not actionable:
+            route_score *= 0.15
         rows.append({
             "sentence_id": item.get("sentence_id") or f"s{index + 1:03d}",
             "sentence_index": index,
@@ -2380,11 +2386,18 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
                 "generic_opening": generic_opening,
                 "high_top10": top10 >= 0.65,
                 "span_count": len(spans),
+                "canonical_factual": bool(classification.get("canonical_factual")),
+                "transition_smoothing": bool(classification.get("transition_smoothing")),
+                "generic_expansion": bool(classification.get("generic_expansion")),
             },
-            "route_score": round(top10 * 0.55 + top50 * 0.20 + risk * 0.20 + (0.05 if generic_opening else 0.0), 4),
+            "route_classification": classification,
+            "action": classification.get("action"),
+            "actionable": actionable,
+            "route_score": round(route_score, 4),
         })
     rows.sort(key=lambda row: row["route_score"], reverse=True)
-    selected = rows[:limit]
+    actionable_rows = [row for row in rows if row.get("actionable")]
+    selected = actionable_rows[:limit]
     ai_components = ((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
     raw_topk = ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern"))
     calibrated_topk = ai_components.get("topk_calibrated_risk")
@@ -2402,7 +2415,88 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
         "topk_calibrated_risk": calibrated_topk,
         "topk_safe_band": ai_components.get("topk_safe_band"),
         "targets": selected,
+        "exempted_targets": [row for row in rows if not row.get("actionable")][:limit],
         "target_sentence_ids": [row.get("sentence_id") for row in selected],
+    }
+
+
+def _topk_sentence_route_classification(sentence: str, row: dict | None = None) -> dict:
+    """Classify high Top-k sentences so canonical facts are not over-rewritten."""
+    value = str(sentence or "").strip()
+    lower = value.lower()
+    words = _text_word_count(value)
+    has_year = bool(re.search(r"\b(?:1[5-9]\d{2}|20\d{2})\b", value))
+    has_number = bool(re.search(r"\b\d+(?:\.\d+)?%?\b", value))
+    has_protected = bool(
+        has_year
+        or has_number
+        or _protected_code_anchor_set(value)
+        or re.search(r"https?://|www\.|\[[^\]]+\]|\([^)]*\d{4}[^)]*\)", value)
+    )
+    canonical_fact = bool(
+        has_protected
+        and re.search(
+            r"\b(?:was founded|were founded|declared independence|constitution|was established|"
+            r"were established|was created|were created|became|is located|are located|"
+            r"was born|died|started|ended|signed|passed|enacted|built)\b",
+            lower,
+        )
+    )
+    generic_opening = bool(re.search(
+        r"^(?:The|This|These|It|Another|One of|In addition|At the same time|Despite|However|In conclusion|Overall)\b",
+        value,
+        re.I,
+    ))
+    transition_smoothing = bool(re.search(
+        r"^(?:Furthermore|Moreover|Additionally|In addition|At the same time|Despite|However|In conclusion|Overall|This highlights|This demonstrates|This shows|This means)\b",
+        value,
+        re.I,
+    ))
+    generic_expansion = bool(
+        re.search(
+            r"\b(?:one of the|important|significant|major role|strong influence|many ways|"
+            r"wide range|various|in modern history|around the world|global influence|"
+            r"complex and influential|strengths and challenges)\b",
+            lower,
+        )
+        and not canonical_fact
+    )
+    canonical_public_definition = bool(
+        has_protected
+        and words <= 24
+        and not transition_smoothing
+        and not generic_expansion
+    )
+    if canonical_fact or canonical_public_definition:
+        action = "preserve_canonical_fact"
+        actionable = False
+        reason = "high predictability comes from canonical factual wording, not missing human voice"
+    elif transition_smoothing:
+        action = "entropy_adjustment_transition"
+        actionable = True
+        reason = "smooth transition route is a valid texture target"
+    elif generic_expansion:
+        action = "entropy_adjustment_generic_expansion"
+        actionable = True
+        reason = "generic expansion can be compressed, split, or de-templated"
+    elif generic_opening and words >= 12:
+        action = "entropy_adjustment_opening"
+        actionable = True
+        reason = "generic opening can be changed without adding personal voice"
+    else:
+        action = "preserve_or_micro_adjust_only"
+        actionable = False
+        reason = "top-k alone is insufficient for a rewrite target"
+    return {
+        "version": "topk_sentence_route_classifier_v1",
+        "action": action,
+        "actionable": actionable,
+        "reason": reason,
+        "canonical_factual": bool(canonical_fact or canonical_public_definition),
+        "generic_opening": generic_opening,
+        "transition_smoothing": transition_smoothing,
+        "generic_expansion": generic_expansion,
+        "has_protected_anchor": has_protected,
     }
 
 
@@ -2411,6 +2505,9 @@ def _deterministic_topk_route_sentence(sentence: str) -> tuple[str, list[str]]:
     original = str(sentence or "").strip()
     candidate = original
     operations: list[str] = []
+    classification = _topk_sentence_route_classification(original)
+    if classification.get("action") == "preserve_canonical_fact":
+        return original, []
 
     strong_routes = [
         (
@@ -2705,6 +2802,10 @@ def _topk_masked_route_prompt(
         "- remove generic connectors instead of replacing them with polished connectors\n"
         "- split over-smooth sentences when meaning remains intact\n"
         "- move a clause to the front only when it lowers the predictable opening\n\n"
+        "Targeting rule:\n"
+        "- do not patch canonical factual sentences just because Top-k is high\n"
+        "- historical dates, protected numbers, citations, and public fact anchors should usually stay unchanged\n"
+        "- predictable fact wording is not the same problem as AI authorship texture\n\n"
         "Forbidden:\n"
         "- no new facts, citations, statistics, examples, or personal experience\n"
         "- no full-document rewrite\n"
@@ -2927,6 +3028,7 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "- changing the document topic\n\n"
         "Patch coverage:\n"
         "- each candidate must include one patch for every listed sentence unless a sentence cannot be found exactly\n"
+        "- listed sentences have already excluded canonical factual anchors; do not add personal voice to compensate for factual predictability\n"
         "- do not return a one-sentence patch when many high-risk sentences are listed\n"
         "- candidate 1 should use direct plain contrast; candidate 2 should use plain sentence splitting and clause movement\n\n"
         "Examples:\n"

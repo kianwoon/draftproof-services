@@ -211,6 +211,7 @@ from rewrite_pipeline import (
     _topk_plain_spoken_snapshot_prompt,
     _topk_safe_band_patch_rounds_default,
     _topk_safe_band_snapshot_max_tokens_default,
+    _topk_sentence_route_classification,
     _topk_repair_map,
     _topk_route_optimizer_candidates,
     _topk_masked_route_prompt,
@@ -5591,6 +5592,14 @@ topk_route_report = {
         "all_sentences": [
             {
                 "sentence_id": "s001",
+                "sentence": "The United States was founded in 1776 after the American colonies declared independence from Britain.",
+                "top10_ratio": 0.92,
+                "top50_ratio": 0.98,
+                "predictability_risk": 0.7,
+                "predictable_token_spans": ["was founded in 1776"],
+            },
+            {
+                "sentence_id": "s002",
                 "sentence": "The United States is often described as one of the most influential countries in modern history.",
                 "top10_ratio": 0.75,
                 "top50_ratio": 0.875,
@@ -5599,7 +5608,7 @@ topk_route_report = {
                 "top_predicted_tokens": [{"token": "of", "rank": 1, "probability": 0.9, "top10": True}],
             },
             {
-                "sentence_id": "s002",
+                "sentence_id": "s003",
                 "sentence": "It has shaped global politics, economics, technology, entertainment, and education for many decades.",
                 "top10_ratio": 0.65,
                 "top50_ratio": 0.94,
@@ -5616,6 +5625,7 @@ topk_route_map = _topk_repair_map(
     limit=2,
 )
 topk_route_candidates = _topk_route_optimizer_candidates(
+    "The United States was founded in 1776 after the American colonies declared independence from Britain. "
     "The United States is often described as one of the most influential countries in modern history. "
     "It has shaped global politics, economics, technology, entertainment, and education for many decades.",
     topk_route_report,
@@ -5632,10 +5642,20 @@ topk_patched_text, topk_applied = _apply_topk_route_patches(
 )
 assert_test(
     topk_route_map["saturated"]
+    and topk_route_map["exempted_targets"][0]["action"] == "preserve_canonical_fact"
+    and _topk_sentence_route_classification(
+        "The United States was founded in 1776 after the American colonies declared independence from Britain."
+    )["action"] == "preserve_canonical_fact"
+    and all(
+        row["sentence_id"] != "s001"
+        for row in topk_route_map["targets"]
+    )
     and topk_route_map["targets"][0]["predictable_token_spans"]
     and topk_route_candidates
     and "often described as" not in topk_route_candidates[0][1]
+    and "founded in 1776" in topk_route_candidates[0][1]
     and "Return valid JSON only" in topk_mask_prompt
+    and "do not patch canonical factual sentences" in topk_mask_prompt
     and "claim -> explanation -> implication" in topk_mask_prompt
     and _phase_sampling_arg("DRAFTPROOF_TOPK_ROUTE", "TOP_P") == 0.72
     and _phase_sampling_arg("DRAFTPROOF_TOPK_ROUTE", "FREQUENCY_PENALTY") == 0.35
