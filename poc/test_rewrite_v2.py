@@ -130,6 +130,7 @@ from rewrite_pipeline import (
     _logical_paragraphs,
     _ai_search_prompt,
     _paragraph_role,
+    _neutralize_external_detector_style_artifacts,
     _human_signal_amplification_prompt,
     _author_reasoning_amplification_prompt,
     _score_human_amplification_candidate,
@@ -3025,6 +3026,37 @@ assert_test(
     ) == "dangling_sentence_fragment_join",
     "AI search rejects dangling sentence-fragment joins",
 )
+generic_admiration_candidate = (
+    "1776: American colonies broke from Britain. The Revolutionary War began. Freedom, democracy, individual rights became core ideals. "
+    "The Constitution balanced power across branches. Expansion swept westward. Industrial surge: 1800s and 1900s burst with swift growth. "
+    "Immigrants arrived seeking work and safety. Millions shaped a diverse society. "
+    "Silicon Valley giants: Apple, Microsoft, Google, Tesla carve innovation's edge. Entrepreneurship thrives in the culture. "
+    "Global companies wield economic influence worldwide. Universities attract international students. "
+    "Hollywood ships culture worldwide. Music, film, sports stars become global fame magnets. "
+    "Basketball and football symbolize national identity. Younger generations echo individuality and self-expression. "
+    "Economic power, cultural sway, diversity: forces molding world history."
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(generic_admiration_candidate)
+    in {"generic_admiration_tone", "compressed_promotional_fragment_style"},
+    "AI search rejects external-detector generic admiration/praise-list style",
+)
+neutralized_admiration_candidate, neutralized_repairs = _neutralize_external_detector_style_artifacts(
+    generic_admiration_candidate
+)
+assert_test(
+    neutralized_repairs
+    and not _ai_candidate_quality_reject_reason(neutralized_admiration_candidate),
+    "AI search can repair external-detector praise-list artifacts before scoring",
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(
+        "Britain.Revolutionary War came next, carving out a fresh nation. "
+        "shape.Freedom and democracy became core ideals. starts.Millions arrived. "
+        "The paragraph has enough remaining words to be treated as a generated candidate for the guard."
+    ).startswith("missing_sentence_spacing_artifact"),
+    "AI search rejects missing sentence-spacing artifacts that external detectors highlight",
+)
 assert_test(
     _ai_candidate_quality_reject_reason(
         "With only six learners in my current HBB26 intake, smaller class sizes let me observe technique closely. "
@@ -5422,6 +5454,18 @@ changed_rows = [
 assert_test(
     all(row.get("new_sentence") for row in changed_rows),
     "sentence comparison groups unequal replace blocks without blank rewritten cells",
+)
+large_replace_mp = SimpleNamespace(
+    original_text="A one. B two. C three. D four. E five.",
+    final_text="First replacement. Second replacement. Third replacement. Fourth replacement. Fifth replacement.",
+    original_metrics=SimpleNamespace(sentence_details=[]),
+    final_metrics=SimpleNamespace(sentence_details=[]),
+)
+large_replace_rows = _build_aligned_sentence_comparison(large_replace_mp)
+assert_test(
+    len(large_replace_rows) == 5
+    and all(len(row.get("new_sentence", "").split(".")) <= 2 for row in large_replace_rows),
+    "sentence comparison keeps large replace blocks sentence-level instead of one giant new sentence",
 )
 heading_comparison_mp = SimpleNamespace(
     original_text=(
