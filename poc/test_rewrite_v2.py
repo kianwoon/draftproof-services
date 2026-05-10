@@ -166,6 +166,10 @@ from rewrite_pipeline import (
     _formula_block_driver_map,
     _formula_convergence_controller,
     _formula_convergence_llm_patch_candidates,
+    _ai_density_breaker_canonical_fact_sentence,
+    _ai_density_breaker_sentence_route,
+    _post_selection_ai_density_breaker_candidates,
+    _post_selection_ai_density_breaker_acceptance,
     _human_anchor_driver_contract,
     _author_stance_thread_candidates,
     _human_target_ai_search_status,
@@ -7573,7 +7577,127 @@ finally:
 
 # ════════════════════════════════════════════════════════════════════════
 print(f"\n{'=' * 70}")
-print("17. FULL PLANNER→GUARD→SCORE PIPELINE")
+print("17. POST-SELECTION AI-DENSITY BREAKER ADD-ON")
+print("=" * 70)
+
+assert_test(
+    _ai_density_breaker_canonical_fact_sentence(
+        "The United States was founded in 1776 after the American colonies declared independence from Britain."
+    )
+    is True,
+    "density breaker preserves canonical factual sentences with protected years",
+)
+
+route_sentence, route_ops = _ai_density_breaker_sentence_route(
+    "One of the biggest strengths of the United States is its economic power."
+)
+assert_test(
+    route_sentence != "One of the biggest strengths of the United States is its economic power."
+    and "economic power" in route_sentence
+    and route_ops,
+    "density breaker uses operation-specific route edits for generic expansion sentences",
+)
+
+density_source = (
+    "The United States was founded in 1776 after the American colonies declared independence from Britain. "
+    "One of the biggest strengths of the United States is its economic power. "
+    "At the same time, diversity has also created challenges related to inequality and social tension."
+)
+density_report = {
+    "ai_risk_badge": {
+        "ai_components": {"topk_pattern_raw": 100, "topk_calibrated_risk": 92},
+        "transformation_classification": {
+            "features": {
+                "ai_likelihood": 0.55,
+                "semantic_uniformity_risk": 0.60,
+                "rewrite_smoothness": 0.50,
+                "outline_to_text_expansion": 0.30,
+                "section_style_variance": 0.20,
+                "signal_agreement_score": 0.60,
+                "human_anchor_discount": 0.15,
+            }
+        },
+    },
+    "predictability": {
+        "all_sentences": [
+            {"sentence": "The United States was founded in 1776 after the American colonies declared independence from Britain.", "top10_ratio": 0.95, "top50_ratio": 1.0},
+            {"sentence": "One of the biggest strengths of the United States is its economic power.", "top10_ratio": 0.90, "top50_ratio": 1.0},
+            {"sentence": "At the same time, diversity has also created challenges related to inequality and social tension.", "top10_ratio": 0.80, "top50_ratio": 1.0},
+        ]
+    },
+}
+density_candidates = _post_selection_ai_density_breaker_candidates(density_source, density_report, limit=4)
+assert_test(
+    bool(density_candidates)
+    and all("1776" in candidate for _strategy, candidate, _meta in density_candidates),
+    "density breaker candidates keep canonical factual anchors while editing generic routes",
+)
+
+base_acceptance_report = {
+    "ai_risk_badge": {
+        "ai_components": {"topk_pattern_raw": 98, "topk_calibrated_risk": 90, "qualifying_text_ai_density": 60},
+        "transformation_classification": {
+            "features": {
+                "ai_likelihood": 0.50,
+                "semantic_uniformity_risk": 0.58,
+                "rewrite_smoothness": 0.48,
+                "outline_to_text_expansion": 0.40,
+                "section_style_variance": 0.20,
+                "signal_agreement_score": 0.50,
+                "human_anchor_discount": 0.18,
+            }
+        },
+    },
+    "integrity_layers": {
+        "layers": {
+            "ai_authorship_risk": {"score": 49},
+            "ai_transformation_risk": {"score": 45},
+            "human_contribution_signal": {"score": 55},
+        }
+    },
+    "findings": {"critical": [], "high": [], "medium": [], "low": []},
+}
+candidate_acceptance_report = {
+    "ai_risk_badge": {
+        "ai_components": {"topk_pattern_raw": 96, "topk_calibrated_risk": 88, "qualifying_text_ai_density": 57},
+        "transformation_classification": {
+            "features": {
+                "ai_likelihood": 0.48,
+                "semantic_uniformity_risk": 0.57,
+                "rewrite_smoothness": 0.48,
+                "outline_to_text_expansion": 0.39,
+                "section_style_variance": 0.20,
+                "signal_agreement_score": 0.49,
+                "human_anchor_discount": 0.18,
+            }
+        },
+    },
+    "integrity_layers": {
+        "layers": {
+            "ai_authorship_risk": {"score": 48},
+            "ai_transformation_risk": {"score": 44},
+            "human_contribution_signal": {"score": 56},
+        }
+    },
+    "findings": {"critical": [], "high": [], "medium": [], "low": []},
+}
+accepted_density = _post_selection_ai_density_breaker_acceptance(
+    base_acceptance_report,
+    candidate_acceptance_report,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    accepted_density.get("selectable") is True
+    and accepted_density.get("driver_drops", {}).get("qualifying_text_ai_density") == 3.0,
+    "density breaker accepts only rescanned formula/external/density improvement without safety regression",
+)
+
+
+# ════════════════════════════════════════════════════════════════════════
+print(f"\n{'=' * 70}")
+print("18. FULL PLANNER→GUARD→SCORE PIPELINE")
 print("=" * 70)
 
 # Simulate the full flow

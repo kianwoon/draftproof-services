@@ -408,6 +408,15 @@ img[src^="https://img.shields.io"] { height: 18px; }
     padding: 0 13pt 4pt;
 }
 
+.dp-core-group-heading {
+    margin: 7pt 0 4pt;
+    color: #334155;
+    font-size: 7.5pt;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
 .dp-core-label {
     min-height: 12pt;
 }

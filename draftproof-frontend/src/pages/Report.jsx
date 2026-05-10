@@ -154,6 +154,54 @@ const TRANSFORMATION_SIGNAL_ORDER = [
   'reporting_suppression',
 ];
 
+const TRANSFORMATION_SIGNAL_GROUPS = [
+  {
+    id: 'ai_authorship',
+    label: 'AI Authorship Signals',
+    keys: [
+      'topk_calibrated_risk',
+      'topk_pattern_raw',
+      'topk_pattern',
+      'ai_likelihood',
+      'rewrite_smoothness',
+      'semantic_uniformity_risk',
+      'section_style_variance',
+      'outline_to_text_expansion',
+      'discourse_regularity_risk',
+    ],
+  },
+  {
+    id: 'human_authenticity',
+    label: 'Human / Authenticity Signals',
+    keys: [
+      'human_anchor_score',
+      'human_anchor_discount',
+    ],
+  },
+  {
+    id: 'quality_calibration',
+    label: 'Quality & Calibration Signals',
+    keys: [
+      'citation_grounding_risk',
+      'calibration_confidence',
+      'reporting_suppression',
+      'signal_agreement_score',
+      'adjusted_ai_risk',
+      'calibrated_ai_risk',
+      'source_similarity',
+      'surface_similarity',
+      'paraphrase_transformation_risk',
+    ],
+  },
+];
+
+const TRANSFORMATION_SIGNAL_GROUP_BY_KEY = TRANSFORMATION_SIGNAL_GROUPS.reduce((acc, group) => {
+  group.keys.forEach((key) => {
+    acc[key] = group.id;
+  });
+  return acc;
+}, {});
+
 const TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION = {
   topk_pattern: 'lower',
   topk_pattern_raw: 'lower',
@@ -244,6 +292,22 @@ function buildPairedTransformationSignals(originalSignals = [], rewrittenSignals
       rewritten,
     };
   });
+}
+
+function groupTransformationSignals(signals = []) {
+  const groups = TRANSFORMATION_SIGNAL_GROUPS.map((group) => ({
+    ...group,
+    signals: [],
+  }));
+  const other = { id: 'other', label: 'Other Signals', keys: [], signals: [] };
+  const byId = new Map(groups.map((group) => [group.id, group]));
+
+  (Array.isArray(signals) ? signals : []).forEach((signal) => {
+    const groupId = TRANSFORMATION_SIGNAL_GROUP_BY_KEY[signal?.key] || 'other';
+    (byId.get(groupId) || other).signals.push(signal);
+  });
+
+  return [...groups, other].filter((group) => group.signals.length > 0);
 }
 
 function getTransformationSignalImprovement(signal, baselineSignal) {
@@ -504,13 +568,19 @@ function deriveCalibratedAuthorshipRating(
     }
   };
 
-  if (
+  const strongTopkWholeProfile = (
     topkPercent != null &&
     topkRiskPercent != null &&
     topkPercent >= 90 &&
     topkRiskPercent >= 90 &&
-    supportingSignal
-  ) {
+    supportingSignal &&
+    calibratedPercent != null &&
+    calibratedPercent >= 35 &&
+    aiLikelihoodPercent != null &&
+    aiLikelihoodPercent >= 55 &&
+    (humanAnchorPercent == null || humanAnchorPercent <= 50)
+  );
+  if (strongTopkWholeProfile) {
     applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'ai_generated_signals'), {
       topk_strong_signal: true,
     });
@@ -582,11 +652,18 @@ function formatAuthorshipSealDetail({
     }
     return 'Sample limited';
   }
-  if (rating.topk_strong_signal && topkPatternScore != null && rating.supporting_signal) {
-    return `${formatMetricPercent(topkPatternScore, 0)} top-k · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${rating.supporting_signal.label.toLowerCase()}`;
+  if (rating.topk_strong_signal && (topkCalibratedRisk != null || topkPatternScore != null) && rating.supporting_signal) {
+    const topkLabel = topkCalibratedRisk != null
+      ? `${formatMetricPercent(topkCalibratedRisk, 0)} calibrated top-k`
+      : `${formatMetricPercent(topkPatternScore, 0)} top-k`;
+    return `${topkLabel} · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${rating.supporting_signal.label.toLowerCase()}`;
   }
   if (rating.topk_escalated && (topkCalibratedRisk != null || topkPatternScore != null)) {
-    return `${formatMetricPercent(topkCalibratedRisk ?? topkPatternScore, 0)} top-k signal`;
+    const topkLabel = `${formatMetricPercent(topkCalibratedRisk ?? topkPatternScore, 0)} calibrated top-k`;
+    if (rating.supporting_signal) {
+      return `${topkLabel} · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${rating.supporting_signal.label.toLowerCase()}`;
+    }
+    return topkLabel;
   }
   if (calibratedAuthorshipRisk != null) {
     return `${formatMetricPercent(calibratedAuthorshipRisk, 0)} calibrated risk`;
@@ -1662,57 +1739,62 @@ export default function Report() {
         {comparisonSignals.length > 0 && (
           <>
             <div className="transformation-chart-head">
-              <span>Core Signals</span>
+              <span>Signal Profile</span>
             </div>
             <div className="transformation-bars">
-              {comparisonSignals.map((signal) => {
-                const baselineSignal = variant === 'rewritten'
-                  ? transformationSignals.find((item) => item.key === signal.key)
-                  : null;
-                const improvement = signal.isMissing ? null : getTransformationSignalImprovement(signal, baselineSignal);
-                const improvementCopy = improvement
-                  ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%.`
-                  : '';
-                const tooltip = [
-                  signal.pairedDescription || signal.description,
-                  signal.isMissing ? 'Signal not present in this scan.' : improvementCopy,
-                ].filter(Boolean).join(' ');
-                const valueLabel = signal.isMissing ? '—' : `${signal.value.toFixed(0)}%`;
-                const barWidth = signal.isMissing ? 0 : signal.value;
+              {groupTransformationSignals(comparisonSignals).map((group) => (
+                <div className="transformation-signal-group" key={`${variant}-${group.id}`}>
+                  <h4>{group.label}</h4>
+                  {group.signals.map((signal) => {
+                    const baselineSignal = variant === 'rewritten'
+                      ? transformationSignals.find((item) => item.key === signal.key)
+                      : null;
+                    const improvement = signal.isMissing ? null : getTransformationSignalImprovement(signal, baselineSignal);
+                    const improvementCopy = improvement
+                      ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%.`
+                      : '';
+                    const tooltip = [
+                      signal.pairedDescription || signal.description,
+                      signal.isMissing ? 'Signal not present in this scan.' : improvementCopy,
+                    ].filter(Boolean).join(' ');
+                    const valueLabel = signal.isMissing ? '—' : `${signal.value.toFixed(0)}%`;
+                    const barWidth = signal.isMissing ? 0 : signal.value;
 
-                return (
-                  <div
-                    key={`${variant}-${signal.key}`}
-                    className={`transformation-bar-row${improvement ? ' is-improved' : ''}${signal.isMissing ? ' is-missing' : ''}`}
-                    data-tooltip={tooltip}
-                    tabIndex={0}
-                    aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.pairedLabel || signal.label}: ${valueLabel}. ${tooltip}`}
-                    title={tooltip}
-                  >
-                    <div className="transformation-bar-label">
-                      <span className="transformation-bar-name">{signal.pairedLabel || signal.label}</span>
-                      <span
-                        className={`transformation-improvement-slot${improvement ? ' is-visible' : ''}`}
-                        aria-label={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
-                        title={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
-                      >
-                        {improvement && (
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                            <path d="M3.2 6.1l1.8 1.8 3.8-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        )}
-                      </span>
-                      <strong>{valueLabel}</strong>
-                    </div>
-                    <div className="transformation-bar-track" aria-hidden="true">
+                    return (
                       <div
-                        className={`transformation-bar-fill transformation-bar-${signal.key}`}
-                        style={{ width: `${barWidth}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+                        key={`${variant}-${signal.key}`}
+                        className={`transformation-bar-row${improvement ? ' is-improved' : ''}${signal.isMissing ? ' is-missing' : ''}`}
+                        data-tooltip={tooltip}
+                        tabIndex={0}
+                        aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.pairedLabel || signal.label}: ${valueLabel}. ${tooltip}`}
+                        title={tooltip}
+                      >
+                        <div className="transformation-bar-label">
+                          <span className="transformation-bar-name">{signal.pairedLabel || signal.label}</span>
+                          <span
+                            className={`transformation-improvement-slot${improvement ? ' is-visible' : ''}`}
+                            aria-label={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
+                            title={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
+                          >
+                            {improvement && (
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                                <path d="M3.2 6.1l1.8 1.8 3.8-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </span>
+                          <strong>{valueLabel}</strong>
+                        </div>
+                        <div className="transformation-bar-track" aria-hidden="true">
+                          <div
+                            className={`transformation-bar-fill transformation-bar-${signal.key}`}
+                            style={{ width: `${barWidth}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           </>
         )}

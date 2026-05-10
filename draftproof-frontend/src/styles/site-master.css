@@ -4410,9 +4410,29 @@ th {
 
 .transformation-bars {
   display: grid;
-  gap: .72rem;
+  gap: .95rem;
   padding-top: .55rem;
   align-self: start;
+}
+
+.transformation-signal-group {
+  display: grid;
+  gap: .62rem;
+}
+
+.transformation-signal-group + .transformation-signal-group {
+  padding-top: .25rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.transformation-signal-group h4 {
+  margin: 0;
+  color: #334155;
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .transformation-bar-row {

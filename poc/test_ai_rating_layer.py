@@ -473,6 +473,33 @@ assert_true(
     "strong top-k escalation is exposed for page/PDF seal copy",
 )
 
+render_rewrite_topk_not_strong = _display_authorship_rating_from_badge({
+    "ai_likelihood_score": 49.0,
+    "ai_components": {
+        "topk_pattern_raw": 97.0,
+        "topk_calibrated_risk": 92.0,
+    },
+    "transformation_classification": {
+        "features": {
+            "ai_likelihood": 49.0,
+            "human_anchor_score": 60.0,
+            "semantic_uniformity_risk": 54.0,
+            "rewrite_smoothness": 48.0,
+            "section_style_variance": 65.0,
+            "calibrated_ai_risk": 28.0,
+        },
+    },
+})
+assert_equal(
+    render_rewrite_topk_not_strong["short_label"],
+    "Likely AI-Assisted",
+    "high top-k on a human-anchored rewrite does not escalate to Strong AI Signal",
+)
+assert_true(
+    not render_rewrite_topk_not_strong.get("topk_strong_signal"),
+    "Strong AI Signal requires broad AI-authorship agreement, not top-k alone",
+)
+
 short_topk_calibration = calibrate_topk_risk(100.0, eligible_sentence_count=1)
 assert_equal(
     short_topk_calibration["topk_calibrated_risk"],
@@ -799,6 +826,12 @@ scan_markdown = render_markdown(scan_report)
 assert_true(
     'class="dp-core-bars"' in scan_markdown and "Core Signals" in scan_markdown,
     "PDF markdown includes the executive transformation signal chart",
+)
+assert_true(
+    "AI Authorship Signals" in scan_markdown
+    and "Human / Authenticity Signals" in scan_markdown
+    and "Quality &amp; Calibration Signals" in scan_markdown,
+    "PDF markdown groups core signals by reader-facing meaning",
 )
 assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],

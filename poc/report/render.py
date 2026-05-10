@@ -127,6 +127,44 @@ _SIGNAL_CHART_COLORS = {
     "reporting_suppression": "#64748b",
 }
 
+_SIGNAL_CHART_GROUPS = [
+    (
+        "AI Authorship Signals",
+        {
+            "topk_calibrated_risk",
+            "topk_pattern_raw",
+            "topk_pattern",
+            "ai_likelihood",
+            "rewrite_smoothness",
+            "semantic_uniformity_risk",
+            "section_style_variance",
+            "outline_to_text_expansion",
+            "discourse_regularity_risk",
+        },
+    ),
+    (
+        "Human / Authenticity Signals",
+        {
+            "human_anchor_score",
+            "human_anchor_discount",
+        },
+    ),
+    (
+        "Quality & Calibration Signals",
+        {
+            "citation_grounding_risk",
+            "calibration_confidence",
+            "reporting_suppression",
+            "signal_agreement_score",
+            "adjusted_ai_risk",
+            "calibrated_ai_risk",
+            "source_similarity",
+            "surface_similarity",
+            "paraphrase_transformation_risk",
+        },
+    ),
+]
+
 # ── Layman labels for AI Likelihood components ──────────────────────────
 _AI_COMPONENT_LABELS = {
     "predictability": ("Predictability", "How predictable the word choices are — higher means the text reads like statistically common patterns"),
@@ -396,6 +434,24 @@ def _strongest_supporting_ai_shape_signal(features: dict | None) -> dict | None:
     return None
 
 
+def _group_signal_chart_rows(rows: list[dict]) -> list[dict]:
+    grouped = [
+        {"label": label, "rows": []}
+        for label, _ in _SIGNAL_CHART_GROUPS
+    ]
+    other = {"label": "Other Signals", "rows": []}
+    by_label = {group["label"]: group for group in grouped}
+    for row in rows:
+        key = row.get("key")
+        target = other
+        for label, keys in _SIGNAL_CHART_GROUPS:
+            if key in keys:
+                target = by_label[label]
+                break
+        target["rows"].append(row)
+    return [group for group in [*grouped, other] if group["rows"]]
+
+
 def _authorship_rating_from_calibrated_risk(
     score,
     topk_score=None,
@@ -456,13 +512,19 @@ def _authorship_rating_from_calibrated_risk(
                 **extra,
             }
 
-    if (
+    strong_topk_whole_profile = (
         topk_score is not None
         and topk_calibrated_score is not None
         and topk_score >= 90
         and topk_calibrated_score >= 90
         and supporting_signal
-    ):
+        and calibrated_score is not None
+        and calibrated_score >= 35
+        and ai_likelihood_score is not None
+        and ai_likelihood_score >= 55
+        and (human_anchor_score is None or human_anchor_score <= 50)
+    )
+    if strong_topk_whole_profile:
         _apply_topk_floor("ai_generated_signals", topk_strong_signal=True)
 
     if topk_calibrated_score is not None:
@@ -598,11 +660,19 @@ def _executive_signal_chart_html(
             rating_detail = f"{sample['sentence_count']:.0f} sentences · sample limited"
         else:
             rating_detail = "Sample limited"
-    elif rating.get("topk_strong_signal") and topk_score is not None and rating.get("supporting_signal"):
+    elif rating.get("topk_strong_signal") and (topk_calibrated_score is not None or topk_score is not None) and rating.get("supporting_signal"):
         support = rating["supporting_signal"]
-        rating_detail = f"{topk_score:.0f}% top-k · {support['score']:.0f}% {support['label'].lower()}"
+        if topk_calibrated_score is not None:
+            rating_detail = f"{topk_calibrated_score:.0f}% calibrated top-k · {support['score']:.0f}% {support['label'].lower()}"
+        else:
+            rating_detail = f"{topk_score:.0f}% top-k · {support['score']:.0f}% {support['label'].lower()}"
     elif rating.get("topk_escalated") and (topk_calibrated_score is not None or topk_score is not None):
-        rating_detail = f"{(topk_calibrated_score if topk_calibrated_score is not None else topk_score):.0f}% top-k signal"
+        topk_detail_score = topk_calibrated_score if topk_calibrated_score is not None else topk_score
+        if rating.get("supporting_signal"):
+            support = rating["supporting_signal"]
+            rating_detail = f"{topk_detail_score:.0f}% calibrated top-k · {support['score']:.0f}% {support['label'].lower()}"
+        else:
+            rating_detail = f"{topk_detail_score:.0f}% calibrated top-k"
     elif calibrated_score is not None:
         rating_detail = f"{calibrated_score:.0f}% calibrated risk"
     else:
@@ -729,21 +799,23 @@ def _executive_signal_chart_html(
         '<div class="dp-core-bars">',
     ]
 
-    for row in rows:
-        key = row["key"]
-        score = max(0, min(100, row.get("score") or 0))
-        color = _SIGNAL_CHART_COLORS.get(key, "#0f766e")
-        html.extend([
-            '<div class="dp-core-row">',
-            '<div class="dp-core-label">',
-            f'<span>{escape(row["label"])}</span>',
-            f'<strong>{score:.0f}%</strong>',
-            '</div>',
-            '<div class="dp-bar-track">',
-            f'<div class="dp-core-fill" style="width:{score:.0f}%;background:{color}"></div>',
-            '</div>',
-            '</div>',
-        ])
+    for group in _group_signal_chart_rows(rows):
+        html.append(f'<h4 class="dp-core-group-heading">{escape(group["label"])}</h4>')
+        for row in group["rows"]:
+            key = row["key"]
+            score = max(0, min(100, row.get("score") or 0))
+            color = _SIGNAL_CHART_COLORS.get(key, "#0f766e")
+            html.extend([
+                '<div class="dp-core-row">',
+                '<div class="dp-core-label">',
+                f'<span>{escape(row["label"])}</span>',
+                f'<strong>{score:.0f}%</strong>',
+                '</div>',
+                '<div class="dp-bar-track">',
+                f'<div class="dp-core-fill" style="width:{score:.0f}%;background:{color}"></div>',
+                '</div>',
+                '</div>',
+            ])
 
     html.extend([
         '</div>',

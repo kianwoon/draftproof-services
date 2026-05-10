@@ -95,6 +95,577 @@ def _ai_first_gate_status(
     }
 
 
+_AI_DENSITY_CANONICAL_FACT_RE = re.compile(
+    r"(?:\b\d{3,4}\b|https?://|www\.|\[[^\]]+\]|\([^)]*\d{4}[^)]*\)|"
+    r"\b[A-Z]{2,}[A-Z0-9-]{2,}\b)",
+    re.I,
+)
+
+_AI_DENSITY_GENERIC_RE = re.compile(
+    r"\b(?:important|significant|major|strong|influential|different|many|"
+    r"various|complex|global|modern|today|society|culture|system|country|"
+    r"world|success|challenge|opportunity|influence|impact|role|feature|"
+    r"strength|development|diversity|economy|education|people)\b",
+    re.I,
+)
+
+_AI_DENSITY_TRANSITION_RE = re.compile(
+    r"^(?:Furthermore|Moreover|Additionally|In conclusion|Overall|Therefore|"
+    r"However|At the same time|In addition|Despite|Another important|"
+    r"One of the|This|These|It is important)\b",
+    re.I,
+)
+
+
+def _ai_density_breaker_canonical_fact_sentence(sentence: str) -> bool:
+    """Preserve canonical factual/anchor-heavy sentences in the add-on layer."""
+    value = str(sentence or "").strip()
+    if not value:
+        return True
+    if _AI_DENSITY_CANONICAL_FACT_RE.search(value):
+        return True
+    proper = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b", value)
+    if len(proper) >= 4 and not _AI_DENSITY_TRANSITION_RE.search(value):
+        return True
+    return False
+
+
+def _ai_density_breaker_sentence_route(sentence: str) -> tuple[str, list[str]]:
+    """Apply a small non-personal route change to generic/transition prose."""
+    original = str(sentence or "").strip()
+    if not original or _ai_density_breaker_canonical_fact_sentence(original):
+        return original, []
+    candidate = original
+    operations: list[str] = []
+    replacements = [
+        (
+            r"^One of the biggest strengths of (?P<subject>.+?) is (?P<claim>[^.]+)\.$",
+            lambda m: f"For {m.group('subject').strip()}, {m.group('claim').strip()} remains one clear strength.",
+            "ranked_claim_route",
+        ),
+        (
+            r"^Another important feature of (?P<subject>.+?) is (?P<claim>[^.]+)\.$",
+            lambda m: f"Another part of {m.group('subject').strip()} is {m.group('claim').strip()}.",
+            "feature_route_reduce",
+        ),
+        (
+            r"^The country has one of the largest (?P<asset>[^.]+?) in the world and is home to many (?P<group>[^.]+)\.$",
+            lambda m: f"Its {m.group('asset').strip()} is large, and many {m.group('group').strip()} operate from there.",
+            "largest_asset_route_reduce",
+        ),
+        (
+            r"^At the same time,\s*(?P<body>.+)$",
+            lambda m: f"Still, {m.group('body').strip()[0].lower() + m.group('body').strip()[1:]}",
+            "transition_break",
+        ),
+        (
+            r"^In addition to\s+(?P<body>.+)$",
+            lambda m: f"Beyond {m.group('body').strip()}",
+            "transition_break",
+        ),
+        (
+            r"^Despite its success,\s*(?P<body>.+)$",
+            lambda m: f"That success has limits. {m.group('body').strip()[0].upper() + m.group('body').strip()[1:]}",
+            "transition_split",
+        ),
+        (
+            r"^However,\s*(?P<body>.+)$",
+            lambda m: f"But {m.group('body').strip()[0].lower() + m.group('body').strip()[1:]}",
+            "transition_plain",
+        ),
+    ]
+    for pattern, replacement, operation in replacements:
+        match = re.match(pattern, candidate, flags=re.I)
+        if not match:
+            continue
+        updated = replacement(match)
+        if updated and updated != candidate:
+            candidate = updated
+            operations.append(operation)
+            break
+    phrase_replacements = [
+        (r"\bplays? (?:a|an) (?:important|significant|major|crucial) role in\b", "matters in", "formula_verb_reduce"),
+        (r"\bhas a significant impact on\b", "affects", "formula_verb_reduce"),
+        (r"\bhas a strong influence on\b", "influences", "formula_verb_reduce"),
+        (r"\bis one of the most influential\b", "has wide influence", "formula_route_reduce"),
+        (r"\ba wide range of\b", "many", "generic_phrase_reduce"),
+    ]
+    for pattern, replacement, operation in phrase_replacements:
+        updated = re.sub(pattern, replacement, candidate, count=1, flags=re.I)
+        if updated != candidate:
+            candidate = updated
+            operations.append(operation)
+            break
+    if candidate == original and _AI_DENSITY_TRANSITION_RE.search(candidate):
+        updated = re.sub(r"^This means that\s+", "That means ", candidate, flags=re.I)
+        updated = re.sub(r"^This has led to\s+", "That has left ", updated, flags=re.I)
+        updated = re.sub(r"^This shows that\s+", "That shows ", updated, flags=re.I)
+        if updated != candidate:
+            candidate = updated
+            operations.append("this_route_reduce")
+    candidate = re.sub(r"\s{2,}", " ", candidate).strip()
+    return (candidate, operations) if candidate and candidate != original else (original, [])
+
+
+def _ai_density_sentence_score(sentence: str, row: dict | None = None) -> float:
+    value = str(sentence or "")
+    if not value.strip() or _ai_density_breaker_canonical_fact_sentence(value):
+        return -100.0
+    top10 = float((row or {}).get("top10_ratio") or 0.0)
+    top50 = float((row or {}).get("top50_ratio") or 0.0)
+    risk = float((row or {}).get("predictability_risk") or 0.0)
+    generic_hits = len(_AI_DENSITY_GENERIC_RE.findall(value))
+    transition = 1.0 if _AI_DENSITY_TRANSITION_RE.search(value.strip()) else 0.0
+    words = _text_word_count(value)
+    return round(top10 * 4.0 + top50 * 1.5 + risk * 2.0 + generic_hits * 0.8 + transition * 2.0 + words / 45.0, 3)
+
+
+def _ai_density_breaker_map(text: str, report_dict: dict | None) -> dict:
+    """Map generic high-density spans for the isolated post-selection layer."""
+    sentences = _split_sentences(text)
+    topk_rows = {
+        int(row.get("sentence_index")): row
+        for row in (_topk_repair_map(text, report_dict, limit=max(1, len(sentences))).get("targets") or [])
+        if isinstance(row, dict) and isinstance(row.get("sentence_index"), int)
+    }
+    sentence_rows = []
+    for index, sentence in enumerate(sentences):
+        row = topk_rows.get(index, {})
+        score = _ai_density_sentence_score(sentence, row)
+        sentence_rows.append({
+            "sentence_index": index,
+            "sentence": sentence,
+            "score": score,
+            "canonical_fact_preserved": _ai_density_breaker_canonical_fact_sentence(sentence),
+            "generic_hits": len(_AI_DENSITY_GENERIC_RE.findall(sentence)),
+            "transition_risk": bool(_AI_DENSITY_TRANSITION_RE.search(sentence.strip())),
+            "top10_ratio": row.get("top10_ratio"),
+            "top50_ratio": row.get("top50_ratio"),
+            "predictability_risk": row.get("predictability_risk"),
+        })
+
+    high_indexes = {
+        int(row["sentence_index"])
+        for row in sentence_rows
+        if not row.get("canonical_fact_preserved")
+        and (
+            float(row.get("top10_ratio") or 0.0) >= 0.55
+            or float(row.get("score") or 0.0) >= 3.5
+        )
+    }
+    runs = []
+    start = None
+    previous = None
+    for index in sorted(high_indexes):
+        if start is None:
+            start = previous = index
+            continue
+        if index == previous + 1:
+            previous = index
+            continue
+        runs.append((start, previous))
+        start = previous = index
+    if start is not None:
+        runs.append((start, previous))
+    run_rows = [
+        {
+            "start_sentence": start,
+            "end_sentence": end,
+            "length": end - start + 1,
+            "score": round(sum(float(sentence_rows[i].get("score") or 0.0) for i in range(start, end + 1)), 3),
+            "preview": " ".join(sentences[start:min(end + 1, start + 3)])[:260],
+        }
+        for start, end in runs
+    ]
+    run_rows.sort(key=lambda row: (int(row.get("length") or 0), float(row.get("score") or 0.0)), reverse=True)
+
+    paragraph_rows = []
+    paragraphs = _logical_paragraphs(text)
+    for index, paragraph in enumerate(paragraphs):
+        paragraph_sentences = _split_sentences(paragraph)
+        words = _text_word_count(paragraph)
+        generic_hits = len(_AI_DENSITY_GENERIC_RE.findall(paragraph))
+        canonical_hits = sum(1 for sentence in paragraph_sentences if _ai_density_breaker_canonical_fact_sentence(sentence))
+        protected = bool(_AI_DENSITY_CANONICAL_FACT_RE.search(paragraph) or _is_heading_like_paragraph(paragraph))
+        score = round(generic_hits * 1.5 + len(paragraph_sentences) * 0.4 - canonical_hits * 2.0 + words / 80.0, 3)
+        paragraph_rows.append({
+            "paragraph_index": index,
+            "score": score,
+            "word_count": words,
+            "sentence_count": len(paragraph_sentences),
+            "generic_hits": generic_hits,
+            "canonical_fact_sentences": canonical_hits,
+            "protected": protected,
+            "preview": paragraph[:240],
+        })
+    paragraph_rows.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
+    return {
+        "version": "post_selection_ai_density_breaker_map_v1",
+        "sentence_count": len(sentences),
+        "top_sentence_targets": sorted(
+            [row for row in sentence_rows if float(row.get("score") or 0.0) > 0.0],
+            key=lambda row: float(row.get("score") or 0.0),
+            reverse=True,
+        )[:12],
+        "contiguous_ai_density_runs": run_rows[:6],
+        "top_generic_paragraphs": paragraph_rows[:8],
+    }
+
+
+def _post_selection_ai_density_breaker_candidates(
+    current_text: str,
+    current_report: dict | None,
+    *,
+    limit: int = 8,
+) -> list[tuple[str, str, dict]]:
+    """Build bounded post-selection candidates without touching rewrite core."""
+    density_map = _ai_density_breaker_map(current_text, current_report)
+    paragraphs = _logical_paragraphs(current_text)
+    candidates: list[tuple[str, str, dict]] = []
+    seen = {str(current_text or "").strip()}
+    limit = max(1, int(limit or 1))
+    source_words = max(1, _text_word_count(current_text))
+    min_words = max(1, int(source_words * 0.60))
+
+    def add(strategy: str, candidate: str, meta: dict) -> None:
+        if len(candidates) >= limit:
+            return
+        normalized = str(candidate or "").strip()
+        if not normalized or normalized in seen or _text_word_count(normalized) < min_words:
+            return
+        seen.add(normalized)
+        candidates.append((strategy, normalized, {**meta, "post_selection_ai_density_breaker_candidate": True}))
+
+    sentence_targets = [
+        row for row in density_map.get("top_sentence_targets") or []
+        if not row.get("canonical_fact_preserved")
+    ]
+    for take in (2, 4, 6):
+        replacements: dict[str, str] = {}
+        operations = []
+        for row in sentence_targets[:take]:
+            original = str(row.get("sentence") or "")
+            replacement, ops = _ai_density_breaker_sentence_route(original)
+            if ops and replacement != original:
+                replacements[original] = replacement
+                operations.append({
+                    "sentence_index": row.get("sentence_index"),
+                    "operations": ops,
+                    "score": row.get("score"),
+                    "top10_ratio": row.get("top10_ratio"),
+                })
+        if operations:
+            add(
+                f"density_route_patch_top{take}",
+                _splice_sentences_by_text(current_text, replacements),
+                {
+                    "operation": "contiguous_ai_density_break",
+                    "edited_sentence_count": len(operations),
+                    "operations": operations,
+                    "density_breaker_map": {
+                        "version": density_map.get("version"),
+                        "top_runs": density_map.get("contiguous_ai_density_runs"),
+                    },
+                },
+            )
+
+    for paragraph_row in (density_map.get("top_generic_paragraphs") or [])[:4]:
+        index = paragraph_row.get("paragraph_index")
+        if not isinstance(index, int) or index < 0 or index >= len(paragraphs):
+            continue
+        if paragraph_row.get("protected") or float(paragraph_row.get("score") or 0.0) <= 2.5:
+            continue
+        replacement = _compress_score_drag_paragraph(paragraphs[index], max_remove=1)
+        if replacement.strip() and replacement.strip() != paragraphs[index].strip():
+            next_paragraphs = list(paragraphs)
+            next_paragraphs[index] = replacement
+            add(
+                f"generic_block_compress_p{index + 1}",
+                _join_logical_paragraphs(next_paragraphs),
+                {
+                    "operation": "generic_block_compress",
+                    "paragraph_index": index,
+                    "paragraph_score": paragraph_row.get("score"),
+                    "edited_sentence_count": 1,
+                    "target_preview": paragraph_row.get("preview"),
+                },
+            )
+
+    removable = []
+    for row in sentence_targets:
+        sentence = str(row.get("sentence") or "")
+        if _ai_density_breaker_canonical_fact_sentence(sentence):
+            continue
+        if len(removable) >= 4:
+            break
+        if (
+            _AI_DENSITY_TRANSITION_RE.search(sentence.strip())
+            or len(_AI_DENSITY_GENERIC_RE.findall(sentence)) >= 2
+        ) and _text_word_count(sentence) <= 28:
+            removable.append(row)
+    for take in (1, 2):
+        selected = removable[:take]
+        if not selected:
+            continue
+        candidate = _remove_sentences_by_text(
+            current_text,
+            [str(row.get("sentence") or "") for row in selected],
+        )
+        add(
+            f"low_value_generic_sentence_remove_{take}",
+            candidate,
+            {
+                "operation": "low_value_generic_remove",
+                "removed_sentence_count": len(selected),
+                "removed_sentences": [str(row.get("sentence") or "")[:220] for row in selected],
+                "edited_sentence_count": len(selected),
+            },
+        )
+
+    return candidates[:limit]
+
+
+def _post_selection_ai_density_breaker_acceptance(
+    current_report: dict | None,
+    candidate_report: dict | None,
+    *,
+    review_burden_delta: int | float,
+    weighted_severity_delta: int | float,
+    critical_high_delta: int | float,
+) -> dict:
+    """Strict local acceptance for the isolated density breaker layer."""
+    base_profile = _turnitin_like_ai_profile(current_report)
+    candidate_profile = _turnitin_like_ai_profile(candidate_report)
+    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
+    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
+    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
+
+    def drop(key: str) -> float:
+        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
+
+    drops = {
+        key: drop(key)
+        for key in (
+            "topk_calibrated_risk",
+            "topk_pattern_raw",
+            "qualifying_text_ai_density",
+            "external_ai_flag_risk",
+            "ai_likelihood",
+            "rewrite_smoothness",
+            "ai_authorship",
+            "ai_transformation",
+            "semantic_uniformity",
+        )
+    }
+    smoothness_max_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_MAX_SMOOTHNESS_REGRESSION", 0.30)
+    min_formula_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_FORMULA_DROP", 0.25)
+    min_external_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_EXTERNAL_DROP", 0.10)
+    min_density_or_topk_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_DENSITY_OR_TOPK_DROP", 0.10)
+    reject_reasons = []
+    if formula_drop < min_formula_drop:
+        reject_reasons.append("formula_drop_too_small")
+    if drops["external_ai_flag_risk"] < min_external_drop:
+        reject_reasons.append("external_proxy_not_reduced")
+    if max(drops["qualifying_text_ai_density"], drops["topk_calibrated_risk"], drops["ai_likelihood"]) < min_density_or_topk_drop:
+        reject_reasons.append("density_topk_likelihood_not_reduced")
+    if drops["rewrite_smoothness"] < -smoothness_max_regression:
+        reject_reasons.append("rewrite_smoothness_regressed")
+    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation"):
+        if drops[key] < -0.001:
+            reject_reasons.append(f"{key}_regressed")
+    if float(review_burden_delta or 0.0) > 0.0:
+        reject_reasons.append("review_burden_regressed")
+    if float(weighted_severity_delta or 0.0) > 0.0:
+        reject_reasons.append("weighted_severity_regressed")
+    if float(critical_high_delta or 0.0) > 0.0:
+        reject_reasons.append("critical_high_regressed")
+    selectable = not reject_reasons
+    return {
+        "version": "post_selection_ai_density_breaker_acceptance_v1",
+        "selectable": selectable,
+        "reason": "accepted_density_breaker_improvement" if selectable else reject_reasons[0],
+        "formula_score_before": base_profile.get("score"),
+        "formula_score_after": candidate_profile.get("score"),
+        "formula_score_drop": formula_drop,
+        "driver_drops": drops,
+        "review_burden_delta": review_burden_delta,
+        "weighted_severity_delta": weighted_severity_delta,
+        "critical_high_delta": critical_high_delta,
+        "thresholds": {
+            "min_formula_drop": min_formula_drop,
+            "min_external_drop": min_external_drop,
+            "min_density_or_topk_drop": min_density_or_topk_drop,
+            "max_smoothness_regression": smoothness_max_regression,
+        },
+    }
+
+
+def _post_selection_ai_density_breaker(
+    current_text: str,
+    current_report: dict | None,
+    original_report: dict | None,
+    *,
+    scan_func=None,
+    drift_checker=check_semantic_drift,
+    max_scans: int | None = None,
+) -> dict:
+    """Run an isolated post-selection AI-density breaker.
+
+    This layer is downstream of the stable selector. It can only replace the
+    current selected candidate when a full rescan proves stronger AI-footprint
+    movement without safety regression.
+    """
+    if not _env_flag("DRAFTPROOF_POST_SELECTION_AI_DENSITY_BREAKER", True):
+        return {"enabled": False, "reason": "disabled"}
+    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
+        return {"enabled": False, "reason": "missing_current_selection"}
+    scan_func = scan_func or _run_full_scan_report_dict
+    max_scans = max(
+        0,
+        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_DENSITY_BREAKER_MAX_SCANS", 6.0)),
+    )
+    if max_scans <= 0:
+        return {"enabled": True, "selected": False, "reason": "scan_budget_zero"}
+    candidates = _post_selection_ai_density_breaker_candidates(
+        current_text,
+        current_report,
+        limit=max_scans,
+    )
+    density_map = _ai_density_breaker_map(current_text, current_report)
+    summary = {
+        "enabled": True,
+        "version": "post_selection_ai_density_breaker_v1",
+        "selected": False,
+        "selected_text": current_text,
+        "selected_report": current_report,
+        "selected_strategy": None,
+        "candidate_count": len(candidates),
+        "scans_used": 0,
+        "density_breaker_map": density_map,
+        "base_summary": {
+            "turnitin_like_ai_score": _turnitin_like_ai_profile(current_report).get("score"),
+            "ai_footprint": _strict_ai_safe_band_status(current_report).get("profile"),
+        },
+        "candidates": [],
+        "reason": "no_candidate_selected",
+    }
+    if not candidates:
+        summary["reason"] = "no_density_breaker_candidates"
+        return summary
+
+    protected = detect_protected_spans(current_text)
+    best_eval = None
+    best_rank = None
+    best_text = current_text
+    best_report = current_report
+    seen = {current_text.strip()}
+    for strategy, candidate_text, meta in candidates:
+        if summary["scans_used"] >= max_scans:
+            break
+        candidate_eval = {
+            "strategy": strategy,
+            "operation": (meta or {}).get("operation"),
+            "meta": meta or {},
+        }
+        normalized = str(candidate_text or "").strip()
+        if not normalized or normalized in seen:
+            candidate_eval["reason"] = "unchanged_or_duplicate_candidate"
+            summary["candidates"].append(candidate_eval)
+            continue
+        seen.add(normalized)
+        local_reason = _ai_candidate_quality_reject_reason(normalized)
+        if local_reason:
+            candidate_eval["reason"] = local_reason
+            summary["candidates"].append(candidate_eval)
+            continue
+        protected_loss = _ai_search_protected_loss_reason(current_text, normalized, protected)
+        if protected_loss:
+            candidate_eval["reason"] = "protected_span_lost " + protected_loss
+            summary["candidates"].append(candidate_eval)
+            continue
+        try:
+            drift = drift_checker(current_text, normalized, threshold=0.80)
+        except TypeError:
+            drift = drift_checker(current_text, normalized)
+        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
+        if not bool(getattr(drift, "accepted", True)):
+            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
+            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
+            summary["candidates"].append(candidate_eval)
+            continue
+        scan_t0 = time.time()
+        try:
+            candidate_report = scan_func(normalized)
+        except Exception as exc:
+            candidate_eval["reason"] = f"candidate_scan_error {exc}"
+            summary["candidates"].append(candidate_eval)
+            continue
+        summary["scans_used"] += 1
+        candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
+        review_delta = _report_review_burden(candidate_report) - _report_review_burden(current_report)
+        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(current_report)
+        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(current_report)
+        acceptance = _post_selection_ai_density_breaker_acceptance(
+            current_report,
+            candidate_report,
+            review_burden_delta=review_delta,
+            weighted_severity_delta=severity_delta,
+            critical_high_delta=critical_delta,
+        )
+        candidate_eval.update({
+            "acceptance": acceptance,
+            "selectable": acceptance.get("selectable"),
+            "reason": acceptance.get("reason"),
+            "formula_score": acceptance.get("formula_score_after"),
+            "formula_score_drop": acceptance.get("formula_score_drop"),
+            "driver_drops": acceptance.get("driver_drops"),
+            "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
+        })
+        summary["candidates"].append(candidate_eval)
+        if not acceptance.get("selectable"):
+            continue
+        rank = (
+            1 if _turnitin_like_ai_profile(candidate_report).get("target_met") else 0,
+            float(acceptance.get("formula_score_drop") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("external_ai_flag_risk") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("qualifying_text_ai_density") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
+            -float(_turnitin_like_ai_profile(candidate_report).get("score") or 100.0),
+        )
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_eval = candidate_eval
+            best_text = normalized
+            best_report = candidate_report
+
+    if best_eval:
+        best_eval["selected"] = True
+        summary.update({
+            "selected": True,
+            "selected_text": best_text,
+            "selected_report": best_report,
+            "selected_strategy": best_eval.get("strategy"),
+            "reason": best_eval.get("reason"),
+            "selected_candidate": {
+                key: best_eval.get(key)
+                for key in (
+                    "strategy",
+                    "operation",
+                    "formula_score",
+                    "formula_score_drop",
+                    "driver_drops",
+                    "drift_similarity",
+                    "acceptance",
+                )
+            },
+            "final_summary": {
+                "turnitin_like_ai_score": _turnitin_like_ai_profile(best_report).get("score"),
+                "ai_footprint": _strict_ai_safe_band_status(best_report).get("profile"),
+            },
+        })
+    return summary
+
+
 def _ai_search_candidate_selection_status(
     reference_ai,
     candidate_ai,
@@ -23486,6 +24057,85 @@ def run_rewrite_pipeline(
                 "target_met": bool(convergence_result.get("target_met")),
                 "stop_reason": convergence_result.get("stop_reason") or convergence_result.get("reason"),
             })
+
+    density_breaker_selected = False
+    if (
+        _env_flag("DRAFTPROOF_POST_SELECTION_AI_DENSITY_BREAKER", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    ):
+        report_progress(82, "Running post-selection AI-density breaker")
+        density_t0 = time.time()
+        try:
+            density_breaker_result = _post_selection_ai_density_breaker(
+                rewritten_text,
+                rewritten_report_dict,
+                original_report_dict,
+                scan_func=_full_scan_report_dict,
+            )
+        except Exception as exc:
+            density_breaker_result = {
+                "enabled": True,
+                "selected": False,
+                "reason": f"post_selection_ai_density_breaker_error {exc}",
+            }
+        stored_density_breaker_result = {
+            key: value
+            for key, value in density_breaker_result.items()
+            if key not in {"selected_text", "selected_report"}
+        }
+        result.summary["post_selection_ai_density_breaker"] = stored_density_breaker_result
+        if density_breaker_result.get("selected"):
+            selected_report = density_breaker_result.get("selected_report")
+            selected_text = density_breaker_result.get("selected_text")
+            if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                rewritten_text = selected_text
+                rewritten_report_dict = selected_report
+                attempted_report_dict = rewritten_report_dict
+                rewritten_ai = _badge_ai(rewritten_report_dict)
+                rewritten_wq = _badge_wq(rewritten_report_dict)
+                rewritten_total = _finding_total(rewritten_report_dict)
+                rewritten_review_burden = _review_burden(rewritten_report_dict)
+                rewritten_severity = _weighted_severity(rewritten_report_dict)
+                rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                if result.mp_result:
+                    result.mp_result.final_text = rewritten_text
+                    result.mp_result.converged = True
+                    result.mp_result.convergence_reason = (
+                        "Selected post-selection AI-density breaker candidate: "
+                        f"{density_breaker_result.get('selected_strategy')}"
+                    )
+                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                ai_search_selected = True
+                density_breaker_selected = True
+                _clear_stale_rollback_for_kept_ai_mitigation(
+                    result.summary,
+                    "post-selection AI-density breaker",
+                )
+                result.summary["selected_strategy"] = density_breaker_result.get("selected_strategy")
+                result.summary["selected_density_breaker_strategy"] = density_breaker_result.get("selected_strategy")
+                result.summary["detect_scores"].update({
+                    "rewritten_ai": rewritten_ai,
+                    "rewritten_writing_quality": rewritten_wq,
+                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                    "rewritten_findings": rewritten_total,
+                    "rewritten_review_burden": rewritten_review_burden,
+                    "rewritten_weighted_severity": rewritten_severity,
+                })
+        stage_timings.append({
+            "stage": "post_selection_ai_density_breaker",
+            "seconds": round(time.time() - density_t0, 3),
+            "candidates": len(stored_density_breaker_result.get("candidates") or []),
+            "scans": stored_density_breaker_result.get("scans_used"),
+            "selected": bool(density_breaker_result.get("selected")),
+            "stop_reason": density_breaker_result.get("reason"),
+        })
 
     ai_regression_tolerance = 0.25
     writing_quality_regression_tolerance = 1.0
