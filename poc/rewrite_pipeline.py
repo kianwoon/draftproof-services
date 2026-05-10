@@ -4531,6 +4531,7 @@ def _ai_footprint_profile(report_dict: dict | None) -> dict:
         "source_similarity": feature("source_similarity"),
         "surface_similarity": feature("surface_similarity"),
         "generic_assertion_risk": num(ai_components.get("generic_assertion_risk")),
+        "qualifying_text_ai_density": num(ai_components.get("qualifying_text_ai_density")),
     }
     grounding = {
         "unsupported_claim_risk": num(writing_components.get("unsupported_claim_risk")),
@@ -4545,10 +4546,11 @@ def _ai_footprint_profile(report_dict: dict | None) -> dict:
         + authorship["topk_calibrated_risk"] * 0.14
         + authorship["rewrite_smoothness"] * 0.12
         + semantic["semantic_uniformity"] * 0.08
-        + structural["discourse_regularity"] * 0.05
+        + semantic["qualifying_text_ai_density"] * 0.07
+        + structural["discourse_regularity"] * 0.04
         + semantic["generic_assertion_risk"] * 0.03
-        + grounding["unsupported_claim_risk"] * 0.025
-        + grounding["broad_claim_risk"] * 0.015
+        + grounding["unsupported_claim_risk"] * 0.015
+        + grounding["broad_claim_risk"] * 0.005
     )
     return {
         "authorship_footprint": {key: round(value, 3) for key, value in authorship.items()},
@@ -4587,6 +4589,7 @@ def _multi_signal_candidate_contract(original_report: dict | None, candidate_rep
         "ai_likelihood": {"weight": 1.15, "tolerance": 0.5, "severe": 3.0},
         "rewrite_smoothness": {"weight": 1.0, "tolerance": 1.0, "severe": 8.0},
         "semantic_uniformity": {"weight": 0.8, "tolerance": 1.0, "severe": 8.0},
+        "qualifying_text_ai_density": {"weight": 1.35, "tolerance": 1.0, "severe": 8.0},
         "discourse_regularity": {"weight": 0.8, "tolerance": 1.0, "severe": 8.0},
         "generic_assertion_risk": {"weight": 0.9, "tolerance": 5.0, "severe": 15.0},
         "unsupported_claim_risk": {"weight": 0.55, "tolerance": 5.0, "severe": 15.0},
@@ -4634,6 +4637,7 @@ def _multi_signal_candidate_contract(original_report: dict | None, candidate_rep
             "external_ai_flag_risk",
             "ai_likelihood",
             "rewrite_smoothness",
+            "qualifying_text_ai_density",
         }
     )
     return {
@@ -4658,6 +4662,7 @@ def _strict_ai_safe_band_status_from_profile(profile: dict | None) -> dict:
             "topk_calibrated_risk": _safe_topk_calibrated_limit(),
             "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
             "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
+            "qualifying_text_ai_density": _float_env("DRAFTPROOF_QUALIFYING_AI_DENSITY_SAFE_BAND", 35.0),
             "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
         }
         return {
@@ -4675,6 +4680,7 @@ def _strict_ai_safe_band_status_from_profile(profile: dict | None) -> dict:
         "topk_calibrated_risk": _safe_topk_calibrated_limit(),
         "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
         "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
+        "qualifying_text_ai_density": _float_env("DRAFTPROOF_QUALIFYING_AI_DENSITY_SAFE_BAND", 35.0),
         "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
     }
     remaining = [
@@ -4772,6 +4778,30 @@ def _strict_safe_phase_budget_contract(
         "post_topk_strict_safe_optimizer": 0,
     }
     contract["total_llm_hard_cap"] = cap
+    if cap <= 10:
+        final_reserve = 1 if cap >= 8 else 0
+        texture_reserve = min(3 if cap >= 10 else 2, max(0, cap - final_reserve - 4))
+        topk_reserve = max(1, cap - texture_reserve - final_reserve)
+        contract.update({
+            "topk_safe_band_rebuild": min(int(policy_phase.get("topk_safe_band_rebuild", 0)), topk_reserve),
+            "authorship_transformation_texture_controller": min(
+                int(policy_phase.get("authorship_transformation_texture_controller", 0)),
+                texture_reserve,
+            ),
+            "final_texture_proxy_repair": min(
+                int(policy_phase.get("final_texture_proxy_repair", 0)),
+                final_reserve,
+            ),
+            "emergency_diagnostic_reserve": 0,
+            "post_topk_strict_safe_optimizer": 0,
+        })
+        unused = cap - sum(
+            int(contract[key])
+            for key in contract
+            if key != "total_llm_hard_cap"
+        )
+        if unused > 0:
+            contract["topk_safe_band_rebuild"] += unused
     overflow = sum(
         int(contract[key])
         for key in contract
@@ -4818,6 +4848,7 @@ def _strict_safe_candidate_rank(
     )
     return (
         1 if after_status.get("achieved") else 0,
+        round(num(base.get("qualifying_text_ai_density")) - num(after.get("qualifying_text_ai_density")), 3),
         round(num(base.get("external_ai_flag_risk")) - num(after.get("external_ai_flag_risk")), 3),
         round(num(base.get("ai_authorship")) - num(after.get("ai_authorship")), 3),
         round(num(base.get("ai_transformation")) - num(after.get("ai_transformation")), 3),
@@ -4881,6 +4912,7 @@ def _ai_footprint_gate_status(
         "topk_pattern_raw",
         "rewrite_smoothness",
         "semantic_uniformity",
+        "qualifying_text_ai_density",
         "discourse_regularity",
         "generic_assertion_risk",
         "unsupported_claim_risk",
@@ -4898,6 +4930,7 @@ def _ai_footprint_gate_status(
         "topk_calibrated_risk",
         "rewrite_smoothness",
         "semantic_uniformity",
+        "qualifying_text_ai_density",
         "discourse_regularity",
     ]
     thresholds = {
@@ -4907,6 +4940,7 @@ def _ai_footprint_gate_status(
         "topk_calibrated_risk": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_TOPK_DROP", 2.0),
         "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SMOOTHNESS_DROP", 1.0),
         "semantic_uniformity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SEMANTIC_DROP", 1.0),
+        "qualifying_text_ai_density": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_QUALIFYING_DENSITY_DROP", 1.0),
         "discourse_regularity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_DISCOURSE_DROP", 1.0),
         "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_MIN_DROP", 1.5),
     }
@@ -4972,6 +5006,7 @@ def _ai_footprint_gate_status(
         "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
         "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
         "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
+        "qualifying_text_ai_density": _float_env("DRAFTPROOF_QUALIFYING_AI_DENSITY_SAFE_BAND", 35.0),
         "topk_calibrated_risk": safe_topk_limit,
         "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_SMOOTHNESS", 55.0),
     }
@@ -5934,7 +5969,8 @@ def _ai_search_llm_hard_cap(source_text: str = "", report_dict: dict | None = No
     explicit = os.environ.get("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS")
     if explicit is not None:
         return max(1, int(_float_env("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", 10.0)))
-    return max(1, int(_ai_search_budget_policy(source_text, report_dict).get("max_llm_calls") or 1))
+    policy_cap = int(_ai_search_budget_policy(source_text, report_dict).get("max_llm_calls") or 1)
+    return max(1, min(10, policy_cap))
 
 
 def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
@@ -6794,6 +6830,7 @@ def _goal_climb_candidate_rank(
     footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
     external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"), 0.0)
     topk_drop = num(footprint_drops.get("topk_calibrated_risk"), 0.0)
+    qualifying_density_drop = num(footprint_drops.get("qualifying_text_ai_density"), 0.0)
     ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"), 0.0)
     ai_authorship_drop = num(gate.get("ai_authorship_delta"), ai_authorship_delta)
     multi_signal = (
@@ -6809,9 +6846,10 @@ def _goal_climb_candidate_rank(
     return (
         1 if status.get("selectable") else 0,
         footprint_priority,
+        qualifying_density_drop,
+        topk_drop,
         -severe_backfire_count,
         balance_score,
-        topk_drop,
         ai_authorship_drop,
         ai_likelihood_drop,
         external_flag_drop,
@@ -14986,11 +15024,29 @@ def run_rewrite_pipeline(
             if isinstance(original_report_dict, dict) else {}
         )
         original_topk_calibrated_for_priority = original_ai_components_for_priority.get("topk_calibrated_risk")
+        original_qualifying_density_for_priority = original_ai_components_for_priority.get("qualifying_text_ai_density")
+        original_generic_assertion_for_priority = original_ai_components_for_priority.get("generic_assertion_risk")
         topk_safe_band_priority = bool(
             topk_route_map.get("saturated")
             or (
                 isinstance(original_topk_calibrated_for_priority, (int, float))
                 and float(original_topk_calibrated_for_priority) >= _safe_topk_calibrated_limit()
+            )
+        )
+        density_or_generic_priority = bool(
+            (
+                isinstance(original_qualifying_density_for_priority, (int, float))
+                and float(original_qualifying_density_for_priority) >= _float_env(
+                    "DRAFTPROOF_QUALIFYING_AI_DENSITY_PRIORITY_THRESHOLD",
+                    55.0,
+                )
+            )
+            or (
+                isinstance(original_generic_assertion_for_priority, (int, float))
+                and float(original_generic_assertion_for_priority) >= _float_env(
+                    "DRAFTPROOF_GENERIC_ASSERTION_PRIORITY_THRESHOLD",
+                    75.0,
+                )
             )
         )
         topk_route_candidates = (
@@ -15005,7 +15061,7 @@ def run_rewrite_pipeline(
         generic_assertion_candidates = []
         pruning_candidates = []
         skipped_pre_topk_candidate_families: list[str] = []
-        if topk_safe_band_priority:
+        if topk_safe_band_priority and not density_or_generic_priority:
             skipped_pre_topk_candidate_families = [
                 "blocker_operation_candidates",
                 "generic_assertion_compiler_candidates",
@@ -15053,7 +15109,10 @@ def run_rewrite_pipeline(
             "reference_ai_meets_threshold": ai_search_reference_meets_threshold,
             "human_target_search": human_target_search_status,
             "topk_safe_band_priority": topk_safe_band_priority,
+            "density_or_generic_priority": density_or_generic_priority,
             "original_topk_calibrated_risk": original_topk_calibrated_for_priority,
+            "original_qualifying_text_ai_density": original_qualifying_density_for_priority,
+            "original_generic_assertion_risk": original_generic_assertion_for_priority,
             "pre_topk_candidate_families_skipped": skipped_pre_topk_candidate_families,
             "ai_footprint_gate": {
                 "enabled": _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True),
@@ -15186,7 +15245,7 @@ def run_rewrite_pipeline(
                 return True
             if (
                 phase == "topk_safe_band_rebuild"
-                and _env_flag("DRAFTPROOF_TOPK_CAN_BORROW_UNUSED_PHASE_BUDGET", True)
+                and _env_flag("DRAFTPROOF_TOPK_CAN_BORROW_UNUSED_PHASE_BUDGET", False)
                 and bool(search_summary.get("topk_safe_band_priority"))
                 and int(search_summary.get("llm_calls") or 0) + int(calls)
                 <= int(phase_budget_contract.get("total_llm_hard_cap") or 0)
@@ -16775,6 +16834,20 @@ def run_rewrite_pipeline(
 
         def _run_post_safe_win_target_push(trigger_phase: str) -> None:
             nonlocal adaptive_stop_reason
+            if (
+                _env_flag("DRAFTPROOF_STRICT_AI_PHASE_BUDGET_ONLY", True)
+                and (topk_safe_band_priority or density_or_generic_priority)
+                and not _strict_ai_safe_band_status(best_report).get("achieved")
+            ):
+                search_summary["post_safe_win_target_push"] = {
+                    "enabled": bool(_env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True)),
+                    "skipped": True,
+                    "reason": "strict_ai_phase_budget_only",
+                    "trigger_phase": trigger_phase,
+                    "selected_strategy": best_strategy,
+                    "strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
+                }
+                return
             resumed_after_llm_budget = False
             resumed_after_scan_budget = False
             scan_reserve_added = 0
@@ -18226,23 +18299,35 @@ def run_rewrite_pipeline(
                         8.0,
                     )
                 )
-                strict_safe_legacy_llm_skipped = bool(
-                    _best_ai_search_selectable()
-                    and (
-                        bool(best_selection_status.get("topk_safe_band_achieved"))
-                        or selected_topk_controlled_candidate
-                    )
+                strict_phase_budget_only_active = bool(
+                    _env_flag("DRAFTPROOF_STRICT_AI_PHASE_BUDGET_ONLY", True)
+                    and (topk_safe_band_priority or density_or_generic_priority)
                     and not _strict_ai_safe_band_status(best_report).get("achieved")
-                    and _env_flag("DRAFTPROOF_SKIP_LEGACY_LLM_AFTER_TOPK_SAFE", True)
+                )
+                strict_safe_legacy_llm_skipped = bool(
+                    (
+                        _best_ai_search_selectable()
+                        and (
+                            bool(best_selection_status.get("topk_safe_band_achieved"))
+                            or selected_topk_controlled_candidate
+                        )
+                        and not _strict_ai_safe_band_status(best_report).get("achieved")
+                        and _env_flag("DRAFTPROOF_SKIP_LEGACY_LLM_AFTER_TOPK_SAFE", True)
+                    )
+                    or strict_phase_budget_only_active
                 )
                 if strict_safe_legacy_llm_skipped:
                     search_summary["legacy_llm_after_topk_safe"] = {
                         "skipped": True,
                         "reason": (
+                            "strict_ai_phase_budget_only"
+                            if strict_phase_budget_only_active
+                            else
                             "preserve_remaining_budget_for_topk_controlled_candidate"
                             if selected_topk_controlled_candidate
                             else "preserve_remaining_budget_for_strict_safe_controller"
                         ),
+                        "strict_ai_phase_budget_only": strict_phase_budget_only_active,
                         "selected_strategy": best_strategy,
                         "selected_topk_calibrated_risk": selected_topk_value,
                         "selected_topk_calibrated_drop": selected_topk_drop,
@@ -21168,6 +21253,7 @@ def run_rewrite_pipeline(
                 "strict_ai_safe_band_achieved": bool(strict_row.get("achieved")),
                 "ai_authorship": profile.get("ai_authorship"),
                 "ai_transformation": profile.get("ai_transformation"),
+                "qualifying_text_ai_density": profile.get("qualifying_text_ai_density"),
                 "external_ai_flag_risk": profile.get("external_ai_flag_risk"),
                 "topk_calibrated_risk": profile.get("topk_calibrated_risk"),
                 "remaining": strict_row.get("remaining") or [],
@@ -21175,6 +21261,7 @@ def run_rewrite_pipeline(
         frontier_rows.sort(
             key=lambda item: (
                 1 if item.get("strict_ai_safe_band_achieved") else 0,
+                -float(item.get("qualifying_text_ai_density") if isinstance(item.get("qualifying_text_ai_density"), (int, float)) else 999.0),
                 -float(item.get("external_ai_flag_risk") if isinstance(item.get("external_ai_flag_risk"), (int, float)) else 999.0),
                 -float(item.get("ai_authorship") if isinstance(item.get("ai_authorship"), (int, float)) else 999.0),
                 -float(item.get("ai_transformation") if isinstance(item.get("ai_transformation"), (int, float)) else 999.0),
@@ -21216,6 +21303,8 @@ def run_rewrite_pipeline(
     final_footprint_drops = final_ai_footprint_gate.get("drops") or {}
     final_before_authorship = final_footprint_before.get("authorship_footprint") or {}
     final_after_authorship = final_footprint_after.get("authorship_footprint") or {}
+    final_before_semantic = final_footprint_before.get("semantic_footprint") or {}
+    final_after_semantic = final_footprint_after.get("semantic_footprint") or {}
     result.summary.setdefault("detect_scores", {}).update({
         "external_ai_flag_risk_before": final_footprint_before.get("external_ai_flag_risk"),
         "external_ai_flag_risk_after": final_footprint_after.get("external_ai_flag_risk"),
@@ -21232,6 +21321,9 @@ def run_rewrite_pipeline(
         "ai_likelihood_driver_before": final_before_authorship.get("ai_likelihood"),
         "ai_likelihood_driver_after": final_after_authorship.get("ai_likelihood"),
         "ai_likelihood_driver_drop": final_footprint_drops.get("ai_likelihood"),
+        "qualifying_text_ai_density_before": final_before_semantic.get("qualifying_text_ai_density"),
+        "qualifying_text_ai_density_after": final_after_semantic.get("qualifying_text_ai_density"),
+        "qualifying_text_ai_density_drop": final_footprint_drops.get("qualifying_text_ai_density"),
         "ai_footprint_outcome_class": final_ai_footprint_gate.get("outcome_class"),
         "remaining_ai_footprint_drivers": final_ai_footprint_gate.get("remaining_ai_footprint_drivers"),
     })

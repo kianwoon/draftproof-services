@@ -1054,6 +1054,7 @@ def make_footprint_report(
     topk_pattern,
     topk_calibrated_risk=None,
     generic_assertion_risk,
+    qualifying_text_ai_density=0,
     unsupported_claim_risk,
     broad_claim_risk,
     discourse,
@@ -1078,6 +1079,7 @@ def make_footprint_report(
                     else calibrate_topk_risk(topk_pattern, eligible_sentence_count=3)["topk_calibrated_risk"]
                 ),
                 "generic_assertion_risk": generic_assertion_risk,
+                "qualifying_text_ai_density": qualifying_text_ai_density,
             },
             "writing_components": {
                 "unsupported_claim_risk": unsupported_claim_risk,
@@ -1334,6 +1336,88 @@ assert_test(
     ),
     "multi-signal contract catches Top-k wins that backfire generic assertion risk",
 )
+density_blocked_report = make_footprint_report(
+    ai_authorship=34,
+    human=66,
+    ai_transformation=34,
+    grounding=40,
+    human_anchor=40,
+    smoothness=30,
+    semantic_uniformity=30,
+    ai_likelihood=34,
+    topk_pattern=60,
+    topk_calibrated_risk=18,
+    generic_assertion_risk=20,
+    qualifying_text_ai_density=72,
+    unsupported_claim_risk=20,
+    broad_claim_risk=20,
+    discourse=20,
+)
+density_gate = _ai_footprint_gate_status(strict_safe_report, density_blocked_report)
+density_strict = _strict_ai_safe_band_status(density_blocked_report)
+assert_test(
+    not density_gate["safe_band"]
+    and any(
+        row.get("driver") == "qualifying_text_ai_density"
+        for row in density_gate["remaining_ai_footprint_drivers"]
+    )
+    and not density_strict["achieved"],
+    "qualifying AI-density is a first-class strict-safe blocker, not a side signal",
+)
+weak_topk_balanced_rank = _goal_climb_candidate_rank(
+    {
+        "selectable": True,
+        "topk_blocker_progress": True,
+        "ai_footprint_outcome_class": "ai_footprint_blocked_by_texture",
+        "authenticity_gate": {
+            "human_delta": 3,
+            "candidate_human": 40,
+            "ai_authorship_delta": 5,
+            "ai_transformation_delta": 3,
+        },
+        "ai_footprint_gate": {
+            "drops": {
+                "topk_calibrated_risk": 4.638,
+                "external_ai_flag_risk": 6.624,
+                "ai_likelihood": 4.6,
+            },
+        },
+        "multi_signal_contract": {
+            "balance_score": 97.221,
+            "severe_backfires": [],
+        },
+    },
+    {},
+)
+strong_topk_backfire_rank = _goal_climb_candidate_rank(
+    {
+        "selectable": True,
+        "topk_blocker_progress": True,
+        "ai_footprint_outcome_class": "ai_footprint_blocked_by_texture",
+        "authenticity_gate": {
+            "human_delta": 11,
+            "candidate_human": 48,
+            "ai_authorship_delta": 18,
+            "ai_transformation_delta": 11,
+        },
+        "ai_footprint_gate": {
+            "drops": {
+                "topk_calibrated_risk": 69.672,
+                "external_ai_flag_risk": 21.126,
+                "ai_likelihood": 17.5,
+            },
+        },
+        "multi_signal_contract": {
+            "balance_score": 58.0,
+            "severe_backfires": [{"driver": "generic_assertion_risk"}],
+        },
+    },
+    {},
+)
+assert_test(
+    strong_topk_backfire_rank > weak_topk_balanced_rank,
+    "goal selector does not let balanced cleanup beat major Top-k/authorship movement",
+)
 topk_near_miss_a = make_footprint_report(
     ai_authorship=50,
     human=45,
@@ -1427,6 +1511,7 @@ assert_test(
 )
 saturated_topk_report = {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}}
 phase_contract = _strict_safe_phase_budget_contract(17, "word " * 900, saturated_topk_report)
+phase_contract_cap10 = _strict_safe_phase_budget_contract(10, "word " * 900, saturated_topk_report)
 phase_contract_lower = _strict_safe_phase_budget_contract(7)
 assert_test(
     phase_contract["total_llm_hard_cap"] == 17
@@ -1435,8 +1520,11 @@ assert_test(
     and phase_contract["final_texture_proxy_repair"] == 2
     and phase_contract["emergency_diagnostic_reserve"] == 0
     and phase_contract["post_topk_strict_safe_optimizer"] == 0
+    and phase_contract_cap10["topk_safe_band_rebuild"] == 6
+    and phase_contract_cap10["authorship_transformation_texture_controller"] == 3
+    and phase_contract_cap10["final_texture_proxy_repair"] == 1
     and sum(value for key, value in phase_contract_lower.items() if key != "total_llm_hard_cap") <= 7,
-    "strict-safe phase budget contract reserves LLM calls by phase and respects lower hard caps",
+    "strict-safe phase budget contract reserves downstream texture calls under the 10-call cap",
 )
 strict_rank_base = make_footprint_report(
     ai_authorship=46,
@@ -2261,9 +2349,9 @@ assert_test(
     and medium_policy["max_llm_calls"] == 12
     and saturated_medium_policy["max_llm_calls"] == 17
     and long_policy["max_llm_calls"] == 20
-    and default_hard_cap == 17
+    and default_hard_cap == 10
     and explicit_hard_cap == 10,
-    "AI search hard LLM cap uses document-size defaults and honors explicit overrides",
+    "AI search hard LLM cap defaults to the production cap and honors explicit overrides",
 )
 medium_topk_prompt = _topk_safe_band_snapshot_prompt(
     "The United States has many strengths and challenges. " * 90,
@@ -2305,6 +2393,20 @@ assert_test(
     "DRAFTPROOF_SCAN_GENERATED_CANDIDATES_AFTER_TIME_BUDGET" in rewrite_pipeline_source
     and "scan_generated_candidate_after_budget" in rewrite_pipeline_source,
     "Already-generated high-value candidates get a scanner pass instead of being wasted after time budget trips",
+)
+assert_test(
+    'DRAFTPROOF_TOPK_CAN_BORROW_UNUSED_PHASE_BUDGET", False' in rewrite_pipeline_source
+    and "density_or_generic_priority" in rewrite_pipeline_source
+    and "original_qualifying_text_ai_density" in rewrite_pipeline_source
+    and "qualifying_text_ai_density" in rewrite_pipeline_source
+    and "DRAFTPROOF_STRICT_AI_PHASE_BUDGET_ONLY" in rewrite_pipeline_source
+    and "strict_ai_phase_budget_only" in rewrite_pipeline_source,
+    "Controller budget and selection prioritize density without default Top-k borrowing or legacy LLM spillover",
+)
+assert_test(
+    'def _run_post_safe_win_target_push(trigger_phase: str) -> None:' in rewrite_pipeline_source
+    and 'reason": "strict_ai_phase_budget_only"' in rewrite_pipeline_source,
+    "Post-safe Human target push cannot bypass strict AI phase-budget-only mode",
 )
 for key, value in previous_sampling_env.items():
     if value is None:
