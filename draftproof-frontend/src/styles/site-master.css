@@ -4704,10 +4704,36 @@ th {
 
 .submitted-signal-chip i {
   display: block;
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
   background: var(--signal-color);
+}
+
+.submitted-signal-chip.signal-style-rewrite_smoothness i,
+.submitted-signal-chip.signal-style-outline_to_text_expansion i,
+.submitted-signal-chip.signal-style-semantic_uniformity_risk i {
+  border-radius: 2px;
+}
+
+.submitted-signal-chip.signal-style-section_style_variance i,
+.submitted-signal-chip.signal-style-style_shift_risk i {
+  background: transparent;
+  border: 2px solid var(--signal-color);
+  border-radius: 2px;
+}
+
+.submitted-signal-chip.signal-style-citation_grounding_risk i,
+.submitted-signal-chip.signal-style-grounding_risk i,
+.submitted-signal-chip.signal-style-source_grounding_risk i {
+  height: 3px;
+  border-radius: 999px;
+}
+
+.submitted-signal-chip.signal-style-human_anchor_score i,
+.submitted-signal-chip.signal-style-human_anchor_discount i {
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, white 72%, var(--signal-color));
 }
 
 .submitted-signal-chip strong {
@@ -4753,9 +4779,9 @@ th {
   margin: 0 .08rem;
   padding: .08rem .18rem .12rem;
   border: 0;
-  border-bottom: 2px solid var(--signal-color);
+  border-bottom: 2.5px solid var(--signal-color);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--signal-color) 14%, white);
+  background: color-mix(in srgb, var(--signal-color) 12%, white);
   color: inherit;
   font: inherit;
   line-height: inherit;
@@ -4765,10 +4791,61 @@ th {
   -webkit-box-decoration-break: clone;
 }
 
+.submitted-highlight.signal-style-ai_likelihood,
+.submitted-highlight.signal-style-predictability,
+.submitted-highlight.signal-style-topk_pattern,
+.submitted-highlight.signal-style-topk_pattern_raw,
+.submitted-highlight.signal-style-topk_calibrated_risk {
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, #f59e0b 11%, white) 0%,
+    color-mix(in srgb, #f59e0b 18%, white) 100%
+  );
+  border-bottom-color: #d97706;
+  box-shadow: inset 0 -1px 0 #d97706;
+}
+
+.submitted-highlight.signal-style-rewrite_smoothness,
+.submitted-highlight.signal-style-outline_to_text_expansion,
+.submitted-highlight.signal-style-semantic_uniformity_risk {
+  background: color-mix(in srgb, #7c3aed 12%, white);
+  border-bottom-color: #7c3aed;
+  border-bottom-style: dashed;
+}
+
+.submitted-highlight.signal-style-section_style_variance,
+.submitted-highlight.signal-style-style_shift_risk {
+  padding-inline: .2rem;
+  background: color-mix(in srgb, #2563eb 10%, white);
+  border: 1px solid color-mix(in srgb, #2563eb 42%, transparent);
+  border-left: 3px solid #2563eb;
+}
+
+.submitted-highlight.signal-style-citation_grounding_risk,
+.submitted-highlight.signal-style-grounding_risk,
+.submitted-highlight.signal-style-source_grounding_risk,
+.submitted-highlight.signal-style-unsupported_claim_risk,
+.submitted-highlight.signal-style-citation_weakness_risk {
+  background: color-mix(in srgb, #dc2626 10%, white);
+  border-bottom-color: #dc2626;
+  border-bottom-width: 3px;
+}
+
+.submitted-highlight.signal-style-human_anchor_score,
+.submitted-highlight.signal-style-human_anchor_discount,
+.submitted-highlight.signal-style-domain_grounding_strength,
+.submitted-highlight.signal-style-source_grounding_strength {
+  background: color-mix(in srgb, #16a34a 12%, white);
+  border-bottom-color: #16a34a;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #16a34a 18%, transparent);
+}
+
 .submitted-highlight:hover,
 .submitted-highlight.is-selected {
-  background: color-mix(in srgb, var(--signal-color) 23%, white);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal-color) 22%, transparent);
+  background: color-mix(in srgb, var(--signal-color) 20%, white);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--signal-color) 24%, transparent),
+    inset 0 -1px 0 var(--signal-color);
 }
 
 .submitted-signal-panel {

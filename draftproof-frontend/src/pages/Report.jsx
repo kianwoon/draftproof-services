@@ -24,28 +24,32 @@ const SEVERITY_CONFIG = {
 };
 
 const SIGNAL_COLORS = {
-  topk_pattern: '#be123c',
-  topk_pattern_raw: '#be123c',
-  topk_calibrated_risk: '#e11d48',
-  ai_likelihood: '#9a3412',
+  topk_pattern: '#d97706',
+  topk_pattern_raw: '#d97706',
+  topk_calibrated_risk: '#ea580c',
+  ai_likelihood: '#d97706',
   adjusted_ai_risk: '#dc2626',
   calibrated_ai_risk: '#b91c1c',
-  grounding_risk: '#9a3412',
-  citation_grounding_risk: '#9a3412',
+  grounding_risk: '#dc2626',
+  citation_grounding_risk: '#dc2626',
   human_anchor_score: '#15803d',
   human_anchor_discount: '#16a34a',
-  rewrite_smoothness: '#4338ca',
-  semantic_uniformity_risk: '#7c3aed',
-  discourse_regularity_risk: '#4f46e5',
-  outline_to_text_expansion: '#4338ca',
-  source_similarity: '#0369a1',
-  surface_similarity: '#0369a1',
+  rewrite_smoothness: '#7c3aed',
+  semantic_uniformity_risk: '#9333ea',
+  discourse_regularity_risk: '#0891b2',
+  outline_to_text_expansion: '#7c3aed',
+  source_similarity: '#0f766e',
+  surface_similarity: '#0f766e',
   paraphrase_transformation_risk: '#0e7490',
   section_style_variance: '#2563eb',
-  predictability: '#9a3412',
-  writing_quality: '#4338ca',
-  genericity: '#4338ca',
+  predictability: '#d97706',
+  writing_quality: '#7c3aed',
+  genericity: '#7c3aed',
 };
+
+function signalClassName(key) {
+  return String(key || 'scan_signal').replace(/[^a-zA-Z0-9_-]/g, '-');
+}
 
 function formatDate(iso) {
   if (!iso) return '';
@@ -1861,7 +1865,11 @@ export default function Report() {
             {submittedContent.legend.length > 0 && (
               <div className="submitted-signal-legend" aria-label="Signal color legend">
                 {submittedContent.legend.slice(0, 6).map((signal) => (
-                  <span key={signal.key} className="submitted-signal-chip" style={{ '--signal-color': signal.color }}>
+                  <span
+                    key={signal.key}
+                    className={`submitted-signal-chip signal-style-${signalClassName(signal.key)}`}
+                    style={{ '--signal-color': signal.color }}
+                  >
                     <i aria-hidden="true" />
                     {signal.label}
                     <strong>{signal.count}</strong>
@@ -1883,7 +1891,7 @@ export default function Report() {
                         <button
                           key={segment.id}
                           type="button"
-                          className={`submitted-highlight${isSelected ? ' is-selected' : ''}`}
+                          className={`submitted-highlight signal-style-${signalClassName(signal.key)}${isSelected ? ' is-selected' : ''}`}
                           style={{ '--signal-color': signal.color }}
                           title={signal.description}
                           onMouseEnter={() => setSelectedSegmentId(segment.id)}
