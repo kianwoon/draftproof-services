@@ -1701,15 +1701,13 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         anchor_text = ", ".join(anchors[:8]) if anchors else "nearby paragraph terms"
         if f.title in ("medium_predictability", "high_predictability"):
             return (
-                "Do not add personal voice. If the sentence is a canonical fact, preserve it. "
-                "Otherwise use a concrete operation: remove connector, split sentence, reorder clause, "
-                f"reduce density, or break transition rhythm using nearby anchors only if natural: {anchor_text}."
+                "Break the common-word path. Rebuild the sentence around a concrete "
+                f"condition, observation, or action supported nearby. Use anchors if natural: {anchor_text}."
             )
         if f.title in ("high_topk_predictability", "low_surprisal", "low_surprisal_pattern"):
             return (
-                "Change only actionable token routes. Preserve canonical factual wording with dates, numbers, "
-                "citations, or public fact anchors. For actionable text, use connector removal, sentence split, "
-                f"clause reorder, density reduction, or transition break. Nearby anchors: {anchor_text}."
+                "Change the sentence opening and token path. Start from a concrete "
+                f"domain object, action, or constraint using nearby anchors: {anchor_text}."
             )
         if f.title == "low_specificity":
             return (
@@ -1717,84 +1715,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "from existing domain terms, source material, or the author's stated context."
             )
         return "Use the finding signal and nearby context to avoid generic paraphrase."
-
-    def _predictability_route_action(sentence: str, f: Finding = None) -> Dict[str, Any]:
-        value = (sentence or "").strip()
-        lower = value.lower()
-        words = len(_re.findall(r"\b\w+\b", value))
-        has_protected = bool(
-            _re.search(r"\b(?:1[5-9]\d{2}|20\d{2})\b|\b\d+(?:\.\d+)?%?\b|https?://|www\.|\[[^\]]+\]|\([^)]*\d{4}[^)]*\)", value)
-            or _re.search(r"\b[A-Z]{3,}[A-Z0-9]{2,}\b", value)
-        )
-        canonical_fact = bool(
-            has_protected
-            and _re.search(
-                r"\b(?:was founded|were founded|declared independence|constitution|was established|"
-                r"were established|was created|were created|became|is located|are located|"
-                r"was born|died|started|ended|signed|passed|enacted|built)\b",
-                lower,
-            )
-        )
-        transition = bool(_re.search(
-            r"^(?:Furthermore|Moreover|Additionally|In addition|At the same time|Despite|However|In conclusion|Overall|This highlights|This demonstrates|This shows|This means)\b",
-            value,
-            _re.I,
-        ))
-        connector = bool(_re.search(
-            r"^(?:Furthermore|Moreover|Additionally|In addition|At the same time|However|In conclusion|Overall)\b",
-            value,
-            _re.I,
-        ))
-        generic_expansion = bool(
-            _re.search(
-                r"\b(?:one of the|important|significant|major role|strong influence|many ways|"
-                r"wide range|various|in modern history|around the world|global influence|"
-                r"complex and influential|strengths and challenges)\b",
-                lower,
-            )
-            and not canonical_fact
-        )
-        if canonical_fact or (has_protected and words <= 24 and not transition and not generic_expansion):
-            return {
-                "action": "canonical_fact_preserve",
-                "actionable": False,
-                "reason": "High predictability comes from canonical factual wording, not missing personal voice.",
-            }
-        if connector:
-            return {
-                "action": "connector_remove",
-                "actionable": True,
-                "reason": "Formulaic connector is a safe local texture target.",
-            }
-        if transition:
-            return {
-                "action": "transition_break",
-                "actionable": True,
-                "reason": "Smooth transition route can be broken without adding personal voice.",
-            }
-        if generic_expansion:
-            return {
-                "action": "density_reduce",
-                "actionable": True,
-                "reason": "Generic expansion should be compressed or narrowed, not humanized.",
-            }
-        if words >= 18 and _re.search(r"\b(?:because|but|which|and)\b", lower):
-            return {
-                "action": "sentence_split",
-                "actionable": True,
-                "reason": "Long predictable clause route can be split while preserving facts.",
-            }
-        if _re.search(r"^(?:The|This|These|It|Another|One of)\b", value, _re.I) and words >= 12:
-            return {
-                "action": "clause_reorder",
-                "actionable": True,
-                "reason": "Generic opening can be adjusted through clause order, not personal voice.",
-            }
-        return {
-            "action": "micro_entropy_patch",
-            "actionable": True,
-            "reason": "Use minimal entropy adjustment only; do not add personal voice.",
-        }
 
     def _rewrite_context_for_finding(f: Finding) -> Optional[Dict[str, Any]]:
         sid = f.sentence_id
@@ -1959,14 +1879,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "predictable_token_spans": sent.get("predictable_token_spans", []),
             "signal_category": f.signal_category or (f.metadata or {}).get("signal_category"),
         }
-        route_action = (
-            _predictability_route_action(target_sentence, f)
-            if "predictability" in f.title or f.title in {"low_surprisal", "low_surprisal_pattern"}
-            else None
-        )
-        if route_action:
-            signals["route_action"] = route_action.get("action")
-            signals["route_classification"] = route_action
         return {
             "finding_id": f.finding_id,
             "sentence_id": sid,
@@ -1981,7 +1893,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "domain_anchors": anchors,
             "protected_spans": _protected_spans_for_sentence(target_sentence),
             "rewrite_permission": _rewrite_permission(f, bucket),
-            "operation_action": route_action.get("action") if route_action else None,
             "instruction": _rewrite_signal_instruction(f, anchors),
         }
 
@@ -2058,27 +1969,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 scope = "paragraph"
                 action = "add_concrete_domain_context"
             elif "predictability" in f.title:
-                sent_row = pred_by_id.get(f.sentence_id or "") or {}
-                route_action = _predictability_route_action(
-                    sent_row.get("sentence") or f.evidence or "",
-                    f,
-                )
-                action = route_action["action"]
-                entry["route_classification"] = route_action
-                if not route_action.get("actionable"):
-                    entry["scope"] = "sentence"
-                    entry["action"] = action
-                    entry["priority"] = priority
-                    entry["adjusted_risk"] = f.adjusted_risk
-                    entry["sentence_id"] = f.sentence_id or None
-                    entry["reason"] = route_action.get("reason")
-                    no_action.append(entry)
-                    continue
+                action = "rewrite_with_personal_voice"
             entry["scope"] = scope
             entry["action"] = action
             entry["priority"] = priority
             entry["adjusted_risk"] = f.adjusted_risk
-            entry["sentence_id"] = f.sentence_id or None
             auto_fixable.append(entry)
         elif bucket == "review_only":
             entry["reason"] = (f.metadata.get("adjustment", {}).get("reason", "")
@@ -2136,15 +2031,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     for af in auto_fixable:
         if af["action"] == "add_concrete_domain_context":
             primary_goals.append("Add domain-specific context and concrete examples")
-        elif af["action"] in {
-            "connector_remove",
-            "sentence_split",
-            "clause_reorder",
-            "density_reduce",
-            "transition_break",
-            "micro_entropy_patch",
-        }:
-            primary_goals.append(f"Apply {af['action'].replace('_', ' ')} to predictability target ({af['finding_id']})")
+        elif af["action"] == "rewrite_with_personal_voice":
+            primary_goals.append(f"Rewrite high-predictability sentence ({af['finding_id']})")
         else:
             primary_goals.append(f"Address {af['title']} ({af['finding_id']})")
     # Add preservation goals from review_only with academic filter

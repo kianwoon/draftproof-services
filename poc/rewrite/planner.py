@@ -39,15 +39,15 @@ class FixabilityDecision:
 FINDING_ROUTING: Dict[str, dict] = {
     "high_predictability": {
         "fixability": FIXABILITY_AUTO,
-        "action": "micro_entropy_patch",
+        "action": "suggest_rewrite",
         "scope": "sentence",
-        "reason": "Predictability should be handled with operation-specific entropy adjustment, not personal-voice rewriting.",
+        "reason": "Writing-style issue can be safely revised.",
     },
     "medium_predictability": {
         "fixability": FIXABILITY_PARTIAL,
-        "action": "micro_entropy_patch",
+        "action": "suggest_rewrite",
         "scope": "sentence",
-        "reason": "Medium predictability: use connector removal, sentence split, clause reorder, density reduction, or preserve canonical facts.",
+        "reason": "Medium predictability: rephrase to reduce common word patterns.",
     },
     "review_predictability": {
         "fixability": FIXABILITY_MANUAL,
@@ -81,9 +81,9 @@ FINDING_ROUTING: Dict[str, dict] = {
     },
     "high_topk_predictability": {
         "fixability": FIXABILITY_AUTO,
-        "action": "micro_entropy_patch",
+        "action": "suggest_rewrite",
         "scope": "sentence",
-        "reason": "Top-k predictability is actionable only through route-specific edits; canonical factual sentences should be preserved.",
+        "reason": "Predictable word-choice patterns can be revised at sentence scope.",
     },
     "low_surprisal_pattern": {
         "fixability": FIXABILITY_AUTO,

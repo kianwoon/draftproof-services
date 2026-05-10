@@ -58,25 +58,18 @@ from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
 from rewrite_pipeline import (
     run_rewrite_pipeline,
-    TOPK_SAFE_BAND_FULL_DOCUMENT_REBUILD_ENABLED,
     _build_aligned_sentence_comparison,
     _ai_first_gate_status,
     _ai_search_marked_grounding_candidates,
     _clear_stale_rollback_for_kept_ai_mitigation,
     _ai_search_fast_accept_reason,
     _ai_search_candidate_selection_status,
-    _safe_partial_final_progress_status,
     _review_marker_notes,
     _ai_candidate_quality_reject_reason,
     _source_repair_brief,
     _ai_search_prompt,
     _ai_search_feedback_prompt,
     _safe_partial_quality_improvement_status,
-    _texture_blocked_without_positive_burden,
-    _veto_texture_blocked_without_positive_burden,
-    _ai_search_edit_budget_contract,
-    _candidate_patchwork_budget_status,
-    _topk_route_optimizer_candidates,
     _ai_footprint_profile,
     _turnitin_like_ai_profile,
     _turnitin_like_ai_gate_status,
@@ -97,7 +90,6 @@ from rewrite_pipeline import (
     _strict_safe_candidate_rank,
     _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
-    _normalize_kept_topk_blocked_partial,
     _allow_ai_search_llm_after_deterministic,
     _load_local_env,
     _repair_candidate_source_damage,
@@ -168,10 +160,6 @@ from rewrite_pipeline import (
     _human_anchor_suppression_frontier,
     _human_anchor_suppression_frontier_candidates,
     _formula_feasibility_estimator,
-    _distribution_centrality_detector,
-    _fact_inventory_contract,
-    _aggressive_geometry_deterministic_candidates,
-    _extract_aggressive_geometry_candidates,
     _geometry_risk_map,
     _coordinated_micro_perturbation_candidates,
     _anti_smoothing_guard_status,
@@ -219,7 +207,6 @@ from rewrite_pipeline import (
     _topk_plain_spoken_snapshot_prompt,
     _topk_safe_band_patch_rounds_default,
     _topk_safe_band_snapshot_max_tokens_default,
-    _topk_sentence_route_classification,
     _topk_repair_map,
     _topk_route_optimizer_candidates,
     _topk_masked_route_prompt,
@@ -973,66 +960,6 @@ assert_test(len(briefs) == 1, "detect JSON includes rewrite_edit_briefs")
 assert_test(briefs[0]["sentence_index"] == 1, "rewrite brief sentence_index is zero-based")
 assert_test(briefs[0]["previous_sentence"].startswith("In my class"), "rewrite brief includes previous sentence")
 assert_test(briefs[0]["signals"]["problem_tokens"], "rewrite brief includes problem tokens")
-assert_test(
-    briefs[0]["operation_action"] in {
-        "connector_remove",
-        "sentence_split",
-        "clause_reorder",
-        "density_reduce",
-        "transition_break",
-        "micro_entropy_patch",
-    }
-    and briefs[0]["operation_action"] != "rewrite_with_personal_voice",
-    "predictability rewrite brief uses operation-specific action instead of personal voice",
-)
-canonical_pred_raw = {
-    "sentences": [
-        {
-            "sentence_id": "s001",
-            "sentence": "The United States was founded in 1776 after the American colonies declared independence from Britain.",
-            "risk_label": "medium",
-            "score": 0.7,
-            "top10_ratio": 0.92,
-            "top50_ratio": 0.98,
-            "avg_surprisal": 1.9,
-            "paragraph_id": "p001",
-            "top_predicted_tokens": [{"token": "founded", "rank": 1, "probability": 0.2, "top10": True}],
-            "predictable_token_spans": ["was founded in 1776"],
-        }
-    ]
-}
-canonical_finding = Finding(
-    finding_type="medium_predictability",
-    risk_level="medium",
-    evidence_strength="moderate",
-    detail="predictable canonical fact",
-    evidence="The United States was founded in 1776 after the American colonies declared independence from Britain.",
-    recommendation="rewrite",
-    suggested_action_type="",
-    location={"sentence_index": 0},
-    metadata={"finding_id": "f_canonical"},
-    actionability="auto_fixable",
-)
-canonical_builder = ReportBuilder()
-canonical_builder.set_meta(
-    original_text="The United States was founded in 1776 after the American colonies declared independence from Britain."
-)
-canonical_builder.add_detection(DetectResult(
-    scanner="predictability",
-    overall_risk=0.7,
-    confidence="medium",
-    confidence_reason="test",
-    findings=[canonical_finding],
-    raw=canonical_pred_raw,
-))
-canonical_json = report_to_dict(canonical_builder.build())
-canonical_plan = canonical_json.get("rewrite_plan") or {}
-assert_test(
-    not canonical_plan.get("auto_fixable")
-    and canonical_plan.get("no_action")
-    and canonical_plan["no_action"][0]["action"] == "canonical_fact_preserve",
-    "canonical factual predictability is preserved instead of auto-humanized",
-)
 
 rollback_report = render_rewrite_report(
     summary={
@@ -1080,60 +1007,9 @@ assert_test(
 tiny_search_status = _ai_search_candidate_selection_status(57.78, 57.72, True)
 assert_test(
     tiny_search_status["improved"]
-    and tiny_search_status["selectable"]
-    and tiny_search_status["safe_partial_ai_drop"]
-    and tiny_search_status["reason"] == "accepted_safe_partial_ai_drop",
-    "AI search keeps safe partial score drops instead of discarding them on the 5-point gate",
-)
-assert_test(
-    _ai_search_selected_by_final_safety_gate(True, tiny_search_status),
-    "safe partial AI drops bypass legacy AI-first rollback after downstream safety checks",
-)
-topk_partial_summary = {
-    "rollback_applied": False,
-    "outcome": "topk_blocked",
-    "saved_contract_notes": [
-        "Kept a Top-k-blocked candidate as partial progress because it materially improved AI-footprint drivers; it is not strict-safe or detector-safe."
-    ],
-}
-_normalize_kept_topk_blocked_partial(topk_partial_summary)
-assert_test(
-    topk_partial_summary["outcome"] == "topk_blocked_partial_kept"
-    and topk_partial_summary["topk_acceptance_gate"]["partial_kept"] is True,
-    "kept Top-k-blocked partial progress is not relabelled as a full rollback/block",
-)
-final_safe_partial = _safe_partial_final_progress_status(
-    text_changed=True,
-    original_ai=54.62,
-    rewritten_ai=51.81,
-    original_total=67,
-    rewritten_total=57,
-    original_review_burden=54,
-    rewritten_review_burden=45,
-    original_weighted_severity=133,
-    rewritten_weighted_severity=114,
-    original_critical_high=3,
-    rewritten_critical_high=2,
-)
-final_unsafe_partial = _safe_partial_final_progress_status(
-    text_changed=True,
-    original_ai=54.62,
-    rewritten_ai=51.81,
-    original_total=67,
-    rewritten_total=57,
-    original_review_burden=54,
-    rewritten_review_burden=55,
-    original_weighted_severity=133,
-    rewritten_weighted_severity=114,
-    original_critical_high=3,
-    rewritten_critical_high=2,
-)
-assert_test(
-    final_safe_partial["allowed"]
-    and final_safe_partial["improvements"]["ai_score_drop"] == 2.81
-    and not final_unsafe_partial["allowed"]
-    and "review_burden_regressed" in final_unsafe_partial["regressions"],
-    "final rollback keeps safe partial progress even when the legacy 5-point AI drop is missed",
+    and not tiny_search_status["selectable"]
+    and tiny_search_status["reason"] == "best_candidate_below_required_ai_drop",
+    "AI search tracks tiny score drops without selecting them as mitigation success",
 )
 safe_partial_status = _safe_partial_quality_improvement_status(
     {
@@ -1179,87 +1055,6 @@ assert_test(
     safe_quality_only_status["allowed"]
     and safe_quality_only_status["quality_only_improved"],
     "safe partial quality gate keeps finding/review/severity reductions even when AI drop is tiny",
-)
-texture_blocked_gate = {
-    "texture_blockers": [
-        {
-            "driver": "topk_calibrated_risk",
-            "reason": "active_topk_pattern_not_reduced",
-        }
-    ]
-}
-weak_positive_burden_gate = {
-    "positive_burden_gate": {
-        "passed": False,
-        "positive_ai_burden_drop": 1.385,
-        "required_positive_ai_burden_drop": 4.0,
-    }
-}
-assert_test(
-    _texture_blocked_without_positive_burden(
-        texture_blocked_gate,
-        weak_positive_burden_gate,
-    ),
-    "texture-blocked candidates cannot be selected as safe partial cleanup without positive AI-burden movement",
-)
-strong_positive_burden_gate = {
-    "positive_burden_gate": {
-        "passed": True,
-        "positive_ai_burden_drop": 4.2,
-        "required_positive_ai_burden_drop": 4.0,
-    }
-}
-assert_test(
-    not _texture_blocked_without_positive_burden(
-        texture_blocked_gate,
-        strong_positive_burden_gate,
-    ),
-    "texture-blocked candidates remain eligible for partial progress only after positive AI-burden movement clears the gate",
-)
-texture_blocked_status = {
-    "success": True,
-    "selectable": True,
-    "reason": "accepted_incremental_authenticity_progress",
-}
-assert_test(
-    _veto_texture_blocked_without_positive_burden(
-        texture_blocked_status,
-        texture_blocked_gate,
-        weak_positive_burden_gate,
-    )
-    and not texture_blocked_status["selectable"]
-    and texture_blocked_status["reason"] == "texture_blocked_without_positive_burden",
-    "final selector veto blocks any texture-blocked fallback path without positive AI-burden movement",
-)
-topk_safe_status = {
-    "success": True,
-    "selectable": True,
-    "reason": "accepted_topk_safe_band_rebuild",
-    "topk_safe_band_achieved": True,
-}
-assert_test(
-    not _veto_texture_blocked_without_positive_burden(
-        topk_safe_status,
-        texture_blocked_gate,
-        weak_positive_burden_gate,
-    )
-    and topk_safe_status["selectable"],
-    "final selector veto does not block a candidate that already reached the Top-k safe band",
-)
-inconsistent_topk_progress_status = {
-    "success": True,
-    "selectable": True,
-    "reason": "accepted_topk_blocker_progress",
-    "topk_blocker_progress": True,
-}
-assert_test(
-    _veto_texture_blocked_without_positive_burden(
-        inconsistent_topk_progress_status,
-        texture_blocked_gate,
-        weak_positive_burden_gate,
-    )
-    and not inconsistent_topk_progress_status["selectable"],
-    "final selector veto does not trust progress flags when positive AI-burden movement failed",
 )
 assert_test(
     _ai_search_selected_by_final_safety_gate(
@@ -1649,65 +1444,11 @@ suppression_only_candidate = make_footprint_report(
     signal_agreement=60,
 )
 suppression_only_gap = _formula_gap_contract(turnitin_formula_original, suppression_only_candidate)
-suppression_only_gate = _turnitin_like_ai_gate_status(
-    turnitin_formula_original,
-    suppression_only_candidate,
-    review_burden_delta=0,
-    weighted_severity_delta=0,
-    critical_high_delta=0,
-    ai_score_regressed=False,
-)
 assert_test(
     suppression_only_gap["weighted_driver_drops"]["human_anchor_suppression"]["gain"] == 9.0
     and suppression_only_gap["score_drop"] == 9.0
     and suppression_only_gap["positive_ai_burden"]["before"] == suppression_only_gap["positive_ai_burden"]["after"],
     "Human Anchor suppression reduces the Turnitin-like score one-for-one when positive drivers are unchanged",
-)
-assert_test(
-    suppression_only_gate["outcome_class"] == "anchor_only_partial"
-    and suppression_only_gate["selected_candidate_gain_source"] == "human_anchor_suppression"
-    and not suppression_only_gate["positive_burden_gate"]["passed"]
-    and suppression_only_gate["positive_ai_burden_drop"] == 0.0,
-    "Turnitin-like gate labels Human Anchor-only gains separately from AI-footprint mitigation",
-)
-positive_burden_candidate = make_footprint_report(
-    ai_authorship=48,
-    human=38,
-    ai_transformation=47,
-    grounding=45,
-    human_anchor=18,
-    smoothness=50,
-    semantic_uniformity=47,
-    ai_likelihood=60,
-    topk_pattern=55,
-    topk_calibrated_risk=25,
-    generic_assertion_risk=40,
-    qualifying_text_ai_density=35,
-    unsupported_claim_risk=30,
-    broad_claim_risk=30,
-    discourse=26,
-    expansion=20,
-    section_style=35,
-    signal_agreement=50,
-)
-positive_burden_gate = _turnitin_like_ai_gate_status(
-    turnitin_formula_original,
-    positive_burden_candidate,
-    review_burden_delta=0,
-    weighted_severity_delta=0,
-    critical_high_delta=0,
-    ai_score_regressed=False,
-)
-assert_test(
-    positive_burden_gate["positive_burden_gate"]["passed"]
-    and positive_burden_gate["selected_candidate_gain_source"] == "positive_burden_reduction"
-    and positive_burden_gate["outcome_class"] in {"ai_mitigated", "partially_ai_mitigated"},
-    "Turnitin-like gate recognizes positive AI-burden reduction even when Human Anchor does not improve",
-)
-assert_test(
-    _turnitin_like_candidate_rank(positive_burden_gate)
-    > _turnitin_like_candidate_rank(suppression_only_gate),
-    "Turnitin-like rank prefers positive-burden movement over Human Anchor-only score drops",
 )
 portfolio_plan = _formula_portfolio_plan(
     turnitin_formula_original,
@@ -2295,7 +2036,7 @@ assert_test(
 meaningful_search_status = _ai_search_candidate_selection_status(57.78, 52.50, True)
 assert_test(
     meaningful_search_status["selectable"],
-    "AI search still selects candidates after the required AI drop is met",
+    "AI search selects candidates only after the required AI drop is met",
 )
 negative_shift_rank = _goal_climb_candidate_rank(
     {
@@ -2977,19 +2718,18 @@ plain_topk_prompt = _topk_plain_spoken_snapshot_prompt(
     {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}},
 )
 assert_test(
-    TOPK_SAFE_BAND_FULL_DOCUMENT_REBUILD_ENABLED is False
-    and "280 to 560 words" not in medium_topk_prompt
+    "280 to 560 words" not in medium_topk_prompt
     and "rough annotated prose" not in medium_topk_prompt
     and "short country profile" in medium_topk_prompt
     and "no metaphors" in plain_topk_prompt
     and "plain everyday nouns and verbs" in plain_topk_prompt
-    and "hard patchwork budget" in _topk_safe_band_sentence_patch_prompt(
+    and "patch all listed sentences" in _topk_safe_band_sentence_patch_prompt(
         "The United States has influence. The country also has problems.",
         {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}},
     )
     and _topk_safe_band_patch_rounds_default("word " * 900, saturated_topk_report) == 10
     and _topk_safe_band_snapshot_max_tokens_default("word " * 900) == 3600,
-    "Top-k full-document safe-band rebuild is disabled; bounded patch prompts keep edit-budget controls",
+    "Top-k safe-band rebuild uses document-sized prose, not compressed snapshot fragments",
 )
 with open(os.path.join(os.path.dirname(__file__), "rewrite_pipeline.py"), "r", encoding="utf-8") as fp:
     rewrite_pipeline_source = fp.read()
@@ -5847,14 +5587,6 @@ topk_route_report = {
         "all_sentences": [
             {
                 "sentence_id": "s001",
-                "sentence": "The United States was founded in 1776 after the American colonies declared independence from Britain.",
-                "top10_ratio": 0.92,
-                "top50_ratio": 0.98,
-                "predictability_risk": 0.7,
-                "predictable_token_spans": ["was founded in 1776"],
-            },
-            {
-                "sentence_id": "s002",
                 "sentence": "The United States is often described as one of the most influential countries in modern history.",
                 "top10_ratio": 0.75,
                 "top50_ratio": 0.875,
@@ -5863,7 +5595,7 @@ topk_route_report = {
                 "top_predicted_tokens": [{"token": "of", "rank": 1, "probability": 0.9, "top10": True}],
             },
             {
-                "sentence_id": "s003",
+                "sentence_id": "s002",
                 "sentence": "It has shaped global politics, economics, technology, entertainment, and education for many decades.",
                 "top10_ratio": 0.65,
                 "top50_ratio": 0.94,
@@ -5880,7 +5612,6 @@ topk_route_map = _topk_repair_map(
     limit=2,
 )
 topk_route_candidates = _topk_route_optimizer_candidates(
-    "The United States was founded in 1776 after the American colonies declared independence from Britain. "
     "The United States is often described as one of the most influential countries in modern history. "
     "It has shaped global politics, economics, technology, entertainment, and education for many decades.",
     topk_route_report,
@@ -5897,78 +5628,16 @@ topk_patched_text, topk_applied = _apply_topk_route_patches(
 )
 assert_test(
     topk_route_map["saturated"]
-    and topk_route_map["exempted_targets"][0]["action"] == "preserve_canonical_fact"
-    and _topk_sentence_route_classification(
-        "The United States was founded in 1776 after the American colonies declared independence from Britain."
-    )["action"] == "preserve_canonical_fact"
-    and all(
-        row["sentence_id"] != "s001"
-        for row in topk_route_map["targets"]
-    )
     and topk_route_map["targets"][0]["predictable_token_spans"]
     and topk_route_candidates
     and "often described as" not in topk_route_candidates[0][1]
-    and "founded in 1776" in topk_route_candidates[0][1]
     and "Return valid JSON only" in topk_mask_prompt
-    and "do not patch canonical factual sentences" in topk_mask_prompt
     and "claim -> explanation -> implication" in topk_mask_prompt
     and _phase_sampling_arg("DRAFTPROOF_TOPK_ROUTE", "TOP_P") == 0.72
     and _phase_sampling_arg("DRAFTPROOF_TOPK_ROUTE", "FREQUENCY_PENALTY") == 0.35
     and topk_applied
     and topk_patched_text.startswith("One common description"),
     "top-k route optimizer builds repair map, deterministic candidates, JSON patch candidates, and phase sampling controls",
-)
-budget_sentences = [
-    f"One of the biggest strengths of the United States is its economic power {idx}."
-    for idx in range(1, 25)
-]
-budget_text = " ".join(budget_sentences)
-budget_report = {
-    "ai_risk_badge": {
-        "ai_components": {
-            "topk_pattern": 100.0,
-            "topk_pattern_raw": 100.0,
-            "topk_calibrated_risk": 100.0,
-            "predictability": 50.0,
-        },
-        "writing_components": {},
-    },
-    "predictability": {
-        "all_sentences": [
-            {
-                "sentence_id": f"s{idx:03d}",
-                "sentence_index": idx - 1,
-                "sentence": sentence,
-                "top10_ratio": 0.82,
-                "top50_ratio": 0.93,
-                "predictability_risk": 0.68,
-                "predictable_token_spans": ["One of the biggest strengths"],
-            }
-            for idx, sentence in enumerate(budget_sentences, start=1)
-        ],
-    },
-}
-budget_contract = _ai_search_edit_budget_contract(budget_text)
-budget_candidates = _topk_route_optimizer_candidates(budget_text, budget_report, limit=99)
-overedited_candidate = " ".join(
-    (
-        sentence.replace("One of the biggest strengths of", "A visible strength around")
-        if idx < 12 else sentence
-    )
-    for idx, sentence in enumerate(budget_sentences)
-)
-patchwork_status = _candidate_patchwork_budget_status(budget_text, overedited_candidate)
-assert_test(
-    budget_contract["max_edited_sentences"] <= 8
-    and budget_candidates
-    and all(
-        int((meta or {}).get("applied_count") or (meta or {}).get("removed_count") or 0)
-        <= budget_contract["max_edited_sentences"]
-        for _strategy, _candidate, meta in budget_candidates
-    )
-    and patchwork_status["exceeded"]
-    and patchwork_status["changed_sentence_count"] > budget_contract["max_edited_sentences"],
-    "Top-k route optimizer and selector patchwork budget cap active sentence edits",
 )
 previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
 previous_tavily_key = os.environ.get("TAVILY_API_KEY")
@@ -7721,114 +7390,6 @@ assert_test(
     and llm_patch_candidates[0][2].get("formula_convergence_llm_block_recreate")
     and "quick answer hides the work" in llm_patch_candidates[0][1],
     "formula convergence LLM block recreate returns JSON paragraph patch candidates",
-)
-central_us_text = (
-    "The United States is one of the most influential countries in modern history. "
-    "It has shaped global politics, economics, technology, entertainment, and education. "
-    "The United States was founded in 1776 after independence from Britain. "
-    "The Constitution shaped the government. "
-    "Apple and Microsoft show the country's economic power."
-)
-central_us_report = make_footprint_report(
-    ai_authorship=58,
-    human=44,
-    ai_transformation=56,
-    grounding=45,
-    human_anchor=22,
-    smoothness=58,
-    semantic_uniformity=62,
-    ai_likelihood=68,
-    topk_pattern=100,
-    topk_calibrated_risk=100,
-    generic_assertion_risk=72,
-    qualifying_text_ai_density=80,
-    unsupported_claim_risk=25,
-    broad_claim_risk=60,
-    discourse=55,
-    expansion=60,
-    section_style=60,
-    signal_agreement=62,
-)
-centrality = _distribution_centrality_detector(central_us_text, central_us_report)
-aggressive_deterministic = _aggressive_geometry_deterministic_candidates(
-    central_us_text + "\n\n" + central_us_text + "\n\n" + central_us_text,
-    central_us_report,
-    limit=2,
-)
-assert_test(
-    centrality["recommended_mode"] == "conservative_formula_convergence"
-    and centrality["centrality_score"] >= 65
-    and not aggressive_deterministic
-    and centrality.get("aggressive_geometry_reauthoring_enabled") is False,
-    "distribution-central prose is diagnostic only after aggressive geometry rollback",
-)
-aggressive_good_text = (
-    "A practical way to read the United States is to hold two facts together. "
-    "It is influential in politics, economics, technology, entertainment, and education, "
-    "but that influence also makes its weaknesses visible. "
-    "The country was founded in 1776 after independence from Britain, and the Constitution "
-    "became the frame for government power. Apple and Microsoft show one side of economic strength."
-)
-aggressive_bad_text = aggressive_good_text.replace("1776 ", "")
-good_fact_contract = _fact_inventory_contract(central_us_text, aggressive_good_text)
-bad_fact_contract = _fact_inventory_contract(central_us_text, aggressive_bad_text)
-assert_test(
-    good_fact_contract["accepted"]
-    and not bad_fact_contract["accepted"]
-    and "1776" in bad_fact_contract["missing_anchors"],
-    "aggressive fact inventory contract preserves protected dates and core facts",
-)
-aggressive_good_report = make_footprint_report(
-    ai_authorship=34,
-    human=72,
-    ai_transformation=19,
-    grounding=45,
-    human_anchor=66,
-    smoothness=28,
-    semantic_uniformity=24,
-    ai_likelihood=22,
-    topk_pattern=45,
-    topk_calibrated_risk=18,
-    generic_assertion_risk=32,
-    qualifying_text_ai_density=30,
-    unsupported_claim_risk=25,
-    broad_claim_risk=35,
-    discourse=20,
-    expansion=24,
-    section_style=24,
-    signal_agreement=25,
-)
-aggressive_controller_result = _formula_convergence_controller(
-    central_us_text,
-    central_us_report,
-    central_us_report,
-    {"max_passes": 1, "max_scans": 2, "max_llm_calls": 0},
-    scan_func=lambda text: aggressive_good_report if text == aggressive_good_text else central_us_report,
-    candidate_builder=lambda _text, _report, _pass, _map: [
-        (
-            "aggressive_geometry_test_candidate",
-            aggressive_good_text,
-            {"aggressive_geometry_reauthoring": True},
-        )
-    ],
-    drift_checker=lambda *_args, **_kwargs: SimpleNamespace(accepted=False, similarity=0.1, reasons=["style_changed"]),
-)
-assert_test(
-    not aggressive_controller_result["selected"]
-    and not aggressive_controller_result["target_met"]
-    and aggressive_controller_result["candidates"][0]["reason"].startswith("semantic_drift"),
-    "aggressive geometry candidates no longer bypass conservative semantic drift",
-)
-parsed_aggressive = _extract_aggressive_geometry_candidates(json.dumps({
-    "candidates": [
-        {"strategy": "selective_depth_rebuild", "text": aggressive_good_text},
-        {"strategy": "fact_thread_rebuild", "text": aggressive_good_text + " It remains uneven."},
-    ]
-}))
-assert_test(
-    len(parsed_aggressive) == 2
-    and parsed_aggressive[0]["strategy"] == "selective_depth_rebuild",
-    "aggressive geometry JSON candidates parse as full-document candidates",
 )
 stance_candidates = _author_stance_thread_candidates(
     target_push_text,

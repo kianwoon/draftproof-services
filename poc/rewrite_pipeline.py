@@ -44,8 +44,6 @@ from detect.turnitin_like import (
     turnitin_like_ai_profile_from_report,
 )
 
-TOPK_SAFE_BAND_FULL_DOCUMENT_REBUILD_ENABLED = False
-
 
 def _metric_decimal(value, default=0.0):
     if not isinstance(value, (int, float)):
@@ -105,12 +103,7 @@ def _ai_search_candidate_selection_status(
     target: float = 60.0,
     required_min_ai: float = 50.0,
 ) -> dict:
-    """Classify a scanned AI-search candidate without discarding safe movement.
-
-    The legacy 5-point AI gate is still reported as a full-mitigation threshold,
-    but it must not be a cliff that discards a rescanned candidate with safe
-    measurable AI reduction. Downstream safety gates can still veto regressions.
-    """
+    """Classify a scanned AI-search candidate without overclaiming tiny drops."""
     gate = _ai_first_gate_status(
         reference_ai,
         candidate_ai,
@@ -128,76 +121,16 @@ def _ai_search_candidate_selection_status(
     elif not improved:
         reason = "candidate_not_below_reference"
     elif gate["required"]:
-        reason = "accepted_safe_partial_ai_drop"
+        reason = "best_candidate_below_required_ai_drop"
     else:
         reason = "ai_first_not_required"
     status = dict(gate)
     status.update({
         "improved": improved,
-        "required_min_drop_met": bool(gate["success"]),
-        "safe_partial_ai_drop": bool(text_changed and improved and not gate["success"]),
-        "selectable": bool(gate["success"] or (text_changed and improved)),
+        "selectable": bool(gate["success"]),
         "reason": reason,
     })
     return status
-
-
-def _safe_partial_final_progress_status(
-    *,
-    text_changed: bool,
-    original_ai,
-    rewritten_ai,
-    original_total: int,
-    rewritten_total: int,
-    original_review_burden: int,
-    rewritten_review_burden: int,
-    original_weighted_severity: int,
-    rewritten_weighted_severity: int,
-    original_critical_high: int,
-    rewritten_critical_high: int,
-    ai_regression_tolerance: float = 0.25,
-) -> dict:
-    """Keep useful final full-scan progress instead of rolling back on cliff gates."""
-    ai_drop = (
-        float(original_ai) - float(rewritten_ai)
-        if isinstance(original_ai, (int, float)) and isinstance(rewritten_ai, (int, float))
-        else None
-    )
-    regressions: list[str] = []
-    if isinstance(ai_drop, (int, float)) and ai_drop < -float(ai_regression_tolerance):
-        regressions.append("ai_score_regressed")
-    if rewritten_review_burden > original_review_burden:
-        regressions.append("review_burden_regressed")
-    if rewritten_weighted_severity > original_weighted_severity:
-        regressions.append("weighted_severity_regressed")
-    if rewritten_critical_high > original_critical_high:
-        regressions.append("critical_high_regressed")
-    if rewritten_total > original_total and rewritten_review_burden >= original_review_burden:
-        regressions.append("findings_regressed_without_review_gain")
-    improvements = {
-        "ai_score_drop": round(ai_drop, 3) if isinstance(ai_drop, (int, float)) else None,
-        "finding_drop": int(original_total) - int(rewritten_total),
-        "review_burden_drop": int(original_review_burden) - int(rewritten_review_burden),
-        "weighted_severity_drop": int(original_weighted_severity) - int(rewritten_weighted_severity),
-        "critical_high_drop": int(original_critical_high) - int(rewritten_critical_high),
-    }
-    material = bool(
-        (isinstance(ai_drop, (int, float)) and ai_drop >= 0.5)
-        or improvements["finding_drop"] >= 1
-        or improvements["review_burden_drop"] >= 1
-        or improvements["weighted_severity_drop"] >= 1
-        or improvements["critical_high_drop"] >= 1
-    )
-    allowed = bool(text_changed and material and not regressions)
-    return {
-        "allowed": allowed,
-        "reason": "safe_partial_final_progress" if allowed else "no_safe_partial_final_progress",
-        "text_changed": bool(text_changed),
-        "material": material,
-        "regressions": regressions,
-        "improvements": improvements,
-        "ai_regression_tolerance": ai_regression_tolerance,
-    }
 
 
 def _safe_partial_quality_improvement_status(
@@ -287,53 +220,6 @@ def _safe_partial_quality_improvement_status(
     }
 
 
-def _texture_blocked_without_positive_burden(
-    ai_footprint_gate: dict | None,
-    turnitin_like_gate: dict | None,
-) -> bool:
-    """True when a candidate is still texture-blocked and lacks real formula movement.
-
-    Small authorship/review cleanup can be useful, but it must not become the
-    selected AI-mitigation candidate while Top-k/texture blockers remain pinned.
-    Otherwise the controller spends budget, chooses a cosmetic candidate, and
-    the final Top-k gate rolls the work back.
-    """
-    ai_footprint_gate = ai_footprint_gate if isinstance(ai_footprint_gate, dict) else {}
-    turnitin_like_gate = turnitin_like_gate if isinstance(turnitin_like_gate, dict) else {}
-    positive_gate = (
-        turnitin_like_gate.get("positive_burden_gate")
-        if isinstance(turnitin_like_gate.get("positive_burden_gate"), dict)
-        else {}
-    )
-    texture_blockers = [
-        blocker for blocker in (ai_footprint_gate.get("texture_blockers") or [])
-        if isinstance(blocker, dict)
-    ]
-    return bool(texture_blockers and not positive_gate.get("passed"))
-
-
-def _veto_texture_blocked_without_positive_burden(
-    selection_status: dict | None,
-    ai_footprint_gate: dict | None,
-    turnitin_like_gate: dict | None,
-) -> bool:
-    """Veto selector branches that accepted cleanup while texture stayed blocked."""
-    if not isinstance(selection_status, dict) or not selection_status.get("selectable"):
-        return False
-    if not _texture_blocked_without_positive_burden(ai_footprint_gate, turnitin_like_gate):
-        return False
-    if selection_status.get("topk_safe_band_achieved"):
-        return False
-    selection_status.update({
-        "success": False,
-        "selectable": False,
-        "reason": "texture_blocked_without_positive_burden",
-        "ai_footprint_texture_blocked": True,
-        "texture_blocked_without_positive_burden": True,
-    })
-    return True
-
-
 def _ai_search_selected_by_final_safety_gate(
     ai_search_selected: bool,
     selection_status: dict | None,
@@ -352,7 +238,6 @@ def _ai_search_selected_by_final_safety_gate(
             "partial_ai_footprint_mitigation",
             "topk_blocker_progress",
             "safe_partial_quality_improvement",
-            "safe_partial_ai_drop",
         )
     )
 
@@ -377,31 +262,6 @@ def _clear_stale_rollback_for_kept_ai_mitigation(summary: dict, source: str) -> 
         summary.setdefault("saved_contract_notes", []).append(
             f"Cleared earlier rewrite rollback because {source} produced a kept AI-mitigation candidate."
         )
-
-
-def _normalize_kept_topk_blocked_partial(summary: dict) -> None:
-    """Keep public outcome consistent when a Top-k-blocked partial is retained."""
-    if not isinstance(summary, dict):
-        return
-    kept_note = any(
-        "Top-k-blocked candidate as partial progress" in str(note)
-        for note in summary.get("saved_contract_notes") or []
-    )
-    if (
-        summary.get("rollback_applied") is False
-        and (
-            summary.get("outcome") == "topk_blocked"
-            or kept_note
-        )
-    ):
-        summary["outcome"] = "topk_blocked_partial_kept"
-        gate = summary.get("topk_acceptance_gate")
-        if not isinstance(gate, dict):
-            gate = {}
-            summary["topk_acceptance_gate"] = gate
-        gate.setdefault("accepted", False)
-        gate.setdefault("partial_kept", True)
-        gate.setdefault("reason", "topk_blocked_partial_kept_without_rollback")
 
 
 def _float_env(name: str, default: float) -> float:
@@ -2468,51 +2328,13 @@ def _topk_texture_repair_prompt(
     )
 
 
-PATCHWORK_SENTENCE_RATIO_LIMIT = 0.18
-
-
-def _ai_search_edit_budget_contract(text: str) -> dict:
-    """Bound active sentence edits so Top-k repair does not become patchwork."""
-    sentences = _split_sentences(text)
-    sentence_count = len(sentences)
-    words = _text_word_count(text)
-    if sentence_count <= 0:
-        return {
-            "version": "edit_budget_v1",
-            "word_count": words,
-            "sentence_count": 0,
-            "max_edited_sentences": 0,
-            "max_sentence_edit_ratio": PATCHWORK_SENTENCE_RATIO_LIMIT,
-            "reason": "empty_text",
-        }
-    ratio_cap = max(1, int(math.floor(sentence_count * PATCHWORK_SENTENCE_RATIO_LIMIT)))
-    if words <= 800:
-        size_cap = 8
-        minimum_useful = 5
-        reason = "short_document_patchwork_budget"
-    elif words <= 1800:
-        size_cap = 12
-        minimum_useful = 1
-        reason = "medium_document_patchwork_budget"
-    else:
-        size_cap = 20
-        minimum_useful = 1
-        reason = "long_document_patchwork_budget"
-    max_edits = min(sentence_count, size_cap, max(minimum_useful, ratio_cap))
-    return {
-        "version": "edit_budget_v1",
-        "word_count": words,
-        "sentence_count": sentence_count,
-        "max_edited_sentences": max(1, max_edits),
-        "max_sentence_edit_ratio": PATCHWORK_SENTENCE_RATIO_LIMIT,
-        "ratio_cap": ratio_cap,
-        "size_cap": size_cap,
-        "reason": reason,
-    }
-
-
 def _topk_optimizer_sentence_limit(text: str) -> int:
-    return int((_ai_search_edit_budget_contract(text) or {}).get("max_edited_sentences") or 1)
+    words = _text_word_count(text)
+    if words <= 700:
+        return int(_float_env("DRAFTPROOF_TOPK_ROUTE_SHORT_SENTENCES", 8.0))
+    if words <= 1800:
+        return int(_float_env("DRAFTPROOF_TOPK_ROUTE_MEDIUM_SENTENCES", 12.0))
+    return int(_float_env("DRAFTPROOF_TOPK_ROUTE_LONG_SENTENCES", 20.0))
 
 
 def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None = None) -> dict:
@@ -2539,17 +2361,11 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
             token for token in (item.get("top_predicted_tokens") or [])
             if isinstance(token, dict)
         ][:10]
-        classification = _topk_sentence_route_classification(sentence, {
-            "top10_ratio": top10,
-            "top50_ratio": top50,
-            "predictability_risk": risk,
-            "predictable_token_spans": spans,
-        })
-        generic_opening = bool(classification.get("generic_opening"))
-        actionable = bool(classification.get("actionable"))
-        route_score = top10 * 0.55 + top50 * 0.20 + risk * 0.20 + (0.05 if generic_opening else 0.0)
-        if not actionable:
-            route_score *= 0.15
+        generic_opening = bool(re.search(
+            r"^(?:The|This|These|It|Another|One of|In addition|At the same time|Despite|However|In conclusion|Overall)\b",
+            sentence,
+            re.I,
+        ))
         rows.append({
             "sentence_id": item.get("sentence_id") or f"s{index + 1:03d}",
             "sentence_index": index,
@@ -2564,18 +2380,11 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
                 "generic_opening": generic_opening,
                 "high_top10": top10 >= 0.65,
                 "span_count": len(spans),
-                "canonical_factual": bool(classification.get("canonical_factual")),
-                "transition_smoothing": bool(classification.get("transition_smoothing")),
-                "generic_expansion": bool(classification.get("generic_expansion")),
             },
-            "route_classification": classification,
-            "action": classification.get("action"),
-            "actionable": actionable,
-            "route_score": round(route_score, 4),
+            "route_score": round(top10 * 0.55 + top50 * 0.20 + risk * 0.20 + (0.05 if generic_opening else 0.0), 4),
         })
     rows.sort(key=lambda row: row["route_score"], reverse=True)
-    actionable_rows = [row for row in rows if row.get("actionable")]
-    selected = actionable_rows[:limit]
+    selected = rows[:limit]
     ai_components = ((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
     raw_topk = ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern"))
     calibrated_topk = ai_components.get("topk_calibrated_risk")
@@ -2584,7 +2393,6 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
     return {
         "enabled": True,
         "limit": limit,
-        "edit_budget": _ai_search_edit_budget_contract(text),
         "saturated": float(calibrated_topk or 0.0) >= _float_env(
             "DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD",
             90.0,
@@ -2594,88 +2402,7 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
         "topk_calibrated_risk": calibrated_topk,
         "topk_safe_band": ai_components.get("topk_safe_band"),
         "targets": selected,
-        "exempted_targets": [row for row in rows if not row.get("actionable")][:limit],
         "target_sentence_ids": [row.get("sentence_id") for row in selected],
-    }
-
-
-def _topk_sentence_route_classification(sentence: str, row: dict | None = None) -> dict:
-    """Classify high Top-k sentences so canonical facts are not over-rewritten."""
-    value = str(sentence or "").strip()
-    lower = value.lower()
-    words = _text_word_count(value)
-    has_year = bool(re.search(r"\b(?:1[5-9]\d{2}|20\d{2})\b", value))
-    has_number = bool(re.search(r"\b\d+(?:\.\d+)?%?\b", value))
-    has_protected = bool(
-        has_year
-        or has_number
-        or _protected_code_anchor_set(value)
-        or re.search(r"https?://|www\.|\[[^\]]+\]|\([^)]*\d{4}[^)]*\)", value)
-    )
-    canonical_fact = bool(
-        has_protected
-        and re.search(
-            r"\b(?:was founded|were founded|declared independence|constitution|was established|"
-            r"were established|was created|were created|became|is located|are located|"
-            r"was born|died|started|ended|signed|passed|enacted|built)\b",
-            lower,
-        )
-    )
-    generic_opening = bool(re.search(
-        r"^(?:The|This|These|It|Another|One of|In addition|At the same time|Despite|However|In conclusion|Overall)\b",
-        value,
-        re.I,
-    ))
-    transition_smoothing = bool(re.search(
-        r"^(?:Furthermore|Moreover|Additionally|In addition|At the same time|Despite|However|In conclusion|Overall|This highlights|This demonstrates|This shows|This means)\b",
-        value,
-        re.I,
-    ))
-    generic_expansion = bool(
-        re.search(
-            r"\b(?:one of the|important|significant|major role|strong influence|many ways|"
-            r"wide range|various|in modern history|around the world|global influence|"
-            r"complex and influential|strengths and challenges)\b",
-            lower,
-        )
-        and not canonical_fact
-    )
-    canonical_public_definition = bool(
-        has_protected
-        and words <= 24
-        and not transition_smoothing
-        and not generic_expansion
-    )
-    if canonical_fact or canonical_public_definition:
-        action = "preserve_canonical_fact"
-        actionable = False
-        reason = "high predictability comes from canonical factual wording, not missing human voice"
-    elif transition_smoothing:
-        action = "entropy_adjustment_transition"
-        actionable = True
-        reason = "smooth transition route is a valid texture target"
-    elif generic_expansion:
-        action = "entropy_adjustment_generic_expansion"
-        actionable = True
-        reason = "generic expansion can be compressed, split, or de-templated"
-    elif generic_opening and words >= 12:
-        action = "entropy_adjustment_opening"
-        actionable = True
-        reason = "generic opening can be changed without adding personal voice"
-    else:
-        action = "preserve_or_micro_adjust_only"
-        actionable = False
-        reason = "top-k alone is insufficient for a rewrite target"
-    return {
-        "version": "topk_sentence_route_classifier_v1",
-        "action": action,
-        "actionable": actionable,
-        "reason": reason,
-        "canonical_factual": bool(canonical_fact or canonical_public_definition),
-        "generic_opening": generic_opening,
-        "transition_smoothing": transition_smoothing,
-        "generic_expansion": generic_expansion,
-        "has_protected_anchor": has_protected,
     }
 
 
@@ -2684,9 +2411,6 @@ def _deterministic_topk_route_sentence(sentence: str) -> tuple[str, list[str]]:
     original = str(sentence or "").strip()
     candidate = original
     operations: list[str] = []
-    classification = _topk_sentence_route_classification(original)
-    if classification.get("action") == "preserve_canonical_fact":
-        return original, []
 
     strong_routes = [
         (
@@ -2882,22 +2606,18 @@ def _topk_route_optimizer_candidates(
     *,
     limit: int | None = None,
 ) -> list[tuple[str, str, dict]]:
-    edit_budget = _ai_search_edit_budget_contract(text)
-    sentence_budget = int(edit_budget.get("max_edited_sentences") or 1)
-    requested_limit = int(limit) if isinstance(limit, int) and limit > 0 else sentence_budget
-    effective_limit = max(1, min(sentence_budget, requested_limit))
-    repair_map = _topk_repair_map(text, report_dict, limit=effective_limit)
+    repair_map = _topk_repair_map(text, report_dict, limit=limit)
     topk_value = float(repair_map.get("topk_calibrated_risk") or 0.0)
     if topk_value < _safe_topk_calibrated_limit():
         return []
-    # Do not expand beyond the edit budget. Earlier versions expanded up to
-    # dozens of sentences, which lowered local predictability while creating
-    # document-level patchwork.
-    expanded_limit = effective_limit
+    expanded_limit = int(_float_env(
+        "DRAFTPROOF_TOPK_ROUTE_EXPANDED_SENTENCES",
+        max(float(repair_map.get("limit") or 1), min(48.0, float(len(_split_sentences(text)) or 1))),
+    ))
     expanded_map = _topk_repair_map(text, report_dict, limit=expanded_limit)
     targets = repair_map.get("targets") or []
     candidate_rows: list[tuple[str, str, dict]] = []
-    batches = [(targets, 0.35, "small"), (targets, 0.65, "medium"), (targets, 1.0, "budget")]
+    batches = [(targets, 0.35, "small"), (targets, 0.65, "medium"), (targets, 1.0, "full")]
     expanded_targets = [
         row for row in (expanded_map.get("targets") or [])
         if float(row.get("top10_ratio") or 0.0) >= _float_env("DRAFTPROOF_TOPK_ROUTE_EXPANDED_MIN_TOP10", 0.45)
@@ -2905,7 +2625,7 @@ def _topk_route_optimizer_candidates(
     if len(expanded_targets) > len(targets):
         batches.append((expanded_targets, 1.0, "expanded"))
     for batch_targets, fraction, label in batches:
-        take = max(1, min(sentence_budget, len(batch_targets), math.ceil(len(batch_targets) * fraction)))
+        take = max(1, min(len(batch_targets), math.ceil(len(batch_targets) * fraction)))
         replacements: dict[str, str] = {}
         operations: list[dict] = []
         for target in batch_targets[:take]:
@@ -2932,7 +2652,6 @@ def _topk_route_optimizer_candidates(
                     "target_count": take,
                     "applied_count": len(operations),
                     "operations": operations,
-                    "edit_budget": edit_budget,
                 },
             ))
     removable_targets = [
@@ -2954,7 +2673,6 @@ def _topk_route_optimizer_candidates(
                         "removed_count": take,
                         "removed_sentence_ids": [row.get("sentence_id") for row in removable_targets[:take]],
                         "removed_top10": [row.get("top10_ratio") for row in removable_targets[:take]],
-                        "edit_budget": edit_budget,
                     },
                 ))
     return candidate_rows
@@ -2987,10 +2705,6 @@ def _topk_masked_route_prompt(
         "- remove generic connectors instead of replacing them with polished connectors\n"
         "- split over-smooth sentences when meaning remains intact\n"
         "- move a clause to the front only when it lowers the predictable opening\n\n"
-        "Targeting rule:\n"
-        "- do not patch canonical factual sentences just because Top-k is high\n"
-        "- historical dates, protected numbers, citations, and public fact anchors should usually stay unchanged\n"
-        "- predictable fact wording is not the same problem as AI authorship texture\n\n"
         "Forbidden:\n"
         "- no new facts, citations, statistics, examples, or personal experience\n"
         "- no full-document rewrite\n"
@@ -3185,10 +2899,8 @@ def _topk_safe_band_snapshot_max_tokens_default(source_text: str) -> int:
 
 
 def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
-    edit_budget = _ai_search_edit_budget_contract(candidate_text)
-    sentence_limit = max(1, int(edit_budget.get("max_edited_sentences") or 1))
     rows = []
-    for row in (_topk_repair_map(candidate_text, candidate_report, limit=sentence_limit).get("targets") or []):
+    for row in (_topk_repair_map(candidate_text, candidate_report, limit=14).get("targets") or []):
         sentence = str(row.get("sentence") or "").strip()
         if not sentence:
             continue
@@ -3214,10 +2926,8 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "- new statistics or citations\n"
         "- changing the document topic\n\n"
         "Patch coverage:\n"
-        f"- each candidate may patch at most {sentence_limit} sentence(s); this is a hard patchwork budget\n"
-        "- prefer the highest-impact listed sentences; do not spread small edits across the whole document\n"
-        "- listed sentences have already excluded canonical factual anchors; do not add personal voice to compensate for factual predictability\n"
-        "- do not patch medium-predictability sentences unless they also carry transition/generic-expansion smoothness\n"
+        "- each candidate must include one patch for every listed sentence unless a sentence cannot be found exactly\n"
+        "- do not return a one-sentence patch when many high-risk sentences are listed\n"
         "- candidate 1 should use direct plain contrast; candidate 2 should use plain sentence splitting and clause movement\n\n"
         "Examples:\n"
         "Original: The United States has a strong cultural influence.\n"
@@ -3228,8 +2938,7 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "Replacement: Freedom, democracy, and individual rights were central ideas. In practice, Americans have argued over those ideas from the beginning.\n\n"
         "Return valid JSON only:\n"
         '{"candidates":[{"patches":[{"original_sentence":"...","replacement_sentence":"..."}]}]}\n'
-        "Return 2 candidates with different sentence routes. Do not repeat the same openings across replacements.\n\n"
-        f"EDIT_BUDGET:\n{json.dumps(edit_budget, ensure_ascii=False)}\n\n"
+        "Return 2 candidates with different sentence routes. Each candidate should patch all listed sentences. Do not repeat the same openings across replacements.\n\n"
         f"SENTENCES:\n{json.dumps(rows, ensure_ascii=False)[:12000]}"
     )
 
@@ -4119,18 +3828,10 @@ def _extract_topk_route_patch_candidates(response_text: str, *, max_candidates: 
     return candidates
 
 
-def _apply_topk_route_patches(
-    text: str,
-    patches: list[dict],
-    *,
-    max_patches: int | None = None,
-) -> tuple[str, list[dict]]:
+def _apply_topk_route_patches(text: str, patches: list[dict]) -> tuple[str, list[dict]]:
     candidate = str(text or "")
     applied = []
-    patch_limit = max_patches if isinstance(max_patches, int) and max_patches > 0 else None
     for patch in patches or []:
-        if patch_limit is not None and len(applied) >= patch_limit:
-            break
         original = str(patch.get("original_sentence") or "").strip()
         replacement = str(patch.get("replacement_sentence") or "").strip()
         if not original or not replacement or original == replacement:
@@ -4982,17 +4683,9 @@ def _turnitin_like_ai_gate_status(
     ai_before = _ai_footprint_flatten(_ai_footprint_profile(original_report))
     ai_after = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
     score_drop = float(drops.get("turnitin_like_ai_score") or 0.0)
-    positive_ai_burden_before = float(before.get("raw_positive_score") or 0.0)
-    positive_ai_burden_after = float(after.get("raw_positive_score") or 0.0)
-    positive_ai_burden_drop = positive_ai_burden_before - positive_ai_burden_after
-    human_anchor_suppression_gain = float(drops.get("human_anchor_suppression") or 0.0)
     min_drop = _float_env("DRAFTPROOF_TURNITIN_LIKE_MIN_DROP", 1.0)
     target_score = TURNITIN_LIKE_TARGET_AI_SCORE
     major_backfire_limit = _float_env("DRAFTPROOF_TURNITIN_LIKE_MAJOR_COMPONENT_BACKFIRE", 8.0)
-    positive_burden_min_drop = _float_env("DRAFTPROOF_POSITIVE_AI_BURDEN_MIN_DROP", 4.0)
-    ai_likelihood_material_drop = _float_env("DRAFTPROOF_POSITIVE_BURDEN_AI_LIKELIHOOD_DROP", 3.0)
-    topk_material_drop = _float_env("DRAFTPROOF_POSITIVE_BURDEN_TOPK_DROP", 8.0)
-    smoothness_material_drop = _float_env("DRAFTPROOF_POSITIVE_BURDEN_SMOOTHNESS_DROP", 3.0)
     component_backfires = [
         {
             "driver": key,
@@ -5014,47 +4707,6 @@ def _turnitin_like_ai_gate_status(
         })
     ai_authorship_drop = float(ai_before.get("ai_authorship", 0.0)) - float(ai_after.get("ai_authorship", 0.0))
     ai_transformation_drop = float(ai_before.get("ai_transformation", 0.0)) - float(ai_after.get("ai_transformation", 0.0))
-    discourse_regularity_drop = (
-        float(ai_before.get("discourse_regularity", 0.0))
-        - float(ai_after.get("discourse_regularity", 0.0))
-    )
-    positive_component_regressions = [
-        {
-            "driver": key,
-            "drop": round(float(drops.get(key) or 0.0), 3),
-            "reason": "positive_driver_regressed",
-        }
-        for key in ("rewrite_smoothness", "patchwork_expansion")
-        if float(drops.get(key) or 0.0) < 0.0
-    ]
-    if discourse_regularity_drop < 0.0:
-        positive_component_regressions.append({
-            "driver": "discourse_regularity",
-            "drop": round(discourse_regularity_drop, 3),
-            "reason": "discourse_geometry_regressed",
-        })
-    material_positive_driver_moved = bool(
-        float(drops.get("ai_likelihood") or 0.0) >= ai_likelihood_material_drop
-        or float(drops.get("topk_calibrated_risk") or 0.0) >= topk_material_drop
-        or float(drops.get("rewrite_smoothness") or 0.0) >= smoothness_material_drop
-    )
-    positive_burden_gate = bool(
-        positive_ai_burden_drop >= positive_burden_min_drop
-        and material_positive_driver_moved
-        and not positive_component_regressions
-    )
-    if positive_burden_gate:
-        selected_candidate_gain_source = (
-            "mixed"
-            if human_anchor_suppression_gain > 0.0
-            else "positive_burden_reduction"
-        )
-    elif human_anchor_suppression_gain > 0.0 and score_drop > 0.0:
-        selected_candidate_gain_source = "human_anchor_suppression"
-    elif score_drop > 0.0:
-        selected_candidate_gain_source = "cleanup_only"
-    else:
-        selected_candidate_gain_source = "none"
     safety_clean = bool(
         not ai_score_regressed
         and float(review_burden_delta or 0.0) <= 0.0
@@ -5066,21 +4718,12 @@ def _turnitin_like_ai_gate_status(
     )
     improved = bool(score_drop >= min_drop)
     score_target_met = bool(float(after.get("score", 100.0)) < target_score)
-    achieved = bool(safety_clean and improved and score_target_met and positive_burden_gate)
-    partial = bool(safety_clean and improved and not achieved and positive_burden_gate)
-    anchor_only_partial = bool(
-        safety_clean
-        and improved
-        and not achieved
-        and not positive_burden_gate
-        and human_anchor_suppression_gain > 0.0
-    )
+    achieved = bool(safety_clean and improved and score_target_met)
+    partial = bool(safety_clean and improved and not achieved)
     if achieved:
         outcome = "ai_mitigated"
     elif partial:
         outcome = "partially_ai_mitigated"
-    elif anchor_only_partial:
-        outcome = "anchor_only_partial"
     elif safety_clean and not improved and (
         float(review_burden_delta or 0.0) < 0.0
         or float(weighted_severity_delta or 0.0) < 0.0
@@ -5098,24 +4741,6 @@ def _turnitin_like_ai_gate_status(
         "component_drops": drops,
         "remaining_turnitin_like_drivers": _remaining_turnitin_like_drivers(after),
         "component_backfires": component_backfires,
-        "selected_candidate_gain_source": selected_candidate_gain_source,
-        "positive_ai_burden_before": round(positive_ai_burden_before, 3),
-        "positive_ai_burden_after": round(positive_ai_burden_after, 3),
-        "positive_ai_burden_drop": round(positive_ai_burden_drop, 3),
-        "human_anchor_suppression_gain": round(human_anchor_suppression_gain, 3),
-        "positive_burden_gate": {
-            "passed": positive_burden_gate,
-            "positive_ai_burden_drop": round(positive_ai_burden_drop, 3),
-            "required_positive_ai_burden_drop": round(float(positive_burden_min_drop), 3),
-            "material_positive_driver_moved": material_positive_driver_moved,
-            "required_driver_drop": {
-                "ai_likelihood": round(float(ai_likelihood_material_drop), 3),
-                "topk_calibrated_risk": round(float(topk_material_drop), 3),
-                "rewrite_smoothness": round(float(smoothness_material_drop), 3),
-            },
-            "positive_component_regressions": positive_component_regressions,
-            "discourse_regularity_drop": round(discourse_regularity_drop, 3),
-        },
         "ai_authorship_drop": round(ai_authorship_drop, 3),
         "ai_transformation_drop": round(ai_transformation_drop, 3),
         "safety_clean": safety_clean,
@@ -5130,10 +4755,6 @@ def _turnitin_like_ai_gate_status(
             "target_score": round(float(target_score), 3),
             "min_drop": round(float(min_drop), 3),
             "major_component_backfire": round(float(major_backfire_limit), 3),
-            "positive_ai_burden_min_drop": round(float(positive_burden_min_drop), 3),
-            "ai_likelihood_material_drop": round(float(ai_likelihood_material_drop), 3),
-            "topk_material_drop": round(float(topk_material_drop), 3),
-            "smoothness_material_drop": round(float(smoothness_material_drop), 3),
         },
     }
 
@@ -5147,12 +4768,9 @@ def _turnitin_like_candidate_rank(
 ) -> tuple:
     gate = gate if isinstance(gate, dict) else {}
     drops = gate.get("component_drops") if isinstance(gate.get("component_drops"), dict) else {}
-    positive_gate = gate.get("positive_burden_gate") if isinstance(gate.get("positive_burden_gate"), dict) else {}
     return (
         1 if gate.get("safe_band") else 0,
         1 if gate.get("safety_clean") else 0,
-        1 if positive_gate.get("passed") else 0,
-        float(gate.get("positive_ai_burden_drop") or 0.0),
         float(gate.get("score_drop") or 0.0),
         float(drops.get("ai_likelihood") or 0.0),
         float(drops.get("topk_calibrated_risk") or 0.0),
@@ -5972,349 +5590,6 @@ def _geometry_disrupt_sentence(sentence: str, row: dict | None = None) -> tuple[
             operations.append("and_route_split")
     candidate = re.sub(r"\s{2,}", " ", candidate).strip()
     return (candidate, operations) if candidate and candidate != original else (original, [])
-
-
-_DISTRIBUTION_CENTRAL_GENERIC_OPENING_RE = re.compile(
-    r"^(?:The|This|These|It|One of|Another|In addition|Despite|However|At the same time|"
-    r"In conclusion|Overall|Technology|Education|The United States)\b",
-    re.I,
-)
-
-AGGRESSIVE_GEOMETRY_REAUTHORING_ENABLED = False
-
-
-def _aggressive_geometry_reauthoring_enabled() -> bool:
-    """Rollback switch: discourse-identity reauthoring is not a selectable path."""
-    return AGGRESSIVE_GEOMETRY_REAUTHORING_ENABLED
-
-
-def _distribution_centrality_detector(text: str, report_dict: dict | None) -> dict:
-    """Detect distribution-central prose as a diagnostic, not a rewrite trigger."""
-    paragraphs = _logical_paragraphs(text)
-    sentences = _split_sentences(text)
-    profile = _turnitin_like_ai_profile(report_dict)
-    footprint = _ai_footprint_profile(report_dict)
-    sentence_count = max(1, len(sentences))
-    paragraph_count = max(1, len(paragraphs))
-    generic_openings = sum(
-        1 for sentence in sentences
-        if _DISTRIBUTION_CENTRAL_GENERIC_OPENING_RE.search(str(sentence or "").strip())
-    )
-    perspective_markers = len(re.findall(
-        r"\b(?:I|we|my|our|I would|I noticed|I think|in practice|what this means|the problem is|the difficult part)\b",
-        str(text or ""),
-        flags=re.I,
-    ))
-    paragraph_lengths = [_text_word_count(paragraph) for paragraph in paragraphs if paragraph.strip()]
-    if len(paragraph_lengths) >= 2:
-        mean_len = statistics.mean(paragraph_lengths)
-        stdev_len = statistics.pstdev(paragraph_lengths)
-        length_uniformity = 1.0 - min(1.0, stdev_len / max(1.0, mean_len))
-    else:
-        length_uniformity = 0.0
-    balanced_roles = sum(
-        1 for paragraph in paragraphs
-        if re.search(r"\b(?:is|are|has|also|another|despite|however|at the same time)\b", paragraph, re.I)
-        and _text_word_count(paragraph) >= 45
-    )
-    generic_opening_ratio = generic_openings / sentence_count
-    low_perspective_ratio = 1.0 - min(1.0, perspective_markers / max(2.0, sentence_count * 0.12))
-    balanced_role_ratio = balanced_roles / paragraph_count
-    topk = float((profile.get("components") or {}).get("topk_calibrated_risk") or 0.0)
-    ai_likelihood = float((profile.get("components") or {}).get("ai_likelihood") or 0.0)
-    semantic_uniformity = float((profile.get("components") or {}).get("semantic_uniformity") or 0.0)
-    badge_components = ((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
-    density = float(
-        footprint.get("qualifying_text_ai_density")
-        or badge_components.get("qualifying_text_ai_density")
-        or 0.0
-    )
-    score = (
-        min(1.0, topk / 100.0) * 24.0
-        + min(1.0, ai_likelihood / 100.0) * 20.0
-        + min(1.0, semantic_uniformity / 100.0) * 12.0
-        + min(1.0, density / 100.0) * 14.0
-        + generic_opening_ratio * 12.0
-        + length_uniformity * 8.0
-        + balanced_role_ratio * 6.0
-        + low_perspective_ratio * 4.0
-    )
-    score = max(0.0, min(100.0, score))
-    ceiling_risk = "high" if score >= 60.0 else "medium" if score >= 45.0 else "low"
-    return {
-        "version": "distribution_centrality_detector_v1",
-        "centrality_score": round(score, 3),
-        "ceiling_risk": ceiling_risk,
-        "recommended_mode": "conservative_formula_convergence",
-        "diagnostic_mode_if_enabled": (
-            "aggressive_geometry_reauthoring" if score >= 60.0 else "conservative_formula_convergence"
-        ),
-        "aggressive_geometry_reauthoring_enabled": False,
-        "rollback_reason": "discourse_identity_reauthoring_disabled",
-        "drivers": {
-            "generic_opening_ratio": round(generic_opening_ratio, 3),
-            "low_perspective_ratio": round(low_perspective_ratio, 3),
-            "paragraph_length_uniformity": round(length_uniformity, 3),
-            "balanced_role_ratio": round(balanced_role_ratio, 3),
-            "topk_calibrated_risk": round(topk, 3),
-            "ai_likelihood": round(ai_likelihood, 3),
-            "semantic_uniformity": round(semantic_uniformity, 3),
-            "qualifying_text_ai_density": round(density, 3),
-        },
-    }
-
-
-def _fact_inventory_from_text(text: str) -> dict:
-    """Extract factual anchors that aggressive discourse rebuilds must preserve."""
-    raw = str(text or "")
-    protected_numbers = sorted(_protected_number_set(raw))
-    protected_codes = sorted(_protected_code_anchor_set(raw))
-    urls = sorted(set(re.findall(r"https?://\S+|www\.\S+", raw, flags=re.I)))
-    entity_candidates = re.findall(
-        r"\b(?:[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,})){0,5}|[A-Z]{2,})\b",
-        raw,
-    )
-    common = {
-        "The", "This", "These", "That", "It", "In", "At", "One", "Another", "However",
-        "Despite", "Although", "Overall", "Understanding", "Technology", "Education",
-    }
-    entities = []
-    for entity in entity_candidates:
-        cleaned = re.sub(r"\s+", " ", entity).strip()
-        if not cleaned or cleaned in common:
-            continue
-        if len(cleaned) < 3 and not cleaned.isupper():
-            continue
-        if cleaned not in entities:
-            entities.append(cleaned)
-    sentences = _split_sentences(raw)
-    claim_keywords = {
-        "founded", "declared", "independence", "built", "established", "expanded",
-        "immigration", "economic", "technology", "innovation", "culture", "diversity",
-        "racism", "inequality", "healthcare", "education", "military", "politics",
-        "artificial intelligence", "renewable energy", "space exploration",
-    }
-    core_claims = []
-    for sentence in sentences:
-        lowered = sentence.lower()
-        if (
-            any(keyword in lowered for keyword in claim_keywords)
-            or any(entity in sentence for entity in entities[:20])
-            or any(number in sentence for number in protected_numbers)
-        ):
-            tokens = [
-                token.lower()
-                for token in re.findall(r"\b[A-Za-z][A-Za-z'-]{3,}\b", sentence)
-                if token.lower() not in _SOURCE_SEARCH_STOPWORDS
-            ]
-            core_claims.append({
-                "sentence": sentence,
-                "keywords": sorted(set(tokens))[:12],
-            })
-    return {
-        "protected_anchors": sorted(set(protected_numbers + protected_codes + urls)),
-        "protected_numbers": protected_numbers,
-        "protected_code_anchors": protected_codes,
-        "urls": urls,
-        "named_entities": entities[:60],
-        "core_claims": core_claims[:24],
-    }
-
-
-def _fact_inventory_contract(source_text: str, candidate_text: str) -> dict:
-    """Validate aggressive candidates by fact preservation, not discourse similarity."""
-    inventory = _fact_inventory_from_text(source_text)
-    candidate = str(candidate_text or "")
-    source = str(source_text or "")
-    missing_anchors = [
-        anchor for anchor in inventory.get("protected_anchors", [])
-        if anchor and anchor not in candidate
-    ]
-    source_numbers = set(inventory.get("protected_numbers") or [])
-    candidate_numbers = _protected_number_set(candidate)
-    new_numbers = sorted(number for number in candidate_numbers if number not in source_numbers)
-    missing_entities = [
-        entity for entity in inventory.get("named_entities", [])[:30]
-        if entity and entity not in candidate
-    ]
-    source_entities = set(inventory.get("named_entities") or [])
-    candidate_entities = set(_fact_inventory_from_text(candidate).get("named_entities") or [])
-    new_entities = sorted(
-        entity for entity in candidate_entities - source_entities
-        if entity not in {"America", "American", "Americans", "U.S", "U.S."}
-    )[:20]
-    preserved_claims = 0
-    checked_claims = 0
-    candidate_lower = candidate.lower()
-    for claim in inventory.get("core_claims") or []:
-        keywords = claim.get("keywords") if isinstance(claim, dict) else []
-        if not keywords:
-            continue
-        checked_claims += 1
-        hits = sum(1 for keyword in keywords if keyword.lower() in candidate_lower)
-        if hits / max(1, len(keywords)) >= 0.45:
-            preserved_claims += 1
-    claim_ratio = preserved_claims / max(1, checked_claims)
-    unsupported_new_facts = bool(new_numbers or len(new_entities) > 6)
-    accepted = (
-        not missing_anchors
-        and len(missing_entities) <= max(2, math.ceil(len(inventory.get("named_entities", [])[:30]) * 0.25))
-        and claim_ratio >= 0.65
-        and not unsupported_new_facts
-    )
-    return {
-        "version": "fact_inventory_contract_v1",
-        "accepted": bool(accepted),
-        "fact_inventory_preserved": bool(accepted),
-        "protected_anchors_preserved": not missing_anchors,
-        "core_claims_preserved_or_merged": claim_ratio >= 0.65,
-        "unsupported_new_facts": unsupported_new_facts,
-        "discourse_identity_changed": False,
-        "missing_anchors": missing_anchors[:20],
-        "missing_named_entities": missing_entities[:20],
-        "new_numbers": new_numbers[:20],
-        "new_named_entities": new_entities,
-        "core_claim_preservation_ratio": round(claim_ratio, 3),
-        "core_claims_checked": checked_claims,
-        "core_claims_preserved": preserved_claims,
-        "inventory": {
-            "protected_anchor_count": len(inventory.get("protected_anchors") or []),
-            "named_entity_count": len(inventory.get("named_entities") or []),
-            "core_claim_count": len(inventory.get("core_claims") or []),
-        },
-    }
-
-
-def _aggressive_geometry_reauthoring_prompt(
-    current_text: str,
-    current_report: dict | None,
-    *,
-    candidate_count: int = 4,
-) -> str:
-    return "DraftProof aggressive geometry reauthoring is disabled."
-
-
-def _extract_aggressive_geometry_candidates(response_text: str, *, max_candidates: int = 5) -> list[dict]:
-    text = str(response_text or "").strip()
-    if not text:
-        return []
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
-    text = re.sub(r"\s*```$", "", text).strip()
-    try:
-        payload = json.loads(text)
-    except Exception:
-        match = re.search(r"\{.*\}", text, re.S)
-        if not match:
-            return []
-        try:
-            payload = json.loads(match.group(0))
-        except Exception:
-            return []
-    rows = payload.get("candidates") if isinstance(payload, dict) else payload
-    if not isinstance(rows, list):
-        return []
-    candidates = []
-    for row in rows[:max(1, int(max_candidates or 1))]:
-        if not isinstance(row, dict):
-            continue
-        candidate_text = str(row.get("text") or row.get("candidate") or "").strip()
-        if not candidate_text:
-            continue
-        candidates.append({
-            "strategy": str(row.get("strategy") or "aggressive_geometry_reauthoring_candidate"),
-            "text": candidate_text,
-            "reason": row.get("reason"),
-        })
-    return candidates
-
-
-def _aggressive_geometry_deterministic_candidates(
-    current_text: str,
-    current_report: dict | None,
-    *,
-    limit: int = 2,
-) -> list[tuple[str, str, dict]]:
-    """Create non-LLM discourse-geometry candidates for central explanatory prose."""
-    if not _aggressive_geometry_reauthoring_enabled():
-        return []
-    centrality = _distribution_centrality_detector(current_text, current_report)
-    if centrality.get("recommended_mode") != "aggressive_geometry_reauthoring":
-        return []
-    paragraphs = _logical_paragraphs(current_text)
-    if len(paragraphs) < 3:
-        return []
-    candidates: list[tuple[str, str, dict]] = []
-    seen = {str(current_text or "").strip()}
-
-    def add(strategy: str, next_paragraphs: list[str], operation: str) -> None:
-        if len(candidates) >= max(1, int(limit or 1)):
-            return
-        candidate = _join_logical_paragraphs([p for p in next_paragraphs if str(p or "").strip()])
-        normalized = candidate.strip()
-        if not normalized or normalized in seen:
-            return
-        seen.add(normalized)
-        candidates.append((
-            f"aggressive_geometry_{strategy}",
-            candidate,
-            {
-                "aggressive_geometry_reauthoring": True,
-                "operation": operation,
-                "distribution_centrality_detector": centrality,
-                "discourse_identity_changed": False,
-                "targeted_drivers": [
-                    "ai_likelihood",
-                    "topk_calibrated_risk",
-                    "semantic_uniformity",
-                    "rewrite_smoothness",
-                    "patchwork_expansion",
-                ],
-            },
-        ))
-
-    compressed = []
-    for index, paragraph in enumerate(paragraphs):
-        cleaned = _compress_score_drag_paragraph(paragraph, max_remove=2)
-        if index == 0:
-            cleaned = re.sub(
-                r"^(The United States is often described as|The United States is)",
-                "A less tidy way to read the United States is as",
-                cleaned,
-                flags=re.I,
-            )
-        cleaned = re.sub(r"^One of the biggest strengths of", "The economic story around", cleaned, flags=re.I)
-        cleaned = re.sub(r"^Another important feature of", "Diversity is the part of", cleaned, flags=re.I)
-        cleaned = re.sub(r"^In conclusion,\s*", "Taken together, ", cleaned, flags=re.I)
-        compressed.append(cleaned)
-    add("selective_depth_rebuild", compressed, "selective_depth_rebuild")
-
-    if len(paragraphs) >= 6:
-        reordered = [paragraphs[0]]
-        tension_blocks = [
-            p for p in paragraphs[1:]
-            if re.search(r"\b(?:challenge|inequality|division|healthcare|cost|critics|however|debate)\b", p, re.I)
-        ]
-        strength_blocks = [p for p in paragraphs[1:] if p not in tension_blocks]
-        merged_strength = " ".join(_compress_score_drag_paragraph(p, max_remove=1) for p in strength_blocks[:3])
-        merged_tension = " ".join(_compress_score_drag_paragraph(p, max_remove=1) for p in tension_blocks[:3])
-        if merged_strength:
-            reordered.append(merged_strength)
-        if merged_tension:
-            reordered.append(merged_tension)
-        remaining = [p for p in paragraphs[1:] if p not in strength_blocks[:3] and p not in tension_blocks[:3]]
-        reordered.extend(_compress_score_drag_paragraph(p, max_remove=1) for p in remaining)
-        add("asymmetric_argument_rebuild", reordered, "asymmetric_argument_rebuild")
-    return candidates[:max(1, int(limit or 1))]
-
-
-def _aggressive_geometry_llm_candidates(
-    current_text: str,
-    current_report: dict | None,
-    gateway: LLMGateway | None,
-    *,
-    max_candidates: int = 4,
-) -> list[tuple[str, str, dict]]:
-    return []
 
 
 def _coordinated_micro_perturbation_candidates(
@@ -9067,53 +8342,6 @@ def _repair_aggression_score(original_text: str, candidate_text: str) -> dict:
         "word_delta_ratio": word_delta_ratio,
         "original_words": original_words,
         "candidate_words": candidate_words,
-    }
-
-
-def _candidate_patchwork_budget_status(source_text: str, candidate_text: str) -> dict:
-    """Detect candidates that touch too many sentence routes for one pass."""
-    budget = _ai_search_edit_budget_contract(source_text)
-    original_sentences = _split_sentences(source_text)
-    candidate_sentences = _split_sentences(candidate_text)
-    original_norm = [re.sub(r"\s+", " ", sentence).strip() for sentence in original_sentences]
-    candidate_norm = [re.sub(r"\s+", " ", sentence).strip() for sentence in candidate_sentences]
-    matcher = SequenceMatcher(None, original_norm, candidate_norm)
-    changed_sentences = 0
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            continue
-        original_count = max(0, i2 - i1)
-        candidate_count = max(0, j2 - j1)
-        if tag == "replace":
-            paired = min(original_count, candidate_count)
-            for offset in range(paired):
-                if SequenceMatcher(
-                    None,
-                    original_norm[i1 + offset],
-                    candidate_norm[j1 + offset],
-                ).ratio() < 0.92:
-                    changed_sentences += 1
-            changed_sentences += max(original_count, candidate_count) - paired
-        else:
-            changed_sentences += max(original_count, candidate_count)
-    sentence_count = max(1, len(original_sentences))
-    edited_ratio = changed_sentences / sentence_count
-    max_edits = int(budget.get("max_edited_sentences") or 0)
-    max_ratio = float(budget.get("max_sentence_edit_ratio") or PATCHWORK_SENTENCE_RATIO_LIMIT)
-    exceeded = bool(
-        changed_sentences > max_edits
-        or edited_ratio > max_ratio
-    )
-    return {
-        "version": "patchwork_budget_v1",
-        "exceeded": exceeded,
-        "changed_sentence_count": changed_sentences,
-        "sentence_count": len(original_sentences),
-        "candidate_sentence_count": len(candidate_sentences),
-        "edited_sentence_ratio": round(edited_ratio, 3),
-        "max_edited_sentences": max_edits,
-        "max_sentence_edit_ratio": max_ratio,
-        "budget": budget,
     }
 
 
@@ -15383,18 +14611,12 @@ def _formula_convergence_candidate_batch(
     """Create one bounded portfolio batch from the current best state."""
     limit = max(1, int(limit or 1))
     feasibility = _formula_feasibility_estimator(current_report)
-    centrality = _distribution_centrality_detector(current_text, current_report)
     geometry_map = _geometry_risk_map(current_text, current_report)
     geometry_candidates = _coordinated_micro_perturbation_candidates(
         current_text,
         current_report,
         geometry_map,
         limit=max(2, min(4, limit)),
-    )
-    aggressive_candidates = _aggressive_geometry_deterministic_candidates(
-        current_text,
-        current_report,
-        limit=max(1, min(3, limit)),
     )
     topk_candidates = _topk_route_optimizer_candidates(current_text, current_report)
     blocker_candidates = _blocker_operation_candidates(current_text, current_report, limit=4)
@@ -15421,11 +14643,6 @@ def _formula_convergence_candidate_batch(
         limit=limit,
     )
     raw_candidates: list[tuple[str, str, dict]] = []
-    if (
-        _aggressive_geometry_reauthoring_enabled()
-        and centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
-    ):
-        raw_candidates.extend(aggressive_candidates)
     if feasibility.get("geometry_required"):
         raw_candidates.extend(geometry_candidates)
     raw_candidates.extend(portfolio_candidates)
@@ -15451,7 +14668,6 @@ def _formula_convergence_candidate_batch(
                 **(meta or {}),
                 "formula_convergence_candidate": True,
                 "feasibility_estimator": feasibility,
-                "distribution_centrality_detector": centrality,
                 "block_driver_map_version": (block_map or {}).get("version"),
                 "geometry_risk_map_version": geometry_map.get("version"),
                 "top_drag_blocks": [
@@ -15621,13 +14837,8 @@ def _formula_convergence_candidate_public(row: dict | None) -> dict:
             "score_drop": gate.get("score_drop"),
             "outcome_class": gate.get("outcome_class"),
             "component_drops": gate.get("component_drops"),
-            "selected_candidate_gain_source": gate.get("selected_candidate_gain_source"),
-            "positive_ai_burden_drop": gate.get("positive_ai_burden_drop"),
-            "positive_burden_gate": gate.get("positive_burden_gate"),
         },
         "anti_smoothing_guard": row.get("anti_smoothing_guard"),
-        "fact_inventory_contract": row.get("fact_inventory_contract"),
-        "aggressive_geometry_reauthoring": row.get("aggressive_geometry_reauthoring"),
         "selection_status": {
             "selectable": status.get("selectable", row.get("selectable")),
             "reason": row.get("reason") or status.get("reason"),
@@ -15726,7 +14937,6 @@ def _formula_convergence_controller(
         last_block_map = block_map
         anchor_frontier = _human_anchor_suppression_frontier(best_text, best_report, block_map)
         feasibility = _formula_feasibility_estimator(best_report, observed_candidates=candidates)
-        centrality = _distribution_centrality_detector(best_text, best_report)
         geometry_map = _geometry_risk_map(best_text, best_report)
         remaining_scans = max(0, max_scans - scans_used)
         batch_limit = max(1, min(remaining_scans, int(math.ceil(max_scans / max(1, max_passes)))))
@@ -15752,28 +14962,13 @@ def _formula_convergence_controller(
                 and len(raw_batch) < remaining_scans
             ):
                 llm_calls_used += 1
-                if (
-                    _aggressive_geometry_reauthoring_enabled()
-                    and centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
-                    and (
-                        feasibility.get("geometry_required")
-                        or float(centrality.get("centrality_score") or 0.0) >= 65.0
-                    )
-                ):
-                    llm_candidates = _aggressive_geometry_llm_candidates(
-                        best_text,
-                        best_report,
-                        llm_gateway,
-                        max_candidates=min(5, max(1, remaining_scans - len(raw_batch))),
-                    )
-                else:
-                    llm_candidates = _formula_convergence_llm_patch_candidates(
-                        best_text,
-                        best_report,
-                        block_map,
-                        llm_gateway,
-                        max_candidates=min(3, max(1, remaining_scans - len(raw_batch))),
-                    )
+                llm_candidates = _formula_convergence_llm_patch_candidates(
+                    best_text,
+                    best_report,
+                    block_map,
+                    llm_gateway,
+                    max_candidates=min(3, max(1, remaining_scans - len(raw_batch))),
+                )
                 raw_batch = list(raw_batch or []) + llm_candidates
         batch: list[tuple[str, str, dict]] = []
         seen = {best_text.strip()}
@@ -15799,15 +14994,6 @@ def _formula_convergence_controller(
                 for key in ("version", "block_count", "formula_score", "target_score", "remaining_gap", "dominant_formula_drivers", "top_blocks")
             },
             "feasibility_estimator": feasibility,
-            "distribution_centrality_detector": centrality,
-            "aggressive_geometry_reauthoring": {
-                "enabled": _aggressive_geometry_reauthoring_enabled(),
-                "triggered": False,
-                "trigger_reason": "disabled_rollback_to_content_aware_bounded_edits",
-                "centrality_score": centrality.get("centrality_score"),
-                "estimated_safe_floor": feasibility.get("estimated_safe_floor"),
-                "estimated_aggressive_floor": feasibility.get("aggressive_floor"),
-            },
             "geometry_risk_map": {
                 "version": geometry_map.get("version"),
                 "sentence_count": geometry_map.get("sentence_count"),
@@ -15855,37 +15041,18 @@ def _formula_convergence_controller(
                 candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
                 candidates.append(candidate_eval)
                 continue
-            fact_contract = None
-            if (
-                _aggressive_geometry_reauthoring_enabled()
-                and candidate_eval.get("aggressive_geometry_reauthoring")
-            ):
-                fact_contract = _fact_inventory_contract(best_text, candidate_text)
-                candidate_eval["fact_inventory_contract"] = fact_contract
-                candidate_eval["drift_similarity"] = None
-                if not fact_contract.get("accepted"):
-                    reason = "fact_inventory_contract_failed"
-                    candidate_eval["reason"] = reason
-                    candidate_eval["selection_status"] = {
-                        "selectable": False,
-                        "reason": reason,
-                        "fact_inventory_contract": fact_contract,
-                    }
-                    candidates.append(candidate_eval)
-                    continue
-            else:
-                try:
-                    drift = drift_checker(best_text, candidate_text, threshold=0.15)
-                except TypeError:
-                    drift = drift_checker(best_text, candidate_text)
-                candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
-                if not bool(getattr(drift, "accepted", True)):
-                    reason = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
-                    candidate_eval["reason"] = reason
-                    candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
-                    candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
-                    candidates.append(candidate_eval)
-                    continue
+            try:
+                drift = drift_checker(best_text, candidate_text, threshold=0.15)
+            except TypeError:
+                drift = drift_checker(best_text, candidate_text)
+            candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
+            if not bool(getattr(drift, "accepted", True)):
+                reason = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
+                candidate_eval["reason"] = reason
+                candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
+                candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
+                candidates.append(candidate_eval)
+                continue
             try:
                 scan_t0 = time.time()
                 candidate_report = scan_func(candidate_text)
@@ -15950,8 +15117,6 @@ def _formula_convergence_controller(
                 reject_reasons.append(str(anti_smoothing.get("reason") or "anti_smoothing_guard_failed"))
             if num(contract_vs_current.get("score_drop"), 0.0) <= 0.05:
                 reject_reasons.append("no_safe_formula_drop")
-            if str(turnitin_gate.get("outcome_class") or "") == "anchor_only_partial":
-                reject_reasons.append("anchor_only_without_positive_burden")
             if review_delta > 0:
                 reject_reasons.append("review_burden_regressed")
             if severity_delta > 0:
@@ -15997,7 +15162,6 @@ def _formula_convergence_controller(
                 "unsupported_claim_risk_delta": round(unsupported_claim_delta, 3),
                 "formula_gap_contract": contract_vs_current,
                 "formula_gap_contract_vs_original": contract_vs_original,
-                "fact_inventory_contract": fact_contract,
                 "anti_smoothing_guard": anti_smoothing,
                 "turnitin_like_ai_gate": turnitin_gate,
                 "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
@@ -16107,8 +15271,6 @@ def _formula_convergence_controller(
             )
         )
     )
-    final_feasibility = _formula_feasibility_estimator(best_report, observed_candidates=candidates)
-    final_centrality = _distribution_centrality_detector(best_text, best_report)
     return {
         "enabled": True,
         "version": "formula_convergence_controller_v1",
@@ -16134,27 +15296,9 @@ def _formula_convergence_controller(
         "original_snapshot": report_snapshot(original_report),
         "start_snapshot": report_snapshot(current_report),
         "final_snapshot": report_snapshot(best_report),
-        "feasibility_estimator": final_feasibility,
-        "distribution_centrality_detector": final_centrality,
-        "aggressive_geometry_reauthoring": {
-            "enabled": _aggressive_geometry_reauthoring_enabled(),
-            "triggered": False,
-            "trigger_reason": "disabled_rollback_to_content_aware_bounded_edits",
-            "centrality_score": final_centrality.get("centrality_score"),
-            "estimated_safe_floor": final_feasibility.get("estimated_safe_floor"),
-            "estimated_aggressive_floor": final_feasibility.get("aggressive_floor"),
-            "selected_strategy": selected_strategy if selected_strategy and "aggressive_geometry" in selected_strategy else None,
-            "candidate_count": len([
-                row for row in candidates
-                if isinstance(row, dict) and row.get("aggressive_geometry_reauthoring")
-            ]),
-        },
-        "fact_inventory_contract": (
-            (selected_eval or {}).get("fact_inventory_contract")
-            if isinstance(selected_eval, dict) and selected_eval.get("aggressive_geometry_reauthoring")
-            else _fact_inventory_contract(current_text, best_text)
-            if selected_strategy and "aggressive_geometry" in str(selected_strategy)
-            else None
+        "feasibility_estimator": _formula_feasibility_estimator(
+            best_report,
+            observed_candidates=candidates,
         ),
         "geometry_risk_map": _geometry_risk_map(best_text, best_report),
         "block_driver_map": last_block_map,
@@ -19441,13 +18585,6 @@ def run_rewrite_pipeline(
                 candidate_eval["effective_max_chars"] = effective_max_chars
                 search_summary["candidates"].append(candidate_eval)
                 return
-            patchwork_budget = _candidate_patchwork_budget_status(search_source_text, candidate)
-            candidate_eval["patchwork_budget"] = patchwork_budget
-            if patchwork_budget.get("exceeded"):
-                candidate_eval["reason"] = "patchwork_budget_exceeded"
-                candidate_eval["passed_local_checks"] = False
-                search_summary["candidates"].append(candidate_eval)
-                return
             protected_loss = _ai_search_protected_loss_reason(search_source_text, candidate, source_protected)
             if protected_loss:
                 candidate_eval["reason"] = "protected_span_lost " + protected_loss
@@ -19788,27 +18925,6 @@ def run_rewrite_pipeline(
             candidate_eval["multi_signal_contract"] = multi_signal_contract
             ai_footprint_outcome = str(ai_footprint_gate.get("outcome_class") or "")
             footprint_drops = ai_footprint_gate.get("drops") if isinstance(ai_footprint_gate.get("drops"), dict) else {}
-            positive_burden_gate_status = (
-                turnitin_like_gate.get("positive_burden_gate")
-                if isinstance(turnitin_like_gate.get("positive_burden_gate"), dict)
-                else {}
-            )
-            positive_burden_gate_passed = bool(positive_burden_gate_status.get("passed"))
-            texture_blocked_without_positive_burden = _texture_blocked_without_positive_burden(
-                ai_footprint_gate,
-                turnitin_like_gate,
-            )
-            if texture_blocked_without_positive_burden:
-                if safe_partial_quality_selectable:
-                    safe_partial_quality_selectable = False
-                    safe_partial_quality_status.update({
-                        "allowed": False,
-                        "reason": "texture_blocked_without_positive_burden",
-                    })
-                if safe_authorship_suppression_selectable:
-                    safe_authorship_suppression_selectable = False
-            if candidate_eval.get("human_signal_amplification") and not positive_burden_gate_passed:
-                human_amplification_selectable = False
             if candidate_eval.get("human_anchor_amplifier"):
                 anchor_deltas = (
                     human_anchor_contract.get("deltas")
@@ -19826,7 +18942,6 @@ def run_rewrite_pipeline(
                 lived_drop = float(anchor_deltas.get("lived_detail_risk") or 0.0)
                 human_anchor_amplification_selectable = bool(
                     _env_flag("DRAFTPROOF_ACCEPT_HUMAN_ANCHOR_AMPLIFIER", True)
-                    and positive_burden_gate_passed
                     and (
                         lived_drop >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_MIN_LIVED_DROP", 15.0)
                         or anchor_gain >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_MIN_SCORE_GAIN", 8.0)
@@ -19860,7 +18975,6 @@ def run_rewrite_pipeline(
                 )
                 candidate_eval["human_anchor_amplifier_status"] = {
                     "selectable": human_anchor_amplification_selectable,
-                    "positive_burden_gate_passed": positive_burden_gate_passed,
                     "human_raw_gain": round(human_raw_gain, 3),
                     "human_anchor_gain": round(anchor_gain, 3),
                     "lived_detail_risk_drop": round(lived_drop, 3),
@@ -19888,11 +19002,6 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_TURNITIN_LIKE_GATE_ENABLED", True)
                 and turnitin_like_gate.get("safety_clean")
                 and turnitin_like_gate.get("improved")
-                and str(turnitin_like_gate.get("outcome_class") or "") in {
-                    "ai_mitigated",
-                    "partially_ai_mitigated",
-                }
-                and positive_burden_gate_passed
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
@@ -19914,7 +19023,7 @@ def run_rewrite_pipeline(
                 and ai_footprint_gate.get("safety_clean")
                 and float(footprint_drops.get("topk_calibrated_risk") or 0.0) >= _float_env(
                     "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_DROP",
-                    8.0,
+                    1.5,
                 )
                 and float(footprint_drops.get("ai_likelihood") or 0.0) >= _float_env(
                     "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_AI_LIKELIHOOD_DROP",
@@ -19930,7 +19039,6 @@ def run_rewrite_pipeline(
                     "DRAFTPROOF_TOPK_BLOCKER_PROGRESS_MIN_TRANSFORMATION_DROP",
                     0.0,
                 )
-                and positive_burden_gate_passed
                 and candidate_critical_high <= saved_critical_high
                 and candidate_finding_total <= original_total
                 and candidate_review_burden <= original_review_burden
@@ -20337,11 +19445,6 @@ def run_rewrite_pipeline(
             selection_status["ai_footprint_gate"] = ai_footprint_gate
             selection_status["ai_footprint_outcome_class"] = ai_footprint_outcome
             selection_status["turnitin_like_ai_gate"] = turnitin_like_gate
-            selection_status["selected_candidate_gain_source"] = turnitin_like_gate.get("selected_candidate_gain_source")
-            selection_status["positive_ai_burden_before"] = turnitin_like_gate.get("positive_ai_burden_before")
-            selection_status["positive_ai_burden_after"] = turnitin_like_gate.get("positive_ai_burden_after")
-            selection_status["positive_ai_burden_drop"] = turnitin_like_gate.get("positive_ai_burden_drop")
-            selection_status["positive_burden_gate"] = turnitin_like_gate.get("positive_burden_gate")
             selection_status["formula_gap_contract"] = formula_gap_contract
             selection_status["formula_gap_rank"] = candidate_eval["formula_gap_rank"]
             selection_status["multi_signal_contract"] = multi_signal_contract
@@ -20378,23 +19481,6 @@ def run_rewrite_pipeline(
                     "reason": "radar_goal_requires_human_progress",
                     "radar_goal_requires_human_progress": True,
                 })
-            if (
-                selection_status.get("selectable")
-                and turnitin_like_gate.get("selected_candidate_gain_source") == "human_anchor_suppression"
-                and not positive_burden_gate_passed
-                and not turnitin_like_gate.get("safe_band")
-            ):
-                selection_status.update({
-                    "success": False,
-                    "selectable": False,
-                    "reason": "anchor_only_without_positive_burden",
-                    "anchor_only_partial": True,
-                })
-            _veto_texture_blocked_without_positive_burden(
-                selection_status,
-                ai_footprint_gate,
-                turnitin_like_gate,
-            )
             candidate_eval["selection_status"] = selection_status
             original_human_value = _contribution_scores(original_report_dict).get("human")
             candidate_human_value = candidate_contribution.get("human")
@@ -22063,11 +21149,7 @@ def run_rewrite_pipeline(
                             )
                             topk_summary["llm_candidate_count"] = len(patch_sets)
                             for route_index, patches in enumerate(patch_sets, start=1):
-                                candidate, applied = _apply_topk_route_patches(
-                                    component_base_text,
-                                    patches,
-                                    max_patches=_topk_optimizer_sentence_limit(component_base_text),
-                                )
+                                candidate, applied = _apply_topk_route_patches(component_base_text, patches)
                                 strategy = f"topk_route_masked_c{route_index}"
                                 if not applied or candidate == component_base_text:
                                     search_summary["candidates"].append({
@@ -22098,10 +21180,7 @@ def run_rewrite_pipeline(
                             topk_summary["llm_error"] = str(exc)
                     else:
                         topk_summary["llm_stage_skipped"] = "topk_not_saturated"
-                if (
-                    TOPK_SAFE_BAND_FULL_DOCUMENT_REBUILD_ENABLED
-                    and _env_flag("DRAFTPROOF_TOPK_SAFE_BAND_REBUILD", True)
-                ):
+                if _env_flag("DRAFTPROOF_TOPK_SAFE_BAND_REBUILD", True):
                     safe_band_summary = search_summary.setdefault("topk_safe_band_rebuild", {
                         "enabled": True,
                         "selected": False,
@@ -22330,11 +21409,7 @@ def run_rewrite_pipeline(
                                     best_round_rank = None
                                     best_round_rejection = ""
                                     for patch_set in patch_sets:
-                                        trial_text, trial_applied = _apply_topk_route_patches(
-                                            candidate_to_eval,
-                                            patch_set,
-                                            max_patches=_topk_optimizer_sentence_limit(candidate_to_eval),
-                                        )
+                                        trial_text, trial_applied = _apply_topk_route_patches(candidate_to_eval, patch_set)
                                         if not trial_applied or trial_text == candidate_to_eval:
                                             continue
                                         trial_rejection = _ai_candidate_quality_reject_reason(trial_text)
@@ -22437,11 +21512,7 @@ def run_rewrite_pipeline(
                                 "topk_safe_band_rebuild": True,
                             })
                 else:
-                    search_summary["topk_safe_band_rebuild"] = {
-                        "enabled": False,
-                        "reason": "full_document_rebuild_disabled_after_rollback",
-                        "bounded_alternative": "topk_route_optimizer",
-                    }
+                    search_summary["topk_safe_band_rebuild"] = {"enabled": False, "reason": "disabled"}
                 if (
                     _best_ai_search_selectable()
                     and bool(best_selection_status.get("topk_safe_band_achieved"))
@@ -24391,9 +23462,6 @@ def run_rewrite_pipeline(
             result.summary["block_driver_map"] = stored_convergence_result.get("block_driver_map")
             result.summary["geometry_risk_map"] = stored_convergence_result.get("geometry_risk_map")
             result.summary["feasibility_estimator"] = stored_convergence_result.get("feasibility_estimator")
-            result.summary["distribution_centrality_detector"] = stored_convergence_result.get("distribution_centrality_detector")
-            result.summary["aggressive_geometry_reauthoring"] = stored_convergence_result.get("aggressive_geometry_reauthoring")
-            result.summary["fact_inventory_contract"] = stored_convergence_result.get("fact_inventory_contract")
             result.summary["formula_convergence_passes"] = stored_convergence_result.get("formula_convergence_passes")
             result.summary["selected_formula_portfolio_candidate"] = (
                 stored_convergence_result.get("selected_formula_portfolio_candidate")
@@ -24639,27 +23707,11 @@ def run_rewrite_pipeline(
         ai_search_selected,
         (result.summary.get("ai_mitigation_search") or {}).get("selection_status"),
     )
-    final_safe_partial_progress = _safe_partial_final_progress_status(
-        text_changed=rewritten_text != text,
-        original_ai=original_ai,
-        rewritten_ai=rewritten_ai,
-        original_total=original_total,
-        rewritten_total=rewritten_total,
-        original_review_burden=original_review_burden,
-        rewritten_review_burden=rewritten_review_burden,
-        original_weighted_severity=original_severity,
-        rewritten_weighted_severity=rewritten_severity,
-        original_critical_high=_critical_high_count(original_report_dict),
-        rewritten_critical_high=_critical_high_count(rewritten_report_dict),
-        ai_regression_tolerance=ai_regression_tolerance,
-    )
-    result.summary["safe_partial_final_progress_gate"] = final_safe_partial_progress
     if (
         ai_first_required
         and not ai_first_success
         and not authenticity_mitigation_selected
         and not ai_search_selected_by_authenticity
-        and not final_safe_partial_progress.get("allowed")
     ):
         delta_text = f"{ai_first_delta:.2f}" if isinstance(ai_first_delta, (int, float)) else "unknown"
         regression_reasons.append(
@@ -24678,26 +23730,6 @@ def run_rewrite_pipeline(
                 f"ai_first_gate_failed {ai_first_reference}->{rewritten_ai}"
             ],
         }
-    elif (
-        ai_first_required
-        and not ai_first_success
-        and final_safe_partial_progress.get("allowed")
-    ):
-        result.summary["ai_first_mitigation"] = {
-            "kept": True,
-            "partial": True,
-            "reference_ai": ai_first_reference,
-            "rewritten_ai": rewritten_ai,
-            "ai_delta": round(ai_first_delta, 3) if isinstance(ai_first_delta, (int, float)) else None,
-            "min_drop": ai_first_min_drop,
-            "target": ai_first_target,
-            "required_min_ai": ai_first_required_min_ai,
-            "reason": "legacy_ai_first_min_drop_missed_but_safe_partial_progress_kept",
-            "safe_partial_final_progress": final_safe_partial_progress,
-        }
-        result.summary.setdefault("saved_contract_notes", []).append(
-            "Kept safe partial progress even though the legacy 5-point AI-first drop was missed; strict detector-safe status is still not claimed."
-        )
     if ai_first_success:
         hard_regression_reasons = []
         soft_regression_reasons = []
@@ -24916,20 +23948,6 @@ def run_rewrite_pipeline(
                 target=ai_first_target,
                 required_min_ai=ai_first_required_min_ai,
             )
-            cp_safe_partial_progress = _safe_partial_final_progress_status(
-                text_changed=checkpoint.get("text") != text,
-                original_ai=original_ai,
-                rewritten_ai=cp_ai,
-                original_total=original_total,
-                rewritten_total=cp_total,
-                original_review_burden=original_review_burden,
-                rewritten_review_burden=cp_review_burden,
-                original_weighted_severity=original_severity,
-                rewritten_weighted_severity=cp_severity,
-                original_critical_high=original_critical_high,
-                rewritten_critical_high=cp_critical_high,
-                ai_regression_tolerance=ai_regression_tolerance,
-            )
             if (
                 cp_ai_regressed
                 or cp_total > original_total
@@ -24938,11 +23956,7 @@ def run_rewrite_pipeline(
                 or cp_critical_high > original_critical_high
                 or cp_violates_saved_contract
                 or not cp_improved
-                or (
-                    cp_ai_first_gate["required"]
-                    and not cp_ai_first_gate["success"]
-                    and not cp_safe_partial_progress.get("allowed")
-                )
+                or (cp_ai_first_gate["required"] and not cp_ai_first_gate["success"])
             ):
                 continue
 
@@ -25457,11 +24471,7 @@ def run_rewrite_pipeline(
         and isinstance(final_topk_for_acceptance, (int, float))
         and float(final_topk_for_acceptance) >= topk_acceptance_limit
         and not topk_near_miss_keep_decision.get("allowed")
-        and (
-            selected_topk_blocker_progress
-            or selected_turnitin_like_progress
-            or final_safe_partial_progress.get("allowed")
-        )
+        and (selected_topk_blocker_progress or selected_turnitin_like_progress)
         and float(_review_burden(rewritten_report_dict) - original_review_burden) <= 0.0
         and float(_weighted_severity(rewritten_report_dict) - original_severity) <= 0.0
         and float(_critical_high_count(rewritten_report_dict) - saved_critical_high) <= 0.0
@@ -25469,9 +24479,6 @@ def run_rewrite_pipeline(
         topk_near_miss_keep_decision = {
             "allowed": True,
             "reason": (
-                "safe_partial_final_progress"
-                if final_safe_partial_progress.get("allowed")
-                else
                 "selector_accepted_turnitin_like_progress"
                 if selected_turnitin_like_progress
                 else "selector_accepted_topk_blocker_progress"
@@ -25645,18 +24652,6 @@ def run_rewrite_pipeline(
         (final_turnitin_like_gate.get("after") or {}).get("components")
     )
     result.summary["turnitin_like_component_drops"] = final_turnitin_like_gate.get("component_drops")
-    result.summary["selected_candidate_gain_source"] = final_turnitin_like_gate.get("selected_candidate_gain_source")
-    result.summary["positive_ai_burden_before"] = final_turnitin_like_gate.get("positive_ai_burden_before")
-    result.summary["positive_ai_burden_after"] = final_turnitin_like_gate.get("positive_ai_burden_after")
-    result.summary["positive_ai_burden_drop"] = final_turnitin_like_gate.get("positive_ai_burden_drop")
-    result.summary["positive_burden_gate"] = final_turnitin_like_gate.get("positive_burden_gate")
-    result.summary["anchor_gain_not_enough"] = bool(
-        final_turnitin_like_gate.get("selected_candidate_gain_source") == "human_anchor_suppression"
-        and not ((final_turnitin_like_gate.get("positive_burden_gate") or {}).get("passed"))
-    )
-    result.summary["positive_burden_still_high"] = bool(
-        not ((final_turnitin_like_gate.get("positive_burden_gate") or {}).get("passed"))
-    )
     result.summary["remaining_turnitin_like_drivers"] = (
         final_turnitin_like_gate.get("remaining_turnitin_like_drivers") or []
     )
@@ -25747,22 +24742,6 @@ def run_rewrite_pipeline(
             "additional_anchor_sentences_needed": final_human_anchor_contract.get("additional_anchor_sentences_needed"),
         }
     ] if not final_human_anchor_contract.get("achieved_next_band") else []
-    final_topk_repair_map = _topk_repair_map(rewritten_text, rewritten_report_dict)
-    final_block_driver_map = _formula_block_driver_map(rewritten_text, rewritten_report_dict)
-    final_blocks = [
-        row for row in (final_block_driver_map.get("blocks") or [])
-        if isinstance(row, dict)
-    ]
-    result.summary["canonical_fact_preserved_count"] = len(final_topk_repair_map.get("exempted_targets") or [])
-    result.summary["generic_blocks_targeted"] = len([
-        row for row in final_blocks
-        if row.get("recommended_portfolio_action") in {"compress", "texture_rebuild", "remove_candidate"}
-        and float(row.get("generic_density") or 0.0) > 0.0
-    ])
-    result.summary["template_blocks_targeted"] = len([
-        row for row in final_blocks
-        if int(row.get("template_connector_hits") or 0) > 0
-    ])
     final_strict_safe_band = _strict_ai_safe_band_status(rewritten_report_dict)
     result.summary["strict_ai_safe_band_achieved"] = bool(final_strict_safe_band.get("achieved"))
     result.summary["remaining_strict_safe_band_drivers"] = final_strict_safe_band.get("remaining") or []
@@ -25806,13 +24785,6 @@ def run_rewrite_pipeline(
                 "turnitin_like_ai_score": turnitin_row.get("score_after"),
                 "turnitin_like_ai_score_drop": turnitin_row.get("score_drop"),
                 "turnitin_like_outcome_class": turnitin_row.get("outcome_class"),
-                "selected_candidate_gain_source": turnitin_row.get("selected_candidate_gain_source"),
-                "positive_ai_burden_drop": turnitin_row.get("positive_ai_burden_drop"),
-                "positive_burden_gate_passed": (
-                    (turnitin_row.get("positive_burden_gate") or {}).get("passed")
-                    if isinstance(turnitin_row.get("positive_burden_gate"), dict)
-                    else False
-                ),
                 "ai_authorship": profile.get("ai_authorship"),
                 "ai_transformation": profile.get("ai_transformation"),
                 "qualifying_text_ai_density": profile.get("qualifying_text_ai_density"),
@@ -25824,8 +24796,6 @@ def run_rewrite_pipeline(
             key=lambda item: (
                 1 if item.get("strict_ai_safe_band_achieved") else 0,
                 1 if item.get("formula_target_met") else 0,
-                1 if item.get("positive_burden_gate_passed") else 0,
-                float(item.get("positive_ai_burden_drop") if isinstance(item.get("positive_ai_burden_drop"), (int, float)) else -999.0),
                 float(item.get("formula_score_drop") if isinstance(item.get("formula_score_drop"), (int, float)) else -999.0),
                 float(item.get("formula_drop_efficiency") if isinstance(item.get("formula_drop_efficiency"), (int, float)) else -999.0),
                 -float(item.get("formula_score") if isinstance(item.get("formula_score"), (int, float)) else 999.0),
@@ -25882,12 +24852,7 @@ def run_rewrite_pipeline(
             "Turnitin-like AI score "
             f"{final_turnitin_like_gate.get('score_after')} is not below "
             f"{final_turnitin_like_gate.get('target_score')}; "
-            + (
-                "Human Anchor gain did not count as mitigation because positive AI burden did not move enough; "
-                if result.summary.get("anchor_gain_not_enough")
-                else ""
-            )
-            + "dominant drivers: "
+            "dominant drivers: "
             + ", ".join(
                 str(row.get("driver"))
                 for row in (final_turnitin_like_gate.get("remaining_turnitin_like_drivers") or [])[:4]
@@ -25970,14 +24935,7 @@ def run_rewrite_pipeline(
         result.summary["detect_scan_attempted"] = _extract_scan_summary(attempted_report_dict)
     else:
         result.summary["final_text"] = rewritten_text
-        convergence_selected = bool(
-            isinstance(result.summary.get("formula_convergence_controller"), dict)
-            and result.summary.get("formula_convergence_controller", {}).get("selected")
-        )
-        if result.summary.get("outcome") == "topk_blocked_partial_kept":
-            result.summary["converged"] = True
-            _normalize_kept_topk_blocked_partial(result.summary)
-        elif ai_search_selected or convergence_selected:
+        if ai_search_selected:
             ai_footprint_outcome = str(final_ai_footprint_gate.get("outcome_class") or "")
             turnitin_like_outcome = str(final_turnitin_like_gate.get("outcome_class") or "")
             texture_blockers = [
@@ -25990,11 +24948,6 @@ def run_rewrite_pipeline(
             )
             if ai_footprint_outcome == "ai_mitigated" and final_turnitin_like_gate.get("safe_band"):
                 result.summary["outcome"] = "ai_mitigated"
-            elif (
-                result.summary.get("aggressive_geometry_reauthoring", {}).get("selected_strategy")
-                and turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"}
-            ):
-                result.summary["outcome"] = "aggressive_partial_mitigation"
             elif turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"}:
                 result.summary["outcome"] = "partially_ai_mitigated"
             else:
@@ -26006,7 +24959,6 @@ def run_rewrite_pipeline(
                     "topk_blocked" if topk_still_blocked else "partially_improved",
                 )
             result.summary["converged"] = True
-            _normalize_kept_topk_blocked_partial(result.summary)
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings
     result.sentence_comparison = sentence_comparison
@@ -26031,7 +24983,6 @@ def run_rewrite_pipeline(
     summary["rewrite_time"] = total_elapsed
     summary["original_tier"] = ctx.overall_tier
     summary["rewrite_decision"] = ctx.rewrite_decision
-    _normalize_kept_topk_blocked_partial(summary)
 
     with open(json_path_out, "w") as f:
         json.dump(summary, f, indent=2, default=str)
@@ -26040,12 +24991,7 @@ def run_rewrite_pipeline(
         pipeline_status = "topk_blocked"
     elif summary.get("rollback_applied") or summary.get("no_text_change"):
         pipeline_status = "original_preserved"
-    elif summary.get("outcome") in {
-        "partially_improved",
-        "partially_ai_mitigated",
-        "cleanup_improved",
-        "topk_blocked_partial_kept",
-    }:
+    elif summary.get("outcome") in {"partially_improved", "partially_ai_mitigated", "cleanup_improved"}:
         pipeline_status = summary.get("outcome")
     else:
         pipeline_status = "rewritten"
