@@ -2375,13 +2375,51 @@ def _topk_texture_repair_prompt(
     )
 
 
-def _topk_optimizer_sentence_limit(text: str) -> int:
+PATCHWORK_SENTENCE_RATIO_LIMIT = 0.18
+
+
+def _ai_search_edit_budget_contract(text: str) -> dict:
+    """Bound active sentence edits so Top-k repair does not become patchwork."""
+    sentences = _split_sentences(text)
+    sentence_count = len(sentences)
     words = _text_word_count(text)
-    if words <= 700:
-        return int(_float_env("DRAFTPROOF_TOPK_ROUTE_SHORT_SENTENCES", 8.0))
-    if words <= 1800:
-        return int(_float_env("DRAFTPROOF_TOPK_ROUTE_MEDIUM_SENTENCES", 12.0))
-    return int(_float_env("DRAFTPROOF_TOPK_ROUTE_LONG_SENTENCES", 20.0))
+    if sentence_count <= 0:
+        return {
+            "version": "edit_budget_v1",
+            "word_count": words,
+            "sentence_count": 0,
+            "max_edited_sentences": 0,
+            "max_sentence_edit_ratio": PATCHWORK_SENTENCE_RATIO_LIMIT,
+            "reason": "empty_text",
+        }
+    ratio_cap = max(1, int(math.floor(sentence_count * PATCHWORK_SENTENCE_RATIO_LIMIT)))
+    if words <= 800:
+        size_cap = 8
+        minimum_useful = 5
+        reason = "short_document_patchwork_budget"
+    elif words <= 1800:
+        size_cap = 12
+        minimum_useful = 1
+        reason = "medium_document_patchwork_budget"
+    else:
+        size_cap = 20
+        minimum_useful = 1
+        reason = "long_document_patchwork_budget"
+    max_edits = min(sentence_count, size_cap, max(minimum_useful, ratio_cap))
+    return {
+        "version": "edit_budget_v1",
+        "word_count": words,
+        "sentence_count": sentence_count,
+        "max_edited_sentences": max(1, max_edits),
+        "max_sentence_edit_ratio": PATCHWORK_SENTENCE_RATIO_LIMIT,
+        "ratio_cap": ratio_cap,
+        "size_cap": size_cap,
+        "reason": reason,
+    }
+
+
+def _topk_optimizer_sentence_limit(text: str) -> int:
+    return int((_ai_search_edit_budget_contract(text) or {}).get("max_edited_sentences") or 1)
 
 
 def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None = None) -> dict:
@@ -2453,6 +2491,7 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
     return {
         "enabled": True,
         "limit": limit,
+        "edit_budget": _ai_search_edit_budget_contract(text),
         "saturated": float(calibrated_topk or 0.0) >= _float_env(
             "DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD",
             90.0,
@@ -2750,18 +2789,22 @@ def _topk_route_optimizer_candidates(
     *,
     limit: int | None = None,
 ) -> list[tuple[str, str, dict]]:
-    repair_map = _topk_repair_map(text, report_dict, limit=limit)
+    edit_budget = _ai_search_edit_budget_contract(text)
+    sentence_budget = int(edit_budget.get("max_edited_sentences") or 1)
+    requested_limit = int(limit) if isinstance(limit, int) and limit > 0 else sentence_budget
+    effective_limit = max(1, min(sentence_budget, requested_limit))
+    repair_map = _topk_repair_map(text, report_dict, limit=effective_limit)
     topk_value = float(repair_map.get("topk_calibrated_risk") or 0.0)
     if topk_value < _safe_topk_calibrated_limit():
         return []
-    expanded_limit = int(_float_env(
-        "DRAFTPROOF_TOPK_ROUTE_EXPANDED_SENTENCES",
-        max(float(repair_map.get("limit") or 1), min(48.0, float(len(_split_sentences(text)) or 1))),
-    ))
+    # Do not expand beyond the edit budget. Earlier versions expanded up to
+    # dozens of sentences, which lowered local predictability while creating
+    # document-level patchwork.
+    expanded_limit = effective_limit
     expanded_map = _topk_repair_map(text, report_dict, limit=expanded_limit)
     targets = repair_map.get("targets") or []
     candidate_rows: list[tuple[str, str, dict]] = []
-    batches = [(targets, 0.35, "small"), (targets, 0.65, "medium"), (targets, 1.0, "full")]
+    batches = [(targets, 0.35, "small"), (targets, 0.65, "medium"), (targets, 1.0, "budget")]
     expanded_targets = [
         row for row in (expanded_map.get("targets") or [])
         if float(row.get("top10_ratio") or 0.0) >= _float_env("DRAFTPROOF_TOPK_ROUTE_EXPANDED_MIN_TOP10", 0.45)
@@ -2769,7 +2812,7 @@ def _topk_route_optimizer_candidates(
     if len(expanded_targets) > len(targets):
         batches.append((expanded_targets, 1.0, "expanded"))
     for batch_targets, fraction, label in batches:
-        take = max(1, min(len(batch_targets), math.ceil(len(batch_targets) * fraction)))
+        take = max(1, min(sentence_budget, len(batch_targets), math.ceil(len(batch_targets) * fraction)))
         replacements: dict[str, str] = {}
         operations: list[dict] = []
         for target in batch_targets[:take]:
@@ -2796,6 +2839,7 @@ def _topk_route_optimizer_candidates(
                     "target_count": take,
                     "applied_count": len(operations),
                     "operations": operations,
+                    "edit_budget": edit_budget,
                 },
             ))
     removable_targets = [
@@ -2817,6 +2861,7 @@ def _topk_route_optimizer_candidates(
                         "removed_count": take,
                         "removed_sentence_ids": [row.get("sentence_id") for row in removable_targets[:take]],
                         "removed_top10": [row.get("top10_ratio") for row in removable_targets[:take]],
+                        "edit_budget": edit_budget,
                     },
                 ))
     return candidate_rows
@@ -3047,8 +3092,10 @@ def _topk_safe_band_snapshot_max_tokens_default(source_text: str) -> int:
 
 
 def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
+    edit_budget = _ai_search_edit_budget_contract(candidate_text)
+    sentence_limit = max(1, int(edit_budget.get("max_edited_sentences") or 1))
     rows = []
-    for row in (_topk_repair_map(candidate_text, candidate_report, limit=14).get("targets") or []):
+    for row in (_topk_repair_map(candidate_text, candidate_report, limit=sentence_limit).get("targets") or []):
         sentence = str(row.get("sentence") or "").strip()
         if not sentence:
             continue
@@ -3074,9 +3121,10 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "- new statistics or citations\n"
         "- changing the document topic\n\n"
         "Patch coverage:\n"
-        "- each candidate must include one patch for every listed sentence unless a sentence cannot be found exactly\n"
+        f"- each candidate may patch at most {sentence_limit} sentence(s); this is a hard patchwork budget\n"
+        "- prefer the highest-impact listed sentences; do not spread small edits across the whole document\n"
         "- listed sentences have already excluded canonical factual anchors; do not add personal voice to compensate for factual predictability\n"
-        "- do not return a one-sentence patch when many high-risk sentences are listed\n"
+        "- do not patch medium-predictability sentences unless they also carry transition/generic-expansion smoothness\n"
         "- candidate 1 should use direct plain contrast; candidate 2 should use plain sentence splitting and clause movement\n\n"
         "Examples:\n"
         "Original: The United States has a strong cultural influence.\n"
@@ -3087,7 +3135,8 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "Replacement: Freedom, democracy, and individual rights were central ideas. In practice, Americans have argued over those ideas from the beginning.\n\n"
         "Return valid JSON only:\n"
         '{"candidates":[{"patches":[{"original_sentence":"...","replacement_sentence":"..."}]}]}\n'
-        "Return 2 candidates with different sentence routes. Each candidate should patch all listed sentences. Do not repeat the same openings across replacements.\n\n"
+        "Return 2 candidates with different sentence routes. Do not repeat the same openings across replacements.\n\n"
+        f"EDIT_BUDGET:\n{json.dumps(edit_budget, ensure_ascii=False)}\n\n"
         f"SENTENCES:\n{json.dumps(rows, ensure_ascii=False)[:12000]}"
     )
 
@@ -3977,10 +4026,18 @@ def _extract_topk_route_patch_candidates(response_text: str, *, max_candidates: 
     return candidates
 
 
-def _apply_topk_route_patches(text: str, patches: list[dict]) -> tuple[str, list[dict]]:
+def _apply_topk_route_patches(
+    text: str,
+    patches: list[dict],
+    *,
+    max_patches: int | None = None,
+) -> tuple[str, list[dict]]:
     candidate = str(text or "")
     applied = []
+    patch_limit = max_patches if isinstance(max_patches, int) and max_patches > 0 else None
     for patch in patches or []:
+        if patch_limit is not None and len(applied) >= patch_limit:
+            break
         original = str(patch.get("original_sentence") or "").strip()
         replacement = str(patch.get("replacement_sentence") or "").strip()
         if not original or not replacement or original == replacement:
@@ -5830,9 +5887,16 @@ _DISTRIBUTION_CENTRAL_GENERIC_OPENING_RE = re.compile(
     re.I,
 )
 
+AGGRESSIVE_GEOMETRY_REAUTHORING_ENABLED = False
+
+
+def _aggressive_geometry_reauthoring_enabled() -> bool:
+    """Rollback switch: discourse-identity reauthoring is not a selectable path."""
+    return AGGRESSIVE_GEOMETRY_REAUTHORING_ENABLED
+
 
 def _distribution_centrality_detector(text: str, report_dict: dict | None) -> dict:
-    """Detect broad, balanced explanatory prose that needs discourse-level rebuild."""
+    """Detect distribution-central prose as a diagnostic, not a rewrite trigger."""
     paragraphs = _logical_paragraphs(text)
     sentences = _split_sentences(text)
     profile = _turnitin_like_ai_profile(report_dict)
@@ -5888,7 +5952,12 @@ def _distribution_centrality_detector(text: str, report_dict: dict | None) -> di
         "version": "distribution_centrality_detector_v1",
         "centrality_score": round(score, 3),
         "ceiling_risk": ceiling_risk,
-        "recommended_mode": "aggressive_geometry_reauthoring" if score >= 60.0 else "conservative_formula_convergence",
+        "recommended_mode": "conservative_formula_convergence",
+        "diagnostic_mode_if_enabled": (
+            "aggressive_geometry_reauthoring" if score >= 60.0 else "conservative_formula_convergence"
+        ),
+        "aggressive_geometry_reauthoring_enabled": False,
+        "rollback_reason": "discourse_identity_reauthoring_disabled",
         "drivers": {
             "generic_opening_ratio": round(generic_opening_ratio, 3),
             "low_perspective_ratio": round(low_perspective_ratio, 3),
@@ -6007,7 +6076,7 @@ def _fact_inventory_contract(source_text: str, candidate_text: str) -> dict:
         "protected_anchors_preserved": not missing_anchors,
         "core_claims_preserved_or_merged": claim_ratio >= 0.65,
         "unsupported_new_facts": unsupported_new_facts,
-        "discourse_identity_changed": True,
+        "discourse_identity_changed": False,
         "missing_anchors": missing_anchors[:20],
         "missing_named_entities": missing_entities[:20],
         "new_numbers": new_numbers[:20],
@@ -6029,38 +6098,7 @@ def _aggressive_geometry_reauthoring_prompt(
     *,
     candidate_count: int = 4,
 ) -> str:
-    profile = _turnitin_like_ai_profile(current_report)
-    centrality = _distribution_centrality_detector(current_text, current_report)
-    inventory = _fact_inventory_from_text(current_text)
-    return (
-        "DraftProof AGGRESSIVE_GEOMETRY_REAUTHORING.\n"
-        "Goal: reduce the shared Turnitin-like AI score below 20 by changing discourse geometry, not by polishing.\n"
-        "Return only valid JSON. No markdown.\n\n"
-        "You may change discourse identity: paragraph order, pacing, viewpoint frame, rhetorical shape, and explanation density.\n"
-        "You must preserve factual inventory: protected anchors, named entities, dates/numbers, and core claims.\n"
-        "Do not add fake facts, fake dates, fake named events, fake people, fake sources, or unsupported statistics.\n"
-        "Avoid encyclopedia cadence, balanced claim-explain-conclude paragraphs, generic openings, and smooth summary rhythm.\n"
-        "Keep the writing readable, plain, and cohesive. Do not use quirky metaphors, gimmicks, slang, or deliberate errors.\n\n"
-        "Target profile:\n"
-        f"{json.dumps({'turnitin_like_profile': profile, 'centrality': centrality}, ensure_ascii=False)[:7000]}\n\n"
-        "Factual inventory to preserve:\n"
-        f"{json.dumps(inventory, ensure_ascii=False)[:10000]}\n\n"
-        "Source document:\n"
-        f"<SOURCE>\n{current_text[:16000]}\n</SOURCE>\n\n"
-        "Candidate strategies to vary:\n"
-        "- perspective_frame_rebuild\n"
-        "- selective_depth_rebuild\n"
-        "- asymmetric_argument_rebuild\n"
-        "- fact_thread_rebuild\n"
-        "- low_value_generic_remove\n\n"
-        "Return schema:\n"
-        "{\n"
-        "  \"candidates\": [\n"
-        "    {\"strategy\": \"selective_depth_rebuild\", \"text\": \"full rewritten document\"}\n"
-        "  ]\n"
-        "}\n"
-        f"Return exactly {max(1, min(int(candidate_count or 1), 5))} candidates when possible."
-    )
+    return "DraftProof aggressive geometry reauthoring is disabled."
 
 
 def _extract_aggressive_geometry_candidates(response_text: str, *, max_candidates: int = 5) -> list[dict]:
@@ -6104,7 +6142,7 @@ def _aggressive_geometry_deterministic_candidates(
     limit: int = 2,
 ) -> list[tuple[str, str, dict]]:
     """Create non-LLM discourse-geometry candidates for central explanatory prose."""
-    if not _env_flag("DRAFTPROOF_AGGRESSIVE_GEOMETRY_REAUTHORING", True):
+    if not _aggressive_geometry_reauthoring_enabled():
         return []
     centrality = _distribution_centrality_detector(current_text, current_report)
     if centrality.get("recommended_mode") != "aggressive_geometry_reauthoring":
@@ -6130,7 +6168,7 @@ def _aggressive_geometry_deterministic_candidates(
                 "aggressive_geometry_reauthoring": True,
                 "operation": operation,
                 "distribution_centrality_detector": centrality,
-                "discourse_identity_changed": True,
+                "discourse_identity_changed": False,
                 "targeted_drivers": [
                     "ai_likelihood",
                     "topk_calibrated_risk",
@@ -6183,59 +6221,7 @@ def _aggressive_geometry_llm_candidates(
     *,
     max_candidates: int = 4,
 ) -> list[tuple[str, str, dict]]:
-    if gateway is None or not _env_flag("DRAFTPROOF_AGGRESSIVE_GEOMETRY_LLM", True):
-        return []
-    centrality = _distribution_centrality_detector(current_text, current_report)
-    if centrality.get("recommended_mode") != "aggressive_geometry_reauthoring":
-        return []
-    try:
-        response = gateway.chat(
-            _aggressive_geometry_reauthoring_prompt(
-                current_text,
-                current_report,
-                candidate_count=max_candidates,
-            ),
-            system=(
-                "You are DraftProof's aggressive geometry reauthoring controller. "
-                "Return only JSON full-document candidates."
-            ),
-            **_phase_chat_sampling_kwargs(
-                "DRAFTPROOF_AGGRESSIVE_GEOMETRY",
-                temperature_env="DRAFTPROOF_AGGRESSIVE_GEOMETRY_TEMPERATURE",
-                temperature_default=0.5,
-                max_tokens_env="DRAFTPROOF_AGGRESSIVE_GEOMETRY_MAX_TOKENS",
-                max_tokens_default=5200,
-            ),
-        )
-    except Exception:
-        return []
-    rows = _extract_aggressive_geometry_candidates(response.content, max_candidates=max_candidates)
-    candidates: list[tuple[str, str, dict]] = []
-    for index, row in enumerate(rows, start=1):
-        candidate_text = str(row.get("text") or "").strip()
-        if not candidate_text or candidate_text == str(current_text or "").strip():
-            continue
-        strategy = str(row.get("strategy") or f"aggressive_geometry_c{index}")
-        candidates.append((
-            f"aggressive_geometry_llm_{strategy}_c{index}",
-            candidate_text,
-            {
-                "aggressive_geometry_reauthoring": True,
-                "aggressive_geometry_llm": True,
-                "operation": strategy,
-                "llm_reason": row.get("reason"),
-                "distribution_centrality_detector": centrality,
-                "discourse_identity_changed": True,
-                "targeted_drivers": [
-                    "ai_likelihood",
-                    "topk_calibrated_risk",
-                    "semantic_uniformity",
-                    "rewrite_smoothness",
-                    "patchwork_expansion",
-                ],
-            },
-        ))
-    return candidates
+    return []
 
 
 def _coordinated_micro_perturbation_candidates(
@@ -8988,6 +8974,53 @@ def _repair_aggression_score(original_text: str, candidate_text: str) -> dict:
         "word_delta_ratio": word_delta_ratio,
         "original_words": original_words,
         "candidate_words": candidate_words,
+    }
+
+
+def _candidate_patchwork_budget_status(source_text: str, candidate_text: str) -> dict:
+    """Detect candidates that touch too many sentence routes for one pass."""
+    budget = _ai_search_edit_budget_contract(source_text)
+    original_sentences = _split_sentences(source_text)
+    candidate_sentences = _split_sentences(candidate_text)
+    original_norm = [re.sub(r"\s+", " ", sentence).strip() for sentence in original_sentences]
+    candidate_norm = [re.sub(r"\s+", " ", sentence).strip() for sentence in candidate_sentences]
+    matcher = SequenceMatcher(None, original_norm, candidate_norm)
+    changed_sentences = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        original_count = max(0, i2 - i1)
+        candidate_count = max(0, j2 - j1)
+        if tag == "replace":
+            paired = min(original_count, candidate_count)
+            for offset in range(paired):
+                if SequenceMatcher(
+                    None,
+                    original_norm[i1 + offset],
+                    candidate_norm[j1 + offset],
+                ).ratio() < 0.92:
+                    changed_sentences += 1
+            changed_sentences += max(original_count, candidate_count) - paired
+        else:
+            changed_sentences += max(original_count, candidate_count)
+    sentence_count = max(1, len(original_sentences))
+    edited_ratio = changed_sentences / sentence_count
+    max_edits = int(budget.get("max_edited_sentences") or 0)
+    max_ratio = float(budget.get("max_sentence_edit_ratio") or PATCHWORK_SENTENCE_RATIO_LIMIT)
+    exceeded = bool(
+        changed_sentences > max_edits
+        or edited_ratio > max_ratio
+    )
+    return {
+        "version": "patchwork_budget_v1",
+        "exceeded": exceeded,
+        "changed_sentence_count": changed_sentences,
+        "sentence_count": len(original_sentences),
+        "candidate_sentence_count": len(candidate_sentences),
+        "edited_sentence_ratio": round(edited_ratio, 3),
+        "max_edited_sentences": max_edits,
+        "max_sentence_edit_ratio": max_ratio,
+        "budget": budget,
     }
 
 
@@ -15295,7 +15328,10 @@ def _formula_convergence_candidate_batch(
         limit=limit,
     )
     raw_candidates: list[tuple[str, str, dict]] = []
-    if centrality.get("recommended_mode") == "aggressive_geometry_reauthoring":
+    if (
+        _aggressive_geometry_reauthoring_enabled()
+        and centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
+    ):
         raw_candidates.extend(aggressive_candidates)
     if feasibility.get("geometry_required"):
         raw_candidates.extend(geometry_candidates)
@@ -15624,7 +15660,8 @@ def _formula_convergence_controller(
             ):
                 llm_calls_used += 1
                 if (
-                    centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
+                    _aggressive_geometry_reauthoring_enabled()
+                    and centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
                     and (
                         feasibility.get("geometry_required")
                         or float(centrality.get("centrality_score") or 0.0) >= 65.0
@@ -15671,15 +15708,9 @@ def _formula_convergence_controller(
             "feasibility_estimator": feasibility,
             "distribution_centrality_detector": centrality,
             "aggressive_geometry_reauthoring": {
-                "enabled": bool(_env_flag("DRAFTPROOF_AGGRESSIVE_GEOMETRY_REAUTHORING", True)),
-                "triggered": centrality.get("recommended_mode") == "aggressive_geometry_reauthoring",
-                "trigger_reason": (
-                    "safe_floor_above_target"
-                    if feasibility.get("geometry_required")
-                    else "distribution_centrality_high"
-                    if centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
-                    else "not_triggered"
-                ),
+                "enabled": _aggressive_geometry_reauthoring_enabled(),
+                "triggered": False,
+                "trigger_reason": "disabled_rollback_to_content_aware_bounded_edits",
                 "centrality_score": centrality.get("centrality_score"),
                 "estimated_safe_floor": feasibility.get("estimated_safe_floor"),
                 "estimated_aggressive_floor": feasibility.get("aggressive_floor"),
@@ -15732,7 +15763,10 @@ def _formula_convergence_controller(
                 candidates.append(candidate_eval)
                 continue
             fact_contract = None
-            if candidate_eval.get("aggressive_geometry_reauthoring"):
+            if (
+                _aggressive_geometry_reauthoring_enabled()
+                and candidate_eval.get("aggressive_geometry_reauthoring")
+            ):
                 fact_contract = _fact_inventory_contract(best_text, candidate_text)
                 candidate_eval["fact_inventory_contract"] = fact_contract
                 candidate_eval["drift_similarity"] = None
@@ -16010,14 +16044,9 @@ def _formula_convergence_controller(
         "feasibility_estimator": final_feasibility,
         "distribution_centrality_detector": final_centrality,
         "aggressive_geometry_reauthoring": {
-            "enabled": _env_flag("DRAFTPROOF_AGGRESSIVE_GEOMETRY_REAUTHORING", True),
-            "trigger_reason": (
-                "safe_floor_above_target"
-                if final_feasibility.get("geometry_required")
-                else "distribution_centrality_high"
-                if final_centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
-                else "not_triggered"
-            ),
+            "enabled": _aggressive_geometry_reauthoring_enabled(),
+            "triggered": False,
+            "trigger_reason": "disabled_rollback_to_content_aware_bounded_edits",
             "centrality_score": final_centrality.get("centrality_score"),
             "estimated_safe_floor": final_feasibility.get("estimated_safe_floor"),
             "estimated_aggressive_floor": final_feasibility.get("aggressive_floor"),
@@ -19319,6 +19348,13 @@ def run_rewrite_pipeline(
                 candidate_eval["effective_max_chars"] = effective_max_chars
                 search_summary["candidates"].append(candidate_eval)
                 return
+            patchwork_budget = _candidate_patchwork_budget_status(search_source_text, candidate)
+            candidate_eval["patchwork_budget"] = patchwork_budget
+            if patchwork_budget.get("exceeded"):
+                candidate_eval["reason"] = "patchwork_budget_exceeded"
+                candidate_eval["passed_local_checks"] = False
+                search_summary["candidates"].append(candidate_eval)
+                return
             protected_loss = _ai_search_protected_loss_reason(search_source_text, candidate, source_protected)
             if protected_loss:
                 candidate_eval["reason"] = "protected_span_lost " + protected_loss
@@ -21934,7 +21970,11 @@ def run_rewrite_pipeline(
                             )
                             topk_summary["llm_candidate_count"] = len(patch_sets)
                             for route_index, patches in enumerate(patch_sets, start=1):
-                                candidate, applied = _apply_topk_route_patches(component_base_text, patches)
+                                candidate, applied = _apply_topk_route_patches(
+                                    component_base_text,
+                                    patches,
+                                    max_patches=_topk_optimizer_sentence_limit(component_base_text),
+                                )
                                 strategy = f"topk_route_masked_c{route_index}"
                                 if not applied or candidate == component_base_text:
                                     search_summary["candidates"].append({
@@ -22194,7 +22234,11 @@ def run_rewrite_pipeline(
                                     best_round_rank = None
                                     best_round_rejection = ""
                                     for patch_set in patch_sets:
-                                        trial_text, trial_applied = _apply_topk_route_patches(candidate_to_eval, patch_set)
+                                        trial_text, trial_applied = _apply_topk_route_patches(
+                                            candidate_to_eval,
+                                            patch_set,
+                                            max_patches=_topk_optimizer_sentence_limit(candidate_to_eval),
+                                        )
                                         if not trial_applied or trial_text == candidate_to_eval:
                                             continue
                                         trial_rejection = _ai_candidate_quality_reject_reason(trial_text)

@@ -72,6 +72,9 @@ from rewrite_pipeline import (
     _safe_partial_quality_improvement_status,
     _texture_blocked_without_positive_burden,
     _veto_texture_blocked_without_positive_burden,
+    _ai_search_edit_budget_contract,
+    _candidate_patchwork_budget_status,
+    _topk_route_optimizer_candidates,
     _ai_footprint_profile,
     _turnitin_like_ai_profile,
     _turnitin_like_ai_gate_status,
@@ -2925,7 +2928,7 @@ assert_test(
     and "short country profile" in medium_topk_prompt
     and "no metaphors" in plain_topk_prompt
     and "plain everyday nouns and verbs" in plain_topk_prompt
-    and "patch all listed sentences" in _topk_safe_band_sentence_patch_prompt(
+    and "hard patchwork budget" in _topk_safe_band_sentence_patch_prompt(
         "The United States has influence. The country also has problems.",
         {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}},
     )
@@ -5860,6 +5863,58 @@ assert_test(
     and topk_patched_text.startswith("One common description"),
     "top-k route optimizer builds repair map, deterministic candidates, JSON patch candidates, and phase sampling controls",
 )
+budget_sentences = [
+    f"One of the biggest strengths of the United States is its economic power {idx}."
+    for idx in range(1, 25)
+]
+budget_text = " ".join(budget_sentences)
+budget_report = {
+    "ai_risk_badge": {
+        "ai_components": {
+            "topk_pattern": 100.0,
+            "topk_pattern_raw": 100.0,
+            "topk_calibrated_risk": 100.0,
+            "predictability": 50.0,
+        },
+        "writing_components": {},
+    },
+    "predictability": {
+        "all_sentences": [
+            {
+                "sentence_id": f"s{idx:03d}",
+                "sentence_index": idx - 1,
+                "sentence": sentence,
+                "top10_ratio": 0.82,
+                "top50_ratio": 0.93,
+                "predictability_risk": 0.68,
+                "predictable_token_spans": ["One of the biggest strengths"],
+            }
+            for idx, sentence in enumerate(budget_sentences, start=1)
+        ],
+    },
+}
+budget_contract = _ai_search_edit_budget_contract(budget_text)
+budget_candidates = _topk_route_optimizer_candidates(budget_text, budget_report, limit=99)
+overedited_candidate = " ".join(
+    (
+        sentence.replace("One of the biggest strengths of", "A visible strength around")
+        if idx < 12 else sentence
+    )
+    for idx, sentence in enumerate(budget_sentences)
+)
+patchwork_status = _candidate_patchwork_budget_status(budget_text, overedited_candidate)
+assert_test(
+    budget_contract["max_edited_sentences"] <= 8
+    and budget_candidates
+    and all(
+        int((meta or {}).get("applied_count") or (meta or {}).get("removed_count") or 0)
+        <= budget_contract["max_edited_sentences"]
+        for _strategy, _candidate, meta in budget_candidates
+    )
+    and patchwork_status["exceeded"]
+    and patchwork_status["changed_sentence_count"] > budget_contract["max_edited_sentences"],
+    "Top-k route optimizer and selector patchwork budget cap active sentence edits",
+)
 previous_search_enabled = os.environ.get("DRAFTPROOF_SOURCE_SEARCH_ENABLED")
 previous_tavily_key = os.environ.get("TAVILY_API_KEY")
 try:
@@ -7646,10 +7701,11 @@ aggressive_deterministic = _aggressive_geometry_deterministic_candidates(
     limit=2,
 )
 assert_test(
-    centrality["recommended_mode"] == "aggressive_geometry_reauthoring"
+    centrality["recommended_mode"] == "conservative_formula_convergence"
     and centrality["centrality_score"] >= 65
-    and bool(aggressive_deterministic),
-    "distribution-central prose triggers aggressive geometry reauthoring candidates",
+    and not aggressive_deterministic
+    and centrality.get("aggressive_geometry_reauthoring_enabled") is False,
+    "distribution-central prose is diagnostic only after aggressive geometry rollback",
 )
 aggressive_good_text = (
     "A practical way to read the United States is to hold two facts together. "
@@ -7703,11 +7759,10 @@ aggressive_controller_result = _formula_convergence_controller(
     drift_checker=lambda *_args, **_kwargs: SimpleNamespace(accepted=False, similarity=0.1, reasons=["style_changed"]),
 )
 assert_test(
-    aggressive_controller_result["selected"]
-    and aggressive_controller_result["target_met"]
-    and aggressive_controller_result["fact_inventory_contract"]["accepted"]
-    and aggressive_controller_result["selected_strategy"] == "aggressive_geometry_test_candidate",
-    "aggressive geometry candidates use fact-inventory contract instead of conservative semantic drift",
+    not aggressive_controller_result["selected"]
+    and not aggressive_controller_result["target_met"]
+    and aggressive_controller_result["candidates"][0]["reason"].startswith("semantic_drift"),
+    "aggressive geometry candidates no longer bypass conservative semantic drift",
 )
 parsed_aggressive = _extract_aggressive_geometry_candidates(json.dumps({
     "candidates": [
