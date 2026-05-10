@@ -5592,6 +5592,420 @@ def _geometry_disrupt_sentence(sentence: str, row: dict | None = None) -> tuple[
     return (candidate, operations) if candidate and candidate != original else (original, [])
 
 
+_DISTRIBUTION_CENTRAL_GENERIC_OPENING_RE = re.compile(
+    r"^(?:The|This|These|It|One of|Another|In addition|Despite|However|At the same time|"
+    r"In conclusion|Overall|Technology|Education|The United States)\b",
+    re.I,
+)
+
+
+def _distribution_centrality_detector(text: str, report_dict: dict | None) -> dict:
+    """Detect broad, balanced explanatory prose that needs discourse-level rebuild."""
+    paragraphs = _logical_paragraphs(text)
+    sentences = _split_sentences(text)
+    profile = _turnitin_like_ai_profile(report_dict)
+    footprint = _ai_footprint_profile(report_dict)
+    sentence_count = max(1, len(sentences))
+    paragraph_count = max(1, len(paragraphs))
+    generic_openings = sum(
+        1 for sentence in sentences
+        if _DISTRIBUTION_CENTRAL_GENERIC_OPENING_RE.search(str(sentence or "").strip())
+    )
+    perspective_markers = len(re.findall(
+        r"\b(?:I|we|my|our|I would|I noticed|I think|in practice|what this means|the problem is|the difficult part)\b",
+        str(text or ""),
+        flags=re.I,
+    ))
+    paragraph_lengths = [_text_word_count(paragraph) for paragraph in paragraphs if paragraph.strip()]
+    if len(paragraph_lengths) >= 2:
+        mean_len = statistics.mean(paragraph_lengths)
+        stdev_len = statistics.pstdev(paragraph_lengths)
+        length_uniformity = 1.0 - min(1.0, stdev_len / max(1.0, mean_len))
+    else:
+        length_uniformity = 0.0
+    balanced_roles = sum(
+        1 for paragraph in paragraphs
+        if re.search(r"\b(?:is|are|has|also|another|despite|however|at the same time)\b", paragraph, re.I)
+        and _text_word_count(paragraph) >= 45
+    )
+    generic_opening_ratio = generic_openings / sentence_count
+    low_perspective_ratio = 1.0 - min(1.0, perspective_markers / max(2.0, sentence_count * 0.12))
+    balanced_role_ratio = balanced_roles / paragraph_count
+    topk = float((profile.get("components") or {}).get("topk_calibrated_risk") or 0.0)
+    ai_likelihood = float((profile.get("components") or {}).get("ai_likelihood") or 0.0)
+    semantic_uniformity = float((profile.get("components") or {}).get("semantic_uniformity") or 0.0)
+    badge_components = ((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
+    density = float(
+        footprint.get("qualifying_text_ai_density")
+        or badge_components.get("qualifying_text_ai_density")
+        or 0.0
+    )
+    score = (
+        min(1.0, topk / 100.0) * 24.0
+        + min(1.0, ai_likelihood / 100.0) * 20.0
+        + min(1.0, semantic_uniformity / 100.0) * 12.0
+        + min(1.0, density / 100.0) * 14.0
+        + generic_opening_ratio * 12.0
+        + length_uniformity * 8.0
+        + balanced_role_ratio * 6.0
+        + low_perspective_ratio * 4.0
+    )
+    score = max(0.0, min(100.0, score))
+    ceiling_risk = "high" if score >= 60.0 else "medium" if score >= 45.0 else "low"
+    return {
+        "version": "distribution_centrality_detector_v1",
+        "centrality_score": round(score, 3),
+        "ceiling_risk": ceiling_risk,
+        "recommended_mode": "aggressive_geometry_reauthoring" if score >= 60.0 else "conservative_formula_convergence",
+        "drivers": {
+            "generic_opening_ratio": round(generic_opening_ratio, 3),
+            "low_perspective_ratio": round(low_perspective_ratio, 3),
+            "paragraph_length_uniformity": round(length_uniformity, 3),
+            "balanced_role_ratio": round(balanced_role_ratio, 3),
+            "topk_calibrated_risk": round(topk, 3),
+            "ai_likelihood": round(ai_likelihood, 3),
+            "semantic_uniformity": round(semantic_uniformity, 3),
+            "qualifying_text_ai_density": round(density, 3),
+        },
+    }
+
+
+def _fact_inventory_from_text(text: str) -> dict:
+    """Extract factual anchors that aggressive discourse rebuilds must preserve."""
+    raw = str(text or "")
+    protected_numbers = sorted(_protected_number_set(raw))
+    protected_codes = sorted(_protected_code_anchor_set(raw))
+    urls = sorted(set(re.findall(r"https?://\S+|www\.\S+", raw, flags=re.I)))
+    entity_candidates = re.findall(
+        r"\b(?:[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,})){0,5}|[A-Z]{2,})\b",
+        raw,
+    )
+    common = {
+        "The", "This", "These", "That", "It", "In", "At", "One", "Another", "However",
+        "Despite", "Although", "Overall", "Understanding", "Technology", "Education",
+    }
+    entities = []
+    for entity in entity_candidates:
+        cleaned = re.sub(r"\s+", " ", entity).strip()
+        if not cleaned or cleaned in common:
+            continue
+        if len(cleaned) < 3 and not cleaned.isupper():
+            continue
+        if cleaned not in entities:
+            entities.append(cleaned)
+    sentences = _split_sentences(raw)
+    claim_keywords = {
+        "founded", "declared", "independence", "built", "established", "expanded",
+        "immigration", "economic", "technology", "innovation", "culture", "diversity",
+        "racism", "inequality", "healthcare", "education", "military", "politics",
+        "artificial intelligence", "renewable energy", "space exploration",
+    }
+    core_claims = []
+    for sentence in sentences:
+        lowered = sentence.lower()
+        if (
+            any(keyword in lowered for keyword in claim_keywords)
+            or any(entity in sentence for entity in entities[:20])
+            or any(number in sentence for number in protected_numbers)
+        ):
+            tokens = [
+                token.lower()
+                for token in re.findall(r"\b[A-Za-z][A-Za-z'-]{3,}\b", sentence)
+                if token.lower() not in _SOURCE_SEARCH_STOPWORDS
+            ]
+            core_claims.append({
+                "sentence": sentence,
+                "keywords": sorted(set(tokens))[:12],
+            })
+    return {
+        "protected_anchors": sorted(set(protected_numbers + protected_codes + urls)),
+        "protected_numbers": protected_numbers,
+        "protected_code_anchors": protected_codes,
+        "urls": urls,
+        "named_entities": entities[:60],
+        "core_claims": core_claims[:24],
+    }
+
+
+def _fact_inventory_contract(source_text: str, candidate_text: str) -> dict:
+    """Validate aggressive candidates by fact preservation, not discourse similarity."""
+    inventory = _fact_inventory_from_text(source_text)
+    candidate = str(candidate_text or "")
+    source = str(source_text or "")
+    missing_anchors = [
+        anchor for anchor in inventory.get("protected_anchors", [])
+        if anchor and anchor not in candidate
+    ]
+    source_numbers = set(inventory.get("protected_numbers") or [])
+    candidate_numbers = _protected_number_set(candidate)
+    new_numbers = sorted(number for number in candidate_numbers if number not in source_numbers)
+    missing_entities = [
+        entity for entity in inventory.get("named_entities", [])[:30]
+        if entity and entity not in candidate
+    ]
+    source_entities = set(inventory.get("named_entities") or [])
+    candidate_entities = set(_fact_inventory_from_text(candidate).get("named_entities") or [])
+    new_entities = sorted(
+        entity for entity in candidate_entities - source_entities
+        if entity not in {"America", "American", "Americans", "U.S", "U.S."}
+    )[:20]
+    preserved_claims = 0
+    checked_claims = 0
+    candidate_lower = candidate.lower()
+    for claim in inventory.get("core_claims") or []:
+        keywords = claim.get("keywords") if isinstance(claim, dict) else []
+        if not keywords:
+            continue
+        checked_claims += 1
+        hits = sum(1 for keyword in keywords if keyword.lower() in candidate_lower)
+        if hits / max(1, len(keywords)) >= 0.45:
+            preserved_claims += 1
+    claim_ratio = preserved_claims / max(1, checked_claims)
+    unsupported_new_facts = bool(new_numbers or len(new_entities) > 6)
+    accepted = (
+        not missing_anchors
+        and len(missing_entities) <= max(2, math.ceil(len(inventory.get("named_entities", [])[:30]) * 0.25))
+        and claim_ratio >= 0.65
+        and not unsupported_new_facts
+    )
+    return {
+        "version": "fact_inventory_contract_v1",
+        "accepted": bool(accepted),
+        "fact_inventory_preserved": bool(accepted),
+        "protected_anchors_preserved": not missing_anchors,
+        "core_claims_preserved_or_merged": claim_ratio >= 0.65,
+        "unsupported_new_facts": unsupported_new_facts,
+        "discourse_identity_changed": True,
+        "missing_anchors": missing_anchors[:20],
+        "missing_named_entities": missing_entities[:20],
+        "new_numbers": new_numbers[:20],
+        "new_named_entities": new_entities,
+        "core_claim_preservation_ratio": round(claim_ratio, 3),
+        "core_claims_checked": checked_claims,
+        "core_claims_preserved": preserved_claims,
+        "inventory": {
+            "protected_anchor_count": len(inventory.get("protected_anchors") or []),
+            "named_entity_count": len(inventory.get("named_entities") or []),
+            "core_claim_count": len(inventory.get("core_claims") or []),
+        },
+    }
+
+
+def _aggressive_geometry_reauthoring_prompt(
+    current_text: str,
+    current_report: dict | None,
+    *,
+    candidate_count: int = 4,
+) -> str:
+    profile = _turnitin_like_ai_profile(current_report)
+    centrality = _distribution_centrality_detector(current_text, current_report)
+    inventory = _fact_inventory_from_text(current_text)
+    return (
+        "DraftProof AGGRESSIVE_GEOMETRY_REAUTHORING.\n"
+        "Goal: reduce the shared Turnitin-like AI score below 20 by changing discourse geometry, not by polishing.\n"
+        "Return only valid JSON. No markdown.\n\n"
+        "You may change discourse identity: paragraph order, pacing, viewpoint frame, rhetorical shape, and explanation density.\n"
+        "You must preserve factual inventory: protected anchors, named entities, dates/numbers, and core claims.\n"
+        "Do not add fake facts, fake dates, fake named events, fake people, fake sources, or unsupported statistics.\n"
+        "Avoid encyclopedia cadence, balanced claim-explain-conclude paragraphs, generic openings, and smooth summary rhythm.\n"
+        "Keep the writing readable, plain, and cohesive. Do not use quirky metaphors, gimmicks, slang, or deliberate errors.\n\n"
+        "Target profile:\n"
+        f"{json.dumps({'turnitin_like_profile': profile, 'centrality': centrality}, ensure_ascii=False)[:7000]}\n\n"
+        "Factual inventory to preserve:\n"
+        f"{json.dumps(inventory, ensure_ascii=False)[:10000]}\n\n"
+        "Source document:\n"
+        f"<SOURCE>\n{current_text[:16000]}\n</SOURCE>\n\n"
+        "Candidate strategies to vary:\n"
+        "- perspective_frame_rebuild\n"
+        "- selective_depth_rebuild\n"
+        "- asymmetric_argument_rebuild\n"
+        "- fact_thread_rebuild\n"
+        "- low_value_generic_remove\n\n"
+        "Return schema:\n"
+        "{\n"
+        "  \"candidates\": [\n"
+        "    {\"strategy\": \"selective_depth_rebuild\", \"text\": \"full rewritten document\"}\n"
+        "  ]\n"
+        "}\n"
+        f"Return exactly {max(1, min(int(candidate_count or 1), 5))} candidates when possible."
+    )
+
+
+def _extract_aggressive_geometry_candidates(response_text: str, *, max_candidates: int = 5) -> list[dict]:
+    text = str(response_text or "").strip()
+    if not text:
+        return []
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
+    text = re.sub(r"\s*```$", "", text).strip()
+    try:
+        payload = json.loads(text)
+    except Exception:
+        match = re.search(r"\{.*\}", text, re.S)
+        if not match:
+            return []
+        try:
+            payload = json.loads(match.group(0))
+        except Exception:
+            return []
+    rows = payload.get("candidates") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return []
+    candidates = []
+    for row in rows[:max(1, int(max_candidates or 1))]:
+        if not isinstance(row, dict):
+            continue
+        candidate_text = str(row.get("text") or row.get("candidate") or "").strip()
+        if not candidate_text:
+            continue
+        candidates.append({
+            "strategy": str(row.get("strategy") or "aggressive_geometry_reauthoring_candidate"),
+            "text": candidate_text,
+            "reason": row.get("reason"),
+        })
+    return candidates
+
+
+def _aggressive_geometry_deterministic_candidates(
+    current_text: str,
+    current_report: dict | None,
+    *,
+    limit: int = 2,
+) -> list[tuple[str, str, dict]]:
+    """Create non-LLM discourse-geometry candidates for central explanatory prose."""
+    if not _env_flag("DRAFTPROOF_AGGRESSIVE_GEOMETRY_REAUTHORING", True):
+        return []
+    centrality = _distribution_centrality_detector(current_text, current_report)
+    if centrality.get("recommended_mode") != "aggressive_geometry_reauthoring":
+        return []
+    paragraphs = _logical_paragraphs(current_text)
+    if len(paragraphs) < 3:
+        return []
+    candidates: list[tuple[str, str, dict]] = []
+    seen = {str(current_text or "").strip()}
+
+    def add(strategy: str, next_paragraphs: list[str], operation: str) -> None:
+        if len(candidates) >= max(1, int(limit or 1)):
+            return
+        candidate = _join_logical_paragraphs([p for p in next_paragraphs if str(p or "").strip()])
+        normalized = candidate.strip()
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append((
+            f"aggressive_geometry_{strategy}",
+            candidate,
+            {
+                "aggressive_geometry_reauthoring": True,
+                "operation": operation,
+                "distribution_centrality_detector": centrality,
+                "discourse_identity_changed": True,
+                "targeted_drivers": [
+                    "ai_likelihood",
+                    "topk_calibrated_risk",
+                    "semantic_uniformity",
+                    "rewrite_smoothness",
+                    "patchwork_expansion",
+                ],
+            },
+        ))
+
+    compressed = []
+    for index, paragraph in enumerate(paragraphs):
+        cleaned = _compress_score_drag_paragraph(paragraph, max_remove=2)
+        if index == 0:
+            cleaned = re.sub(
+                r"^(The United States is often described as|The United States is)",
+                "A less tidy way to read the United States is as",
+                cleaned,
+                flags=re.I,
+            )
+        cleaned = re.sub(r"^One of the biggest strengths of", "The economic story around", cleaned, flags=re.I)
+        cleaned = re.sub(r"^Another important feature of", "Diversity is the part of", cleaned, flags=re.I)
+        cleaned = re.sub(r"^In conclusion,\s*", "Taken together, ", cleaned, flags=re.I)
+        compressed.append(cleaned)
+    add("selective_depth_rebuild", compressed, "selective_depth_rebuild")
+
+    if len(paragraphs) >= 6:
+        reordered = [paragraphs[0]]
+        tension_blocks = [
+            p for p in paragraphs[1:]
+            if re.search(r"\b(?:challenge|inequality|division|healthcare|cost|critics|however|debate)\b", p, re.I)
+        ]
+        strength_blocks = [p for p in paragraphs[1:] if p not in tension_blocks]
+        merged_strength = " ".join(_compress_score_drag_paragraph(p, max_remove=1) for p in strength_blocks[:3])
+        merged_tension = " ".join(_compress_score_drag_paragraph(p, max_remove=1) for p in tension_blocks[:3])
+        if merged_strength:
+            reordered.append(merged_strength)
+        if merged_tension:
+            reordered.append(merged_tension)
+        remaining = [p for p in paragraphs[1:] if p not in strength_blocks[:3] and p not in tension_blocks[:3]]
+        reordered.extend(_compress_score_drag_paragraph(p, max_remove=1) for p in remaining)
+        add("asymmetric_argument_rebuild", reordered, "asymmetric_argument_rebuild")
+    return candidates[:max(1, int(limit or 1))]
+
+
+def _aggressive_geometry_llm_candidates(
+    current_text: str,
+    current_report: dict | None,
+    gateway: LLMGateway | None,
+    *,
+    max_candidates: int = 4,
+) -> list[tuple[str, str, dict]]:
+    if gateway is None or not _env_flag("DRAFTPROOF_AGGRESSIVE_GEOMETRY_LLM", True):
+        return []
+    centrality = _distribution_centrality_detector(current_text, current_report)
+    if centrality.get("recommended_mode") != "aggressive_geometry_reauthoring":
+        return []
+    try:
+        response = gateway.chat(
+            _aggressive_geometry_reauthoring_prompt(
+                current_text,
+                current_report,
+                candidate_count=max_candidates,
+            ),
+            system=(
+                "You are DraftProof's aggressive geometry reauthoring controller. "
+                "Return only JSON full-document candidates."
+            ),
+            **_phase_chat_sampling_kwargs(
+                "DRAFTPROOF_AGGRESSIVE_GEOMETRY",
+                temperature_env="DRAFTPROOF_AGGRESSIVE_GEOMETRY_TEMPERATURE",
+                temperature_default=0.5,
+                max_tokens_env="DRAFTPROOF_AGGRESSIVE_GEOMETRY_MAX_TOKENS",
+                max_tokens_default=5200,
+            ),
+        )
+    except Exception:
+        return []
+    rows = _extract_aggressive_geometry_candidates(response.content, max_candidates=max_candidates)
+    candidates: list[tuple[str, str, dict]] = []
+    for index, row in enumerate(rows, start=1):
+        candidate_text = str(row.get("text") or "").strip()
+        if not candidate_text or candidate_text == str(current_text or "").strip():
+            continue
+        strategy = str(row.get("strategy") or f"aggressive_geometry_c{index}")
+        candidates.append((
+            f"aggressive_geometry_llm_{strategy}_c{index}",
+            candidate_text,
+            {
+                "aggressive_geometry_reauthoring": True,
+                "aggressive_geometry_llm": True,
+                "operation": strategy,
+                "llm_reason": row.get("reason"),
+                "distribution_centrality_detector": centrality,
+                "discourse_identity_changed": True,
+                "targeted_drivers": [
+                    "ai_likelihood",
+                    "topk_calibrated_risk",
+                    "semantic_uniformity",
+                    "rewrite_smoothness",
+                    "patchwork_expansion",
+                ],
+            },
+        ))
+    return candidates
+
+
 def _coordinated_micro_perturbation_candidates(
     current_text: str,
     current_report: dict | None,
@@ -14611,12 +15025,18 @@ def _formula_convergence_candidate_batch(
     """Create one bounded portfolio batch from the current best state."""
     limit = max(1, int(limit or 1))
     feasibility = _formula_feasibility_estimator(current_report)
+    centrality = _distribution_centrality_detector(current_text, current_report)
     geometry_map = _geometry_risk_map(current_text, current_report)
     geometry_candidates = _coordinated_micro_perturbation_candidates(
         current_text,
         current_report,
         geometry_map,
         limit=max(2, min(4, limit)),
+    )
+    aggressive_candidates = _aggressive_geometry_deterministic_candidates(
+        current_text,
+        current_report,
+        limit=max(1, min(3, limit)),
     )
     topk_candidates = _topk_route_optimizer_candidates(current_text, current_report)
     blocker_candidates = _blocker_operation_candidates(current_text, current_report, limit=4)
@@ -14643,6 +15063,8 @@ def _formula_convergence_candidate_batch(
         limit=limit,
     )
     raw_candidates: list[tuple[str, str, dict]] = []
+    if centrality.get("recommended_mode") == "aggressive_geometry_reauthoring":
+        raw_candidates.extend(aggressive_candidates)
     if feasibility.get("geometry_required"):
         raw_candidates.extend(geometry_candidates)
     raw_candidates.extend(portfolio_candidates)
@@ -14668,6 +15090,7 @@ def _formula_convergence_candidate_batch(
                 **(meta or {}),
                 "formula_convergence_candidate": True,
                 "feasibility_estimator": feasibility,
+                "distribution_centrality_detector": centrality,
                 "block_driver_map_version": (block_map or {}).get("version"),
                 "geometry_risk_map_version": geometry_map.get("version"),
                 "top_drag_blocks": [
@@ -14839,6 +15262,8 @@ def _formula_convergence_candidate_public(row: dict | None) -> dict:
             "component_drops": gate.get("component_drops"),
         },
         "anti_smoothing_guard": row.get("anti_smoothing_guard"),
+        "fact_inventory_contract": row.get("fact_inventory_contract"),
+        "aggressive_geometry_reauthoring": row.get("aggressive_geometry_reauthoring"),
         "selection_status": {
             "selectable": status.get("selectable", row.get("selectable")),
             "reason": row.get("reason") or status.get("reason"),
@@ -14937,6 +15362,7 @@ def _formula_convergence_controller(
         last_block_map = block_map
         anchor_frontier = _human_anchor_suppression_frontier(best_text, best_report, block_map)
         feasibility = _formula_feasibility_estimator(best_report, observed_candidates=candidates)
+        centrality = _distribution_centrality_detector(best_text, best_report)
         geometry_map = _geometry_risk_map(best_text, best_report)
         remaining_scans = max(0, max_scans - scans_used)
         batch_limit = max(1, min(remaining_scans, int(math.ceil(max_scans / max(1, max_passes)))))
@@ -14962,13 +15388,27 @@ def _formula_convergence_controller(
                 and len(raw_batch) < remaining_scans
             ):
                 llm_calls_used += 1
-                llm_candidates = _formula_convergence_llm_patch_candidates(
-                    best_text,
-                    best_report,
-                    block_map,
-                    llm_gateway,
-                    max_candidates=min(3, max(1, remaining_scans - len(raw_batch))),
-                )
+                if (
+                    centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
+                    and (
+                        feasibility.get("geometry_required")
+                        or float(centrality.get("centrality_score") or 0.0) >= 65.0
+                    )
+                ):
+                    llm_candidates = _aggressive_geometry_llm_candidates(
+                        best_text,
+                        best_report,
+                        llm_gateway,
+                        max_candidates=min(5, max(1, remaining_scans - len(raw_batch))),
+                    )
+                else:
+                    llm_candidates = _formula_convergence_llm_patch_candidates(
+                        best_text,
+                        best_report,
+                        block_map,
+                        llm_gateway,
+                        max_candidates=min(3, max(1, remaining_scans - len(raw_batch))),
+                    )
                 raw_batch = list(raw_batch or []) + llm_candidates
         batch: list[tuple[str, str, dict]] = []
         seen = {best_text.strip()}
@@ -14994,6 +15434,21 @@ def _formula_convergence_controller(
                 for key in ("version", "block_count", "formula_score", "target_score", "remaining_gap", "dominant_formula_drivers", "top_blocks")
             },
             "feasibility_estimator": feasibility,
+            "distribution_centrality_detector": centrality,
+            "aggressive_geometry_reauthoring": {
+                "enabled": bool(_env_flag("DRAFTPROOF_AGGRESSIVE_GEOMETRY_REAUTHORING", True)),
+                "triggered": centrality.get("recommended_mode") == "aggressive_geometry_reauthoring",
+                "trigger_reason": (
+                    "safe_floor_above_target"
+                    if feasibility.get("geometry_required")
+                    else "distribution_centrality_high"
+                    if centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
+                    else "not_triggered"
+                ),
+                "centrality_score": centrality.get("centrality_score"),
+                "estimated_safe_floor": feasibility.get("estimated_safe_floor"),
+                "estimated_aggressive_floor": feasibility.get("aggressive_floor"),
+            },
             "geometry_risk_map": {
                 "version": geometry_map.get("version"),
                 "sentence_count": geometry_map.get("sentence_count"),
@@ -15041,18 +15496,34 @@ def _formula_convergence_controller(
                 candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
                 candidates.append(candidate_eval)
                 continue
-            try:
-                drift = drift_checker(best_text, candidate_text, threshold=0.15)
-            except TypeError:
-                drift = drift_checker(best_text, candidate_text)
-            candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
-            if not bool(getattr(drift, "accepted", True)):
-                reason = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
-                candidate_eval["reason"] = reason
-                candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
-                candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
-                candidates.append(candidate_eval)
-                continue
+            fact_contract = None
+            if candidate_eval.get("aggressive_geometry_reauthoring"):
+                fact_contract = _fact_inventory_contract(best_text, candidate_text)
+                candidate_eval["fact_inventory_contract"] = fact_contract
+                candidate_eval["drift_similarity"] = None
+                if not fact_contract.get("accepted"):
+                    reason = "fact_inventory_contract_failed"
+                    candidate_eval["reason"] = reason
+                    candidate_eval["selection_status"] = {
+                        "selectable": False,
+                        "reason": reason,
+                        "fact_inventory_contract": fact_contract,
+                    }
+                    candidates.append(candidate_eval)
+                    continue
+            else:
+                try:
+                    drift = drift_checker(best_text, candidate_text, threshold=0.15)
+                except TypeError:
+                    drift = drift_checker(best_text, candidate_text)
+                candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
+                if not bool(getattr(drift, "accepted", True)):
+                    reason = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
+                    candidate_eval["reason"] = reason
+                    candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
+                    candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
+                    candidates.append(candidate_eval)
+                    continue
             try:
                 scan_t0 = time.time()
                 candidate_report = scan_func(candidate_text)
@@ -15162,6 +15633,7 @@ def _formula_convergence_controller(
                 "unsupported_claim_risk_delta": round(unsupported_claim_delta, 3),
                 "formula_gap_contract": contract_vs_current,
                 "formula_gap_contract_vs_original": contract_vs_original,
+                "fact_inventory_contract": fact_contract,
                 "anti_smoothing_guard": anti_smoothing,
                 "turnitin_like_ai_gate": turnitin_gate,
                 "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
@@ -15271,6 +15743,8 @@ def _formula_convergence_controller(
             )
         )
     )
+    final_feasibility = _formula_feasibility_estimator(best_report, observed_candidates=candidates)
+    final_centrality = _distribution_centrality_detector(best_text, best_report)
     return {
         "enabled": True,
         "version": "formula_convergence_controller_v1",
@@ -15296,9 +15770,32 @@ def _formula_convergence_controller(
         "original_snapshot": report_snapshot(original_report),
         "start_snapshot": report_snapshot(current_report),
         "final_snapshot": report_snapshot(best_report),
-        "feasibility_estimator": _formula_feasibility_estimator(
-            best_report,
-            observed_candidates=candidates,
+        "feasibility_estimator": final_feasibility,
+        "distribution_centrality_detector": final_centrality,
+        "aggressive_geometry_reauthoring": {
+            "enabled": _env_flag("DRAFTPROOF_AGGRESSIVE_GEOMETRY_REAUTHORING", True),
+            "trigger_reason": (
+                "safe_floor_above_target"
+                if final_feasibility.get("geometry_required")
+                else "distribution_centrality_high"
+                if final_centrality.get("recommended_mode") == "aggressive_geometry_reauthoring"
+                else "not_triggered"
+            ),
+            "centrality_score": final_centrality.get("centrality_score"),
+            "estimated_safe_floor": final_feasibility.get("estimated_safe_floor"),
+            "estimated_aggressive_floor": final_feasibility.get("aggressive_floor"),
+            "selected_strategy": selected_strategy if selected_strategy and "aggressive_geometry" in selected_strategy else None,
+            "candidate_count": len([
+                row for row in candidates
+                if isinstance(row, dict) and row.get("aggressive_geometry_reauthoring")
+            ]),
+        },
+        "fact_inventory_contract": (
+            (selected_eval or {}).get("fact_inventory_contract")
+            if isinstance(selected_eval, dict) and selected_eval.get("aggressive_geometry_reauthoring")
+            else _fact_inventory_contract(current_text, best_text)
+            if selected_strategy and "aggressive_geometry" in str(selected_strategy)
+            else None
         ),
         "geometry_risk_map": _geometry_risk_map(best_text, best_report),
         "block_driver_map": last_block_map,
@@ -23462,6 +23959,9 @@ def run_rewrite_pipeline(
             result.summary["block_driver_map"] = stored_convergence_result.get("block_driver_map")
             result.summary["geometry_risk_map"] = stored_convergence_result.get("geometry_risk_map")
             result.summary["feasibility_estimator"] = stored_convergence_result.get("feasibility_estimator")
+            result.summary["distribution_centrality_detector"] = stored_convergence_result.get("distribution_centrality_detector")
+            result.summary["aggressive_geometry_reauthoring"] = stored_convergence_result.get("aggressive_geometry_reauthoring")
+            result.summary["fact_inventory_contract"] = stored_convergence_result.get("fact_inventory_contract")
             result.summary["formula_convergence_passes"] = stored_convergence_result.get("formula_convergence_passes")
             result.summary["selected_formula_portfolio_candidate"] = (
                 stored_convergence_result.get("selected_formula_portfolio_candidate")
@@ -24948,6 +25448,11 @@ def run_rewrite_pipeline(
             )
             if ai_footprint_outcome == "ai_mitigated" and final_turnitin_like_gate.get("safe_band"):
                 result.summary["outcome"] = "ai_mitigated"
+            elif (
+                result.summary.get("aggressive_geometry_reauthoring", {}).get("selected_strategy")
+                and turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"}
+            ):
+                result.summary["outcome"] = "aggressive_partial_mitigation"
             elif turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"}:
                 result.summary["outcome"] = "partially_ai_mitigated"
             else:

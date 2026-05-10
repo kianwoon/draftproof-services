@@ -160,6 +160,10 @@ from rewrite_pipeline import (
     _human_anchor_suppression_frontier,
     _human_anchor_suppression_frontier_candidates,
     _formula_feasibility_estimator,
+    _distribution_centrality_detector,
+    _fact_inventory_contract,
+    _aggressive_geometry_deterministic_candidates,
+    _extract_aggressive_geometry_candidates,
     _geometry_risk_map,
     _coordinated_micro_perturbation_candidates,
     _anti_smoothing_guard_status,
@@ -7390,6 +7394,114 @@ assert_test(
     and llm_patch_candidates[0][2].get("formula_convergence_llm_block_recreate")
     and "quick answer hides the work" in llm_patch_candidates[0][1],
     "formula convergence LLM block recreate returns JSON paragraph patch candidates",
+)
+central_us_text = (
+    "The United States is one of the most influential countries in modern history. "
+    "It has shaped global politics, economics, technology, entertainment, and education. "
+    "The United States was founded in 1776 after independence from Britain. "
+    "The Constitution shaped the government. "
+    "Apple and Microsoft show the country's economic power."
+)
+central_us_report = make_footprint_report(
+    ai_authorship=58,
+    human=44,
+    ai_transformation=56,
+    grounding=45,
+    human_anchor=22,
+    smoothness=58,
+    semantic_uniformity=62,
+    ai_likelihood=68,
+    topk_pattern=100,
+    topk_calibrated_risk=100,
+    generic_assertion_risk=72,
+    qualifying_text_ai_density=80,
+    unsupported_claim_risk=25,
+    broad_claim_risk=60,
+    discourse=55,
+    expansion=60,
+    section_style=60,
+    signal_agreement=62,
+)
+centrality = _distribution_centrality_detector(central_us_text, central_us_report)
+aggressive_deterministic = _aggressive_geometry_deterministic_candidates(
+    central_us_text + "\n\n" + central_us_text + "\n\n" + central_us_text,
+    central_us_report,
+    limit=2,
+)
+assert_test(
+    centrality["recommended_mode"] == "aggressive_geometry_reauthoring"
+    and centrality["centrality_score"] >= 65
+    and bool(aggressive_deterministic),
+    "distribution-central prose triggers aggressive geometry reauthoring candidates",
+)
+aggressive_good_text = (
+    "A practical way to read the United States is to hold two facts together. "
+    "It is influential in politics, economics, technology, entertainment, and education, "
+    "but that influence also makes its weaknesses visible. "
+    "The country was founded in 1776 after independence from Britain, and the Constitution "
+    "became the frame for government power. Apple and Microsoft show one side of economic strength."
+)
+aggressive_bad_text = aggressive_good_text.replace("1776 ", "")
+good_fact_contract = _fact_inventory_contract(central_us_text, aggressive_good_text)
+bad_fact_contract = _fact_inventory_contract(central_us_text, aggressive_bad_text)
+assert_test(
+    good_fact_contract["accepted"]
+    and not bad_fact_contract["accepted"]
+    and "1776" in bad_fact_contract["missing_anchors"],
+    "aggressive fact inventory contract preserves protected dates and core facts",
+)
+aggressive_good_report = make_footprint_report(
+    ai_authorship=34,
+    human=72,
+    ai_transformation=19,
+    grounding=45,
+    human_anchor=66,
+    smoothness=28,
+    semantic_uniformity=24,
+    ai_likelihood=22,
+    topk_pattern=45,
+    topk_calibrated_risk=18,
+    generic_assertion_risk=32,
+    qualifying_text_ai_density=30,
+    unsupported_claim_risk=25,
+    broad_claim_risk=35,
+    discourse=20,
+    expansion=24,
+    section_style=24,
+    signal_agreement=25,
+)
+aggressive_controller_result = _formula_convergence_controller(
+    central_us_text,
+    central_us_report,
+    central_us_report,
+    {"max_passes": 1, "max_scans": 2, "max_llm_calls": 0},
+    scan_func=lambda text: aggressive_good_report if text == aggressive_good_text else central_us_report,
+    candidate_builder=lambda _text, _report, _pass, _map: [
+        (
+            "aggressive_geometry_test_candidate",
+            aggressive_good_text,
+            {"aggressive_geometry_reauthoring": True},
+        )
+    ],
+    drift_checker=lambda *_args, **_kwargs: SimpleNamespace(accepted=False, similarity=0.1, reasons=["style_changed"]),
+)
+assert_test(
+    aggressive_controller_result["selected"]
+    and aggressive_controller_result["target_met"]
+    and aggressive_controller_result["fact_inventory_contract"]["accepted"]
+    and aggressive_controller_result["selected_strategy"] == "aggressive_geometry_test_candidate",
+    "aggressive geometry candidates use fact-inventory contract instead of conservative semantic drift",
+)
+parsed_aggressive = _extract_aggressive_geometry_candidates(json.dumps({
+    "candidates": [
+        {"strategy": "selective_depth_rebuild", "text": aggressive_good_text},
+        {"strategy": "fact_thread_rebuild", "text": aggressive_good_text + " It remains uneven."},
+    ]
+}))
+assert_test(
+    len(parsed_aggressive) == 2
+    and parsed_aggressive[0]["strategy"] == "selective_depth_rebuild",
+    "aggressive geometry JSON candidates parse as full-document candidates",
 )
 stance_candidates = _author_stance_thread_candidates(
     target_push_text,
