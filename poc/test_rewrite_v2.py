@@ -965,6 +965,66 @@ assert_test(len(briefs) == 1, "detect JSON includes rewrite_edit_briefs")
 assert_test(briefs[0]["sentence_index"] == 1, "rewrite brief sentence_index is zero-based")
 assert_test(briefs[0]["previous_sentence"].startswith("In my class"), "rewrite brief includes previous sentence")
 assert_test(briefs[0]["signals"]["problem_tokens"], "rewrite brief includes problem tokens")
+assert_test(
+    briefs[0]["operation_action"] in {
+        "connector_remove",
+        "sentence_split",
+        "clause_reorder",
+        "density_reduce",
+        "transition_break",
+        "micro_entropy_patch",
+    }
+    and briefs[0]["operation_action"] != "rewrite_with_personal_voice",
+    "predictability rewrite brief uses operation-specific action instead of personal voice",
+)
+canonical_pred_raw = {
+    "sentences": [
+        {
+            "sentence_id": "s001",
+            "sentence": "The United States was founded in 1776 after the American colonies declared independence from Britain.",
+            "risk_label": "medium",
+            "score": 0.7,
+            "top10_ratio": 0.92,
+            "top50_ratio": 0.98,
+            "avg_surprisal": 1.9,
+            "paragraph_id": "p001",
+            "top_predicted_tokens": [{"token": "founded", "rank": 1, "probability": 0.2, "top10": True}],
+            "predictable_token_spans": ["was founded in 1776"],
+        }
+    ]
+}
+canonical_finding = Finding(
+    finding_type="medium_predictability",
+    risk_level="medium",
+    evidence_strength="moderate",
+    detail="predictable canonical fact",
+    evidence="The United States was founded in 1776 after the American colonies declared independence from Britain.",
+    recommendation="rewrite",
+    suggested_action_type="",
+    location={"sentence_index": 0},
+    metadata={"finding_id": "f_canonical"},
+    actionability="auto_fixable",
+)
+canonical_builder = ReportBuilder()
+canonical_builder.set_meta(
+    original_text="The United States was founded in 1776 after the American colonies declared independence from Britain."
+)
+canonical_builder.add_detection(DetectResult(
+    scanner="predictability",
+    overall_risk=0.7,
+    confidence="medium",
+    confidence_reason="test",
+    findings=[canonical_finding],
+    raw=canonical_pred_raw,
+))
+canonical_json = report_to_dict(canonical_builder.build())
+canonical_plan = canonical_json.get("rewrite_plan") or {}
+assert_test(
+    not canonical_plan.get("auto_fixable")
+    and canonical_plan.get("no_action")
+    and canonical_plan["no_action"][0]["action"] == "canonical_fact_preserve",
+    "canonical factual predictability is preserved instead of auto-humanized",
+)
 
 rollback_report = render_rewrite_report(
     summary={
