@@ -105,7 +105,12 @@ def _ai_search_candidate_selection_status(
     target: float = 60.0,
     required_min_ai: float = 50.0,
 ) -> dict:
-    """Classify a scanned AI-search candidate without overclaiming tiny drops."""
+    """Classify a scanned AI-search candidate without discarding safe movement.
+
+    The legacy 5-point AI gate is still reported as a full-mitigation threshold,
+    but it must not be a cliff that discards a rescanned candidate with safe
+    measurable AI reduction. Downstream safety gates can still veto regressions.
+    """
     gate = _ai_first_gate_status(
         reference_ai,
         candidate_ai,
@@ -123,13 +128,15 @@ def _ai_search_candidate_selection_status(
     elif not improved:
         reason = "candidate_not_below_reference"
     elif gate["required"]:
-        reason = "best_candidate_below_required_ai_drop"
+        reason = "accepted_safe_partial_ai_drop"
     else:
         reason = "ai_first_not_required"
     status = dict(gate)
     status.update({
         "improved": improved,
-        "selectable": bool(gate["success"]),
+        "required_min_drop_met": bool(gate["success"]),
+        "safe_partial_ai_drop": bool(text_changed and improved and not gate["success"]),
+        "selectable": bool(gate["success"] or (text_changed and improved)),
         "reason": reason,
     })
     return status
@@ -345,6 +352,7 @@ def _ai_search_selected_by_final_safety_gate(
             "partial_ai_footprint_mitigation",
             "topk_blocker_progress",
             "safe_partial_quality_improvement",
+            "safe_partial_ai_drop",
         )
     )
 
@@ -369,6 +377,31 @@ def _clear_stale_rollback_for_kept_ai_mitigation(summary: dict, source: str) -> 
         summary.setdefault("saved_contract_notes", []).append(
             f"Cleared earlier rewrite rollback because {source} produced a kept AI-mitigation candidate."
         )
+
+
+def _normalize_kept_topk_blocked_partial(summary: dict) -> None:
+    """Keep public outcome consistent when a Top-k-blocked partial is retained."""
+    if not isinstance(summary, dict):
+        return
+    kept_note = any(
+        "Top-k-blocked candidate as partial progress" in str(note)
+        for note in summary.get("saved_contract_notes") or []
+    )
+    if (
+        summary.get("rollback_applied") is False
+        and (
+            summary.get("outcome") == "topk_blocked"
+            or kept_note
+        )
+    ):
+        summary["outcome"] = "topk_blocked_partial_kept"
+        gate = summary.get("topk_acceptance_gate")
+        if not isinstance(gate, dict):
+            gate = {}
+            summary["topk_acceptance_gate"] = gate
+        gate.setdefault("accepted", False)
+        gate.setdefault("partial_kept", True)
+        gate.setdefault("reason", "topk_blocked_partial_kept_without_rollback")
 
 
 def _float_env(name: str, default: float) -> float:
@@ -25937,7 +25970,14 @@ def run_rewrite_pipeline(
         result.summary["detect_scan_attempted"] = _extract_scan_summary(attempted_report_dict)
     else:
         result.summary["final_text"] = rewritten_text
-        if ai_search_selected:
+        convergence_selected = bool(
+            isinstance(result.summary.get("formula_convergence_controller"), dict)
+            and result.summary.get("formula_convergence_controller", {}).get("selected")
+        )
+        if result.summary.get("outcome") == "topk_blocked_partial_kept":
+            result.summary["converged"] = True
+            _normalize_kept_topk_blocked_partial(result.summary)
+        elif ai_search_selected or convergence_selected:
             ai_footprint_outcome = str(final_ai_footprint_gate.get("outcome_class") or "")
             turnitin_like_outcome = str(final_turnitin_like_gate.get("outcome_class") or "")
             texture_blockers = [
@@ -25966,6 +26006,7 @@ def run_rewrite_pipeline(
                     "topk_blocked" if topk_still_blocked else "partially_improved",
                 )
             result.summary["converged"] = True
+            _normalize_kept_topk_blocked_partial(result.summary)
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings
     result.sentence_comparison = sentence_comparison
@@ -25990,6 +26031,7 @@ def run_rewrite_pipeline(
     summary["rewrite_time"] = total_elapsed
     summary["original_tier"] = ctx.overall_tier
     summary["rewrite_decision"] = ctx.rewrite_decision
+    _normalize_kept_topk_blocked_partial(summary)
 
     with open(json_path_out, "w") as f:
         json.dump(summary, f, indent=2, default=str)
@@ -25998,7 +26040,12 @@ def run_rewrite_pipeline(
         pipeline_status = "topk_blocked"
     elif summary.get("rollback_applied") or summary.get("no_text_change"):
         pipeline_status = "original_preserved"
-    elif summary.get("outcome") in {"partially_improved", "partially_ai_mitigated", "cleanup_improved"}:
+    elif summary.get("outcome") in {
+        "partially_improved",
+        "partially_ai_mitigated",
+        "cleanup_improved",
+        "topk_blocked_partial_kept",
+    }:
         pipeline_status = summary.get("outcome")
     else:
         pipeline_status = "rewritten"

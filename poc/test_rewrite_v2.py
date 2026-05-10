@@ -97,6 +97,7 @@ from rewrite_pipeline import (
     _strict_safe_candidate_rank,
     _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
+    _normalize_kept_topk_blocked_partial,
     _allow_ai_search_llm_after_deterministic,
     _load_local_env,
     _repair_candidate_source_damage,
@@ -1079,9 +1080,27 @@ assert_test(
 tiny_search_status = _ai_search_candidate_selection_status(57.78, 57.72, True)
 assert_test(
     tiny_search_status["improved"]
-    and not tiny_search_status["selectable"]
-    and tiny_search_status["reason"] == "best_candidate_below_required_ai_drop",
-    "AI search tracks tiny score drops without selecting them as mitigation success",
+    and tiny_search_status["selectable"]
+    and tiny_search_status["safe_partial_ai_drop"]
+    and tiny_search_status["reason"] == "accepted_safe_partial_ai_drop",
+    "AI search keeps safe partial score drops instead of discarding them on the 5-point gate",
+)
+assert_test(
+    _ai_search_selected_by_final_safety_gate(True, tiny_search_status),
+    "safe partial AI drops bypass legacy AI-first rollback after downstream safety checks",
+)
+topk_partial_summary = {
+    "rollback_applied": False,
+    "outcome": "topk_blocked",
+    "saved_contract_notes": [
+        "Kept a Top-k-blocked candidate as partial progress because it materially improved AI-footprint drivers; it is not strict-safe or detector-safe."
+    ],
+}
+_normalize_kept_topk_blocked_partial(topk_partial_summary)
+assert_test(
+    topk_partial_summary["outcome"] == "topk_blocked_partial_kept"
+    and topk_partial_summary["topk_acceptance_gate"]["partial_kept"] is True,
+    "kept Top-k-blocked partial progress is not relabelled as a full rollback/block",
 )
 final_safe_partial = _safe_partial_final_progress_status(
     text_changed=True,
@@ -2276,7 +2295,7 @@ assert_test(
 meaningful_search_status = _ai_search_candidate_selection_status(57.78, 52.50, True)
 assert_test(
     meaningful_search_status["selectable"],
-    "AI search selects candidates only after the required AI drop is met",
+    "AI search still selects candidates after the required AI drop is met",
 )
 negative_shift_rank = _goal_climb_candidate_rank(
     {
