@@ -1378,11 +1378,12 @@ assert_test(
     }),
     "selector distinguishes Top-k-safe frontier from merely improved Top-k-blocked progress",
 )
-phase_contract = _strict_safe_phase_budget_contract(12, "word " * 900)
+saturated_topk_report = {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}}
+phase_contract = _strict_safe_phase_budget_contract(14, "word " * 900, saturated_topk_report)
 phase_contract_lower = _strict_safe_phase_budget_contract(7)
 assert_test(
-    phase_contract["total_llm_hard_cap"] == 12
-    and phase_contract["topk_safe_band_rebuild"] == 7
+    phase_contract["total_llm_hard_cap"] == 14
+    and phase_contract["topk_safe_band_rebuild"] == 9
     and phase_contract["authorship_transformation_texture_controller"] == 3
     and phase_contract["final_texture_proxy_repair"] == 2
     and phase_contract["emergency_diagnostic_reserve"] == 0
@@ -2198,8 +2199,9 @@ try:
     os.environ.pop("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", None)
     short_policy = _ai_search_budget_policy("word " * 300)
     medium_policy = _ai_search_budget_policy("word " * 900)
-    long_policy = _ai_search_budget_policy("word " * 2200)
-    default_hard_cap = _ai_search_llm_hard_cap("word " * 900)
+    saturated_medium_policy = _ai_search_budget_policy("word " * 900, saturated_topk_report)
+    long_policy = _ai_search_budget_policy("word " * 2200, saturated_topk_report)
+    default_hard_cap = _ai_search_llm_hard_cap("word " * 900, saturated_topk_report)
     os.environ["DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS"] = "10"
     explicit_hard_cap = _ai_search_llm_hard_cap("word " * 900)
 finally:
@@ -2208,10 +2210,11 @@ finally:
     else:
         os.environ["DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS"] = old_hard_cap
 assert_test(
-    short_policy["max_llm_calls"] == 6
+    short_policy["max_llm_calls"] == 7
     and medium_policy["max_llm_calls"] == 12
-    and long_policy["max_llm_calls"] == 16
-    and default_hard_cap == 12
+    and saturated_medium_policy["max_llm_calls"] == 14
+    and long_policy["max_llm_calls"] == 17
+    and default_hard_cap == 14
     and explicit_hard_cap == 10,
     "AI search hard LLM cap uses document-size defaults and honors explicit overrides",
 )
@@ -2223,7 +2226,7 @@ assert_test(
     "280 to 560 words" not in medium_topk_prompt
     and "rough annotated prose" not in medium_topk_prompt
     and "short country profile" in medium_topk_prompt
-    and _topk_safe_band_patch_rounds_default("word " * 900) == 5
+    and _topk_safe_band_patch_rounds_default("word " * 900, saturated_topk_report) == 7
     and _topk_safe_band_snapshot_max_tokens_default("word " * 900) == 3600,
     "Top-k safe-band rebuild uses document-sized prose, not compressed snapshot fragments",
 )

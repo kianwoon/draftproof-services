@@ -2748,13 +2748,54 @@ def _topk_safe_band_snapshot_prompt(text: str, report_dict: dict | None) -> str:
     )
 
 
-def _topk_safe_band_patch_rounds_default(source_text: str) -> int:
+def _topk_calibrated_from_report(report_dict: dict | None) -> float | None:
+    if not isinstance(report_dict, dict):
+        return None
+    ai_components = (((report_dict.get("ai_risk_badge") or {}).get("ai_components") or {}))
+    value = ai_components.get("topk_calibrated_risk")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _topk_gap_band(report_dict: dict | None) -> dict:
+    value = _topk_calibrated_from_report(report_dict)
+    safe = _safe_topk_calibrated_limit()
+    if not isinstance(value, (int, float)):
+        return {"value": None, "safe": safe, "gap": 0.0, "band": "unknown"}
+    gap = max(0.0, float(value) - safe)
+    if gap >= 60:
+        band = "saturated"
+    elif gap >= 35:
+        band = "high"
+    elif gap >= 10:
+        band = "elevated"
+    elif gap > 0:
+        band = "near_miss"
+    else:
+        band = "safe"
+    return {"value": round(float(value), 3), "safe": safe, "gap": round(gap, 3), "band": band}
+
+
+def _topk_safe_band_patch_rounds_default(source_text: str, report_dict: dict | None = None) -> int:
     words = _text_word_count(source_text)
+    gap = _topk_gap_band(report_dict)
+    band = gap.get("band")
     if words <= 700:
-        return 2
-    if words <= 1800:
-        return 5
-    return 7
+        base, cap = 2, 5
+    elif words <= 1800:
+        base, cap = 4, 8
+    else:
+        base, cap = 5, 10
+    extra_by_gap = {
+        "saturated": 3,
+        "high": 2,
+        "elevated": 1,
+        "near_miss": 2,
+        "safe": 0,
+        "unknown": 1,
+    }.get(str(band), 1)
+    return max(1, min(cap, base + extra_by_gap))
 
 
 def _topk_safe_band_snapshot_max_tokens_default(source_text: str) -> int:
@@ -4502,17 +4543,21 @@ STRICT_SAFE_PHASE_BUDGET_CONTRACT = {
 }
 
 
-def _strict_safe_phase_budget_contract(total_cap: int | None = None, source_text: str = "") -> dict:
+def _strict_safe_phase_budget_contract(
+    total_cap: int | None = None,
+    source_text: str = "",
+    report_dict: dict | None = None,
+) -> dict:
     """Fixed LLM budget split for strict-safe mitigation phases.
 
     Top-k is the entry condition for strict-safe mitigation, so it receives
     the largest fixed reserve. Runtime may lower the total cap, but no phase
     can borrow calls reserved for earlier prerequisite phases.
     """
-    policy = _ai_search_budget_policy(source_text)
+    policy = _ai_search_budget_policy(source_text, report_dict)
     policy_phase = policy.get("phase_budget") or {}
     inferred_cap = int(policy.get("max_llm_calls") or STRICT_SAFE_PHASE_BUDGET_CONTRACT["total_llm_hard_cap"])
-    cap = int(total_cap if isinstance(total_cap, int) else _ai_search_llm_hard_cap(source_text))
+    cap = int(total_cap if isinstance(total_cap, int) else _ai_search_llm_hard_cap(source_text, report_dict))
     cap = max(0, min(cap, inferred_cap))
     contract = {
         "total_llm_hard_cap": inferred_cap,
@@ -5623,59 +5668,68 @@ def _adaptive_budget_default(source_text: str, short_value: int, long_value: int
     return str(long_value)
 
 
-def _ai_search_budget_policy(source_text: str = "") -> dict:
-    """Document-size budget policy for AI mitigation search.
+def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = None) -> dict:
+    """Driver-aware budget policy for AI mitigation search.
 
-    Top-k is a prerequisite for strict-safe output. Medium and long documents
-    need enough calls reserved for Top-k before downstream texture work can be
-    useful.
+    Word count sets the floor. Active scanner blockers, especially calibrated
+    Top-k gap, decide the extra call reserve. This avoids both brittle fixed
+    budgets and runaway retries.
     """
     words = _text_word_count(source_text)
+    topk_gap = _topk_gap_band(report_dict)
+    topk_rounds = _topk_safe_band_patch_rounds_default(source_text, report_dict)
+    topk_phase = 1 + topk_rounds + 1  # masked route + snapshot + patch rounds
     if words <= 700:
-        return {
+        base = {
             "word_count": words,
             "size_band": "short",
             "max_seconds": 120,
-            "max_llm_calls": 6,
+            "max_llm_calls": max(6, topk_phase + 2),
             "max_candidate_scans": 36,
             "phase_budget": {
-                "topk_safe_band_rebuild": 4,
+                "topk_safe_band_rebuild": topk_phase,
                 "authorship_transformation_texture_controller": 1,
                 "final_texture_proxy_repair": 1,
             },
         }
+        base["driver_budget"] = {"topk": topk_gap, "topk_patch_rounds": topk_rounds}
+        return base
     if words <= 1800:
-        return {
+        base = {
             "word_count": words,
             "size_band": "medium",
             "max_seconds": 240,
-            "max_llm_calls": 12,
+            "max_llm_calls": max(10, topk_phase + 5),
             "max_candidate_scans": 64,
             "phase_budget": {
-                "topk_safe_band_rebuild": 7,
+                "topk_safe_band_rebuild": topk_phase,
                 "authorship_transformation_texture_controller": 3,
                 "final_texture_proxy_repair": 2,
             },
         }
-    return {
+        base["driver_budget"] = {"topk": topk_gap, "topk_patch_rounds": topk_rounds}
+        return base
+    base = {
         "word_count": words,
         "size_band": "long",
         "max_seconds": 420,
-        "max_llm_calls": 16,
+        "max_llm_calls": max(14, topk_phase + 7),
         "max_candidate_scans": 96,
         "phase_budget": {
-            "topk_safe_band_rebuild": 9,
+            "topk_safe_band_rebuild": topk_phase,
             "authorship_transformation_texture_controller": 5,
             "final_texture_proxy_repair": 2,
         },
     }
+    base["driver_budget"] = {"topk": topk_gap, "topk_patch_rounds": topk_rounds}
+    return base
 
 
-def _ai_search_llm_hard_cap(source_text: str = "") -> int:
+def _ai_search_llm_hard_cap(source_text: str = "", report_dict: dict | None = None) -> int:
     explicit = os.environ.get("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS")
     if explicit is not None:
         return max(1, int(_float_env("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", 10.0)))
-    return max(1, int(_ai_search_budget_policy(source_text).get("max_llm_calls") or 1))
+    return max(1, int(_ai_search_budget_policy(source_text, report_dict).get("max_llm_calls") or 1))
 
 
 def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
@@ -14750,8 +14804,8 @@ def run_rewrite_pipeline(
         best_human_shift_rank: tuple = (-1, -9999.0, -9999.0)
         best_blocked_human_candidate: dict | None = None
         best_blocked_human_rank: tuple | None = None
-        budget_policy = _ai_search_budget_policy(search_source_text)
-        hard_llm_cap = _ai_search_llm_hard_cap(search_source_text)
+        budget_policy = _ai_search_budget_policy(search_source_text, original_report_dict)
+        hard_llm_cap = _ai_search_llm_hard_cap(search_source_text, original_report_dict)
         search_budget = {
             "max_seconds": _float_env(
                 "DRAFTPROOF_AI_SEARCH_MAX_SECONDS",
@@ -14772,7 +14826,7 @@ def run_rewrite_pipeline(
             hard_llm_cap,
         )
         search_summary["budget"] = search_budget
-        phase_budget_contract = _strict_safe_phase_budget_contract(hard_llm_cap, search_source_text)
+        phase_budget_contract = _strict_safe_phase_budget_contract(hard_llm_cap, search_source_text, original_report_dict)
         phase_budget_used = {
             key: 0
             for key in phase_budget_contract
@@ -16925,6 +16979,18 @@ def run_rewrite_pipeline(
                 summary.update({"skipped": True, "reason": "texture_below_threshold"})
                 search_summary["final_topk_texture_repair"] = summary
                 return
+            elapsed_before_final = time.time() - search_started
+            final_min_seconds = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_SECONDS_REMAINING", 25.0)
+            seconds_remaining = float(search_budget.get("max_seconds") or 0.0) - elapsed_before_final
+            if seconds_remaining < final_min_seconds:
+                summary.update({
+                    "skipped": True,
+                    "reason": "insufficient_time_budget_for_final_texture_repair",
+                    "seconds_remaining": round(seconds_remaining, 3),
+                    "min_seconds_remaining": final_min_seconds,
+                })
+                search_summary["final_topk_texture_repair"] = summary
+                return
             scan_reserve_reason = str(adaptive_stop_reason or "")
             if (
                 scan_reserve_reason != "budget_exhausted_candidate_scans"
@@ -17374,10 +17440,10 @@ def run_rewrite_pipeline(
                     try:
                         planned_patch_rounds_for_reserve = max(1, int(_float_env(
                             "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
-                            float(_topk_safe_band_patch_rounds_default(search_source_text)),
+                            float(_topk_safe_band_patch_rounds_default(search_source_text, original_report_dict)),
                         )))
                     except (TypeError, ValueError):
-                        planned_patch_rounds_for_reserve = _topk_safe_band_patch_rounds_default(search_source_text)
+                        planned_patch_rounds_for_reserve = _topk_safe_band_patch_rounds_default(search_source_text, original_report_dict)
                     try:
                         planned_extra_safe_rounds_for_reserve = max(0, int(_float_env(
                             "DRAFTPROOF_TOPK_SAFE_BAND_EXTRA_SAFE_ROUNDS",
@@ -17492,10 +17558,10 @@ def run_rewrite_pipeline(
                                 try:
                                     max_patch_rounds = max(1, int(_float_env(
                                         "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
-                                        float(_topk_safe_band_patch_rounds_default(route_base_text)),
+                                        float(_topk_safe_band_patch_rounds_default(route_base_text, route_base_report)),
                                     )))
                                 except (TypeError, ValueError):
-                                    max_patch_rounds = _topk_safe_band_patch_rounds_default(route_base_text)
+                                    max_patch_rounds = _topk_safe_band_patch_rounds_default(route_base_text, route_base_report)
                                 try:
                                     extra_safe_rounds = max(0, int(_float_env(
                                         "DRAFTPROOF_TOPK_SAFE_BAND_EXTRA_SAFE_ROUNDS",
@@ -17504,6 +17570,13 @@ def run_rewrite_pipeline(
                                 except (TypeError, ValueError):
                                     extra_safe_rounds = 1
                                 safe_rounds_used = 0
+                                previous_topk_calibrated = (
+                                    float(snapshot_ai.get("topk_calibrated_risk"))
+                                    if isinstance(snapshot_ai.get("topk_calibrated_risk"), (int, float))
+                                    else None
+                                )
+                                stagnant_topk_rounds = 0
+                                min_round_drop = _float_env("DRAFTPROOF_TOPK_SAFE_BAND_MIN_MARGINAL_DROP", 0.35)
                                 for patch_round in range(1, max_patch_rounds + 1):
                                     current_ai = (((candidate_patch_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
                                     if isinstance(current_ai.get("topk_calibrated_risk"), (int, float)) and float(current_ai.get("topk_calibrated_risk")) < _safe_topk_calibrated_limit():
@@ -17557,10 +17630,29 @@ def run_rewrite_pipeline(
                                     applied.extend(round_applied)
                                     candidate_patch_report = _full_scan_report_dict(candidate_to_eval)
                                     patched_ai = (((candidate_patch_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+                                    patched_topk_calibrated = patched_ai.get("topk_calibrated_risk")
+                                    marginal_topk_drop = None
+                                    if (
+                                        isinstance(previous_topk_calibrated, (int, float))
+                                        and isinstance(patched_topk_calibrated, (int, float))
+                                    ):
+                                        marginal_topk_drop = round(
+                                            float(previous_topk_calibrated) - float(patched_topk_calibrated),
+                                            3,
+                                        )
+                                        if (
+                                            marginal_topk_drop < min_round_drop
+                                            and float(patched_topk_calibrated) > _safe_topk_calibrated_limit() + 1.0
+                                        ):
+                                            stagnant_topk_rounds += 1
+                                        else:
+                                            stagnant_topk_rounds = 0
+                                        previous_topk_calibrated = float(patched_topk_calibrated)
                                     patch_rounds[-1].update({
                                         "topk_pattern_raw": patched_ai.get("topk_pattern_raw", patched_ai.get("topk_pattern")),
-                                        "topk_calibrated_risk": patched_ai.get("topk_calibrated_risk"),
+                                        "topk_calibrated_risk": patched_topk_calibrated,
                                         "topk_safe_band": patched_ai.get("topk_safe_band"),
+                                        "marginal_topk_drop": marginal_topk_drop,
                                     })
                                     fallback_rank = _topk_rebuild_fallback_rank(candidate_patch_report)
                                     if fallback_rank and (not best_topk_rank or fallback_rank > best_topk_rank):
@@ -17572,6 +17664,16 @@ def run_rewrite_pipeline(
                                         best_safe_text = candidate_to_eval
                                         best_safe_report = candidate_patch_report
                                         best_safe_rank = safe_rank
+                                    if stagnant_topk_rounds >= 2:
+                                        patch_rounds.append({
+                                            "round": patch_round + 1,
+                                            "skipped": True,
+                                            "reason": "marginal_topk_gain_stalled",
+                                            "min_marginal_drop": min_round_drop,
+                                            "stagnant_rounds": stagnant_topk_rounds,
+                                            "topk_calibrated_risk": patched_topk_calibrated,
+                                        })
+                                        break
                                 safe_band_summary["patch_rounds"] = patch_rounds
                                 safe_band_summary["patch_candidate_count"] = sum(
                                     int(row.get("patch_candidate_count") or 0) for row in patch_rounds
