@@ -170,6 +170,7 @@ from rewrite_pipeline import (
     _ai_density_breaker_sentence_route,
     _post_selection_ai_density_breaker_candidates,
     _post_selection_ai_density_breaker_acceptance,
+    _record_rewrite_llm_calls,
     _human_anchor_driver_contract,
     _author_stance_thread_candidates,
     _human_target_ai_search_status,
@@ -7632,6 +7633,27 @@ assert_test(
     and all("1776" in candidate for _strategy, candidate, _meta in density_candidates),
     "density breaker candidates keep canonical factual anchors while editing generic routes",
 )
+assert_test(
+    bool(density_candidates)
+    and density_candidates[0][0].startswith("density_window_patch")
+    and all(
+        not strategy.startswith("density_route_patch_top4")
+        and not strategy.startswith("density_route_patch_top6")
+        for strategy, _candidate, _meta in density_candidates
+    ),
+    "density breaker uses bounded density windows instead of scattered top-4/top-6 sentence edits",
+)
+assert_test(
+    bool(density_candidates)
+    and all(
+        (_meta.get("patchwork_budget") or {}).get("accepted") is True
+        and int(_meta.get("edited_sentence_count") or 0)
+        <= int((_meta.get("edit_budget") or {}).get("max_edited_sentences") or 0)
+        for _strategy, _candidate, _meta in density_candidates
+        if _meta.get("operation") == "coordinated_density_window_patch"
+    ),
+    "density breaker candidates carry and obey the patchwork edit budget",
+)
 
 base_acceptance_report = {
     "ai_risk_badge": {
@@ -7692,6 +7714,19 @@ assert_test(
     accepted_density.get("selectable") is True
     and accepted_density.get("driver_drops", {}).get("qualifying_text_ai_density") == 3.0,
     "density breaker accepts only rescanned formula/external/density improvement without safety regression",
+)
+assert_test(
+    accepted_density.get("positive_ai_burden_drop", 0) > 0,
+    "density breaker acceptance requires positive AI-burden movement, not suppression-only wins",
+)
+llm_summary_probe = {}
+_record_rewrite_llm_calls(llm_summary_probe, "ai_search_llm_calls_used", 2)
+_record_rewrite_llm_calls(llm_summary_probe, "formula_convergence_llm_calls_used", "4")
+assert_test(
+    llm_summary_probe.get("llm_calls_used") == 6
+    and llm_summary_probe.get("ai_search_llm_calls_used") == 2
+    and llm_summary_probe.get("formula_convergence_llm_calls_used") == 4,
+    "rewrite summary aggregates phase LLM call counts instead of reporting zero after budgeted calls",
 )
 
 

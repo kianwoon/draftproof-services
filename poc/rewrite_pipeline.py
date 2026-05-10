@@ -298,17 +298,176 @@ def _ai_density_breaker_map(text: str, report_dict: dict | None) -> dict:
             "preview": paragraph[:240],
         })
     paragraph_rows.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
+    density_windows = _ai_density_window_targets(sentence_rows)
     return {
         "version": "post_selection_ai_density_breaker_map_v1",
         "sentence_count": len(sentences),
+        "sentence_rows": sentence_rows,
         "top_sentence_targets": sorted(
             [row for row in sentence_rows if float(row.get("score") or 0.0) > 0.0],
             key=lambda row: float(row.get("score") or 0.0),
             reverse=True,
         )[:12],
+        "top_density_windows": density_windows,
         "contiguous_ai_density_runs": run_rows[:6],
         "top_generic_paragraphs": paragraph_rows[:8],
     }
+
+
+def _ai_density_edit_budget(text: str) -> dict:
+    """Bound post-selection edits so the add-on layer cannot create patchwork."""
+    sentence_count = len(_split_sentences(text))
+    word_count = _text_word_count(text)
+    if word_count <= 350:
+        max_sentences = 4
+        max_ratio = 0.22
+    elif word_count <= 800:
+        max_sentences = 8
+        max_ratio = 0.18
+    elif word_count <= 1800:
+        max_sentences = 10
+        max_ratio = 0.14
+    else:
+        max_sentences = 14
+        max_ratio = 0.10
+    if sentence_count <= 6:
+        max_ratio = max(max_ratio, 0.34)
+    ratio_cap = max(1, int(math.floor(max(1, sentence_count) * max_ratio)))
+    effective_max = max(1, min(max_sentences, ratio_cap))
+    return {
+        "version": "ai_density_edit_budget_v1",
+        "word_count": word_count,
+        "sentence_count": sentence_count,
+        "max_edited_sentences": effective_max,
+        "max_edited_sentence_ratio": max_ratio,
+    }
+
+
+def _ai_density_window_targets(sentence_rows: list[dict] | None, *, max_windows: int = 6) -> list[dict]:
+    """Rank 3-5 sentence windows by document-level AI-density drag.
+
+    This avoids the previous scattershot behavior where the highest individual
+    sentences across an essay were patched together, creating a stitched feel.
+    """
+    rows = [row for row in (sentence_rows or []) if isinstance(row, dict)]
+    if not rows:
+        return []
+    raw_windows: list[dict] = []
+    for start in range(len(rows)):
+        for size in (3, 4, 5):
+            end = start + size
+            if end > len(rows):
+                continue
+            window_rows = rows[start:end]
+            editable = [
+                row for row in window_rows
+                if not row.get("canonical_fact_preserved")
+                and float(row.get("score") or 0.0) > 0.0
+            ]
+            if not editable:
+                continue
+            transition_count = sum(1 for row in editable if row.get("transition_risk"))
+            generic_hits = sum(int(row.get("generic_hits") or 0) for row in editable)
+            canonical_count = sum(1 for row in window_rows if row.get("canonical_fact_preserved"))
+            score = (
+                sum(max(0.0, float(row.get("score") or 0.0)) for row in editable)
+                + transition_count * 1.25
+                + generic_hits * 0.35
+                - canonical_count * 1.5
+            )
+            if score <= 0.0:
+                continue
+            raw_windows.append({
+                "start_sentence": start,
+                "end_sentence": end - 1,
+                "sentence_count": size,
+                "editable_sentence_count": len(editable),
+                "score": round(score, 3),
+                "editable_sentences": [
+                    {
+                        "sentence_index": row.get("sentence_index"),
+                        "sentence": row.get("sentence"),
+                        "score": row.get("score"),
+                        "top10_ratio": row.get("top10_ratio"),
+                        "transition_risk": row.get("transition_risk"),
+                        "generic_hits": row.get("generic_hits"),
+                    }
+                    for row in editable
+                ],
+                "preview": " ".join(str(row.get("sentence") or "") for row in window_rows)[:320],
+            })
+    raw_windows.sort(key=lambda row: (float(row.get("score") or 0.0), int(row.get("editable_sentence_count") or 0)), reverse=True)
+    selected: list[dict] = []
+    occupied: set[int] = set()
+    for row in raw_windows:
+        indexes = set(range(int(row["start_sentence"]), int(row["end_sentence"]) + 1))
+        if len(indexes & occupied) > 1:
+            continue
+        selected.append(row)
+        occupied.update(indexes)
+        if len(selected) >= max_windows:
+            break
+    return selected
+
+
+def _ai_density_patchwork_budget_status(source_text: str, candidate_text: str, meta: dict | None = None) -> dict:
+    budget = _ai_density_edit_budget(source_text)
+    meta = meta if isinstance(meta, dict) else {}
+    edited_count = meta.get("edited_sentence_count")
+    if not isinstance(edited_count, (int, float)):
+        source_sentences = _split_sentences(source_text)
+        candidate_sentences = _split_sentences(candidate_text)
+        matcher = SequenceMatcher(None, source_sentences, candidate_sentences, autojunk=False)
+        edited_count = 0
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                continue
+            edited_count += max(i2 - i1, j2 - j1)
+    edited_count = int(max(0, edited_count or 0))
+    sentence_count = int(budget.get("sentence_count") or 0)
+    ratio = edited_count / max(1, sentence_count)
+    accepted = bool(
+        edited_count <= int(budget.get("max_edited_sentences") or 0)
+        and ratio <= float(budget.get("max_edited_sentence_ratio") or 1.0)
+    )
+    return {
+        "version": "ai_density_patchwork_budget_v1",
+        "accepted": accepted,
+        "edited_sentence_count": edited_count,
+        "edited_sentence_ratio": round(ratio, 3),
+        "budget": budget,
+        "reason": "within_patchwork_budget" if accepted else "patchwork_edit_budget_exceeded",
+    }
+
+
+def _turnitin_like_positive_burden_drop(before_report: dict | None, after_report: dict | None) -> float:
+    before = _turnitin_like_ai_profile(before_report)
+    after = _turnitin_like_ai_profile(after_report)
+    return round(float(before.get("raw_positive_score") or 0.0) - float(after.get("raw_positive_score") or 0.0), 3)
+
+
+def _record_rewrite_llm_calls(summary: dict, phase_key: str, calls: int | float | str | None) -> int:
+    """Record phase and total LLM calls in one place.
+
+    Several rewrite phases maintain their own budgets. The report must reflect
+    actual phase usage so production logs and JSON summaries do not disagree.
+    """
+    if not isinstance(summary, dict):
+        return 0
+    try:
+        call_count = max(0, int(calls or 0))
+    except (TypeError, ValueError):
+        call_count = 0
+    summary[str(phase_key)] = call_count
+    if call_count:
+        try:
+            prior = int(summary.get("llm_calls_used") or 0)
+        except (TypeError, ValueError):
+            prior = 0
+        summary["llm_calls_used"] = prior + call_count
+    else:
+        summary.setdefault("llm_calls_used", 0)
+    return call_count
 
 
 def _post_selection_ai_density_breaker_candidates(
@@ -323,6 +482,8 @@ def _post_selection_ai_density_breaker_candidates(
     candidates: list[tuple[str, str, dict]] = []
     seen = {str(current_text or "").strip()}
     limit = max(1, int(limit or 1))
+    edit_budget = _ai_density_edit_budget(current_text)
+    max_edits = max(1, int(edit_budget.get("max_edited_sentences") or 1))
 
     def add(strategy: str, candidate: str, meta: dict) -> None:
         if len(candidates) >= limit:
@@ -333,14 +494,75 @@ def _post_selection_ai_density_breaker_candidates(
         seen.add(normalized)
         candidates.append((strategy, normalized, {**meta, "post_selection_ai_density_breaker_candidate": True}))
 
+    window_targets = density_map.get("top_density_windows") or []
+    for take_windows in (1, 2, 3):
+        replacements: dict[str, str] = {}
+        operations = []
+        edited_indexes: set[int] = set()
+        for window in window_targets[:take_windows]:
+            editable_rows = sorted(
+                [
+                    row for row in (window.get("editable_sentences") or [])
+                    if isinstance(row, dict)
+                ],
+                key=lambda row: int(row.get("sentence_index") if isinstance(row.get("sentence_index"), int) else 10**9),
+            )
+            for row in editable_rows:
+                if len(edited_indexes) >= max_edits:
+                    break
+                sentence_index = row.get("sentence_index")
+                if not isinstance(sentence_index, int) or sentence_index in edited_indexes:
+                    continue
+                original = str(row.get("sentence") or "")
+                replacement, ops = _ai_density_breaker_sentence_route(original)
+                if ops and replacement != original:
+                    replacements[original] = replacement
+                    edited_indexes.add(sentence_index)
+                    operations.append({
+                        "sentence_index": sentence_index,
+                        "operations": ops,
+                        "score": row.get("score"),
+                        "top10_ratio": row.get("top10_ratio"),
+                        "window": {
+                            "start_sentence": window.get("start_sentence"),
+                            "end_sentence": window.get("end_sentence"),
+                            "score": window.get("score"),
+                        },
+                    })
+            if len(edited_indexes) >= max_edits:
+                break
+        if operations:
+            candidate_text = _splice_sentences_by_text(current_text, replacements)
+            budget_status = _ai_density_patchwork_budget_status(
+                current_text,
+                candidate_text,
+                {"edited_sentence_count": len(operations)},
+            )
+            add(
+                f"density_window_patch_top{take_windows}",
+                candidate_text,
+                {
+                    "operation": "coordinated_density_window_patch",
+                    "edited_sentence_count": len(operations),
+                    "target_window_count": take_windows,
+                    "operations": operations,
+                    "edit_budget": edit_budget,
+                    "patchwork_budget": budget_status,
+                    "density_breaker_map": {
+                        "version": density_map.get("version"),
+                        "top_density_windows": window_targets[:take_windows],
+                    },
+                },
+            )
+
     sentence_targets = [
         row for row in density_map.get("top_sentence_targets") or []
         if not row.get("canonical_fact_preserved")
     ]
-    for take in (2, 4, 6):
+    if not candidates and _env_flag("DRAFTPROOF_DENSITY_BREAKER_SCATTER_FALLBACK", False):
         replacements: dict[str, str] = {}
         operations = []
-        for row in sentence_targets[:take]:
+        for row in sentence_targets[: min(2, max_edits)]:
             original = str(row.get("sentence") or "")
             replacement, ops = _ai_density_breaker_sentence_route(original)
             if ops and replacement != original:
@@ -352,13 +574,20 @@ def _post_selection_ai_density_breaker_candidates(
                     "top10_ratio": row.get("top10_ratio"),
                 })
         if operations:
+            candidate_text = _splice_sentences_by_text(current_text, replacements)
             add(
-                f"density_route_patch_top{take}",
-                _splice_sentences_by_text(current_text, replacements),
+                "density_route_patch_top2_fallback",
+                candidate_text,
                 {
-                    "operation": "contiguous_ai_density_break",
+                    "operation": "scatter_density_route_fallback",
                     "edited_sentence_count": len(operations),
                     "operations": operations,
+                    "edit_budget": edit_budget,
+                    "patchwork_budget": _ai_density_patchwork_budget_status(
+                        current_text,
+                        candidate_text,
+                        {"edited_sentence_count": len(operations)},
+                    ),
                     "density_breaker_map": {
                         "version": density_map.get("version"),
                         "top_runs": density_map.get("contiguous_ai_density_runs"),
@@ -384,6 +613,12 @@ def _post_selection_ai_density_breaker_candidates(
                     "paragraph_index": index,
                     "paragraph_score": paragraph_row.get("score"),
                     "edited_sentence_count": 1,
+                    "edit_budget": edit_budget,
+                    "patchwork_budget": _ai_density_patchwork_budget_status(
+                        current_text,
+                        _join_logical_paragraphs(next_paragraphs),
+                        {"edited_sentence_count": 1},
+                    ),
                     "target_preview": paragraph_row.get("preview"),
                 },
             )
@@ -416,6 +651,12 @@ def _post_selection_ai_density_breaker_candidates(
                 "removed_sentence_count": len(selected),
                 "removed_sentences": [str(row.get("sentence") or "")[:220] for row in selected],
                 "edited_sentence_count": len(selected),
+                "edit_budget": edit_budget,
+                "patchwork_budget": _ai_density_patchwork_budget_status(
+                    current_text,
+                    candidate,
+                    {"edited_sentence_count": len(selected)},
+                ),
             },
         )
 
@@ -454,13 +695,18 @@ def _post_selection_ai_density_breaker_acceptance(
             "semantic_uniformity",
         )
     }
+    component_drops = _turnitin_like_component_drops(base_profile, candidate_profile)
+    positive_ai_burden_drop = _turnitin_like_positive_burden_drop(current_report, candidate_report)
     smoothness_max_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_MAX_SMOOTHNESS_REGRESSION", 0.30)
     min_formula_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_FORMULA_DROP", 0.25)
     min_external_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_EXTERNAL_DROP", 0.10)
     min_density_or_topk_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_DENSITY_OR_TOPK_DROP", 0.10)
+    min_positive_burden_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_POSITIVE_BURDEN_DROP", 0.25)
     reject_reasons = []
     if formula_drop < min_formula_drop:
         reject_reasons.append("formula_drop_too_small")
+    if positive_ai_burden_drop < min_positive_burden_drop:
+        reject_reasons.append("positive_ai_burden_not_reduced")
     if drops["external_ai_flag_risk"] < min_external_drop:
         reject_reasons.append("external_proxy_not_reduced")
     if max(drops["qualifying_text_ai_density"], drops["topk_calibrated_risk"], drops["ai_likelihood"]) < min_density_or_topk_drop:
@@ -485,6 +731,10 @@ def _post_selection_ai_density_breaker_acceptance(
         "formula_score_after": candidate_profile.get("score"),
         "formula_score_drop": formula_drop,
         "driver_drops": drops,
+        "turnitin_like_component_drops": component_drops,
+        "positive_ai_burden_before": base_profile.get("raw_positive_score"),
+        "positive_ai_burden_after": candidate_profile.get("raw_positive_score"),
+        "positive_ai_burden_drop": positive_ai_burden_drop,
         "review_burden_delta": review_burden_delta,
         "weighted_severity_delta": weighted_severity_delta,
         "critical_high_delta": critical_high_delta,
@@ -492,6 +742,7 @@ def _post_selection_ai_density_breaker_acceptance(
             "min_formula_drop": min_formula_drop,
             "min_external_drop": min_external_drop,
             "min_density_or_topk_drop": min_density_or_topk_drop,
+            "min_positive_ai_burden_drop": min_positive_burden_drop,
             "max_smoothness_regression": smoothness_max_regression,
         },
     }
@@ -539,6 +790,7 @@ def _post_selection_ai_density_breaker(
         "candidate_count": len(candidates),
         "scans_used": 0,
         "density_breaker_map": density_map,
+        "edit_budget": _ai_density_edit_budget(current_text),
         "base_summary": {
             "turnitin_like_ai_score": _turnitin_like_ai_profile(current_report).get("score"),
             "ai_footprint": _strict_ai_safe_band_status(current_report).get("profile"),
@@ -573,6 +825,12 @@ def _post_selection_ai_density_breaker(
         local_reason = _ai_candidate_quality_reject_reason(normalized)
         if local_reason:
             candidate_eval["reason"] = local_reason
+            summary["candidates"].append(candidate_eval)
+            continue
+        budget_status = _ai_density_patchwork_budget_status(current_text, normalized, meta or {})
+        candidate_eval["patchwork_budget"] = budget_status
+        if not budget_status.get("accepted"):
+            candidate_eval["reason"] = budget_status.get("reason") or "patchwork_edit_budget_exceeded"
             summary["candidates"].append(candidate_eval)
             continue
         protected_loss = _ai_search_protected_loss_reason(current_text, normalized, protected)
@@ -623,10 +881,12 @@ def _post_selection_ai_density_breaker(
             continue
         rank = (
             1 if _turnitin_like_ai_profile(candidate_report).get("target_met") else 0,
-            float(acceptance.get("formula_score_drop") or 0.0),
+            float(acceptance.get("positive_ai_burden_drop") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("external_ai_flag_risk") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("qualifying_text_ai_density") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
+            float(acceptance.get("formula_score_drop") or 0.0),
             -float(_turnitin_like_ai_profile(candidate_report).get("score") or 100.0),
         )
         if best_rank is None or rank > best_rank:
@@ -651,6 +911,10 @@ def _post_selection_ai_density_breaker(
                     "formula_score",
                     "formula_score_drop",
                     "driver_drops",
+                    "positive_ai_burden_drop",
+                    "positive_ai_burden_before",
+                    "positive_ai_burden_after",
+                    "patchwork_budget",
                     "drift_similarity",
                     "acceptance",
                 )
@@ -23904,13 +24168,11 @@ def run_rewrite_pipeline(
             }
             search_summary["llm_calls"] = hard_llm_cap
         result.summary["ai_mitigation_search"] = search_summary
-        if search_summary.get("llm_calls"):
-            result.summary["ai_search_llm_calls_used"] = search_summary["llm_calls"]
-            try:
-                prior_calls = int(result.summary.get("llm_calls_used") or 0)
-            except (TypeError, ValueError):
-                prior_calls = 0
-            result.summary["llm_calls_used"] = prior_calls + int(search_summary["llm_calls"])
+        _record_rewrite_llm_calls(
+            result.summary,
+            "ai_search_llm_calls_used",
+            search_summary.get("llm_calls"),
+        )
         stage_timings.append({
             "stage": "ai_mitigation_search",
             "seconds": search_summary["seconds"],
@@ -24005,6 +24267,19 @@ def run_rewrite_pipeline(
             result.summary["best_formula_frontier"] = stored_convergence_result.get("best_formula_frontier")
             result.summary["remaining_formula_gap"] = stored_convergence_result.get("remaining_formula_gap")
             result.summary["why_not_below_20"] = stored_convergence_result.get("why_not_below_20")
+            try:
+                convergence_llm_calls = int(
+                    ((stored_convergence_result.get("phase_budget_used") or {}).get("llm_calls"))
+                    or stored_convergence_result.get("llm_calls")
+                    or 0
+                )
+            except (TypeError, ValueError):
+                convergence_llm_calls = 0
+            _record_rewrite_llm_calls(
+                result.summary,
+                "formula_convergence_llm_calls_used",
+                convergence_llm_calls,
+            )
             if convergence_result.get("selected"):
                 selected_report = convergence_result.get("selected_report")
                 selected_text = convergence_result.get("selected_text")
