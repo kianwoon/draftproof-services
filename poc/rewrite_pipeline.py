@@ -17269,17 +17269,77 @@ def run_rewrite_pipeline(
                     _run_post_topk_ai_safe_band_optimizer("after_topk_safe_band_rebuild")
                     if not _strict_ai_safe_band_status(best_report).get("achieved"):
                         _run_final_topk_texture_repair("after_post_topk_optimizer")
+                selected_topk_gate = (
+                    best_selection_status.get("ai_footprint_gate")
+                    if isinstance(best_selection_status, dict) else {}
+                )
+                selected_topk_profile = (
+                    ((selected_topk_gate.get("after") or {}).get("authorship_footprint") or {})
+                    if isinstance(selected_topk_gate, dict) else {}
+                )
+                selected_topk_value = selected_topk_profile.get("topk_calibrated_risk")
+                selected_topk_drop = (
+                    (selected_topk_gate.get("drops") or {}).get("topk_calibrated_risk")
+                    if isinstance(selected_topk_gate, dict) else None
+                )
+                selected_topk_rebuild_needs_final_repair = bool(
+                    _best_ai_search_selectable()
+                    and best_strategy == "topk_safe_band_rebuild"
+                    and not bool(best_selection_status.get("topk_safe_band_achieved"))
+                    and isinstance(selected_topk_value, (int, float))
+                    and _safe_topk_calibrated_limit() <= float(selected_topk_value) <= _safe_topk_calibrated_limit() + 5.0
+                    and isinstance(selected_topk_drop, (int, float))
+                    and float(selected_topk_drop) >= _float_env(
+                        "DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP",
+                        8.0,
+                    )
+                )
+                if selected_topk_rebuild_needs_final_repair:
+                    _run_final_topk_texture_repair("after_topk_near_safe_rebuild")
+                    selected_topk_gate = (
+                        best_selection_status.get("ai_footprint_gate")
+                        if isinstance(best_selection_status, dict) else {}
+                    )
+                    selected_topk_profile = (
+                        ((selected_topk_gate.get("after") or {}).get("authorship_footprint") or {})
+                        if isinstance(selected_topk_gate, dict) else {}
+                    )
+                    selected_topk_value = selected_topk_profile.get("topk_calibrated_risk")
+                    selected_topk_drop = (
+                        (selected_topk_gate.get("drops") or {}).get("topk_calibrated_risk")
+                        if isinstance(selected_topk_gate, dict) else None
+                    )
+                selected_topk_controlled_candidate = bool(
+                    _best_ai_search_selectable()
+                    and best_strategy == "topk_safe_band_rebuild"
+                    and isinstance(selected_topk_value, (int, float))
+                    and float(selected_topk_value) <= _safe_topk_calibrated_limit() + 5.0
+                    and isinstance(selected_topk_drop, (int, float))
+                    and float(selected_topk_drop) >= _float_env(
+                        "DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP",
+                        8.0,
+                    )
+                )
                 strict_safe_legacy_llm_skipped = bool(
                     _best_ai_search_selectable()
-                    and bool(best_selection_status.get("topk_safe_band_achieved"))
+                    and (
+                        bool(best_selection_status.get("topk_safe_band_achieved"))
+                        or selected_topk_controlled_candidate
+                    )
                     and not _strict_ai_safe_band_status(best_report).get("achieved")
                     and _env_flag("DRAFTPROOF_SKIP_LEGACY_LLM_AFTER_TOPK_SAFE", True)
                 )
                 if strict_safe_legacy_llm_skipped:
                     search_summary["legacy_llm_after_topk_safe"] = {
                         "skipped": True,
-                        "reason": "preserve_remaining_budget_for_strict_safe_controller",
+                        "reason": (
+                            "preserve_remaining_budget_for_topk_controlled_candidate"
+                            if selected_topk_controlled_candidate
+                            else "preserve_remaining_budget_for_strict_safe_controller"
+                        ),
                         "selected_strategy": best_strategy,
+                        "selected_topk_calibrated_risk": selected_topk_value,
+                        "selected_topk_calibrated_drop": selected_topk_drop,
                         "strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
                     }
                     adaptive_stop_reason = "adaptive_stop_after_strict_safe_phase_budget"
