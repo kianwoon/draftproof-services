@@ -288,6 +288,33 @@ def _safe_topk_limit() -> float:
     return _safe_topk_calibrated_limit()
 
 
+def _selection_status_topk_value(selection_status: dict | None) -> float | None:
+    """Return the selected candidate's calibrated Top-k value when available."""
+    if not isinstance(selection_status, dict):
+        return None
+    direct = selection_status.get("topk_calibrated_risk")
+    if isinstance(direct, (int, float)):
+        return float(direct)
+    gate = selection_status.get("ai_footprint_gate") or {}
+    if isinstance(gate, dict):
+        after = gate.get("after") or {}
+        authorship = after.get("authorship_footprint") or {}
+        value = authorship.get("topk_calibrated_risk")
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def _selection_status_topk_safe(selection_status: dict | None) -> bool:
+    """Whether a candidate is inside the calibrated Top-k safe band."""
+    if not isinstance(selection_status, dict):
+        return False
+    if selection_status.get("topk_safe_band_achieved"):
+        return True
+    value = _selection_status_topk_value(selection_status)
+    return isinstance(value, (int, float)) and float(value) < _safe_topk_calibrated_limit()
+
+
 def _rewrite_sampling_profile(prefix: str = "DRAFTPROOF_AI_SEARCH") -> dict:
     """Effective default sampling controls for rewrite-generation calls.
 
@@ -15650,7 +15677,18 @@ def run_rewrite_pipeline(
                 original_weighted_severity=original_severity,
                 original_finding_total=original_total,
             )
-            if candidate_rank > best_human_shift_rank:
+            topk_safe_frontier_blocked = bool(
+                _selection_status_topk_safe(best_selection_status)
+                and not _selection_status_topk_safe(selection_status)
+            )
+            if topk_safe_frontier_blocked:
+                candidate_eval["selection_blocked_by_topk_safe_frontier"] = True
+                candidate_eval["topk_safe_frontier"] = {
+                    "current_topk_calibrated_risk": _selection_status_topk_value(best_selection_status),
+                    "candidate_topk_calibrated_risk": _selection_status_topk_value(selection_status),
+                    "safe_band": _safe_topk_calibrated_limit(),
+                }
+            elif candidate_rank > best_human_shift_rank:
                 best_ai = candidate_ai
                 best_text = candidate
                 best_report = candidate_report

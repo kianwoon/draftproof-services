@@ -74,6 +74,7 @@ from rewrite_pipeline import (
     _strict_ai_safe_band_status,
     _topk_rebuild_fallback_rank,
     _topk_near_miss_partial_keep_decision,
+    _selection_status_topk_safe,
     _strict_safe_phase_budget_contract,
     _strict_safe_candidate_rank,
     _safe_topk_limit,
@@ -1357,6 +1358,21 @@ assert_test(
     and not topk_blocked_reject["allowed"]
     and topk_blocked_reject["reason"] == "topk_drop_too_small",
     "Top-k final gate preserves material partial progress instead of rolling back on arbitrary miss distance",
+)
+assert_test(
+    _selection_status_topk_safe({
+        "topk_safe_band_achieved": True,
+        "ai_footprint_gate": {
+            "after": {"authorship_footprint": {"topk_calibrated_risk": 18.92}}
+        },
+    })
+    and not _selection_status_topk_safe({
+        "topk_blocker_progress": True,
+        "ai_footprint_gate": {
+            "after": {"authorship_footprint": {"topk_calibrated_risk": 72.938}}
+        },
+    }),
+    "selector distinguishes Top-k-safe frontier from merely improved Top-k-blocked progress",
 )
 phase_contract = _strict_safe_phase_budget_contract(10)
 phase_contract_lower = _strict_safe_phase_budget_contract(7)
