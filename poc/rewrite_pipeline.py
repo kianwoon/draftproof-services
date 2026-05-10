@@ -519,6 +519,32 @@ def _run_full_scan_report_dict(scan_text: str) -> dict:
     return report_to_dict(builder.build())
 
 
+def _report_finding_total(report_dict: dict | None) -> int:
+    findings = (report_dict or {}).get("findings", {}) if isinstance(report_dict, dict) else {}
+    return sum(len(findings.get(tier, [])) for tier in ("critical", "high", "medium", "low"))
+
+
+def _report_review_burden(report_dict: dict | None) -> int:
+    findings = (report_dict or {}).get("findings", {}) if isinstance(report_dict, dict) else {}
+    return sum(len(findings.get(tier, [])) for tier in ("critical", "high", "medium"))
+
+
+def _report_weighted_severity(report_dict: dict | None) -> int:
+    findings = (report_dict or {}).get("findings", {}) if isinstance(report_dict, dict) else {}
+    weights = {"critical": 8, "high": 5, "medium": 2, "low": 1}
+    return sum(len(findings.get(tier, [])) * weight for tier, weight in weights.items())
+
+
+def _report_badge_ai(report_dict: dict | None):
+    score = ((report_dict or {}).get("ai_risk_badge") or {}).get("ai_likelihood_score") if isinstance(report_dict, dict) else None
+    return float(score) if isinstance(score, (int, float)) else None
+
+
+def _report_badge_wq(report_dict: dict | None):
+    score = ((report_dict or {}).get("ai_risk_badge") or {}).get("writing_quality_score") if isinstance(report_dict, dict) else None
+    return float(score) if isinstance(score, (int, float)) else None
+
+
 def _allow_ai_search_llm_after_deterministic() -> bool:
     return _env_flag("DRAFTPROOF_AI_SEARCH_ALLOW_LLM_AFTER_DETERMINISTIC", True)
 
@@ -13487,6 +13513,789 @@ def _human_anchor_amplifier_candidates(
     return candidates[:max(1, int(limit or 1))]
 
 
+def _formula_portfolio_candidates(
+    source_text: str,
+    report_dict: dict | None,
+    *,
+    topk_route_candidates: list[tuple[str, str, dict]] | None = None,
+    blocker_operation_candidates: list[tuple[str, str, dict]] | None = None,
+    generic_assertion_candidates: list[tuple[str, str, dict]] | None = None,
+    pruning_candidates: list[tuple[str, str, dict]] | None = None,
+    limit: int = 6,
+) -> list[tuple[str, str, dict]]:
+    """Build portfolio candidates that move positive drivers and Human Anchor together.
+
+    The existing candidate families are useful, but isolated. This controller
+    composes them according to the Turnitin-like formula plan so the search can
+    test combined gap-closure moves instead of hoping one signal moves enough.
+    """
+    if not _env_flag("DRAFTPROOF_FORMULA_PORTFOLIO_GENERATOR", True):
+        return []
+    limit = max(1, int(limit or 1))
+    plan = _formula_portfolio_plan(report_dict, report_dict)
+    selected_drivers = {
+        str(row.get("driver"))
+        for row in (plan.get("selected_driver_portfolio") or [])
+        if isinstance(row, dict) and row.get("driver")
+    }
+    priority_drivers = {
+        str(row.get("driver"))
+        for row in (plan.get("driver_priorities") or [])[:5]
+        if isinstance(row, dict) and row.get("driver")
+    }
+    drivers = selected_drivers | priority_drivers
+    if not drivers:
+        return []
+
+    source_norm = str(source_text or "").strip()
+    seen: set[str] = {source_norm}
+    candidates: list[tuple[str, str, dict]] = []
+
+    def add(strategy: str, candidate: str, meta: dict | None, targeted: list[str]) -> None:
+        normalized = str(candidate or "").strip()
+        if not normalized or normalized in seen or normalized == source_norm:
+            return
+        if len(candidates) >= limit:
+            return
+        seen.add(normalized)
+        candidates.append((
+            strategy,
+            candidate,
+            {
+                **(meta or {}),
+                "formula_portfolio_candidate": True,
+                "targeted_drivers": targeted,
+                "formula_portfolio_plan": {
+                    "score_before": plan.get("score_before"),
+                    "target_score": plan.get("target_score"),
+                    "required_gap": plan.get("required_gap"),
+                    "positive_ai_burden": plan.get("positive_ai_burden"),
+                    "human_anchor_suppression": plan.get("human_anchor_suppression"),
+                    "selected_driver_portfolio": plan.get("selected_driver_portfolio"),
+                },
+            },
+        ))
+
+    def anchor_on_base(
+        base_strategy: str,
+        base_text: str,
+        base_meta: dict | None,
+        *,
+        targeted: list[str],
+        label: str,
+    ) -> None:
+        if len(candidates) >= limit:
+            return
+        anchor_variants = _human_anchor_amplifier_candidates(base_text, report_dict, limit=1)
+        for anchor_strategy, anchor_text, anchor_meta in anchor_variants[:1]:
+            add(
+                f"formula_portfolio_{label}_{base_strategy}_{anchor_strategy.replace('human_anchor_amplifier_', '')}",
+                anchor_text,
+                {
+                    **(anchor_meta or {}),
+                    "base_strategy": base_strategy,
+                    "base_meta": base_meta or {},
+                    "portfolio_operation": f"{label}_plus_human_anchor",
+                },
+                targeted,
+            )
+
+    topk_pool = list(topk_route_candidates or [])
+    blocker_pool = list(blocker_operation_candidates or [])
+    generic_pool = list(generic_assertion_candidates or [])
+    pruning_pool = list(pruning_candidates or [])
+
+    if "human_anchor_suppression" in drivers:
+        for strategy, candidate, meta in _human_anchor_amplifier_candidates(source_text, report_dict, limit=2):
+            add(
+                f"formula_portfolio_{strategy}",
+                candidate,
+                {
+                    **(meta or {}),
+                    "portfolio_operation": "human_anchor_suppression_gain",
+                },
+                ["human_anchor_suppression"],
+            )
+
+    if {"ai_likelihood", "topk_calibrated_risk", "human_anchor_suppression"} & drivers:
+        for base_strategy, base_text, base_meta in topk_pool[:2]:
+            anchor_on_base(
+                base_strategy,
+                base_text,
+                base_meta,
+                targeted=["ai_likelihood", "topk_calibrated_risk", "human_anchor_suppression"],
+                label="route_anchor",
+            )
+
+    if {"semantic_uniformity", "patchwork_expansion", "ai_likelihood", "human_anchor_suppression"} & drivers:
+        structural_pool = (blocker_pool[:2] + generic_pool[:2] + pruning_pool[:2])
+        for base_strategy, base_text, base_meta in structural_pool:
+            anchor_on_base(
+                base_strategy,
+                base_text,
+                base_meta,
+                targeted=["semantic_uniformity", "patchwork_expansion", "ai_likelihood", "human_anchor_suppression"],
+                label="structure_anchor",
+            )
+            if len(candidates) >= limit:
+                break
+
+    if {"patchwork_expansion", "semantic_uniformity"} & drivers:
+        for base_strategy, base_text, base_meta in pruning_pool[:2]:
+            add(
+                f"formula_portfolio_low_value_remove_{base_strategy}",
+                base_text,
+                {
+                    **(base_meta or {}),
+                    "portfolio_operation": "low_value_remove",
+                },
+                ["patchwork_expansion", "semantic_uniformity"],
+            )
+
+    return candidates[:limit]
+
+
+def _formula_convergence_budget(source_text: str, budget: dict | None = None) -> dict:
+    """Bound formula convergence by document size, not by a fixed global loop."""
+    provided = budget if isinstance(budget, dict) else {}
+    words = _text_word_count(source_text)
+    if words <= 700:
+        defaults = {"max_passes": 2, "max_scans": 8, "max_llm_calls": 2}
+        size_band = "300_700"
+    elif words <= 1800:
+        defaults = {"max_passes": 3, "max_scans": 16, "max_llm_calls": 4}
+        size_band = "700_1800"
+    else:
+        defaults = {"max_passes": 3, "max_scans": 20, "max_llm_calls": 6}
+        size_band = "1800_5000"
+    resolved = {
+        key: int(provided.get(key, defaults[key]) or defaults[key])
+        for key in defaults
+    }
+    resolved["max_passes"] = max(0, resolved["max_passes"])
+    resolved["max_scans"] = max(0, resolved["max_scans"])
+    resolved["max_llm_calls"] = max(0, min(10, resolved["max_llm_calls"]))
+    resolved["word_count"] = words
+    resolved["size_band"] = size_band
+    resolved["total_rewrite_llm_cap"] = 10
+    return resolved
+
+
+def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dict:
+    """Estimate block-level formula drag for convergence planning.
+
+    The scanner scores the whole document, so this map is intentionally a
+    conservative triage layer. It points the generator toward high-generic,
+    low-anchor prose while protecting headings, references, anchors, and blocks
+    likely to carry unique claims.
+    """
+    paragraphs = _logical_paragraphs(source_text)
+    profile = _turnitin_like_ai_profile(report_dict)
+    plan = _formula_portfolio_plan(report_dict, report_dict)
+    weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
+    dominant_drivers = [
+        str(row.get("driver"))
+        for row in (plan.get("driver_priorities") or [])[:5]
+        if isinstance(row, dict) and row.get("driver")
+    ]
+    generic_re = re.compile(
+        r"\b(?:important|significant|various|many|different|modern|today|society|"
+        r"education|culture|technology|system|people|students|community|global|"
+        r"impact|influence|development|opportunity|challenge|supports?|helps?|"
+        r"plays? a role|continues? to|it is clear|this shows|this means)\b",
+        re.I,
+    )
+    human_anchor_re = re.compile(
+        r"\b(?:I|my|we|our|when|during|after|before|in practice|for me|"
+        r"what I|what we|I noticed|I would|the issue is|this depends|"
+        r"checked|feedback|mistake|draft|practice|classroom|workshop|client)\b",
+        re.I,
+    )
+    connector_re = re.compile(
+        r"\b(?:furthermore|moreover|additionally|in conclusion|overall|"
+        r"therefore|as a result|this highlights|this demonstrates)\b",
+        re.I,
+    )
+    reference_section = False
+    blocks: list[dict] = []
+    total_words = max(1, sum(_text_word_count(paragraph) for paragraph in paragraphs))
+    for index, paragraph in enumerate(paragraphs):
+        stripped = str(paragraph or "").strip()
+        if re.match(r"^\s*references?\s*$", stripped, flags=re.I):
+            reference_section = True
+        words = _text_word_count(stripped)
+        sentences = _split_sentences(stripped)
+        sentence_count = max(1, len(sentences))
+        generic_hits = len(generic_re.findall(stripped))
+        anchor_hits = len(human_anchor_re.findall(stripped))
+        connector_hits = len(connector_re.findall(stripped))
+        protected_numbers = sorted(_protected_number_set(stripped))
+        protected_codes = sorted(_protected_code_anchor_set(stripped))
+        url_count = len(re.findall(r"https?://|www\.", stripped, flags=re.I))
+        proper_like = len(re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b", stripped))
+        heading_like = _is_heading_like_paragraph(stripped)
+        protected = bool(reference_section or heading_like or protected_numbers or protected_codes or url_count)
+        unique_core_claim = bool(
+            protected
+            or proper_like >= 2
+            or re.search(r"\b(?:because|therefore|caused|led to|resulted|depends on|specific|particular)\b", stripped, re.I)
+        )
+        generic_density = generic_hits / max(1, words / 20.0)
+        anchor_density = anchor_hits / sentence_count
+        template_density = connector_hits / sentence_count
+        length_share = words / total_words
+        formula_drag = (
+            float(weighted.get("ai_likelihood") or 0.0) * 0.40
+            + float(weighted.get("semantic_uniformity") or 0.0) * 0.22
+            + float(weighted.get("rewrite_smoothness") or 0.0) * 0.18
+            + float(weighted.get("patchwork_expansion") or 0.0) * 0.14
+            + float(weighted.get("topk_calibrated_risk") or 0.0) * 0.06
+        )
+        weighted_drag = (
+            formula_drag * min(1.0, length_share * 4.0)
+            + min(12.0, generic_density * 4.0)
+            + min(8.0, max(0.0, 1.0 - anchor_density) * 3.0)
+            + min(5.0, template_density * 3.0)
+        )
+        if not stripped:
+            action = "preserve"
+            remove_safety = "empty_block"
+        elif protected:
+            action = "preserve"
+            remove_safety = "protected_anchor_or_reference"
+        elif unique_core_claim and weighted_drag >= 12.0:
+            action = "rebuild"
+            remove_safety = "unique_core_claim_requires_replacement"
+        elif weighted_drag >= 15.0 and words <= 80:
+            action = "remove_candidate"
+            remove_safety = "low_anchor_high_drag_no_protected_anchors"
+        elif weighted_drag >= 10.0:
+            action = "compress"
+            remove_safety = "compress_before_remove"
+        else:
+            action = "preserve"
+            remove_safety = "low_estimated_drag"
+        blocks.append({
+            "block_index": index,
+            "word_count": words,
+            "sentence_count": sentence_count,
+            "action": action,
+            "weighted_drag": round(weighted_drag, 3),
+            "generic_hits": generic_hits,
+            "generic_density": round(generic_density, 3),
+            "human_anchor_hits": anchor_hits,
+            "human_anchor_density": round(anchor_density, 3),
+            "template_connector_hits": connector_hits,
+            "protected": protected,
+            "protected_numbers": protected_numbers[:8],
+            "protected_code_anchors": protected_codes[:8],
+            "url_count": url_count,
+            "heading_like": heading_like,
+            "reference_section": reference_section,
+            "unique_core_claim": unique_core_claim,
+            "remove_safety": remove_safety,
+            "dominant_formula_drivers": dominant_drivers,
+            "preview": stripped[:220],
+        })
+    top_blocks = sorted(
+        blocks,
+        key=lambda row: float(row.get("weighted_drag") or 0.0),
+        reverse=True,
+    )[:8]
+    return {
+        "version": "formula_block_driver_map_v1",
+        "block_count": len(blocks),
+        "formula_score": profile.get("score"),
+        "target_score": profile.get("target_score"),
+        "remaining_gap": profile.get("target_gap"),
+        "dominant_formula_drivers": dominant_drivers,
+        "blocks": blocks,
+        "top_blocks": top_blocks,
+    }
+
+
+def _formula_convergence_candidate_batch(
+    current_text: str,
+    current_report: dict | None,
+    block_map: dict | None,
+    *,
+    limit: int = 8,
+) -> list[tuple[str, str, dict]]:
+    """Create one bounded portfolio batch from the current best state."""
+    limit = max(1, int(limit or 1))
+    topk_candidates = _topk_route_optimizer_candidates(current_text, current_report)
+    blocker_candidates = _blocker_operation_candidates(current_text, current_report, limit=4)
+    generic_candidates = _generic_assertion_compiler_candidates(current_text, current_report, limit=3)
+    pruning_candidates = _content_pruning_candidates(current_text, current_report, limit=3)
+    portfolio_candidates = _formula_portfolio_candidates(
+        current_text,
+        current_report,
+        topk_route_candidates=topk_candidates,
+        blocker_operation_candidates=blocker_candidates,
+        generic_assertion_candidates=generic_candidates,
+        pruning_candidates=pruning_candidates,
+        limit=limit,
+    )
+    raw_candidates: list[tuple[str, str, dict]] = []
+    raw_candidates.extend(portfolio_candidates)
+    raw_candidates.extend(topk_candidates[:2])
+    raw_candidates.extend(blocker_candidates[:2])
+    raw_candidates.extend(generic_candidates[:2])
+    raw_candidates.extend(pruning_candidates[:2])
+    normalized_seen = {str(current_text or "").strip()}
+    candidates: list[tuple[str, str, dict]] = []
+    for strategy, candidate, meta in raw_candidates:
+        normalized = str(candidate or "").strip()
+        if not normalized or normalized in normalized_seen:
+            continue
+        normalized_seen.add(normalized)
+        candidates.append((
+            f"formula_convergence_{strategy}",
+            candidate,
+            {
+                **(meta or {}),
+                "formula_convergence_candidate": True,
+                "block_driver_map_version": (block_map or {}).get("version"),
+                "top_drag_blocks": [
+                    {
+                        "block_index": row.get("block_index"),
+                        "action": row.get("action"),
+                        "weighted_drag": row.get("weighted_drag"),
+                    }
+                    for row in ((block_map or {}).get("top_blocks") or [])[:4]
+                    if isinstance(row, dict)
+                ],
+            },
+        ))
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def _formula_convergence_candidate_public(row: dict | None) -> dict:
+    row = row if isinstance(row, dict) else {}
+    contract = row.get("formula_gap_contract") if isinstance(row.get("formula_gap_contract"), dict) else {}
+    gate = row.get("turnitin_like_ai_gate") if isinstance(row.get("turnitin_like_ai_gate"), dict) else {}
+    status = row.get("selection_status") if isinstance(row.get("selection_status"), dict) else {}
+    return {
+        "pass_index": row.get("pass_index"),
+        "strategy": row.get("strategy"),
+        "selectable": status.get("selectable", row.get("selectable")),
+        "selected": row.get("selected", False),
+        "reason": row.get("reason") or status.get("reason"),
+        "score_before": contract.get("score_before"),
+        "score_after": contract.get("score_after"),
+        "score_drop": contract.get("score_drop"),
+        "target_met": contract.get("target_met"),
+        "remaining_formula_gap": contract.get("remaining_formula_gap"),
+        "weighted_driver_drops": contract.get("weighted_driver_drops"),
+        "formula_gap_contract": {
+            "score_before": contract.get("score_before"),
+            "score_after": contract.get("score_after"),
+            "score_drop": contract.get("score_drop"),
+            "target_met": contract.get("target_met"),
+            "weighted_driver_drops": contract.get("weighted_driver_drops"),
+        },
+        "turnitin_like_ai_gate": {
+            "safety_clean": gate.get("safety_clean"),
+            "safe_band": gate.get("safe_band"),
+            "score_drop": gate.get("score_drop"),
+            "outcome_class": gate.get("outcome_class"),
+            "component_drops": gate.get("component_drops"),
+        },
+        "selection_status": {
+            "selectable": status.get("selectable", row.get("selectable")),
+            "reason": row.get("reason") or status.get("reason"),
+        },
+        "turnitin_like_outcome_class": gate.get("outcome_class"),
+        "ai_authorship": row.get("ai_authorship"),
+        "ai_transformation": row.get("ai_transformation"),
+        "review_burden": row.get("review_burden"),
+        "weighted_severity": row.get("weighted_severity"),
+        "critical_high_findings": row.get("critical_high_findings"),
+    }
+
+
+def _formula_convergence_controller(
+    current_text: str,
+    current_report: dict | None,
+    original_report: dict | None,
+    budget: dict | None = None,
+    *,
+    scan_func=None,
+    candidate_builder=None,
+    drift_checker=None,
+) -> dict:
+    """Iteratively close the Turnitin-like formula gap from the current best.
+
+    This is deliberately stateful: each pass plans against the best rescanned
+    candidate from the previous pass. It never rolls back safe partial formula
+    progress just because the strict <20 target is not reached.
+    """
+    if not _env_flag("DRAFTPROOF_FORMULA_CONVERGENCE_CONTROLLER", True):
+        return {
+            "enabled": False,
+            "reason": "formula_convergence_controller_disabled",
+            "selected": False,
+        }
+    scan_func = scan_func or _run_full_scan_report_dict
+    drift_checker = drift_checker or check_semantic_drift
+    resolved_budget = _formula_convergence_budget(current_text, budget)
+    max_passes = int(resolved_budget.get("max_passes") or 0)
+    max_scans = int(resolved_budget.get("max_scans") or 0)
+    if max_passes <= 0 or max_scans <= 0:
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "formula_convergence_budget_zero",
+            "phase_budget_contract": resolved_budget,
+        }
+
+    best_text = str(current_text or "")
+    best_report = current_report if isinstance(current_report, dict) else {}
+    start_profile = _turnitin_like_ai_profile(best_report)
+    best_profile = start_profile
+    original_profile = _turnitin_like_ai_profile(original_report)
+    selected_any = False
+    selected_strategy = None
+    selected_eval = None
+    scans_used = 0
+    llm_calls_used = 0
+    passes: list[dict] = []
+    candidates: list[dict] = []
+    best_frontier: list[dict] = []
+    last_block_map: dict | None = None
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    def report_snapshot(report_dict: dict | None) -> dict:
+        profile = _turnitin_like_ai_profile(report_dict)
+        integrity = _integrity_scores(report_dict)
+        contribution = _contribution_scores(report_dict)
+        return {
+            "turnitin_like_ai_score": profile.get("score"),
+            "target_gap": profile.get("target_gap"),
+            "target_met": profile.get("target_met"),
+            "human_anchor_suppression": profile.get("human_anchor_suppression"),
+            "positive_ai_burden": profile.get("raw_positive_score"),
+            "ai_authorship": integrity.get("ai_authorship"),
+            "ai_transformation": contribution.get("ai_transformation"),
+            "external_ai_flag_risk": _ai_footprint_profile(report_dict).get("external_ai_flag_risk"),
+            "review_burden": _report_review_burden(report_dict),
+            "weighted_severity": _report_weighted_severity(report_dict),
+            "critical_high_findings": _critical_high_count(report_dict),
+        }
+
+    stop_reason = ""
+    for pass_index in range(1, max_passes + 1):
+        best_profile = _turnitin_like_ai_profile(best_report)
+        if bool(best_profile.get("target_met")):
+            stop_reason = "turnitin_like_target_met"
+            break
+        if scans_used >= max_scans:
+            stop_reason = "scan_budget_exhausted"
+            break
+        block_map = _formula_block_driver_map(best_text, best_report)
+        last_block_map = block_map
+        remaining_scans = max(0, max_scans - scans_used)
+        batch_limit = max(1, min(remaining_scans, int(math.ceil(max_scans / max(1, max_passes)))))
+        if candidate_builder:
+            raw_batch = candidate_builder(best_text, best_report, pass_index, block_map)
+        else:
+            raw_batch = _formula_convergence_candidate_batch(
+                best_text,
+                best_report,
+                block_map,
+                limit=batch_limit,
+            )
+        batch: list[tuple[str, str, dict]] = []
+        seen = {best_text.strip()}
+        for item in raw_batch or []:
+            if not item or len(item) < 2:
+                continue
+            strategy = str(item[0] or f"candidate_{len(batch)+1}")
+            candidate_text = str(item[1] or "")
+            meta = item[2] if len(item) > 2 and isinstance(item[2], dict) else {}
+            normalized = candidate_text.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            batch.append((strategy, candidate_text, meta))
+            if len(batch) >= remaining_scans:
+                break
+        pass_summary = {
+            "pass_index": pass_index,
+            "score_before": best_profile.get("score"),
+            "target_gap_before": best_profile.get("target_gap"),
+            "block_driver_map": {
+                key: block_map.get(key)
+                for key in ("version", "block_count", "formula_score", "target_score", "remaining_gap", "dominant_formula_drivers", "top_blocks")
+            },
+            "candidate_count": len(batch),
+            "scanned": 0,
+            "selected": False,
+        }
+        if not batch:
+            pass_summary["reason"] = "no_candidate_batch_generated"
+            passes.append(pass_summary)
+            stop_reason = "no_candidate_batch_generated"
+            break
+
+        pass_best = None
+        pass_best_rank = None
+        for strategy, candidate_text, meta in batch:
+            if scans_used >= max_scans:
+                stop_reason = "scan_budget_exhausted"
+                break
+            candidate_eval = {
+                "pass_index": pass_index,
+                "strategy": strategy,
+                "formula_convergence_candidate": True,
+                "formula_convergence_controller": True,
+                **(meta or {}),
+            }
+            local_reason = _ai_candidate_quality_reject_reason(candidate_text)
+            if local_reason:
+                candidate_eval["reason"] = local_reason
+                candidate_eval["selection_status"] = {"selectable": False, "reason": local_reason}
+                candidates.append(candidate_eval)
+                continue
+            protected_loss = _ai_search_protected_loss_reason(best_text, candidate_text, detect_protected_spans(best_text))
+            if protected_loss:
+                reason = "protected_span_lost " + protected_loss
+                candidate_eval["reason"] = reason
+                candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
+                candidates.append(candidate_eval)
+                continue
+            try:
+                drift = drift_checker(best_text, candidate_text, threshold=0.15)
+            except TypeError:
+                drift = drift_checker(best_text, candidate_text)
+            candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
+            if not bool(getattr(drift, "accepted", True)):
+                reason = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
+                candidate_eval["reason"] = reason
+                candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
+                candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
+                candidates.append(candidate_eval)
+                continue
+            try:
+                scan_t0 = time.time()
+                candidate_report = scan_func(candidate_text)
+                scan_seconds = round(time.time() - scan_t0, 3)
+            except Exception as exc:
+                reason = f"candidate_scan_error {exc}"
+                candidate_eval["reason"] = reason
+                candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
+                candidates.append(candidate_eval)
+                continue
+            scans_used += 1
+            pass_summary["scanned"] += 1
+
+            candidate_profile = _turnitin_like_ai_profile(candidate_report)
+            contract_vs_current = _formula_gap_contract(
+                best_report,
+                candidate_report,
+                source_text=best_text,
+                candidate_text=candidate_text,
+            )
+            contract_vs_original = _formula_gap_contract(
+                original_report,
+                candidate_report,
+                source_text=current_text,
+                candidate_text=candidate_text,
+            )
+            review_delta = _report_review_burden(candidate_report) - _report_review_burden(best_report)
+            severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(best_report)
+            critical_delta = _critical_high_count(candidate_report) - _critical_high_count(best_report)
+            turnitin_gate = _turnitin_like_ai_gate_status(
+                best_report,
+                candidate_report,
+                review_burden_delta=review_delta,
+                weighted_severity_delta=severity_delta,
+                critical_high_delta=critical_delta,
+                ai_score_regressed=False,
+            )
+            current_integrity = _integrity_scores(best_report)
+            candidate_integrity = _integrity_scores(candidate_report)
+            current_contribution = _contribution_scores(best_report)
+            candidate_contribution = _contribution_scores(candidate_report)
+            current_authorship = current_integrity.get("ai_authorship")
+            candidate_authorship = candidate_integrity.get("ai_authorship")
+            current_transformation = current_contribution.get("ai_transformation")
+            candidate_transformation = candidate_contribution.get("ai_transformation")
+            reject_reasons: list[str] = []
+            if num(contract_vs_current.get("score_drop"), 0.0) <= 0.05:
+                reject_reasons.append("no_safe_formula_drop")
+            if review_delta > 0:
+                reject_reasons.append("review_burden_regressed")
+            if severity_delta > 0:
+                reject_reasons.append("weighted_severity_regressed")
+            if critical_delta > 0:
+                reject_reasons.append("critical_high_regressed")
+            if (
+                isinstance(current_authorship, (int, float))
+                and isinstance(candidate_authorship, (int, float))
+                and float(candidate_authorship) > float(current_authorship) + 0.001
+            ):
+                reject_reasons.append("ai_authorship_regressed")
+            if (
+                isinstance(current_transformation, (int, float))
+                and isinstance(candidate_transformation, (int, float))
+                and float(candidate_transformation) > float(current_transformation) + 0.001
+            ):
+                reject_reasons.append("ai_transformation_regressed")
+
+            selectable = not reject_reasons
+            reason = "accepted_formula_convergence_step" if selectable else reject_reasons[0]
+            candidate_eval.update({
+                "scan_seconds": scan_seconds,
+                "ai": _report_badge_ai(candidate_report),
+                "human_contribution": candidate_contribution.get("human"),
+                "ai_transformation": candidate_contribution.get("ai_transformation"),
+                "ai_authorship": candidate_integrity.get("ai_authorship"),
+                "external_ai_flag_risk": _ai_footprint_profile(candidate_report).get("external_ai_flag_risk"),
+                "findings": _report_finding_total(candidate_report),
+                "review_burden": _report_review_burden(candidate_report),
+                "weighted_severity": _report_weighted_severity(candidate_report),
+                "critical_high_findings": _critical_high_count(candidate_report),
+                "formula_gap_contract": contract_vs_current,
+                "formula_gap_contract_vs_original": contract_vs_original,
+                "turnitin_like_ai_gate": turnitin_gate,
+                "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
+                "selection_status": {
+                    "selectable": selectable,
+                    "success": selectable,
+                    "reason": reason,
+                    "formula_convergence_controller": True,
+                    "turnitin_like_ai_gate": turnitin_gate,
+                    "formula_gap_contract": contract_vs_current,
+                    "formula_gap_contract_vs_original": contract_vs_original,
+                    "formula_gap_rank": list(_formula_gap_candidate_rank(contract_vs_current, turnitin_gate)),
+                    "target_met": bool(candidate_profile.get("target_met")),
+                    "partial_turnitin_like_mitigation": bool(selectable and not candidate_profile.get("target_met")),
+                    "turnitin_like_mitigation": bool(selectable and candidate_profile.get("target_met")),
+                },
+                "reason": reason,
+            })
+            candidates.append(candidate_eval)
+            public_eval = _formula_convergence_candidate_public(candidate_eval)
+            best_frontier.append(public_eval)
+            best_frontier = sorted(
+                best_frontier,
+                key=lambda row: (
+                    1 if row.get("selectable") else 0,
+                    1 if row.get("target_met") else 0,
+                    float(row.get("score_drop") or 0.0),
+                    -float(row.get("score_after") if isinstance(row.get("score_after"), (int, float)) else 100.0),
+                ),
+                reverse=True,
+            )[:12]
+            if selectable:
+                rank = (
+                    1 if candidate_profile.get("target_met") else 0,
+                    _formula_gap_candidate_rank(contract_vs_current, turnitin_gate),
+                    -num(candidate_profile.get("score"), 100.0),
+                )
+                if pass_best_rank is None or rank > pass_best_rank:
+                    pass_best_rank = rank
+                    pass_best = {
+                        "strategy": strategy,
+                        "text": candidate_text,
+                        "report": candidate_report,
+                        "eval": candidate_eval,
+                        "rank": rank,
+                    }
+        if pass_best:
+            pass_best["eval"]["selected"] = True
+            best_text = pass_best["text"]
+            best_report = pass_best["report"]
+            best_profile = _turnitin_like_ai_profile(best_report)
+            selected_any = True
+            selected_strategy = pass_best["strategy"]
+            selected_eval = pass_best["eval"]
+            pass_summary.update({
+                "selected": True,
+                "selected_strategy": selected_strategy,
+                "score_after": best_profile.get("score"),
+                "target_gap_after": best_profile.get("target_gap"),
+                "selected_candidate": _formula_convergence_candidate_public(selected_eval),
+            })
+            if bool(best_profile.get("target_met")):
+                stop_reason = "turnitin_like_target_met"
+                passes.append(pass_summary)
+                break
+        else:
+            pass_summary["reason"] = "no_safe_formula_movement"
+            passes.append(pass_summary)
+            stop_reason = "no_safe_formula_movement"
+            break
+        passes.append(pass_summary)
+    else:
+        if not stop_reason:
+            stop_reason = "pass_budget_exhausted"
+
+    final_profile = _turnitin_like_ai_profile(best_report)
+    final_contract = _formula_gap_contract(
+        original_report,
+        best_report,
+        source_text=current_text,
+        candidate_text=best_text,
+    )
+    public_candidates = [_formula_convergence_candidate_public(row) for row in candidates]
+    selected_public = _formula_convergence_candidate_public(selected_eval) if selected_eval else None
+    why_not = (
+        "turnitin-like formula target achieved"
+        if bool(final_profile.get("target_met"))
+        else (
+            f"{final_profile.get('score')} is not below "
+            f"{final_profile.get('target_score')}; remaining drivers: "
+            + ", ".join(
+                str(row.get("driver"))
+                for row in _remaining_turnitin_like_drivers(final_profile)[:4]
+                if isinstance(row, dict) and row.get("driver")
+            )
+        )
+    )
+    return {
+        "enabled": True,
+        "version": "formula_convergence_controller_v1",
+        "selected": selected_any,
+        "selected_text": best_text,
+        "selected_report": best_report,
+        "selected_strategy": selected_strategy,
+        "selected_formula_portfolio_candidate": selected_public,
+        "score_before": start_profile.get("score"),
+        "score_after": final_profile.get("score"),
+        "score_drop": round(num(start_profile.get("score")) - num(final_profile.get("score")), 3),
+        "target_score": final_profile.get("target_score"),
+        "target_met": bool(final_profile.get("target_met")),
+        "remaining_formula_gap": final_profile.get("target_gap"),
+        "why_not_below_20": why_not,
+        "stop_reason": stop_reason,
+        "phase_budget_contract": resolved_budget,
+        "phase_budget_used": {
+            "passes": len(passes),
+            "scans": scans_used,
+            "llm_calls": llm_calls_used,
+        },
+        "original_snapshot": report_snapshot(original_report),
+        "start_snapshot": report_snapshot(current_report),
+        "final_snapshot": report_snapshot(best_report),
+        "block_driver_map": last_block_map,
+        "formula_convergence_passes": passes,
+        "candidates": public_candidates,
+        "best_formula_frontier": best_frontier,
+        "formula_gap_contract": final_contract,
+        "formula_portfolio_plan": _formula_portfolio_plan(
+            original_report,
+            best_report,
+            observed_candidates=candidates,
+        ),
+    }
+
+
 def _human_signal_construction_candidates(
     source_text: str,
     report_dict: dict | None,
@@ -16243,6 +17052,16 @@ def run_rewrite_pipeline(
                 for strategy, candidate, _meta in pruning_candidates
             )
             deterministic_candidates.extend(_ai_search_marked_grounding_candidates(search_source_text))
+        formula_portfolio_candidates = _formula_portfolio_candidates(
+            search_source_text,
+            original_report_dict,
+            topk_route_candidates=topk_route_candidates,
+            blocker_operation_candidates=blocker_operation_candidates,
+            generic_assertion_candidates=generic_assertion_candidates,
+            pruning_candidates=pruning_candidates,
+            limit=int(_float_env("DRAFTPROOF_FORMULA_PORTFOLIO_CANDIDATES", 6.0)),
+        )
+        deterministic_candidates.extend(formula_portfolio_candidates)
         search_summary = {
             "enabled": True,
             "reference_ai": ai_search_reference,
@@ -16297,6 +17116,19 @@ def run_rewrite_pipeline(
                     for strategy, _candidate, meta in (
                         human_anchor_candidates + human_anchor_topk_candidates
                     )
+                ],
+            },
+            "formula_portfolio_generator": {
+                "enabled": _env_flag("DRAFTPROOF_FORMULA_PORTFOLIO_GENERATOR", True),
+                "candidate_count": len(formula_portfolio_candidates),
+                "candidates": [
+                    {
+                        "strategy": strategy,
+                        "targeted_drivers": meta.get("targeted_drivers"),
+                        "portfolio_operation": meta.get("portfolio_operation"),
+                        "base_strategy": meta.get("base_strategy"),
+                    }
+                    for strategy, _candidate, meta in formula_portfolio_candidates
                 ],
             },
             "llm_calls": 0,
@@ -18204,14 +19036,25 @@ def run_rewrite_pipeline(
         except ValueError:
             min_deterministic_scans = len(deterministic_candidates) or 1
         early_stop_reason = ""
-        for index, (strategy, candidate) in enumerate(deterministic_candidates, start=1):
+        for index, deterministic_item in enumerate(deterministic_candidates, start=1):
+            strategy, candidate = deterministic_item[0], deterministic_item[1]
+            deterministic_extra = (
+                deterministic_item[2]
+                if len(deterministic_item) > 2 and isinstance(deterministic_item[2], dict)
+                else None
+            )
             if _search_budget_exhausted("deterministic_candidates"):
                 break
             report_progress(
                 min(79, 76 + index),
                 f"Scanning deterministic AI mitigation candidate {index}/{len(deterministic_candidates)}",
             )
-            _evaluate_ai_search_candidate(strategy, candidate, deterministic=True)
+            _evaluate_ai_search_candidate(
+                strategy,
+                candidate,
+                deterministic=True,
+                extra=deterministic_extra,
+            )
             if adaptive_stop_reason:
                 break
             if index < min_deterministic_scans:
@@ -21539,6 +22382,94 @@ def run_rewrite_pipeline(
             "skipped_reason": "requires_author_input",
         })
 
+    convergence_selected = False
+    if (
+        _env_flag("DRAFTPROOF_FORMULA_CONVERGENCE_CONTROLLER", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+    ):
+        current_formula_profile = _turnitin_like_ai_profile(rewritten_report_dict)
+        if not bool(current_formula_profile.get("target_met")):
+            report_progress(78, "Running formula convergence controller")
+            convergence_t0 = time.time()
+            try:
+                convergence_result = _formula_convergence_controller(
+                    rewritten_text,
+                    rewritten_report_dict,
+                    original_report_dict,
+                )
+            except Exception as exc:
+                convergence_result = {
+                    "enabled": True,
+                    "selected": False,
+                    "reason": f"formula_convergence_controller_error {exc}",
+                }
+            stored_convergence_result = {
+                key: value
+                for key, value in convergence_result.items()
+                if key not in {"selected_text", "selected_report"}
+            }
+            result.summary["formula_convergence_controller"] = stored_convergence_result
+            result.summary["block_driver_map"] = stored_convergence_result.get("block_driver_map")
+            result.summary["formula_convergence_passes"] = stored_convergence_result.get("formula_convergence_passes")
+            result.summary["selected_formula_portfolio_candidate"] = (
+                stored_convergence_result.get("selected_formula_portfolio_candidate")
+            )
+            result.summary["best_formula_frontier"] = stored_convergence_result.get("best_formula_frontier")
+            result.summary["remaining_formula_gap"] = stored_convergence_result.get("remaining_formula_gap")
+            result.summary["why_not_below_20"] = stored_convergence_result.get("why_not_below_20")
+            if convergence_result.get("selected"):
+                selected_report = convergence_result.get("selected_report")
+                selected_text = convergence_result.get("selected_text")
+                if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                    previous_ai = rewritten_ai
+                    rewritten_text = selected_text
+                    rewritten_report_dict = selected_report
+                    attempted_report_dict = rewritten_report_dict
+                    rewritten_ai = _badge_ai(rewritten_report_dict)
+                    rewritten_wq = _badge_wq(rewritten_report_dict)
+                    rewritten_total = _finding_total(rewritten_report_dict)
+                    rewritten_review_burden = _review_burden(rewritten_report_dict)
+                    rewritten_severity = _weighted_severity(rewritten_report_dict)
+                    rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                    if result.mp_result:
+                        result.mp_result.final_text = rewritten_text
+                        result.mp_result.converged = True
+                        result.mp_result.convergence_reason = (
+                            "Selected formula convergence candidate: "
+                            f"{convergence_result.get('selected_strategy')}"
+                        )
+                    sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                    ai_search_selected = True
+                    convergence_selected = True
+                    _clear_stale_rollback_for_kept_ai_mitigation(
+                        result.summary,
+                        "formula convergence controller",
+                    )
+                    result.summary["selected_strategy"] = convergence_result.get("selected_strategy")
+                    result.summary["selected_formula_strategy"] = convergence_result.get("selected_strategy")
+                    result.summary["detect_scores"].update({
+                        "rewritten_ai": rewritten_ai,
+                        "rewritten_writing_quality": rewritten_wq,
+                        "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                        "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                        "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                        "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                        "rewritten_findings": rewritten_total,
+                        "rewritten_review_burden": rewritten_review_burden,
+                        "rewritten_weighted_severity": rewritten_severity,
+                    })
+            stage_timings.append({
+                "stage": "formula_convergence_controller",
+                "seconds": round(time.time() - convergence_t0, 3),
+                "candidates": len(stored_convergence_result.get("candidates") or []),
+                "selected": bool(convergence_result.get("selected")),
+                "target_met": bool(convergence_result.get("target_met")),
+                "stop_reason": convergence_result.get("stop_reason") or convergence_result.get("reason"),
+            })
+
     ai_regression_tolerance = 0.25
     writing_quality_regression_tolerance = 1.0
 
@@ -22465,6 +23396,17 @@ def run_rewrite_pipeline(
         if isinstance(result.summary.get("ai_mitigation_search"), dict)
         else {}
     )
+    convergence_candidate_status = (
+        (result.summary.get("formula_convergence_controller") or {}).get("selected_formula_portfolio_candidate")
+        if isinstance(result.summary.get("formula_convergence_controller"), dict)
+        else {}
+    )
+    if not selected_search_status and isinstance(convergence_candidate_status, dict) and convergence_candidate_status:
+        selected_search_status = {
+            "partial_turnitin_like_mitigation": True,
+            "reason": convergence_candidate_status.get("reason") or "accepted_formula_convergence_step",
+            "turnitin_like_mitigation": bool(convergence_candidate_status.get("target_met")),
+        }
     selected_topk_blocker_progress = bool(
         selected_search_status.get("topk_blocker_progress")
         or selected_search_status.get("reason") == "accepted_topk_blocker_progress"
@@ -22676,6 +23618,10 @@ def run_rewrite_pipeline(
         ai_search_summary_for_formula.get("candidates")
         if isinstance(ai_search_summary_for_formula, dict) else []
     )
+    if isinstance(result.summary.get("formula_convergence_controller"), dict):
+        observed_formula_candidates = list(observed_formula_candidates or []) + list(
+            (result.summary.get("formula_convergence_controller") or {}).get("candidates") or []
+        )
     final_formula_portfolio_plan = _formula_portfolio_plan(
         original_report_dict,
         rewritten_report_dict,
@@ -22690,7 +23636,8 @@ def run_rewrite_pipeline(
         if final_formula_gap_contract.get("driver_priority_plan") else None
     )
     result.summary["selected_formula_strategy"] = (
-        (result.summary.get("ai_mitigation_search") or {}).get("selected_strategy")
+        (result.summary.get("formula_convergence_controller") or {}).get("selected_strategy")
+        or (result.summary.get("ai_mitigation_search") or {}).get("selected_strategy")
         or result.summary.get("selected_strategy")
     )
     result.summary["formula_portfolio_plan"] = final_formula_portfolio_plan

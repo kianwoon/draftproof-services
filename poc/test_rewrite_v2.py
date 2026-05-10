@@ -156,6 +156,9 @@ from rewrite_pipeline import (
     _post_safe_win_target_push_candidates,
     _human_signal_construction_candidates,
     _human_anchor_amplifier_candidates,
+    _formula_portfolio_candidates,
+    _formula_block_driver_map,
+    _formula_convergence_controller,
     _human_anchor_driver_contract,
     _author_stance_thread_candidates,
     _human_target_ai_search_status,
@@ -7022,6 +7025,169 @@ assert_test(
     and all(meta.get("scope") == "implied_context_only" for _strategy, _candidate, meta in anchor_candidates)
     and any(meta.get("changed_sentence_frames", 0) >= 2 for _strategy, _candidate, meta in anchor_candidates),
     "human anchor amplifier creates bounded implied-context candidates",
+)
+portfolio_candidates = _formula_portfolio_candidates(
+    target_push_text,
+    target_push_report,
+    topk_route_candidates=[
+        (
+            "topk_route_optimizer_sample",
+            anchor_candidates[0][1],
+            {"operation": "topk_route_rebuild"},
+        )
+    ],
+    blocker_operation_candidates=_blocker_operation_candidates(target_push_text, target_push_report, limit=1),
+    generic_assertion_candidates=_generic_assertion_compiler_candidates(target_push_text, target_push_report, limit=1),
+    pruning_candidates=_content_pruning_candidates(target_push_text, target_push_report, limit=1),
+    limit=4,
+)
+assert_test(
+    bool(portfolio_candidates)
+    and all(meta.get("formula_portfolio_candidate") for _strategy, _candidate, meta in portfolio_candidates)
+    and any(
+        "human_anchor_suppression" in (meta.get("targeted_drivers") or [])
+        for _strategy, _candidate, meta in portfolio_candidates
+    )
+    and any(
+        set(meta.get("targeted_drivers") or []) & {"ai_likelihood", "topk_calibrated_risk", "semantic_uniformity", "patchwork_expansion"}
+        for _strategy, _candidate, meta in portfolio_candidates
+    ),
+    "formula portfolio generator composes AI-driver reduction with Human Anchor suppression candidates",
+)
+block_driver_map = _formula_block_driver_map(
+    (
+        "Education systems can be important for society and technology because they support many people.\n\n"
+        "References\n\n"
+        "https://example.com/source"
+    ),
+    turnitin_formula_original,
+)
+assert_test(
+    block_driver_map["blocks"][0]["action"] in {"compress", "rebuild", "remove_candidate"}
+    and all(
+        row["action"] == "preserve"
+        for row in block_driver_map["blocks"][1:]
+    )
+    and block_driver_map["top_blocks"],
+    "formula block driver map targets generic prose while preserving reference blocks",
+)
+convergence_current_text = (
+    "Schools can feel predictable. Students need judgement in class. "
+    "Teachers still guide the process."
+)
+convergence_bad_text = (
+    "Schools can feel predictable. Students need judgement in class. "
+    "Teachers still guide the process, overall."
+)
+convergence_better_text = (
+    "Schools can feel uneven. Students need judgement in class, especially when a quick answer hides the work. "
+    "Teachers still guide the process."
+)
+convergence_current_report = make_footprint_report(
+    ai_authorship=50,
+    human=50,
+    ai_transformation=50,
+    grounding=45,
+    human_anchor=30,
+    smoothness=50,
+    semantic_uniformity=50,
+    ai_likelihood=60,
+    topk_pattern=60,
+    topk_calibrated_risk=30,
+    generic_assertion_risk=45,
+    qualifying_text_ai_density=45,
+    unsupported_claim_risk=30,
+    broad_claim_risk=30,
+    discourse=30,
+    expansion=40,
+    section_style=40,
+    signal_agreement=50,
+)
+convergence_better_report = make_footprint_report(
+    ai_authorship=48,
+    human=52,
+    ai_transformation=48,
+    grounding=45,
+    human_anchor=35,
+    smoothness=48,
+    semantic_uniformity=45,
+    ai_likelihood=55,
+    topk_pattern=55,
+    topk_calibrated_risk=25,
+    generic_assertion_risk=42,
+    qualifying_text_ai_density=42,
+    unsupported_claim_risk=30,
+    broad_claim_risk=30,
+    discourse=28,
+    expansion=35,
+    section_style=35,
+    signal_agreement=45,
+)
+convergence_bad_report = make_footprint_report(
+    ai_authorship=48,
+    human=48,
+    ai_transformation=48,
+    grounding=45,
+    human_anchor=10,
+    smoothness=70,
+    semantic_uniformity=70,
+    ai_likelihood=70,
+    topk_pattern=40,
+    topk_calibrated_risk=10,
+    generic_assertion_risk=70,
+    qualifying_text_ai_density=70,
+    unsupported_claim_risk=30,
+    broad_claim_risk=30,
+    discourse=50,
+    expansion=70,
+    section_style=70,
+    signal_agreement=70,
+)
+scan_reports = {
+    convergence_bad_text: convergence_bad_report,
+    convergence_better_text: convergence_better_report,
+}
+planner_scores_seen = []
+
+def fake_formula_convergence_scan(scan_text):
+    return scan_reports[scan_text]
+
+def fake_formula_convergence_candidates(text, report, pass_index, block_map):
+    planner_scores_seen.append(_turnitin_like_ai_profile(report)["score"])
+    if pass_index == 1:
+        return [
+            ("one_signal_backfire", convergence_bad_text, {}),
+            ("portfolio_gain", convergence_better_text, {}),
+        ]
+    return []
+
+def fake_formula_convergence_drift(_a, _b, **_kwargs):
+    return SimpleNamespace(accepted=True, similarity=0.99, reasons=[])
+
+convergence_result = _formula_convergence_controller(
+    convergence_current_text,
+    convergence_current_report,
+    convergence_current_report,
+    {"max_passes": 2, "max_scans": 4, "max_llm_calls": 0},
+    scan_func=fake_formula_convergence_scan,
+    candidate_builder=fake_formula_convergence_candidates,
+    drift_checker=fake_formula_convergence_drift,
+)
+assert_test(
+    convergence_result["selected"]
+    and convergence_result["selected_text"] == convergence_better_text
+    and convergence_result["score_after"] < convergence_result["score_before"]
+    and convergence_result["formula_convergence_passes"][0]["selected"]
+    and planner_scores_seen[0] == _turnitin_like_ai_profile(convergence_current_report)["score"],
+    "formula convergence controller replans from current best and keeps the best safe formula drop",
+)
+assert_test(
+    any(
+        row.get("strategy") == "one_signal_backfire"
+        and row.get("reason") == "no_safe_formula_drop"
+        for row in convergence_result["candidates"]
+    ),
+    "formula convergence controller rejects one-signal movement when total formula score worsens",
 )
 stance_candidates = _author_stance_thread_candidates(
     target_push_text,
