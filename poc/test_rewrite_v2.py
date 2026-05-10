@@ -2223,7 +2223,7 @@ assert_test(
     "280 to 560 words" not in medium_topk_prompt
     and "rough annotated prose" not in medium_topk_prompt
     and "short country profile" in medium_topk_prompt
-    and _topk_safe_band_patch_rounds_default("word " * 900) == 4
+    and _topk_safe_band_patch_rounds_default("word " * 900) == 5
     and _topk_safe_band_snapshot_max_tokens_default("word " * 900) == 3600,
     "Top-k safe-band rebuild uses document-sized prose, not compressed snapshot fragments",
 )

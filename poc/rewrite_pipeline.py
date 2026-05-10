@@ -14581,6 +14581,18 @@ def run_rewrite_pipeline(
             _topk_repair_map(search_source_text, original_report_dict)
             if topk_route_enabled else {"enabled": False, "targets": []}
         )
+        original_ai_components_for_priority = (
+            ((original_report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
+            if isinstance(original_report_dict, dict) else {}
+        )
+        original_topk_calibrated_for_priority = original_ai_components_for_priority.get("topk_calibrated_risk")
+        topk_safe_band_priority = bool(
+            topk_route_map.get("saturated")
+            or (
+                isinstance(original_topk_calibrated_for_priority, (int, float))
+                and float(original_topk_calibrated_for_priority) >= _safe_topk_calibrated_limit()
+            )
+        )
         topk_route_candidates = (
             _topk_route_optimizer_candidates(search_source_text, original_report_dict)
             if topk_route_enabled else []
@@ -14589,34 +14601,46 @@ def run_rewrite_pipeline(
             (strategy, candidate)
             for strategy, candidate, _meta in topk_route_candidates
         )
-        blocker_operation_candidates = _blocker_operation_candidates(
-            search_source_text,
-            original_report_dict,
-            limit=int(_float_env("DRAFTPROOF_BLOCKER_OPERATION_CANDIDATES", 6.0)),
-        )
-        deterministic_candidates.extend(
-            (strategy, candidate)
-            for strategy, candidate, _meta in blocker_operation_candidates
-        )
-        generic_assertion_candidates = _generic_assertion_compiler_candidates(
-            search_source_text,
-            original_report_dict,
-            limit=int(_float_env("DRAFTPROOF_GENERIC_ASSERTION_CANDIDATES", 5.0)),
-        )
-        deterministic_candidates.extend(
-            (strategy, candidate)
-            for strategy, candidate, _meta in generic_assertion_candidates
-        )
-        pruning_candidates = _content_pruning_candidates(
-            search_source_text,
-            original_report_dict,
-            limit=int(_float_env("DRAFTPROOF_CONTENT_PRUNING_CANDIDATES", 4.0)),
-        )
-        deterministic_candidates.extend(
-            (strategy, candidate)
-            for strategy, candidate, _meta in pruning_candidates
-        )
-        deterministic_candidates.extend(_ai_search_marked_grounding_candidates(search_source_text))
+        blocker_operation_candidates = []
+        generic_assertion_candidates = []
+        pruning_candidates = []
+        skipped_pre_topk_candidate_families: list[str] = []
+        if topk_safe_band_priority:
+            skipped_pre_topk_candidate_families = [
+                "blocker_operation_candidates",
+                "generic_assertion_compiler_candidates",
+                "content_pruning_candidates",
+                "marked_grounding_candidates",
+            ]
+        else:
+            blocker_operation_candidates = _blocker_operation_candidates(
+                search_source_text,
+                original_report_dict,
+                limit=int(_float_env("DRAFTPROOF_BLOCKER_OPERATION_CANDIDATES", 6.0)),
+            )
+            deterministic_candidates.extend(
+                (strategy, candidate)
+                for strategy, candidate, _meta in blocker_operation_candidates
+            )
+            generic_assertion_candidates = _generic_assertion_compiler_candidates(
+                search_source_text,
+                original_report_dict,
+                limit=int(_float_env("DRAFTPROOF_GENERIC_ASSERTION_CANDIDATES", 5.0)),
+            )
+            deterministic_candidates.extend(
+                (strategy, candidate)
+                for strategy, candidate, _meta in generic_assertion_candidates
+            )
+            pruning_candidates = _content_pruning_candidates(
+                search_source_text,
+                original_report_dict,
+                limit=int(_float_env("DRAFTPROOF_CONTENT_PRUNING_CANDIDATES", 4.0)),
+            )
+            deterministic_candidates.extend(
+                (strategy, candidate)
+                for strategy, candidate, _meta in pruning_candidates
+            )
+            deterministic_candidates.extend(_ai_search_marked_grounding_candidates(search_source_text))
         search_summary = {
             "enabled": True,
             "reference_ai": ai_search_reference,
@@ -14628,6 +14652,9 @@ def run_rewrite_pipeline(
             "target_ai_score": ai_search_target_score,
             "reference_ai_meets_threshold": ai_search_reference_meets_threshold,
             "human_target_search": human_target_search_status,
+            "topk_safe_band_priority": topk_safe_band_priority,
+            "original_topk_calibrated_risk": original_topk_calibrated_for_priority,
+            "pre_topk_candidate_families_skipped": skipped_pre_topk_candidate_families,
             "ai_footprint_gate": {
                 "enabled": _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True),
                 "before": _ai_footprint_profile(original_report_dict),
