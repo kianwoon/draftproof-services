@@ -5279,6 +5279,69 @@ def _topk_safe_band_scan_reserve() -> int:
         return 16
 
 
+def _topk_near_miss_partial_keep_decision(
+    *,
+    topk_value: float | int | None,
+    safe_limit: float,
+    topk_drop: float | int | None,
+    ai_drop: float | int | None,
+    ai_authorship_drop: float | int | None,
+    ai_transformation_drop: float | int | None,
+    review_burden_delta: int | float,
+    weighted_severity_delta: int | float,
+    critical_high_delta: int | float,
+) -> dict:
+    """Keep strong near-miss Top-k wins as partial progress without calling them safe.
+
+    A calibrated Top-k miss just above the safe line should not erase large
+    authorship/AI-footprint gains. It still blocks strict-safe status.
+    """
+    if not isinstance(topk_value, (int, float)):
+        return {"allowed": False, "reason": "topk_missing"}
+    topk_over_limit = float(topk_value) - float(safe_limit)
+    if topk_over_limit < 0.0:
+        return {"allowed": False, "reason": "already_safe"}
+    if topk_over_limit > 1.0:
+        return {
+            "allowed": False,
+            "reason": "topk_miss_too_large",
+            "topk_over_limit": round(topk_over_limit, 3),
+        }
+    if not isinstance(topk_drop, (int, float)) or float(topk_drop) < 8.0:
+        return {
+            "allowed": False,
+            "reason": "topk_drop_too_small",
+            "topk_drop": round(float(topk_drop or 0.0), 3),
+        }
+    meaningful_driver_drop = any(
+        isinstance(value, (int, float)) and float(value) >= 5.0
+        for value in (ai_drop, ai_authorship_drop, ai_transformation_drop)
+    )
+    if not meaningful_driver_drop:
+        return {"allowed": False, "reason": "no_meaningful_ai_driver_drop"}
+    if (
+        float(review_burden_delta or 0.0) > 0.0
+        or float(weighted_severity_delta or 0.0) > 0.0
+        or float(critical_high_delta or 0.0) > 0.0
+    ):
+        return {"allowed": False, "reason": "review_or_severity_regressed"}
+    return {
+        "allowed": True,
+        "reason": "topk_near_miss_with_material_ai_footprint_drop",
+        "topk_over_limit": round(topk_over_limit, 3),
+        "topk_drop": round(float(topk_drop), 3),
+        "ai_drop": round(float(ai_drop), 3) if isinstance(ai_drop, (int, float)) else None,
+        "ai_authorship_drop": (
+            round(float(ai_authorship_drop), 3)
+            if isinstance(ai_authorship_drop, (int, float)) else None
+        ),
+        "ai_transformation_drop": (
+            round(float(ai_transformation_drop), 3)
+            if isinstance(ai_transformation_drop, (int, float)) else None
+        ),
+    }
+
+
 def _blocked_winner_bounded_quality_tradeoff(
     *,
     candidate_eval: dict | None,
@@ -19929,35 +19992,22 @@ def run_rewrite_pipeline(
         and isinstance(_badge_ai(rewritten_report_dict), (int, float))
         else None
     )
-    keep_topk_near_miss_partial = bool(
-        rewritten_text != text
-        and isinstance(topk_over_limit, (int, float))
-        and 0.0 <= float(topk_over_limit) <= 1.0
-        and isinstance(final_topk_drop_for_acceptance, (int, float))
-        and float(final_topk_drop_for_acceptance) >= 8.0
-        and (
-            (
-                isinstance(final_ai_drop_for_acceptance, (int, float))
-                and float(final_ai_drop_for_acceptance) >= 5.0
-            )
-            or (
-                isinstance(final_authorship_drop_for_acceptance, (int, float))
-                and float(final_authorship_drop_for_acceptance) >= 5.0
-            )
-            or (
-                isinstance(final_transformation_drop_for_acceptance, (int, float))
-                and float(final_transformation_drop_for_acceptance) >= 5.0
-            )
-        )
-        and _review_burden(rewritten_report_dict) <= original_review_burden
-        and _weighted_severity(rewritten_report_dict) <= original_severity
-        and _critical_high_count(rewritten_report_dict) <= saved_critical_high
+    topk_near_miss_keep_decision = _topk_near_miss_partial_keep_decision(
+        topk_value=final_topk_for_acceptance,
+        safe_limit=topk_acceptance_limit,
+        topk_drop=final_topk_drop_for_acceptance,
+        ai_drop=final_ai_drop_for_acceptance,
+        ai_authorship_drop=final_authorship_drop_for_acceptance,
+        ai_transformation_drop=final_transformation_drop_for_acceptance,
+        review_burden_delta=_review_burden(rewritten_report_dict) - original_review_burden,
+        weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
+        critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
     )
     if (
         rewritten_text != text
         and isinstance(final_topk_for_acceptance, (int, float))
         and float(final_topk_for_acceptance) >= topk_acceptance_limit
-        and keep_topk_near_miss_partial
+        and topk_near_miss_keep_decision.get("allowed")
     ):
         reason = (
             f"topk_calibrated_near_miss_kept {float(final_topk_for_acceptance):.2f}>="
@@ -19993,6 +20043,7 @@ def run_rewrite_pipeline(
                 if isinstance(final_transformation_drop_for_acceptance, (int, float)) else None
             ),
             "reason": reason,
+            "decision": topk_near_miss_keep_decision,
         }
         result.summary.setdefault("saved_contract_notes", []).append(
             "Kept a near-miss Top-k candidate as partial progress; it is not strict-safe or detector-safe."

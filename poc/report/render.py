@@ -312,6 +312,38 @@ def _rating_for_calibrated_score(score: float) -> dict:
     return dict(_CALIBRATED_AUTHORSHIP_LEVELS[-1])
 
 
+def _count_value(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, number)
+
+
+def _authorship_sample_limit(sample_context: dict | None = None, topk_calibration_eligible=None) -> dict | None:
+    word_count = _count_value((sample_context or {}).get("word_count"))
+    sentence_count = _count_value((sample_context or {}).get("sentence_count"))
+    if word_count is None and sentence_count is None and topk_calibration_eligible is not False:
+        return None
+
+    very_short = (
+        topk_calibration_eligible is False
+        or (word_count is not None and word_count < 30)
+        or (sentence_count is not None and sentence_count < 3)
+    )
+    limited = (
+        very_short
+        or (word_count is not None and word_count < 150)
+        or (sentence_count is not None and sentence_count < 6)
+    )
+    return {
+        "word_count": word_count,
+        "sentence_count": sentence_count,
+        "very_short": very_short,
+        "limited": limited,
+    }
+
+
 def _strongest_supporting_ai_shape_signal(features: dict | None) -> dict | None:
     for key, label in [
         ("ai_likelihood", "AI likelihood"),
@@ -327,11 +359,31 @@ def _strongest_supporting_ai_shape_signal(features: dict | None) -> dict | None:
     return None
 
 
-def _authorship_rating_from_calibrated_risk(score, topk_score=None, topk_calibrated_risk=None, features: dict | None = None) -> dict:
+def _authorship_rating_from_calibrated_risk(
+    score,
+    topk_score=None,
+    topk_calibrated_risk=None,
+    features: dict | None = None,
+    sample_context: dict | None = None,
+    topk_calibration_eligible=None,
+) -> dict:
     calibrated_score = _tf_pct(score)
     topk_score = _tf_pct(topk_score)
     topk_calibrated_score = _tf_pct(topk_calibrated_risk)
     supporting_signal = _strongest_supporting_ai_shape_signal(features)
+    sample_limit = _authorship_sample_limit(sample_context, topk_calibration_eligible)
+    if sample_limit and sample_limit["very_short"]:
+        return {
+            "label": "Too Short to Assess",
+            "short_label": "Too Short",
+            "code": "insufficient_sample",
+            "level": -1,
+            "sample_limited": True,
+            "sample_context": sample_limit,
+            "score": calibrated_score,
+            "topk_score": topk_score,
+            "topk_calibrated_risk": topk_calibrated_score,
+        }
     rating = _rating_for_calibrated_score(calibrated_score) if calibrated_score is not None else {}
 
     def _apply_topk_floor(floor_code: str, **extra) -> None:
@@ -364,6 +416,13 @@ def _authorship_rating_from_calibrated_risk(score, topk_score=None, topk_calibra
 
     if not rating:
         return {}
+    if sample_limit and sample_limit["limited"] and rating.get("level", 0) > 2:
+        rating = {
+            **next(item for item in _CALIBRATED_AUTHORSHIP_LEVELS if item["code"] == "possible_ai_assisted"),
+            "sample_limited": True,
+            "sample_context": sample_limit,
+            "original_rating": rating,
+        }
     rating["score"] = calibrated_score
     rating["topk_score"] = rating.get("topk_score", topk_score)
     rating["topk_calibrated_risk"] = rating.get("topk_calibrated_risk", topk_calibrated_score)
@@ -373,6 +432,8 @@ def _authorship_rating_from_calibrated_risk(score, topk_score=None, topk_calibra
 
 def _authorship_rating_tone(rating: dict) -> dict:
     code = str((rating or {}).get("code") or (rating or {}).get("short_label") or (rating or {}).get("label") or "").lower()
+    if "insufficient" in code or "too short" in code:
+        return {"color": "#475569", "bg": "#f8fafc"}
     if "low_ai_signal" in code or "low signal" in code:
         return {"color": "#15803d", "bg": "#f0fdf4"}
     if "unlikely" in code:
@@ -386,7 +447,7 @@ def _authorship_rating_tone(rating: dict) -> dict:
     return {"color": "#334155", "bg": "#f8fafc"}
 
 
-def _display_authorship_rating_from_badge(badge: dict) -> dict:
+def _display_authorship_rating_from_badge(badge: dict, sample_context: dict | None = None) -> dict:
     features = (((badge or {}).get("transformation_classification") or {}).get("features") or {})
     ai_components = (badge or {}).get("ai_components") or {}
     topk_score = ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern"))
@@ -395,6 +456,8 @@ def _display_authorship_rating_from_badge(badge: dict) -> dict:
         topk_score,
         ai_components.get("topk_calibrated_risk"),
         features,
+        sample_context,
+        ai_components.get("topk_calibration_eligible"),
     )
     return calibrated or _authorship_rating_from_badge(badge)
 
@@ -431,7 +494,8 @@ def _executive_signal_chart_html(
         "RED": "#fef2f2",
     }.get(badge_tier, "#f8fafc")
 
-    rating = _display_authorship_rating_from_badge(badge)
+    doc_ctx = data.get("document_context", {}) if isinstance(data, dict) else {}
+    rating = _display_authorship_rating_from_badge(badge, doc_ctx)
     rating_label = (
         rating.get("short_label")
         or rating.get("label")
@@ -443,7 +507,23 @@ def _executive_signal_chart_html(
     ai_components = badge.get("ai_components") or {}
     topk_score = _tf_pct(ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")))
     topk_calibrated_score = _tf_pct(ai_components.get("topk_calibrated_risk"))
-    if rating.get("topk_strong_signal") and topk_score is not None and rating.get("supporting_signal"):
+    if rating.get("code") == "insufficient_sample":
+        sample = rating.get("sample_context") or {}
+        if sample.get("word_count") is not None:
+            rating_detail = f"{sample['word_count']:.0f} words · not enough text"
+        elif sample.get("sentence_count") is not None:
+            rating_detail = f"{sample['sentence_count']:.0f} sentences · not enough text"
+        else:
+            rating_detail = "Not enough text"
+    elif rating.get("sample_limited"):
+        sample = rating.get("sample_context") or {}
+        if sample.get("word_count") is not None:
+            rating_detail = f"{sample['word_count']:.0f} words · sample limited"
+        elif sample.get("sentence_count") is not None:
+            rating_detail = f"{sample['sentence_count']:.0f} sentences · sample limited"
+        else:
+            rating_detail = "Sample limited"
+    elif rating.get("topk_strong_signal") and topk_score is not None and rating.get("supporting_signal"):
         support = rating["supporting_signal"]
         rating_detail = f"{topk_score:.0f}% top-k · {support['score']:.0f}% {support['label'].lower()}"
     elif rating.get("topk_escalated") and (topk_calibrated_score is not None or topk_score is not None):
@@ -495,7 +575,6 @@ def _executive_signal_chart_html(
     ]
 
     evidence = transformation.get("evidence") or []
-    doc_ctx = data.get("document_context", {}) if isinstance(data, dict) else {}
     confidence_note = ""
     if doc_ctx:
         word_count = doc_ctx.get("word_count", 0)
@@ -940,7 +1019,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _ab = report.ai_risk_badge
         _abt = _ab.get("tier", "")
         _abs = _ab.get("ai_likelihood_score", 0)
-        _rating = _display_authorship_rating_from_badge(_ab)
+        _rating = _display_authorship_rating_from_badge(_ab, data.get("document_context", {}))
         _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)

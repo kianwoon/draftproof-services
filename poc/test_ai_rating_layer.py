@@ -29,6 +29,7 @@ from report.report import (
     report_to_dict,
 )
 from detect.semantic_shape import SemanticShapeDetector
+from detect.topk_calibration import calibrate_topk_risk
 from report.render import _authorship_rating_from_badge, _display_authorship_rating_from_badge, render_markdown
 
 
@@ -374,6 +375,62 @@ assert_equal(
 assert_true(
     render_strong_topk_stack.get("topk_strong_signal"),
     "strong top-k escalation is exposed for page/PDF seal copy",
+)
+
+short_topk_calibration = calibrate_topk_risk(100.0, eligible_sentence_count=1)
+assert_equal(
+    short_topk_calibration["topk_calibrated_risk"],
+    0.0,
+    "insufficient prose does not convert high raw top-k into maximum calibrated risk",
+)
+assert_true(
+    short_topk_calibration["topk_calibration_eligible"] is False
+    and short_topk_calibration["topk_safe_band"] is False,
+    "short prose is marked ineligible instead of safe or high risk",
+)
+
+render_short_topk = _display_authorship_rating_from_badge({
+    "ai_likelihood_score": 100.0,
+    "ai_components": {
+        "topk_pattern_raw": 100.0,
+        "topk_calibrated_risk": 100.0,
+        "topk_calibration_eligible": False,
+    },
+    "transformation_classification": {
+        "features": {
+            "ai_likelihood": 100.0,
+            "calibrated_ai_risk": 100.0,
+        },
+    },
+}, {"word_count": 3, "sentence_count": 1})
+assert_equal(
+    render_short_topk["short_label"],
+    "Too Short",
+    "very short content is not graded as AI just because top-k is high",
+)
+
+render_limited_topk = _display_authorship_rating_from_badge({
+    "ai_likelihood_score": 85.0,
+    "ai_components": {
+        "topk_pattern_raw": 95.0,
+        "topk_calibrated_risk": 95.0,
+        "topk_calibration_eligible": True,
+    },
+    "transformation_classification": {
+        "features": {
+            "ai_likelihood": 85.0,
+            "calibrated_ai_risk": 80.0,
+        },
+    },
+}, {"word_count": 80, "sentence_count": 4})
+assert_equal(
+    render_limited_topk["short_label"],
+    "Possible AI-Assisted",
+    "short-but-not-tiny content caps authorship grade confidence",
+)
+assert_true(
+    render_limited_topk.get("sample_limited"),
+    "sample-limited cap is exposed for report copy",
 )
 
 scored = Layer3Scorer().score(

@@ -80,6 +80,11 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, percent));
 }
 
+function metricCount(value) {
+  if (value == null || Number.isNaN(Number(value))) return null;
+  return Math.max(0, Number(value));
+}
+
 const TRANSFORMATION_SIGNAL_LABELS = {
   topk_pattern: 'Raw Top-k predictability',
   topk_pattern_raw: 'Raw Top-k predictability',
@@ -389,6 +394,31 @@ function ratingForCalibratedPercent(percent) {
   return { ...rating };
 }
 
+function getAuthorshipSampleLimit(sampleContext = {}, topkCalibrationEligible = null) {
+  const wordCount = metricCount(sampleContext?.word_count);
+  const sentenceCount = metricCount(sampleContext?.sentence_count);
+  const hasSampleContext = wordCount != null || sentenceCount != null || topkCalibrationEligible === false;
+  if (!hasSampleContext) return null;
+
+  const veryShort = (
+    topkCalibrationEligible === false ||
+    (wordCount != null && wordCount < 30) ||
+    (sentenceCount != null && sentenceCount < 3)
+  );
+  const limited = (
+    veryShort ||
+    (wordCount != null && wordCount < 150) ||
+    (sentenceCount != null && sentenceCount < 6)
+  );
+
+  return {
+    wordCount,
+    sentenceCount,
+    veryShort,
+    limited,
+  };
+}
+
 function strongestSupportingAiShapeSignal(signals = {}) {
   const candidates = [
     ['ai_likelihood', 'AI likelihood', signals.ai_likelihood],
@@ -404,11 +434,32 @@ function strongestSupportingAiShapeSignal(signals = {}) {
   return candidates.find((signal) => signal.score >= 50) || null;
 }
 
-function deriveCalibratedAuthorshipRating(score, topkPatternScore = null, topkCalibratedRisk = null, supportingSignals = {}) {
+function deriveCalibratedAuthorshipRating(
+  score,
+  topkPatternScore = null,
+  topkCalibratedRisk = null,
+  supportingSignals = {},
+  sampleContext = {},
+  topkCalibrationEligible = null
+) {
   const calibratedPercent = clampPercent(score);
   const topkPercent = clampPercent(topkPatternScore);
   const topkRiskPercent = clampPercent(topkCalibratedRisk);
   const supportingSignal = strongestSupportingAiShapeSignal(supportingSignals);
+  const sampleLimit = getAuthorshipSampleLimit(sampleContext, topkCalibrationEligible);
+  if (sampleLimit?.veryShort) {
+    return {
+      label: 'Too Short to Assess',
+      short_label: 'Too Short',
+      code: 'insufficient_sample',
+      level: -1,
+      sample_limited: true,
+      sample_context: sampleLimit,
+      score: calibratedPercent,
+      topk_score: topkPercent,
+      topk_calibrated_risk: topkRiskPercent,
+    };
+  }
   let rating = calibratedPercent == null ? null : ratingForCalibratedPercent(calibratedPercent);
 
   const applyTopkFloor = (floor, extra = {}) => {
@@ -445,6 +496,14 @@ function deriveCalibratedAuthorshipRating(score, topkPatternScore = null, topkCa
   }
 
   if (!rating) return null;
+  if (sampleLimit?.limited && rating.level > 2) {
+    rating = {
+      ...CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'possible_ai_assisted'),
+      sample_limited: true,
+      sample_context: sampleLimit,
+      original_rating: rating,
+    };
+  }
   return {
     ...rating,
     score: calibratedPercent,
@@ -461,6 +520,22 @@ function formatAuthorshipSealDetail({
   calibratedAuthorshipRisk = null,
   fallbackScore = null,
 }) {
+  if (rating.code === 'insufficient_sample') {
+    const words = rating.sample_context?.wordCount;
+    const sentences = rating.sample_context?.sentenceCount;
+    if (words != null || sentences != null) {
+      return `${words != null ? `${Math.round(words)} words` : `${Math.round(sentences)} sentences`} · not enough text`;
+    }
+    return 'Not enough text';
+  }
+  if (rating.sample_limited) {
+    const words = rating.sample_context?.wordCount;
+    const sentences = rating.sample_context?.sentenceCount;
+    if (words != null || sentences != null) {
+      return `${words != null ? `${Math.round(words)} words` : `${Math.round(sentences)} sentences`} · sample limited`;
+    }
+    return 'Sample limited';
+  }
   if (rating.topk_strong_signal && topkPatternScore != null && rating.supporting_signal) {
     return `${formatMetricPercent(topkPatternScore, 0)} top-k · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${rating.supporting_signal.label.toLowerCase()}`;
   }
@@ -475,6 +550,9 @@ function formatAuthorshipSealDetail({
 
 function getAuthorshipTone(rating = {}) {
   const code = String(rating.code || rating.short_label || rating.label || '').toLowerCase();
+  if (code.includes('insufficient') || code.includes('too short')) {
+    return { color: '#475569', bg: '#f8fafc' };
+  }
   if (code.includes('low_signal') || code.includes('low signal')) {
     return { color: '#15803d', bg: '#f0fdf4' };
   }
@@ -574,6 +652,11 @@ function getScanIntelligence(scan) {
 
 function getScanAiComponents(scan) {
   return scan?.ai_risk_badge?.ai_components || scan?.results_json?.ai_risk_badge?.ai_components || {};
+}
+
+function getScanDocumentContext(scan) {
+  const intelligence = getScanIntelligence(scan);
+  return scan?.document_context || scan?.results_json?.document_context || intelligence.document || {};
 }
 
 function getScanTransformationSignals(scan) {
@@ -1150,6 +1233,7 @@ export default function Report() {
   const reportScanJson = report.results_json || {};
   const originalComparisonScan = mergeScanSummary(reportScanJson, getOriginalDetectScan(rewriteResultReport));
   const originalComparisonBadge = originalComparisonScan?.ai_risk_badge || badge;
+  const originalDocumentContext = getScanDocumentContext(originalComparisonScan || reportScanJson);
   const originalComparisonAiScore = originalComparisonScan
     ? (originalComparisonScan.ai_score ?? originalComparisonBadge.ai_likelihood_score ?? rewriteResultSummary?.original_risk ?? aiScore)
     : aiScore;
@@ -1199,6 +1283,7 @@ export default function Report() {
   const rewrittenCalibratedAuthorshipRisk = clampPercent(rewrittenTransformation?.features?.calibrated_ai_risk);
   const rewrittenTopkPatternScore = clampPercent(rewrittenBadge.ai_components?.topk_pattern_raw ?? rewrittenBadge.ai_components?.topk_pattern);
   const rewrittenTopkCalibratedRisk = clampPercent(rewrittenBadge.ai_components?.topk_calibrated_risk);
+  const rewrittenDocumentContext = getScanDocumentContext(rewrittenScan);
   const rawAuthorshipSignal = aiScore;
   const storedAuthorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
@@ -1211,7 +1296,9 @@ export default function Report() {
     calibratedAuthorshipRisk,
     topkPatternScore,
     topkCalibratedRisk,
-    transformation?.features
+    transformation?.features,
+    originalDocumentContext,
+    originalComparisonBadge.ai_components?.topk_calibration_eligible
   ) || storedAuthorshipRating;
   const authorshipTone = getAuthorshipTone(authorshipRating);
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
@@ -1234,7 +1321,9 @@ export default function Report() {
     rewrittenCalibratedAuthorshipRisk,
     rewrittenTopkPatternScore,
     rewrittenTopkCalibratedRisk,
-    rewrittenTransformation?.features
+    rewrittenTransformation?.features,
+    rewrittenDocumentContext,
+    rewrittenBadge.ai_components?.topk_calibration_eligible
   ) || rewrittenStoredAuthorshipRating;
   const rewrittenAuthorshipSealDetail = formatAuthorshipSealDetail({
     rating: rewrittenAuthorshipRating,

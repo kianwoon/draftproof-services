@@ -73,6 +73,7 @@ from rewrite_pipeline import (
     _ai_footprint_gate_status,
     _strict_ai_safe_band_status,
     _topk_rebuild_fallback_rank,
+    _topk_near_miss_partial_keep_decision,
     _strict_safe_phase_budget_contract,
     _strict_safe_candidate_rank,
     _safe_topk_limit,
@@ -1315,6 +1316,34 @@ topk_near_miss_b = make_footprint_report(
 assert_test(
     _topk_rebuild_fallback_rank(topk_near_miss_a) > _topk_rebuild_fallback_rank(topk_near_miss_b),
     "Top-k rebuild fallback keeps the better near-miss instead of the later worse round",
+)
+near_miss_keep = _topk_near_miss_partial_keep_decision(
+    topk_value=25.654,
+    safe_limit=25.0,
+    topk_drop=74.346,
+    ai_drop=15.05,
+    ai_authorship_drop=15.0,
+    ai_transformation_drop=9.0,
+    review_burden_delta=-48,
+    weighted_severity_delta=-102,
+    critical_high_delta=0,
+)
+near_miss_reject = _topk_near_miss_partial_keep_decision(
+    topk_value=27.4,
+    safe_limit=25.0,
+    topk_drop=72.6,
+    ai_drop=15.0,
+    ai_authorship_drop=15.0,
+    ai_transformation_drop=9.0,
+    review_burden_delta=-48,
+    weighted_severity_delta=-102,
+    critical_high_delta=0,
+)
+assert_test(
+    near_miss_keep["allowed"]
+    and not near_miss_reject["allowed"]
+    and near_miss_reject["reason"] == "topk_miss_too_large",
+    "Top-k near-miss gate preserves strong partial progress only inside the fixed 1-point band",
 )
 phase_contract = _strict_safe_phase_budget_contract(10)
 phase_contract_lower = _strict_safe_phase_budget_contract(7)

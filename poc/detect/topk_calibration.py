@@ -64,7 +64,7 @@ def calibrate_topk_risk(
         raw = 0.0
 
     if not calibration_eligible:
-        calibrated = 100.0
+        calibrated = 0.0
         band = "insufficient_prose"
     elif raw <= 45.0:
         calibrated = raw * 0.25
