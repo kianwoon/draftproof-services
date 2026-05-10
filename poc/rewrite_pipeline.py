@@ -5291,22 +5291,16 @@ def _topk_near_miss_partial_keep_decision(
     weighted_severity_delta: int | float,
     critical_high_delta: int | float,
 ) -> dict:
-    """Keep strong near-miss Top-k wins as partial progress without calling them safe.
+    """Keep strong Top-k-blocked wins as partial progress without calling them safe.
 
-    A calibrated Top-k miss just above the safe line should not erase large
-    authorship/AI-footprint gains. It still blocks strict-safe status.
+    Calibrated Top-k above the safe line should not erase large authorship or
+    AI-footprint gains. It still blocks strict-safe status.
     """
     if not isinstance(topk_value, (int, float)):
         return {"allowed": False, "reason": "topk_missing"}
     topk_over_limit = float(topk_value) - float(safe_limit)
     if topk_over_limit < 0.0:
         return {"allowed": False, "reason": "already_safe"}
-    if topk_over_limit > 1.0:
-        return {
-            "allowed": False,
-            "reason": "topk_miss_too_large",
-            "topk_over_limit": round(topk_over_limit, 3),
-        }
     if not isinstance(topk_drop, (int, float)) or float(topk_drop) < 8.0:
         return {
             "allowed": False,
@@ -5327,7 +5321,7 @@ def _topk_near_miss_partial_keep_decision(
         return {"allowed": False, "reason": "review_or_severity_regressed"}
     return {
         "allowed": True,
-        "reason": "topk_near_miss_with_material_ai_footprint_drop",
+        "reason": "topk_blocked_but_material_ai_footprint_drop",
         "topk_over_limit": round(topk_over_limit, 3),
         "topk_drop": round(float(topk_drop), 3),
         "ai_drop": round(float(ai_drop), 3) if isinstance(ai_drop, (int, float)) else None,
@@ -20070,12 +20064,12 @@ def run_rewrite_pipeline(
         and topk_near_miss_keep_decision.get("allowed")
     ):
         reason = (
-            f"topk_calibrated_near_miss_kept {float(final_topk_for_acceptance):.2f}>="
+            f"topk_calibrated_blocked_partial_kept {float(final_topk_for_acceptance):.2f}>="
             f"{topk_acceptance_limit:.2f}"
         )
         result.summary["rollback_applied"] = False
         result.summary.pop("rollback_reason", None)
-        result.summary["outcome"] = "topk_near_miss_partial"
+        result.summary["outcome"] = "topk_blocked_partial_kept"
         result.summary["topk_acceptance_gate"] = {
             "accepted": False,
             "partial_kept": True,
@@ -20106,7 +20100,7 @@ def run_rewrite_pipeline(
             "decision": topk_near_miss_keep_decision,
         }
         result.summary.setdefault("saved_contract_notes", []).append(
-            "Kept a near-miss Top-k candidate as partial progress; it is not strict-safe or detector-safe."
+            "Kept a Top-k-blocked candidate as partial progress because it materially improved AI-footprint drivers; it is not strict-safe or detector-safe."
         )
     elif (
         rewritten_text != text

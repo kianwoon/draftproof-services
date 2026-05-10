@@ -1328,7 +1328,7 @@ near_miss_keep = _topk_near_miss_partial_keep_decision(
     weighted_severity_delta=-102,
     critical_high_delta=0,
 )
-near_miss_reject = _topk_near_miss_partial_keep_decision(
+topk_blocked_keep = _topk_near_miss_partial_keep_decision(
     topk_value=27.4,
     safe_limit=25.0,
     topk_drop=72.6,
@@ -1339,11 +1339,23 @@ near_miss_reject = _topk_near_miss_partial_keep_decision(
     weighted_severity_delta=-102,
     critical_high_delta=0,
 )
+topk_blocked_reject = _topk_near_miss_partial_keep_decision(
+    topk_value=90.0,
+    safe_limit=25.0,
+    topk_drop=3.0,
+    ai_drop=15.0,
+    ai_authorship_drop=15.0,
+    ai_transformation_drop=9.0,
+    review_burden_delta=-48,
+    weighted_severity_delta=-102,
+    critical_high_delta=0,
+)
 assert_test(
     near_miss_keep["allowed"]
-    and not near_miss_reject["allowed"]
-    and near_miss_reject["reason"] == "topk_miss_too_large",
-    "Top-k near-miss gate preserves strong partial progress only inside the fixed 1-point band",
+    and topk_blocked_keep["allowed"]
+    and not topk_blocked_reject["allowed"]
+    and topk_blocked_reject["reason"] == "topk_drop_too_small",
+    "Top-k final gate preserves material partial progress instead of rolling back on arbitrary miss distance",
 )
 phase_contract = _strict_safe_phase_budget_contract(10)
 phase_contract_lower = _strict_safe_phase_budget_contract(7)
