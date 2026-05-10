@@ -77,6 +77,7 @@ from rewrite_pipeline import (
     _formula_gap_contract,
     _formula_gap_candidate_rank,
     _formula_gap_changed_word_count,
+    _formula_portfolio_plan,
     _multi_signal_candidate_contract,
     _ai_footprint_gate_status,
     _strict_ai_safe_band_status,
@@ -1397,8 +1398,72 @@ assert_test(
     and formula_gap["target_met"] is True
     and formula_gap["remaining_formula_gap"] == 0.0
     and formula_gap["changed_word_count"] > 0
-    and "ai_likelihood" in (formula_gap["weighted_driver_drops"] or {}),
+    and "ai_likelihood" in (formula_gap["weighted_driver_drops"] or {})
+    and formula_gap["driver_priority_plan"]
+    and formula_gap["priority_basis"],
     "Formula-gap contract reports exact shared score movement, weighted driver drops, target state, and change budget",
+)
+formula_priority_gap = _formula_gap_contract(turnitin_formula_original, turnitin_formula_original)
+priority_plan = formula_priority_gap["driver_priority_plan"]
+assert_test(
+    priority_plan[0]["driver"] in {"ai_likelihood", "topk_calibrated_risk"}
+    and all("actionability" in row and "backfire_risk" in row for row in priority_plan)
+    and all("expected_net_gain" in row for row in priority_plan)
+    and formula_priority_gap["next_formula_driver"] == priority_plan[0]["driver"],
+    "Formula-gap priority plan combines weighted impact with actionability, headroom, and backfire risk",
+)
+suppression_only_candidate = make_footprint_report(
+    ai_authorship=50,
+    human=42,
+    ai_transformation=50,
+    grounding=45,
+    human_anchor=40,
+    smoothness=60,
+    semantic_uniformity=50,
+    ai_likelihood=70,
+    topk_pattern=80,
+    topk_calibrated_risk=40,
+    generic_assertion_risk=40,
+    qualifying_text_ai_density=40,
+    unsupported_claim_risk=30,
+    broad_claim_risk=30,
+    discourse=30,
+    expansion=20,
+    section_style=55,
+    signal_agreement=60,
+)
+suppression_only_gap = _formula_gap_contract(turnitin_formula_original, suppression_only_candidate)
+assert_test(
+    suppression_only_gap["weighted_driver_drops"]["human_anchor_suppression"]["gain"] == 9.0
+    and suppression_only_gap["score_drop"] == 9.0
+    and suppression_only_gap["positive_ai_burden"]["before"] == suppression_only_gap["positive_ai_burden"]["after"],
+    "Human Anchor suppression reduces the Turnitin-like score one-for-one when positive drivers are unchanged",
+)
+portfolio_plan = _formula_portfolio_plan(
+    turnitin_formula_original,
+    turnitin_formula_candidate,
+    observed_candidates=[
+        {
+            "strategy": "safe_human_anchor_candidate",
+            "formula_gap_contract": suppression_only_gap,
+            "turnitin_like_ai_gate": {"safety_clean": True},
+            "selection_status": {"selectable": True, "reason": "accepted_formula_portfolio_partial"},
+        },
+        {
+            "strategy": "blocked_likelihood_candidate",
+            "formula_gap_contract": formula_gap,
+            "turnitin_like_ai_gate": {"safety_clean": False},
+            "selection_status": {"selectable": False, "reason": "review_burden_regressed"},
+        },
+    ],
+)
+assert_test(
+    portfolio_plan["positive_ai_burden"]["before"] > portfolio_plan["human_anchor_suppression"]["before"]
+    and portfolio_plan["suppression_headroom"] >= 0
+    and portfolio_plan["observed_driver_movement"]["human_anchor_suppression"]["best_safe_drop"] == 9.0
+    and portfolio_plan["driver_priorities"]
+    and portfolio_plan["selected_driver_portfolio"],
+    "Formula portfolio plan exposes positive AI burden, Human Anchor suppression, observed movement, and selected driver portfolio",
 )
 formula_one_signal_backfire = _formula_gap_contract(
     turnitin_formula_original,

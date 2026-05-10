@@ -4821,6 +4821,329 @@ def _formula_gap_weighted_driver_plan(profile: dict | None, *, safety_margin: fl
     return plan
 
 
+_FORMULA_DRIVER_CONTROL_PROFILES = {
+    "ai_likelihood": {
+        "strategy_family": "LIKELIHOOD_TEXTURE_REBUILD",
+        "actionability": 0.78,
+        "backfire_risk": 0.28,
+        "typical_backfire": ["rewrite_smoothness", "semantic_uniformity"],
+    },
+    "topk_calibrated_risk": {
+        "strategy_family": "TOPK_ROUTE_REBUILD",
+        "actionability": 0.72,
+        "backfire_risk": 0.34,
+        "typical_backfire": ["semantic_drift", "rewrite_smoothness"],
+    },
+    "semantic_uniformity": {
+        "strategy_family": "SEMANTIC_VARIANCE_RESTRUCTURE",
+        "actionability": 0.64,
+        "backfire_risk": 0.36,
+        "typical_backfire": ["semantic_drift", "review_burden"],
+    },
+    "rewrite_smoothness": {
+        "strategy_family": "SMOOTHNESS_DEPOLISH",
+        "actionability": 0.70,
+        "backfire_risk": 0.26,
+        "typical_backfire": ["review_burden", "readability"],
+    },
+    "patchwork_expansion": {
+        "strategy_family": "PATCHWORK_COLLAPSE",
+        "actionability": 0.82,
+        "backfire_risk": 0.22,
+        "typical_backfire": ["anchor_loss", "semantic_drift"],
+    },
+    "signal_agreement": {
+        "strategy_family": "SIGNAL_DISAGREEMENT_REBALANCE",
+        "actionability": 0.48,
+        "backfire_risk": 0.42,
+        "typical_backfire": ["component_backfire"],
+    },
+    "human_anchor_suppression": {
+        "strategy_family": "HUMAN_ANCHOR_SUPPRESSION_GAIN",
+        "actionability": 0.62,
+        "backfire_risk": 0.40,
+        "typical_backfire": ["ai_authorship", "unsupported_claim_risk"],
+    },
+}
+
+
+def _formula_gap_driver_priority_plan(
+    before: dict | None,
+    after: dict | None,
+    *,
+    safety_margin: float = 3.0,
+) -> list[dict]:
+    """Rank the next drivers by weighted impact, movable headroom, and risk cost."""
+    before = before if isinstance(before, dict) else {}
+    after = after if isinstance(after, dict) else {}
+    target_score = float(after.get("target_score") or before.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
+    remaining_gap = max(0.0, float(after.get("score") or 0.0) - target_score)
+    gap_to_cover = remaining_gap + float(safety_margin or 0.0)
+    before_weighted = before.get("weighted_components") if isinstance(before.get("weighted_components"), dict) else {}
+    after_weighted = after.get("weighted_components") if isinstance(after.get("weighted_components"), dict) else {}
+    after_components = after.get("components") if isinstance(after.get("components"), dict) else {}
+    rows: list[dict] = []
+    for driver, weight in TURNITIN_LIKE_COMPONENT_WEIGHTS.items():
+        weighted_remaining = max(0.0, float(after_weighted.get(driver) or 0.0))
+        if weighted_remaining <= 0.0:
+            continue
+        achieved_drop = float(before_weighted.get(driver) or 0.0) - weighted_remaining
+        feasible_headroom = min(weighted_remaining, gap_to_cover) if gap_to_cover > 0.0 else 0.0
+        profile = _FORMULA_DRIVER_CONTROL_PROFILES.get(driver, {})
+        actionability = float(profile.get("actionability", 0.5))
+        backfire_risk = float(profile.get("backfire_risk", 0.35))
+        priority = feasible_headroom * (0.65 + actionability) * max(0.15, 1.0 - backfire_risk * 0.45)
+        rows.append({
+            "driver": driver,
+            "strategy_family": profile.get("strategy_family", driver.upper()),
+            "raw_value_after": round(float(after_components.get(driver) or 0.0), 3),
+            "formula_weight": round(float(weight), 3),
+            "weighted_remaining": round(weighted_remaining, 3),
+            "achieved_weighted_drop": round(achieved_drop, 3),
+            "feasible_weighted_headroom": round(feasible_headroom, 3),
+            "remaining_gap_share": round(
+                feasible_headroom / max(remaining_gap, 1.0),
+                3,
+            ),
+            "actionability": round(actionability, 3),
+            "backfire_risk": round(backfire_risk, 3),
+            "priority_score": round(priority, 3),
+            "expected_net_gain": round(priority, 3),
+            "typical_backfire": profile.get("typical_backfire", []),
+            "control_goal": "reduce",
+        })
+
+    suppression = float(after.get("human_anchor_suppression") or 0.0)
+    suppression_before = float(before.get("human_anchor_suppression") or 0.0)
+    suppression_headroom = max(0.0, 45.0 - suppression)
+    if suppression_headroom > 0.0:
+        profile = _FORMULA_DRIVER_CONTROL_PROFILES["human_anchor_suppression"]
+        feasible_headroom = min(suppression_headroom, gap_to_cover) if gap_to_cover > 0.0 else 0.0
+        actionability = float(profile.get("actionability", 0.5))
+        backfire_risk = float(profile.get("backfire_risk", 0.35))
+        priority = feasible_headroom * (0.65 + actionability) * max(0.15, 1.0 - backfire_risk * 0.45)
+        rows.append({
+            "driver": "human_anchor_suppression",
+            "strategy_family": profile.get("strategy_family"),
+            "raw_value_after": round(suppression, 3),
+            "formula_weight": -1.0,
+            "weighted_remaining": round(-suppression, 3),
+            "achieved_weighted_drop": round(suppression - suppression_before, 3),
+            "feasible_weighted_headroom": round(feasible_headroom, 3),
+            "remaining_gap_share": round(
+                feasible_headroom / max(remaining_gap, 1.0),
+                3,
+            ),
+            "actionability": round(actionability, 3),
+            "backfire_risk": round(backfire_risk, 3),
+            "priority_score": round(priority, 3),
+            "expected_net_gain": round(priority, 3),
+            "typical_backfire": profile.get("typical_backfire", []),
+            "control_goal": "increase",
+        })
+    rows.sort(
+        key=lambda row: (
+            float(row.get("priority_score", 0.0)),
+            float(row.get("feasible_weighted_headroom", 0.0)),
+            float(row.get("weighted_remaining", 0.0)),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _formula_observed_driver_movement(candidates: list[dict] | tuple[dict, ...] | None) -> dict:
+    """Summarize measured formula-driver movement across the current candidate frontier."""
+    drivers = list(TURNITIN_LIKE_COMPONENT_WEIGHTS) + ["human_anchor_suppression"]
+    observed = {
+        driver: {
+            "candidate_count": 0,
+            "safe_candidate_count": 0,
+            "best_observed_drop": 0.0,
+            "best_observed_strategy": None,
+            "best_safe_drop": 0.0,
+            "best_safe_strategy": None,
+            "best_blocked_drop": 0.0,
+            "best_blocked_strategy": None,
+            "best_blocked_reason": None,
+        }
+        for driver in drivers
+    }
+    for row in candidates or []:
+        if not isinstance(row, dict):
+            continue
+        contract = row.get("formula_gap_contract")
+        if not isinstance(contract, dict):
+            contract = ((row.get("selection_status") or {}).get("formula_gap_contract") or {})
+        drops = contract.get("weighted_driver_drops") if isinstance(contract.get("weighted_driver_drops"), dict) else {}
+        status = row.get("selection_status") if isinstance(row.get("selection_status"), dict) else {}
+        gate = row.get("turnitin_like_ai_gate") if isinstance(row.get("turnitin_like_ai_gate"), dict) else {}
+        if not gate:
+            gate = status.get("turnitin_like_ai_gate") if isinstance(status.get("turnitin_like_ai_gate"), dict) else {}
+        selectable = bool(status.get("selectable"))
+        safety_clean = bool(gate.get("safety_clean", selectable))
+        safe = selectable and safety_clean
+        reason = row.get("reason") or status.get("reason")
+        strategy = row.get("strategy") or status.get("strategy")
+        for driver in drivers:
+            driver_drop = drops.get(driver) if isinstance(drops.get(driver), dict) else {}
+            if not isinstance(driver_drop, dict):
+                continue
+            value = driver_drop.get("drop", driver_drop.get("gain"))
+            if not isinstance(value, (int, float)):
+                continue
+            value = round(float(value), 3)
+            if value <= 0.0:
+                continue
+            item = observed[driver]
+            item["candidate_count"] += 1
+            if value > float(item["best_observed_drop"] or 0.0):
+                item["best_observed_drop"] = value
+                item["best_observed_strategy"] = strategy
+            if safe:
+                item["safe_candidate_count"] += 1
+                if value > float(item["best_safe_drop"] or 0.0):
+                    item["best_safe_drop"] = value
+                    item["best_safe_strategy"] = strategy
+            elif value > float(item["best_blocked_drop"] or 0.0):
+                item["best_blocked_drop"] = value
+                item["best_blocked_strategy"] = strategy
+                item["best_blocked_reason"] = reason
+    return observed
+
+
+def _formula_portfolio_plan_from_profiles(
+    before: dict | None,
+    after: dict | None,
+    *,
+    observed_driver_movement: dict | None = None,
+    safety_margin: float = 3.0,
+) -> dict:
+    before = before if isinstance(before, dict) else {}
+    after = after if isinstance(after, dict) else {}
+    target_score = float(after.get("target_score") or before.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
+    score_before = float(before.get("score") or 0.0)
+    score_after = float(after.get("score") or 0.0)
+    positive_before = float(before.get("raw_positive_score") or 0.0)
+    positive_after = float(after.get("raw_positive_score") or 0.0)
+    suppression_before = float(before.get("human_anchor_suppression") or 0.0)
+    suppression_after = float(after.get("human_anchor_suppression") or 0.0)
+    suppression_headroom = max(0.0, 45.0 - suppression_after)
+    remaining_gap = max(0.0, score_after - target_score)
+    required_total_gain = remaining_gap + float(safety_margin or 0.0)
+    required_suppression_gain = min(suppression_headroom, required_total_gain)
+    observed_driver_movement = observed_driver_movement if isinstance(observed_driver_movement, dict) else {}
+    base_priorities = _formula_gap_driver_priority_plan(before, after, safety_margin=safety_margin)
+    driver_priorities: list[dict] = []
+    for row in base_priorities:
+        if not isinstance(row, dict):
+            continue
+        driver = str(row.get("driver") or "")
+        movement = observed_driver_movement.get(driver) if isinstance(observed_driver_movement.get(driver), dict) else {}
+        headroom = float(row.get("feasible_weighted_headroom") or 0.0)
+        static_actionability = float(row.get("actionability") or 0.0)
+        safe_drop = float(movement.get("best_safe_drop") or 0.0)
+        blocked_drop = float(movement.get("best_blocked_drop") or 0.0)
+        observed_safe_ratio = min(1.0, safe_drop / max(headroom, 1.0))
+        observed_blocked_ratio = min(1.0, blocked_drop / max(headroom, 1.0))
+        observed_actionability = (
+            min(1.0, static_actionability * 0.65 + observed_safe_ratio * 0.35)
+            if movement.get("candidate_count")
+            else static_actionability
+        )
+        if safe_drop <= 0.0 and blocked_drop > 0.0:
+            observed_actionability = min(1.0, static_actionability * 0.55 + observed_blocked_ratio * 0.20)
+        backfire_risk = float(row.get("backfire_risk") or 0.0)
+        if blocked_drop > safe_drop and blocked_drop > 0.0:
+            backfire_risk = min(1.0, backfire_risk + 0.12)
+        expected_net_gain = headroom * (0.65 + observed_actionability) * max(0.10, 1.0 - backfire_risk * 0.50)
+        enriched = dict(row)
+        enriched.update({
+            "static_actionability": round(static_actionability, 3),
+            "observed_actionability": round(observed_actionability, 3),
+            "observed_safe_drop": round(safe_drop, 3),
+            "observed_best_drop": round(float(movement.get("best_observed_drop") or 0.0), 3),
+            "observed_blocked_drop": round(blocked_drop, 3),
+            "observed_candidate_count": int(movement.get("candidate_count") or 0),
+            "observed_safe_candidate_count": int(movement.get("safe_candidate_count") or 0),
+            "best_safe_strategy": movement.get("best_safe_strategy"),
+            "best_blocked_strategy": movement.get("best_blocked_strategy"),
+            "best_blocked_reason": movement.get("best_blocked_reason"),
+            "backfire_risk": round(backfire_risk, 3),
+            "expected_net_gain": round(expected_net_gain, 3),
+            "priority_score": round(expected_net_gain, 3),
+        })
+        driver_priorities.append(enriched)
+    driver_priorities.sort(
+        key=lambda item: (
+            float(item.get("expected_net_gain", 0.0)),
+            float(item.get("feasible_weighted_headroom", 0.0)),
+            float(item.get("observed_safe_drop", 0.0)),
+        ),
+        reverse=True,
+    )
+    selected_portfolio = []
+    cumulative = 0.0
+    for row in driver_priorities:
+        if cumulative >= required_total_gain:
+            break
+        selected_portfolio.append({
+            "driver": row.get("driver"),
+            "strategy_family": row.get("strategy_family"),
+            "expected_net_gain": row.get("expected_net_gain"),
+            "control_goal": row.get("control_goal"),
+        })
+        cumulative += float(row.get("expected_net_gain") or 0.0)
+    return {
+        "version": "formula_portfolio_plan_v1",
+        "score_before": round(score_before, 3),
+        "score_after": round(score_after, 3),
+        "target_score": round(target_score, 3),
+        "target_met": bool(score_after < target_score),
+        "required_gap": round(remaining_gap, 3),
+        "safety_margin": round(float(safety_margin or 0.0), 3),
+        "required_total_gain": round(required_total_gain, 3),
+        "positive_ai_burden": {
+            "before": round(positive_before, 3),
+            "after": round(positive_after, 3),
+            "drop": round(positive_before - positive_after, 3),
+        },
+        "human_anchor_suppression": {
+            "before": round(suppression_before, 3),
+            "after": round(suppression_after, 3),
+            "gain": round(suppression_after - suppression_before, 3),
+        },
+        "suppression_headroom": round(suppression_headroom, 3),
+        "required_suppression_gain": round(required_suppression_gain, 3),
+        "driver_priorities": driver_priorities,
+        "selected_driver_portfolio": selected_portfolio,
+        "expected_net_gain": {
+            str(row.get("driver")): row.get("expected_net_gain")
+            for row in driver_priorities
+            if row.get("driver")
+        },
+        "observed_driver_movement": observed_driver_movement,
+    }
+
+
+def _formula_portfolio_plan(
+    original_report: dict | None,
+    candidate_report: dict | None,
+    *,
+    observed_candidates: list[dict] | tuple[dict, ...] | None = None,
+    safety_margin: float = 3.0,
+) -> dict:
+    before = _turnitin_like_ai_profile(original_report)
+    after = _turnitin_like_ai_profile(candidate_report)
+    observed = _formula_observed_driver_movement(observed_candidates)
+    return _formula_portfolio_plan_from_profiles(
+        before,
+        after,
+        observed_driver_movement=observed,
+        safety_margin=safety_margin,
+    )
+
+
 def _formula_gap_contract(
     original_report: dict | None,
     candidate_report: dict | None,
@@ -4868,6 +5191,7 @@ def _formula_gap_contract(
     efficiency = measured_score_drop / max(1, changed_words)
     target_score = float(after.get("target_score") or before.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
     remaining_gap = max(0.0, score_after - target_score)
+    portfolio = _formula_portfolio_plan_from_profiles(before, after, safety_margin=safety_margin)
     contract = {
         "version": "formula_gap_contract_v1",
         "score_before": round(score_before, 3),
@@ -4889,13 +5213,26 @@ def _formula_gap_contract(
             for key, value in after_weighted.items()
             if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
         },
+        "positive_ai_burden": portfolio.get("positive_ai_burden"),
+        "human_anchor_suppression": portfolio.get("human_anchor_suppression"),
+        "suppression_headroom": portfolio.get("suppression_headroom"),
+        "required_suppression_gain": portfolio.get("required_suppression_gain"),
+        "formula_portfolio_plan": portfolio,
         "weighted_driver_plan": _formula_gap_weighted_driver_plan(before, safety_margin=safety_margin),
+        "driver_priority_plan": portfolio.get("driver_priorities") or [],
         "weighted_driver_drops": weighted_driver_drops,
         "component_drops": component_drops,
         "changed_word_count": changed_words,
         "weighted_driver_drop_efficiency": round(efficiency, 6),
         "remaining_formula_drivers": _remaining_turnitin_like_drivers(after),
     }
+    contract["next_formula_driver"] = (
+        (contract.get("driver_priority_plan") or [{}])[0].get("driver")
+        if contract.get("driver_priority_plan") else None
+    )
+    contract["priority_basis"] = (
+        "weighted contribution plus feasible headroom plus actionability minus backfire risk"
+    )
     contract["why_not_below_20"] = (
         "turnitin-like formula target achieved"
         if contract["target_met"]
@@ -4927,13 +5264,13 @@ def _formula_gap_candidate_rank(contract: dict | None, gate: dict | None = None)
         1 if contract.get("target_met") else 0,
         float(contract.get("score_drop") or 0.0),
         float(contract.get("weighted_driver_drop_efficiency") or 0.0),
+        drop("human_anchor_suppression"),
         drop("ai_likelihood"),
         drop("topk_calibrated_risk"),
         drop("semantic_uniformity"),
         drop("rewrite_smoothness"),
         drop("patchwork_expansion"),
         drop("signal_agreement"),
-        drop("human_anchor_suppression"),
         -float(contract.get("score_after") if isinstance(contract.get("score_after"), (int, float)) else 100.0),
     )
 
@@ -22316,12 +22653,38 @@ def run_rewrite_pipeline(
         if isinstance(original_report_dict.get("document_context"), dict) else "",
         candidate_text=rewritten_text,
     )
+    ai_search_summary_for_formula = result.summary.get("ai_mitigation_search") or {}
+    observed_formula_candidates = (
+        ai_search_summary_for_formula.get("candidates")
+        if isinstance(ai_search_summary_for_formula, dict) else []
+    )
+    final_formula_portfolio_plan = _formula_portfolio_plan(
+        original_report_dict,
+        rewritten_report_dict,
+        observed_candidates=observed_formula_candidates,
+    )
     result.summary["formula_gap_contract"] = final_formula_gap_contract
+    final_formula_gap_contract["formula_portfolio_plan"] = final_formula_portfolio_plan
+    final_formula_gap_contract["driver_priority_plan"] = final_formula_portfolio_plan.get("driver_priorities") or []
+    final_formula_gap_contract["observed_driver_movement"] = final_formula_portfolio_plan.get("observed_driver_movement")
+    final_formula_gap_contract["next_formula_driver"] = (
+        (final_formula_gap_contract.get("driver_priority_plan") or [{}])[0].get("driver")
+        if final_formula_gap_contract.get("driver_priority_plan") else None
+    )
     result.summary["selected_formula_strategy"] = (
         (result.summary.get("ai_mitigation_search") or {}).get("selected_strategy")
         or result.summary.get("selected_strategy")
     )
+    result.summary["formula_portfolio_plan"] = final_formula_portfolio_plan
+    result.summary["positive_ai_burden"] = final_formula_portfolio_plan.get("positive_ai_burden")
+    result.summary["human_anchor_suppression"] = final_formula_portfolio_plan.get("human_anchor_suppression")
+    result.summary["suppression_headroom"] = final_formula_portfolio_plan.get("suppression_headroom")
+    result.summary["required_suppression_gain"] = final_formula_portfolio_plan.get("required_suppression_gain")
+    result.summary["expected_net_gain"] = final_formula_portfolio_plan.get("expected_net_gain")
+    result.summary["observed_driver_movement"] = final_formula_portfolio_plan.get("observed_driver_movement")
     result.summary["weighted_driver_plan"] = final_formula_gap_contract.get("weighted_driver_plan")
+    result.summary["driver_priority_plan"] = final_formula_portfolio_plan.get("driver_priorities")
+    result.summary["next_formula_driver"] = final_formula_gap_contract.get("next_formula_driver")
     result.summary["weighted_driver_drops"] = final_formula_gap_contract.get("weighted_driver_drops")
     result.summary["remaining_formula_gap"] = final_formula_gap_contract.get("remaining_formula_gap")
     result.summary["why_not_below_20"] = final_formula_gap_contract.get("why_not_below_20")

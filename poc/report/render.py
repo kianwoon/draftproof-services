@@ -169,6 +169,51 @@ def _tf_pct(value) -> float | None:
     return max(0.0, min(100.0, number))
 
 
+def _report_transformation_feature_fallbacks(data: dict | None) -> dict:
+    if not isinstance(data, dict):
+        return {}
+    intelligence = data.get("scan_intelligence") or {}
+    transformation = intelligence.get("transformation") if isinstance(intelligence, dict) else {}
+    features: dict = {}
+    if isinstance(transformation, dict):
+        for row in transformation.get("core_signals") or []:
+            if not isinstance(row, dict) or not row.get("key"):
+                continue
+            score = _tf_pct(row.get("score"))
+            if score is not None:
+                features[str(row["key"])] = score
+        contribution = transformation.get("contribution") or {}
+        if isinstance(contribution, dict):
+            for source_key, target_key in [
+                ("calibrated_ai_risk", "calibrated_ai_risk"),
+                ("adjusted_ai_risk", "adjusted_ai_risk"),
+                ("human_anchor_discount", "human_anchor_discount"),
+                ("calibration_confidence", "calibration_confidence"),
+                ("reporting_suppression", "reporting_suppression"),
+            ]:
+                score = _tf_pct(contribution.get(source_key))
+                if score is not None:
+                    features.setdefault(target_key, score)
+    return features
+
+
+def _badge_with_report_calibration(badge: dict, data: dict | None = None) -> dict:
+    if not isinstance(badge, dict):
+        return badge
+    fallback_features = _report_transformation_feature_fallbacks(data)
+    if not fallback_features:
+        return badge
+    transformed = dict(badge.get("transformation_classification") or {})
+    features = {
+        **fallback_features,
+        **(transformed.get("features") or {}),
+    }
+    transformed["features"] = features
+    enriched = dict(badge)
+    enriched["transformation_classification"] = transformed
+    return enriched
+
+
 def _transformation_signals(features: dict) -> list[dict]:
     rows = []
     for key in TRANSFORMATION_SIGNAL_METADATA:
@@ -364,6 +409,8 @@ def _authorship_rating_from_calibrated_risk(
     topk_calibrated_score = _tf_pct(topk_calibrated_risk)
     supporting_signal = _strongest_supporting_ai_shape_signal(features)
     ai_likelihood_score = _tf_pct((features or {}).get("ai_likelihood"))
+    human_anchor_score = _tf_pct((features or {}).get("human_anchor_score"))
+    semantic_uniformity_score = _tf_pct((features or {}).get("semantic_uniformity_risk"))
     sample_limit = _authorship_sample_limit(sample_context, topk_calibration_eligible)
     if sample_limit and sample_limit["very_short"]:
         return {
@@ -379,8 +426,25 @@ def _authorship_rating_from_calibrated_risk(
         }
     rating = _rating_for_calibrated_score(calibrated_score) if calibrated_score is not None else {}
 
+    turnitin_zero_like_human_profile = (
+        calibrated_score is not None
+        and calibrated_score <= 14
+        and human_anchor_score is not None
+        and human_anchor_score >= 75
+        and (ai_likelihood_score is None or ai_likelihood_score <= 35)
+        and (topk_calibrated_score is None or topk_calibrated_score <= 55)
+        and (semantic_uniformity_score is None or semantic_uniformity_score <= 35)
+    )
+    if turnitin_zero_like_human_profile:
+        rating = {
+            **next(item for item in _CALIBRATED_AUTHORSHIP_LEVELS if item["code"] == "low_ai_signal"),
+            "turnitin_zero_like_human_profile": True,
+        }
+
     def _apply_topk_floor(floor_code: str, **extra) -> None:
         nonlocal rating
+        if turnitin_zero_like_human_profile:
+            return
         floor = next((dict(item) for item in _CALIBRATED_AUTHORSHIP_LEVELS if item["code"] == floor_code), {})
         if floor and (not rating or rating.get("level", -1) < floor["level"]):
             rating = {
@@ -453,7 +517,12 @@ def _authorship_rating_tone(rating: dict) -> dict:
     return {"color": "#334155", "bg": "#f8fafc"}
 
 
-def _display_authorship_rating_from_badge(badge: dict, sample_context: dict | None = None) -> dict:
+def _display_authorship_rating_from_badge(
+    badge: dict,
+    sample_context: dict | None = None,
+    data: dict | None = None,
+) -> dict:
+    badge = _badge_with_report_calibration(badge, data)
     features = (((badge or {}).get("transformation_classification") or {}).get("features") or {})
     ai_components = (badge or {}).get("ai_components") or {}
     topk_score = ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern"))
@@ -501,7 +570,7 @@ def _executive_signal_chart_html(
     }.get(badge_tier, "#f8fafc")
 
     doc_ctx = data.get("document_context", {}) if isinstance(data, dict) else {}
-    rating = _display_authorship_rating_from_badge(badge, doc_ctx)
+    rating = _display_authorship_rating_from_badge(badge, doc_ctx, data)
     rating_label = (
         rating.get("short_label")
         or rating.get("label")
@@ -1025,7 +1094,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _ab = report.ai_risk_badge
         _abt = _ab.get("tier", "")
         _abs = _ab.get("ai_likelihood_score", 0)
-        _rating = _display_authorship_rating_from_badge(_ab, data.get("document_context", {}))
+        _rating = _display_authorship_rating_from_badge(_ab, data.get("document_context", {}), data)
         _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)

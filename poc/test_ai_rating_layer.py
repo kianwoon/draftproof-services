@@ -380,6 +380,42 @@ assert_equal(
     "Turnitin-zero profile with strong human anchor and low calibrated AI risk stays Good",
 )
 
+render_turnitin_zero_from_scan_intel = _display_authorship_rating_from_badge({
+    "authorship_rating": {
+        "label": "Likely AI-Assisted",
+        "short_label": "Likely AI-Assisted",
+        "code": "likely_ai",
+    },
+    "ai_likelihood_score": 31.88,
+    "ai_components": {
+        "topk_pattern_raw": 82.0,
+        "topk_calibrated_risk": 50.0,
+        "topk_calibration_eligible": True,
+    },
+}, {"word_count": 317, "sentence_count": 22}, {
+    "scan_intelligence": {
+        "transformation": {
+            "core_signals": [
+                {"key": "human_anchor_score", "score": 84.0},
+                {"key": "ai_likelihood", "score": 32.0},
+                {"key": "semantic_uniformity_risk", "score": 15.0},
+                {"key": "calibrated_ai_risk", "score": 14.0},
+            ],
+            "contribution": {
+                "calibrated_ai_risk": 14.0,
+                "human_anchor_discount": 38.0,
+                "calibration_confidence": 65.0,
+                "reporting_suppression": 35.0,
+            },
+        },
+    },
+})
+assert_equal(
+    render_turnitin_zero_from_scan_intel["label"],
+    "Good",
+    "scan-intelligence Turnitin-zero profile overrides stale stored Likely AI stamp",
+)
+
 render_turnitin_moderate_profile = _display_authorship_rating_from_badge({
     "ai_likelihood_score": 35.3,
     "ai_components": {

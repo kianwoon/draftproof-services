@@ -200,6 +200,15 @@ function buildTransformationSignals(features = {}, suppliedSignals = []) {
     .sort((a, b) => b.value - a.value);
 }
 
+function transformationSignalFeatureMap(signals = []) {
+  return (Array.isArray(signals) ? signals : []).reduce((acc, signal) => {
+    if (!signal?.key) return acc;
+    const value = clampPercent(signal.score ?? signal.value);
+    if (value != null) acc[signal.key] = value;
+    return acc;
+  }, {});
+}
+
 function sortTransformationSignalsForComparison(signals = []) {
   return [...signals].sort((a, b) => {
     const scoreDelta = Number(b.value || 0) - Number(a.value || 0);
@@ -448,6 +457,8 @@ function deriveCalibratedAuthorshipRating(
   const supportingSignal = strongestSupportingAiShapeSignal(supportingSignals);
   const sampleLimit = getAuthorshipSampleLimit(sampleContext, topkCalibrationEligible);
   const aiLikelihoodPercent = clampPercent(supportingSignals?.ai_likelihood);
+  const humanAnchorPercent = clampPercent(supportingSignals?.human_anchor_score);
+  const semanticUniformityPercent = clampPercent(supportingSignals?.semantic_uniformity_risk);
   if (sampleLimit?.veryShort) {
     return {
       label: 'Too Short to Assess',
@@ -463,7 +474,24 @@ function deriveCalibratedAuthorshipRating(
   }
   let rating = calibratedPercent == null ? null : ratingForCalibratedPercent(calibratedPercent);
 
+  const turnitinZeroLikeHumanProfile = (
+    calibratedPercent != null &&
+    calibratedPercent <= 14 &&
+    humanAnchorPercent != null &&
+    humanAnchorPercent >= 75 &&
+    (aiLikelihoodPercent == null || aiLikelihoodPercent <= 35) &&
+    (topkRiskPercent == null || topkRiskPercent <= 55) &&
+    (semanticUniformityPercent == null || semanticUniformityPercent <= 35)
+  );
+  if (turnitinZeroLikeHumanProfile) {
+    rating = {
+      ...CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'low_ai_signal'),
+      turnitin_zero_like_human_profile: true,
+    };
+  }
+
   const applyTopkFloor = (floor, extra = {}) => {
+    if (turnitinZeroLikeHumanProfile) return;
     if (!rating || rating.level < floor.level) {
       rating = {
         ...floor,
@@ -1257,12 +1285,20 @@ export default function Report() {
     : aiScore;
   const transformation = originalComparisonBadge.transformation_classification || null;
   const transformationSignalMetadata = getScanTransformationSignals(originalComparisonScan);
-  const transformationSignals = buildTransformationSignals(transformation?.features, transformationSignalMetadata);
+  const transformationFeatureFallbacks = transformationSignalFeatureMap(transformationSignalMetadata);
+  const authorshipFeatures = {
+    ...transformationFeatureFallbacks,
+    ...(transformation?.features || {}),
+  };
+  const transformationSignals = buildTransformationSignals(authorshipFeatures, transformationSignalMetadata);
   const originalScanContributionSummary = getScanContributionSummary(originalComparisonScan);
   const originalContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'original') || originalScanContributionSummary;
+  if (authorshipFeatures.calibrated_ai_risk == null && originalContributionOverride?.adjustedAiRisk != null) {
+    authorshipFeatures.calibrated_ai_risk = originalContributionOverride.adjustedAiRisk;
+  }
   const transformationSummary = transformation
     ? mergeTransformationSummary(
-      buildTransformationSummary(transformation.features, transformationSignals, originalContributionOverride),
+      buildTransformationSummary(authorshipFeatures, transformationSignals, originalContributionOverride),
       originalScanContributionSummary
     )
     : null;
@@ -1270,15 +1306,23 @@ export default function Report() {
   const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
   const rewrittenTransformation = rewrittenBadge.transformation_classification || null;
   const rewrittenTransformationSignalMetadata = getScanTransformationSignals(rewrittenScan);
+  const rewrittenTransformationFeatureFallbacks = transformationSignalFeatureMap(rewrittenTransformationSignalMetadata);
+  const rewrittenAuthorshipFeatures = {
+    ...rewrittenTransformationFeatureFallbacks,
+    ...(rewrittenTransformation?.features || {}),
+  };
   const rewrittenTransformationSignals = buildTransformationSignals(
-    rewrittenTransformation?.features,
+    rewrittenAuthorshipFeatures,
     rewrittenTransformationSignalMetadata
   );
   const rewrittenScanContributionSummary = getScanContributionSummary(rewrittenScan);
   const rewrittenContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'rewritten') || rewrittenScanContributionSummary;
+  if (rewrittenAuthorshipFeatures.calibrated_ai_risk == null && rewrittenContributionOverride?.adjustedAiRisk != null) {
+    rewrittenAuthorshipFeatures.calibrated_ai_risk = rewrittenContributionOverride.adjustedAiRisk;
+  }
   const rewrittenTransformationSummary = rewrittenTransformation
     ? mergeTransformationSummary(
-      buildTransformationSummary(rewrittenTransformation.features, rewrittenTransformationSignals, rewrittenContributionOverride),
+      buildTransformationSummary(rewrittenAuthorshipFeatures, rewrittenTransformationSignals, rewrittenContributionOverride),
       rewrittenScanContributionSummary
     )
     : rewrittenContributionOverride
@@ -1295,10 +1339,10 @@ export default function Report() {
     : null;
   const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
   const rewrittenWritingScore = rewrittenScan.writing_score ?? rewrittenBadge.writing_quality_score ?? null;
-  const calibratedAuthorshipRisk = clampPercent(transformation?.features?.calibrated_ai_risk);
+  const calibratedAuthorshipRisk = clampPercent(authorshipFeatures.calibrated_ai_risk);
   const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern_raw ?? originalComparisonBadge.ai_components?.topk_pattern);
   const topkCalibratedRisk = clampPercent(originalComparisonBadge.ai_components?.topk_calibrated_risk);
-  const rewrittenCalibratedAuthorshipRisk = clampPercent(rewrittenTransformation?.features?.calibrated_ai_risk);
+  const rewrittenCalibratedAuthorshipRisk = clampPercent(rewrittenAuthorshipFeatures.calibrated_ai_risk);
   const rewrittenTopkPatternScore = clampPercent(rewrittenBadge.ai_components?.topk_pattern_raw ?? rewrittenBadge.ai_components?.topk_pattern);
   const rewrittenTopkCalibratedRisk = clampPercent(rewrittenBadge.ai_components?.topk_calibrated_risk);
   const rewrittenDocumentContext = getScanDocumentContext(rewrittenScan);
@@ -1314,7 +1358,7 @@ export default function Report() {
     calibratedAuthorshipRisk,
     topkPatternScore,
     topkCalibratedRisk,
-    transformation?.features,
+    authorshipFeatures,
     originalDocumentContext,
     originalComparisonBadge.ai_components?.topk_calibration_eligible
   ) || storedAuthorshipRating;
@@ -1339,7 +1383,7 @@ export default function Report() {
     rewrittenCalibratedAuthorshipRisk,
     rewrittenTopkPatternScore,
     rewrittenTopkCalibratedRisk,
-    rewrittenTransformation?.features,
+    rewrittenAuthorshipFeatures,
     rewrittenDocumentContext,
     rewrittenBadge.ai_components?.topk_calibration_eligible
   ) || rewrittenStoredAuthorshipRating;

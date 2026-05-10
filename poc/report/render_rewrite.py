@@ -470,8 +470,19 @@ def render_rewrite_report(
 
         formula_gap = summary.get("formula_gap_contract") or {}
         if isinstance(formula_gap, dict) and formula_gap.get("version"):
+            portfolio = summary.get("formula_portfolio_plan") or formula_gap.get("formula_portfolio_plan") or {}
+            positive_burden = portfolio.get("positive_ai_burden") if isinstance(portfolio, dict) else {}
+            anchor_suppression = portfolio.get("human_anchor_suppression") if isinstance(portfolio, dict) else {}
             lines.append("**Formula Gap To <20:**")
             lines.append("")
+            if isinstance(positive_burden, dict) and isinstance(anchor_suppression, dict):
+                lines.append(
+                    f"Positive AI burden `{float(positive_burden.get('before') or 0.0):.3f}` → "
+                    f"`{float(positive_burden.get('after') or 0.0):.3f}`; "
+                    f"Human-anchor suppression `{float(anchor_suppression.get('before') or 0.0):.3f}` → "
+                    f"`{float(anchor_suppression.get('after') or 0.0):.3f}`."
+                )
+                lines.append("")
             lines.append("| Driver | Weighted Before | Weighted After | Drop |")
             lines.append("|--------|----------------:|---------------:|-----:|")
             drops = formula_gap.get("weighted_driver_drops") or {}
@@ -501,6 +512,24 @@ def render_rewrite_report(
                     f"Remaining formula gap: `{float(formula_gap.get('remaining_formula_gap') or 0.0):.3f}`. "
                     f"{summary.get('why_not_below_20') or formula_gap.get('why_not_below_20') or ''}"
                 )
+            priority_plan = (
+                (portfolio.get("driver_priorities") if isinstance(portfolio, dict) else None)
+                or formula_gap.get("driver_priority_plan")
+                or summary.get("driver_priority_plan")
+                or []
+            )
+            if priority_plan:
+                lines.append("")
+                lines.append("Top control priorities:")
+                for row in priority_plan[:3]:
+                    if not isinstance(row, dict):
+                        continue
+                    lines.append(
+                        f"- `{row.get('driver')}` via `{row.get('strategy_family')}` "
+                        f"(expected net gain `{row.get('expected_net_gain')}`, "
+                        f"headroom `{row.get('feasible_weighted_headroom')}`, "
+                        f"safe observed drop `{row.get('observed_safe_drop', 0)}`)"
+                    )
             lines.append("")
 
         # Findings breakdown by tier
