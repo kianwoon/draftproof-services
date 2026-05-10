@@ -19900,17 +19900,114 @@ def run_rewrite_pipeline(
     )
     final_topk_for_acceptance = final_after_authorship_for_acceptance.get("topk_calibrated_risk")
     final_topk_raw_for_acceptance = final_after_authorship_for_acceptance.get("topk_pattern_raw")
+    topk_acceptance_limit = _safe_topk_calibrated_limit()
+    topk_over_limit = (
+        float(final_topk_for_acceptance) - topk_acceptance_limit
+        if isinstance(final_topk_for_acceptance, (int, float)) else None
+    )
+    final_topk_drop_for_acceptance = (
+        (final_ai_footprint_gate.get("drops") or {}).get("topk_calibrated_risk")
+        if isinstance(final_ai_footprint_gate, dict) else None
+    )
+    final_authorship_drop_for_acceptance = (
+        _integrity_scores(original_report_dict).get("ai_authorship")
+        - _integrity_scores(rewritten_report_dict).get("ai_authorship")
+        if isinstance(_integrity_scores(original_report_dict).get("ai_authorship"), (int, float))
+        and isinstance(_integrity_scores(rewritten_report_dict).get("ai_authorship"), (int, float))
+        else None
+    )
+    final_transformation_drop_for_acceptance = (
+        _contribution_scores(original_report_dict).get("ai_transformation")
+        - _contribution_scores(rewritten_report_dict).get("ai_transformation")
+        if isinstance(_contribution_scores(original_report_dict).get("ai_transformation"), (int, float))
+        and isinstance(_contribution_scores(rewritten_report_dict).get("ai_transformation"), (int, float))
+        else None
+    )
+    final_ai_drop_for_acceptance = (
+        _badge_ai(original_report_dict) - _badge_ai(rewritten_report_dict)
+        if isinstance(_badge_ai(original_report_dict), (int, float))
+        and isinstance(_badge_ai(rewritten_report_dict), (int, float))
+        else None
+    )
+    keep_topk_near_miss_partial = bool(
+        rewritten_text != text
+        and isinstance(topk_over_limit, (int, float))
+        and 0.0 <= float(topk_over_limit) <= 1.0
+        and isinstance(final_topk_drop_for_acceptance, (int, float))
+        and float(final_topk_drop_for_acceptance) >= 8.0
+        and (
+            (
+                isinstance(final_ai_drop_for_acceptance, (int, float))
+                and float(final_ai_drop_for_acceptance) >= 5.0
+            )
+            or (
+                isinstance(final_authorship_drop_for_acceptance, (int, float))
+                and float(final_authorship_drop_for_acceptance) >= 5.0
+            )
+            or (
+                isinstance(final_transformation_drop_for_acceptance, (int, float))
+                and float(final_transformation_drop_for_acceptance) >= 5.0
+            )
+        )
+        and _review_burden(rewritten_report_dict) <= original_review_burden
+        and _weighted_severity(rewritten_report_dict) <= original_severity
+        and _critical_high_count(rewritten_report_dict) <= saved_critical_high
+    )
     if (
         rewritten_text != text
         and isinstance(final_topk_for_acceptance, (int, float))
-        and float(final_topk_for_acceptance) >= _safe_topk_calibrated_limit()
+        and float(final_topk_for_acceptance) >= topk_acceptance_limit
+        and keep_topk_near_miss_partial
+    ):
+        reason = (
+            f"topk_calibrated_near_miss_kept {float(final_topk_for_acceptance):.2f}>="
+            f"{topk_acceptance_limit:.2f}"
+        )
+        result.summary["rollback_applied"] = False
+        result.summary.pop("rollback_reason", None)
+        result.summary["outcome"] = "topk_near_miss_partial"
+        result.summary["topk_acceptance_gate"] = {
+            "accepted": False,
+            "partial_kept": True,
+            "safe_limit": topk_acceptance_limit,
+            "topk_over_limit": round(float(topk_over_limit), 3),
+            "attempted_topk_calibrated_risk": round(float(final_topk_for_acceptance), 3),
+            "attempted_topk_pattern_raw": (
+                round(float(final_topk_raw_for_acceptance), 3)
+                if isinstance(final_topk_raw_for_acceptance, (int, float)) else None
+            ),
+            "topk_calibrated_risk_drop": (
+                round(float(final_topk_drop_for_acceptance), 3)
+                if isinstance(final_topk_drop_for_acceptance, (int, float)) else None
+            ),
+            "ai_score_drop": (
+                round(float(final_ai_drop_for_acceptance), 3)
+                if isinstance(final_ai_drop_for_acceptance, (int, float)) else None
+            ),
+            "ai_authorship_drop": (
+                round(float(final_authorship_drop_for_acceptance), 3)
+                if isinstance(final_authorship_drop_for_acceptance, (int, float)) else None
+            ),
+            "ai_transformation_drop": (
+                round(float(final_transformation_drop_for_acceptance), 3)
+                if isinstance(final_transformation_drop_for_acceptance, (int, float)) else None
+            ),
+            "reason": reason,
+        }
+        result.summary.setdefault("saved_contract_notes", []).append(
+            "Kept a near-miss Top-k candidate as partial progress; it is not strict-safe or detector-safe."
+        )
+    elif (
+        rewritten_text != text
+        and isinstance(final_topk_for_acceptance, (int, float))
+        and float(final_topk_for_acceptance) >= topk_acceptance_limit
     ):
         attempted_text = rewritten_text
         attempted_report_dict = rewritten_report_dict
         attempted_sentence_comparison = sentence_comparison
         reason = (
             f"topk_calibrated_safe_band_failed {float(final_topk_for_acceptance):.2f}>="
-            f"{_safe_topk_calibrated_limit():.2f}"
+            f"{topk_acceptance_limit:.2f}"
         )
         rewritten_text = text
         rewritten_report_dict = original_report_dict
@@ -19933,7 +20030,7 @@ def run_rewrite_pipeline(
         result.summary["outcome"] = "topk_blocked"
         result.summary["topk_acceptance_gate"] = {
             "accepted": False,
-            "safe_limit": _safe_topk_calibrated_limit(),
+            "safe_limit": topk_acceptance_limit,
             "attempted_topk_calibrated_risk": round(float(final_topk_for_acceptance), 3),
             "attempted_topk_pattern_raw": (
                 round(float(final_topk_raw_for_acceptance), 3)
