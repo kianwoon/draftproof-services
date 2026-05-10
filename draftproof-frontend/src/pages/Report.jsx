@@ -447,6 +447,7 @@ function deriveCalibratedAuthorshipRating(
   const topkRiskPercent = clampPercent(topkCalibratedRisk);
   const supportingSignal = strongestSupportingAiShapeSignal(supportingSignals);
   const sampleLimit = getAuthorshipSampleLimit(sampleContext, topkCalibrationEligible);
+  const aiLikelihoodPercent = clampPercent(supportingSignals?.ai_likelihood);
   if (sampleLimit?.veryShort) {
     return {
       label: 'Too Short to Assess',
@@ -493,6 +494,23 @@ function deriveCalibratedAuthorshipRating(
     } else if (topkRiskPercent >= 70) {
       applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'possible_ai_assisted'));
     }
+  }
+
+  const moderateAiTexture = (
+    calibratedPercent != null &&
+    aiLikelihoodPercent != null &&
+    topkPercent != null &&
+    topkRiskPercent != null &&
+    calibratedPercent >= 15 &&
+    aiLikelihoodPercent >= 32 &&
+    aiLikelihoodPercent < 45 &&
+    topkPercent >= 70 &&
+    topkRiskPercent >= 40
+  );
+  if (moderateAiTexture) {
+    applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'possible_ai_assisted'), {
+      moderate_ai_texture: true,
+    });
   }
 
   if (!rating) return null;

@@ -147,6 +147,8 @@ from rewrite_pipeline import (
     _blocker_operation_candidates,
     _post_safe_win_target_push_candidates,
     _human_signal_construction_candidates,
+    _human_anchor_amplifier_candidates,
+    _human_anchor_driver_contract,
     _author_stance_thread_candidates,
     _human_target_ai_search_status,
     _dominant_blocker_gate_status,
@@ -1417,6 +1419,61 @@ strong_topk_backfire_rank = _goal_climb_candidate_rank(
 assert_test(
     strong_topk_backfire_rank > weak_topk_balanced_rank,
     "goal selector does not let balanced cleanup beat major Top-k/authorship movement",
+)
+topk_only_partial_rank = _goal_climb_candidate_rank(
+    {
+        "selectable": True,
+        "topk_blocker_progress": True,
+        "ai_footprint_outcome_class": "ai_footprint_blocked_by_texture",
+        "authenticity_gate": {
+            "human_delta": 1,
+            "candidate_human": 38,
+            "ai_authorship_delta": 5,
+            "ai_transformation_delta": 4,
+        },
+        "ai_footprint_gate": {
+            "drops": {
+                "topk_calibrated_risk": 7.0,
+                "external_ai_flag_risk": 5.0,
+                "ai_likelihood": 5.0,
+                "qualifying_text_ai_density": 5.0,
+            },
+        },
+    },
+    {},
+)
+human_anchor_partial_rank = _goal_climb_candidate_rank(
+    {
+        "selectable": True,
+        "human_anchor_amplifier": True,
+        "topk_blocker_progress": True,
+        "ai_footprint_outcome_class": "ai_footprint_blocked_by_texture",
+        "authenticity_gate": {
+            "human_delta": 8,
+            "candidate_human": 45,
+            "ai_authorship_delta": 6,
+            "ai_transformation_delta": 8,
+        },
+        "human_anchor_driver_contract": {
+            "deltas": {
+                "human_anchor_score": 24,
+                "lived_detail_risk": 30,
+            },
+        },
+        "ai_footprint_gate": {
+            "drops": {
+                "topk_calibrated_risk": 6.0,
+                "external_ai_flag_risk": 4.5,
+                "ai_likelihood": 5.0,
+                "qualifying_text_ai_density": 6.0,
+            },
+        },
+    },
+    {},
+)
+assert_test(
+    human_anchor_partial_rank > topk_only_partial_rank,
+    "goal selector prioritizes measured Human Anchor movement over weaker Top-k-only partials",
 )
 topk_near_miss_a = make_footprint_report(
     ai_authorship=50,
@@ -6639,6 +6696,42 @@ assert_test(
         for _strategy, _candidate, meta in construction_candidates
     ),
     "human signal construction builds section-level author-density candidates",
+)
+anchor_contract = _human_anchor_driver_contract(
+    {
+        "ai_risk_badge": {
+            "writing_components": {
+                "lived_detail_risk": 80.0,
+                "domain_grounding_strength": 100.0,
+            },
+            "transformation_classification": {
+                "features": {
+                    "human_anchor_score": 0.36,
+                    "rewrite_smoothness": 0.62,
+                    "source_similarity": 0.0,
+                    "surface_similarity": 0.0,
+                },
+            },
+        }
+    },
+    text=target_push_text,
+)
+assert_test(
+    anchor_contract["next_lived_detail_band"]["risk"] == 65.0
+    and anchor_contract["required_anchor_sentences_for_next_band"] >= 1
+    and anchor_contract["human_raw_formula"]["before"]["anchor_component"] == 16.2,
+    "human anchor driver contract exposes lived-detail band and human_raw contribution",
+)
+anchor_candidates = _human_anchor_amplifier_candidates(
+    target_push_text,
+    target_push_report,
+    limit=3,
+)
+assert_test(
+    bool(anchor_candidates)
+    and all(meta.get("scope") == "implied_context_only" for _strategy, _candidate, meta in anchor_candidates)
+    and any(meta.get("changed_sentence_frames", 0) >= 2 for _strategy, _candidate, meta in anchor_candidates),
+    "human anchor amplifier creates bounded implied-context candidates",
 )
 stance_candidates = _author_stance_thread_candidates(
     target_push_text,

@@ -6629,6 +6629,141 @@ def _feature_percent(report_dict: dict | None, key: str):
     return value * 100.0 if abs(value) <= 1.0 else value
 
 
+def _writing_component_percent(report_dict: dict | None, key: str):
+    if not isinstance(report_dict, dict):
+        return None
+    badge = report_dict.get("ai_risk_badge") or {}
+    writing = badge.get("writing_components") or {}
+    value = writing.get(key) if isinstance(writing, dict) else None
+    if not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value * 100.0 if abs(value) <= 1.0 else value
+
+
+_LIVED_DETAIL_RISK_BANDS = [
+    {"risk": 80.0, "min_density": 0.00},
+    {"risk": 65.0, "min_density": 0.10},
+    {"risk": 50.0, "min_density": 0.20},
+    {"risk": 35.0, "min_density": 0.30},
+    {"risk": 20.0, "min_density": 0.45},
+]
+
+
+def _next_lived_detail_band(current_risk: float | int | None) -> dict:
+    try:
+        risk = float(current_risk)
+    except (TypeError, ValueError):
+        risk = 80.0
+    for band in _LIVED_DETAIL_RISK_BANDS[1:]:
+        if risk > float(band["risk"]):
+            return dict(band)
+    return dict(_LIVED_DETAIL_RISK_BANDS[-1])
+
+
+def _human_anchor_marker_density(text: str) -> dict:
+    sentences = [
+        sentence for sentence in _split_sentences(text)
+        if len(sentence.split()) >= 5
+    ]
+    if not sentences:
+        return {
+            "eligible_sentence_count": 0,
+            "anchor_sentence_count": 0,
+            "anchor_density": 0.0,
+        }
+    marker_re = re.compile(
+        r"\b(?:\d+|during|when|after|before|feedback|testing|case|example|"
+        r"classroom|school|in practice|I would|I think|I worry|we observed|"
+        r"what (?:I|we) (?:would|need|want)|my judgement)\b",
+        re.I,
+    )
+    anchor_count = sum(1 for sentence in sentences if marker_re.search(sentence))
+    return {
+        "eligible_sentence_count": len(sentences),
+        "anchor_sentence_count": anchor_count,
+        "anchor_density": round(anchor_count / max(1, len(sentences)), 4),
+    }
+
+
+def _human_anchor_driver_contract(
+    original_report: dict | None,
+    candidate_report: dict | None = None,
+    *,
+    text: str = "",
+) -> dict:
+    """Expose the actual scanner drivers behind Human Anchor movement."""
+    def formula_parts(report: dict | None) -> dict:
+        features = _transformation_features(report)
+
+        def fnum(key: str) -> float:
+            value = features.get(key)
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return 0.0
+            return max(0.0, min(1.0, value if abs(value) <= 1.0 else value / 100.0))
+
+        max_similarity = max(fnum("source_similarity"), fnum("surface_similarity"))
+        anchor_component = fnum("human_anchor_score") * 0.45
+        smoothness_component = (1.0 - fnum("rewrite_smoothness")) * 0.20
+        originality_component = (1.0 - max_similarity) * 0.10
+        return {
+            "anchor_component": round(anchor_component * 100.0, 3),
+            "smoothness_component": round(smoothness_component * 100.0, 3),
+            "originality_component": round(originality_component * 100.0, 3),
+            "human_raw": round((anchor_component + smoothness_component + originality_component) * 100.0, 3),
+            "rewrite_smoothness": round(fnum("rewrite_smoothness") * 100.0, 3),
+            "max_similarity": round(max_similarity * 100.0, 3),
+        }
+
+    before_lived = _writing_component_percent(original_report, "lived_detail_risk")
+    before_domain = _writing_component_percent(original_report, "domain_grounding_strength")
+    before_anchor = _feature_percent(original_report, "human_anchor_score")
+    after_lived = _writing_component_percent(candidate_report, "lived_detail_risk")
+    after_domain = _writing_component_percent(candidate_report, "domain_grounding_strength")
+    after_anchor = _feature_percent(candidate_report, "human_anchor_score")
+    next_band = _next_lived_detail_band(before_lived)
+    density = _human_anchor_marker_density(text)
+    required_count = int(math.ceil(float(next_band["min_density"]) * max(1, density["eligible_sentence_count"])))
+    current_count = int(density["anchor_sentence_count"])
+    before = {
+        "human_anchor_score": before_anchor,
+        "lived_detail_risk": before_lived,
+        "domain_grounding_strength": before_domain,
+    }
+    after = {
+        "human_anchor_score": after_anchor,
+        "lived_detail_risk": after_lived,
+        "domain_grounding_strength": after_domain,
+    }
+    deltas = {}
+    if isinstance(before_anchor, (int, float)) and isinstance(after_anchor, (int, float)):
+        deltas["human_anchor_score"] = round(float(after_anchor) - float(before_anchor), 3)
+    if isinstance(before_lived, (int, float)) and isinstance(after_lived, (int, float)):
+        deltas["lived_detail_risk"] = round(float(before_lived) - float(after_lived), 3)
+    if isinstance(before_domain, (int, float)) and isinstance(after_domain, (int, float)):
+        deltas["domain_grounding_strength"] = round(float(after_domain) - float(before_domain), 3)
+    return {
+        "before": before,
+        "after": after if candidate_report is not None else None,
+        "deltas": deltas,
+        "human_raw_formula": {
+            "before": formula_parts(original_report),
+            "after": formula_parts(candidate_report) if candidate_report is not None else None,
+        },
+        "next_lived_detail_band": next_band,
+        "estimated_anchor_density": density,
+        "required_anchor_sentences_for_next_band": required_count,
+        "additional_anchor_sentences_needed": max(0, required_count - current_count),
+        "achieved_next_band": bool(
+            isinstance(after_lived, (int, float))
+            and float(after_lived) <= float(next_band["risk"])
+        ),
+        "scope": "implied_context_only",
+    }
+
+
 def _human_shift_score(
     original_report: dict,
     candidate_report: dict,
@@ -6825,6 +6960,8 @@ def _goal_climb_candidate_rank(
     }.get(footprint_outcome, 0)
     if status.get("topk_blocker_progress"):
         footprint_priority = max(footprint_priority, 2)
+    if status.get("human_anchor_amplifier"):
+        footprint_priority = max(footprint_priority, 3)
     if status.get("topk_safe_band_achieved"):
         footprint_priority = max(footprint_priority, 5)
     footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
@@ -6833,6 +6970,16 @@ def _goal_climb_candidate_rank(
     qualifying_density_drop = num(footprint_drops.get("qualifying_text_ai_density"), 0.0)
     ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"), 0.0)
     ai_authorship_drop = num(gate.get("ai_authorship_delta"), ai_authorship_delta)
+    anchor_contract = (
+        status.get("human_anchor_driver_contract")
+        if isinstance(status.get("human_anchor_driver_contract"), dict)
+        else eval_data.get("human_anchor_driver_contract")
+        if isinstance(eval_data.get("human_anchor_driver_contract"), dict)
+        else {}
+    )
+    anchor_deltas = anchor_contract.get("deltas") if isinstance(anchor_contract.get("deltas"), dict) else {}
+    human_anchor_gain = num(anchor_deltas.get("human_anchor_score"), 0.0)
+    lived_detail_drop = num(anchor_deltas.get("lived_detail_risk"), 0.0)
     multi_signal = (
         status.get("multi_signal_contract")
         if isinstance(status.get("multi_signal_contract"), dict)
@@ -6847,6 +6994,8 @@ def _goal_climb_candidate_rank(
         1 if status.get("selectable") else 0,
         footprint_priority,
         qualifying_density_drop,
+        lived_detail_drop,
+        human_anchor_gain,
         topk_drop,
         -severe_backfire_count,
         balance_score,
@@ -12397,6 +12546,176 @@ def _post_safe_win_target_push_candidates(
     return candidates[:limit]
 
 
+def _human_anchor_amplifier_candidates(
+    source_text: str,
+    report_dict: dict | None,
+    *,
+    limit: int = 3,
+) -> list[tuple[str, str, dict]]:
+    """Add bounded implied-context anchors across low-anchor prose spans.
+
+    This targets the scanner's lived-detail density band directly. The edits do
+    not claim a new named event, source, person, date, or statistic; they frame
+    existing claims as process, judgement, or practice conditions.
+    """
+    if not _env_flag("DRAFTPROOF_HUMAN_ANCHOR_AMPLIFIER", True):
+        return []
+    contract = _human_anchor_driver_contract(report_dict, text=source_text)
+    before = contract.get("before") or {}
+    lived_risk = before.get("lived_detail_risk")
+    human_anchor = before.get("human_anchor_score")
+    if (
+        isinstance(lived_risk, (int, float))
+        and float(lived_risk) < _float_env("DRAFTPROOF_HUMAN_ANCHOR_LIVED_RISK_TRIGGER", 65.0)
+        and isinstance(human_anchor, (int, float))
+        and float(human_anchor) >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_SCORE_TRIGGER", 50.0)
+    ):
+        return []
+
+    paragraphs = _logical_paragraphs(source_text)
+    if not paragraphs:
+        return []
+
+    anchor_re = re.compile(
+        r"\b(?:\d+|during|when|after|before|feedback|testing|case|example|"
+        r"classroom|school|in practice|I would|I think|I worry|we observed|"
+        r"what (?:I|we) (?:would|need|want)|my judgement)\b",
+        re.I,
+    )
+    assertion_re = re.compile(
+        r"\b(?:is|are|was|has|have|can|should|must|need(?:s|ed)?|"
+        r"creates?|makes?|means|requires?|shows?|supports?|helps?|allows?)\b",
+        re.I,
+    )
+    reference_heading_seen = False
+    flat_rows: list[dict] = []
+    flat_index = 0
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        if re.match(r"^\s*references?\s*$", paragraph, flags=re.I):
+            reference_heading_seen = True
+        sentences = _split_sentences(paragraph)
+        for sentence_index, sentence in enumerate(sentences):
+            words = sentence.split()
+            row = {
+                "flat_index": flat_index,
+                "paragraph_index": paragraph_index,
+                "sentence_index": sentence_index,
+                "sentence": sentence,
+                "skip": False,
+            }
+            flat_index += 1
+            if (
+                reference_heading_seen
+                or _is_heading_like_paragraph(paragraph)
+                or len(words) < 8
+                or re.search(r"https?://|www\.", sentence, flags=re.I)
+                or anchor_re.search(sentence)
+            ):
+                row["skip"] = True
+                flat_rows.append(row)
+                continue
+            score = (
+                (2.0 if assertion_re.search(sentence) else 0.0)
+                + min(len(words) / 32.0, 1.5)
+                + (1.5 if paragraph_index not in {0, len(paragraphs) - 1} else 0.5)
+            )
+            row["score"] = round(score, 3)
+            flat_rows.append(row)
+
+    target_pool = sorted(
+        [row for row in flat_rows if not row.get("skip") and float(row.get("score") or 0.0) > 0],
+        key=lambda row: float(row.get("score") or 0.0),
+        reverse=True,
+    )
+    if not target_pool:
+        return []
+
+    density = contract.get("estimated_anchor_density") or {}
+    eligible_count = int(density.get("eligible_sentence_count") or 0)
+    current_hits = int(density.get("anchor_sentence_count") or 0)
+    next_required = int(contract.get("required_anchor_sentences_for_next_band") or 0)
+    base_needed = max(1, next_required - current_hits)
+    sentence_cap = max(1, min(len(target_pool), int(math.ceil(max(eligible_count, 1) * 0.45))))
+    profiles = [
+        ("human_anchor_amplifier_next_band", min(sentence_cap, base_needed)),
+        (
+            "human_anchor_amplifier_density_step",
+            min(sentence_cap, max(base_needed + 2, int(math.ceil(max(eligible_count, 1) * 0.20)) - current_hits)),
+        ),
+        (
+            "human_anchor_amplifier_strong_density",
+            min(sentence_cap, max(base_needed + 4, int(math.ceil(max(eligible_count, 1) * 0.30)) - current_hits)),
+        ),
+    ]
+
+    operations = [
+        ("When this is applied in practice, ", "lower_first", "practice_condition"),
+        ("In this case, ", "lower_first", "case_frame"),
+        ("During review, ", "lower_first", "review_condition"),
+        ("I would narrow the point this way: ", "keep", "author_judgement"),
+        ("When the process is checked, ", "lower_first", "process_check"),
+        ("One example is the underlying claim that ", "lower_first", "example_frame"),
+    ]
+
+    def contextualize(sentence: str, op_index: int) -> tuple[str, str]:
+        prefix, mode, label = operations[op_index % len(operations)]
+        stripped = sentence.strip()
+        if not stripped:
+            return stripped, label
+        if mode == "lower_first" and stripped:
+            return prefix + stripped[0].lower() + stripped[1:], label
+        return prefix + stripped, label
+
+    def build(limit_count: int, label: str) -> tuple[str, list[dict]]:
+        selected = sorted(target_pool[:max(1, limit_count)], key=lambda row: int(row["flat_index"]))
+        selected_by_flat = {int(row["flat_index"]): pos for pos, row in enumerate(selected)}
+        rebuilt_paragraphs = []
+        flat = 0
+        changes = []
+        for paragraph in paragraphs:
+            rebuilt_sentences = []
+            for sentence in _split_sentences(paragraph):
+                if flat in selected_by_flat:
+                    replacement, operation = contextualize(sentence, selected_by_flat[flat])
+                    rebuilt_sentences.append(replacement)
+                    changes.append({
+                        "flat_sentence_index": flat,
+                        "operation": operation,
+                        "original": sentence[:180],
+                        "replacement": replacement[:180],
+                    })
+                else:
+                    rebuilt_sentences.append(sentence)
+                flat += 1
+            rebuilt_paragraphs.append(" ".join(rebuilt_sentences))
+        return _join_logical_paragraphs(rebuilt_paragraphs), changes
+
+    candidates: list[tuple[str, str, dict]] = []
+    seen: set[str] = {str(source_text or "").strip()}
+    for strategy, target_count in profiles[:max(1, int(limit or 1))]:
+        if target_count <= 0:
+            continue
+        candidate, changes = build(target_count, strategy)
+        normalized = candidate.strip()
+        if not changes or not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append((
+            strategy,
+            candidate,
+            {
+                "operation": "human_anchor_amplifier",
+                "human_anchor_amplifier": True,
+                "scope": "implied_context_only",
+                "changed_sentence_frames": len(changes),
+                "contract_before": contract,
+                "target_lived_detail_band": contract.get("next_lived_detail_band"),
+                "changes": changes[:12],
+            },
+        ))
+    return candidates[:max(1, int(limit or 1))]
+
+
 def _human_signal_construction_candidates(
     source_text: str,
     report_dict: dict | None,
@@ -12422,6 +12741,25 @@ def _human_signal_construction_candidates(
     broad_risk = float(writing.get("broad_claim_risk") or 0.0)
     if max(lived_risk, broad_risk) < 55.0:
         return []
+
+    generic_anchor_candidates = _human_anchor_amplifier_candidates(
+        source_text,
+        report_dict,
+        limit=limit,
+    )
+    if generic_anchor_candidates:
+        return [
+            (
+                strategy.replace("human_anchor_amplifier", "human_signal_construction"),
+                candidate,
+                {
+                    **meta,
+                    "operation": "human_signal_construction",
+                    "human_anchor_amplifier": True,
+                },
+            )
+            for strategy, candidate, meta in generic_anchor_candidates[:max(1, int(limit or 1))]
+        ]
 
     replacements: list[tuple[re.Pattern, str, str]] = [
         (
@@ -15057,6 +15395,43 @@ def run_rewrite_pipeline(
             (strategy, candidate)
             for strategy, candidate, _meta in topk_route_candidates
         )
+        human_anchor_candidates = _human_anchor_amplifier_candidates(
+            search_source_text,
+            original_report_dict,
+            limit=int(_float_env("DRAFTPROOF_HUMAN_ANCHOR_AMPLIFIER_CANDIDATES", 3.0)),
+        )
+        human_anchor_topk_candidates: list[tuple[str, str, dict]] = []
+        if human_anchor_candidates and topk_route_candidates:
+            combined_limit = max(
+                0,
+                int(_float_env("DRAFTPROOF_HUMAN_ANCHOR_TOPK_COMBINED_CANDIDATES", 4.0)),
+            )
+            for topk_strategy, topk_candidate, topk_meta in topk_route_candidates[:2]:
+                if len(human_anchor_topk_candidates) >= combined_limit:
+                    break
+                for anchor_strategy, anchor_candidate, anchor_meta in _human_anchor_amplifier_candidates(
+                    topk_candidate,
+                    original_report_dict,
+                    limit=2,
+                ):
+                    if len(human_anchor_topk_candidates) >= combined_limit:
+                        break
+                    human_anchor_topk_candidates.append((
+                        f"human_anchor_amplifier_on_{topk_strategy}_{anchor_strategy.replace('human_anchor_amplifier_', '')}",
+                        anchor_candidate,
+                        {
+                            **anchor_meta,
+                            "operation": "human_anchor_amplifier_on_topk",
+                            "base_topk_strategy": topk_strategy,
+                            "base_topk_meta": topk_meta,
+                        },
+                    ))
+        deterministic_candidates.extend(
+            (strategy, candidate)
+            for strategy, candidate, _meta in (
+                human_anchor_candidates + human_anchor_topk_candidates
+            )
+        )
         blocker_operation_candidates = []
         generic_assertion_candidates = []
         pruning_candidates = []
@@ -15129,6 +15504,28 @@ def run_rewrite_pipeline(
                         **meta,
                     }
                     for strategy, _candidate, meta in topk_route_candidates
+                ],
+            },
+            "human_anchor_driver_contract": _human_anchor_driver_contract(
+                original_report_dict,
+                text=search_source_text,
+            ),
+            "human_anchor_amplifier": {
+                "enabled": _env_flag("DRAFTPROOF_HUMAN_ANCHOR_AMPLIFIER", True),
+                "candidate_count": len(human_anchor_candidates) + len(human_anchor_topk_candidates),
+                "standalone_candidate_count": len(human_anchor_candidates),
+                "topk_combined_candidate_count": len(human_anchor_topk_candidates),
+                "candidates": [
+                    {
+                        "strategy": strategy,
+                        "operation": meta.get("operation"),
+                        "scope": meta.get("scope"),
+                        "changed_sentence_frames": meta.get("changed_sentence_frames"),
+                        "target_lived_detail_band": meta.get("target_lived_detail_band"),
+                    }
+                    for strategy, _candidate, meta in (
+                        human_anchor_candidates + human_anchor_topk_candidates
+                    )
                 ],
             },
             "llm_calls": 0,
@@ -15419,6 +15816,9 @@ def run_rewrite_pipeline(
             }
             if extra:
                 candidate_eval.update(extra)
+            if str(strategy or "").startswith("human_anchor_amplifier"):
+                candidate_eval["human_anchor_amplifier"] = True
+                candidate_eval["human_signal_amplification"] = True
             topk_safe_band_rebuild = bool(extra and extra.get("topk_safe_band_rebuild"))
             ignore_search_budget = bool(
                 extra
@@ -15615,6 +16015,11 @@ def run_rewrite_pipeline(
             blocker_status = _blocker_elimination_status(original_report_dict, candidate_report)
             dominant_blocker_status = _dominant_blocker_gate_status(original_report_dict, candidate_report)
             human_formula_status = _human_formula_driver_status(original_report_dict, candidate_report)
+            human_anchor_contract = _human_anchor_driver_contract(
+                original_report_dict,
+                candidate_report,
+                text=candidate,
+            )
             human_shift = _human_shift_score(
                 original_report_dict,
                 candidate_report,
@@ -15642,6 +16047,7 @@ def run_rewrite_pipeline(
                 "blocker_elimination": blocker_status,
                 "dominant_blocker_gate": dominant_blocker_status,
                 "human_formula_driver_gate": human_formula_status,
+                "human_anchor_driver_contract": human_anchor_contract,
                 "scan_scope": _scan_scope_summary(candidate_report),
             })
             selection_status = _ai_search_candidate_selection_status(
@@ -15775,6 +16181,7 @@ def run_rewrite_pipeline(
             )
             human_amplification_score = None
             human_amplification_selectable = False
+            human_anchor_amplification_selectable = False
             if candidate_eval.get("human_signal_amplification"):
                 aggression = _repair_aggression_score(text, candidate).get("score", 0.0)
                 locality = _locality_score(text, candidate).get("changed_sentence_ratio", 0.0)
@@ -15867,6 +16274,64 @@ def run_rewrite_pipeline(
             )
             candidate_eval["multi_signal_contract"] = multi_signal_contract
             ai_footprint_outcome = str(ai_footprint_gate.get("outcome_class") or "")
+            footprint_drops = ai_footprint_gate.get("drops") if isinstance(ai_footprint_gate.get("drops"), dict) else {}
+            if candidate_eval.get("human_anchor_amplifier"):
+                anchor_deltas = (
+                    human_anchor_contract.get("deltas")
+                    if isinstance(human_anchor_contract.get("deltas"), dict) else {}
+                )
+                human_raw_formula = human_anchor_contract.get("human_raw_formula") or {}
+                before_raw = (human_raw_formula.get("before") or {}).get("human_raw")
+                after_raw = (human_raw_formula.get("after") or {}).get("human_raw")
+                human_raw_gain = (
+                    float(after_raw) - float(before_raw)
+                    if isinstance(before_raw, (int, float)) and isinstance(after_raw, (int, float))
+                    else 0.0
+                )
+                anchor_gain = float(anchor_deltas.get("human_anchor_score") or 0.0)
+                lived_drop = float(anchor_deltas.get("lived_detail_risk") or 0.0)
+                human_anchor_amplification_selectable = bool(
+                    _env_flag("DRAFTPROOF_ACCEPT_HUMAN_ANCHOR_AMPLIFIER", True)
+                    and (
+                        lived_drop >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_MIN_LIVED_DROP", 15.0)
+                        or anchor_gain >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_MIN_SCORE_GAIN", 8.0)
+                    )
+                    and human_raw_gain > 0.0
+                    and not ai_score_regressed
+                    and isinstance(ai_authorship_delta, (int, float))
+                    and ai_authorship_delta >= -_float_env(
+                        "DRAFTPROOF_HUMAN_ANCHOR_MAX_AUTHORSHIP_REGRESSION",
+                        0.0,
+                    )
+                    and isinstance(candidate_ai_transform_delta, (int, float))
+                    and candidate_ai_transform_delta >= -_float_env(
+                        "DRAFTPROOF_HUMAN_ANCHOR_MAX_TRANSFORMATION_REGRESSION",
+                        0.0,
+                    )
+                    and float(footprint_drops.get("topk_calibrated_risk") or 0.0) >= -_float_env(
+                        "DRAFTPROOF_HUMAN_ANCHOR_MAX_TOPK_REGRESSION",
+                        2.0,
+                    )
+                    and float(footprint_drops.get("external_ai_flag_risk") or 0.0) >= -_float_env(
+                        "DRAFTPROOF_HUMAN_ANCHOR_MAX_EXTERNAL_PROXY_REGRESSION",
+                        1.0,
+                    )
+                    and candidate_finding_total <= original_total
+                    and candidate_review_burden <= original_review_burden
+                    and candidate_weighted_severity <= original_severity
+                    and not authenticity_status.get("critical_high_regressed")
+                    and candidate_critical_high <= saved_critical_high
+                    and not authenticity_status.get("ai_authorship_regression_blocked")
+                )
+                candidate_eval["human_anchor_amplifier_status"] = {
+                    "selectable": human_anchor_amplification_selectable,
+                    "human_raw_gain": round(human_raw_gain, 3),
+                    "human_anchor_gain": round(anchor_gain, 3),
+                    "lived_detail_risk_drop": round(lived_drop, 3),
+                    "target_lived_detail_band": human_anchor_contract.get("next_lived_detail_band"),
+                    "achieved_next_band": human_anchor_contract.get("achieved_next_band"),
+                    "scope": "implied_context_only",
+                }
             ai_footprint_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True)
                 and ai_footprint_outcome in {"ai_mitigated", "partially_ai_mitigated"}
@@ -15879,7 +16344,6 @@ def run_rewrite_pipeline(
                 and candidate_weighted_severity <= original_severity
                 and not ai_score_regressed
             )
-            footprint_drops = ai_footprint_gate.get("drops") if isinstance(ai_footprint_gate.get("drops"), dict) else {}
             topk_texture_blocked = bool(
                 any(
                     str(blocker.get("driver") or "") in {"topk_calibrated_risk", "topk_pattern"}
@@ -16052,6 +16516,34 @@ def run_rewrite_pipeline(
                     "topk_safe_band_achieved": True,
                     "topk_calibrated_risk": round(float(candidate_topk_calibrated), 3),
                 })
+            if human_amplification_selectable:
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "human_signal_amplification": True,
+                    "reason": (
+                        selection_status.get("reason")
+                        if selection_status.get("ai_footprint_mitigation")
+                        or selection_status.get("partial_ai_footprint_mitigation")
+                        or selection_status.get("topk_blocker_progress")
+                        or selection_status.get("topk_safe_band_achieved")
+                        else "accepted_human_signal_amplification"
+                    ),
+                })
+            if human_anchor_amplification_selectable:
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "human_anchor_amplifier": True,
+                    "reason": (
+                        selection_status.get("reason")
+                        if selection_status.get("ai_footprint_mitigation")
+                        or selection_status.get("partial_ai_footprint_mitigation")
+                        or selection_status.get("topk_blocker_progress")
+                        or selection_status.get("topk_safe_band_achieved")
+                        else "accepted_human_anchor_amplifier"
+                    ),
+                })
             if (
                 not selection_status.get("selectable")
                 and (
@@ -16065,6 +16557,7 @@ def run_rewrite_pipeline(
                     or
                     incremental_authenticity_selectable
                     or human_amplification_selectable
+                    or human_anchor_amplification_selectable
                     or safe_authorship_suppression_selectable
                     or safe_partial_quality_selectable
                     or score_drag_removal_selectable
@@ -16096,22 +16589,26 @@ def run_rewrite_pipeline(
                                                     "accepted_human_signal_amplification"
                                                     if human_amplification_selectable
                                                     else (
-                                                        "accepted_post_safe_target_climb"
-                                                        if post_safe_target_climb_selectable
+                                                        "accepted_human_anchor_amplifier"
+                                                        if human_anchor_amplification_selectable
                                                         else (
-                                                            "accepted_score_drag_removal"
-                                                            if score_drag_removal_selectable
+                                                            "accepted_post_safe_target_climb"
+                                                            if post_safe_target_climb_selectable
                                                             else (
-                                                                "accepted_safe_partial_quality_improvement"
-                                                                if safe_partial_quality_selectable
+                                                                "accepted_score_drag_removal"
+                                                                if score_drag_removal_selectable
                                                                 else (
-                                                                    (
-                                                                        "accepted_incremental_human_target_progress"
-                                                                        if _radar_goal_requires_human_progress(radar_goal_controller)
-                                                                        else "accepted_safe_authorship_suppression"
+                                                                    "accepted_safe_partial_quality_improvement"
+                                                                    if safe_partial_quality_selectable
+                                                                    else (
+                                                                        (
+                                                                            "accepted_incremental_human_target_progress"
+                                                                            if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                                            else "accepted_safe_authorship_suppression"
+                                                                        )
+                                                                        if safe_authorship_suppression_selectable
+                                                                        else "accepted_incremental_authenticity_progress"
                                                                     )
-                                                                    if safe_authorship_suppression_selectable
-                                                                    else "accepted_incremental_authenticity_progress"
                                                                 )
                                                             )
                                                         )
@@ -16133,6 +16630,7 @@ def run_rewrite_pipeline(
                     "cleanup_improved": bool(safe_partial_quality_selectable and ai_footprint_outcome == "cleanup_improved"),
                     "authenticity_incremental": bool(incremental_authenticity_selectable),
                     "human_signal_amplification": bool(human_amplification_selectable),
+                    "human_anchor_amplifier": bool(human_anchor_amplification_selectable),
                     "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
                     "safe_partial_quality_improvement": bool(safe_partial_quality_selectable),
                     "score_drag_removal": bool(score_drag_removal_selectable),
@@ -16140,6 +16638,8 @@ def run_rewrite_pipeline(
                 })
             if human_amplification_score:
                 selection_status["human_signal_amplification_score"] = human_amplification_score
+            if candidate_eval.get("human_anchor_amplifier_status"):
+                selection_status["human_anchor_amplifier_status"] = candidate_eval.get("human_anchor_amplifier_status")
             dominant_blocker_progress_override = _dominant_blocker_safe_progress_override(
                 dominant_blocker_status,
                 authenticity_status,
@@ -16161,6 +16661,8 @@ def run_rewrite_pipeline(
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
                 and not selection_status.get("topk_safe_band_achieved")
+                and not selection_status.get("human_anchor_amplifier")
+                and not selection_status.get("human_signal_amplification")
                 and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
@@ -16179,6 +16681,8 @@ def run_rewrite_pipeline(
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
                 and not selection_status.get("topk_safe_band_achieved")
+                and not selection_status.get("human_anchor_amplifier")
+                and not selection_status.get("human_signal_amplification")
                 and not selection_status.get("safe_partial_quality_improvement")
             ):
                 selection_status.update({
@@ -16214,6 +16718,8 @@ def run_rewrite_pipeline(
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
                 and not selection_status.get("topk_safe_band_achieved")
+                and not selection_status.get("human_anchor_amplifier")
+                and not selection_status.get("human_signal_amplification")
                 and _env_flag("DRAFTPROOF_BLOCK_TEXTURE_STALLED_AI_FOOTPRINT", True)
             ):
                 selection_status.update({
@@ -16228,6 +16734,7 @@ def run_rewrite_pipeline(
             selection_status["multi_signal_contract"] = multi_signal_contract
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
             selection_status["human_formula_driver_gate"] = human_formula_status
+            selection_status["human_anchor_driver_contract"] = human_anchor_contract
             selection_status["dominant_blocker_progress_override"] = dominant_blocker_progress_override
             selection_status["ai_score_regression_tolerance"] = ai_score_regression_tolerance
             selection_status["ai_score_regressed"] = ai_score_regressed
@@ -16238,6 +16745,7 @@ def run_rewrite_pipeline(
                 and selection_status.get("selectable")
                 and not selection_status.get("human_primary_progress")
                 and not selection_status.get("human_signal_amplification")
+                and not selection_status.get("human_anchor_amplifier")
                 and not selection_status.get("post_safe_target_climb")
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
@@ -21222,6 +21730,46 @@ def run_rewrite_pipeline(
             ai_score_regressed=False,
         )
     result.summary["ai_footprint_gate"] = final_ai_footprint_gate
+    final_human_anchor_contract = _human_anchor_driver_contract(
+        original_report_dict,
+        rewritten_report_dict,
+        text=rewritten_text,
+    )
+    result.summary["human_anchor_driver_contract"] = final_human_anchor_contract
+    result.summary["human_anchor_score_before"] = (
+        (final_human_anchor_contract.get("before") or {}).get("human_anchor_score")
+    )
+    result.summary["human_anchor_score_after"] = (
+        (final_human_anchor_contract.get("after") or {}).get("human_anchor_score")
+    )
+    result.summary["lived_detail_risk_before"] = (
+        (final_human_anchor_contract.get("before") or {}).get("lived_detail_risk")
+    )
+    result.summary["lived_detail_risk_after"] = (
+        (final_human_anchor_contract.get("after") or {}).get("lived_detail_risk")
+    )
+    result.summary["domain_grounding_strength_before"] = (
+        (final_human_anchor_contract.get("before") or {}).get("domain_grounding_strength")
+    )
+    result.summary["domain_grounding_strength_after"] = (
+        (final_human_anchor_contract.get("after") or {}).get("domain_grounding_strength")
+    )
+    selected_anchor_status = (
+        ((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
+        .get("human_anchor_amplifier_status")
+    )
+    if isinstance(selected_anchor_status, dict):
+        result.summary["selected_human_anchor_strategy"] = (
+            (result.summary.get("ai_mitigation_search") or {}).get("selected_strategy")
+        )
+    result.summary["remaining_human_anchor_blockers"] = [
+        {
+            "driver": "lived_detail_risk",
+            "value": (final_human_anchor_contract.get("after") or {}).get("lived_detail_risk"),
+            "target_next_band": (final_human_anchor_contract.get("next_lived_detail_band") or {}).get("risk"),
+            "additional_anchor_sentences_needed": final_human_anchor_contract.get("additional_anchor_sentences_needed"),
+        }
+    ] if not final_human_anchor_contract.get("achieved_next_band") else []
     final_strict_safe_band = _strict_ai_safe_band_status(rewritten_report_dict)
     result.summary["strict_ai_safe_band_achieved"] = bool(final_strict_safe_band.get("achieved"))
     result.summary["remaining_strict_safe_band_drivers"] = final_strict_safe_band.get("remaining") or []

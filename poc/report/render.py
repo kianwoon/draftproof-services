@@ -371,6 +371,7 @@ def _authorship_rating_from_calibrated_risk(
     topk_score = _tf_pct(topk_score)
     topk_calibrated_score = _tf_pct(topk_calibrated_risk)
     supporting_signal = _strongest_supporting_ai_shape_signal(features)
+    ai_likelihood_score = _tf_pct((features or {}).get("ai_likelihood"))
     sample_limit = _authorship_sample_limit(sample_context, topk_calibration_eligible)
     if sample_limit and sample_limit["very_short"]:
         return {
@@ -413,6 +414,19 @@ def _authorship_rating_from_calibrated_risk(
             _apply_topk_floor("likely_ai")
         elif topk_calibrated_score >= 70:
             _apply_topk_floor("possible_ai_assisted")
+
+    moderate_ai_texture = (
+        calibrated_score is not None
+        and ai_likelihood_score is not None
+        and topk_score is not None
+        and topk_calibrated_score is not None
+        and calibrated_score >= 15
+        and 32 <= ai_likelihood_score < 45
+        and topk_score >= 70
+        and topk_calibrated_score >= 40
+    )
+    if moderate_ai_texture:
+        _apply_topk_floor("possible_ai_assisted", moderate_ai_texture=True)
 
     if not rating:
         return {}

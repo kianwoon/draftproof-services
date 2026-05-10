@@ -374,6 +374,37 @@ assert_equal(
     "Turnitin-zero profile with strong human anchor and low calibrated AI risk stays Good",
 )
 
+render_turnitin_moderate_profile = _display_authorship_rating_from_badge({
+    "ai_likelihood_score": 35.3,
+    "ai_components": {
+        "topk_pattern_raw": 78.0,
+        "topk_calibrated_risk": 41.0,
+        "topk_calibration_eligible": True,
+    },
+    "transformation_classification": {
+        "features": {
+            "ai_likelihood": 35.3,
+            "human_anchor_score": 84.0,
+            "citation_grounding_risk": 80.0,
+            "calibration_confidence": 61.0,
+            "section_style_variance": 45.0,
+            "rewrite_smoothness": 40.0,
+            "outline_to_text_expansion": 30.0,
+            "semantic_uniformity_risk": 32.0,
+            "calibrated_ai_risk": 15.0,
+        },
+    },
+}, {"word_count": 317, "sentence_count": 22})
+assert_equal(
+    render_turnitin_moderate_profile["label"],
+    "Possible AI-Assisted",
+    "moderate Turnitin-like texture floors to Possible AI-Assisted without becoming Likely",
+)
+assert_true(
+    render_turnitin_moderate_profile.get("moderate_ai_texture"),
+    "moderate AI texture floor is exposed for report diagnostics",
+)
+
 render_strong_topk_stack = _display_authorship_rating_from_badge({
     "ai_likelihood_score": 60.9,
     "ai_components": {
