@@ -15240,10 +15240,19 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_POST_TOPK_LLM_PATCHES", True)
                 and int(search_summary.get("llm_calls") or 0) < int(search_budget.get("max_llm_calls") or 0)
             ):
-                try:
+                patch_candidates_total = 0
+                patch_batches = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_LLM_BATCHES", 3.0)))
+                summary["llm_patch_batches_requested"] = patch_batches
+                summary["llm_patch_batches_used"] = 0
+                summary["llm_patch_candidate_count"] = 0
+                for batch_index in range(1, patch_batches + 1):
+                    if int(search_summary.get("llm_calls") or 0) >= int(search_budget.get("max_llm_calls") or 0):
+                        summary["llm_patch_stop_reason"] = "total_llm_budget_exhausted"
+                        break
                     if _phase_budget_block_record("post_topk_strict_safe_optimizer", summary):
-                        summary["llm_patch_candidate_count"] = 0
-                    else:
+                        summary["llm_patch_stop_reason"] = "phase_llm_budget_exhausted"
+                        break
+                    try:
                         search_summary["llm_calls"] += 1
                         _record_phase_llm_call("post_topk_strict_safe_optimizer")
                         response = gateway.chat(
@@ -15260,23 +15269,27 @@ def run_rewrite_pipeline(
                                 max_tokens_default=2200,
                             ),
                         )
+                        summary["llm_patch_batches_used"] += 1
                         patch_candidates = _extract_post_topk_patch_candidates(response.content, max_candidates=2)
-                        summary["llm_patch_candidate_count"] = len(patch_candidates)
+                        patch_candidates_total += len(patch_candidates)
+                        summary["llm_patch_candidate_count"] = patch_candidates_total
                         for index, patch_candidate in enumerate(patch_candidates, start=1):
                             patched_text, applied = _apply_post_topk_patches(best_text, patch_candidate.get("patches") or [])
                             if applied and patched_text.strip() != best_text.strip():
                                 add_candidate(
-                                    f"post_topk_llm_patch_c{index}",
+                                    f"post_topk_llm_patch_b{batch_index}_c{index}",
                                     patched_text,
                                     {
                                         "post_topk_optimizer": True,
                                         "llm_patch": True,
+                                        "llm_patch_batch": batch_index,
                                         "llm_reason": patch_candidate.get("reason"),
                                         "applied_post_topk_patches": applied,
                                     },
                                 )
-                except Exception as exc:
-                    summary["llm_error"] = str(exc)
+                    except Exception as exc:
+                        summary["llm_error"] = str(exc)
+                        break
 
             summary["candidate_count"] = len(candidates)
             base_protected = detect_protected_spans(best_text)
@@ -16574,7 +16587,10 @@ def run_rewrite_pipeline(
                                 route_base_report,
                                 candidate_count=route_candidate_count,
                             )
+                            if _phase_budget_block_record("topk_safe_band_rebuild", topk_summary):
+                                raise RuntimeError("phase_llm_budget_exhausted")
                             search_summary["llm_calls"] += 1
+                            _record_phase_llm_call("topk_safe_band_rebuild")
                             response = gateway.chat(
                                 prompt,
                                 system=(
@@ -16874,9 +16890,31 @@ def run_rewrite_pipeline(
                     _run_post_topk_ai_safe_band_optimizer("after_topk_safe_band_rebuild")
                     if not _strict_ai_safe_band_status(best_report).get("achieved"):
                         _run_final_topk_texture_repair("after_post_topk_optimizer")
+                strict_safe_legacy_llm_skipped = bool(
+                    _best_ai_search_selectable()
+                    and bool(best_selection_status.get("topk_safe_band_achieved"))
+                    and not _strict_ai_safe_band_status(best_report).get("achieved")
+                    and _env_flag("DRAFTPROOF_SKIP_LEGACY_LLM_AFTER_TOPK_SAFE", True)
+                )
+                if strict_safe_legacy_llm_skipped:
+                    search_summary["legacy_llm_after_topk_safe"] = {
+                        "skipped": True,
+                        "reason": "preserve_remaining_budget_for_strict_safe_controller",
+                        "selected_strategy": best_strategy,
+                        "strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
+                    }
+                    adaptive_stop_reason = "adaptive_stop_after_strict_safe_phase_budget"
+                    search_summary["adaptive_stop"] = {
+                        "phase": "strict_safe_controller",
+                        "reason": adaptive_stop_reason,
+                        "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                        "selected_strategy": best_strategy,
+                        "selection_status": best_selection_status,
+                    }
                 internet_priority = _internet_reauthor_priority_status(original_report_dict, component_base_text)
                 paragraph_component_first = bool(
                     paragraph_search_enabled
+                    and not strict_safe_legacy_llm_skipped
                     and _env_flag("DRAFTPROOF_PARAGRAPH_COMPONENT_FIRST", True)
                     and not internet_priority.get("prioritize")
                     and _text_word_count(component_base_text) >= int(_float_env(
@@ -16895,6 +16933,8 @@ def run_rewrite_pipeline(
                     float(source_components.get("citation_weakness_risk") or 0.0),
                 )
                 source_repair_allowed = bool(
+                    not strict_safe_legacy_llm_skipped
+                    and
                     _env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True)
                     and (
                         not human_target_search_status.get("active")
@@ -16907,6 +16947,7 @@ def run_rewrite_pipeline(
                 search_summary["source_grounding_repair_policy"] = {
                     "enabled": bool(_env_flag("DRAFTPROOF_SOURCE_GROUNDING_REPAIR", True)),
                     "allowed": source_repair_allowed,
+                    "legacy_llm_after_topk_safe_skipped": strict_safe_legacy_llm_skipped,
                     "source_grounding_or_citation_blocker": round(source_grounding_for_search, 3),
                     "human_target_active": bool(human_target_search_status.get("active")),
                     "min_source_blocker_for_human_target": _float_env(
@@ -16996,7 +17037,11 @@ def run_rewrite_pipeline(
                                 ),
                             },
                         )
-                    if _env_flag("DRAFTPROOF_INTERNET_REINFORCED_REAUTHORING", True) and not paragraph_component_first:
+                    if (
+                        _env_flag("DRAFTPROOF_INTERNET_REINFORCED_REAUTHORING", True)
+                        and not paragraph_component_first
+                        and not strict_safe_legacy_llm_skipped
+                    ):
                         internet_candidate_count = max(
                             1,
                             int(_float_env(
@@ -17074,7 +17119,11 @@ def run_rewrite_pipeline(
                             "enabled": False,
                             "reason": "deferred_after_paragraph_component_first",
                         }
-                    if _env_flag("DRAFTPROOF_CLAIM_NARROWING_REPAIR", True) and not paragraph_component_first:
+                    if (
+                        _env_flag("DRAFTPROOF_CLAIM_NARROWING_REPAIR", True)
+                        and not paragraph_component_first
+                        and not strict_safe_legacy_llm_skipped
+                    ):
                         claim_candidate_count = max(
                             1,
                             int(_float_env(
@@ -17156,7 +17205,11 @@ def run_rewrite_pipeline(
                             "enabled": False,
                             "reason": "deferred_after_paragraph_component_first",
                         }
-                if _env_flag("DRAFTPROOF_TOPK_TEXTURE_REPAIR", True) and not paragraph_component_first:
+                if (
+                    _env_flag("DRAFTPROOF_TOPK_TEXTURE_REPAIR", True)
+                    and not paragraph_component_first
+                    and not strict_safe_legacy_llm_skipped
+                ):
                     texture_base_text = best_text if _best_ai_search_selectable() else component_base_text
                     texture_base_report = best_report if _best_ai_search_selectable() else original_report_dict
                     topk_candidate_count = max(
@@ -17389,7 +17442,7 @@ def run_rewrite_pipeline(
                     if best_strategy and best_selection_status.get("selectable"):
                         component_base_text = best_text
 
-                if paragraph_search_enabled:
+                if paragraph_search_enabled and not strict_safe_legacy_llm_skipped:
                     try:
                         paragraph_limit = max(
                             1,
@@ -17799,8 +17852,10 @@ def run_rewrite_pipeline(
                             if adaptive_stop_reason:
                                 break
 
-                if adaptive_stop_reason:
+                if adaptive_stop_reason and adaptive_stop_reason != "adaptive_stop_after_strict_safe_phase_budget":
                     _run_post_safe_win_target_push("post_llm_adaptive_stop")
+                    search_summary["llm_reason"] = adaptive_stop_reason
+                elif adaptive_stop_reason:
                     search_summary["llm_reason"] = adaptive_stop_reason
 
                 for index, strategy in enumerate([] if adaptive_stop_reason else strategies, start=1):
@@ -18424,8 +18479,23 @@ def run_rewrite_pipeline(
                             },
                         )
 
-                if _best_ai_search_selectable():
+                skip_post_safe_target_push = bool(
+                    _best_ai_search_selectable()
+                    and bool(best_selection_status.get("topk_safe_band_achieved"))
+                    and not _strict_ai_safe_band_status(best_report).get("achieved")
+                    and _env_flag("DRAFTPROOF_SKIP_HUMAN_TARGET_PUSH_AFTER_TOPK_SAFE", True)
+                )
+                if _best_ai_search_selectable() and not skip_post_safe_target_push:
                     _run_post_safe_win_target_push("pre_selection")
+                elif skip_post_safe_target_push:
+                    search_summary["post_safe_win_target_push"] = {
+                        "enabled": bool(_env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True)),
+                        "skipped": True,
+                        "reason": "strict_safe_objective_active_after_topk_safe",
+                        "selected_strategy": best_strategy,
+                        "strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
+                    }
+                if _best_ai_search_selectable():
                     if (
                         _env_flag("DRAFTPROOF_FINAL_CLEANUP_AFTER_SCAN_BUDGET", True)
                         and len(search_summary.get("candidates", [])) >= int(search_budget.get("max_candidate_scans") or 0)

@@ -73,6 +73,8 @@ from rewrite_pipeline import (
     _ai_footprint_gate_status,
     _strict_ai_safe_band_status,
     _topk_rebuild_fallback_rank,
+    _strict_safe_phase_budget_contract,
+    _strict_safe_candidate_rank,
     _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
     _allow_ai_search_llm_after_deterministic,
@@ -1312,6 +1314,70 @@ assert_test(
     _topk_rebuild_fallback_rank(topk_near_miss_a) > _topk_rebuild_fallback_rank(topk_near_miss_b),
     "Top-k rebuild fallback keeps the better near-miss instead of the later worse round",
 )
+phase_contract = _strict_safe_phase_budget_contract(10)
+phase_contract_lower = _strict_safe_phase_budget_contract(7)
+assert_test(
+    phase_contract["total_llm_hard_cap"] == 10
+    and phase_contract["topk_safe_band_rebuild"] == 4
+    and phase_contract["post_topk_strict_safe_optimizer"] == 3
+    and phase_contract["final_texture_proxy_repair"] == 2
+    and phase_contract["emergency_diagnostic_reserve"] == 1
+    and sum(value for key, value in phase_contract_lower.items() if key != "total_llm_hard_cap") <= 7,
+    "strict-safe phase budget contract reserves LLM calls by phase and respects lower hard caps",
+)
+strict_rank_base = make_footprint_report(
+    ai_authorship=46,
+    human=47,
+    ai_transformation=53,
+    grounding=20,
+    human_anchor=30,
+    smoothness=40,
+    semantic_uniformity=45,
+    ai_likelihood=45,
+    topk_pattern=70,
+    topk_calibrated_risk=21,
+    generic_assertion_risk=90,
+    unsupported_claim_risk=10,
+    broad_claim_risk=10,
+    discourse=20,
+)
+strict_rank_candidate_good = make_footprint_report(
+    ai_authorship=44,
+    human=47,
+    ai_transformation=49,
+    grounding=20,
+    human_anchor=30,
+    smoothness=38,
+    semantic_uniformity=43,
+    ai_likelihood=43,
+    topk_pattern=69,
+    topk_calibrated_risk=22,
+    generic_assertion_risk=82,
+    unsupported_claim_risk=10,
+    broad_claim_risk=10,
+    discourse=18,
+)
+strict_rank_candidate_worse = make_footprint_report(
+    ai_authorship=45,
+    human=48,
+    ai_transformation=51,
+    grounding=20,
+    human_anchor=30,
+    smoothness=38,
+    semantic_uniformity=43,
+    ai_likelihood=43,
+    topk_pattern=74,
+    topk_calibrated_risk=26,
+    generic_assertion_risk=80,
+    unsupported_claim_risk=10,
+    broad_claim_risk=10,
+    discourse=18,
+)
+assert_test(
+    _strict_safe_candidate_rank(strict_rank_base, strict_rank_candidate_good)
+    > _strict_safe_candidate_rank(strict_rank_base, strict_rank_candidate_worse),
+    "strict-safe rank preserves Top-k-safe candidates and prefers external/authorship/transformation movement",
+)
 post_topk_patch_payload = json.dumps({
     "candidates": [
         {
@@ -1335,7 +1401,7 @@ assert_test(
 )
 post_topk_generic_source = (
     "Education is changing rapidly. This highlights the importance of helping students develop important skills. "
-    "Teachers should support learning in many different ways.\n\n"
+    "Teachers should support learning in many different ways. This affects classroom practice over time.\n\n"
     "Students use YouTube, TikTok, AI tools, search engines, and online courses before they ask a teacher. "
     "That creates a problem of what to trust.\n\n"
     "In conclusion, education should prepare students for a changing world. "
@@ -1361,14 +1427,16 @@ post_topk_driver_map = _post_topk_driver_map(post_topk_generic_source, post_topk
 post_topk_convergence_candidates = _post_topk_convergence_candidates(
     post_topk_generic_source,
     post_topk_generic_report,
-    limit=6,
+    limit=10,
 )
 assert_test(
     post_topk_driver_map["generic_sentence_ratio"] > 0
     and post_topk_convergence_candidates
     and any(meta.get("post_topk_convergence") for _s, _c, meta in post_topk_convergence_candidates)
+    and any(meta.get("operation") == "authorship_suppression_candidate" for _s, _c, meta in post_topk_convergence_candidates)
+    and any(meta.get("operation") == "transformation_reduction_candidate" for _s, _c, meta in post_topk_convergence_candidates)
     and any("This highlights the importance" not in candidate for _s, candidate, _m in post_topk_convergence_candidates),
-    "post-Top-k convergence optimizer builds stronger document-wide generic-collapse candidates",
+    "post-Top-k convergence optimizer builds strict-safe authorship, transformation, and generic-collapse candidates",
 )
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {
@@ -3068,6 +3136,16 @@ assert_test(
         detect_protected_spans(quote_comma_original),
     ),
     "AI search protected check preserves quote content without rejecting comma placement changes",
+)
+rhetorical_quote_original = 'Schools should ask, "What answer did the student give?" before marking the work.'
+rhetorical_quote_candidate = "Schools should ask what answer the student gave before marking the work."
+assert_test(
+    not _ai_search_protected_loss_reason(
+        rhetorical_quote_original,
+        rhetorical_quote_candidate,
+        detect_protected_spans(rhetorical_quote_original),
+    ),
+    "AI search protected check treats short question quotes as rhetorical prompts when content words remain",
 )
 assert_test(
     _ai_search_protected_loss_reason(
