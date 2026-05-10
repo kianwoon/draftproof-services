@@ -2730,18 +2730,78 @@ def _topk_safe_band_snapshot_prompt(text: str, report_dict: dict | None) -> str:
         "- use concrete anchors where they naturally belong: date, place, named event, law, institution, company, person, technology, object, or movement\n"
         "- include at least 10 prose sentences of 8-18 words so the scanner has eligible prose\n"
         "- use uneven rhythm: short sentence, longer sentence, plain follow-up where useful\n"
+        "- use direct plain turns where useful: That sounds tidy. It is not. The cleaner story leaves parts out.\n"
+        "- do not repeat the same sentence opening or subject-verb route\n"
         "- use stable public facts already implied by the source topic; no invented statistics\n"
         "- avoid generic openings: The topic is, It is important, One of the, In conclusion, Overall\n"
         "- avoid smooth claim -> explanation -> implication paragraphs\n"
         "- avoid colon-heavy compressed fragments and promotional list tone\n"
+        "- avoid poetic metaphor, quirky phrasing, slang, and dramatic compressed phrases\n"
+        "- use plain concrete wording even when varying sentence routes\n"
         "- keep sentence spacing clean; every sentence must have a space after punctuation\n\n"
         "Sentence texture examples:\n"
         "Original: The United States has a strong cultural influence.\n"
-        "Route: American culture travels easily. Films, music, sport, and online platforms carry it into daily life far outside the country.\n"
+        "Route: American culture appears far outside the country. Films, music, sport, and online platforms are the clearest examples.\n"
         "Original: Despite its success, the United States also faces many serious issues.\n"
-        "Route: The success is real, but it sits beside hard problems: cost, division, access, and trust.\n"
+        "Route: The success is real. That sounds tidy, but it leaves out cost, division, access, and trust.\n"
         "Original: Technology and innovation continue to shape the future of the United States.\n"
-        "Route: Technology is still one of the country's loudest signals. That does not make every change simple or fair.\n\n"
+        "Route: Technology still shapes the country. Not every change is simple or fair.\n\n"
+        "Return only the rewritten prose. No explanation.\n\n"
+        "SOURCE DOCUMENT:\n"
+        f"{str(text or '')[:12000]}"
+    )
+
+
+def _topk_plain_spoken_snapshot_prompt(text: str, report_dict: dict | None) -> str:
+    """Fallback rebuild when ordinary Top-k snapshot remains saturated.
+
+    This route is intentionally not "quirky" or poetic. It creates stronger
+    token-route movement through plain sequencing, narrower claims, and varied
+    paragraph shape.
+    """
+    ai_components = (((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+    source_words = _text_word_count(text)
+    min_words = max(240, int(source_words * 0.70))
+    max_words = max(min_words + 80, int(source_words * 1.05))
+    current_signals = json.dumps({
+        "raw_topk": ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")),
+        "topk_calibrated_risk": ai_components.get("topk_calibrated_risk"),
+        "source_word_count": source_words,
+        "target_word_range": [min_words, max_words],
+    }, ensure_ascii=False)
+    return (
+        "DraftProof PLAIN_SPOKEN_TOPK_REBUILD.\n"
+        "The first Top-k rebuild may still be too predictable. Rebuild the document again, "
+        "but do it in plain, ordinary prose. Do not use poetic, quirky, metaphorical, or slogan-like phrasing.\n\n"
+        "Goal:\n"
+        "- lower calibrated Top-k risk by changing sentence routes and paragraph order\n"
+        "- preserve the same topic, core claims, names, dates, and examples\n"
+        "- keep the writing readable and natural, not compressed or decorative\n\n"
+        "Current signals:\n"
+        f"{current_signals}\n\n"
+        "How to write:\n"
+        f"- target {min_words} to {max_words} words\n"
+        "- use plain everyday nouns and verbs\n"
+        "- use mixed sentence jobs: fact, limit, example, consequence, doubt, correction\n"
+        "- make some paragraphs short and some fuller, but keep normal prose\n"
+        "- narrow broad claims instead of praising or dramatizing them\n"
+        "- use direct turns such as: The difficulty is, This is not always true, One limit is, The result is uneven\n"
+        "- do not repeat the same opening route such as Its influence, The country, or This shows\n"
+        "- keep at least 10 eligible prose sentences of 8-18 words\n\n"
+        "Forbidden:\n"
+        "- no metaphors such as route, cogs, strands, muscle, tapestry, shadow, ground zero, sharp corner\n"
+        "- no quirky slang or colloquial shortcuts such as folks, cash, grit, stateside, hatched\n"
+        "- no colon-heavy list fragments\n"
+        "- no missing spaces after punctuation\n"
+        "- no generic admiration list of strengths\n"
+        "- no new statistics or invented citations\n\n"
+        "Plain route examples:\n"
+        "Original: The United States is influential in global culture.\n"
+        "Rewrite: American culture reaches many countries. The clearest channels are entertainment, sport, technology, and social media.\n"
+        "Original: The country has many strengths but also many challenges.\n"
+        "Rewrite: The strengths are visible. That is not the full picture. Inequality, political division, health costs, and access still matter.\n"
+        "Original: Technology companies shape the modern world.\n"
+        "Rewrite: Large technology companies affect daily life. Their products change work, communication, shopping, and study.\n\n"
         "Return only the rewritten prose. No explanation.\n\n"
         "SOURCE DOCUMENT:\n"
         f"{str(text or '')[:12000]}"
@@ -2782,15 +2842,15 @@ def _topk_safe_band_patch_rounds_default(source_text: str, report_dict: dict | N
     gap = _topk_gap_band(report_dict)
     band = gap.get("band")
     if words <= 700:
-        base, cap = 2, 5
+        base, cap = 2, 8
     elif words <= 1800:
-        base, cap = 4, 8
+        base, cap = 4, 12
     else:
-        base, cap = 5, 10
+        base, cap = 5, 14
     extra_by_gap = {
-        "saturated": 3,
-        "high": 2,
-        "elevated": 1,
+        "saturated": 6,
+        "high": 4,
+        "elevated": 2,
         "near_miss": 2,
         "safe": 0,
         "unknown": 1,
@@ -2823,22 +2883,27 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "DraftProof TOPK_SAFE_BAND_SENTENCE_PATCH.\n"
         "Patch these high Top-k sentences after the snapshot rebuild. Preserve meaning, but use lower-predictability routing.\n\n"
         "Allowed:\n"
-        "- fragments, colon routes, sharper nouns, rough contrast, compact human note style\n"
+        "- plain uneven sentence routes: one short sentence, one specific follow-up, one limited contrast\n"
+        "- direct skeptical turns: That sounds tidy. It is not. The cleaner version misses something.\n"
+        "- occasional plain fragment only when it reads naturally, not as a headline\n"
         "- tiny stable details only when directly implied by the sentence or public context\n"
-        "- replace smooth textbook phrasing with less predictable human phrasing\n\n"
+        "- replace smooth textbook phrasing with less predictable but ordinary wording\n\n"
         "Forbidden:\n"
         "- generic essay polish\n"
+        "- poetic metaphor, quirky phrasing, slang, or compressed headline style\n"
+        "- colon-heavy fragments and dramatic list rhythm\n"
         "- new statistics or citations\n"
         "- changing the document topic\n\n"
         "Examples:\n"
-        "Original: Better wages for some workers, harder discipline for many others.\n"
-        "Replacement: Five dollars a day sounded generous; the stopwatch told another story.\n"
-        "Original: It challenged sheriffs, buses, lunch counters, voting offices, landlords, school boards, and presidents.\n"
-        "Replacement: Sheriffs, buses, lunch counters, voting offices, landlords, school boards, presidents: all were pulled into the fight.\n"
-        "Original: The Civil War was not just blue uniforms against grey uniforms.\n"
-        "Replacement: Blue uniforms versus grey uniforms is the small version.\n\n"
+        "Original: The United States has a strong cultural influence.\n"
+        "Replacement: American culture is visible outside the country. Film, music, sport, and social media are the main routes.\n"
+        "Original: Despite its success, the United States also faces many serious issues.\n"
+        "Replacement: The country has clear strengths. That is not the whole story. Cost, division, access, and trust remain problems.\n"
+        "Original: The country was built on ideas such as freedom, democracy, and individual rights.\n"
+        "Replacement: Freedom, democracy, and individual rights were central ideas. In practice, Americans have argued over those ideas from the beginning.\n\n"
         "Return valid JSON only:\n"
-        '{"patches":[{"original_sentence":"...","replacement_sentence":"..."}]}\n\n'
+        '{"candidates":[{"patches":[{"original_sentence":"...","replacement_sentence":"..."}]}]}\n'
+        "Return 2 candidates with different sentence routes. Do not repeat the same openings across replacements.\n\n"
         f"SENTENCES:\n{json.dumps(rows, ensure_ascii=False)[:12000]}"
     )
 
@@ -5679,11 +5744,12 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
     topk_gap = _topk_gap_band(report_dict)
     topk_rounds = _topk_safe_band_patch_rounds_default(source_text, report_dict)
     topk_phase = 1 + topk_rounds + 1  # masked route + snapshot + patch rounds
+    extra_seconds = 60 if topk_gap.get("band") == "saturated" else 30 if topk_gap.get("band") == "high" else 0
     if words <= 700:
         base = {
             "word_count": words,
             "size_band": "short",
-            "max_seconds": 120,
+            "max_seconds": 120 + extra_seconds,
             "max_llm_calls": max(6, topk_phase + 2),
             "max_candidate_scans": 36,
             "phase_budget": {
@@ -5698,7 +5764,7 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
         base = {
             "word_count": words,
             "size_band": "medium",
-            "max_seconds": 240,
+            "max_seconds": 240 + extra_seconds,
             "max_llm_calls": max(10, topk_phase + 5),
             "max_candidate_scans": 64,
             "phase_budget": {
@@ -5712,7 +5778,7 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
     base = {
         "word_count": words,
         "size_band": "long",
-        "max_seconds": 420,
+        "max_seconds": 420 + extra_seconds,
         "max_llm_calls": max(14, topk_phase + 7),
         "max_candidate_scans": 96,
         "phase_budget": {
@@ -9289,6 +9355,26 @@ _LOW_FRICTION_CONTRAST_RE = re.compile(
     r"uneven|inequality|limitation|risk|concern|struggle|tension)\b",
     re.I,
 )
+_STYLIZED_TEXTURE_TERMS_RE = re.compile(
+    r"\b(?:carv(?:e|ed|ing)|route|routes|cogs?|knobs?|sprint(?:ed|ing)?|"
+    r"stunn(?:ed|ing)|mirrors?|sprawling|strands?|tapestr(?:y|ies)|"
+    r"towering|churn(?:s|ed|ing)?|hatched|ground zero|sharp corner|"
+    r"shadow|shadows|muscle|heavyweight|fuse|fuel(?:ed|s)?|"
+    r"pull(?:s|ed|ing)? strings?|levers?|edge|echo(?:es|ed|ing)?|"
+    r"stitched|quilt|thorny|cracks?|fault lines?|roadblocks?)\b",
+    re.I,
+)
+_COLLOQUIAL_TEXTURE_TERMS_RE = re.compile(
+    r"\b(?:folks?|cash|grit|hungry to|stateside|wins|fresh chances?|"
+    r"biggest|loudest|kicks off|snapped from|staring down)\b",
+    re.I,
+)
+_ABSTRACT_LIST_TERMS_RE = re.compile(
+    r"\b(?:freedom|democracy|individual rights|opportunity|change|"
+    r"influence|power|culture|innovation|diversity|stability|"
+    r"identity|self-expression|values?|progress|responsibility)\b",
+    re.I,
+)
 _KNOWN_HEADING_FOLLOWERS = [
     ("Introduction", "Inclusive learning design"),
     ("When learners start to get lost", "The challenge"),
@@ -9394,6 +9480,35 @@ def _repeated_long_sequence_reason(text: str, window: int = 8) -> str:
     return ""
 
 
+def _repeated_sentence_opening_reason(text: str) -> str:
+    body_text = _strip_reference_like_lines_for_quality(text)
+    sentences = [
+        re.sub(r"\s+", " ", sentence.strip())
+        for sentence in re.split(r"(?<=[.!?])\s+", str(body_text or ""))
+        if len(sentence.split()) >= 4
+    ]
+    if len(sentences) < 8:
+        return ""
+    counts: dict[str, int] = {}
+    for sentence in sentences:
+        words = re.findall(r"[A-Za-z']+", sentence.lower())
+        if len(words) < 3:
+            continue
+        opening = " ".join(words[:3])
+        if opening in {
+            "the united states",
+            "the u s",
+        }:
+            continue
+        counts[opening] = counts.get(opening, 0) + 1
+    if not counts:
+        return ""
+    opening, count = max(counts.items(), key=lambda item: item[1])
+    if count >= 3 and count / max(1, len(sentences)) >= 0.12:
+        return f"repeated_sentence_opening:{opening}"
+    return ""
+
+
 def _external_detector_style_artifact_reason(text: str) -> str:
     """Detect generic promotional/list tone that external detectors flag."""
     if not isinstance(text, str) or not text.strip():
@@ -9415,11 +9530,17 @@ def _external_detector_style_artifact_reason(text: str) -> str:
     praise_hits = len(_GENERIC_PRAISE_TERMS_RE.findall(body))
     praise_phrase_hits = len(_GENERIC_PRAISE_PHRASES_RE.findall(body))
     contrast_hits = len(_LOW_FRICTION_CONTRAST_RE.findall(body))
+    stylized_hits = len(_STYLIZED_TEXTURE_TERMS_RE.findall(body))
+    colloquial_hits = len(_COLLOQUIAL_TEXTURE_TERMS_RE.findall(body))
+    abstract_hits = len(_ABSTRACT_LIST_TERMS_RE.findall(body))
     short_fragment_count = sum(1 for sentence in sentences if len(sentence.split()) <= 9)
     colon_fragment_count = sum(1 for sentence in sentences if ":" in sentence and len(sentence.split()) <= 14)
+    dash_sentence_count = sum(1 for sentence in sentences if " -- " in sentence or " - " in sentence)
     praise_density = praise_hits / word_count
     phrase_density = praise_phrase_hits / max(1, len(sentences))
     short_fragment_ratio = short_fragment_count / max(1, len(sentences))
+    stylized_density = (stylized_hits + colloquial_hits) / word_count
+    abstract_density = abstract_hits / word_count
 
     if (
         praise_hits >= 12
@@ -9434,6 +9555,12 @@ def _external_detector_style_artifact_reason(text: str) -> str:
         and colon_fragment_count >= 3
     ):
         return "compressed_promotional_fragment_style"
+    if (
+        stylized_hits + colloquial_hits >= 10
+        and stylized_density >= 0.018
+        and (dash_sentence_count >= 2 or colon_fragment_count >= 2 or abstract_density >= 0.025)
+    ):
+        return "over_stylized_metaphorical_texture"
     return ""
 
 
@@ -9504,6 +9631,31 @@ def _neutralize_external_detector_style_artifacts(text: str) -> tuple[str, list[
     updated = re.sub(r"\b(?:giants|heavyweight ring|throwing heavy punches)\b", "large organizations", updated, flags=re.I)
     updated = re.sub(r"\bships culture worldwide\b", "circulates culture internationally", updated, flags=re.I)
     updated = re.sub(r"\btrumpet(?:s|ed)?\b", "argue for", updated, flags=re.I)
+    neutral_terms = [
+        (r"\bcarved a sharp route\b", "developed quickly"),
+        (r"\bcut(?:s)? a sharp corner\b", "marks a clear point"),
+        (r"\bpull(?:s|ed|ing)? strings?\b", "has influence"),
+        (r"\btech cogs?\b", "technology systems"),
+        (r"\bsprint(?:ed|ing)? to power\b", "rapid growth"),
+        (r"\bstunned many\b", "was unusually fast"),
+        (r"\bmirrors? a sprawling mix\b", "includes a wide range"),
+        (r"\bunder wins\b", "alongside its strengths"),
+        (r"\bground zero for\b", "an important base for"),
+        (r"\btowering corporations\b", "large corporations"),
+        (r"\bsocial tapestry\b", "society"),
+        (r"\bthrows? a vast shadow\b", "has wide influence"),
+        (r"\bchurns? out\b", "produces"),
+        (r"\bhatched stateside\b", "from the United States"),
+        (r"\bleans human quirkiness\b", "sounds less mechanically polished"),
+        (r"\bpower'?s knobs\b", "centres of power"),
+        (r"\bstrands\b", "areas"),
+        (r"\bfresh chances\b", "new opportunities"),
+        (r"\bfolks\b", "people"),
+        (r"\bcash\b", "money"),
+        (r"\bgrit\b", "effort"),
+    ]
+    for pattern, replacement in neutral_terms:
+        updated = re.sub(pattern, replacement, updated, flags=re.I)
     updated = re.sub(r"\bremarkable strengths\b", "strengths", updated, flags=re.I)
     updated = re.sub(r"\bprestige\b", "reputation", updated, flags=re.I)
     updated = re.sub(r"[ \t]+", " ", updated)
@@ -9564,6 +9716,9 @@ def _ai_candidate_quality_reject_reason(
         repeated = _repeated_long_sequence_reason(candidate)
         if repeated:
             return repeated
+        repeated_opening = _repeated_sentence_opening_reason(candidate)
+        if repeated_opening:
+            return repeated_opening
 
     sentences = [
         re.sub(r"\s+", " ", s.strip()).lower()
@@ -14838,6 +14993,14 @@ def run_rewrite_pipeline(
         def _phase_budget_can_spend(phase: str, calls: int = 1) -> bool:
             if phase not in phase_budget_used:
                 return True
+            if (
+                phase == "topk_safe_band_rebuild"
+                and _env_flag("DRAFTPROOF_TOPK_CAN_BORROW_UNUSED_PHASE_BUDGET", True)
+                and bool(search_summary.get("topk_safe_band_priority"))
+                and int(search_summary.get("llm_calls") or 0) + int(calls)
+                <= int(phase_budget_contract.get("total_llm_hard_cap") or 0)
+            ):
+                return True
             return (
                 int(phase_budget_used.get(phase) or 0) + int(calls)
                 <= int(phase_budget_contract.get(phase) or 0)
@@ -14848,8 +15011,20 @@ def run_rewrite_pipeline(
         def _record_phase_llm_call(phase: str, calls: int = 1) -> None:
             if phase not in phase_budget_used:
                 return
+            phase_limit = int(phase_budget_contract.get(phase) or 0)
+            previous_used = int(phase_budget_used.get(phase) or 0)
             phase_budget_used[phase] = int(phase_budget_used.get(phase) or 0) + int(calls)
             search_summary["phase_budget_used"] = dict(phase_budget_used)
+            if (
+                phase == "topk_safe_band_rebuild"
+                and phase_budget_used[phase] > phase_limit
+                and bool(search_summary.get("topk_safe_band_priority"))
+            ):
+                borrowed = max(0, phase_budget_used[phase] - max(phase_limit, previous_used))
+                if borrowed:
+                    search_summary["topk_phase_budget_borrowed_calls"] = (
+                        int(search_summary.get("topk_phase_budget_borrowed_calls") or 0) + borrowed
+                    )
 
         def _phase_budget_block_record(phase: str, summary: dict, *, calls: int = 1) -> bool:
             if _phase_budget_can_spend(phase, calls):
@@ -15048,6 +15223,7 @@ def run_rewrite_pipeline(
             if quality_rejection in {
                 "generic_admiration_tone",
                 "compressed_promotional_fragment_style",
+                "over_stylized_metaphorical_texture",
             }:
                 repaired_candidate, style_repairs = _neutralize_external_detector_style_artifacts(candidate)
                 if style_repairs and repaired_candidate.strip() != candidate.strip():
@@ -17523,6 +17699,43 @@ def run_rewrite_pipeline(
                                     "topk_calibrated_risk": snapshot_ai.get("topk_calibrated_risk"),
                                     "topk_safe_band": snapshot_ai.get("topk_safe_band"),
                                 }
+                                if (
+                                    isinstance(snapshot_ai.get("topk_calibrated_risk"), (int, float))
+                                    and float(snapshot_ai.get("topk_calibrated_risk")) >= 75.0
+                                    and not _phase_budget_block_record("topk_safe_band_rebuild", safe_band_summary)
+                                    and not _search_budget_exhausted("plain_spoken_topk_rebuild")
+                                ):
+                                    search_summary["llm_calls"] += 1
+                                    _record_phase_llm_call("topk_safe_band_rebuild")
+                                    plain_response = gateway.chat(
+                                        _topk_plain_spoken_snapshot_prompt(route_base_text, route_base_report),
+                                        system=(
+                                            "You are DraftProof's plain-spoken Top-k rebuild controller. "
+                                            "Return only rewritten prose."
+                                        ),
+                                        **_phase_chat_sampling_kwargs(
+                                            "DRAFTPROOF_PLAIN_SPOKEN_TOPK_REBUILD",
+                                            temperature_env="DRAFTPROOF_PLAIN_SPOKEN_TOPK_REBUILD_TEMPERATURE",
+                                            temperature_default=0.58,
+                                            max_tokens_env="DRAFTPROOF_PLAIN_SPOKEN_TOPK_REBUILD_MAX_TOKENS",
+                                            max_tokens_default=_topk_safe_band_snapshot_max_tokens_default(route_base_text),
+                                        ),
+                                    )
+                                    plain_text = _clean_full_document_candidate(plain_response.content, route_base_text)
+                                    if plain_text:
+                                        plain_report = _full_scan_report_dict(plain_text)
+                                        plain_ai = (((plain_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
+                                        safe_band_summary["plain_spoken_snapshot"] = {
+                                            "words": _text_word_count(plain_text),
+                                            "topk_pattern_raw": plain_ai.get("topk_pattern_raw", plain_ai.get("topk_pattern")),
+                                            "topk_calibrated_risk": plain_ai.get("topk_calibrated_risk"),
+                                            "topk_safe_band": plain_ai.get("topk_safe_band"),
+                                        }
+                                        if _topk_rebuild_fallback_rank(plain_report) > _topk_rebuild_fallback_rank(snapshot_report):
+                                            snapshot_text = plain_text
+                                            snapshot_report = plain_report
+                                            snapshot_ai = plain_ai
+                                            safe_band_summary["snapshot_replaced_by"] = "plain_spoken_snapshot"
                                 candidate_to_eval = snapshot_text
                                 candidate_patch_report = snapshot_report
                                 applied = []
@@ -17613,22 +17826,41 @@ def run_rewrite_pipeline(
                                             max_tokens_default=2600,
                                         ),
                                     )
-                                    patch_sets = _extract_topk_route_patch_candidates(patch_response.content, max_candidates=1)
+                                    patch_sets = _extract_topk_route_patch_candidates(
+                                        patch_response.content,
+                                        max_candidates=int(_float_env("DRAFTPROOF_TOPK_SAFE_BAND_PATCH_CANDIDATES", 2.0)),
+                                    )
                                     round_applied = []
-                                    if patch_sets:
-                                        patched_text, round_applied = _apply_topk_route_patches(candidate_to_eval, patch_sets[0])
-                                    else:
-                                        patched_text = candidate_to_eval
+                                    patched_text = candidate_to_eval
+                                    best_round_report = None
+                                    best_round_rank = None
+                                    best_round_rejection = ""
+                                    for patch_set in patch_sets:
+                                        trial_text, trial_applied = _apply_topk_route_patches(candidate_to_eval, patch_set)
+                                        if not trial_applied or trial_text == candidate_to_eval:
+                                            continue
+                                        trial_rejection = _ai_candidate_quality_reject_reason(trial_text)
+                                        if trial_rejection:
+                                            best_round_rejection = trial_rejection
+                                            continue
+                                        trial_report = _full_scan_report_dict(trial_text)
+                                        trial_rank = _topk_rebuild_fallback_rank(trial_report)
+                                        if trial_rank and (best_round_rank is None or trial_rank > best_round_rank):
+                                            patched_text = trial_text
+                                            round_applied = trial_applied
+                                            best_round_report = trial_report
+                                            best_round_rank = trial_rank
                                     patch_rounds.append({
                                         "round": patch_round,
                                         "patch_candidate_count": len(patch_sets),
                                         "applied_patch_count": len(round_applied),
+                                        "rejected_patch_candidate_reason": best_round_rejection,
                                     })
                                     if not round_applied or patched_text == candidate_to_eval:
                                         break
                                     candidate_to_eval = patched_text
                                     applied.extend(round_applied)
-                                    candidate_patch_report = _full_scan_report_dict(candidate_to_eval)
+                                    candidate_patch_report = best_round_report or _full_scan_report_dict(candidate_to_eval)
                                     patched_ai = (((candidate_patch_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
                                     patched_topk_calibrated = patched_ai.get("topk_calibrated_risk")
                                     marginal_topk_drop = None

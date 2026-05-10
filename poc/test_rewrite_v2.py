@@ -178,6 +178,7 @@ from rewrite_pipeline import (
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
     _topk_safe_band_snapshot_prompt,
+    _topk_plain_spoken_snapshot_prompt,
     _topk_safe_band_patch_rounds_default,
     _topk_safe_band_snapshot_max_tokens_default,
     _topk_repair_map,
@@ -1379,11 +1380,11 @@ assert_test(
     "selector distinguishes Top-k-safe frontier from merely improved Top-k-blocked progress",
 )
 saturated_topk_report = {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}}
-phase_contract = _strict_safe_phase_budget_contract(14, "word " * 900, saturated_topk_report)
+phase_contract = _strict_safe_phase_budget_contract(17, "word " * 900, saturated_topk_report)
 phase_contract_lower = _strict_safe_phase_budget_contract(7)
 assert_test(
-    phase_contract["total_llm_hard_cap"] == 14
-    and phase_contract["topk_safe_band_rebuild"] == 9
+    phase_contract["total_llm_hard_cap"] == 17
+    and phase_contract["topk_safe_band_rebuild"] == 12
     and phase_contract["authorship_transformation_texture_controller"] == 3
     and phase_contract["final_texture_proxy_repair"] == 2
     and phase_contract["emergency_diagnostic_reserve"] == 0
@@ -2212,9 +2213,9 @@ finally:
 assert_test(
     short_policy["max_llm_calls"] == 7
     and medium_policy["max_llm_calls"] == 12
-    and saturated_medium_policy["max_llm_calls"] == 14
-    and long_policy["max_llm_calls"] == 17
-    and default_hard_cap == 14
+    and saturated_medium_policy["max_llm_calls"] == 17
+    and long_policy["max_llm_calls"] == 20
+    and default_hard_cap == 17
     and explicit_hard_cap == 10,
     "AI search hard LLM cap uses document-size defaults and honors explicit overrides",
 )
@@ -2222,11 +2223,17 @@ medium_topk_prompt = _topk_safe_band_snapshot_prompt(
     "The United States has many strengths and challenges. " * 90,
     {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}},
 )
+plain_topk_prompt = _topk_plain_spoken_snapshot_prompt(
+    "The United States has many strengths and challenges. " * 90,
+    {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}},
+)
 assert_test(
     "280 to 560 words" not in medium_topk_prompt
     and "rough annotated prose" not in medium_topk_prompt
     and "short country profile" in medium_topk_prompt
-    and _topk_safe_band_patch_rounds_default("word " * 900, saturated_topk_report) == 7
+    and "no metaphors" in plain_topk_prompt
+    and "plain everyday nouns and verbs" in plain_topk_prompt
+    and _topk_safe_band_patch_rounds_default("word " * 900, saturated_topk_report) == 10
     and _topk_safe_band_snapshot_max_tokens_default("word " * 900) == 3600,
     "Top-k safe-band rebuild uses document-sized prose, not compressed snapshot fragments",
 )
@@ -3091,6 +3098,30 @@ assert_test(
     and not _ai_candidate_quality_reject_reason(neutralized_admiration_candidate),
     "AI search can repair external-detector praise-list artifacts before scoring",
 )
+stylized_detector_candidate = (
+    "Recently, the U.S. carved a sharp route: pulling strings in politics, money, tech cogs, culture strands. "
+    "Though young beside ancient civilizations, its sprint to power stunned many. "
+    "Famed for democracy and economic muscle, the nation mirrors a sprawling mix of folks and viewpoints. "
+    "Under wins, stubborn blocks -- unequal ground, political cracks, health troubles, social tension. "
+    "1776 cuts a sharp corner in America's story. That year, thirteen colonies snapped from Britain, "
+    "sparking revolt and laying U.S. foundations. At this young nation's heart: freedom, self-rule, personal stakes. "
+    "Across centuries, the nation pushed west, powered by factories and surges of newcomers. "
+    "Newcomers chased safer harbors, fresh chances, weaving the nation's social tapestry. "
+    "Economic muscle still defines the U.S. today. Ground zero for massive economies, towering corporations."
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(stylized_detector_candidate)
+    == "over_stylized_metaphorical_texture",
+    "AI search rejects over-stylized metaphor/quirky texture flagged by external detectors",
+)
+neutralized_stylized_candidate, stylized_repairs = _neutralize_external_detector_style_artifacts(
+    stylized_detector_candidate
+)
+assert_test(
+    stylized_repairs
+    and not _ai_candidate_quality_reject_reason(neutralized_stylized_candidate),
+    "AI search can neutralize over-stylized metaphor texture before scoring",
+)
 assert_test(
     _ai_candidate_quality_reject_reason(
         "Britain.Revolutionary War came next, carving out a fresh nation. "
@@ -3106,6 +3137,20 @@ assert_test(
         "With only six learners in my current HBB26 intake, smaller class sizes let me observe technique closely."
     ).startswith("repeated_long_sequence"),
     "AI search rejects repeated long text sequences inside candidates",
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(
+        "Its influence appears in politics and culture. "
+        "Its influence appears in technology and business. "
+        "Its influence appears in sport and media. "
+        "The country has a varied history. "
+        "Some changes were positive for particular communities. "
+        "Some problems remained visible across public life. "
+        "The paragraph continues with ordinary detail. "
+        "Another sentence gives enough length for candidate quality checks. "
+        "A final sentence keeps the sample above the opening threshold."
+    ).startswith("repeated_sentence_opening"),
+    "AI search rejects repeated sentence-opening route artifacts",
 )
 assert_test(
     not _ai_candidate_quality_reject_reason(
