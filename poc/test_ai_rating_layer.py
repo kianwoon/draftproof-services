@@ -330,7 +330,7 @@ assert_equal(
     "detect PDF renderer escalates dense qualifying-text AI profile from old score fields",
 )
 
-render_topk_calibrated_floor = _display_authorship_rating_from_badge({
+render_raw_topk_no_floor = _display_authorship_rating_from_badge({
     "ai_likelihood_score": 47.85,
     "ai_components": {
         "topk_pattern": 80.83,
@@ -342,13 +342,36 @@ render_topk_calibrated_floor = _display_authorship_rating_from_badge({
     },
 })
 assert_equal(
-    render_topk_calibrated_floor["label"],
-    "Likely AI-Assisted",
-    "high top-k predictability floors the calibrated display rating above Good",
+    render_raw_topk_no_floor["label"],
+    "Good",
+    "raw top-k alone does not floor the calibrated display rating above Good",
 )
-assert_true(
-    render_topk_calibrated_floor.get("topk_escalated"),
-    "top-k calibrated floor is exposed for page/PDF seal copy",
+
+render_turnitin_zero_profile = _display_authorship_rating_from_badge({
+    "ai_likelihood_score": 32.46,
+    "ai_components": {
+        "topk_pattern_raw": 81.0,
+        "topk_calibrated_risk": 48.0,
+        "topk_calibration_eligible": True,
+    },
+    "transformation_classification": {
+        "features": {
+            "ai_likelihood": 32.46,
+            "human_anchor_score": 84.0,
+            "citation_grounding_risk": 70.0,
+            "calibration_confidence": 61.0,
+            "section_style_variance": 45.0,
+            "rewrite_smoothness": 40.0,
+            "outline_to_text_expansion": 32.0,
+            "semantic_uniformity_risk": 26.0,
+            "calibrated_ai_risk": 13.0,
+        },
+    },
+}, {"word_count": 317, "sentence_count": 22})
+assert_equal(
+    render_turnitin_zero_profile["label"],
+    "Good",
+    "Turnitin-zero profile with strong human anchor and low calibrated AI risk stays Good",
 )
 
 render_strong_topk_stack = _display_authorship_rating_from_badge({

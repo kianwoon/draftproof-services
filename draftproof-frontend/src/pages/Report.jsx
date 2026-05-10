@@ -487,10 +487,10 @@ function deriveCalibratedAuthorshipRating(
     });
   }
 
-  if (topkPercent != null || topkRiskPercent != null) {
-    if (topkPercent >= 80 || (topkRiskPercent != null && topkRiskPercent >= 80)) {
+  if (topkRiskPercent != null) {
+    if (topkRiskPercent >= 80) {
       applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'likely_ai'));
-    } else if (topkPercent >= 70 || (topkRiskPercent != null && topkRiskPercent >= 70)) {
+    } else if (topkRiskPercent >= 70) {
       applyTopkFloor(CALIBRATED_AUTHORSHIP_LEVELS.find((item) => item.code === 'possible_ai_assisted'));
     }
   }

@@ -4575,6 +4575,79 @@ def _ai_footprint_flatten(profile: dict | None) -> dict:
     return merged
 
 
+def _multi_signal_candidate_contract(original_report: dict | None, candidate_report: dict | None) -> dict:
+    """Summarize cross-signal movement so one repaired metric cannot hide damage elsewhere."""
+    before = _ai_footprint_flatten(_ai_footprint_profile(original_report))
+    after = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
+    driver_specs = {
+        "topk_calibrated_risk": {"weight": 1.5, "tolerance": 0.5, "severe": 2.0},
+        "ai_authorship": {"weight": 1.4, "tolerance": 0.5, "severe": 2.0},
+        "ai_transformation": {"weight": 1.25, "tolerance": 0.5, "severe": 2.0},
+        "external_ai_flag_risk": {"weight": 1.4, "tolerance": 0.5, "severe": 2.0},
+        "ai_likelihood": {"weight": 1.15, "tolerance": 0.5, "severe": 3.0},
+        "rewrite_smoothness": {"weight": 1.0, "tolerance": 1.0, "severe": 8.0},
+        "semantic_uniformity": {"weight": 0.8, "tolerance": 1.0, "severe": 8.0},
+        "discourse_regularity": {"weight": 0.8, "tolerance": 1.0, "severe": 8.0},
+        "generic_assertion_risk": {"weight": 0.9, "tolerance": 5.0, "severe": 15.0},
+        "unsupported_claim_risk": {"weight": 0.55, "tolerance": 5.0, "severe": 15.0},
+        "broad_claim_risk": {"weight": 0.5, "tolerance": 5.0, "severe": 15.0},
+    }
+    improvements: list[dict] = []
+    regressions: list[dict] = []
+    severe_backfires: list[dict] = []
+    balance_score = 0.0
+    for driver, spec in driver_specs.items():
+        before_value = before.get(driver)
+        after_value = after.get(driver)
+        if not isinstance(before_value, (int, float)) or not isinstance(after_value, (int, float)):
+            continue
+        delta = round(float(before_value) - float(after_value), 3)
+        tolerance = float(spec.get("tolerance", 0.0))
+        weight = float(spec.get("weight", 1.0))
+        if delta > tolerance:
+            row = {
+                "driver": driver,
+                "before": round(float(before_value), 3),
+                "after": round(float(after_value), 3),
+                "drop": delta,
+            }
+            improvements.append(row)
+            balance_score += delta * weight
+        elif delta < -tolerance:
+            regression = {
+                "driver": driver,
+                "before": round(float(before_value), 3),
+                "after": round(float(after_value), 3),
+                "increase": round(abs(delta), 3),
+            }
+            regressions.append(regression)
+            balance_score -= abs(delta) * weight * 1.5
+            if abs(delta) >= float(spec.get("severe", tolerance)):
+                severe_backfires.append(regression)
+    primary_drop = sum(
+        float(row.get("drop") or 0.0)
+        for row in improvements
+        if row.get("driver") in {
+            "topk_calibrated_risk",
+            "ai_authorship",
+            "ai_transformation",
+            "external_ai_flag_risk",
+            "ai_likelihood",
+            "rewrite_smoothness",
+        }
+    )
+    return {
+        "version": "multi_signal_v1",
+        "balance_score": round(balance_score, 3),
+        "primary_drop": round(primary_drop, 3),
+        "improvements": improvements,
+        "regressions": regressions,
+        "severe_backfires": severe_backfires,
+        "severe_backfire": bool(severe_backfires),
+        "needs_balance_repair": bool(severe_backfires and primary_drop >= 8.0),
+    }
+
+
 def _strict_ai_safe_band_status(report_dict: dict | None) -> dict:
     return _strict_ai_safe_band_status_from_profile(_ai_footprint_profile(report_dict))
 
@@ -6723,10 +6796,21 @@ def _goal_climb_candidate_rank(
     topk_drop = num(footprint_drops.get("topk_calibrated_risk"), 0.0)
     ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"), 0.0)
     ai_authorship_drop = num(gate.get("ai_authorship_delta"), ai_authorship_delta)
+    multi_signal = (
+        status.get("multi_signal_contract")
+        if isinstance(status.get("multi_signal_contract"), dict)
+        else eval_data.get("multi_signal_contract")
+        if isinstance(eval_data.get("multi_signal_contract"), dict)
+        else {}
+    )
+    severe_backfire_count = len(multi_signal.get("severe_backfires") or [])
+    balance_score = num(multi_signal.get("balance_score"), 0.0)
 
     return (
         1 if status.get("selectable") else 0,
         footprint_priority,
+        -severe_backfire_count,
+        balance_score,
         topk_drop,
         ai_authorship_drop,
         ai_likelihood_drop,
@@ -10100,6 +10184,47 @@ def _ai_search_quote_drift_scan_allowed(candidate: str, reasons: list[str], simi
     if not isinstance(candidate, str) or not reasons or similarity < 0.70:
         return False
     return all(str(reason).startswith("quote_lost:") for reason in reasons)
+
+
+def _document_recreate_drift_scan_allowed(
+    candidate: str,
+    reasons: list[str],
+    similarity: float,
+    extra: dict | None,
+) -> bool:
+    """Allow scanner scoring for recreate/remove candidates with example-entity drift.
+
+    Recreate candidates are allowed to remove low-value examples. The protected
+    span gate already ran before semantic drift, so numbers, citations, and
+    exact protected strings remain guarded. This only prevents named-example
+    drift from blocking the scanner from measuring the actual AI footprint.
+    """
+    if not (
+        isinstance(candidate, str)
+        and isinstance(extra, dict)
+        and reasons
+        and similarity >= _float_env("DRAFTPROOF_RECREATE_DRIFT_SCAN_MIN_SIMILARITY", 0.45)
+        and (
+            extra.get("internet_reinforced_reauthoring")
+            or extra.get("strict_safe_candidate")
+            or extra.get("post_topk_optimizer")
+        )
+    ):
+        return False
+    candidate_l = re.sub(r"\s+", " ", candidate).lower()
+    for reason in reasons:
+        reason_s = str(reason or "")
+        if not reason_s.startswith(("lost_named_entity:", "new_named_entity:")):
+            return False
+        match = re.match(r"(?:lost_named_entity|new_named_entity):\s+'([^']+)'", reason_s)
+        if not match:
+            return False
+        entity = re.sub(r"\s+", " ", match.group(1)).strip()
+        if entity.lower() in candidate_l:
+            continue
+        if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
+            return False
+    return True
 
 
 def _reconstruction_drift_scan_allowed(candidate: str, reasons: list[str], similarity: float) -> bool:
@@ -15247,6 +15372,10 @@ def run_rewrite_pipeline(
                         extra.get("final_topk_texture_repair_budget_override")
                         and _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_AFTER_BUDGET", True)
                     )
+                    or (
+                        extra.get("scan_generated_candidate_after_budget")
+                        and _env_flag("DRAFTPROOF_SCAN_GENERATED_CANDIDATES_AFTER_TIME_BUDGET", True)
+                    )
                 )
             )
             if not ignore_search_budget and _search_budget_exhausted("candidate_scan"):
@@ -15336,9 +15465,23 @@ def run_rewrite_pipeline(
                 )
             )
             if len(candidate) < effective_min_chars:
-                candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{effective_min_chars}"
-                search_summary["candidates"].append(candidate_eval)
-                return
+                hard_min_chars = max(
+                    200,
+                    int(len(search_source_text) * _float_env(
+                        "DRAFTPROOF_AI_SEARCH_HARD_MIN_CHAR_RATIO",
+                        0.45,
+                    )),
+                )
+                if len(candidate) < hard_min_chars:
+                    candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{hard_min_chars}"
+                    candidate_eval["guidance_min_chars"] = effective_min_chars
+                    search_summary["candidates"].append(candidate_eval)
+                    return
+                candidate_eval["length_guidance_warning"] = (
+                    f"candidate_below_guidance_min {len(candidate)}<{effective_min_chars}"
+                )
+                candidate_eval["effective_min_chars"] = effective_min_chars
+                candidate_eval["hard_min_chars"] = hard_min_chars
             effective_max_chars = (
                 max(max_chars, int(len(search_source_text) * _float_env(
                     "DRAFTPROOF_TOPK_SAFE_BAND_MAX_CHAR_RATIO",
@@ -15380,6 +15523,10 @@ def run_rewrite_pipeline(
                 elif _ai_search_entity_drift_scan_allowed(candidate, drift.reasons, drift.similarity):
                     candidate_eval["semantic_review_required"] = True
                     candidate_eval["drift_scan_relaxed_for_scoring"] = True
+                elif _document_recreate_drift_scan_allowed(candidate, drift.reasons, drift.similarity, extra):
+                    candidate_eval["semantic_review_required"] = True
+                    candidate_eval["drift_scan_relaxed_for_document_recreate"] = True
+                    candidate_eval["drift_reasons_relaxed"] = drift.reasons[:5]
                 else:
                     candidate_eval["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
                     search_summary["candidates"].append(candidate_eval)
@@ -15655,6 +15802,11 @@ def run_rewrite_pipeline(
                 ai_score_regressed=ai_score_regressed,
             )
             candidate_eval["ai_footprint_gate"] = ai_footprint_gate
+            multi_signal_contract = _multi_signal_candidate_contract(
+                original_report_dict,
+                candidate_report,
+            )
+            candidate_eval["multi_signal_contract"] = multi_signal_contract
             ai_footprint_outcome = str(ai_footprint_gate.get("outcome_class") or "")
             ai_footprint_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True)
@@ -16014,6 +16166,7 @@ def run_rewrite_pipeline(
             selection_status["authenticity_gate"] = authenticity_status
             selection_status["ai_footprint_gate"] = ai_footprint_gate
             selection_status["ai_footprint_outcome_class"] = ai_footprint_outcome
+            selection_status["multi_signal_contract"] = multi_signal_contract
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
             selection_status["human_formula_driver_gate"] = human_formula_status
             selection_status["dominant_blocker_progress_override"] = dominant_blocker_progress_override
@@ -18304,6 +18457,7 @@ def run_rewrite_pipeline(
                                     "internet_reinforced_reauthoring": True,
                                     "source_search_status": source_layer.get("status"),
                                     "source_result_count": len(source_layer.get("results") or []),
+                                    "scan_generated_candidate_after_budget": True,
                                 },
                             )
                     elif paragraph_component_first:
@@ -19780,6 +19934,7 @@ def run_rewrite_pipeline(
                         ),
                         "selected_human_shift_score": best_selection_status.get("human_shift_score"),
                         "selected_human_shift_components": best_selection_status.get("human_shift_components"),
+                        "selected_multi_signal_contract": best_selection_status.get("multi_signal_contract"),
                         "selected_semantic_review_required": best_semantic_review_required,
                         "selected_drift_reasons": best_drift_reasons[:10],
                         "selection_status": best_selection_status,
@@ -19825,6 +19980,7 @@ def run_rewrite_pipeline(
                 ),
                 "selected_human_shift_score": best_selection_status.get("human_shift_score"),
                 "selected_human_shift_components": best_selection_status.get("human_shift_components"),
+                "selected_multi_signal_contract": best_selection_status.get("multi_signal_contract"),
                 "selected_semantic_review_required": best_semantic_review_required,
                 "selected_drift_reasons": best_drift_reasons[:10],
                 "selection_status": best_selection_status,

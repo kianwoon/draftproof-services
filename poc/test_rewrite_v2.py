@@ -70,6 +70,7 @@ from rewrite_pipeline import (
     _ai_search_feedback_prompt,
     _safe_partial_quality_improvement_status,
     _ai_footprint_profile,
+    _multi_signal_candidate_contract,
     _ai_footprint_gate_status,
     _strict_ai_safe_band_status,
     _strict_ai_safe_band_status_from_footprint_gate,
@@ -88,6 +89,7 @@ from rewrite_pipeline import (
     _ai_search_drift_false_positive,
     _ai_search_quote_drift_scan_allowed,
     _ai_search_entity_drift_scan_allowed,
+    _document_recreate_drift_scan_allowed,
     _reconstruction_drift_scan_allowed,
     _scan_scope_summary,
     _human_shift_score,
@@ -1298,6 +1300,40 @@ assert_test(
     ],
     "post-Top-k strict safe band is recoverable from the canonical candidate footprint gate",
 )
+topk_improved_generic_backfire_report = make_footprint_report(
+    ai_authorship=43,
+    human=48,
+    ai_transformation=52,
+    grounding=55,
+    human_anchor=31,
+    smoothness=38,
+    semantic_uniformity=41,
+    ai_likelihood=45,
+    topk_pattern=73,
+    topk_calibrated_risk=30.328,
+    generic_assertion_risk=90,
+    unsupported_claim_risk=25,
+    broad_claim_risk=15,
+    discourse=30,
+)
+multi_signal_contract = _multi_signal_candidate_contract(
+    footprint_original,
+    topk_improved_generic_backfire_report,
+)
+assert_test(
+    multi_signal_contract["needs_balance_repair"]
+    and any(
+        item["driver"] == "generic_assertion_risk"
+        and item["increase"] >= 15
+        for item in multi_signal_contract["severe_backfires"]
+    )
+    and any(
+        item["driver"] == "topk_calibrated_risk"
+        and item["drop"] > 60
+        for item in multi_signal_contract["improvements"]
+    ),
+    "multi-signal contract catches Top-k wins that backfire generic assertion risk",
+)
 topk_near_miss_a = make_footprint_report(
     ai_authorship=50,
     human=45,
@@ -2258,6 +2294,17 @@ assert_test(
     and "if topk_safe_band_rebuild or strict_safe_shortening" in rewrite_pipeline_source
     and "effective_max_chars" in rewrite_pipeline_source,
     "Top-k/strict-safe candidates use a relaxed effective length gate before rejection",
+)
+assert_test(
+    "DRAFTPROOF_AI_SEARCH_HARD_MIN_CHAR_RATIO" in rewrite_pipeline_source
+    and "length_guidance_warning" in rewrite_pipeline_source
+    and "candidate_below_guidance_min" in rewrite_pipeline_source,
+    "AI-search length is guidance for substantial candidates, not a near-miss hard rollback",
+)
+assert_test(
+    "DRAFTPROOF_SCAN_GENERATED_CANDIDATES_AFTER_TIME_BUDGET" in rewrite_pipeline_source
+    and "scan_generated_candidate_after_budget" in rewrite_pipeline_source,
+    "Already-generated high-value candidates get a scanner pass instead of being wasted after time budget trips",
 )
 for key, value in previous_sampling_env.items():
     if value is None:
@@ -3419,6 +3466,24 @@ assert_test(
         0.95,
     ),
     "AI search still blocks scoring candidates that lose critical entities",
+)
+assert_test(
+    _document_recreate_drift_scan_allowed(
+        "The United States discussion keeps 1776, the Constitution, civil rights, technology, and global politics.",
+        [
+            "lost_named_entity: 'Hollywood'",
+            "lost_named_entity: 'The National Basketball Association'",
+        ],
+        0.62,
+        {"internet_reinforced_reauthoring": True},
+    )
+    and not _document_recreate_drift_scan_allowed(
+        "Hairdressing content with learners.",
+        ["lost_named_entity: 'Box Hill Institute'"],
+        0.80,
+        {"internet_reinforced_reauthoring": True},
+    ),
+    "document-level recreate can be scanned after losing non-critical examples but not protected course anchors",
 )
 feedback_prompt = _ai_search_feedback_prompt(
     "Original source text.",

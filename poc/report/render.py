@@ -408,10 +408,10 @@ def _authorship_rating_from_calibrated_risk(
     ):
         _apply_topk_floor("ai_generated_signals", topk_strong_signal=True)
 
-    if topk_score is not None or topk_calibrated_score is not None:
-        if (topk_score is not None and topk_score >= 80) or (topk_calibrated_score is not None and topk_calibrated_score >= 80):
+    if topk_calibrated_score is not None:
+        if topk_calibrated_score >= 80:
             _apply_topk_floor("likely_ai")
-        elif (topk_score is not None and topk_score >= 70) or (topk_calibrated_score is not None and topk_calibrated_score >= 70):
+        elif topk_calibrated_score >= 70:
             _apply_topk_floor("possible_ai_assisted")
 
     if not rating:
