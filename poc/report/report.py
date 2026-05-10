@@ -1358,11 +1358,25 @@ class ReportBuilder:
             _estimate_in_text_source_grounding_strength(self._original_text or ""),
         )
 
+        # Raw GPT-2 Top-k stays visible as a diagnostic signal, but the
+        # authorship/transformation model must consume the calibrated Top-k
+        # risk. Otherwise strict-safe can pass calibrated Top-k while
+        # AI Authorship is still punished by the impossible raw scale.
+        raw_topk_pattern = sig.get("topk_pattern_risk", 0.0) or 0.0
+        topk_calibration = _topk_calibration_fields_for_summary(
+            self._pred_summary,
+            raw_topk_pattern,
+            self._summaries.get("criterion_scores"),
+        )
+        calibrated_topk_for_authorship = (
+            (topk_calibration.get("topk_calibrated_risk") or 0.0) / 100.0
+        )
+
         # Build Layer3Input from scanner outputs + text-derived signals
         layer3_input = build_layer3_input_from_text(
             self._original_text or "",
             predictability=sig.get("predictability", 0.0) or 0.0,
-            topk_pattern=sig.get("topk_pattern_risk", 0.0) or 0.0,
+            topk_pattern=calibrated_topk_for_authorship,
             generic_phrase_density=sig.get("genericity", 0.0) or 0.0,
             # broad_claim_risk & unsupported_claim_risk: auto-computed from text
             citation_weakness_risk=cite_risk,
@@ -1392,15 +1406,11 @@ class ReportBuilder:
         )
 
         ai_components = {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()}
-        topk_calibration = _topk_calibration_fields_for_summary(
-            self._pred_summary,
-            ai_components.get("topk_pattern"),
-            self._summaries.get("criterion_scores"),
-        )
+        ai_components["topk_authorship_component"] = ai_components.get("topk_pattern")
         ai_components.update(topk_calibration)
         # Compatibility: topk_pattern remains the raw scanner score. The
         # calibrated risk is a separate safe-band gate.
-        ai_components.setdefault("topk_pattern", topk_calibration.get("topk_pattern_raw", 0.0))
+        ai_components["topk_pattern"] = topk_calibration.get("topk_pattern_raw", raw_topk_pattern)
 
         ai_risk_badge = {
             # AI Generation (Phase 1)

@@ -180,6 +180,8 @@ from rewrite_pipeline import (
     _extract_topk_route_patch_candidates,
     _apply_topk_route_patches,
     _post_topk_driver_map,
+    _authorship_transformation_texture_driver_map,
+    _authorship_transformation_texture_candidates,
     _post_topk_convergence_candidates,
     _extract_post_topk_patch_candidates,
     _apply_post_topk_patches,
@@ -1319,9 +1321,10 @@ phase_contract_lower = _strict_safe_phase_budget_contract(7)
 assert_test(
     phase_contract["total_llm_hard_cap"] == 10
     and phase_contract["topk_safe_band_rebuild"] == 4
-    and phase_contract["post_topk_strict_safe_optimizer"] == 3
+    and phase_contract["authorship_transformation_texture_controller"] == 4
     and phase_contract["final_texture_proxy_repair"] == 2
-    and phase_contract["emergency_diagnostic_reserve"] == 1
+    and phase_contract["emergency_diagnostic_reserve"] == 0
+    and phase_contract["post_topk_strict_safe_optimizer"] == 0
     and sum(value for key, value in phase_contract_lower.items() if key != "total_llm_hard_cap") <= 7,
     "strict-safe phase budget contract reserves LLM calls by phase and respects lower hard caps",
 )
@@ -1424,7 +1427,13 @@ post_topk_generic_report = make_footprint_report(
     discourse=27,
 )
 post_topk_driver_map = _post_topk_driver_map(post_topk_generic_source, post_topk_generic_report)
+texture_driver_map = _authorship_transformation_texture_driver_map(post_topk_generic_source, post_topk_generic_report)
 post_topk_convergence_candidates = _post_topk_convergence_candidates(
+    post_topk_generic_source,
+    post_topk_generic_report,
+    limit=10,
+)
+texture_candidates = _authorship_transformation_texture_candidates(
     post_topk_generic_source,
     post_topk_generic_report,
     limit=10,
@@ -1437,6 +1446,18 @@ assert_test(
     and any(meta.get("operation") == "transformation_reduction_candidate" for _s, _c, meta in post_topk_convergence_candidates)
     and any("This highlights the importance" not in candidate for _s, candidate, _m in post_topk_convergence_candidates),
     "post-Top-k convergence optimizer builds strict-safe authorship, transformation, and generic-collapse candidates",
+)
+assert_test(
+    texture_driver_map["kind"] == "authorship_transformation_texture_driver_map"
+    and texture_driver_map["ranked_blocks"]
+    and texture_driver_map["authorship_drivers"]["sentence_length_uniformity"] >= 0
+    and texture_candidates
+    and all(meta.get("authorship_transformation_texture_controller") for _s, _c, meta in texture_candidates)
+    and {
+        meta.get("texture_candidate_family")
+        for _s, _c, meta in texture_candidates
+    }.intersection({"AUTHORSHIP_SUPPRESSION", "TRANSFORMATION_DETEMPLATE", "HYBRID_TEXTURE_COLLAPSE", "LOW_VALUE_REMOVE"}),
+    "authorship/transformation texture controller maps and labels targeted candidate families",
 )
 safe_partial_stop_reason = _ai_search_adaptive_stop_reason(
     {

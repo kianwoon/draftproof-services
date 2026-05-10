@@ -19,6 +19,7 @@ import time
 import re
 import argparse
 import math
+import statistics
 import requests
 from difflib import SequenceMatcher
 from urllib.parse import urlparse
@@ -2788,7 +2789,65 @@ def _post_topk_ai_safe_band_patch_prompt(candidate_text: str, candidate_report: 
         "    {\n"
         "      \"reason\": \"short reason\",\n"
         "      \"patches\": [\n"
-        "        {\"paragraph_index\": 0, \"replacement\": \"replacement paragraph\"}\n"
+        "        {\"operation_type\": \"AUTHORSHIP_SUPPRESSION\", \"target_paragraph_index\": 0, \"expected_driver\": \"ai_authorship\", \"replacement\": \"replacement paragraph\"}\n"
+        "      ]\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Return at most 2 candidates. Each candidate may patch at most 2 paragraphs."
+    )
+
+
+def _authorship_transformation_texture_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
+    driver_map = _authorship_transformation_texture_driver_map(candidate_text, candidate_report)
+    strict_status = _strict_ai_safe_band_status(candidate_report)
+    patch_targets = []
+    paragraphs = _logical_paragraphs(candidate_text)
+    for row in driver_map.get("ranked_blocks") or []:
+        index = row.get("paragraph_index")
+        if not isinstance(index, int) or index < 0 or index >= len(paragraphs):
+            continue
+        if row.get("has_protected_anchor"):
+            continue
+        patch_targets.append({
+            "paragraph_index": index,
+            "role": row.get("role"),
+            "authorship_driver_score": row.get("authorship_driver_score"),
+            "transformation_driver_score": row.get("transformation_driver_score"),
+            "generic_sentence_ratio": row.get("generic_sentence_ratio"),
+            "paragraph": paragraphs[index],
+        })
+        if len(patch_targets) >= 5:
+            break
+    return (
+        "DraftProof AUTHORSHIP_TRANSFORMATION_TEXTURE_CONTROLLER.\n"
+        "The document already passed calibrated Top-k. Preserve that and attack only authorship/transformation texture.\n"
+        "Return only valid JSON. No markdown.\n\n"
+        "Hard controller rules:\n"
+        "- topk_calibrated_risk must stay below 25\n"
+        "- reduce ai_authorship, ai_transformation, or external_ai_flag_risk\n"
+        "- do not increase review burden, weighted severity, or critical/high findings\n"
+        "- no full-document rewrite; patch selected paragraphs only\n"
+        "- no new facts, citations, names, numbers, dates, examples, or author evidence\n"
+        "- do not polish the prose into a cleaner essay style\n\n"
+        "Allowed operation types:\n"
+        "- AUTHORSHIP_SUPPRESSION: break explanatory cadence in one paragraph\n"
+        "- TRANSFORMATION_DETEMPLATE: collapse claim-explain-conclude symmetry\n"
+        "- HYBRID_TEXTURE_COLLAPSE: combine small authorship/transformation reductions\n"
+        "- LOW_VALUE_REMOVE: replace a low-value generic paragraph with an empty string only if meaning is duplicated nearby\n\n"
+        "Current strict-safe status:\n"
+        f"{json.dumps(strict_status, ensure_ascii=False)[:3000]}\n\n"
+        "Texture driver map:\n"
+        f"{json.dumps({k: driver_map.get(k) for k in ('authorship_drivers', 'transformation_drivers', 'generic_sentence_ratio')}, ensure_ascii=False)[:3500]}\n\n"
+        "Patch targets:\n"
+        f"{json.dumps(patch_targets, ensure_ascii=False)[:9000]}\n\n"
+        "Return schema:\n"
+        "{\n"
+        "  \"candidates\": [\n"
+        "    {\n"
+        "      \"reason\": \"short reason\",\n"
+        "      \"patches\": [\n"
+        "        {\"operation_type\": \"AUTHORSHIP_SUPPRESSION\", \"target_paragraph_index\": 0, \"expected_driver\": \"ai_authorship\", \"replacement\": \"replacement paragraph\"}\n"
         "      ]\n"
         "    }\n"
         "  ]\n"
@@ -2827,11 +2886,21 @@ def _extract_post_topk_patch_candidates(response_text: str, *, max_candidates: i
         for patch in patches[:2]:
             if not isinstance(patch, dict):
                 continue
-            index = patch.get("paragraph_index")
+            index = patch.get("target_paragraph_index")
+            if not isinstance(index, int):
+                index = patch.get("paragraph_index")
             replacement = str(patch.get("replacement") or "").strip()
             if not isinstance(index, int) or not replacement:
                 continue
-            cleaned.append({"paragraph_index": index, "replacement": replacement})
+            operation_type = str(patch.get("operation_type") or row.get("operation_type") or "").strip()
+            expected_driver = str(patch.get("expected_driver") or row.get("expected_driver") or "").strip()
+            cleaned.append({
+                "paragraph_index": index,
+                "target_paragraph_index": index,
+                "replacement": replacement,
+                "operation_type": operation_type,
+                "expected_driver": expected_driver,
+            })
         if cleaned:
             candidates.append({"reason": row.get("reason"), "patches": cleaned})
     return candidates
@@ -2851,7 +2920,13 @@ def _apply_post_topk_patches(text: str, patches: list[dict]) -> tuple[str, list[
         if cleaned.strip() == paragraphs[index].strip():
             continue
         paragraphs[index] = cleaned
-        applied.append({"paragraph_index": index, "replacement_words": _text_word_count(cleaned)})
+        applied.append({
+            "paragraph_index": index,
+            "target_paragraph_index": index,
+            "replacement_words": _text_word_count(cleaned),
+            "operation_type": patch.get("operation_type"),
+            "expected_driver": patch.get("expected_driver"),
+        })
     if not applied:
         return text, []
     return _join_logical_paragraphs(paragraphs), applied
@@ -2983,6 +3058,188 @@ def _post_topk_driver_map(text: str, raw_json: dict | None) -> dict:
         "repeated_paragraph_role_runs": repeated_role_runs,
         "paragraphs": sorted(rows, key=lambda item: float(item.get("paragraph_driver_score") or 0.0), reverse=True),
     }
+
+
+def _opening_route_key(sentence: str) -> str:
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", str(sentence or "").lower())
+    return " ".join(words[:3])
+
+
+def _authorship_transformation_texture_driver_map(text: str, raw_json: dict | None) -> dict:
+    """Map the post-Top-k document to authorship and transformation texture drivers.
+
+    This deliberately separates detector texture from quality cleanup. The map is
+    consumed by the strict-safe controller, so rows are ranked by likely
+    authorship/transformation drag rather than by generic review burden.
+    """
+    base = _post_topk_driver_map(text, raw_json)
+    paragraphs = base.get("paragraphs") or []
+    opening_counts: dict[str, int] = {}
+    sentence_lengths: list[int] = []
+    transition_hits = 0
+    transition_re = re.compile(
+        r"^\s*(?:also|but|however|therefore|so|then|this|that|in\s+(?:addition|conclusion|summary)|"
+        r"furthermore|moreover|additionally|overall)\b",
+        re.I,
+    )
+    for row in paragraphs:
+        for sentence_row in row.get("sentences") or []:
+            sentence = sentence_row.get("text") or ""
+            key = _opening_route_key(sentence)
+            if key:
+                opening_counts[key] = opening_counts.get(key, 0) + 1
+            sentence_lengths.append(int(sentence_row.get("word_count") or 0))
+            if transition_re.search(sentence):
+                transition_hits += 1
+
+    mean_len = statistics.mean(sentence_lengths) if sentence_lengths else 0.0
+    stdev_len = statistics.pstdev(sentence_lengths) if len(sentence_lengths) > 1 else 0.0
+    length_uniformity = 0.0
+    if mean_len > 0:
+        length_uniformity = max(0.0, min(100.0, 100.0 - (stdev_len / mean_len * 100.0)))
+
+    repeated_opening_hits = sum(count - 1 for count in opening_counts.values() if count > 1)
+    transition_density = transition_hits / max(int(base.get("sentence_count") or 0), 1)
+    role_counts: dict[str, int] = {}
+    for row in paragraphs:
+        role = str(row.get("role") or "")
+        if role:
+            role_counts[role] = role_counts.get(role, 0) + 1
+
+    ranked_blocks = []
+    low_value_blocks = []
+    for row in paragraphs:
+        sentence_count = max(int(row.get("sentence_count") or 0), 1)
+        generic_ratio = float(row.get("generic_sentence_ratio") or 0.0)
+        role = str(row.get("role") or "")
+        role_repeat = max(0, int(role_counts.get(role, 0)) - 1)
+        repeated_openings_in_block = 0
+        transition_hits_in_block = 0
+        for sentence_row in row.get("sentences") or []:
+            sentence = sentence_row.get("text") or ""
+            key = _opening_route_key(sentence)
+            if key and opening_counts.get(key, 0) > 1:
+                repeated_openings_in_block += 1
+            if transition_re.search(sentence):
+                transition_hits_in_block += 1
+        authorship_score = (
+            float(row.get("max_sentence_driver_score") or 0.0)
+            + generic_ratio * 12.0
+            + (transition_hits_in_block / sentence_count) * 5.0
+            + repeated_openings_in_block * 1.5
+            + (length_uniformity / 100.0) * 3.0
+        )
+        transformation_score = (
+            float(row.get("paragraph_driver_score") or 0.0)
+            + generic_ratio * 8.0
+            + role_repeat * 2.0
+            + (6.0 if role in {"generic_claim_heavy", "conclusion_template_risk", "source_summary_heavy"} else 0.0)
+        )
+        row_out = {
+            "paragraph_index": row.get("paragraph_index"),
+            "role": role,
+            "word_count": row.get("word_count"),
+            "sentence_count": row.get("sentence_count"),
+            "has_protected_anchor": bool(row.get("has_protected_anchor")),
+            "low_value_generic_block": bool(row.get("low_value_generic_block")),
+            "generic_sentence_ratio": row.get("generic_sentence_ratio"),
+            "authorship_driver_score": round(authorship_score, 3),
+            "transformation_driver_score": round(transformation_score, 3),
+            "texture_driver_score": round(authorship_score + transformation_score, 3),
+            "repeated_opening_hits": repeated_openings_in_block,
+            "transition_hits": transition_hits_in_block,
+            "top_sentence_drivers": [
+                {
+                    "sentence_index": s.get("sentence_index"),
+                    "driver_score": s.get("driver_score"),
+                    "word_count": s.get("word_count"),
+                    "contextual": s.get("contextual"),
+                    "protected": s.get("protected"),
+                }
+                for s in sorted(
+                    row.get("sentences") or [],
+                    key=lambda item: float(item.get("driver_score") or 0.0),
+                    reverse=True,
+                )[:3]
+            ],
+        }
+        ranked_blocks.append(row_out)
+        if row_out["low_value_generic_block"]:
+            low_value_blocks.append(row_out)
+
+    ranked_blocks.sort(key=lambda item: float(item.get("texture_driver_score") or 0.0), reverse=True)
+    profile = base.get("profile") or {}
+    return {
+        "kind": "authorship_transformation_texture_driver_map",
+        "profile": profile,
+        "authorship_drivers": {
+            "ai_likelihood": profile.get("ai_likelihood"),
+            "rewrite_smoothness": profile.get("rewrite_smoothness"),
+            "repeated_opening_hits": repeated_opening_hits,
+            "transition_density": round(transition_density, 3),
+            "sentence_length_uniformity": round(length_uniformity, 3),
+        },
+        "transformation_drivers": {
+            "ai_transformation": profile.get("ai_transformation"),
+            "semantic_uniformity": profile.get("semantic_uniformity"),
+            "discourse_regularity": profile.get("discourse_regularity"),
+            "repeated_paragraph_role_runs": base.get("repeated_paragraph_role_runs"),
+            "role_counts": role_counts,
+        },
+        "score_drag_blocks": low_value_blocks[:8],
+        "generic_sentence_ratio": base.get("generic_sentence_ratio"),
+        "generic_sentence_count": base.get("generic_sentence_count"),
+        "sentence_count": base.get("sentence_count"),
+        "paragraph_count": base.get("paragraph_count"),
+        "ranked_blocks": ranked_blocks[:12],
+        "paragraphs": paragraphs,
+    }
+
+
+def _texture_candidate_family(operation: str | None) -> str:
+    operation = str(operation or "").lower()
+    if "authorship" in operation:
+        return "AUTHORSHIP_SUPPRESSION"
+    if "transformation" in operation or "template" in operation or "merge" in operation:
+        return "TRANSFORMATION_DETEMPLATE"
+    if "external_proxy" in operation or "generic_assertion_collapse" in operation:
+        return "HYBRID_TEXTURE_COLLAPSE"
+    if "removal" in operation or "remove" in operation:
+        return "LOW_VALUE_REMOVE"
+    return "HYBRID_TEXTURE_COLLAPSE"
+
+
+def _authorship_transformation_texture_candidates(
+    source_text: str,
+    raw_json: dict | None,
+    *,
+    limit: int = 12,
+) -> list[tuple[str, str, dict]]:
+    candidates = _post_topk_convergence_candidates(source_text, raw_json, limit=limit)
+    mapped: list[tuple[str, str, dict]] = []
+    for strategy, candidate, meta in candidates:
+        operation = str((meta or {}).get("operation") or "")
+        family = _texture_candidate_family(operation)
+        strategy_name = str(strategy or "texture_candidate")
+        strategy_name = re.sub(r"^post_topk_", "texture_", strategy_name)
+        if not strategy_name.startswith("texture_"):
+            strategy_name = f"texture_{strategy_name}"
+        mapped.append((
+            strategy_name,
+            candidate,
+            {
+                **(meta or {}),
+                "authorship_transformation_texture_controller": True,
+                "texture_candidate_family": family,
+                "expected_driver": (
+                    "ai_authorship" if family == "AUTHORSHIP_SUPPRESSION"
+                    else "ai_transformation" if family == "TRANSFORMATION_DETEMPLATE"
+                    else "external_ai_flag_risk" if family == "HYBRID_TEXTURE_COLLAPSE"
+                    else "ai_transformation"
+                ),
+            },
+        ))
+    return mapped[:max(1, limit)]
 
 
 def _post_topk_convergence_candidates(
@@ -4176,9 +4433,12 @@ def _strict_ai_safe_band_status(report_dict: dict | None) -> dict:
 STRICT_SAFE_PHASE_BUDGET_CONTRACT = {
     "total_llm_hard_cap": 10,
     "topk_safe_band_rebuild": 4,
-    "post_topk_strict_safe_optimizer": 3,
+    "authorship_transformation_texture_controller": 4,
     "final_texture_proxy_repair": 2,
-    "emergency_diagnostic_reserve": 1,
+    "emergency_diagnostic_reserve": 0,
+    # Backward-compatible report key only. New work must spend against the
+    # explicit authorship/transformation texture controller budget above.
+    "post_topk_strict_safe_optimizer": 0,
 }
 
 
@@ -4201,8 +4461,9 @@ def _strict_safe_phase_budget_contract(total_cap: int | None = None) -> dict:
         for key in (
             "emergency_diagnostic_reserve",
             "final_texture_proxy_repair",
-            "post_topk_strict_safe_optimizer",
+            "authorship_transformation_texture_controller",
             "topk_safe_band_rebuild",
+            "post_topk_strict_safe_optimizer",
         ):
             take = min(overflow, int(contract[key]))
             contract[key] = int(contract[key]) - take
@@ -4240,6 +4501,8 @@ def _strict_safe_candidate_rank(
         round(num(base.get("external_ai_flag_risk")) - num(after.get("external_ai_flag_risk")), 3),
         round(num(base.get("ai_authorship")) - num(after.get("ai_authorship")), 3),
         round(num(base.get("ai_transformation")) - num(after.get("ai_transformation")), 3),
+        round(num(base.get("rewrite_smoothness")) - num(after.get("rewrite_smoothness")), 3),
+        round(num(base.get("semantic_uniformity")) - num(after.get("semantic_uniformity")), 3),
         1 if topk_safe else 0,
         1 if safety_clean else 0,
         round(-max(0.0, float(review_burden_delta or 0.0)), 3),
@@ -11766,10 +12029,14 @@ def _enrich_report_authorship_schema(report_dict: dict) -> dict:
         return report_dict
 
     writing_components = badge.get("writing_components") or {}
+    topk_calibration = calibrate_topk_risk(
+        ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")),
+        eligible_sentence_count=max(3, len(_split_sentences(text))),
+    )
     layer3_input = build_layer3_input_from_text(
         text,
         predictability=_metric_decimal(ai_components.get("predictability")),
-        topk_pattern=_metric_decimal(ai_components.get("topk_pattern")),
+        topk_pattern=_metric_decimal(topk_calibration.get("topk_calibrated_risk")),
         generic_phrase_density=_metric_decimal(ai_components.get("generic_phrase_density")),
         broad_claim_risk=_metric_decimal(writing_components.get("broad_claim_risk")),
         citation_weakness_risk=_metric_decimal(writing_components.get("citation_weakness_risk")),
@@ -11779,11 +12046,11 @@ def _enrich_report_authorship_schema(report_dict: dict) -> dict:
     )
     layer3 = Layer3Scorer().score(layer3_input)
     enriched_ai_components = {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()}
-    enriched_ai_components.update(
-        calibrate_topk_risk(
-            enriched_ai_components.get("topk_pattern"),
-            eligible_sentence_count=max(3, len(_split_sentences(text))),
-        )
+    enriched_ai_components["topk_authorship_component"] = enriched_ai_components.get("topk_pattern")
+    enriched_ai_components.update(topk_calibration)
+    enriched_ai_components["topk_pattern"] = topk_calibration.get(
+        "topk_pattern_raw",
+        ai_components.get("topk_pattern"),
     )
 
     enriched = dict(report_dict)
@@ -14190,11 +14457,22 @@ def run_rewrite_pipeline(
                 return True
             elapsed = time.time() - search_started
             reason = ""
+            phase_name = str(phase or "")
+            llm_bound_phase = any(
+                token in phase_name
+                for token in ("llm", "topk", "post_topk", "texture", "score_feedback")
+            )
             if elapsed >= float(search_budget["max_seconds"]):
                 reason = "budget_exhausted_time"
             elif before_llm and _llm_call_budget_exhausted_before_send(
                 int(search_summary.get("llm_calls") or 0),
                 int(search_budget["max_llm_calls"]),
+            ):
+                reason = "budget_exhausted_llm_calls"
+            elif (
+                not before_llm
+                and llm_bound_phase
+                and int(search_summary.get("llm_calls") or 0) >= int(search_budget["max_llm_calls"])
             ):
                 reason = "budget_exhausted_llm_calls"
             elif len(search_summary.get("candidates", [])) >= int(search_budget["max_candidate_scans"]):
@@ -15144,21 +15422,29 @@ def run_rewrite_pipeline(
         def _run_post_topk_ai_safe_band_optimizer(trigger_phase: str) -> None:
             nonlocal best_text, best_report, best_ai, best_strategy, best_selection_status
             nonlocal best_human_shift_rank, best_semantic_review_required, best_drift_reasons
-            if not _env_flag("DRAFTPROOF_POST_TOPK_AI_SAFE_BAND_OPTIMIZER", True):
-                search_summary["post_topk_optimizer"] = {"enabled": False, "reason": "disabled"}
+            texture_phase = "authorship_transformation_texture_controller"
+            if not _env_flag("DRAFTPROOF_AUTHORSHIP_TRANSFORMATION_TEXTURE_CONTROLLER", True):
+                disabled_summary = {"enabled": False, "reason": "disabled", "kind": texture_phase}
+                search_summary[texture_phase] = disabled_summary
+                search_summary["post_topk_optimizer"] = disabled_summary
                 return
             if not _best_ai_search_selectable() or not isinstance(best_report, dict):
-                search_summary["post_topk_optimizer"] = {"enabled": True, "skipped": True, "reason": "no_selectable_base"}
+                skipped_summary = {"enabled": True, "skipped": True, "reason": "no_selectable_base", "kind": texture_phase}
+                search_summary[texture_phase] = skipped_summary
+                search_summary["post_topk_optimizer"] = skipped_summary
                 return
             base_strict = _strict_ai_safe_band_status(best_report)
             base_profile = base_strict.get("profile") or {}
             if float(base_profile.get("topk_calibrated_risk", 100.0)) >= _safe_topk_calibrated_limit():
-                search_summary["post_topk_optimizer"] = {
+                skipped_summary = {
                     "enabled": True,
                     "skipped": True,
                     "reason": "base_topk_not_safe",
                     "base_strict_safe_band": base_strict,
+                    "kind": texture_phase,
                 }
+                search_summary[texture_phase] = skipped_summary
+                search_summary["post_topk_optimizer"] = skipped_summary
                 return
 
             try:
@@ -15184,26 +15470,30 @@ def run_rewrite_pipeline(
                 )
 
             max_scans = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_MAX_CANDIDATE_SCANS", 12.0)))
-            driver_map = _post_topk_driver_map(best_text, best_report)
+            driver_map = _authorship_transformation_texture_driver_map(best_text, best_report)
             summary = {
                 "enabled": True,
+                "kind": texture_phase,
                 "trigger_phase": trigger_phase,
                 "base_strategy": best_strategy,
                 "base_strict_safe_band": base_strict,
-                "driver_map": {
+                "texture_driver_map": {
                     "generic_sentence_ratio": driver_map.get("generic_sentence_ratio"),
                     "generic_sentence_count": driver_map.get("generic_sentence_count"),
                     "sentence_count": driver_map.get("sentence_count"),
-                    "repeated_paragraph_role_runs": driver_map.get("repeated_paragraph_role_runs"),
+                    "authorship_drivers": driver_map.get("authorship_drivers"),
+                    "transformation_drivers": driver_map.get("transformation_drivers"),
                     "top_blocks": [
                         {
                             "paragraph_index": row.get("paragraph_index"),
                             "role": row.get("role"),
                             "generic_sentence_ratio": row.get("generic_sentence_ratio"),
-                            "paragraph_driver_score": row.get("paragraph_driver_score"),
+                            "authorship_driver_score": row.get("authorship_driver_score"),
+                            "transformation_driver_score": row.get("transformation_driver_score"),
+                            "texture_driver_score": row.get("texture_driver_score"),
                             "low_value_generic_block": row.get("low_value_generic_block"),
                         }
-                        for row in (driver_map.get("paragraphs") or [])[:6]
+                        for row in (driver_map.get("ranked_blocks") or [])[:6]
                     ],
                 },
                 "candidate_count": 0,
@@ -15213,6 +15503,8 @@ def run_rewrite_pipeline(
                 "scan_reserve_added": scan_reserve,
                 "llm_reserve_added": llm_reserve,
             }
+            summary["driver_map"] = summary["texture_driver_map"]
+            search_summary[texture_phase] = summary
             search_summary["post_topk_optimizer"] = summary
 
             candidates: list[tuple[str, str, dict]] = []
@@ -15225,16 +15517,29 @@ def run_rewrite_pipeline(
                 seen.add(normalized)
                 candidates.append((strategy, normalized, meta or {}))
 
-            convergence_candidates = _post_topk_convergence_candidates(best_text, best_report, limit=12)
-            summary["convergence_candidate_count"] = len(convergence_candidates)
-            for strategy, candidate_text, meta in convergence_candidates:
+            texture_candidates = _authorship_transformation_texture_candidates(best_text, best_report, limit=12)
+            summary["texture_candidate_count"] = len(texture_candidates)
+            for strategy, candidate_text, meta in texture_candidates:
                 add_candidate(strategy, candidate_text, {**meta, "post_topk_optimizer": True})
-            for strategy, candidate_text, meta in _generic_assertion_compiler_candidates(best_text, best_report, limit=3):
-                add_candidate(f"post_topk_{strategy}", candidate_text, {**meta, "post_topk_optimizer": True})
-            for strategy, candidate_text, meta in _blocker_operation_candidates(best_text, best_report, limit=3):
-                add_candidate(f"post_topk_{strategy}", candidate_text, {**meta, "post_topk_optimizer": True})
-            for strategy, candidate_text, meta in _content_pruning_candidates(best_text, best_report, limit=2):
-                add_candidate(f"post_topk_{strategy}", candidate_text, {**meta, "post_topk_optimizer": True})
+            if _env_flag("DRAFTPROOF_LEGACY_POST_TOPK_CANDIDATES", False):
+                for strategy, candidate_text, meta in _generic_assertion_compiler_candidates(best_text, best_report, limit=2):
+                    add_candidate(
+                        f"legacy_post_topk_{strategy}",
+                        candidate_text,
+                        {**meta, "post_topk_optimizer": True, "legacy_post_topk_candidate": True},
+                    )
+                for strategy, candidate_text, meta in _blocker_operation_candidates(best_text, best_report, limit=2):
+                    add_candidate(
+                        f"legacy_post_topk_{strategy}",
+                        candidate_text,
+                        {**meta, "post_topk_optimizer": True, "legacy_post_topk_candidate": True},
+                    )
+                for strategy, candidate_text, meta in _content_pruning_candidates(best_text, best_report, limit=1):
+                    add_candidate(
+                        f"legacy_post_topk_{strategy}",
+                        candidate_text,
+                        {**meta, "post_topk_optimizer": True, "legacy_post_topk_candidate": True},
+                    )
 
             if (
                 _env_flag("DRAFTPROOF_POST_TOPK_LLM_PATCHES", True)
@@ -15249,16 +15554,16 @@ def run_rewrite_pipeline(
                     if int(search_summary.get("llm_calls") or 0) >= int(search_budget.get("max_llm_calls") or 0):
                         summary["llm_patch_stop_reason"] = "total_llm_budget_exhausted"
                         break
-                    if _phase_budget_block_record("post_topk_strict_safe_optimizer", summary):
+                    if _phase_budget_block_record(texture_phase, summary):
                         summary["llm_patch_stop_reason"] = "phase_llm_budget_exhausted"
                         break
                     try:
                         search_summary["llm_calls"] += 1
-                        _record_phase_llm_call("post_topk_strict_safe_optimizer")
+                        _record_phase_llm_call(texture_phase)
                         response = gateway.chat(
-                            _post_topk_ai_safe_band_patch_prompt(best_text, best_report),
+                            _authorship_transformation_texture_patch_prompt(best_text, best_report),
                             system=(
-                                "You are DraftProof's post-Top-k strict safe-band optimizer. "
+                                "You are DraftProof's authorship/transformation texture controller. "
                                 "Return only valid JSON paragraph patches."
                             ),
                             **_phase_chat_sampling_kwargs(
@@ -15277,10 +15582,14 @@ def run_rewrite_pipeline(
                             patched_text, applied = _apply_post_topk_patches(best_text, patch_candidate.get("patches") or [])
                             if applied and patched_text.strip() != best_text.strip():
                                 add_candidate(
-                                    f"post_topk_llm_patch_b{batch_index}_c{index}",
+                                    f"texture_llm_patch_b{batch_index}_c{index}",
                                     patched_text,
                                     {
                                         "post_topk_optimizer": True,
+                                        "authorship_transformation_texture_controller": True,
+                                        "texture_candidate_family": _texture_candidate_family(
+                                            (applied[0] or {}).get("operation_type") if applied else None
+                                        ),
                                         "llm_patch": True,
                                         "llm_patch_batch": batch_index,
                                         "llm_reason": patch_candidate.get("reason"),
@@ -15314,6 +15623,7 @@ def run_rewrite_pipeline(
                     "strategy": strategy,
                     "deterministic": not bool(meta.get("llm_patch")),
                     "post_topk_optimizer": True,
+                    "authorship_transformation_texture_controller": True,
                     "passed_local_checks": False,
                     **meta,
                 }
@@ -15389,6 +15699,7 @@ def run_rewrite_pipeline(
                     "success": not reject_reasons,
                     "reason": "accepted_post_topk_strict_safe_band" if not reject_reasons else reject_reasons[0],
                     "post_topk_optimizer": True,
+                    "authorship_transformation_texture_controller": True,
                     "strict_ai_safe_band_achieved": bool(after_strict.get("achieved")),
                     "ai_footprint_gate": gate,
                     "ai_footprint_outcome_class": gate.get("outcome_class"),
@@ -15424,6 +15735,7 @@ def run_rewrite_pipeline(
                     best_diagnostic_rank = diagnostic_rank
                     best_diagnostic = {
                         "strategy": strategy,
+                        "texture_candidate_family": meta.get("texture_candidate_family"),
                         "rank": diagnostic_rank,
                         "reject_reasons": reject_reasons,
                         "strict_ai_safe_band": after_strict,
@@ -15478,6 +15790,7 @@ def run_rewrite_pipeline(
                 best_selection_status.update({
                     "ai_footprint_mitigation": True,
                     "partial_ai_footprint_mitigation": False,
+                    "authorship_transformation_texture_controller": True,
                     "topk_safe_band_achieved": True,
                     "strict_ai_safe_band_achieved": True,
                 })
@@ -15514,6 +15827,7 @@ def run_rewrite_pipeline(
                     "success": True,
                     "reason": "accepted_post_topk_partial_safe_band",
                     "post_topk_optimizer": True,
+                    "authorship_transformation_texture_controller": True,
                     "strict_ai_safe_band_achieved": False,
                     "ai_footprint_mitigation": False,
                     "partial_ai_footprint_mitigation": True,
@@ -15961,6 +16275,8 @@ def run_rewrite_pipeline(
                                 ),
                             )
                             try:
+                                if _search_budget_exhausted("post_safe_win_target_push_llm"):
+                                    raise RuntimeError("budget_exhausted_llm_calls")
                                 prompt = _human_signal_amplification_prompt(
                                     target,
                                     original_report_dict,
@@ -18650,6 +18966,14 @@ def run_rewrite_pipeline(
             "max_calls_per_run": _source_search_max_calls_per_run(),
             "remaining_calls": _source_search_remaining_calls(),
         }
+        hard_llm_cap = _ai_search_llm_hard_cap()
+        if int(search_summary.get("llm_calls") or 0) > hard_llm_cap:
+            search_summary["llm_calls_counter_correction"] = {
+                "reported_before_correction": int(search_summary.get("llm_calls") or 0),
+                "hard_cap": hard_llm_cap,
+                "reason": "blocked optimistic LLM attempt exceeded reported counter",
+            }
+            search_summary["llm_calls"] = hard_llm_cap
         result.summary["ai_mitigation_search"] = search_summary
         if search_summary.get("llm_calls"):
             result.summary["ai_search_llm_calls_used"] = search_summary["llm_calls"]
@@ -19710,10 +20034,18 @@ def run_rewrite_pipeline(
             if isinstance(row, dict)
         )
     )
-    post_topk_summary = (result.summary.get("ai_mitigation_search") or {}).get("post_topk_optimizer")
-    if isinstance(post_topk_summary, dict):
-        result.summary["post_topk_optimizer"] = post_topk_summary
-        result.summary["selected_post_topk_strategy"] = post_topk_summary.get("selected_strategy")
+    texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("authorship_transformation_texture_controller")
+    if not isinstance(texture_summary, dict):
+        texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("post_topk_optimizer")
+    if isinstance(texture_summary, dict):
+        result.summary["authorship_transformation_texture_controller"] = texture_summary
+        result.summary["texture_driver_map"] = texture_summary.get("texture_driver_map") or texture_summary.get("driver_map")
+        result.summary["selected_texture_strategy"] = texture_summary.get("selected_strategy")
+        result.summary["texture_candidate_frontier"] = texture_summary.get("best_rejected_candidate")
+        result.summary["remaining_texture_blockers"] = texture_summary.get("remaining_strict_safe_band_drivers") or result.summary.get("remaining_strict_safe_band_drivers")
+        # Backward-compatible keys for the existing report renderer.
+        result.summary["post_topk_optimizer"] = texture_summary
+        result.summary["selected_post_topk_strategy"] = texture_summary.get("selected_strategy")
     final_footprint_before = final_ai_footprint_gate.get("before", {}) or {}
     final_footprint_after = final_ai_footprint_gate.get("after", {}) or {}
     final_footprint_drops = final_ai_footprint_gate.get("drops") or {}
