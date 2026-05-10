@@ -4761,6 +4761,183 @@ def _turnitin_like_candidate_rank(
     )
 
 
+def _formula_gap_changed_word_count(source_text: str, candidate_text: str) -> int:
+    """Approximate changed-word budget for formula-drop efficiency reporting."""
+    source_tokens = re.findall(r"\w+|[^\w\s]", source_text or "", flags=re.UNICODE)
+    candidate_tokens = re.findall(r"\w+|[^\w\s]", candidate_text or "", flags=re.UNICODE)
+    if not source_tokens and not candidate_tokens:
+        return 0
+    matcher = SequenceMatcher(None, source_tokens, candidate_tokens, autojunk=False)
+    changed = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        changed += max(i2 - i1, j2 - j1)
+    return int(changed)
+
+
+def _formula_gap_weighted_driver_plan(profile: dict | None, *, safety_margin: float = 3.0) -> list[dict]:
+    profile = profile if isinstance(profile, dict) else {}
+    score = float(profile.get("score") or 0.0)
+    target_score = float(profile.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
+    required = max(0.0, score - target_score + float(safety_margin or 0.0))
+    components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
+    weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
+    plan: list[dict] = []
+    remaining = required
+    for driver, contribution in sorted(
+        weighted.items(),
+        key=lambda item: float(item[1]) if isinstance(item[1], (int, float)) else 0.0,
+        reverse=True,
+    ):
+        if driver not in TURNITIN_LIKE_COMPONENT_WEIGHTS:
+            continue
+        weighted_value = max(0.0, float(contribution or 0.0))
+        if weighted_value <= 0.0:
+            continue
+        required_weighted_drop = min(weighted_value, remaining) if remaining > 0.0 else 0.0
+        weight = float(TURNITIN_LIKE_COMPONENT_WEIGHTS[driver])
+        plan.append({
+            "driver": driver,
+            "component_value": round(float(components.get(driver) or 0.0), 3),
+            "formula_weight": round(weight, 3),
+            "weighted_contribution": round(weighted_value, 3),
+            "required_weighted_drop": round(required_weighted_drop, 3),
+            "required_raw_drop": round(required_weighted_drop / weight, 3) if weight > 0.0 else 0.0,
+        })
+        remaining = max(0.0, remaining - required_weighted_drop)
+    suppression = float(profile.get("human_anchor_suppression") or 0.0)
+    suppression_headroom = max(0.0, 45.0 - suppression)
+    required_suppression_gain = min(suppression_headroom, remaining) if remaining > 0.0 else 0.0
+    plan.append({
+        "driver": "human_anchor_suppression",
+        "component_value": round(suppression, 3),
+        "formula_weight": -1.0,
+        "weighted_contribution": round(-suppression, 3),
+        "target_direction": "increase",
+        "available_suppression_headroom": round(suppression_headroom, 3),
+        "required_suppression_gain": round(required_suppression_gain, 3),
+    })
+    return plan
+
+
+def _formula_gap_contract(
+    original_report: dict | None,
+    candidate_report: dict | None,
+    *,
+    source_text: str = "",
+    candidate_text: str = "",
+    safety_margin: float = 3.0,
+) -> dict:
+    """Rewrite controller contract for closing the shared Turnitin-like formula gap."""
+    before = _turnitin_like_ai_profile(original_report)
+    after = _turnitin_like_ai_profile(candidate_report)
+    component_drops = _turnitin_like_component_drops(before, after)
+    before_weighted = before.get("weighted_components") if isinstance(before.get("weighted_components"), dict) else {}
+    after_weighted = after.get("weighted_components") if isinstance(after.get("weighted_components"), dict) else {}
+    weighted_driver_drops: dict[str, dict] = {}
+    weighted_formula_drop = 0.0
+    for driver in TURNITIN_LIKE_COMPONENT_WEIGHTS:
+        before_value = float(before_weighted.get(driver) or 0.0)
+        after_value = float(after_weighted.get(driver) or 0.0)
+        drop = before_value - after_value
+        weighted_formula_drop += drop
+        weighted_driver_drops[driver] = {
+            "before": round(before_value, 3),
+            "after": round(after_value, 3),
+            "drop": round(drop, 3),
+            "raw_before": (before.get("components") or {}).get(driver),
+            "raw_after": (after.get("components") or {}).get(driver),
+            "raw_drop": round(float(component_drops.get(driver) or 0.0), 3),
+            "formula_weight": round(float(TURNITIN_LIKE_COMPONENT_WEIGHTS[driver]), 3),
+        }
+    suppression_gain = float(component_drops.get("human_anchor_suppression") or 0.0)
+    weighted_formula_drop += suppression_gain
+    weighted_driver_drops["human_anchor_suppression"] = {
+        "before": round(float(before.get("human_anchor_suppression") or 0.0), 3),
+        "after": round(float(after.get("human_anchor_suppression") or 0.0), 3),
+        "gain": round(suppression_gain, 3),
+        "drop": round(suppression_gain, 3),
+        "formula_weight": -1.0,
+        "target_direction": "increase",
+    }
+    score_before = float(before.get("score") or 0.0)
+    score_after = float(after.get("score") or 0.0)
+    measured_score_drop = score_before - score_after
+    changed_words = _formula_gap_changed_word_count(source_text, candidate_text) if source_text or candidate_text else 0
+    efficiency = measured_score_drop / max(1, changed_words)
+    target_score = float(after.get("target_score") or before.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
+    remaining_gap = max(0.0, score_after - target_score)
+    contract = {
+        "version": "formula_gap_contract_v1",
+        "score_before": round(score_before, 3),
+        "score_after": round(score_after, 3),
+        "score_drop": round(measured_score_drop, 3),
+        "weighted_formula_score_drop": round(weighted_formula_drop, 3),
+        "target_score": round(target_score, 3),
+        "target_gap_before": round(max(0.0, score_before - target_score), 3),
+        "target_gap": round(remaining_gap, 3),
+        "remaining_formula_gap": round(remaining_gap, 3),
+        "target_met": bool(score_after < target_score),
+        "weighted_contributions_before": {
+            key: round(float(value or 0.0), 3)
+            for key, value in before_weighted.items()
+            if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
+        },
+        "weighted_contributions_after": {
+            key: round(float(value or 0.0), 3)
+            for key, value in after_weighted.items()
+            if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
+        },
+        "weighted_driver_plan": _formula_gap_weighted_driver_plan(before, safety_margin=safety_margin),
+        "weighted_driver_drops": weighted_driver_drops,
+        "component_drops": component_drops,
+        "changed_word_count": changed_words,
+        "weighted_driver_drop_efficiency": round(efficiency, 6),
+        "remaining_formula_drivers": _remaining_turnitin_like_drivers(after),
+    }
+    contract["why_not_below_20"] = (
+        "turnitin-like formula target achieved"
+        if contract["target_met"]
+        else (
+            "Remaining weighted gap "
+            f"{contract['remaining_formula_gap']} to target {contract['target_score']}; "
+            "dominant drivers: "
+            + ", ".join(
+                str(row.get("driver"))
+                for row in contract["remaining_formula_drivers"][:4]
+                if isinstance(row, dict) and row.get("driver")
+            )
+        )
+    )
+    return contract
+
+
+def _formula_gap_candidate_rank(contract: dict | None, gate: dict | None = None) -> tuple:
+    contract = contract if isinstance(contract, dict) else {}
+    gate = gate if isinstance(gate, dict) else {}
+    drops = contract.get("weighted_driver_drops") if isinstance(contract.get("weighted_driver_drops"), dict) else {}
+
+    def drop(driver: str) -> float:
+        row = drops.get(driver) if isinstance(drops.get(driver), dict) else {}
+        return float(row.get("drop") or row.get("gain") or 0.0)
+
+    return (
+        1 if gate.get("safety_clean", True) else 0,
+        1 if contract.get("target_met") else 0,
+        float(contract.get("score_drop") or 0.0),
+        float(contract.get("weighted_driver_drop_efficiency") or 0.0),
+        drop("ai_likelihood"),
+        drop("topk_calibrated_risk"),
+        drop("semantic_uniformity"),
+        drop("rewrite_smoothness"),
+        drop("patchwork_expansion"),
+        drop("signal_agreement"),
+        drop("human_anchor_suppression"),
+        -float(contract.get("score_after") if isinstance(contract.get("score_after"), (int, float)) else 100.0),
+    )
+
+
 def _ai_footprint_flatten(profile: dict | None) -> dict:
     merged = {}
     profile = profile or {}
@@ -7184,6 +7361,14 @@ def _goal_climb_candidate_rank(
         else 0
     )
     turnitin_score_drop = num(turnitin_gate.get("score_drop"), 0.0)
+    formula_gap_contract = (
+        status.get("formula_gap_contract")
+        if isinstance(status.get("formula_gap_contract"), dict)
+        else eval_data.get("formula_gap_contract")
+        if isinstance(eval_data.get("formula_gap_contract"), dict)
+        else {}
+    )
+    formula_gap_rank = _formula_gap_candidate_rank(formula_gap_contract, turnitin_gate)
     external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"), 0.0)
     topk_drop = num(footprint_drops.get("topk_calibrated_risk"), 0.0)
     qualifying_density_drop = num(footprint_drops.get("qualifying_text_ai_density"), 0.0)
@@ -7211,6 +7396,10 @@ def _goal_climb_candidate_rank(
 
     return (
         1 if status.get("selectable") else 0,
+        1 if formula_gap_contract.get("target_met") else 0,
+        num(formula_gap_contract.get("score_drop"), turnitin_score_drop),
+        num(formula_gap_contract.get("weighted_driver_drop_efficiency"), 0.0),
+        formula_gap_rank,
         turnitin_priority,
         turnitin_score_drop,
         num(turnitin_drops.get("ai_likelihood"), 0.0),
@@ -16504,6 +16693,16 @@ def run_rewrite_pipeline(
                 ai_score_regressed=ai_score_regressed,
             )
             candidate_eval["turnitin_like_ai_gate"] = turnitin_like_gate
+            formula_gap_contract = _formula_gap_contract(
+                original_report_dict,
+                candidate_report,
+                source_text=search_source_text,
+                candidate_text=candidate,
+            )
+            candidate_eval["formula_gap_contract"] = formula_gap_contract
+            candidate_eval["formula_gap_rank"] = list(
+                _formula_gap_candidate_rank(formula_gap_contract, turnitin_like_gate)
+            )
             multi_signal_contract = _multi_signal_candidate_contract(
                 original_report_dict,
                 candidate_report,
@@ -17031,6 +17230,8 @@ def run_rewrite_pipeline(
             selection_status["ai_footprint_gate"] = ai_footprint_gate
             selection_status["ai_footprint_outcome_class"] = ai_footprint_outcome
             selection_status["turnitin_like_ai_gate"] = turnitin_like_gate
+            selection_status["formula_gap_contract"] = formula_gap_contract
+            selection_status["formula_gap_rank"] = candidate_eval["formula_gap_rank"]
             selection_status["multi_signal_contract"] = multi_signal_contract
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
             selection_status["human_formula_driver_gate"] = human_formula_status
@@ -17341,6 +17542,7 @@ def run_rewrite_pipeline(
             base_severity = _weighted_severity(best_report)
             base_finding_total = _finding_total(best_report)
             base_critical_high = _critical_high_count(best_report)
+            base_formula_profile = _turnitin_like_ai_profile(best_report)
             selected = None
             selected_rank = None
             partial_selected = None
@@ -17399,6 +17601,20 @@ def run_rewrite_pipeline(
                     critical_high_delta=_critical_high_count(candidate_report) - saved_critical_high,
                     ai_score_regressed=False,
                 )
+                turnitin_like_gate = _turnitin_like_ai_gate_status(
+                    original_report_dict,
+                    candidate_report,
+                    review_burden_delta=_review_burden(candidate_report) - original_review_burden,
+                    weighted_severity_delta=_weighted_severity(candidate_report) - original_severity,
+                    critical_high_delta=_critical_high_count(candidate_report) - saved_critical_high,
+                    ai_score_regressed=False,
+                )
+                formula_gap_contract = _formula_gap_contract(
+                    original_report_dict,
+                    candidate_report,
+                    source_text=search_source_text,
+                    candidate_text=candidate_text,
+                )
                 candidate_eval.update({
                     "ai": _badge_ai(candidate_report),
                     "human_contribution": _contribution_scores(candidate_report).get("human"),
@@ -17410,8 +17626,15 @@ def run_rewrite_pipeline(
                     "critical_high_findings": _critical_high_count(candidate_report),
                     "strict_ai_safe_band": after_strict,
                     "ai_footprint_gate": gate,
+                    "turnitin_like_ai_gate": turnitin_like_gate,
+                    "formula_gap_contract": formula_gap_contract,
+                    "formula_gap_rank": list(
+                        _formula_gap_candidate_rank(formula_gap_contract, turnitin_like_gate)
+                    ),
                 })
                 reject_reasons = []
+                if num(formula_gap_contract.get("score_after"), 100.0) > num(base_formula_profile.get("score"), 100.0) + 0.001:
+                    reject_reasons.append("formula_score_regressed")
                 if num(after_profile.get("topk_calibrated_risk"), 100.0) >= _safe_topk_calibrated_limit():
                     reject_reasons.append("topk_calibrated_regressed_or_unsafe")
                 for key in ("ai_authorship", "ai_transformation", "external_ai_flag_risk"):
@@ -17427,6 +17650,8 @@ def run_rewrite_pipeline(
                     reject_reasons.append("critical_high_regressed")
                 if not after_strict.get("achieved"):
                     reject_reasons.append("strict_safe_band_not_reached")
+                if not formula_gap_contract.get("target_met"):
+                    reject_reasons.append("formula_gap_target_not_reached")
 
                 candidate_eval["post_topk_reject_reasons"] = reject_reasons
                 candidate_eval["selection_status"] = {
@@ -17437,6 +17662,9 @@ def run_rewrite_pipeline(
                     "authorship_transformation_texture_controller": True,
                     "strict_ai_safe_band_achieved": bool(after_strict.get("achieved")),
                     "ai_footprint_gate": gate,
+                    "turnitin_like_ai_gate": turnitin_like_gate,
+                    "formula_gap_contract": formula_gap_contract,
+                    "formula_gap_rank": candidate_eval["formula_gap_rank"],
                     "ai_footprint_outcome_class": gate.get("outcome_class"),
                     "topk_safe_band_achieved": True,
                     "human_shift_score": _human_shift_score(
@@ -17449,14 +17677,20 @@ def run_rewrite_pipeline(
                 }
                 summary["scanned"] += 1
                 search_summary["candidates"].append(candidate_eval)
-                rank = _strict_safe_candidate_rank(
-                    best_report,
-                    candidate_report,
-                    review_burden_delta=_review_burden(candidate_report) - base_review_burden,
-                    weighted_severity_delta=_weighted_severity(candidate_report) - base_severity,
-                    critical_high_delta=_critical_high_count(candidate_report) - base_critical_high,
+                rank = (
+                    _formula_gap_candidate_rank(formula_gap_contract, turnitin_like_gate),
+                    _strict_safe_candidate_rank(
+                        best_report,
+                        candidate_report,
+                        review_burden_delta=_review_burden(candidate_report) - base_review_burden,
+                        weighted_severity_delta=_weighted_severity(candidate_report) - base_severity,
+                        critical_high_delta=_critical_high_count(candidate_report) - base_critical_high,
+                    ),
                 )
                 diagnostic_rank = (
+                    1 if formula_gap_contract.get("target_met") else 0,
+                    num(formula_gap_contract.get("score_drop"), 0.0),
+                    num(formula_gap_contract.get("weighted_driver_drop_efficiency"), 0.0),
                     1 if num(after_profile.get("topk_calibrated_risk"), 100.0) < _safe_topk_calibrated_limit() else 0,
                     num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")),
                     num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")),
@@ -17481,13 +17715,15 @@ def run_rewrite_pipeline(
                         "external_ai_flag_risk": after_profile.get("external_ai_flag_risk"),
                         "generic_assertion_risk": after_profile.get("generic_assertion_risk"),
                         "topk_calibrated_risk": after_profile.get("topk_calibrated_risk"),
+                        "formula_gap_contract": formula_gap_contract,
                     }
                 hard_reject_reasons = [
                     reason for reason in reject_reasons
-                    if reason != "strict_safe_band_not_reached"
+                    if reason not in {"strict_safe_band_not_reached", "formula_gap_target_not_reached"}
                 ]
                 partial_driver_moved = bool(
-                    num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")) > 0.25
+                    num(base_formula_profile.get("score")) - num(formula_gap_contract.get("score_after"), 100.0) > 0.25
+                    or num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")) > 0.25
                     or num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")) > 0.25
                     or num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")) > 0.25
                     or num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")) > 0.25
@@ -22073,6 +22309,22 @@ def run_rewrite_pipeline(
     result.summary["remaining_turnitin_like_drivers"] = (
         final_turnitin_like_gate.get("remaining_turnitin_like_drivers") or []
     )
+    final_formula_gap_contract = _formula_gap_contract(
+        original_report_dict,
+        rewritten_report_dict,
+        source_text=original_report_dict.get("document_context", {}).get("original_text", "")
+        if isinstance(original_report_dict.get("document_context"), dict) else "",
+        candidate_text=rewritten_text,
+    )
+    result.summary["formula_gap_contract"] = final_formula_gap_contract
+    result.summary["selected_formula_strategy"] = (
+        (result.summary.get("ai_mitigation_search") or {}).get("selected_strategy")
+        or result.summary.get("selected_strategy")
+    )
+    result.summary["weighted_driver_plan"] = final_formula_gap_contract.get("weighted_driver_plan")
+    result.summary["weighted_driver_drops"] = final_formula_gap_contract.get("weighted_driver_drops")
+    result.summary["remaining_formula_gap"] = final_formula_gap_contract.get("remaining_formula_gap")
+    result.summary["why_not_below_20"] = final_formula_gap_contract.get("why_not_below_20")
     final_human_anchor_contract = _human_anchor_driver_contract(
         original_report_dict,
         rewritten_report_dict,
@@ -22140,11 +22392,19 @@ def run_rewrite_pipeline(
             turnitin_row = row.get("turnitin_like_ai_gate")
             if not isinstance(turnitin_row, dict):
                 turnitin_row = ((row.get("selection_status") or {}).get("turnitin_like_ai_gate") or {})
+            formula_row = row.get("formula_gap_contract")
+            if not isinstance(formula_row, dict):
+                formula_row = ((row.get("selection_status") or {}).get("formula_gap_contract") or {})
             frontier_rows.append({
                 "strategy": row.get("strategy"),
                 "selectable": bool((row.get("selection_status") or {}).get("selectable")),
                 "reason": row.get("reason") or (row.get("selection_status") or {}).get("reason"),
                 "strict_ai_safe_band_achieved": bool(strict_row.get("achieved")),
+                "formula_target_met": bool(formula_row.get("target_met")),
+                "formula_score": formula_row.get("score_after"),
+                "formula_score_drop": formula_row.get("score_drop"),
+                "formula_remaining_gap": formula_row.get("remaining_formula_gap"),
+                "formula_drop_efficiency": formula_row.get("weighted_driver_drop_efficiency"),
                 "turnitin_like_ai_score": turnitin_row.get("score_after"),
                 "turnitin_like_ai_score_drop": turnitin_row.get("score_drop"),
                 "turnitin_like_outcome_class": turnitin_row.get("outcome_class"),
@@ -22158,8 +22418,11 @@ def run_rewrite_pipeline(
         frontier_rows.sort(
             key=lambda item: (
                 1 if item.get("strict_ai_safe_band_achieved") else 0,
+                1 if item.get("formula_target_met") else 0,
+                float(item.get("formula_score_drop") if isinstance(item.get("formula_score_drop"), (int, float)) else -999.0),
+                float(item.get("formula_drop_efficiency") if isinstance(item.get("formula_drop_efficiency"), (int, float)) else -999.0),
+                -float(item.get("formula_score") if isinstance(item.get("formula_score"), (int, float)) else 999.0),
                 float(item.get("turnitin_like_ai_score_drop") if isinstance(item.get("turnitin_like_ai_score_drop"), (int, float)) else -999.0),
-                -float(item.get("turnitin_like_ai_score") if isinstance(item.get("turnitin_like_ai_score"), (int, float)) else 999.0),
                 -float(item.get("qualifying_text_ai_density") if isinstance(item.get("qualifying_text_ai_density"), (int, float)) else 999.0),
                 -float(item.get("external_ai_flag_risk") if isinstance(item.get("external_ai_flag_risk"), (int, float)) else 999.0),
                 -float(item.get("ai_authorship") if isinstance(item.get("ai_authorship"), (int, float)) else 999.0),
@@ -22169,6 +22432,7 @@ def run_rewrite_pipeline(
             reverse=True,
         )
         result.summary["best_candidate_frontier"] = frontier_rows[:8]
+        result.summary["best_formula_frontier"] = frontier_rows[:8]
     result.summary["selected_candidate_rank"] = list(_strict_safe_candidate_rank(
         original_report_dict,
         rewritten_report_dict,
@@ -22182,6 +22446,9 @@ def run_rewrite_pipeline(
         weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
         critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
     ))
+    result.summary["formula_gap_selected_candidate_rank"] = list(
+        _formula_gap_candidate_rank(final_formula_gap_contract, final_turnitin_like_gate)
+    )
     result.summary["why_not_strict_safe"] = (
         "strict safe band achieved"
         if final_strict_safe_band.get("achieved") and final_turnitin_like_gate.get("safe_band")

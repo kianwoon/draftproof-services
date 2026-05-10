@@ -468,6 +468,41 @@ def render_rewrite_report(
                 lines.append(f"| {label} | `{o_val:.1%}` | `{n_val:.1%}` | `{delta:+.1%}` |")
         lines.append("")
 
+        formula_gap = summary.get("formula_gap_contract") or {}
+        if isinstance(formula_gap, dict) and formula_gap.get("version"):
+            lines.append("**Formula Gap To <20:**")
+            lines.append("")
+            lines.append("| Driver | Weighted Before | Weighted After | Drop |")
+            lines.append("|--------|----------------:|---------------:|-----:|")
+            drops = formula_gap.get("weighted_driver_drops") or {}
+            for driver in (
+                "ai_likelihood",
+                "topk_calibrated_risk",
+                "semantic_uniformity",
+                "rewrite_smoothness",
+                "patchwork_expansion",
+                "signal_agreement",
+                "human_anchor_suppression",
+            ):
+                row = drops.get(driver) if isinstance(drops, dict) else None
+                if not isinstance(row, dict):
+                    continue
+                before = row.get("before")
+                after = row.get("after")
+                drop = row.get("drop", row.get("gain"))
+                if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+                    label = driver.replace("_", " ").title()
+                    lines.append(
+                        f"| {label} | `{float(before):.3f}` | `{float(after):.3f}` | `{float(drop or 0.0):+.3f}` |"
+                    )
+            if not formula_gap.get("target_met"):
+                lines.append("")
+                lines.append(
+                    f"Remaining formula gap: `{float(formula_gap.get('remaining_formula_gap') or 0.0):.3f}`. "
+                    f"{summary.get('why_not_below_20') or formula_gap.get('why_not_below_20') or ''}"
+                )
+            lines.append("")
+
         # Findings breakdown by tier
         lines.append("**Findings by Severity:**")
         lines.append("")

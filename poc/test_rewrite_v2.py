@@ -74,6 +74,9 @@ from rewrite_pipeline import (
     _turnitin_like_ai_profile,
     _turnitin_like_ai_gate_status,
     _turnitin_like_candidate_rank,
+    _formula_gap_contract,
+    _formula_gap_candidate_rank,
+    _formula_gap_changed_word_count,
     _multi_signal_candidate_contract,
     _ai_footprint_gate_status,
     _strict_ai_safe_band_status,
@@ -1380,6 +1383,62 @@ turnitin_mitigation_rank = _turnitin_like_candidate_rank(
 assert_test(
     turnitin_mitigation_rank > turnitin_cleanup_rank,
     "Turnitin-like rank prioritizes formula-driver reduction over cleanup-only candidates",
+)
+formula_gap = _formula_gap_contract(
+    turnitin_formula_original,
+    turnitin_formula_candidate,
+    source_text="The education system is changing quickly. Students need judgement.",
+    candidate_text="The education system is changing. Students need judgement, but the classroom still matters.",
+)
+assert_test(
+    formula_gap["score_before"] == turnitin_original_profile["score"]
+    and formula_gap["score_after"] == turnitin_candidate_profile["score"]
+    and formula_gap["score_drop"] == turnitin_gate["score_drop"]
+    and formula_gap["target_met"] is True
+    and formula_gap["remaining_formula_gap"] == 0.0
+    and formula_gap["changed_word_count"] > 0
+    and "ai_likelihood" in (formula_gap["weighted_driver_drops"] or {}),
+    "Formula-gap contract reports exact shared score movement, weighted driver drops, target state, and change budget",
+)
+formula_one_signal_backfire = _formula_gap_contract(
+    turnitin_formula_original,
+    make_footprint_report(
+        ai_authorship=50,
+        human=41,
+        ai_transformation=52,
+        grounding=45,
+        human_anchor=0,
+        smoothness=100,
+        semantic_uniformity=100,
+        ai_likelihood=100,
+        topk_pattern=30,
+        topk_calibrated_risk=10,
+        generic_assertion_risk=40,
+        qualifying_text_ai_density=40,
+        unsupported_claim_risk=30,
+        broad_claim_risk=30,
+        discourse=30,
+        expansion=100,
+        section_style=100,
+        signal_agreement=100,
+    ),
+    source_text="A generic paragraph.",
+    candidate_text="A generic paragraph with a lower token route but worse model cadence.",
+)
+assert_test(
+    formula_one_signal_backfire["component_drops"]["topk_calibrated_risk"] > 0
+    and formula_one_signal_backfire["score_drop"] < 0
+    and not formula_one_signal_backfire["target_met"],
+    "Formula-gap contract rejects one-signal wins when total weighted score gets worse",
+)
+assert_test(
+    _formula_gap_candidate_rank(formula_gap, turnitin_gate)
+    > _formula_gap_candidate_rank(formula_one_signal_backfire, {"safety_clean": True}),
+    "Formula-gap rank selects total formula closure over isolated signal movement",
+)
+assert_test(
+    _formula_gap_changed_word_count("one two three", "one two four five") == 2,
+    "Formula-gap changed-word budget counts replacements and insertions for efficiency ranking",
 )
 rewrite_source_for_turnitin_target = open(__file__.replace("test_rewrite_v2.py", "rewrite_pipeline.py")).read()
 assert_test(
