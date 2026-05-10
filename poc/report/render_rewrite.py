@@ -415,6 +415,17 @@ def render_rewrite_report(
         lines.append("| Metric | Original | Final Output | Change |")
         lines.append("|--------|----------|--------------|--------|")
         lines.append(f"| **AI Likelihood** | `{orig_ai:.2f}%` | `{new_ai:.2f}%` | `{ai_delta:+.2f}%` |")
+        detect_scores = summary.get("detect_scores") or {}
+        turnitin_before = summary.get("turnitin_like_ai_score_before", detect_scores.get("turnitin_like_ai_score_before"))
+        turnitin_after = summary.get("turnitin_like_ai_score_after", detect_scores.get("turnitin_like_ai_score_after"))
+        turnitin_drop = summary.get("turnitin_like_ai_score_drop", detect_scores.get("turnitin_like_ai_score_drop"))
+        turnitin_target = summary.get("turnitin_like_target_score", detect_scores.get("turnitin_like_target_score"))
+        if isinstance(turnitin_before, (int, float)) and isinstance(turnitin_after, (int, float)):
+            target_note = f" target < `{float(turnitin_target):.0f}%`" if isinstance(turnitin_target, (int, float)) else ""
+            lines.append(
+                f"| **Turnitin-like AI Score** | `{float(turnitin_before):.2f}%` | "
+                f"`{float(turnitin_after):.2f}%`{target_note} | `{float(turnitin_drop or 0.0):+.2f}% drop` |"
+            )
         footprint_gate = summary.get("ai_footprint_gate") or {}
         footprint_drops = footprint_gate.get("drops") or {}
         footprint_before = (footprint_gate.get("before") or {}).get("external_ai_flag_risk")

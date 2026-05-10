@@ -55,6 +55,7 @@ from rewrite.rewrite import (
 )
 from rewrite.mitigation import build_mitigation_plan
 from detect.topk_calibration import calibrate_topk_risk
+from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
 from rewrite_pipeline import (
     run_rewrite_pipeline,
     _build_aligned_sentence_comparison,
@@ -1270,10 +1271,10 @@ turnitin_formula_candidate = make_footprint_report(
     human=56,
     ai_transformation=44,
     grounding=45,
-    human_anchor=60,
+    human_anchor=62,
     smoothness=50,
     semantic_uniformity=45,
-    ai_likelihood=60,
+    ai_likelihood=58,
     topk_pattern=50,
     topk_calibrated_risk=30,
     generic_assertion_risk=40,
@@ -1298,14 +1299,31 @@ turnitin_gate = _turnitin_like_ai_gate_status(
 assert_test(
     turnitin_original_profile["components"]["patchwork_expansion"] == 55.0
     and turnitin_original_profile["score"] == 49.9
-    and turnitin_candidate_profile["human_anchor_suppression"] == 27.0,
-    "Turnitin-like formula computes weighted score, patchwork max, and human-anchor suppression",
+    and turnitin_candidate_profile["human_anchor_suppression"] == 27.9
+    and turnitin_candidate_profile["target_score"] == TURNITIN_LIKE_TARGET_AI_SCORE,
+    "Turnitin-like formula computes weighted score, patchwork max, human-anchor suppression, and target",
 )
 assert_test(
     turnitin_gate["safe_band"]
+    and turnitin_gate["target_met"]
     and turnitin_gate["outcome_class"] == "ai_mitigated"
     and turnitin_gate["score_drop"] > 25,
-    "Turnitin-like gate accepts safe formula reduction under existing safety constraints",
+    "Turnitin-like gate accepts only below-target formula reduction under existing safety constraints",
+)
+turnitin_at_target_profile = turnitin_like_ai_profile(
+    features={"ai_likelihood": 44.4444444444},
+    ai_components={},
+)
+turnitin_below_target_profile = turnitin_like_ai_profile(
+    features={"ai_likelihood": 44.4422222222},
+    ai_components={},
+)
+assert_test(
+    turnitin_at_target_profile["score"] == 20.0
+    and not turnitin_at_target_profile["target_met"]
+    and turnitin_below_target_profile["score"] == 19.999
+    and turnitin_below_target_profile["target_met"],
+    "Turnitin-like target is strict: 19.999 passes and 20.0 fails",
 )
 turnitin_authorship_backfire = _turnitin_like_ai_gate_status(
     turnitin_formula_original,
@@ -1362,6 +1380,12 @@ turnitin_mitigation_rank = _turnitin_like_candidate_rank(
 assert_test(
     turnitin_mitigation_rank > turnitin_cleanup_rank,
     "Turnitin-like rank prioritizes formula-driver reduction over cleanup-only candidates",
+)
+rewrite_source_for_turnitin_target = open(__file__.replace("test_rewrite_v2.py", "rewrite_pipeline.py")).read()
+assert_test(
+    "DRAFTPROOF_TURNITIN_LIKE_SAFE_BAND" not in rewrite_source_for_turnitin_target
+    and "TURNITIN_LIKE_TARGET_AI_SCORE" in rewrite_source_for_turnitin_target,
+    "Turnitin-like target is shared code, not an environment-tuned safe band",
 )
 assert_test(
     _safe_topk_limit() == 25.0,

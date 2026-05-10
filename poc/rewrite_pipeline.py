@@ -40,6 +40,7 @@ from detect.mitigation import build_ai_mitigation_plan
 from detect.topk_calibration import TOPK_CALIBRATED_SAFE_LIMIT, calibrate_topk_risk
 from detect.turnitin_like import (
     TURNITIN_LIKE_COMPONENT_WEIGHTS,
+    TURNITIN_LIKE_TARGET_AI_SCORE,
     turnitin_like_ai_profile_from_report,
 )
 
@@ -4605,37 +4606,37 @@ def _remaining_turnitin_like_drivers(profile: dict | None) -> list[dict]:
     profile = profile if isinstance(profile, dict) else {}
     components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
     weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
-    thresholds = {
-        "ai_likelihood": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_AI_LIKELIHOOD", 35.0),
-        "topk_calibrated_risk": _safe_topk_calibrated_limit(),
-        "semantic_uniformity": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_SEMANTIC", 35.0),
-        "rewrite_smoothness": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_SMOOTHNESS", 35.0),
-        "patchwork_expansion": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_PATCHWORK", 35.0),
-        "signal_agreement": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_SIGNAL_AGREEMENT", 35.0),
-    }
+    if bool(profile.get("target_met")):
+        return []
+    target_gap = float(profile.get("target_gap") or 0.0)
     remaining = [
         {
             "driver": key,
             "value": round(float(value), 3),
-            "safe_band": round(float(thresholds[key]), 3),
+            "formula_weight": round(float(TURNITIN_LIKE_COMPONENT_WEIGHTS[key]), 3),
             "weighted_contribution": round(float(weighted.get(key, 0.0)), 3),
+            "target_gap": round(target_gap, 3),
         }
         for key, value in components.items()
-        if key in thresholds
+        if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
         and isinstance(value, (int, float))
-        and float(value) > float(thresholds[key])
+        and float(weighted.get(key, 0.0)) > 0.0
     ]
-    suppression_floor = _float_env("DRAFTPROOF_TURNITIN_LIKE_MIN_HUMAN_ANCHOR_SUPPRESSION", 15.0)
     suppression = profile.get("human_anchor_suppression")
-    if isinstance(suppression, (int, float)) and float(suppression) < suppression_floor:
+    if isinstance(suppression, (int, float)) and float(suppression) < 45.0:
         remaining.append({
             "driver": "human_anchor_suppression",
             "value": round(float(suppression), 3),
-            "target_min": round(float(suppression_floor), 3),
+            "target_direction": "increase",
+            "available_suppression_headroom": round(max(0.0, 45.0 - float(suppression)), 3),
             "weighted_contribution": round(-float(suppression), 3),
+            "target_gap": round(target_gap, 3),
         })
     remaining.sort(
-        key=lambda row: abs(float(row.get("weighted_contribution", 0.0))),
+        key=lambda row: (
+            0 if row.get("driver") == "human_anchor_suppression" else 1,
+            abs(float(row.get("weighted_contribution", 0.0))),
+        ),
         reverse=True,
     )
     return remaining
@@ -4657,7 +4658,7 @@ def _turnitin_like_ai_gate_status(
     ai_after = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
     score_drop = float(drops.get("turnitin_like_ai_score") or 0.0)
     min_drop = _float_env("DRAFTPROOF_TURNITIN_LIKE_MIN_DROP", 1.0)
-    safe_band = _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_BAND", 35.0)
+    target_score = TURNITIN_LIKE_TARGET_AI_SCORE
     major_backfire_limit = _float_env("DRAFTPROOF_TURNITIN_LIKE_MAJOR_COMPONENT_BACKFIRE", 8.0)
     component_backfires = [
         {
@@ -4690,7 +4691,8 @@ def _turnitin_like_ai_gate_status(
         and not component_backfires
     )
     improved = bool(score_drop >= min_drop)
-    achieved = bool(safety_clean and improved and float(after.get("score", 100.0)) <= safe_band)
+    score_target_met = bool(float(after.get("score", 100.0)) < target_score)
+    achieved = bool(safety_clean and improved and score_target_met)
     partial = bool(safety_clean and improved and not achieved)
     if achieved:
         outcome = "ai_mitigated"
@@ -4718,9 +4720,13 @@ def _turnitin_like_ai_gate_status(
         "safety_clean": safety_clean,
         "improved": improved,
         "safe_band": achieved,
+        "target_met": score_target_met,
+        "target_score": round(float(target_score), 3),
+        "target_gap": round(max(0.0, float(after.get("score", 100.0)) - float(target_score)), 3),
         "outcome_class": outcome,
         "thresholds": {
-            "safe_band": round(float(safe_band), 3),
+            "safe_band": round(float(target_score), 3),
+            "target_score": round(float(target_score), 3),
             "min_drop": round(float(min_drop), 3),
             "major_component_backfire": round(float(major_backfire_limit), 3),
         },
@@ -22054,6 +22060,9 @@ def run_rewrite_pipeline(
     result.summary["turnitin_like_ai_score_before"] = final_turnitin_like_gate.get("score_before")
     result.summary["turnitin_like_ai_score_after"] = final_turnitin_like_gate.get("score_after")
     result.summary["turnitin_like_ai_score_drop"] = final_turnitin_like_gate.get("score_drop")
+    result.summary["turnitin_like_target_score"] = final_turnitin_like_gate.get("target_score")
+    result.summary["turnitin_like_target_gap"] = final_turnitin_like_gate.get("target_gap")
+    result.summary["turnitin_like_target_met"] = final_turnitin_like_gate.get("target_met")
     result.summary["turnitin_like_components_before"] = (
         (final_turnitin_like_gate.get("before") or {}).get("components")
     )
@@ -22192,6 +22201,21 @@ def run_rewrite_pipeline(
             )
         )
     )
+    result.summary["why_not_turnitin_like_target"] = (
+        "turnitin-like target achieved"
+        if final_turnitin_like_gate.get("target_met")
+        else (
+            "Turnitin-like AI score "
+            f"{final_turnitin_like_gate.get('score_after')} is not below "
+            f"{final_turnitin_like_gate.get('target_score')}; "
+            "dominant drivers: "
+            + ", ".join(
+                str(row.get("driver"))
+                for row in (final_turnitin_like_gate.get("remaining_turnitin_like_drivers") or [])[:4]
+                if isinstance(row, dict) and row.get("driver")
+            )
+        )
+    )
     texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("authorship_transformation_texture_controller")
     if not isinstance(texture_summary, dict):
         texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("post_topk_optimizer")
@@ -22230,6 +22254,9 @@ def run_rewrite_pipeline(
         "turnitin_like_ai_score_before": final_turnitin_like_gate.get("score_before"),
         "turnitin_like_ai_score_after": final_turnitin_like_gate.get("score_after"),
         "turnitin_like_ai_score_drop": final_turnitin_like_gate.get("score_drop"),
+        "turnitin_like_target_score": final_turnitin_like_gate.get("target_score"),
+        "turnitin_like_target_gap": final_turnitin_like_gate.get("target_gap"),
+        "turnitin_like_target_met": final_turnitin_like_gate.get("target_met"),
         "qualifying_text_ai_density_before": final_before_semantic.get("qualifying_text_ai_density"),
         "qualifying_text_ai_density_after": final_after_semantic.get("qualifying_text_ai_density"),
         "qualifying_text_ai_density_drop": final_footprint_drops.get("qualifying_text_ai_density"),

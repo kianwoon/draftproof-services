@@ -228,8 +228,13 @@ def _transformation_contribution_summary(features: dict, signals: list[dict], ba
         "calibration_confidence": round(_tf_pct((features or {}).get("calibration_confidence")) or 0.0),
         "reporting_suppression": round(_tf_pct((features or {}).get("reporting_suppression")) or 0.0),
         "turnitin_like_ai_score": round(float(turnitin_profile.get("score") or 0.0), 3),
+        "turnitin_like_target_score": turnitin_profile.get("target_score"),
+        "turnitin_like_target_gap": turnitin_profile.get("target_gap"),
+        "turnitin_like_target_met": turnitin_profile.get("target_met"),
         "turnitin_like_components": turnitin_profile.get("components") or {},
         "turnitin_like_weighted_components": turnitin_profile.get("weighted_components") or {},
+        "turnitin_like_component_contributions": turnitin_profile.get("component_contributions") or {},
+        "turnitin_like_top_positive_drivers": turnitin_profile.get("top_positive_drivers") or [],
         "turnitin_like_human_anchor_suppression": turnitin_profile.get("human_anchor_suppression"),
         "summary": summary,
     }

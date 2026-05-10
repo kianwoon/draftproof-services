@@ -30,7 +30,7 @@ from report.report import (
 )
 from detect.semantic_shape import SemanticShapeDetector
 from detect.topk_calibration import calibrate_topk_risk
-from detect.turnitin_like import turnitin_like_ai_profile
+from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
 from report.render import (
     _authorship_rating_from_badge,
     _display_authorship_rating_from_badge,
@@ -642,6 +642,16 @@ assert_equal(
     scan_contribution.get("turnitin_like_ai_score"),
     shared_turnitin_profile.get("score"),
     "scanner contribution uses shared Turnitin-like score",
+)
+assert_equal(
+    scan_contribution.get("turnitin_like_target_score"),
+    TURNITIN_LIKE_TARGET_AI_SCORE,
+    "scanner contribution exposes shared Turnitin-like target",
+)
+assert_equal(
+    scan_contribution.get("turnitin_like_target_met"),
+    shared_turnitin_profile.get("target_met"),
+    "scanner contribution exposes shared Turnitin-like target result",
 )
 assert_equal(
     scan_contribution.get("ai_transformation_ratio"),

@@ -21,7 +21,7 @@ from detect.topk_calibration import calibrate_topk_risk
 
 
 TURNITIN_LIKE_SCORE_VERSION = "turnitin_like_v1"
-TURNITIN_LIKE_SAFE_BAND = 35.0
+TURNITIN_LIKE_TARGET_AI_SCORE = 20.0
 TURNITIN_LIKE_COMPONENT_WEIGHTS = {
     "ai_likelihood": 0.45,
     "topk_calibrated_risk": 0.20,
@@ -88,16 +88,37 @@ def turnitin_like_ai_profile(
     }
     raw_positive_score = sum(weighted_components.values())
     score = max(0.0, min(100.0, raw_positive_score - human_anchor_suppression))
+    target_gap = max(0.0, score - TURNITIN_LIKE_TARGET_AI_SCORE)
+    target_met = score < TURNITIN_LIKE_TARGET_AI_SCORE
+    top_positive_drivers = [
+        {
+            "driver": key,
+            "component": round(float(components.get(key, 0.0)), 3),
+            "weight": float(TURNITIN_LIKE_COMPONENT_WEIGHTS[key]),
+            "weighted_contribution": round(float(value), 3),
+        }
+        for key, value in sorted(
+            weighted_components.items(),
+            key=lambda item: float(item[1]),
+            reverse=True,
+        )
+        if float(value) > 0.0
+    ]
     return {
         "version": TURNITIN_LIKE_SCORE_VERSION,
         "score": round(score, 3),
         "components": {key: round(float(value), 3) for key, value in components.items()},
         "weighted_components": weighted_components,
+        "component_contributions": weighted_components,
+        "top_positive_drivers": top_positive_drivers,
         "human_anchor_suppression": round(float(human_anchor_suppression), 3),
         "raw_positive_score": round(float(raw_positive_score), 3),
         "weights": dict(TURNITIN_LIKE_COMPONENT_WEIGHTS),
-        "safe_band": score <= TURNITIN_LIKE_SAFE_BAND,
-        "safe_band_threshold": TURNITIN_LIKE_SAFE_BAND,
+        "target_score": TURNITIN_LIKE_TARGET_AI_SCORE,
+        "target_gap": round(float(target_gap), 3),
+        "target_met": target_met,
+        "safe_band": target_met,
+        "safe_band_threshold": TURNITIN_LIKE_TARGET_AI_SCORE,
     }
 
 
@@ -112,8 +133,11 @@ def turnitin_like_ai_profile_from_report(report_dict: Dict[str, Any] | None) -> 
             "human_anchor_suppression": 0.0,
             "raw_positive_score": 0.0,
             "weights": dict(TURNITIN_LIKE_COMPONENT_WEIGHTS),
+            "target_score": TURNITIN_LIKE_TARGET_AI_SCORE,
+            "target_gap": 0.0,
+            "target_met": True,
             "safe_band": True,
-            "safe_band_threshold": TURNITIN_LIKE_SAFE_BAND,
+            "safe_band_threshold": TURNITIN_LIKE_TARGET_AI_SCORE,
         }
     badge = report_dict.get("ai_risk_badge") or {}
     transformation = badge.get("transformation_classification") or {}
