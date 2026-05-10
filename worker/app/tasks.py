@@ -728,6 +728,47 @@ def _build_rewrite_debug_log(
         "sentence_comparison_count": len(sentence_comparison),
         "sentence_comparison_changes": _sentence_comparison_debug_preview(sentence_comparison),
     }
+    rewrite_debug = log_data.get("rewrite_summary") or {}
+    controller_debug_keys = [
+        "selected_strategy",
+        "selected_density_breaker_strategy",
+        "selected_formula_strategy",
+        "formula_convergence_controller",
+        "post_selection_ai_density_breaker",
+        "ai_footprint_gate",
+        "turnitin_like_ai_gate",
+        "formula_gap_contract",
+        "formula_portfolio_plan",
+        "positive_ai_burden",
+        "human_anchor_suppression",
+        "suppression_headroom",
+        "required_suppression_gain",
+        "expected_net_gain",
+        "observed_driver_movement",
+        "weighted_driver_plan",
+        "driver_priority_plan",
+        "weighted_driver_drops",
+        "remaining_formula_gap",
+        "why_not_below_20",
+        "why_not_strict_safe",
+        "strict_ai_safe_band_achieved",
+    ]
+    rewrite_debug["raw_summary_keys"] = sorted(summary.keys()) if isinstance(summary, dict) else []
+    rewrite_debug["controller_field_presence"] = {
+        key: key in summary for key in controller_debug_keys
+    } if isinstance(summary, dict) else {}
+    for key in controller_debug_keys:
+        if isinstance(summary, dict) and key in summary:
+            rewrite_debug[key] = summary.get(key)
+    rewrite_debug["controller_stage_timings"] = [
+        stage for stage in (summary.get("stage_timings") or [])
+        if isinstance(stage, dict)
+        and str(stage.get("stage") or "") in {
+            "ai_mitigation_search",
+            "formula_convergence_controller",
+            "post_selection_ai_density_breaker",
+        }
+    ] if isinstance(summary, dict) else []
     return json.dumps(log_data, indent=2, ensure_ascii=False, default=str)
 
 
