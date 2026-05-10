@@ -5094,6 +5094,24 @@ def _formula_portfolio_plan_from_profiles(
             "control_goal": row.get("control_goal"),
         })
         cumulative += float(row.get("expected_net_gain") or 0.0)
+    if remaining_gap > 0.0 and suppression_headroom > 0.0 and not any(
+        item.get("driver") == "human_anchor_suppression" for item in selected_portfolio
+    ):
+        anchor_row = next(
+            (
+                row for row in driver_priorities
+                if row.get("driver") == "human_anchor_suppression"
+            ),
+            None,
+        )
+        if anchor_row:
+            selected_portfolio.insert(1 if selected_portfolio else 0, {
+                "driver": anchor_row.get("driver"),
+                "strategy_family": anchor_row.get("strategy_family"),
+                "expected_net_gain": anchor_row.get("expected_net_gain"),
+                "control_goal": anchor_row.get("control_goal"),
+                "required_because": "subtractive Human Anchor suppression has usable headroom",
+            })
     return {
         "version": "formula_portfolio_plan_v1",
         "score_before": round(score_before, 3),
