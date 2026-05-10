@@ -220,6 +220,53 @@ def _safe_partial_quality_improvement_status(
     }
 
 
+def _texture_blocked_without_positive_burden(
+    ai_footprint_gate: dict | None,
+    turnitin_like_gate: dict | None,
+) -> bool:
+    """True when a candidate is still texture-blocked and lacks real formula movement.
+
+    Small authorship/review cleanup can be useful, but it must not become the
+    selected AI-mitigation candidate while Top-k/texture blockers remain pinned.
+    Otherwise the controller spends budget, chooses a cosmetic candidate, and
+    the final Top-k gate rolls the work back.
+    """
+    ai_footprint_gate = ai_footprint_gate if isinstance(ai_footprint_gate, dict) else {}
+    turnitin_like_gate = turnitin_like_gate if isinstance(turnitin_like_gate, dict) else {}
+    positive_gate = (
+        turnitin_like_gate.get("positive_burden_gate")
+        if isinstance(turnitin_like_gate.get("positive_burden_gate"), dict)
+        else {}
+    )
+    texture_blockers = [
+        blocker for blocker in (ai_footprint_gate.get("texture_blockers") or [])
+        if isinstance(blocker, dict)
+    ]
+    return bool(texture_blockers and not positive_gate.get("passed"))
+
+
+def _veto_texture_blocked_without_positive_burden(
+    selection_status: dict | None,
+    ai_footprint_gate: dict | None,
+    turnitin_like_gate: dict | None,
+) -> bool:
+    """Veto selector branches that accepted cleanup while texture stayed blocked."""
+    if not isinstance(selection_status, dict) or not selection_status.get("selectable"):
+        return False
+    if not _texture_blocked_without_positive_burden(ai_footprint_gate, turnitin_like_gate):
+        return False
+    if selection_status.get("topk_safe_band_achieved"):
+        return False
+    selection_status.update({
+        "success": False,
+        "selectable": False,
+        "reason": "texture_blocked_without_positive_burden",
+        "ai_footprint_texture_blocked": True,
+        "texture_blocked_without_positive_burden": True,
+    })
+    return True
+
+
 def _ai_search_selected_by_final_safety_gate(
     ai_search_selected: bool,
     selection_status: dict | None,
@@ -19618,6 +19665,19 @@ def run_rewrite_pipeline(
                 else {}
             )
             positive_burden_gate_passed = bool(positive_burden_gate_status.get("passed"))
+            texture_blocked_without_positive_burden = _texture_blocked_without_positive_burden(
+                ai_footprint_gate,
+                turnitin_like_gate,
+            )
+            if texture_blocked_without_positive_burden:
+                if safe_partial_quality_selectable:
+                    safe_partial_quality_selectable = False
+                    safe_partial_quality_status.update({
+                        "allowed": False,
+                        "reason": "texture_blocked_without_positive_burden",
+                    })
+                if safe_authorship_suppression_selectable:
+                    safe_authorship_suppression_selectable = False
             if candidate_eval.get("human_signal_amplification") and not positive_burden_gate_passed:
                 human_amplification_selectable = False
             if candidate_eval.get("human_anchor_amplifier"):
@@ -20201,6 +20261,11 @@ def run_rewrite_pipeline(
                     "reason": "anchor_only_without_positive_burden",
                     "anchor_only_partial": True,
                 })
+            _veto_texture_blocked_without_positive_burden(
+                selection_status,
+                ai_footprint_gate,
+                turnitin_like_gate,
+            )
             candidate_eval["selection_status"] = selection_status
             original_human_value = _contribution_scores(original_report_dict).get("human")
             candidate_human_value = candidate_contribution.get("human")

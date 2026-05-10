@@ -70,6 +70,8 @@ from rewrite_pipeline import (
     _ai_search_prompt,
     _ai_search_feedback_prompt,
     _safe_partial_quality_improvement_status,
+    _texture_blocked_without_positive_burden,
+    _veto_texture_blocked_without_positive_burden,
     _ai_footprint_profile,
     _turnitin_like_ai_profile,
     _turnitin_like_ai_gate_status,
@@ -1120,6 +1122,87 @@ assert_test(
     safe_quality_only_status["allowed"]
     and safe_quality_only_status["quality_only_improved"],
     "safe partial quality gate keeps finding/review/severity reductions even when AI drop is tiny",
+)
+texture_blocked_gate = {
+    "texture_blockers": [
+        {
+            "driver": "topk_calibrated_risk",
+            "reason": "active_topk_pattern_not_reduced",
+        }
+    ]
+}
+weak_positive_burden_gate = {
+    "positive_burden_gate": {
+        "passed": False,
+        "positive_ai_burden_drop": 1.385,
+        "required_positive_ai_burden_drop": 4.0,
+    }
+}
+assert_test(
+    _texture_blocked_without_positive_burden(
+        texture_blocked_gate,
+        weak_positive_burden_gate,
+    ),
+    "texture-blocked candidates cannot be selected as safe partial cleanup without positive AI-burden movement",
+)
+strong_positive_burden_gate = {
+    "positive_burden_gate": {
+        "passed": True,
+        "positive_ai_burden_drop": 4.2,
+        "required_positive_ai_burden_drop": 4.0,
+    }
+}
+assert_test(
+    not _texture_blocked_without_positive_burden(
+        texture_blocked_gate,
+        strong_positive_burden_gate,
+    ),
+    "texture-blocked candidates remain eligible for partial progress only after positive AI-burden movement clears the gate",
+)
+texture_blocked_status = {
+    "success": True,
+    "selectable": True,
+    "reason": "accepted_incremental_authenticity_progress",
+}
+assert_test(
+    _veto_texture_blocked_without_positive_burden(
+        texture_blocked_status,
+        texture_blocked_gate,
+        weak_positive_burden_gate,
+    )
+    and not texture_blocked_status["selectable"]
+    and texture_blocked_status["reason"] == "texture_blocked_without_positive_burden",
+    "final selector veto blocks any texture-blocked fallback path without positive AI-burden movement",
+)
+topk_safe_status = {
+    "success": True,
+    "selectable": True,
+    "reason": "accepted_topk_safe_band_rebuild",
+    "topk_safe_band_achieved": True,
+}
+assert_test(
+    not _veto_texture_blocked_without_positive_burden(
+        topk_safe_status,
+        texture_blocked_gate,
+        weak_positive_burden_gate,
+    )
+    and topk_safe_status["selectable"],
+    "final selector veto does not block a candidate that already reached the Top-k safe band",
+)
+inconsistent_topk_progress_status = {
+    "success": True,
+    "selectable": True,
+    "reason": "accepted_topk_blocker_progress",
+    "topk_blocker_progress": True,
+}
+assert_test(
+    _veto_texture_blocked_without_positive_burden(
+        inconsistent_topk_progress_status,
+        texture_blocked_gate,
+        weak_positive_burden_gate,
+    )
+    and not inconsistent_topk_progress_status["selectable"],
+    "final selector veto does not trust progress flags when positive AI-burden movement failed",
 )
 assert_test(
     _ai_search_selected_by_final_safety_gate(
