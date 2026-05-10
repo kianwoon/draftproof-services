@@ -177,6 +177,9 @@ from rewrite_pipeline import (
     _internet_reinforced_reauthor_prompt,
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
+    _topk_safe_band_snapshot_prompt,
+    _topk_safe_band_patch_rounds_default,
+    _topk_safe_band_snapshot_max_tokens_default,
     _topk_repair_map,
     _topk_route_optimizer_candidates,
     _topk_masked_route_prompt,
@@ -2211,6 +2214,18 @@ assert_test(
     and default_hard_cap == 12
     and explicit_hard_cap == 10,
     "AI search hard LLM cap uses document-size defaults and honors explicit overrides",
+)
+medium_topk_prompt = _topk_safe_band_snapshot_prompt(
+    "The United States has many strengths and challenges. " * 90,
+    {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}},
+)
+assert_test(
+    "280 to 560 words" not in medium_topk_prompt
+    and "rough annotated prose" not in medium_topk_prompt
+    and "short country profile" in medium_topk_prompt
+    and _topk_safe_band_patch_rounds_default("word " * 900) == 4
+    and _topk_safe_band_snapshot_max_tokens_default("word " * 900) == 3600,
+    "Top-k safe-band rebuild uses document-sized prose, not compressed snapshot fragments",
 )
 for key, value in previous_sampling_env.items():
     if value is None:

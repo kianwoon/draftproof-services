@@ -2694,16 +2694,28 @@ def _topk_masked_route_prompt(
 def _topk_safe_band_snapshot_prompt(text: str, report_dict: dict | None) -> str:
     ai_components = (((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
     contribution = _contribution_scores(report_dict)
+    source_words = _text_word_count(text)
+    min_words = max(260, int(source_words * 0.72))
+    max_words = max(min_words + 80, int(source_words * 1.08))
+    if source_words <= 700:
+        block_guidance = "5 to 8 normal paragraphs"
+    elif source_words <= 1800:
+        block_guidance = "7 to 12 normal paragraphs"
+    else:
+        block_guidance = "section-preserving paragraphs; do not collapse the document into a short summary"
     current_signals = json.dumps({
         "raw_topk": ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")),
         "topk_calibrated_risk": ai_components.get("topk_calibrated_risk"),
         "ai_transformation": contribution.get("ai_transformation"),
         "human_contribution": contribution.get("human"),
+        "source_word_count": source_words,
+        "target_word_range": [min_words, max_words],
     }, ensure_ascii=False)
     return (
         "DraftProof TOPK_SAFE_BAND_REBUILD.\n"
         "The current document is saturated on GPT-2 Top-k token-route predictability. "
-        "A normal smooth essay will fail. Rebuild the submission as rough annotated prose.\n\n"
+        "A normal smooth essay will fail, but compressed fragment prose will also fail. "
+        "Rebuild the submission as ordinary paragraphs with less predictable sentence routes.\n\n"
         "Objective:\n"
         "- lower calibrated Top-k risk below 25 after scanning\n"
         "- preserve the topic and main claims\n"
@@ -2712,25 +2724,46 @@ def _topk_safe_band_snapshot_prompt(text: str, report_dict: dict | None) -> str:
         "Current signals:\n"
         f"{current_signals}\n\n"
         "Required texture:\n"
-        "- 8 to 12 compact snapshot blocks\n"
-        "- each block starts with a concrete anchor: date, place, named event, law, institution, company, person, technology, object, or movement\n"
+        f"- write {block_guidance}\n"
+        f"- target {min_words} to {max_words} words unless preserving meaning needs a little more\n"
+        "- keep full-document coverage; do not turn the submission into a short country profile or bullet-like digest\n"
+        "- use concrete anchors where they naturally belong: date, place, named event, law, institution, company, person, technology, object, or movement\n"
         "- include at least 10 prose sentences of 8-18 words so the scanner has eligible prose\n"
-        "- use uneven rhythm: short sentence, colon route, rough contrast, then move on\n"
+        "- use uneven rhythm: short sentence, longer sentence, plain follow-up where useful\n"
         "- use stable public facts already implied by the source topic; no invented statistics\n"
         "- avoid generic openings: The topic is, It is important, One of the, In conclusion, Overall\n"
         "- avoid smooth claim -> explanation -> implication paragraphs\n"
-        "- 280 to 560 words is acceptable when it reaches the Top-k safe band\n\n"
+        "- avoid colon-heavy compressed fragments and promotional list tone\n"
+        "- keep sentence spacing clean; every sentence must have a space after punctuation\n\n"
         "Sentence texture examples:\n"
-        "Original: Better wages for some workers, harder discipline for many others.\n"
-        "Route: Five dollars a day sounded generous; the stopwatch told another story.\n"
-        "Original: It challenged sheriffs, buses, lunch counters, voting offices, landlords, school boards, and presidents.\n"
-        "Route: Sheriffs, buses, lunch counters, voting offices, landlords, school boards, presidents: all were pulled into the fight.\n"
-        "Original: The Civil War was not just blue uniforms against grey uniforms.\n"
-        "Route: Blue uniforms versus grey uniforms is the small version.\n\n"
+        "Original: The United States has a strong cultural influence.\n"
+        "Route: American culture travels easily. Films, music, sport, and online platforms carry it into daily life far outside the country.\n"
+        "Original: Despite its success, the United States also faces many serious issues.\n"
+        "Route: The success is real, but it sits beside hard problems: cost, division, access, and trust.\n"
+        "Original: Technology and innovation continue to shape the future of the United States.\n"
+        "Route: Technology is still one of the country's loudest signals. That does not make every change simple or fair.\n\n"
         "Return only the rewritten prose. No explanation.\n\n"
         "SOURCE DOCUMENT:\n"
         f"{str(text or '')[:12000]}"
     )
+
+
+def _topk_safe_band_patch_rounds_default(source_text: str) -> int:
+    words = _text_word_count(source_text)
+    if words <= 700:
+        return 2
+    if words <= 1800:
+        return 5
+    return 7
+
+
+def _topk_safe_band_snapshot_max_tokens_default(source_text: str) -> int:
+    words = _text_word_count(source_text)
+    if words <= 700:
+        return 2200
+    if words <= 1800:
+        return 3600
+    return 6500
 
 
 def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
@@ -17314,10 +17347,10 @@ def run_rewrite_pipeline(
                     try:
                         planned_patch_rounds_for_reserve = max(1, int(_float_env(
                             "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
-                            3.0,
+                            float(_topk_safe_band_patch_rounds_default(search_source_text)),
                         )))
                     except (TypeError, ValueError):
-                        planned_patch_rounds_for_reserve = 3
+                        planned_patch_rounds_for_reserve = _topk_safe_band_patch_rounds_default(search_source_text)
                     try:
                         planned_extra_safe_rounds_for_reserve = max(0, int(_float_env(
                             "DRAFTPROOF_TOPK_SAFE_BAND_EXTRA_SAFE_ROUNDS",
@@ -17384,7 +17417,7 @@ def run_rewrite_pipeline(
                                     temperature_env="DRAFTPROOF_TOPK_SAFE_BAND_REBUILD_TEMPERATURE",
                                     temperature_default=0.45,
                                     max_tokens_env="DRAFTPROOF_TOPK_SAFE_BAND_REBUILD_MAX_TOKENS",
-                                    max_tokens_default=2200,
+                                    max_tokens_default=_topk_safe_band_snapshot_max_tokens_default(route_base_text),
                                 ),
                             )
                             snapshot_text = _clean_full_document_candidate(snapshot_response.content, route_base_text)
@@ -17432,10 +17465,10 @@ def run_rewrite_pipeline(
                                 try:
                                     max_patch_rounds = max(1, int(_float_env(
                                         "DRAFTPROOF_TOPK_SAFE_BAND_PATCH_ROUNDS",
-                                        3.0,
+                                        float(_topk_safe_band_patch_rounds_default(route_base_text)),
                                     )))
                                 except (TypeError, ValueError):
-                                    max_patch_rounds = 3
+                                    max_patch_rounds = _topk_safe_band_patch_rounds_default(route_base_text)
                                 try:
                                     extra_safe_rounds = max(0, int(_float_env(
                                         "DRAFTPROOF_TOPK_SAFE_BAND_EXTRA_SAFE_ROUNDS",
