@@ -143,6 +143,7 @@ from rewrite_pipeline import (
     _ai_search_prompt,
     _paragraph_role,
     _neutralize_external_detector_style_artifacts,
+    _synthetic_meta_anchor_artifact_reason,
     _human_signal_amplification_prompt,
     _author_reasoning_amplification_prompt,
     _score_human_amplification_candidate,
@@ -172,6 +173,7 @@ from rewrite_pipeline import (
     _post_selection_ai_density_breaker_acceptance,
     _record_rewrite_llm_calls,
     _human_anchor_driver_contract,
+    _human_anchor_positive_burden_gate_status,
     _author_stance_thread_candidates,
     _human_target_ai_search_status,
     _blocker_scores,
@@ -3582,6 +3584,18 @@ bad_anchor_candidate = " ".join(
 assert_test(
     _ai_candidate_quality_reject_reason(bad_anchor_candidate).startswith("synthetic_anchor_overuse"),
     "AI search rejects synthetic anchor overuse in final candidates",
+)
+synthetic_meta_anchor_candidate = (
+    "The United States has a large economy and many global companies. "
+    "When this is applied in practice, major technology companies such as Apple and Microsoft are often named. "
+    "During review, cities such as New York City and Los Angeles are used as examples of diversity. "
+    "I would narrow the point this way: wealth and inequality can exist at the same time."
+)
+assert_test(
+    _ai_candidate_quality_reject_reason(synthetic_meta_anchor_candidate).startswith(
+        "synthetic_meta_anchor_artifact"
+    ),
+    "AI search rejects synthetic meta/process anchor filler in final candidates",
 )
 assert_test(
     _ai_candidate_quality_reject_reason("Introduction Inclusive learning design starts here."),
@@ -7044,11 +7058,50 @@ anchor_candidates = _human_anchor_amplifier_candidates(
     target_push_report,
     limit=3,
 )
+anchor_candidate_text = "\n".join(candidate for _strategy, candidate, _meta in anchor_candidates)
 assert_test(
     bool(anchor_candidates)
     and all(meta.get("scope") == "implied_context_only" for _strategy, _candidate, meta in anchor_candidates)
     and any(meta.get("changed_sentence_frames", 0) >= 2 for _strategy, _candidate, meta in anchor_candidates),
     "human anchor amplifier creates bounded implied-context candidates",
+)
+assert_test(
+    not _synthetic_meta_anchor_artifact_reason(anchor_candidate_text)
+    and "When this is applied in practice" not in anchor_candidate_text
+    and "I would narrow the point this way" not in anchor_candidate_text,
+    "human anchor amplifier avoids generic meta/process filler phrases",
+)
+strict_anchor_report = make_footprint_report(
+    ai_authorship=50,
+    human=67,
+    ai_transformation=33,
+    grounding=68,
+    human_anchor=60,
+    smoothness=48,
+    semantic_uniformity=54,
+    ai_likelihood=50,
+    topk_pattern=97,
+    topk_calibrated_risk=92,
+    generic_assertion_risk=65,
+    unsupported_claim_risk=90,
+    broad_claim_risk=75,
+    discourse=27,
+    expansion=65,
+    signal_agreement=47,
+)
+weak_anchor_burden_gate = _human_anchor_positive_burden_gate_status(
+    {"positive_ai_burden": {"drop": 3.8}},
+    strict_anchor_report,
+)
+strong_anchor_burden_gate = _human_anchor_positive_burden_gate_status(
+    {"positive_ai_burden": {"drop": 4.2}},
+    strict_anchor_report,
+)
+assert_test(
+    not weak_anchor_burden_gate["accepted"]
+    and weak_anchor_burden_gate["reason"] == "positive_ai_burden_drop_too_small"
+    and strong_anchor_burden_gate["accepted"],
+    "human anchor candidates need meaningful positive AI-burden movement while core AI drivers remain high",
 )
 portfolio_candidates = _formula_portfolio_candidates(
     target_push_text,

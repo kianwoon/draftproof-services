@@ -446,6 +446,50 @@ def _turnitin_like_positive_burden_drop(before_report: dict | None, after_report
     return round(float(before.get("raw_positive_score") or 0.0) - float(after.get("raw_positive_score") or 0.0), 3)
 
 
+def _human_anchor_positive_burden_gate_status(
+    formula_gap_contract: dict | None,
+    candidate_report: dict | None,
+) -> dict:
+    """Require real AI-driver movement before Human Anchor suppression can win."""
+    contract = formula_gap_contract if isinstance(formula_gap_contract, dict) else {}
+    burden = contract.get("positive_ai_burden") if isinstance(contract.get("positive_ai_burden"), dict) else {}
+    try:
+        burden_drop = float(burden.get("drop") or 0.0)
+    except (TypeError, ValueError):
+        burden_drop = 0.0
+    profile = _turnitin_like_ai_profile(candidate_report)
+    components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
+    def num(value, default=0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    topk_after = num(components.get("topk_calibrated_risk"), 0.0)
+    ai_likelihood_after = num(components.get("ai_likelihood"), 0.0)
+    strict_driver_active = bool(
+        topk_after >= _safe_topk_calibrated_limit()
+        or ai_likelihood_after > _float_env("DRAFTPROOF_HUMAN_ANCHOR_AI_LIKELIHOOD_SAFE_MAX", 35.0)
+    )
+    required_drop = _float_env(
+        "DRAFTPROOF_HUMAN_ANCHOR_STRICT_MIN_POSITIVE_BURDEN_DROP"
+        if strict_driver_active
+        else "DRAFTPROOF_HUMAN_ANCHOR_MIN_POSITIVE_BURDEN_DROP",
+        4.0 if strict_driver_active else 1.0,
+    )
+    accepted = burden_drop >= required_drop
+    return {
+        "version": "human_anchor_positive_burden_gate_v1",
+        "accepted": accepted,
+        "reason": "positive_ai_burden_moved" if accepted else "positive_ai_burden_drop_too_small",
+        "positive_ai_burden_drop": round(burden_drop, 3),
+        "required_positive_ai_burden_drop": round(float(required_drop), 3),
+        "strict_driver_active": strict_driver_active,
+        "topk_calibrated_risk_after": round(topk_after, 3),
+        "ai_likelihood_after": round(ai_likelihood_after, 3),
+    }
+
+
 def _record_rewrite_llm_calls(summary: dict, phase_key: str, calls: int | float | str | None) -> int:
     """Record phase and total LLM calls in one place.
 
@@ -11967,6 +12011,26 @@ def _external_detector_style_artifact_reason(text: str) -> str:
     return ""
 
 
+_SYNTHETIC_META_ANCHOR_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"(?m)(?:^|[.!?]\s+)When this is applied in practice,\s+", "when_this_is_applied_in_practice"),
+    (r"(?m)(?:^|[.!?]\s+)In this case,\s+", "in_this_case_prefix"),
+    (r"(?m)(?:^|[.!?]\s+)During review,\s+", "during_review_prefix"),
+    (r"(?m)(?:^|[.!?]\s+)I would narrow the point this way:\s+", "i_would_narrow_prefix"),
+    (r"(?m)(?:^|[.!?]\s+)When the process is checked,\s+", "process_checked_prefix"),
+    (r"\bOne example is the underlying claim that\b", "underlying_claim_frame"),
+)
+
+
+def _synthetic_meta_anchor_artifact_reason(text: str) -> str:
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    body = _strip_reference_like_lines_for_quality(text)
+    for pattern, label in _SYNTHETIC_META_ANCHOR_PATTERNS:
+        if re.search(pattern, body, flags=re.I):
+            return f"synthetic_meta_anchor_artifact:{label}"
+    return ""
+
+
 def _neutralize_external_detector_style_artifacts(text: str) -> tuple[str, list[str]]:
     """Repair promotional/list-like phrasing without adding new facts."""
     if not isinstance(text, str) or not text.strip():
@@ -12077,6 +12141,9 @@ def _ai_candidate_quality_reject_reason(
         return "empty_candidate"
     if "[[REVIEW:" in candidate:
         return "review_markers_not_auto_kept"
+    synthetic_meta_anchor = _synthetic_meta_anchor_artifact_reason(candidate)
+    if synthetic_meta_anchor:
+        return synthetic_meta_anchor
     synthetic_anchors = _SYNTHETIC_ANCHOR_RE.findall(candidate)
     sentence_count = max(1, len(re.findall(r"(?<=[.!?])\s+", candidate)) + 1)
     max_anchor_count = max(3, min(8, sentence_count // 8))
@@ -14714,27 +14781,60 @@ def _human_anchor_amplifier_candidates(
         ),
     ]
 
-    operations = [
-        ("When this is applied in practice, ", "lower_first", "practice_condition"),
-        ("In this case, ", "lower_first", "case_frame"),
-        ("During review, ", "lower_first", "review_condition"),
-        ("I would narrow the point this way: ", "keep", "author_judgement"),
-        ("When the process is checked, ", "lower_first", "process_check"),
-        ("One example is the underlying claim that ", "lower_first", "example_frame"),
+    context_operations: list[tuple[re.Pattern, str, str]] = [
+        (
+            re.compile(r"\b(?:student|students|learner|learners|homework|essay|answer|assignment)\b", re.I),
+            " The useful check is whether the student can explain the steps, not only show the final answer.",
+            "student_reasoning_check",
+        ),
+        (
+            re.compile(r"\b(?:teacher|teachers|classroom|school|lesson|education|learning|exam|grade|feedback)\b", re.I),
+            " That is where the teacher has to look at the process, not only the completed work.",
+            "classroom_process_context",
+        ),
+        (
+            re.compile(r"\b(?:AI|online|search engine|social media|YouTube|TikTok|tool|tools)\b", re.I),
+            " The practical risk is that a quick answer can sound complete before the student has checked whether it is right.",
+            "digital_verification_context",
+        ),
+        (
+            re.compile(r"\b(?:salon|client|hair|haircut|cutting|assessment|unit|practice|angle|tension|section)\b", re.I),
+            " In practice, the result still has to be checked against the section, angle, timing, or client condition.",
+            "practice_check_context",
+        ),
+        (
+            re.compile(r"\b(?:source|citation|evidence|claim|reference|example)\b", re.I),
+            " The claim needs to stay tied to the exact source or example being used.",
+            "source_claim_context",
+        ),
     ]
 
-    def contextualize(sentence: str, op_index: int) -> tuple[str, str]:
-        prefix, mode, label = operations[op_index % len(operations)]
+    def contextualize(sentence: str) -> tuple[str, str]:
         stripped = sentence.strip()
         if not stripped:
-            return stripped, label
-        if mode == "lower_first" and stripped:
-            return prefix + stripped[0].lower() + stripped[1:], label
-        return prefix + stripped, label
+            return "", ""
+        for pattern, addition, label in context_operations:
+            if pattern.search(stripped):
+                if stripped.endswith(addition.strip()):
+                    return "", ""
+                return stripped + addition, label
+        return "", ""
+
+    target_pool = [
+        {**row, "contextual_operation": contextualize(str(row.get("sentence") or ""))}
+        for row in target_pool
+    ]
+    target_pool = [row for row in target_pool if row.get("contextual_operation", ("", ""))[0]]
+    if not target_pool:
+        return []
 
     def build(limit_count: int, label: str) -> tuple[str, list[dict]]:
         selected = sorted(target_pool[:max(1, limit_count)], key=lambda row: int(row["flat_index"]))
         selected_by_flat = {int(row["flat_index"]): pos for pos, row in enumerate(selected)}
+        selected_replacements = {
+            int(row["flat_index"]): row.get("contextual_operation", ("", ""))
+            for row in selected
+        }
         rebuilt_paragraphs = []
         flat = 0
         changes = []
@@ -14742,14 +14842,17 @@ def _human_anchor_amplifier_candidates(
             rebuilt_sentences = []
             for sentence in _split_sentences(paragraph):
                 if flat in selected_by_flat:
-                    replacement, operation = contextualize(sentence, selected_by_flat[flat])
-                    rebuilt_sentences.append(replacement)
-                    changes.append({
-                        "flat_sentence_index": flat,
-                        "operation": operation,
-                        "original": sentence[:180],
-                        "replacement": replacement[:180],
-                    })
+                    replacement, operation = selected_replacements.get(flat, ("", ""))
+                    if replacement:
+                        rebuilt_sentences.append(replacement)
+                        changes.append({
+                            "flat_sentence_index": flat,
+                            "operation": operation,
+                            "original": sentence[:180],
+                            "replacement": replacement[:180],
+                        })
+                    else:
+                        rebuilt_sentences.append(sentence)
                 else:
                     rebuilt_sentences.append(sentence)
                 flat += 1
@@ -19794,6 +19897,10 @@ def run_rewrite_pipeline(
                     if isinstance(before_raw, (int, float)) and isinstance(after_raw, (int, float))
                     else 0.0
                 )
+                human_anchor_burden_gate = _human_anchor_positive_burden_gate_status(
+                    formula_gap_contract,
+                    candidate_report,
+                )
                 anchor_gain = float(anchor_deltas.get("human_anchor_score") or 0.0)
                 lived_drop = float(anchor_deltas.get("lived_detail_risk") or 0.0)
                 human_anchor_amplification_selectable = bool(
@@ -19803,6 +19910,7 @@ def run_rewrite_pipeline(
                         or anchor_gain >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_MIN_SCORE_GAIN", 8.0)
                     )
                     and human_raw_gain > 0.0
+                    and human_anchor_burden_gate.get("accepted")
                     and not ai_score_regressed
                     and isinstance(ai_authorship_delta, (int, float))
                     and ai_authorship_delta >= -_float_env(
@@ -19837,6 +19945,7 @@ def run_rewrite_pipeline(
                     "target_lived_detail_band": human_anchor_contract.get("next_lived_detail_band"),
                     "achieved_next_band": human_anchor_contract.get("achieved_next_band"),
                     "scope": "implied_context_only",
+                    "positive_burden_gate": human_anchor_burden_gate,
                 }
             ai_footprint_selectable = bool(
                 _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True)
