@@ -254,6 +254,7 @@ from rewrite_pipeline import (
     _llm_call_budget_exhausted_before_send,
     _ai_search_budget_policy,
     _ai_search_llm_hard_cap,
+    _extend_candidate_scan_budget,
     _resolve_stage_llm_budget,
 )
 import llm.gateway as llm_gateway_module
@@ -1862,14 +1863,14 @@ phase_contract = _strict_safe_phase_budget_contract(17, "word " * 900, saturated
 phase_contract_cap10 = _strict_safe_phase_budget_contract(10, "word " * 900, saturated_topk_report)
 phase_contract_lower = _strict_safe_phase_budget_contract(7)
 assert_test(
-    phase_contract["total_llm_hard_cap"] == 17
+    phase_contract["total_llm_hard_cap"] == 15
     and phase_contract["topk_safe_band_rebuild"] == 12
-    and phase_contract["authorship_transformation_texture_controller"] == 3
-    and phase_contract["final_texture_proxy_repair"] == 2
+    and phase_contract["authorship_transformation_texture_controller"] == 2
+    and phase_contract["final_texture_proxy_repair"] == 1
     and phase_contract["emergency_diagnostic_reserve"] == 0
     and phase_contract["post_topk_strict_safe_optimizer"] == 0
-    and phase_contract_cap10["topk_safe_band_rebuild"] == 6
-    and phase_contract_cap10["authorship_transformation_texture_controller"] == 3
+    and phase_contract_cap10["topk_safe_band_rebuild"] == 7
+    and phase_contract_cap10["authorship_transformation_texture_controller"] == 2
     and phase_contract_cap10["final_texture_proxy_repair"] == 1
     and sum(value for key, value in phase_contract_lower.items() if key != "total_llm_hard_cap") <= 7,
     "strict-safe phase budget contract reserves downstream texture calls under the 10-call cap",
@@ -2693,13 +2694,24 @@ finally:
     else:
         os.environ["DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS"] = old_hard_cap
 assert_test(
-    short_policy["max_llm_calls"] == 7
-    and medium_policy["max_llm_calls"] == 12
-    and saturated_medium_policy["max_llm_calls"] == 17
-    and long_policy["max_llm_calls"] == 20
+    short_policy["max_llm_calls"] == 6
+    and short_policy["max_candidate_scans"] == 16
+    and medium_policy["max_llm_calls"] == 10
+    and medium_policy["max_candidate_scans"] == 24
+    and saturated_medium_policy["max_llm_calls"] == 15
+    and saturated_medium_policy["max_candidate_scan_hard_cap"] == 32
+    and long_policy["max_llm_calls"] == 17
+    and long_policy["max_candidate_scans"] == 36
     and default_hard_cap == 10
     and explicit_hard_cap == 10,
-    "AI search hard LLM cap defaults to the production cap and honors explicit overrides",
+    "AI search budget policy caps scan-heavy candidate search and hard LLM cap honors explicit overrides",
+)
+scan_budget_probe = {"max_candidate_scans": 24, "max_candidate_scan_hard_cap": 32}
+_extend_candidate_scan_budget(scan_budget_probe, 24, 12)
+_extend_candidate_scan_budget(scan_budget_probe, 32, 12)
+assert_test(
+    scan_budget_probe["max_candidate_scans"] == 32,
+    "AI search scan reserves cannot grow beyond the size-policy hard cap",
 )
 medium_topk_prompt = _topk_safe_band_snapshot_prompt(
     "The United States has many strengths and challenges. " * 90,

@@ -770,7 +770,7 @@ def _post_selection_ai_density_breaker(
     scan_func = scan_func or _run_full_scan_report_dict
     max_scans = max(
         0,
-        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_DENSITY_BREAKER_MAX_SCANS", 6.0)),
+        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_DENSITY_BREAKER_MAX_SCANS", 3.0)),
     )
     if max_scans <= 0:
         return {"enabled": True, "selected": False, "reason": "scan_budget_zero"}
@@ -7915,9 +7915,10 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
         base = {
             "word_count": words,
             "size_band": "short",
-            "max_seconds": 120 + extra_seconds,
-            "max_llm_calls": max(6, topk_phase + 2),
-            "max_candidate_scans": 36,
+            "max_seconds": 90 + extra_seconds,
+            "max_llm_calls": max(4, topk_phase + 1),
+            "max_candidate_scans": 16,
+            "max_candidate_scan_hard_cap": 22,
             "phase_budget": {
                 "topk_safe_band_rebuild": topk_phase,
                 "authorship_transformation_texture_controller": 1,
@@ -7930,13 +7931,14 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
         base = {
             "word_count": words,
             "size_band": "medium",
-            "max_seconds": 240 + extra_seconds,
-            "max_llm_calls": max(10, topk_phase + 5),
-            "max_candidate_scans": 64,
+            "max_seconds": 150 + extra_seconds,
+            "max_llm_calls": max(6, topk_phase + 3),
+            "max_candidate_scans": 24,
+            "max_candidate_scan_hard_cap": 32,
             "phase_budget": {
                 "topk_safe_band_rebuild": topk_phase,
-                "authorship_transformation_texture_controller": 3,
-                "final_texture_proxy_repair": 2,
+                "authorship_transformation_texture_controller": 2,
+                "final_texture_proxy_repair": 1,
             },
         }
         base["driver_budget"] = {"topk": topk_gap, "topk_patch_rounds": topk_rounds}
@@ -7944,13 +7946,14 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
     base = {
         "word_count": words,
         "size_band": "long",
-        "max_seconds": 420 + extra_seconds,
-        "max_llm_calls": max(14, topk_phase + 7),
-        "max_candidate_scans": 96,
+        "max_seconds": 240 + extra_seconds,
+        "max_llm_calls": max(8, topk_phase + 4),
+        "max_candidate_scans": 36,
+        "max_candidate_scan_hard_cap": 48,
         "phase_budget": {
             "topk_safe_band_rebuild": topk_phase,
-            "authorship_transformation_texture_controller": 5,
-            "final_texture_proxy_repair": 2,
+            "authorship_transformation_texture_controller": 3,
+            "final_texture_proxy_repair": 1,
         },
     }
     base["driver_budget"] = {"topk": topk_gap, "topk_patch_rounds": topk_rounds}
@@ -7963,6 +7966,45 @@ def _ai_search_llm_hard_cap(source_text: str = "", report_dict: dict | None = No
         return max(1, int(_float_env("DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS", 10.0)))
     policy_cap = int(_ai_search_budget_policy(source_text, report_dict).get("max_llm_calls") or 1)
     return max(1, min(10, policy_cap))
+
+
+def _candidate_scan_hard_cap(search_budget: dict | None) -> int:
+    budget = search_budget if isinstance(search_budget, dict) else {}
+    try:
+        configured = int(budget.get("max_candidate_scans") or 0)
+    except (TypeError, ValueError):
+        configured = 0
+    try:
+        hard_cap = int(budget.get("max_candidate_scan_hard_cap") or configured or 0)
+    except (TypeError, ValueError):
+        hard_cap = configured
+    if hard_cap <= 0:
+        return max(0, configured)
+    return hard_cap
+
+
+def _extend_candidate_scan_budget(search_budget: dict, current_scans: int, reserve: int | float | str | None) -> int:
+    """Extend scan budget by a small reserve without cumulative runaway growth."""
+    if not isinstance(search_budget, dict):
+        return 0
+    try:
+        previous = int(search_budget.get("max_candidate_scans") or 0)
+    except (TypeError, ValueError):
+        previous = 0
+    try:
+        current = max(0, int(current_scans or 0))
+    except (TypeError, ValueError):
+        current = 0
+    try:
+        reserve_count = max(0, int(reserve or 0))
+    except (TypeError, ValueError):
+        reserve_count = 0
+    hard_cap = _candidate_scan_hard_cap(search_budget)
+    requested = max(previous, current + reserve_count)
+    if hard_cap > 0:
+        requested = min(hard_cap, requested)
+    search_budget["max_candidate_scans"] = requested
+    return requested
 
 
 def _radar_blockers_for_controller(raw_json: dict | None) -> list[dict]:
@@ -15223,13 +15265,13 @@ def _formula_convergence_budget(source_text: str, budget: dict | None = None) ->
     provided = budget if isinstance(budget, dict) else {}
     words = _text_word_count(source_text)
     if words <= 700:
-        defaults = {"max_passes": 2, "max_scans": 8, "max_llm_calls": 2}
+        defaults = {"max_passes": 2, "max_scans": 6, "max_llm_calls": 1}
         size_band = "300_700"
     elif words <= 1800:
-        defaults = {"max_passes": 4, "max_scans": 20, "max_llm_calls": 5}
+        defaults = {"max_passes": 2, "max_scans": 8, "max_llm_calls": 2}
         size_band = "700_1800"
     else:
-        defaults = {"max_passes": 3, "max_scans": 20, "max_llm_calls": 6}
+        defaults = {"max_passes": 2, "max_scans": 12, "max_llm_calls": 3}
         size_band = "1800_5000"
     resolved = {
         key: int(provided.get(key, defaults[key]) or defaults[key])
@@ -19054,11 +19096,23 @@ def run_rewrite_pipeline(
                 "DRAFTPROOF_AI_SEARCH_MAX_CANDIDATE_SCANS",
                 float(budget_policy.get("max_candidate_scans") or 60),
             )),
+            "max_candidate_scan_hard_cap": int(_float_env(
+                "DRAFTPROOF_AI_SEARCH_MAX_CANDIDATE_SCAN_HARD_CAP",
+                float(
+                    budget_policy.get("max_candidate_scan_hard_cap")
+                    or budget_policy.get("max_candidate_scans")
+                    or 60
+                ),
+            )),
             "policy": budget_policy,
         }
         search_budget["max_llm_calls"] = min(
             int(search_budget["max_llm_calls"]),
             hard_llm_cap,
+        )
+        search_budget["max_candidate_scans"] = min(
+            int(search_budget["max_candidate_scans"]),
+            _candidate_scan_hard_cap(search_budget),
         )
         search_summary["budget"] = search_budget
         phase_budget_contract = _strict_safe_phase_budget_contract(hard_llm_cap, search_source_text, original_report_dict)
@@ -20407,7 +20461,7 @@ def run_rewrite_pipeline(
             if scan_reserve > 0:
                 previous_max = int(search_budget.get("max_candidate_scans") or 0)
                 current_scans = len(search_summary.get("candidates", []))
-                search_budget["max_candidate_scans"] = max(previous_max + scan_reserve, current_scans + scan_reserve)
+                _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve)
 
             try:
                 llm_reserve = max(0, int(_float_env("DRAFTPROOF_POST_TOPK_LLM_RESERVE", 2.0)))
@@ -20422,7 +20476,7 @@ def run_rewrite_pipeline(
                     ),
                 )
 
-            max_scans = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_MAX_CANDIDATE_SCANS", 12.0)))
+            max_scans = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_MAX_CANDIDATE_SCANS", 6.0)))
             driver_map = _authorship_transformation_texture_driver_map(best_text, best_report)
             summary = {
                 "enabled": True,
@@ -20935,10 +20989,7 @@ def run_rewrite_pipeline(
                         if scan_reserve_added > 0:
                             previous_max = int(search_budget.get("max_candidate_scans") or 0)
                             current_scans = len(search_summary.get("candidates", []))
-                            search_budget["max_candidate_scans"] = max(
-                                previous_max + scan_reserve_added,
-                                current_scans + scan_reserve_added,
-                            )
+                            _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve_added)
                             search_summary["post_safe_target_push_scan_reserve"] = {
                                 "enabled": True,
                                 "trigger_phase": trigger_phase,
@@ -21552,10 +21603,7 @@ def run_rewrite_pipeline(
             if scan_reserve > 0:
                 previous_max = int(search_budget.get("max_candidate_scans") or 0)
                 current_scans = len(search_summary.get("candidates", []))
-                search_budget["max_candidate_scans"] = max(
-                    previous_max + scan_reserve,
-                    current_scans + scan_reserve,
-                )
+                _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve)
                 adaptive_stop_reason = ""
                 summary["scan_reserve"] = {
                     "enabled": True,
@@ -21732,10 +21780,7 @@ def run_rewrite_pipeline(
             if reserve > 0:
                 previous_max = int(search_budget.get("max_candidate_scans") or 0)
                 current_scans = len(search_summary.get("candidates", []))
-                search_budget["max_candidate_scans"] = max(
-                    previous_max + reserve,
-                    current_scans + reserve,
-                )
+                _extend_candidate_scan_budget(search_budget, current_scans, reserve)
             if str(adaptive_stop_reason or "").startswith("budget_exhausted"):
                 adaptive_stop_reason = ""
             summary = {
@@ -22028,10 +22073,7 @@ def run_rewrite_pipeline(
                     if reserve > 0 and not safe_band_summary.get("scan_reserve_added"):
                         previous_max = int(search_budget.get("max_candidate_scans") or 0)
                         current_scans = len(search_summary.get("candidates", []))
-                        search_budget["max_candidate_scans"] = max(
-                            previous_max + reserve,
-                            current_scans + reserve,
-                        )
+                        _extend_candidate_scan_budget(search_budget, current_scans, reserve)
                         safe_band_summary["scan_reserve_added"] = {
                             "reserve_added": reserve,
                             "previous_max_candidate_scans": previous_max,
@@ -24015,10 +24057,7 @@ def run_rewrite_pipeline(
                         if cleanup_reserve > 0:
                             previous_max = int(search_budget.get("max_candidate_scans") or 0)
                             current_scans = len(search_summary.get("candidates", []))
-                            search_budget["max_candidate_scans"] = max(
-                                previous_max + cleanup_reserve,
-                                current_scans + cleanup_reserve,
-                            )
+                            _extend_candidate_scan_budget(search_budget, current_scans, cleanup_reserve)
                             if str(adaptive_stop_reason or "") == "budget_exhausted_candidate_scans":
                                 adaptive_stop_reason = ""
                             search_summary["final_cleanup_scan_reserve"] = {
