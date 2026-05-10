@@ -5319,6 +5319,401 @@ def _formula_gap_candidate_rank(contract: dict | None, gate: dict | None = None)
     )
 
 
+def _formula_feasibility_estimator(
+    report_dict: dict | None,
+    *,
+    observed_candidates: list[dict] | tuple[dict, ...] | None = None,
+) -> dict:
+    """Estimate whether formula convergence needs geometry-first intervention."""
+    profile = _turnitin_like_ai_profile(report_dict)
+    components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
+    weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
+    score = float(profile.get("score") or 0.0)
+    target = float(profile.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
+    positive_burden = float(profile.get("raw_positive_score") or 0.0)
+    suppression = float(profile.get("human_anchor_suppression") or 0.0)
+    suppression_headroom = max(0.0, 45.0 - suppression)
+
+    observed = _formula_observed_driver_movement(observed_candidates)
+    dominant = [
+        str(row.get("driver"))
+        for row in (profile.get("top_positive_drivers") or [])[:4]
+        if isinstance(row, dict) and row.get("driver")
+    ]
+    primary_weighted = (
+        float(weighted.get("ai_likelihood") or 0.0)
+        + float(weighted.get("topk_calibrated_risk") or 0.0)
+    )
+    secondary_weighted = sum(
+        float(weighted.get(driver) or 0.0)
+        for driver in (
+            "semantic_uniformity",
+            "rewrite_smoothness",
+            "patchwork_expansion",
+            "signal_agreement",
+        )
+    )
+
+    # Safe floor assumes local statistical edits and bounded anchor gains. The
+    # aggressive floor assumes coordinated geometry edits and low-value removal.
+    safe_driver_headroom = (
+        min(float(weighted.get("ai_likelihood") or 0.0), 8.0)
+        + min(float(weighted.get("topk_calibrated_risk") or 0.0), 5.0)
+        + min(secondary_weighted, 5.0)
+        + min(suppression_headroom, 4.0)
+    )
+    aggressive_driver_headroom = (
+        min(float(weighted.get("ai_likelihood") or 0.0), 14.0)
+        + min(float(weighted.get("topk_calibrated_risk") or 0.0), 8.0)
+        + min(secondary_weighted, 9.0)
+        + min(suppression_headroom, 7.0)
+    )
+    best_observed_drop = max(
+        [
+            float((row or {}).get("score_drop") or 0.0)
+            for row in (observed_candidates or [])
+            if isinstance(row, dict)
+        ]
+        or [0.0]
+    )
+    if best_observed_drop > 0.0:
+        safe_driver_headroom = max(safe_driver_headroom, min(best_observed_drop + 4.0, 18.0))
+        aggressive_driver_headroom = max(aggressive_driver_headroom, min(best_observed_drop + 8.0, 28.0))
+
+    safe_floor = max(0.0, score - safe_driver_headroom)
+    aggressive_floor = max(0.0, score - aggressive_driver_headroom)
+    geometry_required = safe_floor >= target and primary_weighted >= max(8.0, positive_burden * 0.45)
+    return {
+        "version": "formula_feasibility_estimator_v1",
+        "score": round(score, 3),
+        "target_score": round(target, 3),
+        "target_gap": round(max(0.0, score - target), 3),
+        "positive_ai_burden": round(positive_burden, 3),
+        "human_anchor_suppression": round(suppression, 3),
+        "suppression_headroom": round(suppression_headroom, 3),
+        "primary_driver_weighted_burden": round(primary_weighted, 3),
+        "secondary_driver_weighted_burden": round(secondary_weighted, 3),
+        "estimated_safe_floor": round(safe_floor, 3),
+        "aggressive_floor": round(aggressive_floor, 3),
+        "dominant_drivers": dominant,
+        "mode": "geometry_mode" if geometry_required else "safe_portfolio_mode",
+        "geometry_required": bool(geometry_required),
+        "observed_driver_movement": observed,
+        "component_snapshot": {key: round(float(value or 0.0), 3) for key, value in components.items()},
+    }
+
+
+def _sentence_opening_route(sentence: str) -> str:
+    words = re.findall(r"\b[\w'-]+\b", str(sentence or "").strip())
+    if not words:
+        return ""
+    if len(words) >= 2 and words[0].lower() in {"the", "this", "these", "that", "it"}:
+        return " ".join(words[:2]).lower()
+    return words[0].lower()
+
+
+def _geometry_risk_map(
+    text: str,
+    report_dict: dict | None,
+    *,
+    limit: int | None = None,
+) -> dict:
+    """Rank sentence and paragraph geometry hotspots by weighted formula impact."""
+    sentences = _split_sentences(text)
+    sentence_limit = max(1, int(limit or _topk_optimizer_sentence_limit(text)))
+    profile = _turnitin_like_ai_profile(report_dict)
+    weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
+    topk_rows = {
+        int(row.get("sentence_index")): row
+        for row in (_topk_repair_map(text, report_dict, limit=max(sentence_limit, len(sentences) or 1)).get("targets") or [])
+        if isinstance(row, dict) and isinstance(row.get("sentence_index"), int)
+    }
+    lengths = [_text_word_count(sentence) for sentence in sentences]
+    median_length = statistics.median(lengths) if lengths else 0.0
+    openings = [_sentence_opening_route(sentence) for sentence in sentences]
+    opening_counts = {opening: openings.count(opening) for opening in set(openings) if opening}
+    connector_re = re.compile(
+        r"^(?:Furthermore|Moreover|Additionally|In conclusion|Overall|Therefore|However|"
+        r"At the same time|In addition|This|These|It is important|This shows|This means)\b",
+        re.I,
+    )
+    balance_re = re.compile(r"\b(?:because|which|that|while|although|therefore|so that|in order to)\b", re.I)
+    rows: list[dict] = []
+    primary_drag = (
+        float(weighted.get("ai_likelihood") or 0.0) * 0.55
+        + float(weighted.get("topk_calibrated_risk") or 0.0) * 0.35
+        + float(weighted.get("rewrite_smoothness") or 0.0) * 0.25
+        + float(weighted.get("semantic_uniformity") or 0.0) * 0.15
+    )
+    for index, sentence in enumerate(sentences):
+        words = _text_word_count(sentence)
+        opening = openings[index] if index < len(openings) else ""
+        topk = topk_rows.get(index, {})
+        top10 = float(topk.get("top10_ratio") or 0.0)
+        predictability = float(topk.get("predictability_risk") or 0.0)
+        connector_risk = 1.0 if connector_re.search(sentence.strip()) else 0.0
+        repeated_opening = max(0, opening_counts.get(opening, 0) - 1) / max(1, len(sentences) - 1)
+        prev_len = lengths[index - 1] if index > 0 else None
+        next_len = lengths[index + 1] if index + 1 < len(lengths) else None
+        neighbor_lengths = [item for item in (prev_len, next_len) if isinstance(item, int)]
+        cadence_uniformity = (
+            sum(1 for item in neighbor_lengths if abs(item - words) <= 3) / max(1, len(neighbor_lengths))
+            if neighbor_lengths else 0.0
+        )
+        clause_balance = min(1.0, (sentence.count(",") + len(balance_re.findall(sentence))) / 4.0)
+        length_uniformity = 1.0 - min(1.0, abs(words - median_length) / max(1.0, median_length)) if median_length else 0.0
+        geometry_score = (
+            top10 * 0.30
+            + predictability * 0.25
+            + connector_risk * 0.14
+            + repeated_opening * 0.12
+            + cadence_uniformity * 0.10
+            + clause_balance * 0.05
+            + length_uniformity * 0.04
+        )
+        weighted_drag = geometry_score * max(1.0, primary_drag)
+        protected = bool(
+            re.search(r"https?://|www\.|\b[A-Z]{2,}[A-Z0-9-]{2,}\b", sentence)
+            or _protected_number_set(sentence)
+        )
+        rows.append({
+            "sentence_index": index,
+            "sentence": sentence,
+            "word_count": words,
+            "opening_route": opening,
+            "weighted_geometry_drag": round(weighted_drag, 3),
+            "geometry_score": round(geometry_score, 3),
+            "protected": protected,
+            "drivers": {
+                "top10_density": round(top10, 4),
+                "predictability": round(predictability, 4),
+                "connector_risk": round(connector_risk, 3),
+                "repeated_opening": round(repeated_opening, 3),
+                "cadence_uniformity": round(cadence_uniformity, 3),
+                "clause_balance": round(clause_balance, 3),
+                "length_uniformity": round(length_uniformity, 3),
+            },
+        })
+    rows.sort(key=lambda row: float(row.get("weighted_geometry_drag") or 0.0), reverse=True)
+
+    paragraph_rows = []
+    for row in (_formula_block_driver_map(text, report_dict).get("blocks") or []):
+        if not isinstance(row, dict):
+            continue
+        paragraph_rows.append({
+            "block_index": row.get("block_index"),
+            "weighted_drag": row.get("weighted_drag"),
+            "recommended_portfolio_action": row.get("recommended_portfolio_action"),
+            "human_anchor_deficit": row.get("human_anchor_deficit"),
+            "protected": row.get("protected"),
+            "remove_value_loss_risk": row.get("remove_value_loss_risk"),
+            "preview": row.get("preview"),
+        })
+    paragraph_rows.sort(key=lambda row: float(row.get("weighted_drag") or 0.0), reverse=True)
+    return {
+        "version": "geometry_risk_map_v1",
+        "sentence_count": len(sentences),
+        "median_sentence_words": round(float(median_length or 0.0), 3),
+        "formula_score": profile.get("score"),
+        "dominant_weighted_drivers": [
+            row.get("driver")
+            for row in (profile.get("top_positive_drivers") or [])[:4]
+            if isinstance(row, dict)
+        ],
+        "sentence_hotspots": rows[:sentence_limit],
+        "paragraph_hotspots": paragraph_rows[:8],
+    }
+
+
+def _geometry_disrupt_sentence(sentence: str, row: dict | None = None) -> tuple[str, list[str]]:
+    """Apply one or two semantic-preserving syntax/route perturbations."""
+    original = str(sentence or "").strip()
+    candidate = original
+    operations: list[str] = []
+    if not candidate or re.search(r"https?://|www\.", candidate, re.I):
+        return original, []
+    if _protected_code_anchor_set(candidate):
+        return original, []
+
+    replacements = [
+        (r"^Furthermore,\s*", "", "connector_remove"),
+        (r"^Moreover,\s*", "", "connector_remove"),
+        (r"^Additionally,\s*", "", "connector_remove"),
+        (r"^In conclusion,\s*", "Taken together, ", "conclusion_route"),
+        (r"^Overall,\s*", "Taken together, ", "summary_route"),
+        (r"^At the same time,\s*", "Still, ", "connector_shorten"),
+        (r"^In addition to\s+", "Beyond ", "connector_shorten"),
+        (r"^However,\s*", "But ", "connector_plain"),
+        (r"^This highlights the importance of\s+", "The pressure sits around ", "template_opening_disrupt"),
+        (r"^This demonstrates that\s+", "That leaves a simpler point: ", "template_opening_disrupt"),
+        (r"^This means that\s+", "That means ", "this_route_plain"),
+        (r"^It is important to note that\s+", "", "meta_phrase_remove"),
+        (r"\bplays? (?:a|an) (?:important|significant|major|crucial) role in\b", "matters in", "formula_verb_reduce"),
+        (r"\bhas a significant impact on\b", "affects", "formula_verb_reduce"),
+        (r"\ba wide range of\b", "many", "generic_phrase_reduce"),
+        (r"\bvarious factors\b", "several factors", "generic_phrase_reduce"),
+    ]
+    for pattern, replacement, op in replacements:
+        updated = re.sub(pattern, replacement, candidate, count=1, flags=re.I).strip()
+        if updated != candidate:
+            candidate = updated
+            operations.append(op)
+            break
+
+    words = _text_word_count(candidate)
+    if words >= 18 and len(operations) < 2:
+        for splitter, op in (
+            (r"\s+because\s+", "because_route_split"),
+            (r"\s+but\s+", "contrast_route_split"),
+            (r"\s+which\s+", "which_route_split"),
+        ):
+            match = re.search(splitter, candidate, flags=re.I)
+            if not match:
+                continue
+            left = candidate[:match.start()].strip(" ,;")
+            right = candidate[match.end():].strip(" ,;")
+            if _text_word_count(left) >= 6 and _text_word_count(right) >= 5:
+                lead = "Because" if "because" in splitter else ("But" if "but" in splitter else "That")
+                candidate = f"{left}. {lead} {right[0].lower() + right[1:] if len(right) > 1 else right}"
+                operations.append(op)
+                break
+    if candidate == original and 10 <= words <= 30 and "," in candidate:
+        first, rest = candidate.split(",", 1)
+        if 3 <= _text_word_count(first) <= 9 and _text_word_count(rest) >= 6:
+            candidate = f"{rest.strip()} {first.strip().lower()}."
+            candidate = re.sub(r"\.\.$", ".", candidate)
+            operations.append("front_context_shift")
+    if candidate == original and words >= 20:
+        parts = candidate.split(" and ", 1)
+        if len(parts) == 2 and _text_word_count(parts[0]) >= 8 and _text_word_count(parts[1]) >= 6:
+            candidate = f"{parts[0].strip()}. {parts[1].strip().capitalize()}"
+            operations.append("and_route_split")
+    candidate = re.sub(r"\s{2,}", " ", candidate).strip()
+    return (candidate, operations) if candidate and candidate != original else (original, [])
+
+
+def _coordinated_micro_perturbation_candidates(
+    current_text: str,
+    current_report: dict | None,
+    geometry_map: dict | None = None,
+    *,
+    limit: int = 4,
+) -> list[tuple[str, str, dict]]:
+    """Generate coordinated sentence-level geometry candidates."""
+    if not _env_flag("DRAFTPROOF_COORDINATED_MICRO_PERTURBATION", True):
+        return []
+    geometry_map = geometry_map or _geometry_risk_map(current_text, current_report)
+    hotspots = [
+        row for row in (geometry_map.get("sentence_hotspots") or [])
+        if isinstance(row, dict) and not row.get("protected")
+    ]
+    if not hotspots:
+        return []
+    limit = max(1, int(limit or 1))
+    batches = [
+        ("light", 0.25),
+        ("medium", 0.45),
+        ("wide", 0.70),
+        ("full", 1.0),
+    ]
+    candidates: list[tuple[str, str, dict]] = []
+    seen = {str(current_text or "").strip()}
+    for label, fraction in batches:
+        if len(candidates) >= limit:
+            break
+        take = max(1, min(len(hotspots), math.ceil(len(hotspots) * fraction)))
+        replacements: dict[str, str] = {}
+        operations = []
+        for row in hotspots[:take]:
+            sentence = str(row.get("sentence") or "")
+            replacement, ops = _geometry_disrupt_sentence(sentence, row)
+            if not ops or replacement == sentence:
+                continue
+            replacements[sentence] = replacement
+            operations.append({
+                "sentence_index": row.get("sentence_index"),
+                "operations": ops,
+                "weighted_geometry_drag": row.get("weighted_geometry_drag"),
+                "drivers": row.get("drivers"),
+            })
+        candidate = _splice_sentences_by_text(current_text, replacements)
+        normalized = candidate.strip()
+        if operations and normalized and normalized not in seen:
+            seen.add(normalized)
+            candidates.append((
+                f"coordinated_micro_perturbation_{label}",
+                candidate,
+                {
+                    "coordinated_micro_perturbation": True,
+                    "geometry_mode": True,
+                    "operation": "coordinated_micro_perturbation",
+                    "targeted_drivers": [
+                        "ai_likelihood",
+                        "topk_calibrated_risk",
+                        "rewrite_smoothness",
+                        "semantic_uniformity",
+                    ],
+                    "geometry_risk_map": {
+                        "version": geometry_map.get("version"),
+                        "formula_score": geometry_map.get("formula_score"),
+                        "dominant_weighted_drivers": geometry_map.get("dominant_weighted_drivers"),
+                        "selected_sentence_count": take,
+                    },
+                    "applied_geometry_operations": operations,
+                },
+            ))
+    return candidates[:limit]
+
+
+def _anti_smoothing_guard_status(
+    current_report: dict | None,
+    candidate_report: dict | None,
+    *,
+    strict: bool = False,
+) -> dict:
+    """Block geometry candidates that win one signal by smoothing elsewhere."""
+    current = _turnitin_like_ai_profile(current_report)
+    candidate = _turnitin_like_ai_profile(candidate_report)
+    current_components = current.get("components") if isinstance(current.get("components"), dict) else {}
+    candidate_components = candidate.get("components") if isinstance(candidate.get("components"), dict) else {}
+    score_drop = float(current.get("score") or 0.0) - float(candidate.get("score") or 0.0)
+    tolerance = 0.001 if strict else 1.0
+    backfires = []
+    for driver in (
+        "ai_likelihood",
+        "topk_calibrated_risk",
+        "semantic_uniformity",
+        "rewrite_smoothness",
+        "patchwork_expansion",
+        "signal_agreement",
+    ):
+        before = float(current_components.get(driver) or 0.0)
+        after = float(candidate_components.get(driver) or 0.0)
+        delta = after - before
+        if delta > tolerance:
+            backfires.append({
+                "driver": driver,
+                "before": round(before, 3),
+                "after": round(after, 3),
+                "increase": round(delta, 3),
+            })
+    return {
+        "version": "anti_smoothing_guard_v1",
+        "accepted": bool(score_drop > 0.05 and not backfires),
+        "score_drop": round(score_drop, 3),
+        "strict": bool(strict),
+        "tolerance": tolerance,
+        "backfires": backfires,
+        "reason": (
+            "accepted"
+            if score_drop > 0.05 and not backfires
+            else "formula_score_not_improved"
+            if score_drop <= 0.05
+            else "component_backfire:" + ",".join(row["driver"] for row in backfires[:4])
+        ),
+    }
+
+
 def _ai_footprint_flatten(profile: dict | None) -> dict:
     merged = {}
     profile = profile or {}
@@ -14190,6 +14585,14 @@ def _formula_convergence_candidate_batch(
 ) -> list[tuple[str, str, dict]]:
     """Create one bounded portfolio batch from the current best state."""
     limit = max(1, int(limit or 1))
+    feasibility = _formula_feasibility_estimator(current_report)
+    geometry_map = _geometry_risk_map(current_text, current_report)
+    geometry_candidates = _coordinated_micro_perturbation_candidates(
+        current_text,
+        current_report,
+        geometry_map,
+        limit=max(2, min(4, limit)),
+    )
     topk_candidates = _topk_route_optimizer_candidates(current_text, current_report)
     blocker_candidates = _blocker_operation_candidates(current_text, current_report, limit=4)
     generic_candidates = _generic_assertion_compiler_candidates(current_text, current_report, limit=3)
@@ -14215,7 +14618,11 @@ def _formula_convergence_candidate_batch(
         limit=limit,
     )
     raw_candidates: list[tuple[str, str, dict]] = []
+    if feasibility.get("geometry_required"):
+        raw_candidates.extend(geometry_candidates)
     raw_candidates.extend(portfolio_candidates)
+    if not feasibility.get("geometry_required"):
+        raw_candidates.extend(geometry_candidates[:2])
     raw_candidates.extend(block_map_removal_candidates)
     raw_candidates.extend(topk_candidates[:2])
     raw_candidates.extend(blocker_candidates[:2])
@@ -14235,7 +14642,9 @@ def _formula_convergence_candidate_batch(
             {
                 **(meta or {}),
                 "formula_convergence_candidate": True,
+                "feasibility_estimator": feasibility,
                 "block_driver_map_version": (block_map or {}).get("version"),
+                "geometry_risk_map_version": geometry_map.get("version"),
                 "top_drag_blocks": [
                     {
                         "block_index": row.get("block_index"),
@@ -14404,6 +14813,7 @@ def _formula_convergence_candidate_public(row: dict | None) -> dict:
             "outcome_class": gate.get("outcome_class"),
             "component_drops": gate.get("component_drops"),
         },
+        "anti_smoothing_guard": row.get("anti_smoothing_guard"),
         "selection_status": {
             "selectable": status.get("selectable", row.get("selectable")),
             "reason": row.get("reason") or status.get("reason"),
@@ -14501,6 +14911,8 @@ def _formula_convergence_controller(
         block_map = _formula_block_driver_map(best_text, best_report)
         last_block_map = block_map
         anchor_frontier = _human_anchor_suppression_frontier(best_text, best_report, block_map)
+        feasibility = _formula_feasibility_estimator(best_report, observed_candidates=candidates)
+        geometry_map = _geometry_risk_map(best_text, best_report)
         remaining_scans = max(0, max_scans - scans_used)
         batch_limit = max(1, min(remaining_scans, int(math.ceil(max_scans / max(1, max_passes)))))
         if candidate_builder:
@@ -14555,6 +14967,15 @@ def _formula_convergence_controller(
             "block_driver_map": {
                 key: block_map.get(key)
                 for key in ("version", "block_count", "formula_score", "target_score", "remaining_gap", "dominant_formula_drivers", "top_blocks")
+            },
+            "feasibility_estimator": feasibility,
+            "geometry_risk_map": {
+                "version": geometry_map.get("version"),
+                "sentence_count": geometry_map.get("sentence_count"),
+                "median_sentence_words": geometry_map.get("median_sentence_words"),
+                "dominant_weighted_drivers": geometry_map.get("dominant_weighted_drivers"),
+                "top_sentence_hotspots": (geometry_map.get("sentence_hotspots") or [])[:6],
+                "top_paragraph_hotspots": (geometry_map.get("paragraph_hotspots") or [])[:4],
             },
             "human_anchor_suppression_frontier": anchor_frontier,
             "candidate_count": len(batch),
@@ -14659,6 +15080,16 @@ def _formula_convergence_controller(
             current_transformation = current_contribution.get("ai_transformation")
             candidate_transformation = candidate_contribution.get("ai_transformation")
             reject_reasons: list[str] = []
+            anti_smoothing = _anti_smoothing_guard_status(
+                best_report,
+                candidate_report,
+                strict=bool(candidate_eval.get("coordinated_micro_perturbation") or candidate_eval.get("geometry_mode")),
+            )
+            if (
+                candidate_eval.get("coordinated_micro_perturbation")
+                or candidate_eval.get("geometry_mode")
+            ) and not anti_smoothing.get("accepted"):
+                reject_reasons.append(str(anti_smoothing.get("reason") or "anti_smoothing_guard_failed"))
             if num(contract_vs_current.get("score_drop"), 0.0) <= 0.05:
                 reject_reasons.append("no_safe_formula_drop")
             if review_delta > 0:
@@ -14706,6 +15137,7 @@ def _formula_convergence_controller(
                 "unsupported_claim_risk_delta": round(unsupported_claim_delta, 3),
                 "formula_gap_contract": contract_vs_current,
                 "formula_gap_contract_vs_original": contract_vs_original,
+                "anti_smoothing_guard": anti_smoothing,
                 "turnitin_like_ai_gate": turnitin_gate,
                 "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
                 "selection_status": {
@@ -14839,6 +15271,11 @@ def _formula_convergence_controller(
         "original_snapshot": report_snapshot(original_report),
         "start_snapshot": report_snapshot(current_report),
         "final_snapshot": report_snapshot(best_report),
+        "feasibility_estimator": _formula_feasibility_estimator(
+            best_report,
+            observed_candidates=candidates,
+        ),
+        "geometry_risk_map": _geometry_risk_map(best_text, best_report),
         "block_driver_map": last_block_map,
         "human_anchor_suppression_frontier": _human_anchor_suppression_frontier(
             best_text,

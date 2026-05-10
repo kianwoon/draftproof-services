@@ -158,6 +158,10 @@ from rewrite_pipeline import (
     _human_anchor_amplifier_candidates,
     _human_anchor_suppression_frontier,
     _human_anchor_suppression_frontier_candidates,
+    _formula_feasibility_estimator,
+    _geometry_risk_map,
+    _coordinated_micro_perturbation_candidates,
+    _anti_smoothing_guard_status,
     _formula_portfolio_candidates,
     _formula_block_driver_map,
     _formula_convergence_controller,
@@ -7120,6 +7124,57 @@ assert_test(
     ),
     "human anchor suppression frontier exposes headroom and creates portfolio candidates",
 )
+geometry_text = (
+    "Furthermore, students can use AI tools because answers can look complete. "
+    "Teachers still guide the process."
+)
+geometry_report = json.loads(json.dumps(frontier_report))
+geometry_report["predictability"] = {
+    "all_sentences": [
+        {
+            "sentence_id": "s001",
+            "sentence_index": 0,
+            "sentence": "Furthermore, students can use AI tools because answers can look complete.",
+            "top10_ratio": 0.82,
+            "top50_ratio": 0.91,
+            "predictability_risk": 0.76,
+        },
+        {
+            "sentence_id": "s002",
+            "sentence_index": 1,
+            "sentence": "Teachers still guide the process.",
+            "top10_ratio": 0.42,
+            "top50_ratio": 0.62,
+            "predictability_risk": 0.38,
+        },
+    ]
+}
+feasibility = _formula_feasibility_estimator(geometry_report)
+geometry_map = _geometry_risk_map(geometry_text, geometry_report, limit=3)
+geometry_candidates = _coordinated_micro_perturbation_candidates(
+    geometry_text,
+    geometry_report,
+    geometry_map,
+    limit=3,
+)
+assert_test(
+    feasibility["mode"] in {"geometry_mode", "safe_portfolio_mode"}
+    and "ai_likelihood" in feasibility["dominant_drivers"]
+    and feasibility["estimated_safe_floor"] >= 0,
+    "formula feasibility estimator exposes safe/aggressive floor and dominant weighted drivers",
+)
+assert_test(
+    bool(geometry_map["sentence_hotspots"])
+    and geometry_map["sentence_hotspots"][0]["sentence_index"] == 0
+    and geometry_map["sentence_hotspots"][0]["drivers"]["connector_risk"] > 0,
+    "geometry risk map ranks predictable connector/cadence hotspots",
+)
+assert_test(
+    bool(geometry_candidates)
+    and all(meta.get("coordinated_micro_perturbation") for _strategy, _candidate, meta in geometry_candidates)
+    and any("Furthermore" not in candidate for _strategy, candidate, _meta in geometry_candidates),
+    "coordinated micro perturbation creates deterministic geometry candidates",
+)
 convergence_current_text = (
     "Schools can feel predictable. Students need judgement in class. "
     "Teachers still guide the process."
@@ -7191,6 +7246,14 @@ convergence_bad_report = make_footprint_report(
     expansion=70,
     section_style=70,
     signal_agreement=70,
+)
+anti_smoothing_ok = _anti_smoothing_guard_status(convergence_current_report, convergence_better_report, strict=True)
+anti_smoothing_bad = _anti_smoothing_guard_status(convergence_current_report, convergence_bad_report, strict=True)
+assert_test(
+    anti_smoothing_ok["accepted"]
+    and not anti_smoothing_bad["accepted"]
+    and anti_smoothing_bad["backfires"],
+    "anti-smoothing guard accepts full formula texture gains and rejects component backfire",
 )
 scan_reports = {
     convergence_bad_text: convergence_bad_report,
