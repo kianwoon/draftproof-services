@@ -3008,7 +3008,9 @@ def _post_topk_convergence_candidates(
         return []
     driver_map = _post_topk_driver_map(source_text, raw_json)
     source_words = _text_word_count(source_text)
-    min_words = max(30, int(source_words * _float_env("DRAFTPROOF_POST_TOPK_MIN_WORD_RATIO", 0.35)))
+    # Strict-safe convergence is allowed to shorten low-value generic material.
+    # Semantic drift/protected-anchor checks still gate the candidate after scan.
+    min_words = max(30, int(source_words * _float_env("DRAFTPROOF_POST_TOPK_MIN_WORD_RATIO", 0.20)))
     candidates: list[tuple[str, str, dict]] = []
     seen: set[str] = {str(source_text or "").strip()}
 
@@ -3103,6 +3105,51 @@ def _post_topk_convergence_candidates(
             },
         )
 
+    authorship_rows = [
+        row for row in driver_map.get("paragraphs") or []
+        if not row.get("has_protected_anchor")
+        and int(row.get("sentence_count") or 0) >= 2
+        and float(row.get("paragraph_driver_score") or 0.0) >= 8.0
+    ]
+    for row in authorship_rows[:3]:
+        if len(candidates) >= max(1, limit):
+            break
+        paragraph_index = int(row.get("paragraph_index", -1))
+        if paragraph_index < 0 or paragraph_index >= len(paragraphs):
+            continue
+        sentences = _split_sentences(paragraphs[paragraph_index])
+        sentence_rows = sorted(
+            [
+                sentence_row for sentence_row in row.get("sentences") or []
+                if not sentence_row.get("protected")
+            ],
+            key=lambda item: float(item.get("driver_score") or 0.0),
+            reverse=True,
+        )
+        if len(sentences) < 2 or not sentence_rows:
+            continue
+        remove_indexes = {
+            int(sentence_rows[0].get("sentence_index", 0))
+        }
+        kept = [
+            sentence for sentence_index, sentence in enumerate(sentences)
+            if sentence_index not in remove_indexes
+        ]
+        if not kept:
+            continue
+        next_paragraphs = list(paragraphs)
+        next_paragraphs[paragraph_index] = _narrow_generic_claim_text(" ".join(kept).strip())
+        add(
+            f"post_topk_authorship_suppression_candidate_p{paragraph_index + 1}",
+            next_paragraphs,
+            {
+                "operation": "authorship_suppression_candidate",
+                "paragraph_index": paragraph_index,
+                "removed_sentence_indexes": sorted(remove_indexes),
+                "paragraph_role": row.get("role"),
+            },
+        )
+
     high_drag_rows = [
         row for row in driver_map.get("paragraphs") or []
         if not row.get("has_protected_anchor")
@@ -3133,6 +3180,43 @@ def _post_topk_convergence_candidates(
                 },
             )
 
+    symmetry_rows = [
+        row for row in driver_map.get("paragraphs") or []
+        if not row.get("has_protected_anchor")
+        and int(row.get("sentence_count") or 0) >= 3
+        and (
+            float(row.get("generic_sentence_ratio") or 0.0) >= 0.34
+            or row.get("role") in {"generic_claim_heavy", "conclusion_template_risk"}
+        )
+    ]
+    for row in symmetry_rows[:2]:
+        if len(candidates) >= max(1, limit):
+            break
+        paragraph_index = int(row.get("paragraph_index", -1))
+        if paragraph_index < 0 or paragraph_index >= len(paragraphs):
+            continue
+        sentences = _split_sentences(paragraphs[paragraph_index])
+        if len(sentences) < 3:
+            continue
+        compressed_sentences = []
+        for sentence in sentences:
+            narrowed = _narrow_generic_claim_text(sentence)
+            if not _POST_TOPK_TEMPLATE_OPENING_RE.search(narrowed):
+                compressed_sentences.append(narrowed)
+        if len(sentences) >= 3:
+            compressed_sentences = [sentences[0], sentences[-1]]
+        next_paragraphs = list(paragraphs)
+        next_paragraphs[paragraph_index] = " ".join(s.strip() for s in compressed_sentences if s.strip())
+        add(
+            f"post_topk_transformation_reduction_candidate_p{paragraph_index + 1}",
+            next_paragraphs,
+            {
+                "operation": "transformation_reduction_candidate",
+                "paragraph_index": paragraph_index,
+                "paragraph_role": row.get("role"),
+            },
+        )
+
     low_value_rows = [
         row for row in driver_map.get("paragraphs") or []
         if row.get("low_value_generic_block")
@@ -3154,11 +3238,46 @@ def _post_topk_convergence_candidates(
             if index not in indexes
         ]
         add(
-            f"post_topk_last_resort_remove_{remove_count}",
+            f"post_topk_low_value_block_removal_candidate_{remove_count}",
             next_paragraphs,
             {
-                "operation": "last_resort_remove",
+                "operation": "low_value_block_removal_candidate",
                 "removed_paragraph_indexes": sorted(indexes),
+            },
+        )
+
+    if low_value_rows and removable_targets and len(candidates) < max(1, limit):
+        indexes = {
+            int(row.get("paragraph_index", -1))
+            for row in low_value_rows[:1]
+            if int(row.get("paragraph_index", -1)) >= 0
+        }
+        remove_pairs = {
+            (paragraph_index, sentence_index)
+            for _score, paragraph_index, sentence_index, _contextual, _sentence in removable_targets[:2]
+            if paragraph_index not in indexes
+        }
+        next_paragraphs = []
+        removed_sentences = []
+        for paragraph_index, paragraph in enumerate(paragraphs):
+            if paragraph_index in indexes:
+                continue
+            sentences = _split_sentences(paragraph)
+            kept = []
+            for sentence_index, sentence in enumerate(sentences):
+                if (paragraph_index, sentence_index) in remove_pairs and len(sentences) > 1:
+                    removed_sentences.append({"paragraph_index": paragraph_index, "sentence_index": sentence_index})
+                    continue
+                kept.append(sentence)
+            if kept:
+                next_paragraphs.append(_narrow_generic_claim_text(" ".join(kept).strip()))
+        add(
+            "post_topk_external_proxy_reduction_candidate",
+            next_paragraphs,
+            {
+                "operation": "external_proxy_reduction_candidate",
+                "removed_paragraph_indexes": sorted(indexes),
+                "removed_sentences": removed_sentences,
             },
         )
 
@@ -3195,6 +3314,16 @@ def _post_topk_convergence_candidates(
                 {"operation": "paragraph_merge_de_template", "merged_paragraph_indexes": merged_indexes},
             )
 
+    operation_priority = {
+        "external_proxy_reduction_candidate": 0,
+        "authorship_suppression_candidate": 1,
+        "transformation_reduction_candidate": 2,
+        "generic_assertion_collapse": 3,
+        "structure_de_template": 4,
+        "low_value_block_removal_candidate": 5,
+        "paragraph_merge_de_template": 6,
+    }
+    candidates.sort(key=lambda row: operation_priority.get(str((row[2] or {}).get("operation") or ""), 99))
     return candidates[:max(1, limit)]
 
 
@@ -4042,6 +4171,82 @@ def _strict_ai_safe_band_status(report_dict: dict | None) -> dict:
         "thresholds": thresholds,
         "remaining": remaining,
     }
+
+
+STRICT_SAFE_PHASE_BUDGET_CONTRACT = {
+    "total_llm_hard_cap": 10,
+    "topk_safe_band_rebuild": 4,
+    "post_topk_strict_safe_optimizer": 3,
+    "final_texture_proxy_repair": 2,
+    "emergency_diagnostic_reserve": 1,
+}
+
+
+def _strict_safe_phase_budget_contract(total_cap: int | None = None) -> dict:
+    """Fixed LLM budget split for strict-safe mitigation phases.
+
+    The split is intentionally not threshold-tuned by environment. Runtime may
+    lower the total cap, but no phase can borrow calls reserved for later phases.
+    """
+    cap = int(total_cap if isinstance(total_cap, int) else _ai_search_llm_hard_cap())
+    cap = max(0, min(cap, int(STRICT_SAFE_PHASE_BUDGET_CONTRACT["total_llm_hard_cap"])))
+    contract = dict(STRICT_SAFE_PHASE_BUDGET_CONTRACT)
+    contract["total_llm_hard_cap"] = cap
+    overflow = sum(
+        int(contract[key])
+        for key in contract
+        if key != "total_llm_hard_cap"
+    ) - cap
+    if overflow > 0:
+        for key in (
+            "emergency_diagnostic_reserve",
+            "final_texture_proxy_repair",
+            "post_topk_strict_safe_optimizer",
+            "topk_safe_band_rebuild",
+        ):
+            take = min(overflow, int(contract[key]))
+            contract[key] = int(contract[key]) - take
+            overflow -= take
+            if overflow <= 0:
+                break
+    return contract
+
+
+def _strict_safe_candidate_rank(
+    base_report: dict | None,
+    candidate_report: dict | None,
+    *,
+    review_burden_delta: int | float = 0,
+    weighted_severity_delta: int | float = 0,
+    critical_high_delta: int | float = 0,
+) -> tuple:
+    """Rank strict-safe candidates by the actual remaining blocker order."""
+    base_status = _strict_ai_safe_band_status(base_report)
+    after_status = _strict_ai_safe_band_status(candidate_report)
+    base = base_status.get("profile") or {}
+    after = after_status.get("profile") or {}
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    topk_safe = num(after.get("topk_calibrated_risk"), 100.0) < _safe_topk_calibrated_limit()
+    safety_clean = (
+        float(review_burden_delta or 0.0) <= 0.0
+        and float(weighted_severity_delta or 0.0) <= 0.0
+        and float(critical_high_delta or 0.0) <= 0.0
+    )
+    return (
+        1 if after_status.get("achieved") else 0,
+        round(num(base.get("external_ai_flag_risk")) - num(after.get("external_ai_flag_risk")), 3),
+        round(num(base.get("ai_authorship")) - num(after.get("ai_authorship")), 3),
+        round(num(base.get("ai_transformation")) - num(after.get("ai_transformation")), 3),
+        1 if topk_safe else 0,
+        1 if safety_clean else 0,
+        round(-max(0.0, float(review_burden_delta or 0.0)), 3),
+        round(-max(0.0, float(weighted_severity_delta or 0.0)), 3),
+        round(-max(0.0, float(critical_high_delta or 0.0)), 3),
+        round(-num(after.get("topk_calibrated_risk"), 100.0), 3),
+    )
 
 
 def _topk_rebuild_fallback_rank(report_dict: dict | None) -> tuple:
@@ -9116,6 +9321,32 @@ def _ai_search_protected_loss_reason(original: str, candidate: str, protected) -
             continue
         if span.reason == "direct_quote":
             quote_norm = _normalize_direct_quote_content(span_text)
+            quote_words = [
+                word.lower()
+                for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", quote_norm)
+                if word.lower() not in {"the", "a", "an", "is", "are", "was", "were", "did", "do", "does"}
+            ]
+            quote_first = (quote_words[0] if quote_words else "").lower()
+            short_question_prompt = bool(
+                len(quote_words) <= 10
+                and not _protected_number_set(span_text)
+                and (
+                    "?" in span_text
+                    or quote_first in {"what", "how", "why", "when", "where", "who", "which", "can", "could", "should", "would"}
+                    or _normalize_direct_quote_content(span_text).lower().startswith("did ")
+                )
+            )
+            if short_question_prompt:
+                continue
+            if (
+                quote_norm
+                and quote_norm not in candidate_norm
+                and "?" in span_text
+                and len(quote_words) <= 10
+                and quote_words
+                and sum(1 for word in quote_words if word in candidate_norm) / max(len(quote_words), 1) >= 0.60
+            ):
+                continue
             if quote_norm and quote_norm not in candidate_norm:
                 return f"quote_lost:{quote_norm[:40]}"
             continue
@@ -13894,6 +14125,44 @@ def run_rewrite_pipeline(
             _ai_search_llm_hard_cap(),
         )
         search_summary["budget"] = search_budget
+        phase_budget_contract = _strict_safe_phase_budget_contract(_ai_search_llm_hard_cap())
+        phase_budget_used = {
+            key: 0
+            for key in phase_budget_contract
+            if key != "total_llm_hard_cap"
+        }
+        search_summary["phase_budget_contract"] = phase_budget_contract
+        search_summary["phase_budget_used"] = phase_budget_used
+
+        def _phase_budget_can_spend(phase: str, calls: int = 1) -> bool:
+            if phase not in phase_budget_used:
+                return True
+            return (
+                int(phase_budget_used.get(phase) or 0) + int(calls)
+                <= int(phase_budget_contract.get(phase) or 0)
+                and int(search_summary.get("llm_calls") or 0) + int(calls)
+                <= int(phase_budget_contract.get("total_llm_hard_cap") or 0)
+            )
+
+        def _record_phase_llm_call(phase: str, calls: int = 1) -> None:
+            if phase not in phase_budget_used:
+                return
+            phase_budget_used[phase] = int(phase_budget_used.get(phase) or 0) + int(calls)
+            search_summary["phase_budget_used"] = dict(phase_budget_used)
+
+        def _phase_budget_block_record(phase: str, summary: dict, *, calls: int = 1) -> bool:
+            if _phase_budget_can_spend(phase, calls):
+                return False
+            summary.update({
+                "skipped": True,
+                "reason": "phase_llm_budget_exhausted",
+                "phase": phase,
+                "requested_calls": calls,
+                "phase_budget_contract": phase_budget_contract,
+                "phase_budget_used": dict(phase_budget_used),
+                "total_llm_calls": int(search_summary.get("llm_calls") or 0),
+            })
+            return True
 
         def _best_ai_search_selectable() -> bool:
             return bool(best_strategy and best_selection_status.get("selectable"))
@@ -14078,7 +14347,23 @@ def run_rewrite_pipeline(
                     candidate_eval["reason"] = anchor_echo_rejection
                     search_summary["candidates"].append(candidate_eval)
                     return
-            effective_min_chars = 200 if topk_safe_band_rebuild else min_chars
+            strict_safe_shortening = bool(
+                extra
+                and (
+                    extra.get("post_topk_optimizer")
+                    or extra.get("strict_safe_candidate")
+                    or extra.get("final_topk_texture_repair")
+                )
+            )
+            effective_min_chars = (
+                200
+                if topk_safe_band_rebuild
+                else (
+                    max(200, int(len(search_source_text) * 0.25))
+                    if strict_safe_shortening
+                    else min_chars
+                )
+            )
             if len(candidate) < effective_min_chars:
                 candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{effective_min_chars}"
                 search_summary["candidates"].append(candidate_eval)
@@ -14940,7 +15225,7 @@ def run_rewrite_pipeline(
                 seen.add(normalized)
                 candidates.append((strategy, normalized, meta or {}))
 
-            convergence_candidates = _post_topk_convergence_candidates(best_text, best_report, limit=8)
+            convergence_candidates = _post_topk_convergence_candidates(best_text, best_report, limit=12)
             summary["convergence_candidate_count"] = len(convergence_candidates)
             for strategy, candidate_text, meta in convergence_candidates:
                 add_candidate(strategy, candidate_text, {**meta, "post_topk_optimizer": True})
@@ -14956,36 +15241,40 @@ def run_rewrite_pipeline(
                 and int(search_summary.get("llm_calls") or 0) < int(search_budget.get("max_llm_calls") or 0)
             ):
                 try:
-                    search_summary["llm_calls"] += 1
-                    response = gateway.chat(
-                        _post_topk_ai_safe_band_patch_prompt(best_text, best_report),
-                        system=(
-                            "You are DraftProof's post-Top-k strict safe-band optimizer. "
-                            "Return only valid JSON paragraph patches."
-                        ),
-                        **_phase_chat_sampling_kwargs(
-                            "DRAFTPROOF_POST_TOPK",
-                            temperature_env="DRAFTPROOF_POST_TOPK_TEMPERATURE",
-                            temperature_default=0.35,
-                            max_tokens_env="DRAFTPROOF_POST_TOPK_MAX_TOKENS",
-                            max_tokens_default=2200,
-                        ),
-                    )
-                    patch_candidates = _extract_post_topk_patch_candidates(response.content, max_candidates=2)
-                    summary["llm_patch_candidate_count"] = len(patch_candidates)
-                    for index, patch_candidate in enumerate(patch_candidates, start=1):
-                        patched_text, applied = _apply_post_topk_patches(best_text, patch_candidate.get("patches") or [])
-                        if applied and patched_text.strip() != best_text.strip():
-                            add_candidate(
-                                f"post_topk_llm_patch_c{index}",
-                                patched_text,
-                                {
-                                    "post_topk_optimizer": True,
-                                    "llm_patch": True,
-                                    "llm_reason": patch_candidate.get("reason"),
-                                    "applied_post_topk_patches": applied,
-                                },
-                            )
+                    if _phase_budget_block_record("post_topk_strict_safe_optimizer", summary):
+                        summary["llm_patch_candidate_count"] = 0
+                    else:
+                        search_summary["llm_calls"] += 1
+                        _record_phase_llm_call("post_topk_strict_safe_optimizer")
+                        response = gateway.chat(
+                            _post_topk_ai_safe_band_patch_prompt(best_text, best_report),
+                            system=(
+                                "You are DraftProof's post-Top-k strict safe-band optimizer. "
+                                "Return only valid JSON paragraph patches."
+                            ),
+                            **_phase_chat_sampling_kwargs(
+                                "DRAFTPROOF_POST_TOPK",
+                                temperature_env="DRAFTPROOF_POST_TOPK_TEMPERATURE",
+                                temperature_default=0.35,
+                                max_tokens_env="DRAFTPROOF_POST_TOPK_MAX_TOKENS",
+                                max_tokens_default=2200,
+                            ),
+                        )
+                        patch_candidates = _extract_post_topk_patch_candidates(response.content, max_candidates=2)
+                        summary["llm_patch_candidate_count"] = len(patch_candidates)
+                        for index, patch_candidate in enumerate(patch_candidates, start=1):
+                            patched_text, applied = _apply_post_topk_patches(best_text, patch_candidate.get("patches") or [])
+                            if applied and patched_text.strip() != best_text.strip():
+                                add_candidate(
+                                    f"post_topk_llm_patch_c{index}",
+                                    patched_text,
+                                    {
+                                        "post_topk_optimizer": True,
+                                        "llm_patch": True,
+                                        "llm_reason": patch_candidate.get("reason"),
+                                        "applied_post_topk_patches": applied,
+                                    },
+                                )
                 except Exception as exc:
                     summary["llm_error"] = str(exc)
 
@@ -15101,17 +15390,15 @@ def run_rewrite_pipeline(
                 }
                 summary["scanned"] += 1
                 search_summary["candidates"].append(candidate_eval)
-                rank = (
-                    1 if after_strict.get("achieved") else 0,
-                    num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")),
-                    num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")),
-                    num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")),
-                    num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")),
-                    base_review_burden - _review_burden(candidate_report),
-                    base_severity - _weighted_severity(candidate_report),
-                    -num(_badge_ai(candidate_report), 999.0),
+                rank = _strict_safe_candidate_rank(
+                    best_report,
+                    candidate_report,
+                    review_burden_delta=_review_burden(candidate_report) - base_review_burden,
+                    weighted_severity_delta=_weighted_severity(candidate_report) - base_severity,
+                    critical_high_delta=_critical_high_count(candidate_report) - base_critical_high,
                 )
                 diagnostic_rank = (
+                    1 if num(after_profile.get("topk_calibrated_risk"), 100.0) < _safe_topk_calibrated_limit() else 0,
                     num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")),
                     num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")),
                     num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")),
@@ -15935,6 +16222,8 @@ def run_rewrite_pipeline(
                         "hard_llm_cap": hard_llm_cap,
                     })
                     return
+                if _phase_budget_block_record("final_texture_proxy_repair", summary):
+                    return
                 next_llm_call_exceeds_budget = _llm_call_budget_exhausted_before_send(
                     current_llm_calls + 1,
                     int(search_budget.get("max_llm_calls") or 0),
@@ -15957,6 +16246,7 @@ def run_rewrite_pipeline(
                     candidate_count=candidate_limit,
                 )
                 search_summary["llm_calls"] += 1
+                _record_phase_llm_call("final_texture_proxy_repair")
                 topk_gateway = gateway
                 if use_budget_override_gateway:
                     topk_gateway = LLMGateway(LLMConfig(
@@ -16400,7 +16690,10 @@ def run_rewrite_pipeline(
                         safe_band_summary["reason"] = "topk_safe_band_already_reached"
                     elif not _search_budget_exhausted("topk_safe_band_rebuild"):
                         try:
+                            if _phase_budget_block_record("topk_safe_band_rebuild", safe_band_summary):
+                                raise RuntimeError("phase_llm_budget_exhausted")
                             search_summary["llm_calls"] += 1
+                            _record_phase_llm_call("topk_safe_band_rebuild")
                             snapshot_response = gateway.chat(
                                 _topk_safe_band_snapshot_prompt(route_base_text, route_base_report),
                                 system=(
@@ -16484,7 +16777,16 @@ def run_rewrite_pipeline(
                                             })
                                             break
                                         safe_rounds_used += 1
+                                    if _phase_budget_block_record("topk_safe_band_rebuild", safe_band_summary):
+                                        patch_rounds.append({
+                                            "round": patch_round,
+                                            "skipped": True,
+                                            "reason": "phase_llm_budget_exhausted",
+                                            "phase_budget_used": dict(phase_budget_used),
+                                        })
+                                        break
                                     search_summary["llm_calls"] += 1
+                                    _record_phase_llm_call("topk_safe_band_rebuild")
                                     patch_response = gateway.chat(
                                         _topk_safe_band_sentence_patch_prompt(candidate_to_eval, candidate_patch_report),
                                         system=(
@@ -19284,6 +19586,60 @@ def run_rewrite_pipeline(
     final_strict_safe_band = _strict_ai_safe_band_status(rewritten_report_dict)
     result.summary["strict_ai_safe_band_achieved"] = bool(final_strict_safe_band.get("achieved"))
     result.summary["remaining_strict_safe_band_drivers"] = final_strict_safe_band.get("remaining") or []
+    ai_search_summary = result.summary.get("ai_mitigation_search") or {}
+    if isinstance(ai_search_summary, dict):
+        if isinstance(ai_search_summary.get("phase_budget_contract"), dict):
+            result.summary["phase_budget_contract"] = ai_search_summary.get("phase_budget_contract")
+        if isinstance(ai_search_summary.get("phase_budget_used"), dict):
+            result.summary["phase_budget_used"] = ai_search_summary.get("phase_budget_used")
+        frontier_rows = []
+        for row in ai_search_summary.get("candidates") or []:
+            if not isinstance(row, dict):
+                continue
+            strict_row = row.get("strict_ai_safe_band")
+            if not isinstance(strict_row, dict):
+                strict_row = ((row.get("ai_footprint_gate") or {}).get("strict_ai_safe_band") or {})
+            profile = strict_row.get("profile") if isinstance(strict_row, dict) else {}
+            if not isinstance(profile, dict):
+                continue
+            frontier_rows.append({
+                "strategy": row.get("strategy"),
+                "selectable": bool((row.get("selection_status") or {}).get("selectable")),
+                "reason": row.get("reason") or (row.get("selection_status") or {}).get("reason"),
+                "strict_ai_safe_band_achieved": bool(strict_row.get("achieved")),
+                "ai_authorship": profile.get("ai_authorship"),
+                "ai_transformation": profile.get("ai_transformation"),
+                "external_ai_flag_risk": profile.get("external_ai_flag_risk"),
+                "topk_calibrated_risk": profile.get("topk_calibrated_risk"),
+                "remaining": strict_row.get("remaining") or [],
+            })
+        frontier_rows.sort(
+            key=lambda item: (
+                1 if item.get("strict_ai_safe_band_achieved") else 0,
+                -float(item.get("external_ai_flag_risk") if isinstance(item.get("external_ai_flag_risk"), (int, float)) else 999.0),
+                -float(item.get("ai_authorship") if isinstance(item.get("ai_authorship"), (int, float)) else 999.0),
+                -float(item.get("ai_transformation") if isinstance(item.get("ai_transformation"), (int, float)) else 999.0),
+                -float(item.get("topk_calibrated_risk") if isinstance(item.get("topk_calibrated_risk"), (int, float)) else 999.0),
+            ),
+            reverse=True,
+        )
+        result.summary["best_candidate_frontier"] = frontier_rows[:8]
+    result.summary["selected_candidate_rank"] = list(_strict_safe_candidate_rank(
+        original_report_dict,
+        rewritten_report_dict,
+        review_burden_delta=_review_burden(rewritten_report_dict) - original_review_burden,
+        weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
+        critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
+    ))
+    result.summary["why_not_strict_safe"] = (
+        "strict safe band achieved"
+        if final_strict_safe_band.get("achieved")
+        else "Remaining blockers: " + ", ".join(
+            f"{row.get('driver')} {row.get('value')} > {row.get('safe_band')}"
+            for row in (final_strict_safe_band.get("remaining") or [])
+            if isinstance(row, dict)
+        )
+    )
     post_topk_summary = (result.summary.get("ai_mitigation_search") or {}).get("post_topk_optimizer")
     if isinstance(post_topk_summary, dict):
         result.summary["post_topk_optimizer"] = post_topk_summary
