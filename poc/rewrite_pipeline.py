@@ -2894,6 +2894,10 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "- colon-heavy fragments and dramatic list rhythm\n"
         "- new statistics or citations\n"
         "- changing the document topic\n\n"
+        "Patch coverage:\n"
+        "- each candidate must include one patch for every listed sentence unless a sentence cannot be found exactly\n"
+        "- do not return a one-sentence patch when many high-risk sentences are listed\n"
+        "- candidate 1 should use direct plain contrast; candidate 2 should use plain sentence splitting and clause movement\n\n"
         "Examples:\n"
         "Original: The United States has a strong cultural influence.\n"
         "Replacement: American culture is visible outside the country. Film, music, sport, and social media are the main routes.\n"
@@ -2903,7 +2907,7 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "Replacement: Freedom, democracy, and individual rights were central ideas. In practice, Americans have argued over those ideas from the beginning.\n\n"
         "Return valid JSON only:\n"
         '{"candidates":[{"patches":[{"original_sentence":"...","replacement_sentence":"..."}]}]}\n'
-        "Return 2 candidates with different sentence routes. Do not repeat the same openings across replacements.\n\n"
+        "Return 2 candidates with different sentence routes. Each candidate should patch all listed sentences. Do not repeat the same openings across replacements.\n\n"
         f"SENTENCES:\n{json.dumps(rows, ensure_ascii=False)[:12000]}"
     )
 
@@ -4572,7 +4576,28 @@ def _ai_footprint_flatten(profile: dict | None) -> dict:
 
 
 def _strict_ai_safe_band_status(report_dict: dict | None) -> dict:
-    flat = _ai_footprint_flatten(_ai_footprint_profile(report_dict))
+    return _strict_ai_safe_band_status_from_profile(_ai_footprint_profile(report_dict))
+
+
+def _strict_ai_safe_band_status_from_profile(profile: dict | None) -> dict:
+    if not isinstance(profile, dict) or not profile:
+        thresholds = {
+            "topk_calibrated_risk": _safe_topk_calibrated_limit(),
+            "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
+            "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
+            "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
+        }
+        return {
+            "achieved": False,
+            "profile": {},
+            "thresholds": thresholds,
+            "remaining": [
+                {"driver": key, "value": None, "safe_band": round(float(limit), 3)}
+                for key, limit in thresholds.items()
+            ],
+            "unscored": True,
+        }
+    flat = _ai_footprint_flatten(profile if isinstance(profile, dict) else {})
     thresholds = {
         "topk_calibrated_risk": _safe_topk_calibrated_limit(),
         "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
@@ -4586,14 +4611,55 @@ def _strict_ai_safe_band_status(report_dict: dict | None) -> dict:
             "safe_band": round(float(limit), 3),
         }
         for key, limit in thresholds.items()
-        if float(flat.get(key, 0.0)) > float(limit)
+        if isinstance(flat.get(key), (int, float)) and float(flat.get(key, 0.0)) > float(limit)
+    ]
+    missing = [
+        {
+            "driver": key,
+            "value": None,
+            "safe_band": round(float(limit), 3),
+            "missing": True,
+        }
+        for key, limit in thresholds.items()
+        if not isinstance(flat.get(key), (int, float))
     ]
     return {
-        "achieved": not remaining,
+        "achieved": not remaining and not missing,
         "profile": flat,
         "thresholds": thresholds,
-        "remaining": remaining,
+        "remaining": remaining + missing,
+        "unscored": bool(missing),
     }
+
+
+def _strict_ai_safe_band_status_from_footprint_gate(gate: dict | None) -> dict:
+    """Recover strict safe-band status from a scanned candidate footprint gate."""
+    if not isinstance(gate, dict):
+        return _strict_ai_safe_band_status_from_profile({})
+    after = gate.get("after") if isinstance(gate.get("after"), dict) else {}
+    authorship = (
+        after.get("authorship_footprint")
+        if isinstance(after.get("authorship_footprint"), dict) else {}
+    )
+    structural = (
+        after.get("structural_footprint")
+        if isinstance(after.get("structural_footprint"), dict) else {}
+    )
+    semantic = (
+        after.get("semantic_footprint")
+        if isinstance(after.get("semantic_footprint"), dict) else {}
+    )
+    grounding = (
+        after.get("grounding_footprint")
+        if isinstance(after.get("grounding_footprint"), dict) else {}
+    )
+    return _strict_ai_safe_band_status_from_profile({
+        "authorship_footprint": authorship,
+        "structural_footprint": structural,
+        "semantic_footprint": semantic,
+        "grounding_footprint": grounding,
+        "external_ai_flag_risk": after.get("external_ai_flag_risk"),
+    })
 
 
 STRICT_SAFE_PHASE_BUDGET_CONTRACT = {
@@ -15273,8 +15339,17 @@ def run_rewrite_pipeline(
                 candidate_eval["reason"] = f"candidate_too_short {len(candidate)}<{effective_min_chars}"
                 search_summary["candidates"].append(candidate_eval)
                 return
-            if len(candidate) > max_chars:
-                candidate_eval["reason"] = f"candidate_too_long {len(candidate)}>{max_chars}"
+            effective_max_chars = (
+                max(max_chars, int(len(search_source_text) * _float_env(
+                    "DRAFTPROOF_TOPK_SAFE_BAND_MAX_CHAR_RATIO",
+                    1.75,
+                )))
+                if topk_safe_band_rebuild or strict_safe_shortening
+                else max_chars
+            )
+            if len(candidate) > effective_max_chars:
+                candidate_eval["reason"] = f"candidate_too_long {len(candidate)}>{effective_max_chars}"
+                candidate_eval["effective_max_chars"] = effective_max_chars
                 search_summary["candidates"].append(candidate_eval)
                 return
             protected_loss = _ai_search_protected_loss_reason(search_source_text, candidate, source_protected)
@@ -20741,6 +20816,49 @@ def run_rewrite_pipeline(
         weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
         critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
     )
+    selected_search_status = (
+        ((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
+        if isinstance(result.summary.get("ai_mitigation_search"), dict)
+        else {}
+    )
+    selected_topk_blocker_progress = bool(
+        selected_search_status.get("topk_blocker_progress")
+        or selected_search_status.get("reason") == "accepted_topk_blocker_progress"
+    )
+    if (
+        rewritten_text != text
+        and isinstance(final_topk_for_acceptance, (int, float))
+        and float(final_topk_for_acceptance) >= topk_acceptance_limit
+        and not topk_near_miss_keep_decision.get("allowed")
+        and selected_topk_blocker_progress
+        and float(_review_burden(rewritten_report_dict) - original_review_burden) <= 0.0
+        and float(_weighted_severity(rewritten_report_dict) - original_severity) <= 0.0
+        and float(_critical_high_count(rewritten_report_dict) - saved_critical_high) <= 0.0
+    ):
+        topk_near_miss_keep_decision = {
+            "allowed": True,
+            "reason": "selector_accepted_topk_blocker_progress",
+            "topk_over_limit": (
+                round(float(topk_over_limit), 3)
+                if isinstance(topk_over_limit, (int, float)) else None
+            ),
+            "topk_drop": (
+                round(float(final_topk_drop_for_acceptance), 3)
+                if isinstance(final_topk_drop_for_acceptance, (int, float)) else None
+            ),
+            "ai_drop": (
+                round(float(final_ai_drop_for_acceptance), 3)
+                if isinstance(final_ai_drop_for_acceptance, (int, float)) else None
+            ),
+            "ai_authorship_drop": (
+                round(float(final_authorship_drop_for_acceptance), 3)
+                if isinstance(final_authorship_drop_for_acceptance, (int, float)) else None
+            ),
+            "ai_transformation_drop": (
+                round(float(final_transformation_drop_for_acceptance), 3)
+                if isinstance(final_transformation_drop_for_acceptance, (int, float)) else None
+            ),
+        }
     if (
         rewritten_text != text
         and isinstance(final_topk_for_acceptance, (int, float))
@@ -20879,8 +20997,13 @@ def run_rewrite_pipeline(
             strict_row = row.get("strict_ai_safe_band")
             if not isinstance(strict_row, dict):
                 strict_row = ((row.get("ai_footprint_gate") or {}).get("strict_ai_safe_band") or {})
+            if not isinstance(strict_row, dict) or not isinstance(strict_row.get("profile"), dict):
+                strict_row = _strict_ai_safe_band_status_from_footprint_gate(
+                    row.get("ai_footprint_gate")
+                    or ((row.get("selection_status") or {}).get("ai_footprint_gate"))
+                )
             profile = strict_row.get("profile") if isinstance(strict_row, dict) else {}
-            if not isinstance(profile, dict):
+            if not isinstance(profile, dict) or not profile:
                 continue
             frontier_rows.append({
                 "strategy": row.get("strategy"),

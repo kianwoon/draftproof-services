@@ -72,6 +72,7 @@ from rewrite_pipeline import (
     _ai_footprint_profile,
     _ai_footprint_gate_status,
     _strict_ai_safe_band_status,
+    _strict_ai_safe_band_status_from_footprint_gate,
     _topk_rebuild_fallback_rank,
     _topk_near_miss_partial_keep_decision,
     _selection_status_topk_safe,
@@ -178,6 +179,7 @@ from rewrite_pipeline import (
     _claim_narrowing_repair_prompt,
     _topk_texture_repair_prompt,
     _topk_safe_band_snapshot_prompt,
+    _topk_safe_band_sentence_patch_prompt,
     _topk_plain_spoken_snapshot_prompt,
     _topk_safe_band_patch_rounds_default,
     _topk_safe_band_snapshot_max_tokens_default,
@@ -1277,16 +1279,24 @@ strict_blocked_report = make_footprint_report(
 )
 strict_safe_status = _strict_ai_safe_band_status(strict_safe_report)
 strict_blocked_status = _strict_ai_safe_band_status(strict_blocked_report)
+strict_from_gate_status = _strict_ai_safe_band_status_from_footprint_gate(
+    _ai_footprint_gate_status(strict_safe_report, strict_blocked_report)
+)
+strict_missing_gate_status = _strict_ai_safe_band_status_from_footprint_gate({})
 assert_test(
     strict_safe_status["achieved"]
     and not strict_safe_status["remaining"]
     and not strict_blocked_status["achieved"]
+    and not strict_from_gate_status["achieved"]
+    and not strict_missing_gate_status["achieved"]
+    and strict_missing_gate_status.get("unscored")
+    and strict_from_gate_status["profile"]["topk_calibrated_risk"] == 18.0
     and [item["driver"] for item in strict_blocked_status["remaining"]] == [
         "ai_authorship",
         "ai_transformation",
         "external_ai_flag_risk",
     ],
-    "post-Top-k strict safe band requires authorship, transformation, and external proxy after Top-k is safe",
+    "post-Top-k strict safe band is recoverable from the canonical candidate footprint gate",
 )
 topk_near_miss_a = make_footprint_report(
     ai_authorship=50,
@@ -2233,9 +2243,21 @@ assert_test(
     and "short country profile" in medium_topk_prompt
     and "no metaphors" in plain_topk_prompt
     and "plain everyday nouns and verbs" in plain_topk_prompt
+    and "patch all listed sentences" in _topk_safe_band_sentence_patch_prompt(
+        "The United States has influence. The country also has problems.",
+        {"ai_risk_badge": {"ai_components": {"topk_calibrated_risk": 100.0}}},
+    )
     and _topk_safe_band_patch_rounds_default("word " * 900, saturated_topk_report) == 10
     and _topk_safe_band_snapshot_max_tokens_default("word " * 900) == 3600,
     "Top-k safe-band rebuild uses document-sized prose, not compressed snapshot fragments",
+)
+with open(os.path.join(os.path.dirname(__file__), "rewrite_pipeline.py"), "r", encoding="utf-8") as fp:
+    rewrite_pipeline_source = fp.read()
+assert_test(
+    "DRAFTPROOF_TOPK_SAFE_BAND_MAX_CHAR_RATIO" in rewrite_pipeline_source
+    and "if topk_safe_band_rebuild or strict_safe_shortening" in rewrite_pipeline_source
+    and "effective_max_chars" in rewrite_pipeline_source,
+    "Top-k/strict-safe candidates use a relaxed effective length gate before rejection",
 )
 for key, value in previous_sampling_env.items():
     if value is None:
