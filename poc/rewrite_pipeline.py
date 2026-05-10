@@ -2355,14 +2355,14 @@ def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None =
     rows.sort(key=lambda row: row["route_score"], reverse=True)
     selected = rows[:limit]
     ai_components = ((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
-    raw_topk = _blocker_scores(report_dict).get("topk_pattern")
+    raw_topk = ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern"))
     calibrated_topk = ai_components.get("topk_calibrated_risk")
     if not isinstance(calibrated_topk, (int, float)):
         calibrated_topk = calibrate_topk_risk(raw_topk, eligible_sentence_count=3).get("topk_calibrated_risk")
     return {
         "enabled": True,
         "limit": limit,
-        "saturated": float(raw_topk or 0.0) >= _float_env(
+        "saturated": float(calibrated_topk or 0.0) >= _float_env(
             "DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD",
             90.0,
         ),
@@ -4464,15 +4464,27 @@ def _blocker_scores(report_dict: dict | None) -> dict:
         value = source.get(key)
         return float(value) if isinstance(value, (int, float)) else 0.0
 
+    topk_raw = num(ai, "topk_pattern_raw") or num(ai, "topk_pattern")
+    topk_calibrated = num(ai, "topk_calibrated_risk")
+    if topk_raw and not topk_calibrated:
+        topk_calibrated = float(
+            calibrate_topk_risk(
+                topk_raw,
+                eligible_sentence_count=3,
+            ).get("topk_calibrated_risk", topk_raw)
+        )
+
     return {
         "unsupported_claim_risk": num(writing, "unsupported_claim_risk"),
         "broad_claim_risk": num(writing, "broad_claim_risk"),
         "source_grounding_risk": num(writing, "source_grounding_risk"),
         "lived_detail_risk": num(writing, "lived_detail_risk"),
         "generic_assertion_risk": num(ai, "generic_assertion_risk"),
-        "topk_pattern": num(ai, "topk_pattern"),
-        "topk_pattern_raw": num(ai, "topk_pattern_raw") or num(ai, "topk_pattern"),
-        "topk_calibrated_risk": num(ai, "topk_calibrated_risk"),
+        # Legacy alias used by older rewrite gates. It now carries calibrated
+        # risk so raw token predictability cannot act as a standalone blocker.
+        "topk_pattern": topk_calibrated,
+        "topk_pattern_raw": topk_raw,
+        "topk_calibrated_risk": topk_calibrated,
         "predictability": num(ai, "predictability"),
     }
 
@@ -4559,6 +4571,253 @@ def _ai_footprint_profile(report_dict: dict | None) -> dict:
         "grounding_footprint": {key: round(value, 3) for key, value in grounding.items()},
         "external_ai_flag_risk": round(risk, 3),
     }
+
+
+TURNITIN_LIKE_COMPONENT_WEIGHTS = {
+    "ai_likelihood": 0.45,
+    "topk_calibrated_risk": 0.20,
+    "semantic_uniformity": 0.12,
+    "rewrite_smoothness": 0.10,
+    "patchwork_expansion": 0.08,
+    "signal_agreement": 0.05,
+}
+
+
+def _turnitin_like_ai_profile(report_dict: dict | None) -> dict:
+    """Rewrite-only Turnitin-like score proxy from existing scanner fields."""
+    if not isinstance(report_dict, dict):
+        empty_components = {key: 0.0 for key in TURNITIN_LIKE_COMPONENT_WEIGHTS}
+        return {
+            "version": "turnitin_like_rewrite_v1",
+            "score": 0.0,
+            "components": empty_components,
+            "weighted_components": {key: 0.0 for key in TURNITIN_LIKE_COMPONENT_WEIGHTS},
+            "human_anchor_suppression": 0.0,
+            "raw_positive_score": 0.0,
+            "weights": dict(TURNITIN_LIKE_COMPONENT_WEIGHTS),
+        }
+    badge = report_dict.get("ai_risk_badge") or {}
+    ai_components = badge.get("ai_components") or {}
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    def feature(key: str, default=0.0) -> float:
+        value = _feature_percent(report_dict, key)
+        return num(value, default)
+
+    topk_raw = num(ai_components.get("topk_pattern_raw"), num(ai_components.get("topk_pattern")))
+    topk_calibrated = num(ai_components.get("topk_calibrated_risk"), -1.0)
+    if topk_calibrated < 0.0:
+        topk_calibrated = float(
+            calibrate_topk_risk(
+                topk_raw,
+                eligible_sentence_count=3,
+            ).get("topk_calibrated_risk", topk_raw)
+        )
+    patchwork_expansion = max(
+        feature("outline_to_text_expansion"),
+        feature("section_style_variance"),
+    )
+    components = {
+        "ai_likelihood": feature("ai_likelihood", num(badge.get("ai_likelihood_score"))),
+        "topk_calibrated_risk": topk_calibrated,
+        "semantic_uniformity": feature("semantic_uniformity_risk"),
+        "rewrite_smoothness": feature("rewrite_smoothness"),
+        "patchwork_expansion": patchwork_expansion,
+        "signal_agreement": feature("signal_agreement_score"),
+    }
+    human_anchor_suppression = feature("human_anchor_discount")
+    if human_anchor_suppression <= 0.0:
+        human_anchor_suppression = min(45.0, feature("human_anchor_score") * 0.45)
+    weighted_components = {
+        key: round(float(components[key]) * float(weight), 3)
+        for key, weight in TURNITIN_LIKE_COMPONENT_WEIGHTS.items()
+    }
+    raw_positive_score = sum(weighted_components.values())
+    score = max(0.0, min(100.0, raw_positive_score - human_anchor_suppression))
+    return {
+        "version": "turnitin_like_rewrite_v1",
+        "score": round(score, 3),
+        "components": {key: round(float(value), 3) for key, value in components.items()},
+        "weighted_components": weighted_components,
+        "human_anchor_suppression": round(float(human_anchor_suppression), 3),
+        "raw_positive_score": round(float(raw_positive_score), 3),
+        "weights": dict(TURNITIN_LIKE_COMPONENT_WEIGHTS),
+    }
+
+
+def _turnitin_like_component_drops(before: dict | None, after: dict | None) -> dict:
+    before_components = (before or {}).get("components") or {}
+    after_components = (after or {}).get("components") or {}
+    drops = {
+        key: round(float(before_components.get(key, 0.0)) - float(after_components.get(key, 0.0)), 3)
+        for key in TURNITIN_LIKE_COMPONENT_WEIGHTS
+    }
+    drops["human_anchor_suppression"] = round(
+        float((after or {}).get("human_anchor_suppression", 0.0))
+        - float((before or {}).get("human_anchor_suppression", 0.0)),
+        3,
+    )
+    drops["turnitin_like_ai_score"] = round(
+        float((before or {}).get("score", 0.0)) - float((after or {}).get("score", 0.0)),
+        3,
+    )
+    return drops
+
+
+def _remaining_turnitin_like_drivers(profile: dict | None) -> list[dict]:
+    profile = profile if isinstance(profile, dict) else {}
+    components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
+    weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
+    thresholds = {
+        "ai_likelihood": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_AI_LIKELIHOOD", 35.0),
+        "topk_calibrated_risk": _safe_topk_calibrated_limit(),
+        "semantic_uniformity": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_SEMANTIC", 35.0),
+        "rewrite_smoothness": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_SMOOTHNESS", 35.0),
+        "patchwork_expansion": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_PATCHWORK", 35.0),
+        "signal_agreement": _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_SIGNAL_AGREEMENT", 35.0),
+    }
+    remaining = [
+        {
+            "driver": key,
+            "value": round(float(value), 3),
+            "safe_band": round(float(thresholds[key]), 3),
+            "weighted_contribution": round(float(weighted.get(key, 0.0)), 3),
+        }
+        for key, value in components.items()
+        if key in thresholds
+        and isinstance(value, (int, float))
+        and float(value) > float(thresholds[key])
+    ]
+    suppression_floor = _float_env("DRAFTPROOF_TURNITIN_LIKE_MIN_HUMAN_ANCHOR_SUPPRESSION", 15.0)
+    suppression = profile.get("human_anchor_suppression")
+    if isinstance(suppression, (int, float)) and float(suppression) < suppression_floor:
+        remaining.append({
+            "driver": "human_anchor_suppression",
+            "value": round(float(suppression), 3),
+            "target_min": round(float(suppression_floor), 3),
+            "weighted_contribution": round(-float(suppression), 3),
+        })
+    remaining.sort(
+        key=lambda row: abs(float(row.get("weighted_contribution", 0.0))),
+        reverse=True,
+    )
+    return remaining
+
+
+def _turnitin_like_ai_gate_status(
+    original_report: dict | None,
+    candidate_report: dict | None,
+    *,
+    review_burden_delta: int | float = 0,
+    weighted_severity_delta: int | float = 0,
+    critical_high_delta: int | float = 0,
+    ai_score_regressed: bool = False,
+) -> dict:
+    before = _turnitin_like_ai_profile(original_report)
+    after = _turnitin_like_ai_profile(candidate_report)
+    drops = _turnitin_like_component_drops(before, after)
+    ai_before = _ai_footprint_flatten(_ai_footprint_profile(original_report))
+    ai_after = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
+    score_drop = float(drops.get("turnitin_like_ai_score") or 0.0)
+    min_drop = _float_env("DRAFTPROOF_TURNITIN_LIKE_MIN_DROP", 1.0)
+    safe_band = _float_env("DRAFTPROOF_TURNITIN_LIKE_SAFE_BAND", 35.0)
+    major_backfire_limit = _float_env("DRAFTPROOF_TURNITIN_LIKE_MAJOR_COMPONENT_BACKFIRE", 8.0)
+    component_backfires = [
+        {
+            "driver": key,
+            "increase": round(abs(float(drop)), 3),
+            "before": (before.get("components") or {}).get(key),
+            "after": (after.get("components") or {}).get(key),
+        }
+        for key, drop in drops.items()
+        if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
+        and isinstance(drop, (int, float))
+        and float(drop) <= -major_backfire_limit
+    ]
+    if float(drops.get("human_anchor_suppression") or 0.0) <= -major_backfire_limit:
+        component_backfires.append({
+            "driver": "human_anchor_suppression",
+            "increase": round(abs(float(drops.get("human_anchor_suppression") or 0.0)), 3),
+            "before": before.get("human_anchor_suppression"),
+            "after": after.get("human_anchor_suppression"),
+        })
+    ai_authorship_drop = float(ai_before.get("ai_authorship", 0.0)) - float(ai_after.get("ai_authorship", 0.0))
+    ai_transformation_drop = float(ai_before.get("ai_transformation", 0.0)) - float(ai_after.get("ai_transformation", 0.0))
+    safety_clean = bool(
+        not ai_score_regressed
+        and float(review_burden_delta or 0.0) <= 0.0
+        and float(weighted_severity_delta or 0.0) <= 0.0
+        and float(critical_high_delta or 0.0) <= 0.0
+        and ai_authorship_drop >= 0.0
+        and ai_transformation_drop >= 0.0
+        and not component_backfires
+    )
+    improved = bool(score_drop >= min_drop)
+    achieved = bool(safety_clean and improved and float(after.get("score", 100.0)) <= safe_band)
+    partial = bool(safety_clean and improved and not achieved)
+    if achieved:
+        outcome = "ai_mitigated"
+    elif partial:
+        outcome = "partially_ai_mitigated"
+    elif safety_clean and not improved and (
+        float(review_burden_delta or 0.0) < 0.0
+        or float(weighted_severity_delta or 0.0) < 0.0
+    ):
+        outcome = "cleanup_improved"
+    else:
+        outcome = "no_turnitin_like_improvement"
+    return {
+        "version": "turnitin_like_gate_v1",
+        "before": before,
+        "after": after,
+        "score_before": before.get("score"),
+        "score_after": after.get("score"),
+        "score_drop": round(score_drop, 3),
+        "component_drops": drops,
+        "remaining_turnitin_like_drivers": _remaining_turnitin_like_drivers(after),
+        "component_backfires": component_backfires,
+        "ai_authorship_drop": round(ai_authorship_drop, 3),
+        "ai_transformation_drop": round(ai_transformation_drop, 3),
+        "safety_clean": safety_clean,
+        "improved": improved,
+        "safe_band": achieved,
+        "outcome_class": outcome,
+        "thresholds": {
+            "safe_band": round(float(safe_band), 3),
+            "min_drop": round(float(min_drop), 3),
+            "major_component_backfire": round(float(major_backfire_limit), 3),
+        },
+    }
+
+
+def _turnitin_like_candidate_rank(
+    gate: dict | None,
+    *,
+    review_burden_delta: int | float = 0,
+    weighted_severity_delta: int | float = 0,
+    critical_high_delta: int | float = 0,
+) -> tuple:
+    gate = gate if isinstance(gate, dict) else {}
+    drops = gate.get("component_drops") if isinstance(gate.get("component_drops"), dict) else {}
+    return (
+        1 if gate.get("safe_band") else 0,
+        1 if gate.get("safety_clean") else 0,
+        float(gate.get("score_drop") or 0.0),
+        float(drops.get("ai_likelihood") or 0.0),
+        float(drops.get("topk_calibrated_risk") or 0.0),
+        float(drops.get("semantic_uniformity") or 0.0),
+        float(drops.get("rewrite_smoothness") or 0.0),
+        float(drops.get("patchwork_expansion") or 0.0),
+        float(drops.get("signal_agreement") or 0.0),
+        float(drops.get("human_anchor_suppression") or 0.0),
+        -len(gate.get("component_backfires") or []),
+        -max(0.0, float(review_burden_delta or 0.0)),
+        -max(0.0, float(weighted_severity_delta or 0.0)),
+        -max(0.0, float(critical_high_delta or 0.0)),
+        -float((gate.get("after") or {}).get("score") or 100.0),
+    )
 
 
 def _ai_footprint_flatten(profile: dict | None) -> dict:
@@ -5078,6 +5337,7 @@ def _human_target_ai_search_status(report_dict: dict | None) -> dict:
     active_blockers = [
         key for key, value in blockers.items()
         if isinstance(value, (int, float)) and float(value) >= blocker_threshold
+        and key not in {"topk_pattern", "topk_pattern_raw"}
     ]
     if not active_blockers:
         return {
@@ -5109,11 +5369,17 @@ def _blocker_elimination_status(original_report: dict | None, candidate_report: 
     active_keys = [
         key for key, value in original.items()
         if isinstance(value, (int, float)) and value >= 60.0
+        and key not in {"topk_pattern", "topk_pattern_raw"}
     ]
     active_drop = sum(max(0.0, drops.get(key, 0.0)) for key in active_keys)
     active_regression = sum(max(0.0, -drops.get(key, 0.0)) for key in active_keys)
+    display_candidate = {
+        key: value
+        for key, value in candidate.items()
+        if key not in {"topk_pattern", "topk_pattern_raw"}
+    }
     top_remaining = sorted(
-        candidate.items(),
+        display_candidate.items(),
         key=lambda item: float(item[1] or 0.0),
         reverse=True,
     )[:5]
@@ -5144,7 +5410,7 @@ def _dominant_blocker_gate_status(original_report: dict | None, candidate_report
         key.strip()
         for key in os.environ.get(
             "DRAFTPROOF_DOMINANT_BLOCKER_KEYS",
-            "unsupported_claim_risk,source_grounding_risk,broad_claim_risk,topk_pattern,generic_assertion_risk",
+            "unsupported_claim_risk,source_grounding_risk,broad_claim_risk,topk_calibrated_risk,generic_assertion_risk",
         ).split(",")
         if key.strip()
     ]
@@ -5348,7 +5614,7 @@ def _dominant_blocker_safe_progress_override(
         key.strip()
         for key in os.environ.get(
             "DRAFTPROOF_DOMINANT_BLOCKER_SAFE_PROGRESS_KEYS",
-            "unsupported_claim_risk,source_grounding_risk,broad_claim_risk,topk_pattern,generic_assertion_risk",
+            "unsupported_claim_risk,source_grounding_risk,broad_claim_risk,topk_calibrated_risk,generic_assertion_risk",
         ).split(",")
         if key.strip()
     }
@@ -6965,6 +7231,18 @@ def _goal_climb_candidate_rank(
     if status.get("topk_safe_band_achieved"):
         footprint_priority = max(footprint_priority, 5)
     footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
+    turnitin_gate = status.get("turnitin_like_ai_gate") if isinstance(status.get("turnitin_like_ai_gate"), dict) else {}
+    turnitin_drops = (
+        turnitin_gate.get("component_drops")
+        if isinstance(turnitin_gate.get("component_drops"), dict)
+        else {}
+    )
+    turnitin_priority = (
+        5 if turnitin_gate.get("safe_band")
+        else 3 if turnitin_gate.get("improved") and turnitin_gate.get("safety_clean")
+        else 0
+    )
+    turnitin_score_drop = num(turnitin_gate.get("score_drop"), 0.0)
     external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"), 0.0)
     topk_drop = num(footprint_drops.get("topk_calibrated_risk"), 0.0)
     qualifying_density_drop = num(footprint_drops.get("qualifying_text_ai_density"), 0.0)
@@ -6992,6 +7270,14 @@ def _goal_climb_candidate_rank(
 
     return (
         1 if status.get("selectable") else 0,
+        turnitin_priority,
+        turnitin_score_drop,
+        num(turnitin_drops.get("ai_likelihood"), 0.0),
+        num(turnitin_drops.get("topk_calibrated_risk"), 0.0),
+        num(turnitin_drops.get("semantic_uniformity"), 0.0),
+        num(turnitin_drops.get("rewrite_smoothness"), 0.0),
+        num(turnitin_drops.get("patchwork_expansion"), 0.0),
+        num(turnitin_drops.get("human_anchor_suppression"), 0.0),
         footprint_priority,
         qualifying_density_drop,
         lived_detail_drop,
@@ -16268,6 +16554,15 @@ def run_rewrite_pipeline(
                 ai_score_regressed=ai_score_regressed,
             )
             candidate_eval["ai_footprint_gate"] = ai_footprint_gate
+            turnitin_like_gate = _turnitin_like_ai_gate_status(
+                original_report_dict,
+                candidate_report,
+                review_burden_delta=review_burden_delta,
+                weighted_severity_delta=weighted_severity_delta,
+                critical_high_delta=critical_high_delta,
+                ai_score_regressed=ai_score_regressed,
+            )
+            candidate_eval["turnitin_like_ai_gate"] = turnitin_like_gate
             multi_signal_contract = _multi_signal_candidate_contract(
                 original_report_dict,
                 candidate_report,
@@ -16336,6 +16631,22 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_AI_FOOTPRINT_GATE_ENABLED", True)
                 and ai_footprint_outcome in {"ai_mitigated", "partially_ai_mitigated"}
                 and ai_footprint_gate.get("safety_clean")
+                and (
+                    ai_footprint_outcome != "ai_mitigated"
+                    or turnitin_like_gate.get("safe_band")
+                )
+                and not authenticity_status.get("ai_authorship_regression_blocked")
+                and not authenticity_status.get("critical_high_regressed")
+                and candidate_critical_high <= saved_critical_high
+                and candidate_finding_total <= original_total
+                and candidate_review_burden <= original_review_burden
+                and candidate_weighted_severity <= original_severity
+                and not ai_score_regressed
+            )
+            turnitin_like_selectable = bool(
+                _env_flag("DRAFTPROOF_TURNITIN_LIKE_GATE_ENABLED", True)
+                and turnitin_like_gate.get("safety_clean")
+                and turnitin_like_gate.get("improved")
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
@@ -16500,6 +16811,26 @@ def run_rewrite_pipeline(
                     "ai_footprint_mitigation": bool(ai_footprint_outcome == "ai_mitigated"),
                     "partial_ai_footprint_mitigation": bool(ai_footprint_outcome == "partially_ai_mitigated"),
                 })
+            if turnitin_like_selectable:
+                turnitin_like_full_mitigation = bool(
+                    turnitin_like_gate.get("safe_band")
+                    and ai_footprint_gate.get("safe_band")
+                )
+                selection_status.update({
+                    "success": True,
+                    "selectable": True,
+                    "reason": (
+                        selection_status.get("reason")
+                        if selection_status.get("ai_footprint_mitigation")
+                        else (
+                            "accepted_turnitin_like_mitigation"
+                            if turnitin_like_full_mitigation
+                            else "accepted_partial_turnitin_like_mitigation"
+                        )
+                    ),
+                    "turnitin_like_mitigation": turnitin_like_full_mitigation,
+                    "partial_turnitin_like_mitigation": not turnitin_like_full_mitigation,
+                })
             if topk_blocker_progress_selectable:
                 selection_status.update({
                     "success": True,
@@ -16550,6 +16881,7 @@ def run_rewrite_pipeline(
                     blocker_elimination_selectable
                     or
                     human_primary_selectable
+                    or turnitin_like_selectable
                     or
                     ai_footprint_selectable
                     or topk_blocker_progress_selectable
@@ -16574,40 +16906,48 @@ def run_rewrite_pipeline(
                             "accepted_human_primary_progress"
                             if human_primary_selectable
                             else (
-                                    "accepted_ai_footprint_mitigation"
-                                    if ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"
+                                    "accepted_turnitin_like_mitigation"
+                                    if turnitin_like_selectable and turnitin_like_gate.get("safe_band") and ai_footprint_gate.get("safe_band")
                                     else (
-                                        "accepted_partial_ai_footprint_mitigation"
-                                        if ai_footprint_selectable
+                                        "accepted_partial_turnitin_like_mitigation"
+                                        if turnitin_like_selectable
                                         else (
-                                            "accepted_topk_blocker_progress"
-                                            if topk_blocker_progress_selectable
+                                            "accepted_ai_footprint_mitigation"
+                                            if ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"
                                             else (
-                                                "accepted_topk_safe_band_rebuild"
-                                                if topk_safe_band_rebuild_selectable
+                                                "accepted_partial_ai_footprint_mitigation"
+                                                if ai_footprint_selectable
                                                 else (
-                                                    "accepted_human_signal_amplification"
-                                                    if human_amplification_selectable
+                                                    "accepted_topk_blocker_progress"
+                                                    if topk_blocker_progress_selectable
                                                     else (
-                                                        "accepted_human_anchor_amplifier"
-                                                        if human_anchor_amplification_selectable
+                                                        "accepted_topk_safe_band_rebuild"
+                                                        if topk_safe_band_rebuild_selectable
                                                         else (
-                                                            "accepted_post_safe_target_climb"
-                                                            if post_safe_target_climb_selectable
+                                                            "accepted_human_signal_amplification"
+                                                            if human_amplification_selectable
                                                             else (
-                                                                "accepted_score_drag_removal"
-                                                                if score_drag_removal_selectable
+                                                                "accepted_human_anchor_amplifier"
+                                                                if human_anchor_amplification_selectable
                                                                 else (
-                                                                    "accepted_safe_partial_quality_improvement"
-                                                                    if safe_partial_quality_selectable
+                                                                    "accepted_post_safe_target_climb"
+                                                                    if post_safe_target_climb_selectable
                                                                     else (
-                                                                        (
-                                                                            "accepted_incremental_human_target_progress"
-                                                                            if _radar_goal_requires_human_progress(radar_goal_controller)
-                                                                            else "accepted_safe_authorship_suppression"
+                                                                        "accepted_score_drag_removal"
+                                                                        if score_drag_removal_selectable
+                                                                        else (
+                                                                            "accepted_safe_partial_quality_improvement"
+                                                                            if safe_partial_quality_selectable
+                                                                            else (
+                                                                                (
+                                                                                    "accepted_incremental_human_target_progress"
+                                                                                    if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                                                    else "accepted_safe_authorship_suppression"
+                                                                                )
+                                                                                if safe_authorship_suppression_selectable
+                                                                                else "accepted_incremental_authenticity_progress"
+                                                                            )
                                                                         )
-                                                                        if safe_authorship_suppression_selectable
-                                                                        else "accepted_incremental_authenticity_progress"
                                                                     )
                                                                 )
                                                             )
@@ -16622,6 +16962,18 @@ def run_rewrite_pipeline(
                     ),
                     "blocker_elimination": bool(blocker_elimination_selectable),
                     "human_primary_progress": bool(human_primary_selectable),
+                    "turnitin_like_mitigation": bool(
+                        turnitin_like_selectable
+                        and turnitin_like_gate.get("safe_band")
+                        and ai_footprint_gate.get("safe_band")
+                    ),
+                    "partial_turnitin_like_mitigation": bool(
+                        turnitin_like_selectable
+                        and not (
+                            turnitin_like_gate.get("safe_band")
+                            and ai_footprint_gate.get("safe_band")
+                        )
+                    ),
                     "ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"),
                     "partial_ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "partially_ai_mitigated"),
                     "topk_blocker_progress": bool(topk_blocker_progress_selectable),
@@ -16657,6 +17009,8 @@ def run_rewrite_pipeline(
                 and not dominant_blocker_progress_override.get("allowed")
                 and not selection_status.get("score_drag_removal")
                 and not selection_status.get("safe_authorship_suppression")
+                and not selection_status.get("turnitin_like_mitigation")
+                and not selection_status.get("partial_turnitin_like_mitigation")
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
@@ -16677,6 +17031,8 @@ def run_rewrite_pipeline(
                 and not human_formula_status.get("cleared")
                 and not selection_status.get("human_primary_progress")
                 and not selection_status.get("post_safe_target_climb")
+                and not selection_status.get("turnitin_like_mitigation")
+                and not selection_status.get("partial_turnitin_like_mitigation")
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
@@ -16714,6 +17070,8 @@ def run_rewrite_pipeline(
             if (
                 selection_status.get("selectable")
                 and ai_footprint_outcome == "ai_footprint_blocked_by_texture"
+                and not selection_status.get("turnitin_like_mitigation")
+                and not selection_status.get("partial_turnitin_like_mitigation")
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("topk_blocker_progress")
@@ -16731,6 +17089,7 @@ def run_rewrite_pipeline(
             selection_status["authenticity_gate"] = authenticity_status
             selection_status["ai_footprint_gate"] = ai_footprint_gate
             selection_status["ai_footprint_outcome_class"] = ai_footprint_outcome
+            selection_status["turnitin_like_ai_gate"] = turnitin_like_gate
             selection_status["multi_signal_contract"] = multi_signal_contract
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
             selection_status["human_formula_driver_gate"] = human_formula_status
@@ -16747,6 +17106,8 @@ def run_rewrite_pipeline(
                 and not selection_status.get("human_signal_amplification")
                 and not selection_status.get("human_anchor_amplifier")
                 and not selection_status.get("post_safe_target_climb")
+                and not selection_status.get("turnitin_like_mitigation")
+                and not selection_status.get("partial_turnitin_like_mitigation")
                 and not selection_status.get("ai_footprint_mitigation")
                 and not selection_status.get("partial_ai_footprint_mitigation")
                 and not selection_status.get("score_drag_removal")
@@ -20519,6 +20880,7 @@ def run_rewrite_pipeline(
                         "selected_strategy": best_strategy,
                         "selected_outcome_class": best_selection_status.get("ai_footprint_outcome_class"),
                         "selected_ai_footprint_gate": best_selection_status.get("ai_footprint_gate"),
+                        "selected_turnitin_like_ai_gate": best_selection_status.get("turnitin_like_ai_gate"),
                         "previous_ai": previous_ai,
                         "selected_ai": rewritten_ai,
                         "selected_ai_delta_vs_reference": (
@@ -20565,6 +20927,7 @@ def run_rewrite_pipeline(
                 "selected_strategy": best_strategy,
                 "selected_outcome_class": best_selection_status.get("ai_footprint_outcome_class"),
                 "selected_ai_footprint_gate": best_selection_status.get("ai_footprint_gate"),
+                "selected_turnitin_like_ai_gate": best_selection_status.get("turnitin_like_ai_gate"),
                 "previous_ai": previous_ai,
                 "selected_ai": rewritten_ai,
                 "selected_ai_delta_vs_reference": (
@@ -21574,19 +21937,29 @@ def run_rewrite_pipeline(
         selected_search_status.get("topk_blocker_progress")
         or selected_search_status.get("reason") == "accepted_topk_blocker_progress"
     )
+    selected_turnitin_like_progress = bool(
+        selected_search_status.get("turnitin_like_mitigation")
+        or selected_search_status.get("partial_turnitin_like_mitigation")
+        or str(selected_search_status.get("reason") or "").startswith("accepted_partial_turnitin_like")
+        or str(selected_search_status.get("reason") or "").startswith("accepted_turnitin_like")
+    )
     if (
         rewritten_text != text
         and isinstance(final_topk_for_acceptance, (int, float))
         and float(final_topk_for_acceptance) >= topk_acceptance_limit
         and not topk_near_miss_keep_decision.get("allowed")
-        and selected_topk_blocker_progress
+        and (selected_topk_blocker_progress or selected_turnitin_like_progress)
         and float(_review_burden(rewritten_report_dict) - original_review_burden) <= 0.0
         and float(_weighted_severity(rewritten_report_dict) - original_severity) <= 0.0
         and float(_critical_high_count(rewritten_report_dict) - saved_critical_high) <= 0.0
     ):
         topk_near_miss_keep_decision = {
             "allowed": True,
-            "reason": "selector_accepted_topk_blocker_progress",
+            "reason": (
+                "selector_accepted_turnitin_like_progress"
+                if selected_turnitin_like_progress
+                else "selector_accepted_topk_blocker_progress"
+            ),
             "topk_over_limit": (
                 round(float(topk_over_limit), 3)
                 if isinstance(topk_over_limit, (int, float)) else None
@@ -21730,6 +22103,32 @@ def run_rewrite_pipeline(
             ai_score_regressed=False,
         )
     result.summary["ai_footprint_gate"] = final_ai_footprint_gate
+    final_turnitin_like_gate = _turnitin_like_ai_gate_status(
+        original_report_dict,
+        rewritten_report_dict,
+        review_burden_delta=_review_burden(rewritten_report_dict) - original_review_burden,
+        weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
+        critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
+        ai_score_regressed=bool(
+            isinstance(_badge_ai(original_report_dict), (int, float))
+            and isinstance(_badge_ai(rewritten_report_dict), (int, float))
+            and _badge_ai(rewritten_report_dict) > _badge_ai(original_report_dict) + _float_env("DRAFTPROOF_AI_SEARCH_AI_SCORE_REGRESSION_TOLERANCE", 0.25)
+        ),
+    )
+    result.summary["turnitin_like_ai_gate"] = final_turnitin_like_gate
+    result.summary["turnitin_like_ai_score_before"] = final_turnitin_like_gate.get("score_before")
+    result.summary["turnitin_like_ai_score_after"] = final_turnitin_like_gate.get("score_after")
+    result.summary["turnitin_like_ai_score_drop"] = final_turnitin_like_gate.get("score_drop")
+    result.summary["turnitin_like_components_before"] = (
+        (final_turnitin_like_gate.get("before") or {}).get("components")
+    )
+    result.summary["turnitin_like_components_after"] = (
+        (final_turnitin_like_gate.get("after") or {}).get("components")
+    )
+    result.summary["turnitin_like_component_drops"] = final_turnitin_like_gate.get("component_drops")
+    result.summary["remaining_turnitin_like_drivers"] = (
+        final_turnitin_like_gate.get("remaining_turnitin_like_drivers") or []
+    )
     final_human_anchor_contract = _human_anchor_driver_contract(
         original_report_dict,
         rewritten_report_dict,
@@ -21794,11 +22193,17 @@ def run_rewrite_pipeline(
             profile = strict_row.get("profile") if isinstance(strict_row, dict) else {}
             if not isinstance(profile, dict) or not profile:
                 continue
+            turnitin_row = row.get("turnitin_like_ai_gate")
+            if not isinstance(turnitin_row, dict):
+                turnitin_row = ((row.get("selection_status") or {}).get("turnitin_like_ai_gate") or {})
             frontier_rows.append({
                 "strategy": row.get("strategy"),
                 "selectable": bool((row.get("selection_status") or {}).get("selectable")),
                 "reason": row.get("reason") or (row.get("selection_status") or {}).get("reason"),
                 "strict_ai_safe_band_achieved": bool(strict_row.get("achieved")),
+                "turnitin_like_ai_score": turnitin_row.get("score_after"),
+                "turnitin_like_ai_score_drop": turnitin_row.get("score_drop"),
+                "turnitin_like_outcome_class": turnitin_row.get("outcome_class"),
                 "ai_authorship": profile.get("ai_authorship"),
                 "ai_transformation": profile.get("ai_transformation"),
                 "qualifying_text_ai_density": profile.get("qualifying_text_ai_density"),
@@ -21809,6 +22214,8 @@ def run_rewrite_pipeline(
         frontier_rows.sort(
             key=lambda item: (
                 1 if item.get("strict_ai_safe_band_achieved") else 0,
+                float(item.get("turnitin_like_ai_score_drop") if isinstance(item.get("turnitin_like_ai_score_drop"), (int, float)) else -999.0),
+                -float(item.get("turnitin_like_ai_score") if isinstance(item.get("turnitin_like_ai_score"), (int, float)) else 999.0),
                 -float(item.get("qualifying_text_ai_density") if isinstance(item.get("qualifying_text_ai_density"), (int, float)) else 999.0),
                 -float(item.get("external_ai_flag_risk") if isinstance(item.get("external_ai_flag_risk"), (int, float)) else 999.0),
                 -float(item.get("ai_authorship") if isinstance(item.get("ai_authorship"), (int, float)) else 999.0),
@@ -21825,13 +22232,29 @@ def run_rewrite_pipeline(
         weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
         critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
     ))
+    result.summary["turnitin_like_selected_candidate_rank"] = list(_turnitin_like_candidate_rank(
+        final_turnitin_like_gate,
+        review_burden_delta=_review_burden(rewritten_report_dict) - original_review_burden,
+        weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
+        critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
+    ))
     result.summary["why_not_strict_safe"] = (
         "strict safe band achieved"
-        if final_strict_safe_band.get("achieved")
+        if final_strict_safe_band.get("achieved") and final_turnitin_like_gate.get("safe_band")
         else "Remaining blockers: " + ", ".join(
-            f"{row.get('driver')} {row.get('value')} > {row.get('safe_band')}"
-            for row in (final_strict_safe_band.get("remaining") or [])
-            if isinstance(row, dict)
+            [
+                f"{row.get('driver')} {row.get('value')} > {row.get('safe_band')}"
+                for row in (final_strict_safe_band.get("remaining") or [])
+                if isinstance(row, dict)
+            ]
+            + (
+                [
+                    "turnitin_like_ai_score "
+                    f"{final_turnitin_like_gate.get('score_after')} > "
+                    f"{(final_turnitin_like_gate.get('thresholds') or {}).get('safe_band')}"
+                ]
+                if not final_turnitin_like_gate.get("safe_band") else []
+            )
         )
     )
     texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("authorship_transformation_texture_controller")
@@ -21869,6 +22292,9 @@ def run_rewrite_pipeline(
         "ai_likelihood_driver_before": final_before_authorship.get("ai_likelihood"),
         "ai_likelihood_driver_after": final_after_authorship.get("ai_likelihood"),
         "ai_likelihood_driver_drop": final_footprint_drops.get("ai_likelihood"),
+        "turnitin_like_ai_score_before": final_turnitin_like_gate.get("score_before"),
+        "turnitin_like_ai_score_after": final_turnitin_like_gate.get("score_after"),
+        "turnitin_like_ai_score_drop": final_turnitin_like_gate.get("score_drop"),
         "qualifying_text_ai_density_before": final_before_semantic.get("qualifying_text_ai_density"),
         "qualifying_text_ai_density_after": final_after_semantic.get("qualifying_text_ai_density"),
         "qualifying_text_ai_density_drop": final_footprint_drops.get("qualifying_text_ai_density"),
@@ -21905,6 +22331,7 @@ def run_rewrite_pipeline(
         result.summary["final_text"] = rewritten_text
         if ai_search_selected:
             ai_footprint_outcome = str(final_ai_footprint_gate.get("outcome_class") or "")
+            turnitin_like_outcome = str(final_turnitin_like_gate.get("outcome_class") or "")
             texture_blockers = [
                 blocker for blocker in (final_ai_footprint_gate.get("texture_blockers") or [])
                 if isinstance(blocker, dict)
@@ -21913,14 +22340,18 @@ def run_rewrite_pipeline(
                 str(blocker.get("driver") or "") in {"topk_calibrated_risk", "topk_pattern"}
                 for blocker in texture_blockers
             )
-            result.summary["outcome"] = {
-                "ai_mitigated": "ai_mitigated",
-                "partially_ai_mitigated": "partially_ai_mitigated",
-                "cleanup_improved": "cleanup_improved",
-            }.get(
-                ai_footprint_outcome,
-                "topk_blocked" if topk_still_blocked else "partially_improved",
-            )
+            if ai_footprint_outcome == "ai_mitigated" and final_turnitin_like_gate.get("safe_band"):
+                result.summary["outcome"] = "ai_mitigated"
+            elif turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"}:
+                result.summary["outcome"] = "partially_ai_mitigated"
+            else:
+                result.summary["outcome"] = {
+                    "partially_ai_mitigated": "partially_ai_mitigated",
+                    "cleanup_improved": "cleanup_improved",
+                }.get(
+                    ai_footprint_outcome,
+                    "topk_blocked" if topk_still_blocked else "partially_improved",
+                )
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["stage_timings"] = stage_timings

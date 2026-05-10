@@ -1123,7 +1123,7 @@ class Layer3Scorer:
     def calculate_ai_likelihood(self, data: Layer3Input) -> tuple[ClusterScore, float, Optional[str]]:
         """Phase 1: AI Generation Likelihood — pure mechanical signals, zero grounding credit."""
         predictability = clamp(data.predictability)
-        topk = clamp(data.topk_pattern)
+        raw_topk = clamp(data.topk_pattern)
         genericity = clamp(data.generic_phrase_density)
         burstiness = clamp(data.burstiness_risk)
         repeated_struct = clamp(data.repeated_sentence_structure_risk)
@@ -1131,15 +1131,46 @@ class Layer3Scorer:
         qualifying_density = clamp(data.qualifying_text_ai_density)
         balanced_hedging = clamp(data.balanced_hedging_risk)
 
+        genericity_support = clamp(genericity / 0.12) if genericity > 0 else 0.0
+        topk_support = max(
+            predictability,
+            genericity_support,
+            repeated_struct,
+            generic_assertion,
+            qualifying_density,
+            balanced_hedging,
+        )
+        sample_tiny = (
+            (0 < data.word_count < 50)
+            or (0 < data.sentence_count < 3)
+        )
+        sample_limited = sample_tiny or (
+            (0 < data.word_count < 150)
+            or (0 < data.sentence_count < 6)
+        )
+
+        if raw_topk <= 0:
+            topk = 0.0
+        elif sample_tiny:
+            topk = min(raw_topk * 0.25, 0.22)
+        elif sample_limited:
+            topk = min(raw_topk * 0.40, 0.30)
+        elif topk_support < 0.25:
+            topk = min(raw_topk * 0.35, 0.31)
+        elif topk_support < 0.45:
+            topk = raw_topk * 0.65
+        else:
+            topk = raw_topk
+
         AI_WEIGHTS = {
-            "predictability": 0.19,
-            "topk_pattern": 0.17,
-            "generic_phrase_density": 0.13,
-            "burstiness_risk": 0.10,
-            "repeated_sentence_structure_risk": 0.10,
-            "generic_assertion_risk": 0.10,
-            "qualifying_text_ai_density": 0.13,
-            "balanced_hedging_risk": 0.08,
+            "predictability": 0.18,
+            "topk_pattern": 0.14,
+            "generic_phrase_density": 0.10,
+            "burstiness_risk": 0.08,
+            "repeated_sentence_structure_risk": 0.07,
+            "generic_assertion_risk": 0.14,
+            "qualifying_text_ai_density": 0.24,
+            "balanced_hedging_risk": 0.05,
         }
 
         components = {
@@ -1156,7 +1187,7 @@ class Layer3Scorer:
         score = weighted_average({
             k: (v, AI_WEIGHTS[k])
             for k, v in components.items()
-            if v > 0
+            if getattr(data, k, None) is not None
         })
 
         cluster_boost = 0.0
@@ -1207,6 +1238,12 @@ class Layer3Scorer:
             score = max(score, 0.60)
         if template_ai_style:
             score = max(score, 0.58)
+        if template_ai_style and not qualifying_density_ai and qualifying_density < 0.55:
+            score = min(score, 0.64)
+        if sample_tiny:
+            score = min(score, 0.24)
+        elif sample_limited:
+            score = min(score, 0.32)
 
         if data.human_provenance_positive:
             score *= 0.80
@@ -1234,6 +1271,10 @@ class Layer3Scorer:
             reasons.append("moderate_ai_likelihood")
         if cluster_name:
             reasons.append(f"{cluster_name}_cluster")
+        if raw_topk and topk < raw_topk - 0.05:
+            reasons.append("topk_requires_supporting_ai_signals")
+        if sample_limited:
+            reasons.append("sample_length_limited")
         if data.human_provenance_positive:
             reasons.append("human_provenance_positive")
 

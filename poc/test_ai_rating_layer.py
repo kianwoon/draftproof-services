@@ -564,6 +564,42 @@ assert_equal(template_ai.ai_cluster_name, "template_ai_style", "education AI sam
 assert_true(template_ai.ai_likelihood_score >= 0.58, "template AI cluster floors the AI score above possible-AI band")
 assert_equal(template_ai.tier, Tier.ORANGE, "template AI sample escalates to orange tier")
 
+isolated_topk = Layer3Scorer().score(
+    Layer3Input(
+        topk_pattern=0.95,
+        word_count=800,
+        sentence_count=38,
+        paragraph_count=7,
+    )
+)
+assert_true(
+    isolated_topk.ai_likelihood_score < 0.32,
+    "high top-k alone stays below possible-AI scoring threshold",
+)
+assert_true(
+    "topk_requires_supporting_ai_signals" in isolated_topk.ai_phase.reasons,
+    "scanner explains when top-k was dampened for weak supporting evidence",
+)
+
+short_topk = Layer3Scorer().score(
+    Layer3Input(
+        predictability=0.90,
+        topk_pattern=1.0,
+        generic_assertion_risk=0.90,
+        word_count=3,
+        sentence_count=1,
+        paragraph_count=1,
+    )
+)
+assert_true(
+    short_topk.ai_likelihood_score <= 0.24,
+    "very short samples cannot produce a high scanner AI score from top-k",
+)
+assert_true(
+    "sample_length_limited" in short_topk.ai_phase.reasons,
+    "scanner records sample length as a score limiter",
+)
+
 scan_builder = ReportBuilder().set_meta(
     original_text=(
         "In 2024, I observed the VET workshop and wrote rough notes about the Certificate III classroom task. "

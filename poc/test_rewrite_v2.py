@@ -70,6 +70,9 @@ from rewrite_pipeline import (
     _ai_search_feedback_prompt,
     _safe_partial_quality_improvement_status,
     _ai_footprint_profile,
+    _turnitin_like_ai_profile,
+    _turnitin_like_ai_gate_status,
+    _turnitin_like_candidate_rank,
     _multi_signal_candidate_contract,
     _ai_footprint_gate_status,
     _strict_ai_safe_band_status,
@@ -151,6 +154,7 @@ from rewrite_pipeline import (
     _human_anchor_driver_contract,
     _author_stance_thread_candidates,
     _human_target_ai_search_status,
+    _blocker_scores,
     _dominant_blocker_gate_status,
     _dominant_blocker_safe_progress_override,
     _ai_search_adaptive_stop_reason,
@@ -1060,6 +1064,9 @@ def make_footprint_report(
     unsupported_claim_risk,
     broad_claim_risk,
     discourse,
+    expansion=0,
+    section_style=0,
+    signal_agreement=0,
 ):
     return {
         "integrity_layers": {
@@ -1094,6 +1101,9 @@ def make_footprint_report(
                     "ai_likelihood": ai_likelihood / 100,
                     "semantic_uniformity_risk": semantic_uniformity / 100,
                     "discourse_regularity_risk": discourse / 100,
+                    "outline_to_text_expansion": expansion / 100,
+                    "section_style_variance": section_style / 100,
+                    "signal_agreement_score": signal_agreement / 100,
                 }
             },
         },
@@ -1234,6 +1244,124 @@ assert_test(
     and not stalled_topk_gate["material_driver_moved"]
     and stalled_topk_gate["texture_blockers"],
     "AI-footprint gate blocks mitigation claims when top-k remains pinned and smoothness regresses",
+)
+turnitin_formula_original = make_footprint_report(
+    ai_authorship=50,
+    human=42,
+    ai_transformation=50,
+    grounding=45,
+    human_anchor=20,
+    smoothness=60,
+    semantic_uniformity=50,
+    ai_likelihood=70,
+    topk_pattern=80,
+    topk_calibrated_risk=40,
+    generic_assertion_risk=40,
+    qualifying_text_ai_density=40,
+    unsupported_claim_risk=30,
+    broad_claim_risk=30,
+    discourse=30,
+    expansion=20,
+    section_style=55,
+    signal_agreement=60,
+)
+turnitin_formula_candidate = make_footprint_report(
+    ai_authorship=45,
+    human=56,
+    ai_transformation=44,
+    grounding=45,
+    human_anchor=60,
+    smoothness=50,
+    semantic_uniformity=45,
+    ai_likelihood=60,
+    topk_pattern=50,
+    topk_calibrated_risk=30,
+    generic_assertion_risk=40,
+    qualifying_text_ai_density=38,
+    unsupported_claim_risk=30,
+    broad_claim_risk=30,
+    discourse=30,
+    expansion=20,
+    section_style=20,
+    signal_agreement=45,
+)
+turnitin_original_profile = _turnitin_like_ai_profile(turnitin_formula_original)
+turnitin_candidate_profile = _turnitin_like_ai_profile(turnitin_formula_candidate)
+turnitin_gate = _turnitin_like_ai_gate_status(
+    turnitin_formula_original,
+    turnitin_formula_candidate,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    turnitin_original_profile["components"]["patchwork_expansion"] == 55.0
+    and turnitin_original_profile["score"] == 49.9
+    and turnitin_candidate_profile["human_anchor_suppression"] == 27.0,
+    "Turnitin-like formula computes weighted score, patchwork max, and human-anchor suppression",
+)
+assert_test(
+    turnitin_gate["safe_band"]
+    and turnitin_gate["outcome_class"] == "ai_mitigated"
+    and turnitin_gate["score_drop"] > 25,
+    "Turnitin-like gate accepts safe formula reduction under existing safety constraints",
+)
+turnitin_authorship_backfire = _turnitin_like_ai_gate_status(
+    turnitin_formula_original,
+    make_footprint_report(
+        ai_authorship=55,
+        human=58,
+        ai_transformation=44,
+        grounding=45,
+        human_anchor=70,
+        smoothness=35,
+        semantic_uniformity=30,
+        ai_likelihood=35,
+        topk_pattern=40,
+        topk_calibrated_risk=20,
+        generic_assertion_risk=20,
+        qualifying_text_ai_density=20,
+        unsupported_claim_risk=20,
+        broad_claim_risk=20,
+        discourse=20,
+        expansion=10,
+        section_style=10,
+        signal_agreement=20,
+    ),
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    turnitin_authorship_backfire["improved"]
+    and not turnitin_authorship_backfire["safety_clean"]
+    and turnitin_authorship_backfire["outcome_class"] == "no_turnitin_like_improvement",
+    "Turnitin-like gate does not let human-anchor suppression hide authorship regression",
+)
+turnitin_cleanup_rank = _turnitin_like_candidate_rank(
+    _turnitin_like_ai_gate_status(
+        turnitin_formula_original,
+        turnitin_formula_original,
+        review_burden_delta=-2,
+        weighted_severity_delta=-2,
+        critical_high_delta=0,
+        ai_score_regressed=False,
+    ),
+    review_burden_delta=-2,
+    weighted_severity_delta=-2,
+    critical_high_delta=0,
+)
+turnitin_mitigation_rank = _turnitin_like_candidate_rank(
+    turnitin_gate,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    turnitin_mitigation_rank > turnitin_cleanup_rank,
+    "Turnitin-like rank prioritizes formula-driver reduction over cleanup-only candidates",
 )
 assert_test(
     _safe_topk_limit() == 25.0,
@@ -4583,8 +4711,23 @@ blocker_status = _blocker_elimination_status(
 assert_test(
     blocker_status["active_drop"] >= 100
     and blocker_status["drops"]["unsupported_claim_risk"] == 20.0
-    and blocker_status["top_remaining"][0]["key"] == "topk_pattern",
+    and blocker_status["top_remaining"][0]["key"] == "unsupported_claim_risk",
     "blocker elimination status measures active blocker reduction directly",
+)
+raw_high_calibrated_blockers = _blocker_scores({
+    "ai_risk_badge": {
+        "ai_components": {
+            "topk_pattern": 81.56,
+            "topk_pattern_raw": 81.56,
+            "topk_calibrated_risk": 18.0,
+        }
+    }
+})
+assert_test(
+    raw_high_calibrated_blockers["topk_pattern"] == 18.0
+    and raw_high_calibrated_blockers["topk_calibrated_risk"] == 18.0
+    and raw_high_calibrated_blockers["topk_pattern_raw"] == 81.56,
+    "rewrite blocker scoring uses calibrated Top-k while preserving raw Top-k as diagnostic",
 )
 dominant_blocker_status = _dominant_blocker_gate_status(
     {
@@ -4688,9 +4831,8 @@ assert_test(
     and set(dominant_target_gap_status["active_keys"]) == {
         "unsupported_claim_risk",
         "broad_claim_risk",
-        "topk_pattern",
     },
-    "dominant blocker gate lowers its active threshold while Human is below target",
+    "dominant blocker gate lowers its active threshold without treating raw Top-k as a direct blocker",
 )
 human_target_search_status = _human_target_ai_search_status(
     {
@@ -6809,12 +6951,12 @@ topk_moving_blocker_override = _dominant_blocker_safe_progress_override(
     {
         "required": True,
         "cleared": False,
-        "active_keys": ["unsupported_claim_risk", "source_grounding_risk", "broad_claim_risk", "topk_pattern"],
+        "active_keys": ["unsupported_claim_risk", "source_grounding_risk", "broad_claim_risk", "topk_calibrated_risk"],
         "drops": {
             "unsupported_claim_risk": 0.0,
             "source_grounding_risk": 0.0,
             "broad_claim_risk": 0.0,
-            "topk_pattern": 0.75,
+            "topk_calibrated_risk": 0.75,
         },
     },
     {
