@@ -9,10 +9,12 @@ from sqlalchemy import select
 from app.config import REWRITE_STALE_THRESHOLD_MINUTES
 from app.models.db import async_session, RewriteJob, ScanJob, CreditAccount, CreditReservation
 from app.services.scan_service import _rewrite_cost
+from app.services import progress_stream
 
 logger = logging.getLogger("rewrite_service")
 
 _STALE_THRESHOLD = timedelta(minutes=REWRITE_STALE_THRESHOLD_MINUTES)
+_PROCESSING_HEARTBEAT_STALE_THRESHOLD = timedelta(minutes=5)
 _ACTIVE_REWRITE_STATUSES = ("pending", "processing", "retrying")
 _STALE_RECOVERY_STATUSES = ("pending", "retrying")
 _REPHRASABLE_TYPES = {
@@ -92,6 +94,49 @@ async def _release_active_reservation(session, job_id: uuid.UUID) -> None:
     reservation.status = "released"
 
 
+def _redis_stream_event_time(event_id: str) -> datetime | None:
+    """Parse a Redis stream ID into UTC time."""
+    try:
+        millis = int(str(event_id).split("-", 1)[0])
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(millis / 1000, tz=timezone.utc)
+
+
+async def _processing_rewrite_is_stale(job: RewriteJob, *, now: datetime | None = None) -> bool:
+    """Detect a processing rewrite whose worker heartbeat has stopped.
+
+    Redis progress events are the lightweight heartbeat. If Redis is unavailable
+    or the stream is missing, fall back to the conservative hard stale threshold
+    so active long rewrites are not killed incorrectly.
+    """
+    if job.status != "processing" or not job.created_at:
+        return False
+
+    now = now or datetime.now(timezone.utc)
+    age = now - job.created_at
+    if age > _STALE_THRESHOLD:
+        return True
+
+    latest = await progress_stream.read_latest_rewrite_progress(str(job.id))
+    if latest is None:
+        return False
+
+    event_time = _redis_stream_event_time(latest[0])
+    if event_time is None:
+        return False
+
+    return now - event_time > _PROCESSING_HEARTBEAT_STALE_THRESHOLD
+
+
+async def _mark_rewrite_interrupted(session, job: RewriteJob) -> None:
+    job.status = "failed"
+    job.error = "Rewrite interrupted during worker restart"
+    job.progress_message = "Rewrite worker restarted. Please retry."
+    job.completed_at = datetime.now(timezone.utc)
+    await _release_active_reservation(session, job.id)
+
+
 async def create_rewrite(scan_id: str, user_id: str) -> dict:
     """Create a rewrite job: validate scan, check balance, deduct tokens, enqueue."""
     uid = uuid.UUID(user_id)
@@ -109,8 +154,9 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         if not scan:
             raise ValueError("Completed scan not found")
 
-        # Only recover queued/retry jobs here. A processing rewrite may still be
-        # running in the worker; the worker's own time limit owns true timeout.
+        # Recover stale queued/retry jobs first. Processing rewrites are handled
+        # below with the Redis heartbeat so deploy-killed workers do not leave
+        # a permanently active job row.
         stale_cutoff = datetime.now(timezone.utc) - _STALE_THRESHOLD
         stale = await session.execute(
             select(RewriteJob).where(
@@ -121,11 +167,7 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         )
         stale_jobs = stale.scalars().all()
         for stale_job in stale_jobs:
-            stale_job.status = "failed"
-            stale_job.error = "Stale rewrite timed out"
-            stale_job.progress_message = "Rewrite timed out"
-            stale_job.completed_at = datetime.now(timezone.utc)
-            await _release_active_reservation(session, stale_job.id)
+            await _mark_rewrite_interrupted(session, stale_job)
 
         # Check for actively running rewrites.
         existing = await session.execute(
@@ -136,8 +178,15 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         )
         existing_job = existing.scalar_one_or_none()
         if existing_job:
+            if await _processing_rewrite_is_stale(existing_job):
+                await _mark_rewrite_interrupted(session, existing_job)
+                await session.commit()
+            else:
+                await session.commit()
+                return _rewrite_to_dict(existing_job)
+
+        if stale_jobs:
             await session.commit()
-            return _rewrite_to_dict(existing_job)
 
         completed = await session.execute(
             select(RewriteJob).where(
@@ -239,9 +288,8 @@ async def cancel_rewrite(rewrite_id: str, user_id: str) -> dict | None:
 async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | None:
     """Get rewrite job status.
 
-    Stale recovery intentionally excludes ``processing`` rewrites because they
-    may still be actively running in Celery. The worker is responsible for true
-    runtime timeouts and failure updates.
+    Stale recovery uses the Redis heartbeat for ``processing`` rewrites. This
+    prevents deploy-killed worker tasks from leaving jobs stuck indefinitely.
     """
     async with async_session() as session:
         q = select(RewriteJob).where(RewriteJob.id == uuid.UUID(rewrite_id))
@@ -256,13 +304,13 @@ async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | Non
         if job.status in _STALE_RECOVERY_STATUSES and job.created_at:
             age = datetime.now(timezone.utc) - job.created_at
             if age > _STALE_THRESHOLD:
-                job.status = "failed"
-                job.error = "Rewrite timed out"
-                job.progress_message = "Rewrite timed out"
-                job.completed_at = datetime.now(timezone.utc)
-                await _release_active_reservation(session, job.id)
+                await _mark_rewrite_interrupted(session, job)
                 await session.commit()
                 await session.refresh(job)
+        elif await _processing_rewrite_is_stale(job):
+            await _mark_rewrite_interrupted(session, job)
+            await session.commit()
+            await session.refresh(job)
 
         return _rewrite_to_dict(job)
 

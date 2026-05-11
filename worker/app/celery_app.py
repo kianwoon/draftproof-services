@@ -25,6 +25,7 @@ app.conf.update(
     accept_content=["json"],
     task_track_started=False,
     task_acks_late=True,
+    task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     # Disable Celery's internal event stream — single worker, no monitoring.
     # Event polling was generating ~11K reads/sec on Redis.

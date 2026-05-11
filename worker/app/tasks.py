@@ -6,6 +6,7 @@ import os
 import json
 import time
 import logging
+import threading
 
 # Make poc/ importable — on Koyeb: /app/poc/, locally: ../../poc/
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1133,12 +1134,32 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 "redis_updated_at": 0.0,
                 "db_percent": 40,
                 "db_updated_at": time.monotonic(),
+                "heartbeat_percent": 40,
+                "heartbeat_message": "Rewriting AI sections",
             }
+
+            heartbeat_stop = threading.Event()
+
+            def rewrite_heartbeat() -> None:
+                while not heartbeat_stop.wait(30.0):
+                    publish_progress(
+                        "processing",
+                        last_rewrite_progress["heartbeat_percent"],
+                        last_rewrite_progress["heartbeat_message"],
+                    )
+
+            heartbeat_thread = threading.Thread(
+                target=rewrite_heartbeat,
+                name=f"rewrite-heartbeat-{rewrite_id}",
+                daemon=True,
+            )
 
             def report_rewrite_progress(percent: int, message: str) -> None:
                 raise_if_canceled()
                 normalized_percent = max(40, min(79, int(percent)))
                 now = time.monotonic()
+                last_rewrite_progress["heartbeat_percent"] = normalized_percent
+                last_rewrite_progress["heartbeat_message"] = message
                 if (
                     normalized_percent <= last_rewrite_progress["redis_percent"]
                     and normalized_percent < 76
@@ -1165,18 +1186,23 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     last_rewrite_progress["db_updated_at"] = now
 
             raise_if_canceled()
-            result = run_rewrite_pipeline(
-                detect_json=report_json,
-                output_dir=tmpdir,
-                max_passes=3,
-                max_detect_loops=0,
-                ai_only=True,
-                verbose=False,
-                api_key=llm_api_key or None,
-                model=settings.LLM_MODEL or None,
-                base_url=settings.LLM_BASE_URL or None,
-                progress_callback=report_rewrite_progress,
-            )
+            heartbeat_thread.start()
+            try:
+                result = run_rewrite_pipeline(
+                    detect_json=report_json,
+                    output_dir=tmpdir,
+                    max_passes=3,
+                    max_detect_loops=0,
+                    ai_only=True,
+                    verbose=False,
+                    api_key=llm_api_key or None,
+                    model=settings.LLM_MODEL or None,
+                    base_url=settings.LLM_BASE_URL or None,
+                    progress_callback=report_rewrite_progress,
+                )
+            finally:
+                heartbeat_stop.set()
+                heartbeat_thread.join(timeout=1.0)
             raise_if_canceled()
 
             if result["status"] in ("skipped", "clean"):

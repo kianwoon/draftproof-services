@@ -59,6 +59,23 @@ async def read_rewrite_progress(
     return events
 
 
+async def read_latest_rewrite_progress(rewrite_id: str) -> tuple[str, dict] | None:
+    """Return the newest rewrite progress event, or None if unavailable/missing."""
+    try:
+        entries = await _redis_client().xrevrange(
+            rewrite_progress_key(rewrite_id),
+            count=1,
+        )
+    except Exception:
+        logger.warning("Failed to read latest rewrite progress from Redis", exc_info=True)
+        return None
+
+    if not entries:
+        return None
+    event_id, fields = entries[0]
+    return event_id, fields
+
+
 async def read_scan_progress(
     scan_id: str,
     last_id: str = "$",
