@@ -699,9 +699,11 @@ def _build_rewrite_debug_log(
             "circuit_breaker_reason": summary.get("circuit_breaker_reason"),
             "selected_strategy": summary.get("selected_strategy"),
             "selected_density_breaker_strategy": summary.get("selected_density_breaker_strategy"),
+            "selected_human_anchor_probe_strategy": summary.get("selected_human_anchor_probe_strategy"),
             "ai_mitigation_search": summary.get("ai_mitigation_search"),
             "formula_convergence_controller": summary.get("formula_convergence_controller"),
             "post_selection_ai_density_breaker": summary.get("post_selection_ai_density_breaker"),
+            "post_density_human_anchor_probe": summary.get("post_density_human_anchor_probe"),
             "generation_layer": summary.get("generation_layer"),
             "authenticity_mitigation": summary.get("authenticity_mitigation"),
             "authenticity_llm_calls_used": summary.get("authenticity_llm_calls_used"),
@@ -736,9 +738,11 @@ def _build_rewrite_debug_log(
     controller_debug_keys = [
         "selected_strategy",
         "selected_density_breaker_strategy",
+        "selected_human_anchor_probe_strategy",
         "selected_formula_strategy",
         "formula_convergence_controller",
         "post_selection_ai_density_breaker",
+        "post_density_human_anchor_probe",
         "ai_footprint_gate",
         "turnitin_like_ai_gate",
         "formula_gap_contract",
@@ -771,6 +775,7 @@ def _build_rewrite_debug_log(
             "ai_mitigation_search",
             "formula_convergence_controller",
             "post_selection_ai_density_breaker",
+            "post_density_human_anchor_probe",
         }
     ] if isinstance(summary, dict) else []
     return json.dumps(log_data, indent=2, ensure_ascii=False, default=str)

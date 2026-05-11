@@ -7792,6 +7792,44 @@ assert_test(
     "density breaker acceptance requires positive AI-burden movement, not suppression-only wins",
 )
 
+density_smoothness_slippage_report = {
+    "ai_risk_badge": {
+        "ai_components": {"topk_pattern_raw": 97.69, "topk_calibrated_risk": 89.154, "qualifying_text_ai_density": 61.06},
+        "transformation_classification": {
+            "features": {
+                "ai_likelihood": 0.485,
+                "semantic_uniformity_risk": 0.5821,
+                "rewrite_smoothness": 0.5074,
+                "outline_to_text_expansion": 0.39,
+                "section_style_variance": 0.20,
+                "signal_agreement_score": 0.50,
+                "human_anchor_discount": 0.18,
+            }
+        },
+    },
+    "integrity_layers": {
+        "layers": {
+            "ai_authorship_risk": {"score": 47},
+            "ai_transformation_risk": {"score": 43},
+            "human_contribution_signal": {"score": 57},
+        }
+    },
+    "findings": {"critical": [], "high": [], "medium": [], "low": []},
+}
+accepted_density_slippage = _post_selection_ai_density_breaker_acceptance(
+    base_acceptance_report,
+    density_smoothness_slippage_report,
+    review_burden_delta=-2,
+    weighted_severity_delta=-3,
+    critical_high_delta=0,
+)
+assert_test(
+    accepted_density_slippage.get("selectable") is True
+    and accepted_density_slippage.get("component_slippage_accepted") is True
+    and "rewrite_smoothness" in (accepted_density_slippage.get("component_slippage") or {}),
+    "density breaker preserves bounded smoothness slippage when total formula and core AI drivers improve",
+)
+
 anchor_probe_candidates = _post_density_human_anchor_probe_candidates(
     density_source,
     density_report,
@@ -7897,6 +7935,13 @@ assert_test(
     rejected_anchor_probe.get("selectable") is False
     and rejected_anchor_probe.get("driver_drops", {}).get("topk_calibrated_risk", 0) < 0,
     "post-density Human Anchor probe rejects anchor gain when protected AI drivers backfire",
+)
+
+worker_tasks_source = open(os.path.join(os.path.dirname(__file__), "..", "worker", "app", "tasks.py")).read()
+assert_test(
+    '"post_density_human_anchor_probe"' in worker_tasks_source
+    and '"selected_human_anchor_probe_strategy"' in worker_tasks_source,
+    "worker debug export includes post-density Human Anchor probe details",
 )
 
 llm_summary_probe = {}

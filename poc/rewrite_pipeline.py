@@ -746,7 +746,21 @@ def _post_selection_ai_density_breaker_acceptance(
     min_external_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_EXTERNAL_DROP", 0.10)
     min_density_or_topk_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_DENSITY_OR_TOPK_DROP", 0.10)
     min_positive_burden_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_POSITIVE_BURDEN_DROP", 0.25)
+    severe_smoothness_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_SMOOTHNESS_REGRESSION", 4.0)
+    severe_semantic_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_SEMANTIC_REGRESSION", 3.0)
+    severe_density_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_DENSITY_REGRESSION", 3.0)
     reject_reasons = []
+    slippage_notes = []
+    protected_regressions = []
+    core_progress_ok = bool(
+        formula_drop >= min_formula_drop
+        and positive_ai_burden_drop >= min_positive_burden_drop
+        and drops["external_ai_flag_risk"] >= min_external_drop
+        and max(drops["qualifying_text_ai_density"], drops["topk_calibrated_risk"], drops["ai_likelihood"]) >= min_density_or_topk_drop
+        and float(review_burden_delta or 0.0) <= 0.0
+        and float(weighted_severity_delta or 0.0) <= 0.0
+        and float(critical_high_delta or 0.0) <= 0.0
+    )
     if formula_drop < min_formula_drop:
         reject_reasons.append("formula_drop_too_small")
     if positive_ai_burden_drop < min_positive_burden_drop:
@@ -755,11 +769,23 @@ def _post_selection_ai_density_breaker_acceptance(
         reject_reasons.append("external_proxy_not_reduced")
     if max(drops["qualifying_text_ai_density"], drops["topk_calibrated_risk"], drops["ai_likelihood"]) < min_density_or_topk_drop:
         reject_reasons.append("density_topk_likelihood_not_reduced")
-    if drops["rewrite_smoothness"] < -smoothness_max_regression:
-        reject_reasons.append("rewrite_smoothness_regressed")
     for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation"):
         if drops[key] < -0.001:
-            reject_reasons.append(f"{key}_regressed")
+            protected_regressions.append(f"{key}_regressed")
+    reject_reasons.extend(protected_regressions)
+    if drops["rewrite_smoothness"] < -smoothness_max_regression:
+        if drops["rewrite_smoothness"] < -severe_smoothness_regression or not core_progress_ok or protected_regressions:
+            reject_reasons.append("rewrite_smoothness_regressed")
+        else:
+            slippage_notes.append("rewrite_smoothness_regressed_but_total_formula_improved")
+    if drops["semantic_uniformity"] < -severe_semantic_regression:
+        reject_reasons.append("semantic_uniformity_severely_regressed")
+    elif drops["semantic_uniformity"] < -0.001:
+        slippage_notes.append("semantic_uniformity_regressed_but_total_formula_improved")
+    if drops["qualifying_text_ai_density"] < -severe_density_regression:
+        reject_reasons.append("qualifying_text_ai_density_severely_regressed")
+    elif drops["qualifying_text_ai_density"] < -0.001:
+        slippage_notes.append("qualifying_text_ai_density_regressed_but_total_formula_improved")
     if float(review_burden_delta or 0.0) > 0.0:
         reject_reasons.append("review_burden_regressed")
     if float(weighted_severity_delta or 0.0) > 0.0:
@@ -776,6 +802,13 @@ def _post_selection_ai_density_breaker_acceptance(
         "formula_score_drop": formula_drop,
         "driver_drops": drops,
         "turnitin_like_component_drops": component_drops,
+        "component_slippage": {
+            key: round(abs(value), 3)
+            for key, value in drops.items()
+            if isinstance(value, (int, float)) and value < -0.001
+        },
+        "component_slippage_accepted": bool(selectable and slippage_notes),
+        "component_slippage_notes": slippage_notes,
         "positive_ai_burden_before": base_profile.get("raw_positive_score"),
         "positive_ai_burden_after": candidate_profile.get("raw_positive_score"),
         "positive_ai_burden_drop": positive_ai_burden_drop,
@@ -788,6 +821,9 @@ def _post_selection_ai_density_breaker_acceptance(
             "min_density_or_topk_drop": min_density_or_topk_drop,
             "min_positive_ai_burden_drop": min_positive_burden_drop,
             "max_smoothness_regression": smoothness_max_regression,
+            "severe_smoothness_regression": severe_smoothness_regression,
+            "severe_semantic_regression": severe_semantic_regression,
+            "severe_density_regression": severe_density_regression,
         },
     }
 
