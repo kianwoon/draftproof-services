@@ -608,6 +608,28 @@ def _build_rewrite_debug_log(
             "qualifying_text_ai_density": scan_components.get("qualifying_text_ai_density"),
         }
 
+    def _controller_phase_value(key: str, stage_name: str) -> dict | None:
+        value = summary.get(key) if isinstance(summary, dict) else None
+        if value is not None:
+            return value
+        stage = next(
+            (
+                row for row in (summary.get("stage_timings") or [])
+                if isinstance(row, dict) and row.get("stage") == stage_name
+            ),
+            None,
+        ) if isinstance(summary, dict) else None
+        if not stage:
+            return value
+        return {
+            "enabled": True,
+            "selected": stage.get("selected"),
+            "reason": stage.get("stop_reason"),
+            "candidate_count": stage.get("candidates"),
+            "scans_used": stage.get("scans"),
+            "reporting_fallback": True,
+        }
+
     log_data = {
         "debug_export_version": "rewrite_controller_debug_passthrough_v2",
         "debug_export_source": "worker.app.tasks._build_rewrite_debug_log",
@@ -702,8 +724,14 @@ def _build_rewrite_debug_log(
             "selected_human_anchor_probe_strategy": summary.get("selected_human_anchor_probe_strategy"),
             "ai_mitigation_search": summary.get("ai_mitigation_search"),
             "formula_convergence_controller": summary.get("formula_convergence_controller"),
-            "post_selection_ai_density_breaker": summary.get("post_selection_ai_density_breaker"),
-            "post_density_human_anchor_probe": summary.get("post_density_human_anchor_probe"),
+            "post_selection_ai_density_breaker": _controller_phase_value(
+                "post_selection_ai_density_breaker",
+                "post_selection_ai_density_breaker",
+            ),
+            "post_density_human_anchor_probe": _controller_phase_value(
+                "post_density_human_anchor_probe",
+                "post_density_human_anchor_probe",
+            ),
             "generation_layer": summary.get("generation_layer"),
             "authenticity_mitigation": summary.get("authenticity_mitigation"),
             "authenticity_llm_calls_used": summary.get("authenticity_llm_calls_used"),
@@ -767,7 +795,10 @@ def _build_rewrite_debug_log(
     } if isinstance(summary, dict) else {}
     for key in controller_debug_keys:
         if isinstance(summary, dict) and key in summary:
-            rewrite_debug[key] = summary.get(key)
+            if key in {"post_selection_ai_density_breaker", "post_density_human_anchor_probe"}:
+                rewrite_debug[key] = _controller_phase_value(key, key)
+            else:
+                rewrite_debug[key] = summary.get(key)
     rewrite_debug["controller_stage_timings"] = [
         stage for stage in (summary.get("stage_timings") or [])
         if isinstance(stage, dict)

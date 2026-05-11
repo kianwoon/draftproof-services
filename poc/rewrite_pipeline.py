@@ -911,10 +911,7 @@ def _post_selection_ai_density_breaker_acceptance(
     component_drops = _turnitin_like_component_drops(base_profile, candidate_profile)
     positive_ai_burden_drop = _turnitin_like_positive_burden_drop(current_report, candidate_report)
     smoothness_max_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_MAX_SMOOTHNESS_REGRESSION", 0.30)
-    min_formula_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_FORMULA_DROP", 0.25)
-    min_external_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_EXTERNAL_DROP", 0.10)
-    min_density_or_topk_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_DENSITY_OR_TOPK_DROP", 0.10)
-    min_positive_burden_drop = _float_env("DRAFTPROOF_DENSITY_BREAKER_MIN_POSITIVE_BURDEN_DROP", 0.25)
+    improvement_epsilon = 0.001
     severe_smoothness_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_SMOOTHNESS_REGRESSION", 4.0)
     severe_semantic_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_SEMANTIC_REGRESSION", 3.0)
     severe_density_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_DENSITY_REGRESSION", 3.0)
@@ -922,23 +919,19 @@ def _post_selection_ai_density_breaker_acceptance(
     slippage_notes = []
     protected_regressions = []
     core_progress_ok = bool(
-        formula_drop >= min_formula_drop
-        and positive_ai_burden_drop >= min_positive_burden_drop
-        and drops["external_ai_flag_risk"] >= min_external_drop
-        and max(drops["qualifying_text_ai_density"], drops["topk_calibrated_risk"], drops["ai_likelihood"]) >= min_density_or_topk_drop
+        formula_drop > improvement_epsilon
+        and positive_ai_burden_drop >= -improvement_epsilon
+        and drops["external_ai_flag_risk"] >= -improvement_epsilon
+        and drops["ai_likelihood"] >= -improvement_epsilon
         and float(review_burden_delta or 0.0) <= 0.0
         and float(weighted_severity_delta or 0.0) <= 0.0
         and float(critical_high_delta or 0.0) <= 0.0
     )
-    if formula_drop < min_formula_drop:
-        reject_reasons.append("formula_drop_too_small")
-    if positive_ai_burden_drop < min_positive_burden_drop:
-        reject_reasons.append("positive_ai_burden_not_reduced")
-    if drops["external_ai_flag_risk"] < min_external_drop:
-        reject_reasons.append("external_proxy_not_reduced")
-    if max(drops["qualifying_text_ai_density"], drops["topk_calibrated_risk"], drops["ai_likelihood"]) < min_density_or_topk_drop:
-        reject_reasons.append("density_topk_likelihood_not_reduced")
-    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation"):
+    if formula_drop <= improvement_epsilon:
+        reject_reasons.append("formula_score_not_reduced")
+    if positive_ai_burden_drop < -improvement_epsilon:
+        reject_reasons.append("positive_ai_burden_regressed")
+    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation", "external_ai_flag_risk", "ai_likelihood"):
         if drops[key] < -0.001:
             protected_regressions.append(f"{key}_regressed")
     reject_reasons.extend(protected_regressions)
@@ -985,10 +978,7 @@ def _post_selection_ai_density_breaker_acceptance(
         "weighted_severity_delta": weighted_severity_delta,
         "critical_high_delta": critical_high_delta,
         "thresholds": {
-            "min_formula_drop": min_formula_drop,
-            "min_external_drop": min_external_drop,
-            "min_density_or_topk_drop": min_density_or_topk_drop,
-            "min_positive_ai_burden_drop": min_positive_burden_drop,
+            "improvement_epsilon": improvement_epsilon,
             "max_smoothness_regression": smoothness_max_regression,
             "severe_smoothness_regression": severe_smoothness_regression,
             "severe_semantic_regression": severe_semantic_regression,
@@ -1130,12 +1120,12 @@ def _post_selection_ai_density_breaker(
             continue
         rank = (
             1 if _turnitin_like_ai_profile(candidate_report).get("target_met") else 0,
+            float(acceptance.get("formula_score_drop") or 0.0),
             float(acceptance.get("positive_ai_burden_drop") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("external_ai_flag_risk") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("qualifying_text_ai_density") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
-            float(acceptance.get("formula_score_drop") or 0.0),
             -float(_turnitin_like_ai_profile(candidate_report).get("score") or 100.0),
         )
         if best_rank is None or rank > best_rank:
@@ -6268,7 +6258,7 @@ def _turnitin_like_ai_gate_status(
     ai_before = _ai_footprint_flatten(_ai_footprint_profile(original_report))
     ai_after = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
     score_drop = float(drops.get("turnitin_like_ai_score") or 0.0)
-    min_drop = _float_env("DRAFTPROOF_TURNITIN_LIKE_MIN_DROP", 1.0)
+    improvement_epsilon = 0.001
     target_score = TURNITIN_LIKE_TARGET_AI_SCORE
     major_backfire_limit = _float_env("DRAFTPROOF_TURNITIN_LIKE_MAJOR_COMPONENT_BACKFIRE", 8.0)
     component_backfires = [
@@ -6301,7 +6291,7 @@ def _turnitin_like_ai_gate_status(
         and ai_transformation_drop >= 0.0
         and not component_backfires
     )
-    improved = bool(score_drop >= min_drop)
+    improved = bool(score_drop > improvement_epsilon)
     score_target_met = bool(float(after.get("score", 100.0)) < target_score)
     achieved = bool(safety_clean and improved and score_target_met)
     partial = bool(safety_clean and improved and not achieved)
@@ -6330,6 +6320,7 @@ def _turnitin_like_ai_gate_status(
         "ai_transformation_drop": round(ai_transformation_drop, 3),
         "safety_clean": safety_clean,
         "improved": improved,
+        "improvement_epsilon": improvement_epsilon,
         "safe_band": achieved,
         "target_met": score_target_met,
         "target_score": round(float(target_score), 3),
@@ -6338,7 +6329,7 @@ def _turnitin_like_ai_gate_status(
         "thresholds": {
             "safe_band": round(float(target_score), 3),
             "target_score": round(float(target_score), 3),
-            "min_drop": round(float(min_drop), 3),
+            "improvement_epsilon": round(float(improvement_epsilon), 3),
             "major_component_backfire": round(float(major_backfire_limit), 3),
         },
     }
@@ -6910,7 +6901,14 @@ def _formula_convergence_primary_burden_gate_status(
     candidate_report: dict | None,
     contract: dict | None,
 ) -> dict:
-    """Require real positive-burden movement when dominant AI drivers are pinned."""
+    """Record primary-burden movement without discarding safe formula progress.
+
+    Earlier versions used minimum raw/burden drops as a hard gate. That caused
+    verified, safety-clean improvements to be thrown away when the remaining
+    dominant drivers were stubborn. At this layer, safety gates already run
+    separately, so this function should only block candidates that fail to move
+    the total formula score or that worsen the positive AI burden.
+    """
     contract = contract if isinstance(contract, dict) else {}
     current_profile = _turnitin_like_ai_profile(current_report)
     candidate_profile = _turnitin_like_ai_profile(candidate_report)
@@ -6948,22 +6946,22 @@ def _formula_convergence_primary_burden_gate_status(
         or current_density > _float_env("DRAFTPROOF_QUALIFYING_AI_DENSITY_SAFE_BAND", 35.0) + 20.0
         or current_ai_likelihood >= 55.0
     )
-    min_positive_drop = max(1.0, min(4.0, score_drop * 0.45))
-    min_primary_raw_drop = 2.0 if primary_pinned else 0.5
+    improvement_epsilon = 0.001
+    min_positive_drop = 0.0
+    min_primary_raw_drop = 0.0
     accepted = bool(
         target_met
-        or not primary_pinned
         or (
-            positive_ai_burden_drop >= min_positive_drop
-            and primary_raw_drop >= min_primary_raw_drop
+            score_drop > improvement_epsilon
+            and positive_ai_burden_drop >= -improvement_epsilon
         )
     )
     reason = "accepted"
     if not accepted:
         reason = (
-            "dominant_positive_ai_burden_not_reduced"
-            if positive_ai_burden_drop < min_positive_drop
-            else "dominant_primary_driver_not_reduced"
+            "positive_ai_burden_regressed"
+            if positive_ai_burden_drop < -improvement_epsilon
+            else "formula_score_not_reduced"
         )
     return {
         "version": "formula_convergence_primary_burden_gate_v1",

@@ -1385,6 +1385,53 @@ assert_test(
     and turnitin_gate["score_drop"] > 25,
     "Turnitin-like gate accepts only below-target formula reduction under existing safety constraints",
 )
+turnitin_micro_before = make_footprint_report(
+    ai_authorship=50,
+    human=50,
+    ai_transformation=50,
+    grounding=45,
+    human_anchor=25,
+    smoothness=45,
+    semantic_uniformity=45,
+    ai_likelihood=50,
+    topk_pattern=85,
+    topk_calibrated_risk=70,
+    generic_assertion_risk=45,
+    qualifying_text_ai_density=45,
+    unsupported_claim_risk=35,
+    broad_claim_risk=35,
+    discourse=35,
+)
+turnitin_micro_after = make_footprint_report(
+    ai_authorship=50,
+    human=50,
+    ai_transformation=50,
+    grounding=45,
+    human_anchor=25,
+    smoothness=45,
+    semantic_uniformity=45,
+    ai_likelihood=49.99,
+    topk_pattern=85,
+    topk_calibrated_risk=70,
+    generic_assertion_risk=45,
+    qualifying_text_ai_density=45,
+    unsupported_claim_risk=35,
+    broad_claim_risk=35,
+    discourse=35,
+)
+turnitin_micro_gate = _turnitin_like_ai_gate_status(
+    turnitin_micro_before,
+    turnitin_micro_after,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+    ai_score_regressed=False,
+)
+assert_test(
+    turnitin_micro_gate["outcome_class"] == "partially_ai_mitigated"
+    and 0 < turnitin_micro_gate["score_drop"] < 1.0,
+    "Turnitin-like gate preserves safety-clean micro formula drops instead of applying a minimum-drop cliff",
+)
 turnitin_at_target_profile = turnitin_like_ai_profile(
     features={"ai_likelihood": 44.4444444444},
     ai_components={},
@@ -1668,10 +1715,10 @@ primary_driver_gate = _formula_convergence_primary_burden_gate_status(
     _formula_gap_contract(primary_pinned_current, primary_driver_candidate),
 )
 assert_test(
-    not anchor_heavy_gate["accepted"]
-    and anchor_heavy_gate["reason"] == "dominant_positive_ai_burden_not_reduced"
+    anchor_heavy_gate["accepted"]
+    and anchor_heavy_gate["reason"] == "accepted"
     and primary_driver_gate["accepted"],
-    "formula convergence rejects anchor-heavy gains when dominant AI burden remains pinned",
+    "formula convergence records pinned-driver diagnostics without discarding safe formula drops",
 )
 assert_test(
     _formula_gap_changed_word_count("one two three", "one two four five") == 2,
@@ -1680,8 +1727,9 @@ assert_test(
 rewrite_source_for_turnitin_target = open(__file__.replace("test_rewrite_v2.py", "rewrite_pipeline.py")).read()
 assert_test(
     "DRAFTPROOF_TURNITIN_LIKE_SAFE_BAND" not in rewrite_source_for_turnitin_target
+    and "DRAFTPROOF_TURNITIN_LIKE_MIN_DROP" not in rewrite_source_for_turnitin_target
     and "TURNITIN_LIKE_TARGET_AI_SCORE" in rewrite_source_for_turnitin_target,
-    "Turnitin-like target is shared code, not an environment-tuned safe band",
+    "Turnitin-like target and partial-progress gate are shared code, not environment-tuned cliffs",
 )
 assert_test(
     _safe_topk_limit() == 25.0,
@@ -7954,7 +8002,43 @@ assert_test(
 )
 assert_test(
     accepted_density.get("positive_ai_burden_drop", 0) > 0,
-    "density breaker acceptance requires positive AI-burden movement, not suppression-only wins",
+    "density breaker acceptance records positive AI-burden movement when present",
+)
+micro_density_report = {
+    "ai_risk_badge": {
+        "ai_components": {"topk_pattern_raw": 98, "topk_calibrated_risk": 90, "qualifying_text_ai_density": 60},
+        "transformation_classification": {
+            "features": {
+                "ai_likelihood": 0.499,
+                "semantic_uniformity_risk": 0.58,
+                "rewrite_smoothness": 0.48,
+                "outline_to_text_expansion": 0.40,
+                "section_style_variance": 0.20,
+                "signal_agreement_score": 0.50,
+                "human_anchor_discount": 0.18,
+            }
+        },
+    },
+    "integrity_layers": {
+        "layers": {
+            "ai_authorship_risk": {"score": 49},
+            "ai_transformation_risk": {"score": 45},
+            "human_contribution_signal": {"score": 55},
+        }
+    },
+    "findings": {"critical": [], "high": [], "medium": [], "low": []},
+}
+accepted_micro_density = _post_selection_ai_density_breaker_acceptance(
+    base_acceptance_report,
+    micro_density_report,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    accepted_micro_density.get("selectable") is True
+    and 0 < accepted_micro_density.get("formula_score_drop", 0) < 0.25,
+    "density breaker keeps safety-clean micro formula drops instead of applying a minimum-drop cliff",
 )
 
 density_smoothness_slippage_report = {
