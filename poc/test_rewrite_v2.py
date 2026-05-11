@@ -76,15 +76,22 @@ from rewrite_controller import (
     resolve_global_rewrite_seconds,
     assemble_formula_gap_candidate,
     build_eligible_span_density_contract,
+    build_segment_density_windows,
     compare_eligible_span_density,
     evaluate_text_quality_regression,
     extract_formula_gap_candidate_payload,
+    extract_segment_window_payload,
     formula_gap_block_portfolio_tasks,
     formula_gap_budget_contract,
     formula_gap_candidate_prompt,
     formula_gap_named_entity_inventory,
     formula_gap_plan,
     formula_gap_portfolio_families,
+    assemble_segment_window_candidate,
+    segment_patchwork_budget,
+    segment_window_candidate_prompt,
+    segment_window_is_canonical_fact_sentence,
+    segment_window_tasks,
 )
 from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
@@ -9013,6 +9020,101 @@ assert_test(
     span_unsafe_class["class"] != "detector_safe"
     and span_safe_class["class"] == "detector_safe",
     "selector cannot label detector-safe while eligible span density remains unsafe",
+)
+segment_window_text = (
+    "The United States was founded in 1776 after the colonies declared independence from Britain. "
+    "The Constitution later created a system of government with separate branches. "
+    "One of the most important features of the country is its strong global influence. "
+    "Furthermore, it plays a major role in politics, economics, culture, and education. "
+    "This shows that the country has become a significant force in the modern world. "
+    "Another important feature is its economic strength and global companies. "
+    "Apple, Microsoft, Google, Tesla, and NASA are often used as examples. "
+    "Overall, the United States remains influential because of its history and culture."
+)
+segment_window_report = {
+    "ai_risk_badge": {
+        "ai_likelihood_score": 64,
+        "ai_components": {
+            "topk_calibrated_risk": 92,
+            "qualifying_text_ai_density": 75,
+        },
+        "writing_components": {
+            "lived_detail_risk": 80,
+            "domain_grounding_strength": 30,
+        },
+        "transformation_classification": {
+            "features": {
+                "semantic_uniformity_risk": 0.58,
+                "rewrite_smoothness": 0.52,
+                "outline_to_text_expansion": 0.40,
+                "section_style_variance": 0.45,
+                "signal_agreement_score": 0.50,
+            }
+        },
+    },
+    "predictability": {
+        "all_sentences": [
+            {
+                "sentence_id": f"s{idx + 1:03d}",
+                "sentence_index": idx,
+                "sentence": sentence,
+                "top10_ratio": 0.78,
+                "top50_ratio": 0.91,
+                "predictability_risk": 0.60,
+            }
+            for idx, sentence in enumerate([s.strip() for s in re.split(r"(?<=[.!?])\s+", segment_window_text) if s.strip()])
+        ]
+    },
+}
+segment_windows = build_segment_density_windows(segment_window_text, segment_window_report, limit=3)
+segment_tasks = segment_window_tasks(segment_window_text, segment_window_report, limit=3)
+segment_prompt = segment_window_candidate_prompt(segment_window_text, segment_window_report, segment_tasks[0])
+segment_payload, segment_payload_reason = extract_segment_window_payload(json.dumps({
+    "strategy": "WINDOW_TEXTURE_REBUILD",
+    "targeted_drivers": ["ai_likelihood", "topk_calibrated_risk"],
+    "fact_inventory_preserved": True,
+    "protected_anchors_preserved": True,
+    "unsupported_new_facts": False,
+    "sentence_patches": [
+        {
+            "sentence_index": 2,
+            "replacement_text": "Its global influence is broad, but the effects do not land in one neat pattern."
+        },
+        {
+            "sentence_index": 0,
+            "replacement_text": "The founding date changed."
+        },
+    ],
+}))
+segment_candidate_text, segment_applied, segment_assembly_reason = assemble_segment_window_candidate(
+    segment_window_text,
+    segment_payload or {},
+    segment_tasks[0],
+)
+assert_test(
+    segment_windows
+    and 5 <= segment_windows[0]["sentence_count"] <= 10
+    and segment_windows[0]["editable_sentence_count"] >= 1,
+    "segment-window controller ranks overlapping 5-10 sentence density windows",
+)
+assert_test(
+    segment_window_is_canonical_fact_sentence("The United States was founded in 1776 after independence from Britain.")
+    and "canonical_fact_preserve" in segment_prompt
+    and "No personal voice" in segment_prompt,
+    "segment-window prompt preserves canonical facts and forbids personal voice",
+)
+assert_test(
+    segment_payload is not None
+    and not segment_payload_reason
+    and "1776" in segment_candidate_text
+    and "The founding date changed" not in segment_candidate_text
+    and segment_applied
+    and not segment_assembly_reason,
+    "segment-window assembler applies only editable sentence patches and skips canonical facts",
+)
+assert_test(
+    segment_patchwork_budget(segment_window_text, segment_candidate_text, segment_applied)["accepted"] is True,
+    "segment-window patchwork budget accepts scoped window edits",
 )
 decision_probe = build_candidate_decision(
     {

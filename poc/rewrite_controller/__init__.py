@@ -29,6 +29,16 @@ from .eligible_span_density import (
     build_eligible_span_density_contract,
     compare_eligible_span_density,
 )
+from .segment_window_density import (
+    SEGMENT_WINDOW_CONTROLLER_VERSION,
+    assemble_segment_window_candidate,
+    build_segment_density_windows,
+    extract_segment_window_payload,
+    is_canonical_fact_sentence as segment_window_is_canonical_fact_sentence,
+    segment_patchwork_budget,
+    segment_window_candidate_prompt,
+    segment_window_tasks,
+)
 
 __all__ = [
     "CandidateLedger",
@@ -53,4 +63,12 @@ __all__ = [
     "formula_gap_portfolio_families",
     "build_eligible_span_density_contract",
     "compare_eligible_span_density",
+    "SEGMENT_WINDOW_CONTROLLER_VERSION",
+    "assemble_segment_window_candidate",
+    "build_segment_density_windows",
+    "extract_segment_window_payload",
+    "segment_patchwork_budget",
+    "segment_window_candidate_prompt",
+    "segment_window_is_canonical_fact_sentence",
+    "segment_window_tasks",
 ]

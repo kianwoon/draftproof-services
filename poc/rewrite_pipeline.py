@@ -58,6 +58,15 @@ from rewrite_controller.eligible_span_density import (
     build_eligible_span_density_contract as _eligible_span_density_contract,
     compare_eligible_span_density as _eligible_span_density_comparison,
 )
+from rewrite_controller.segment_window_density import (
+    SEGMENT_WINDOW_CONTROLLER_VERSION as _SEGMENT_WINDOW_CONTROLLER_VERSION,
+    assemble_segment_window_candidate as _assemble_segment_window_candidate,
+    build_segment_density_windows as _segment_density_windows,
+    extract_segment_window_payload as _extract_segment_window_payload,
+    segment_patchwork_budget as _segment_window_patchwork_budget,
+    segment_window_candidate_prompt as _segment_window_candidate_prompt,
+    segment_window_tasks as _segment_window_tasks,
+)
 from rewrite_compiler import CompilerConfig, CompilerDependencies, run_rewrite_compiler
 from rewrite.guards import detect_protected_spans, check_semantic_drift
 from report.pdf import render_pdf
@@ -1014,6 +1023,342 @@ def _post_selection_ai_density_breaker_acceptance(
             "severe_density_regression": severe_density_regression,
         },
     }
+
+
+def _segment_window_density_acceptance(
+    current_text: str,
+    current_report: dict | None,
+    candidate_text: str,
+    candidate_report: dict | None,
+    *,
+    review_burden_delta: int | float,
+    weighted_severity_delta: int | float,
+    critical_high_delta: int | float,
+) -> dict:
+    """Acceptance policy for scoped 5-10 sentence density-window candidates."""
+    base_profile = _turnitin_like_ai_profile(current_report)
+    candidate_profile = _turnitin_like_ai_profile(candidate_report)
+    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
+    density_gate = _eligible_span_density_comparison(
+        current_text,
+        current_report,
+        candidate_text,
+        candidate_report,
+    )
+    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
+    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
+
+    def drop(key: str) -> float:
+        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
+
+    driver_drops = {
+        key: drop(key)
+        for key in (
+            "topk_calibrated_risk",
+            "qualifying_text_ai_density",
+            "external_ai_flag_risk",
+            "ai_likelihood",
+            "rewrite_smoothness",
+            "ai_authorship",
+            "ai_transformation",
+            "semantic_uniformity",
+        )
+    }
+    current_ai = _report_badge_ai(current_report)
+    candidate_ai = _report_badge_ai(candidate_report)
+    headline_ai_drop = (
+        round(float(current_ai) - float(candidate_ai), 3)
+        if isinstance(current_ai, (int, float)) and isinstance(candidate_ai, (int, float))
+        else 0.0
+    )
+    reject_reasons: list[str] = []
+    if formula_drop <= 0.001:
+        reject_reasons.append("formula_score_not_reduced")
+    if not (density_gate.get("safe") or density_gate.get("improved")):
+        reject_reasons.append("eligible_span_density_not_improved")
+    if headline_ai_drop < -0.001:
+        reject_reasons.append("headline_ai_score_regressed")
+    for key in ("ai_authorship", "ai_transformation", "external_ai_flag_risk", "ai_likelihood"):
+        if driver_drops.get(key, 0.0) < -0.001:
+            reject_reasons.append(f"{key}_regressed")
+    if float(review_burden_delta or 0.0) > 0.0:
+        reject_reasons.append("review_burden_regressed")
+    if float(weighted_severity_delta or 0.0) > 0.0:
+        reject_reasons.append("weighted_severity_regressed")
+    if float(critical_high_delta or 0.0) > 0.0:
+        reject_reasons.append("critical_high_regressed")
+    selectable = not reject_reasons
+    return {
+        "version": "segment_window_density_acceptance_v1",
+        "selectable": selectable,
+        "reason": "accepted_segment_window_density_improvement" if selectable else reject_reasons[0],
+        "formula_score_before": base_profile.get("score"),
+        "formula_score_after": candidate_profile.get("score"),
+        "formula_score_drop": formula_drop,
+        "target_met": bool(candidate_profile.get("target_met")),
+        "headline_ai_drop": headline_ai_drop,
+        "driver_drops": driver_drops,
+        "eligible_span_density_gate": density_gate,
+        "unsafe_eligible_word_ratio_drop": density_gate.get("unsafe_eligible_word_ratio_drop"),
+        "longest_unsafe_span_words_drop": density_gate.get("longest_unsafe_span_words_drop"),
+        "review_burden_delta": review_burden_delta,
+        "weighted_severity_delta": weighted_severity_delta,
+        "critical_high_delta": critical_high_delta,
+    }
+
+
+def _segment_window_density_controller(
+    current_text: str,
+    current_report: dict | None,
+    original_report: dict | None,
+    *,
+    gateway: LLMGateway | None = None,
+    scan_func=None,
+    drift_checker=check_semantic_drift,
+    max_scans: int | None = None,
+    max_llm_calls: int | None = None,
+) -> dict:
+    """Run scoped 5-10 sentence density-window LLM patches."""
+    if not _env_flag("DRAFTPROOF_SEGMENT_WINDOW_DENSITY_CONTROLLER", True):
+        return {"enabled": False, "reason": "disabled"}
+    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
+        return {"enabled": False, "reason": "missing_current_selection"}
+    scan_func = scan_func or _run_full_scan_report_dict
+    max_scans = max(
+        0,
+        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_SEGMENT_WINDOW_MAX_SCANS", 3.0)),
+    )
+    max_llm_calls = max(
+        0,
+        int(max_llm_calls if isinstance(max_llm_calls, int) else _float_env("DRAFTPROOF_SEGMENT_WINDOW_MAX_LLM_CALLS", 3.0)),
+    )
+    current_profile = _turnitin_like_ai_profile(current_report)
+    density_before = _eligible_span_density_contract(current_text, current_report)
+    components = current_profile.get("components") if isinstance(current_profile.get("components"), dict) else {}
+    topk_after = float(components.get("topk_calibrated_risk") or 0.0)
+    if bool(current_profile.get("target_met")) and bool(density_before.get("safe")):
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "already_turnitin_and_density_safe",
+            "segment_density_windows": _segment_density_windows(current_text, current_report),
+        }
+    if bool(density_before.get("safe")) and topk_after < _safe_topk_calibrated_limit():
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "density_and_topk_already_safe",
+            "segment_density_windows": _segment_density_windows(current_text, current_report),
+        }
+    if gateway is None or max_llm_calls <= 0:
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "no_llm_budget_or_gateway",
+            "segment_density_windows": _segment_density_windows(current_text, current_report),
+            "eligible_span_density_before": density_before,
+        }
+    if max_scans <= 0:
+        return {"enabled": True, "selected": False, "reason": "scan_budget_zero"}
+
+    tasks = _segment_window_tasks(current_text, current_report, limit=max_llm_calls)
+    summary = {
+        "enabled": True,
+        "version": _SEGMENT_WINDOW_CONTROLLER_VERSION,
+        "selected": False,
+        "selected_text": current_text,
+        "selected_report": current_report,
+        "selected_strategy": None,
+        "llm_calls": 0,
+        "scans_used": 0,
+        "candidate_count": 0,
+        "segment_density_windows": _segment_density_windows(current_text, current_report),
+        "eligible_span_density_before": density_before,
+        "base_summary": {
+            "turnitin_like_ai_score": current_profile.get("score"),
+            "target_met": current_profile.get("target_met"),
+            "topk_calibrated_risk": topk_after,
+        },
+        "candidate_frontier": [],
+        "reason": "no_candidate_selected",
+    }
+    if not tasks:
+        summary["reason"] = "no_segment_window_tasks"
+        return summary
+
+    protected = detect_protected_spans(current_text)
+    best_eval = None
+    best_rank = None
+    best_text = current_text
+    best_report = current_report
+    seen = {current_text.strip()}
+    for task_index, task in enumerate(tasks, start=1):
+        if summary["llm_calls"] >= max_llm_calls or summary["scans_used"] >= max_scans:
+            break
+        strategy = f"segment_window_density_{str(task.get('family') or 'window').lower()}_{task_index}"
+        candidate_eval = {
+            "strategy": strategy,
+            "task": task,
+            "passed_local_checks": False,
+        }
+        try:
+            prompt = _segment_window_candidate_prompt(current_text, current_report, task)
+            summary["llm_calls"] += 1
+            response = gateway.chat(
+                prompt,
+                system=(
+                    "You are DraftProof's segment-window density controller. "
+                    "Return only JSON sentence patches for the selected window."
+                ),
+                **_phase_chat_sampling_kwargs(
+                    "DRAFTPROOF_SEGMENT_WINDOW_DENSITY",
+                    temperature_env="DRAFTPROOF_SEGMENT_WINDOW_TEMPERATURE",
+                    temperature_default=0.42,
+                    max_tokens_env="DRAFTPROOF_SEGMENT_WINDOW_MAX_TOKENS",
+                    max_tokens_default=2600,
+                ),
+            )
+            payload, payload_reason = _extract_segment_window_payload(response.content)
+        except Exception as exc:
+            candidate_eval["reason"] = f"llm_error {exc}"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        if not payload:
+            candidate_eval["reason"] = payload_reason or "invalid_segment_window_payload"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        assembled, applied, assembly_reason = _assemble_segment_window_candidate(current_text, payload, task)
+        candidate_text = _clean_full_document_candidate(assembled, current_text)
+        candidate_eval.update({
+            "payload_strategy": payload.get("strategy"),
+            "applied_sentence_patches": applied,
+            "targeted_drivers": payload.get("targeted_drivers"),
+        })
+        if not candidate_text:
+            candidate_eval["reason"] = assembly_reason or "empty_or_unchanged_candidate"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        if candidate_text.strip() in seen:
+            candidate_eval["reason"] = "duplicate_candidate"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        seen.add(candidate_text.strip())
+        local_reason = _ai_candidate_quality_reject_reason(candidate_text)
+        if local_reason:
+            candidate_eval["reason"] = local_reason
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        patchwork = _segment_window_patchwork_budget(current_text, candidate_text, applied)
+        candidate_eval["patchwork_budget"] = patchwork
+        if not patchwork.get("accepted"):
+            candidate_eval["reason"] = patchwork.get("reason") or "patchwork_edit_budget_exceeded"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        protected_loss = _ai_search_protected_loss_reason(current_text, candidate_text, protected)
+        if protected_loss:
+            candidate_eval["reason"] = "protected_span_lost " + protected_loss
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        try:
+            drift = drift_checker(current_text, candidate_text, threshold=0.80)
+        except TypeError:
+            drift = drift_checker(current_text, candidate_text)
+        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
+        if not bool(getattr(drift, "accepted", True)):
+            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
+            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        try:
+            candidate_report = scan_func(candidate_text)
+        except Exception as exc:
+            candidate_eval["reason"] = f"candidate_scan_error {exc}"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        summary["scans_used"] += 1
+        review_delta = _report_review_burden(candidate_report) - _report_review_burden(current_report)
+        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(current_report)
+        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(current_report)
+        acceptance = _segment_window_density_acceptance(
+            current_text,
+            current_report,
+            candidate_text,
+            candidate_report,
+            review_burden_delta=review_delta,
+            weighted_severity_delta=severity_delta,
+            critical_high_delta=critical_delta,
+        )
+        candidate_eval.update({
+            "passed_local_checks": True,
+            "acceptance": acceptance,
+            "selectable": acceptance.get("selectable"),
+            "reason": acceptance.get("reason"),
+            "formula_score": acceptance.get("formula_score_after"),
+            "formula_score_drop": acceptance.get("formula_score_drop"),
+            "eligible_span_density_gate": acceptance.get("eligible_span_density_gate"),
+            "driver_drops": acceptance.get("driver_drops"),
+        })
+        summary["candidate_frontier"].append(candidate_eval)
+        if not acceptance.get("selectable"):
+            continue
+        density_gate = acceptance.get("eligible_span_density_gate") or {}
+        rank = (
+            1 if acceptance.get("target_met") and density_gate.get("safe") else 0,
+            float(acceptance.get("formula_score_drop") or 0.0),
+            float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0),
+            float(density_gate.get("longest_unsafe_span_words_drop") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
+            -float((acceptance.get("formula_score_after") or 100.0)),
+        )
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_eval = candidate_eval
+            best_text = candidate_text
+            best_report = candidate_report
+
+    summary["candidate_count"] = len(summary.get("candidate_frontier") or [])
+    if best_eval:
+        best_eval["selected"] = True
+        final_density = _eligible_span_density_comparison(
+            current_text,
+            current_report,
+            best_text,
+            best_report,
+        )
+        summary.update({
+            "selected": True,
+            "selected_text": best_text,
+            "selected_report": best_report,
+            "selected_strategy": best_eval.get("strategy"),
+            "selected_candidate": {
+                key: best_eval.get(key)
+                for key in (
+                    "strategy",
+                    "formula_score",
+                    "formula_score_drop",
+                    "eligible_span_density_gate",
+                    "driver_drops",
+                    "patchwork_budget",
+                    "drift_similarity",
+                    "applied_sentence_patches",
+                    "acceptance",
+                )
+            },
+            "eligible_span_density_after": final_density.get("after"),
+            "eligible_span_density_drop": final_density.get("unsafe_eligible_word_ratio_drop"),
+            "longest_unsafe_span_words_drop": final_density.get("longest_unsafe_span_words_drop"),
+            "reason": best_eval.get("reason"),
+            "final_summary": {
+                "turnitin_like_ai_score": _turnitin_like_ai_profile(best_report).get("score"),
+                "target_met": _turnitin_like_ai_profile(best_report).get("target_met"),
+                "eligible_span_density_safe": final_density.get("safe"),
+            },
+        })
+    elif summary["candidate_frontier"]:
+        summary["reason"] = "ceiling_reached"
+        summary["why_not_below_20"] = "No segment-window candidate reduced both formula score and eligible-span density without safety regression."
+    return summary
 
 
 def _post_selection_ai_density_breaker(
@@ -25513,6 +25858,171 @@ def run_rewrite_pipeline(
                 "stop_reason": stored_convergence_result.get("reason"),
             })
 
+    segment_window_selected = False
+    segment_window_should_run = (
+        _env_flag("DRAFTPROOF_SEGMENT_WINDOW_DENSITY_CONTROLLER", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    )
+    if segment_window_should_run and not global_rewrite_budget.can_run(min_seconds=8.0, min_scans=1, min_llm_calls=1):
+        stored_segment_window_result = _global_phase_budget_skip(
+            "segment_window_density_controller",
+            min_seconds=8.0,
+            min_scans=1,
+            min_llm_calls=1,
+        ) or {}
+        result.summary["segment_window_density_controller"] = stored_segment_window_result
+        stage_timings.append({
+            "stage": "segment_window_density_controller",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_segment_window_result.get("reason"),
+        })
+    elif segment_window_should_run:
+        current_segment_profile = _turnitin_like_ai_profile(rewritten_report_dict)
+        current_segment_density = _eligible_span_density_contract(rewritten_text, rewritten_report_dict)
+        current_segment_components = current_segment_profile.get("components") if isinstance(current_segment_profile.get("components"), dict) else {}
+        segment_needed = bool(
+            not current_segment_profile.get("target_met")
+            and (
+                not current_segment_density.get("safe")
+                or float(current_segment_components.get("topk_calibrated_risk") or 0.0) >= _safe_topk_calibrated_limit()
+            )
+        )
+        if not segment_needed:
+            stored_segment_window_result = {
+                "enabled": True,
+                "selected": False,
+                "reason": "turnitin_or_density_segment_controller_not_needed",
+                "segment_density_windows": _segment_density_windows(rewritten_text, rewritten_report_dict),
+                "eligible_span_density_before": current_segment_density,
+            }
+            result.summary["segment_window_density_controller"] = stored_segment_window_result
+            stage_timings.append({
+                "stage": "segment_window_density_controller",
+                "seconds": 0.0,
+                "candidates": 0,
+                "selected": False,
+                "stop_reason": stored_segment_window_result.get("reason"),
+            })
+        else:
+            report_progress(81, "Running segment-window density controller")
+            segment_t0 = time.time()
+            remaining_scans = global_rewrite_budget.remaining_scans()
+            remaining_llm = global_rewrite_budget.remaining_llm_calls()
+            max_segment_scans = min(3, remaining_scans if remaining_scans is not None else 3)
+            max_segment_llm = min(3, remaining_llm if remaining_llm is not None else 3)
+            try:
+                segment_key = (
+                    api_key
+                    or os.environ.get("OPENROUTER_API_KEY")
+                    or os.environ.get("LLM_API_KEY")
+                )
+                segment_gateway = (
+                    LLMGateway(LLMConfig(
+                        api_key=segment_key,
+                        model=generator_model,
+                        base_url=base_url,
+                        timeout=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_TIMEOUT", "90")),
+                        max_retries=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_RETRIES", "1")),
+                        max_tokens=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_MAX_TOKENS", "2600")),
+                        temperature=float(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_TEMPERATURE", "0.42")),
+                    ))
+                    if segment_key and max_segment_llm > 0
+                    else None
+                )
+                segment_window_result = _segment_window_density_controller(
+                    rewritten_text,
+                    rewritten_report_dict,
+                    original_report_dict,
+                    gateway=segment_gateway,
+                    scan_func=_full_scan_report_dict,
+                    max_scans=max_segment_scans,
+                    max_llm_calls=max_segment_llm,
+                )
+            except Exception as exc:
+                segment_window_result = {
+                    "enabled": True,
+                    "selected": False,
+                    "reason": f"segment_window_density_controller_error {exc}",
+                }
+            stored_segment_window_result = {
+                key: value
+                for key, value in segment_window_result.items()
+                if key not in {"selected_text", "selected_report"}
+            }
+            result.summary["segment_window_density_controller"] = stored_segment_window_result
+            result.summary["segment_density_windows"] = stored_segment_window_result.get("segment_density_windows")
+            result.summary["segment_window_candidate_frontier"] = stored_segment_window_result.get("candidate_frontier")
+            result.summary["selected_segment_window_strategy"] = stored_segment_window_result.get("selected_strategy")
+            if (
+                segment_window_result.get("selected")
+                and _global_controller_phase_accepted(
+                    "segment_window_density_controller",
+                    segment_window_result,
+                    stored_segment_window_result,
+                )
+            ):
+                selected_report = segment_window_result.get("selected_report")
+                selected_text = segment_window_result.get("selected_text")
+                if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                    rewritten_text = selected_text
+                    rewritten_report_dict = selected_report
+                    attempted_report_dict = rewritten_report_dict
+                    rewritten_ai = _badge_ai(rewritten_report_dict)
+                    rewritten_wq = _badge_wq(rewritten_report_dict)
+                    rewritten_total = _finding_total(rewritten_report_dict)
+                    rewritten_review_burden = _review_burden(rewritten_report_dict)
+                    rewritten_severity = _weighted_severity(rewritten_report_dict)
+                    rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                    if result.mp_result:
+                        result.mp_result.final_text = rewritten_text
+                        result.mp_result.converged = True
+                        result.mp_result.convergence_reason = (
+                            "Selected segment-window density candidate: "
+                            f"{segment_window_result.get('selected_strategy')}"
+                        )
+                    sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                    ai_search_selected = True
+                    segment_window_selected = True
+                    _clear_stale_rollback_for_kept_ai_mitigation(
+                        result.summary,
+                        "segment-window density controller",
+                    )
+                    result.summary["selected_strategy"] = segment_window_result.get("selected_strategy")
+                    result.summary["selected_segment_window_strategy"] = segment_window_result.get("selected_strategy")
+                    result.summary["detect_scores"].update({
+                        "rewritten_ai": rewritten_ai,
+                        "rewritten_writing_quality": rewritten_wq,
+                        "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                        "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                        "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                        "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                        "rewritten_findings": rewritten_total,
+                        "rewritten_review_burden": rewritten_review_burden,
+                        "rewritten_weighted_severity": rewritten_severity,
+                    })
+            stage_timings.append({
+                "stage": "segment_window_density_controller",
+                "seconds": round(time.time() - segment_t0, 3),
+                "candidates": len(stored_segment_window_result.get("candidate_frontier") or []),
+                "scans": stored_segment_window_result.get("scans_used"),
+                "llm_calls": stored_segment_window_result.get("llm_calls"),
+                "selected": bool(segment_window_result.get("selected")),
+                "stop_reason": segment_window_result.get("reason"),
+            })
+            global_rewrite_budget.record_stage(
+                "segment_window_density_controller",
+                seconds=round(time.time() - segment_t0, 3),
+                scans=int(stored_segment_window_result.get("scans_used") or 0),
+                llm_calls=int(stored_segment_window_result.get("llm_calls") or 0),
+            )
+
     density_breaker_selected = False
     density_breaker_should_run = (
         _env_flag("DRAFTPROOF_POST_SELECTION_AI_DENSITY_BREAKER", True)
@@ -25546,6 +26056,11 @@ def run_rewrite_pipeline(
                 rewritten_report_dict,
                 original_report_dict,
                 scan_func=_full_scan_report_dict,
+                max_scans=(
+                    global_rewrite_budget.remaining_scans()
+                    if global_rewrite_budget.remaining_scans() is not None
+                    else None
+                ),
             )
         except Exception as exc:
             density_breaker_result = {
