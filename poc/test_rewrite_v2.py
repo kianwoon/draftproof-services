@@ -109,6 +109,7 @@ from rewrite_pipeline import (
     _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
     _ai_search_final_selection_status,
+    _detector_progress_rank,
     _allow_ai_search_llm_after_deterministic,
     _load_local_env,
     _repair_candidate_source_damage,
@@ -1145,6 +1146,139 @@ assert_test(
         }
     }).get("partial_turnitin_like_mitigation"),
     "final rollback gate reads nested best-attempt selection status",
+)
+cleanup_formula_only_status = {
+    "selectable": True,
+    "partial_turnitin_like_mitigation": True,
+    "ai_footprint_outcome_class": "cleanup_improved",
+    "authenticity_gate": {
+        "human_delta": 2.0,
+        "candidate_human": 55.0,
+        "ai_authorship_delta": 0.0,
+        "ai_transformation_delta": 2.0,
+    },
+    "ai_footprint_gate": {
+        "outcome_class": "cleanup_improved",
+        "drops": {
+            "topk_calibrated_risk": 0.0,
+            "ai_likelihood": -0.01,
+            "ai_authorship": 0.0,
+            "external_ai_flag_risk": 1.007,
+            "qualifying_text_ai_density": 0.01,
+        },
+    },
+    "turnitin_like_ai_gate": {
+        "safety_clean": True,
+        "improved": True,
+        "score_drop": 2.562,
+        "component_drops": {
+            "ai_likelihood": -0.005,
+            "topk_calibrated_risk": 0.0,
+            "semantic_uniformity": 0.961,
+            "rewrite_smoothness": 0.006,
+            "patchwork_expansion": 1.6,
+        },
+    },
+    "formula_gap_contract": {
+        "target_met": False,
+        "score_drop": 2.562,
+        "weighted_formula_score_drop": 2.562,
+        "weighted_driver_drop_efficiency": 0.077,
+        "weighted_driver_drops": {
+            "ai_likelihood": {"drop": -0.005},
+            "topk_calibrated_risk": {"drop": 0.0},
+            "semantic_uniformity": {"drop": 0.961},
+            "rewrite_smoothness": {"drop": 0.006},
+            "patchwork_expansion": {"drop": 1.6},
+        },
+    },
+    "human_shift_score": 8.024,
+    "human_shift_components": {
+        "semantic_uniformity_reduction": 8.01,
+        "rewrite_smoothness_reduction": 0.06,
+    },
+}
+topk_driver_progress_status = {
+    "selectable": True,
+    "partial_turnitin_like_mitigation": True,
+    "topk_blocker_progress": True,
+    "ai_footprint_outcome_class": "ai_footprint_blocked_by_texture",
+    "authenticity_gate": {
+        "human_delta": 0.0,
+        "candidate_human": 53.0,
+        "ai_authorship_delta": 2.0,
+        "ai_transformation_delta": 2.0,
+    },
+    "ai_footprint_gate": {
+        "outcome_class": "ai_footprint_blocked_by_texture",
+        "drops": {
+            "topk_calibrated_risk": 6.384,
+            "ai_likelihood": 1.79,
+            "ai_authorship": 2.0,
+            "external_ai_flag_risk": 2.124,
+            "qualifying_text_ai_density": 0.5,
+        },
+    },
+    "turnitin_like_ai_gate": {
+        "safety_clean": True,
+        "improved": True,
+        "score_drop": 2.321,
+        "component_drops": {
+            "ai_likelihood": 0.806,
+            "topk_calibrated_risk": 1.277,
+            "semantic_uniformity": 0.0,
+            "rewrite_smoothness": 0.201,
+            "patchwork_expansion": 0.0,
+        },
+    },
+    "formula_gap_contract": {
+        "target_met": False,
+        "score_drop": 2.321,
+        "weighted_formula_score_drop": 2.321,
+        "weighted_driver_drop_efficiency": 0.05,
+        "weighted_driver_drops": {
+            "ai_likelihood": {"drop": 0.806},
+            "topk_calibrated_risk": {"drop": 1.277},
+            "semantic_uniformity": {"drop": 0.0},
+            "rewrite_smoothness": {"drop": 0.201},
+            "patchwork_expansion": {"drop": 0.0},
+        },
+    },
+    "human_shift_score": 5.0,
+    "human_shift_components": {
+        "semantic_uniformity_reduction": 0.0,
+        "rewrite_smoothness_reduction": 0.201,
+    },
+}
+assert_test(
+    _detector_progress_rank(topk_driver_progress_status)
+    > _detector_progress_rank(cleanup_formula_only_status),
+    "detector progress rank prefers Top-k/AI-likelihood/authorship movement over cleanup-only formula gain",
+)
+assert_test(
+    _goal_climb_candidate_rank(
+        topk_driver_progress_status,
+        {},
+        candidate_ai=52.83,
+        candidate_review_burden=51,
+        candidate_weighted_severity=127,
+        candidate_finding_total=64,
+        original_review_burden=54,
+        original_weighted_severity=133,
+        original_finding_total=67,
+    )
+    > _goal_climb_candidate_rank(
+        cleanup_formula_only_status,
+        {},
+        candidate_ai=54.63,
+        candidate_review_burden=51,
+        candidate_weighted_severity=127,
+        candidate_finding_total=64,
+        original_review_burden=54,
+        original_weighted_severity=133,
+        original_finding_total=67,
+    ),
+    "AI-search selector chooses core detector-driver movement before deletion/cleanup formula wins",
 )
 def make_footprint_report(
     *,

@@ -9817,6 +9817,87 @@ def _is_better_human_shift_candidate(candidate_gate: dict | None, best_gate: dic
     return _human_shift_rank_key(candidate_gate) > _human_shift_rank_key(best_gate)
 
 
+def _detector_progress_rank(selection_status: dict | None, candidate_eval: dict | None = None) -> tuple:
+    """Rank candidates by actual detector-driver movement before cleanup/formula polish.
+
+    A candidate can reduce the Turnitin-like formula by deleting or compressing
+    low-value text while leaving Top-k, AI likelihood, authorship, and qualifying
+    density pinned. That is useful cleanup, but it should not beat a candidate
+    that moves the unsafe AI-footprint drivers.
+    """
+    status = selection_status or {}
+    eval_data = candidate_eval or {}
+    gate = status.get("authenticity_gate") if isinstance(status.get("authenticity_gate"), dict) else status
+    footprint_gate = status.get("ai_footprint_gate") if isinstance(status.get("ai_footprint_gate"), dict) else {}
+    footprint_outcome = str(
+        status.get("ai_footprint_outcome_class")
+        or footprint_gate.get("outcome_class")
+        or ""
+    )
+    footprint_priority = {
+        "ai_mitigated": 4,
+        "partially_ai_mitigated": 3,
+        "cleanup_improved": 1,
+    }.get(footprint_outcome, 0)
+    if status.get("topk_blocker_progress"):
+        footprint_priority = max(footprint_priority, 2)
+    if status.get("human_anchor_amplifier"):
+        footprint_priority = max(footprint_priority, 3)
+    if status.get("topk_safe_band_achieved"):
+        footprint_priority = max(footprint_priority, 5)
+    footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
+    components = (
+        status.get("human_shift_components")
+        if isinstance(status.get("human_shift_components"), dict)
+        else gate.get("human_shift_components")
+        if isinstance(gate.get("human_shift_components"), dict)
+        else {}
+    )
+
+    def num(value, default=0.0) -> float:
+        return float(value) if isinstance(value, (int, float)) else float(default)
+
+    external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"))
+    topk_drop = num(footprint_drops.get("topk_calibrated_risk"))
+    qualifying_density_drop = num(footprint_drops.get("qualifying_text_ai_density"))
+    ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"))
+    ai_authorship_drop = num(gate.get("ai_authorship_delta"))
+    rewrite_smoothness_reduction = num(components.get("rewrite_smoothness_reduction"))
+    detector_progress_priority = footprint_priority
+    if status.get("topk_safe_band_achieved"):
+        detector_progress_priority = max(detector_progress_priority, 5)
+    if status.get("ai_footprint_mitigation"):
+        detector_progress_priority = max(detector_progress_priority, 4)
+    if status.get("partial_ai_footprint_mitigation"):
+        detector_progress_priority = max(detector_progress_priority, 3)
+    if status.get("topk_blocker_progress"):
+        detector_progress_priority = max(detector_progress_priority, 2)
+    if (
+        status.get("partial_turnitin_like_mitigation")
+        and footprint_outcome == "cleanup_improved"
+        and not status.get("topk_blocker_progress")
+        and not status.get("partial_ai_footprint_mitigation")
+    ):
+        detector_progress_priority = min(detector_progress_priority, 1)
+    detector_driver_drop_score = (
+        max(0.0, ai_likelihood_drop) * 4.0
+        + max(0.0, topk_drop) * 3.0
+        + max(0.0, ai_authorship_drop) * 2.0
+        + max(0.0, qualifying_density_drop) * 2.0
+        + max(0.0, external_flag_drop) * 1.5
+        + max(0.0, rewrite_smoothness_reduction)
+    )
+    return (
+        detector_progress_priority,
+        detector_driver_drop_score,
+        max(0.0, ai_likelihood_drop),
+        max(0.0, topk_drop),
+        max(0.0, ai_authorship_drop),
+        max(0.0, external_flag_drop),
+        footprint_priority,
+    )
+
+
 def _goal_climb_candidate_rank(
     selection_status: dict | None,
     candidate_eval: dict | None,
@@ -9903,6 +9984,7 @@ def _goal_climb_candidate_rank(
     qualifying_density_drop = num(footprint_drops.get("qualifying_text_ai_density"), 0.0)
     ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"), 0.0)
     ai_authorship_drop = num(gate.get("ai_authorship_delta"), ai_authorship_delta)
+    detector_progress_rank = _detector_progress_rank(status, eval_data)
     anchor_contract = (
         status.get("human_anchor_driver_contract")
         if isinstance(status.get("human_anchor_driver_contract"), dict)
@@ -9926,10 +10008,11 @@ def _goal_climb_candidate_rank(
     return (
         1 if status.get("selectable") else 0,
         1 if formula_gap_contract.get("target_met") else 0,
-        num(formula_gap_contract.get("score_drop"), turnitin_score_drop),
-        num(formula_gap_contract.get("weighted_driver_drop_efficiency"), 0.0),
-        formula_gap_rank,
+        detector_progress_rank,
         turnitin_priority,
+        num(formula_gap_contract.get("score_drop"), turnitin_score_drop),
+        formula_gap_rank,
+        num(formula_gap_contract.get("weighted_driver_drop_efficiency"), 0.0),
         turnitin_score_drop,
         num(turnitin_drops.get("ai_likelihood"), 0.0),
         num(turnitin_drops.get("topk_calibrated_risk"), 0.0),
@@ -9937,7 +10020,6 @@ def _goal_climb_candidate_rank(
         num(turnitin_drops.get("rewrite_smoothness"), 0.0),
         num(turnitin_drops.get("patchwork_expansion"), 0.0),
         num(turnitin_drops.get("human_anchor_suppression"), 0.0),
-        footprint_priority,
         qualifying_density_drop,
         lived_detail_drop,
         human_anchor_gain,
