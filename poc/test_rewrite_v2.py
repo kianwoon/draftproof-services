@@ -171,6 +171,8 @@ from rewrite_pipeline import (
     _ai_density_breaker_sentence_route,
     _post_selection_ai_density_breaker_candidates,
     _post_selection_ai_density_breaker_acceptance,
+    _post_density_human_anchor_probe_candidates,
+    _post_density_human_anchor_probe_acceptance,
     _record_rewrite_llm_calls,
     _human_anchor_driver_contract,
     _human_anchor_positive_burden_gate_status,
@@ -7674,6 +7676,7 @@ density_report = {
         "ai_components": {"topk_pattern_raw": 100, "topk_calibrated_risk": 92},
         "transformation_classification": {
             "features": {
+                "human_anchor_score": 0.20,
                 "ai_likelihood": 0.55,
                 "semantic_uniformity_risk": 0.60,
                 "rewrite_smoothness": 0.50,
@@ -7682,6 +7685,10 @@ density_report = {
                 "signal_agreement_score": 0.60,
                 "human_anchor_discount": 0.15,
             }
+        },
+        "writing_components": {
+            "lived_detail_risk": 0.80,
+            "domain_grounding_strength": 0.70,
         },
     },
     "predictability": {
@@ -7784,6 +7791,114 @@ assert_test(
     accepted_density.get("positive_ai_burden_drop", 0) > 0,
     "density breaker acceptance requires positive AI-burden movement, not suppression-only wins",
 )
+
+anchor_probe_candidates = _post_density_human_anchor_probe_candidates(
+    density_source,
+    density_report,
+    limit=3,
+)
+assert_test(
+    bool(anchor_probe_candidates)
+    and all("1776" in candidate for _strategy, candidate, _meta in anchor_probe_candidates)
+    and all(" I " not in f" {candidate} " for _strategy, candidate, _meta in anchor_probe_candidates),
+    "post-density Human Anchor probe keeps canonical facts and avoids personal-voice injection",
+)
+assert_test(
+    bool(anchor_probe_candidates)
+    and all(
+        (_meta.get("patchwork_budget") or {}).get("accepted") is True
+        and int(_meta.get("changed_sentence_frames") or 0) <= 3
+        for _strategy, _candidate, _meta in anchor_probe_candidates
+    ),
+    "post-density Human Anchor probe uses a tiny bounded edit budget",
+)
+
+anchor_probe_base = make_footprint_report(
+    ai_authorship=51,
+    human=49,
+    ai_transformation=44,
+    grounding=40,
+    human_anchor=20,
+    smoothness=48,
+    semantic_uniformity=58,
+    ai_likelihood=50,
+    topk_pattern=96,
+    topk_calibrated_risk=90,
+    generic_assertion_risk=70,
+    qualifying_text_ai_density=60,
+    unsupported_claim_risk=30,
+    broad_claim_risk=45,
+    discourse=40,
+    expansion=35,
+    section_style=20,
+    signal_agreement=50,
+)
+anchor_probe_good = make_footprint_report(
+    ai_authorship=51,
+    human=50,
+    ai_transformation=44,
+    grounding=40,
+    human_anchor=32,
+    smoothness=48,
+    semantic_uniformity=58,
+    ai_likelihood=50,
+    topk_pattern=96,
+    topk_calibrated_risk=90,
+    generic_assertion_risk=70,
+    qualifying_text_ai_density=60,
+    unsupported_claim_risk=30,
+    broad_claim_risk=45,
+    discourse=40,
+    expansion=35,
+    section_style=20,
+    signal_agreement=50,
+)
+anchor_probe_bad = make_footprint_report(
+    ai_authorship=52,
+    human=50,
+    ai_transformation=44,
+    grounding=40,
+    human_anchor=35,
+    smoothness=48,
+    semantic_uniformity=58,
+    ai_likelihood=50,
+    topk_pattern=98,
+    topk_calibrated_risk=94,
+    generic_assertion_risk=70,
+    qualifying_text_ai_density=60,
+    unsupported_claim_risk=30,
+    broad_claim_risk=45,
+    discourse=40,
+    expansion=35,
+    section_style=20,
+    signal_agreement=50,
+)
+accepted_anchor_probe = _post_density_human_anchor_probe_acceptance(
+    anchor_probe_base,
+    anchor_probe_good,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+rejected_anchor_probe = _post_density_human_anchor_probe_acceptance(
+    anchor_probe_base,
+    anchor_probe_bad,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    accepted_anchor_probe.get("selectable") is True
+    and accepted_anchor_probe.get("human_anchor_suppression_gain", 0) > 0
+    and accepted_anchor_probe.get("formula_score_drop", 0) > 0,
+    "post-density Human Anchor probe accepts measured suppression gain only when total formula drops",
+)
+assert_test(
+    rejected_anchor_probe.get("selectable") is False
+    and rejected_anchor_probe.get("driver_drops", {}).get("topk_calibrated_risk", 0) < 0,
+    "post-density Human Anchor probe rejects anchor gain when protected AI drivers backfire",
+)
+
 llm_summary_probe = {}
 _record_rewrite_llm_calls(llm_summary_probe, "ai_search_llm_calls_used", 2)
 _record_rewrite_llm_calls(llm_summary_probe, "formula_convergence_llm_calls_used", "4")
