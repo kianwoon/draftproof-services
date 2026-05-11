@@ -8422,19 +8422,32 @@ assert_test(
     "post-density Human Anchor probe rejects anchor gain when protected AI drivers backfire",
 )
 
-worker_tasks_source = open(os.path.join(os.path.dirname(__file__), "..", "worker", "app", "tasks.py")).read()
+repo_root_for_worker_checks = os.path.join(os.path.dirname(__file__), "..")
+worker_tasks_source = open(
+    os.path.join(repo_root_for_worker_checks, "worker", "app", "tasks.py")
+).read()
+worker_entrypoint_source = open(
+    os.path.join(repo_root_for_worker_checks, "worker", "entrypoint.sh")
+).read()
 assert_test(
     '"post_density_human_anchor_probe"' in worker_tasks_source
     and '"selected_human_anchor_probe_strategy"' in worker_tasks_source,
     "worker debug export includes post-density Human Anchor probe details",
 )
 assert_test(
-    '"debug_export_version": "rewrite_controller_debug_passthrough_v3"' in worker_tasks_source
+    '"debug_export_version": REWRITE_DEBUG_EXPORT_VERSION' in worker_tasks_source
+    and '"runtime_code_fingerprint": runtime_fingerprint' in worker_tasks_source
+    and '"worker_tasks_sha256_12"' in worker_tasks_source
     and '"rewrite_compiler"' in worker_tasks_source
     and '"deterministic_rewrite_compiler"' in worker_tasks_source
     and '"selected_rewrite_compiler_strategy"' in worker_tasks_source
     and '"llm_calls_used": stage.get("llm_calls")' in worker_tasks_source,
-    "worker debug export includes deterministic rewrite compiler details and fallback timing fields",
+    "worker debug export includes compiler details plus actual runtime source fingerprint",
+)
+assert_test(
+    "rm -rf /app/worker/app" in worker_entrypoint_source
+    and "cp -a /tmp/draftproof-repo/worker/app /app/worker/app" in worker_entrypoint_source,
+    "worker entrypoint replaces the baked worker app instead of nesting latest app under app/app",
 )
 
 llm_summary_probe = {}

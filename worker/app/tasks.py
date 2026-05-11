@@ -7,6 +7,7 @@ import json
 import time
 import logging
 import threading
+import hashlib
 
 # Make poc/ importable — on Koyeb: /app/poc/, locally: ../../poc/
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +37,41 @@ from celery.signals import worker_process_init
 from celery.exceptions import SoftTimeLimitExceeded
 
 logger = logging.getLogger(__name__)
+
+REWRITE_DEBUG_EXPORT_VERSION = "rewrite_controller_debug_passthrough_v3"
+
+
+def _runtime_code_fingerprint() -> dict:
+    """Return non-secret evidence of the worker code actually imported."""
+    fingerprint = {
+        "debug_export_version": REWRITE_DEBUG_EXPORT_VERSION,
+        "runtime_code_sha_env": os.environ.get("DRAFTPROOF_RUNTIME_CODE_SHA"),
+        "worker_tasks_file": os.path.abspath(__file__),
+    }
+
+    for key, path in (
+        ("runtime_code_sha_file", "/app/runtime_code_sha"),
+        ("worker_runtime_code_sha_file", "/app/worker/app/.runtime_git_sha"),
+        ("poc_runtime_code_sha_file", "/app/poc/.runtime_git_sha"),
+    ):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                fingerprint[key] = handle.read().strip() or None
+        except OSError:
+            fingerprint[key] = None
+
+    try:
+        stat = os.stat(__file__)
+        fingerprint["worker_tasks_size"] = stat.st_size
+        fingerprint["worker_tasks_mtime"] = int(stat.st_mtime)
+        with open(__file__, "rb") as handle:
+            fingerprint["worker_tasks_sha256_12"] = hashlib.sha256(
+                handle.read()
+            ).hexdigest()[:12]
+    except OSError as exc:
+        fingerprint["worker_tasks_fingerprint_error"] = str(exc)
+
+    return fingerprint
 
 
 class RewriteCanceled(Exception):
@@ -667,10 +703,12 @@ def _build_rewrite_debug_log(
             return compiler.get("selected_strategy")
         return None
 
+    runtime_fingerprint = _runtime_code_fingerprint()
     log_data = {
-        "debug_export_version": "rewrite_controller_debug_passthrough_v3",
+        "debug_export_version": REWRITE_DEBUG_EXPORT_VERSION,
         "debug_export_source": "worker.app.tasks._build_rewrite_debug_log",
         "runtime_code_sha": os.environ.get("DRAFTPROOF_RUNTIME_CODE_SHA"),
+        "runtime_code_fingerprint": runtime_fingerprint,
         "rewrite_id": rewrite_id,
         "scan_id": scan_id,
         "status": rewrite_json.get("status"),

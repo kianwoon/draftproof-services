@@ -44,7 +44,13 @@ if [ -n "${GIT_PAT}" ]; then
         CODE_SHA=$(git -C /tmp/draftproof-repo rev-parse --short HEAD 2>/dev/null || echo "unknown")
         rm -rf "${CODE_DIR}"
         cp -a /tmp/draftproof-repo/poc "${CODE_DIR}"
-        # Also overlay latest worker/app/ code (fast code deploys without Docker rebuild)
+        # Also overlay latest worker/app/ code for fast code deploys.
+        # Important: /app/worker/app already exists in the image. Copying the
+        # source directory onto that path would create /app/worker/app/app and
+        # leave the baked tasks.py loaded by Celery. Replace the package so the
+        # runtime SHA and imported worker code cannot diverge.
+        rm -rf /app/worker/app
+        mkdir -p /app/worker
         cp -a /tmp/draftproof-repo/worker/app /app/worker/app
         export DRAFTPROOF_RUNTIME_CODE_SHA="${CODE_SHA}"
         echo "${CODE_SHA}" > /app/runtime_code_sha
