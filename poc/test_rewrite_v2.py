@@ -11,6 +11,7 @@ import os
 import re
 import json
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "."))
@@ -212,12 +213,14 @@ from rewrite_pipeline import (
     _anti_smoothing_guard_status,
     _formula_portfolio_candidates,
     _formula_block_driver_map,
+    _formula_convergence_budget,
     _formula_convergence_controller,
     _formula_convergence_llm_patch_candidates,
     _ai_density_breaker_canonical_fact_sentence,
     _ai_density_breaker_sentence_route,
     _post_selection_ai_density_breaker_candidates,
     _post_selection_ai_density_breaker_acceptance,
+    _segment_window_density_acceptance,
     _post_density_human_anchor_probe_candidates,
     _post_density_human_anchor_probe_acceptance,
     _contribution_scores,
@@ -8520,6 +8523,33 @@ assert_test(
     },
     "global rewrite budget blocks late phases after the shared cap is exhausted",
 )
+reserve_check = RewriteRunBudget(max_seconds=210, max_scans=14, max_llm_calls=10, started_at=0)
+reserve_check.record_stage("ai_mitigation_search", seconds=90.0, scans=8, llm_calls=5)
+formula_budget = _formula_convergence_budget(auto_repair_source)
+reserved_segment_scans = min(3, reserve_check.remaining_scans() or 3)
+reserved_segment_llm = min(3, reserve_check.remaining_llm_calls() or 3)
+formula_budget["max_scans"] = min(
+    formula_budget["max_scans"],
+    max(0, (reserve_check.remaining_scans() or 0) - reserved_segment_scans),
+)
+formula_budget["max_llm_calls"] = min(
+    formula_budget["max_llm_calls"],
+    max(0, (reserve_check.remaining_llm_calls() or 0) - reserved_segment_llm),
+)
+assert_test(
+    formula_budget["max_scans"] <= 3
+    and formula_budget["max_llm_calls"] <= 2
+    and reserved_segment_scans == 3
+    and reserved_segment_llm == 3,
+    "formula convergence reserves scan and LLM budget for segment-window density controller",
+)
+worker_tasks_source = Path("worker/app/tasks.py").read_text()
+assert_test(
+    "segment_window_density_controller" in worker_tasks_source
+    and "segment_window_candidate_frontier" in worker_tasks_source
+    and "selected_segment_window_strategy" in worker_tasks_source,
+    "worker debug export exposes segment-window controller details",
+)
 
 def _ledger_record(stage, source_text, current_text, candidate_text, current_report, candidate_report):
     metrics = {
@@ -9115,6 +9145,51 @@ assert_test(
 assert_test(
     segment_patchwork_budget(segment_window_text, segment_candidate_text, segment_applied)["accepted"] is True,
     "segment-window patchwork budget accepts scoped window edits",
+)
+segment_small_gain_sentences = [
+    sentence.strip()
+    for sentence in re.split(r"(?<=[.!?])\s+", segment_candidate_text)
+    if sentence.strip()
+]
+segment_small_gain_report = {
+    **segment_window_report,
+    "ai_risk_badge": {
+        **segment_window_report["ai_risk_badge"],
+        "ai_likelihood_score": 63,
+        "ai_components": {
+            **segment_window_report["ai_risk_badge"]["ai_components"],
+            "topk_calibrated_risk": 90,
+            "qualifying_text_ai_density": 73,
+        },
+    },
+    "predictability": {
+        "all_sentences": [
+            {
+                "sentence_id": f"s{idx + 1:03d}",
+                "sentence_index": idx,
+                "sentence": sentence,
+                "top10_ratio": 0.52 if idx == 2 else 0.78,
+                "top50_ratio": 0.76 if idx == 2 else 0.91,
+                "predictability_risk": 0.30 if idx == 2 else 0.60,
+            }
+            for idx, sentence in enumerate(segment_small_gain_sentences)
+        ]
+    },
+}
+segment_small_gain_acceptance = _segment_window_density_acceptance(
+    segment_window_text,
+    segment_window_report,
+    segment_candidate_text,
+    segment_small_gain_report,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    segment_small_gain_acceptance["selectable"] is True
+    and segment_small_gain_acceptance["formula_score_drop"] > 0
+    and segment_small_gain_acceptance["density_positive"] is True,
+    "segment-window acceptance keeps safe small formula and density gains",
 )
 decision_probe = build_candidate_decision(
     {

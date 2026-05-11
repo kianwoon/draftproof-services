@@ -36,6 +36,7 @@ from rewrite_controller import (
     RewriteRunBudget,
     build_candidate_record,
     cap_phase_seconds_for_reserve,
+    evaluate_text_quality_regression,
     post_ai_search_reserve_seconds,
     resolve_global_rewrite_seconds,
 )
@@ -1074,8 +1075,22 @@ def _segment_window_density_acceptance(
     reject_reasons: list[str] = []
     if formula_drop <= 0.001:
         reject_reasons.append("formula_score_not_reduced")
-    if not (density_gate.get("safe") or density_gate.get("improved")):
+    unsafe_ratio_drop = float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0)
+    longest_span_drop = float(density_gate.get("longest_unsafe_span_words_drop") or 0.0)
+    density_non_worsening = bool(
+        density_gate.get("safe")
+        or (unsafe_ratio_drop >= -0.001 and longest_span_drop >= -0.001)
+    )
+    density_positive = bool(
+        density_gate.get("safe")
+        or density_gate.get("improved")
+        or unsafe_ratio_drop > 0.001
+        or longest_span_drop > 0.001
+    )
+    if not density_positive:
         reject_reasons.append("eligible_span_density_not_improved")
+    elif not density_non_worsening:
+        reject_reasons.append("eligible_span_density_regressed")
     if headline_ai_drop < -0.001:
         reject_reasons.append("headline_ai_score_regressed")
     for key in ("ai_authorship", "ai_transformation", "external_ai_flag_risk", "ai_likelihood"):
@@ -1099,6 +1114,8 @@ def _segment_window_density_acceptance(
         "headline_ai_drop": headline_ai_drop,
         "driver_drops": driver_drops,
         "eligible_span_density_gate": density_gate,
+        "density_positive": density_positive,
+        "density_non_worsening": density_non_worsening,
         "unsafe_eligible_word_ratio_drop": density_gate.get("unsafe_eligible_word_ratio_drop"),
         "longest_unsafe_span_words_drop": density_gate.get("longest_unsafe_span_words_drop"),
         "review_burden_delta": review_burden_delta,
@@ -1252,6 +1269,16 @@ def _segment_window_density_controller(
         candidate_eval["patchwork_budget"] = patchwork
         if not patchwork.get("accepted"):
             candidate_eval["reason"] = patchwork.get("reason") or "patchwork_edit_budget_exceeded"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        quality_gate = evaluate_text_quality_regression(
+            current_text,
+            candidate_text,
+            changed_sentence_ratio=patchwork.get("edited_sentence_ratio"),
+        )
+        candidate_eval["quality_gate"] = quality_gate
+        if not quality_gate.get("passed"):
+            candidate_eval["reason"] = (quality_gate.get("reject_reasons") or ["quality_gate_failed"])[0]
             summary["candidate_frontier"].append(candidate_eval)
             continue
         protected_loss = _ai_search_protected_loss_reason(current_text, candidate_text, protected)
@@ -25702,10 +25729,70 @@ def run_rewrite_pipeline(
         phase_result["global_controller_decision"] = decision
         if not decision.get("accepted"):
             phase_result["selected"] = False
+            stored_result["selected"] = False
+            stored_result["global_selected_rejected"] = True
             return False
         return True
 
     _seed_global_candidate_ledger("post_ai_search_current")
+
+    segment_window_budget_reserve = {
+        "enabled": bool(_env_flag("DRAFTPROOF_SEGMENT_WINDOW_DENSITY_CONTROLLER", True)),
+        "needed": False,
+        "reserved_scans": 0,
+        "reserved_llm_calls": 0,
+        "reason": "not_evaluated",
+    }
+    if (
+        segment_window_budget_reserve["enabled"]
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    ):
+        reserve_profile = _turnitin_like_ai_profile(rewritten_report_dict)
+        reserve_density = _eligible_span_density_contract(rewritten_text, rewritten_report_dict)
+        reserve_components = (
+            reserve_profile.get("components")
+            if isinstance(reserve_profile.get("components"), dict)
+            else {}
+        )
+        reserve_needed = bool(
+            not reserve_profile.get("target_met")
+            and (
+                not reserve_density.get("safe")
+                or float(reserve_components.get("topk_calibrated_risk") or 0.0)
+                >= _safe_topk_calibrated_limit()
+            )
+        )
+        if reserve_needed:
+            remaining_scans_for_reserve = global_rewrite_budget.remaining_scans()
+            remaining_llm_for_reserve = global_rewrite_budget.remaining_llm_calls()
+            target_scans = int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_RESERVED_SCANS", 3.0))
+            target_llm = int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_RESERVED_LLM_CALLS", 3.0))
+            segment_window_budget_reserve.update({
+                "needed": True,
+                "reason": "density_or_topk_unsafe",
+                "reserved_scans": max(
+                    0,
+                    min(target_scans, remaining_scans_for_reserve if remaining_scans_for_reserve is not None else target_scans),
+                ),
+                "reserved_llm_calls": max(
+                    0,
+                    min(target_llm, remaining_llm_for_reserve if remaining_llm_for_reserve is not None else target_llm),
+                ),
+                "eligible_span_density_safe": bool(reserve_density.get("safe")),
+                "topk_calibrated_risk": round(float(reserve_components.get("topk_calibrated_risk") or 0.0), 3),
+            })
+        else:
+            segment_window_budget_reserve.update({
+                "needed": False,
+                "reason": "turnitin_or_density_segment_controller_not_needed",
+                "eligible_span_density_safe": bool(reserve_density.get("safe")),
+                "topk_calibrated_risk": round(float(reserve_components.get("topk_calibrated_risk") or 0.0), 3),
+            })
+    result.summary["segment_window_budget_reserve"] = segment_window_budget_reserve
 
     convergence_selected = False
     if (
@@ -25741,10 +25828,31 @@ def run_rewrite_pipeline(
                     if convergence_key and _env_flag("DRAFTPROOF_FORMULA_CONVERGENCE_LLM_BLOCK_RECREATE", True)
                     else None
                 )
+                convergence_budget = _formula_convergence_budget(rewritten_text)
+                remaining_scans_for_convergence = global_rewrite_budget.remaining_scans()
+                remaining_llm_for_convergence = global_rewrite_budget.remaining_llm_calls()
+                reserved_scans = int(segment_window_budget_reserve.get("reserved_scans") or 0)
+                reserved_llm = int(segment_window_budget_reserve.get("reserved_llm_calls") or 0)
+                if remaining_scans_for_convergence is not None:
+                    convergence_budget["max_scans"] = min(
+                        int(convergence_budget.get("max_scans") or 0),
+                        max(0, remaining_scans_for_convergence - reserved_scans),
+                    )
+                if remaining_llm_for_convergence is not None:
+                    convergence_budget["max_llm_calls"] = min(
+                        int(convergence_budget.get("max_llm_calls") or 0),
+                        max(0, remaining_llm_for_convergence - reserved_llm),
+                    )
+                convergence_budget["reserved_for_segment_window"] = {
+                    "scans": reserved_scans,
+                    "llm_calls": reserved_llm,
+                    "reason": segment_window_budget_reserve.get("reason"),
+                }
                 convergence_result = _formula_convergence_controller(
                     rewritten_text,
                     rewritten_report_dict,
                     original_report_dict,
+                    budget=convergence_budget,
                     llm_gateway=convergence_gateway,
                 )
             except Exception as exc:
@@ -25959,7 +26067,6 @@ def run_rewrite_pipeline(
             result.summary["segment_window_density_controller"] = stored_segment_window_result
             result.summary["segment_density_windows"] = stored_segment_window_result.get("segment_density_windows")
             result.summary["segment_window_candidate_frontier"] = stored_segment_window_result.get("candidate_frontier")
-            result.summary["selected_segment_window_strategy"] = stored_segment_window_result.get("selected_strategy")
             if (
                 segment_window_result.get("selected")
                 and _global_controller_phase_accepted(
