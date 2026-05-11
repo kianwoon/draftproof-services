@@ -25494,7 +25494,7 @@ def run_rewrite_pipeline(
             global_rewrite_budget.record_stage(
                 "formula_convergence_controller",
                 seconds=round(time.time() - convergence_t0, 3),
-                scans=len(stored_convergence_result.get("candidates") or []),
+                scans=int(stored_convergence_result.get("scans_used") or 0),
                 llm_calls=convergence_llm_calls,
             )
         elif not bool(current_formula_profile.get("target_met")):
