@@ -94,9 +94,9 @@ def _top_user_actions(mitigation: dict, limit: int = 5) -> List[str]:
             if "unsupported" in component or "source" in component or "citation" in component:
                 actions.append("Add source-backed support for broad or unsupported claims, or soften those claims.")
             elif "lived_detail" in component:
-                actions.append("Add a real classroom/process detail from the author's experience.")
+                actions.append("Add a real process detail from the author's experience.")
             else:
-                actions.append("Narrow generic assertions to the exact classroom, unit, or hairdressing context.")
+                actions.append("Narrow generic assertions to the exact submitted context.")
         elif bucket == "structure_guidance":
             actions.append("Revise paragraph openings and structure before retrying sentence-level rewrite.")
         elif bucket == "auto_rewrite":
@@ -120,7 +120,7 @@ def _guided_revision_checklist(mitigation: dict, limit: int = 5) -> List[Dict[st
         guidance = _driver_guidance(driver)
         if component == "unsupported_claim_risk":
             where = "Confident claims without visible support"
-            add = "A source, classroom example, or softer claim wording"
+            add = "A source, concrete example, or softer claim wording"
             retry = "After claims are supported or narrowed"
         elif component == "source_grounding_risk":
             where = "Claims that cite theory but do not explain the source link"
@@ -132,7 +132,7 @@ def _guided_revision_checklist(mitigation: dict, limit: int = 5) -> List[Dict[st
             retry = "After citation linkage is repaired"
         elif component in {"broad_claim_risk", "generic_assertion_risk"}:
             where = "Broad statements that could fit many drafts"
-            add = "The exact class, unit, method, learner group, or observation"
+            add = "The exact context, method, participant group, or observation"
             retry = "After broad claims are narrowed to the draft context"
         elif component == "lived_detail_risk":
             where = "General claims about learning or practice"
@@ -181,7 +181,7 @@ def _driver_guidance(driver: dict) -> Dict[str, str]:
         action = "Name the source, connect it to the claim, or add the missing in-text citation."
     elif component == "lived_detail_risk":
         issue = "The writing lacks concrete author/process detail."
-        action = "Add a real classroom, project, client, lesson, or workflow detail supplied by the author."
+        action = "Add a real project, participant, task, or workflow detail supplied by the author."
     elif component == "topk_pattern":
         issue = "Some sentences follow very predictable word-choice paths."
         action = "Review the sentence structure; only keep an edit if the final scan improves."
@@ -839,7 +839,7 @@ def render_rewrite_report(
                 )
             lines.append("")
 
-    educational = summary.get("educational_mitigation_rewrite") or {}
+    marked_mitigation = summary.get("marked_mitigation_rewrite") or {}
     completion = summary.get("author_evidence_completion") or {}
     if completion.get("draft_text"):
         lines.append("## Author Evidence Completion Draft")
@@ -875,18 +875,18 @@ def render_rewrite_report(
                 )
             lines.append("")
 
-    if educational.get("draft_text"):
-        lines.append("## Educational Mitigation Draft")
+    if marked_mitigation.get("draft_text"):
+        lines.append("## Marked Mitigation Draft")
         lines.append("")
         lines.append(
-            "This is a learning scaffold, not the accepted final output. Replace every bracketed marker with verified author evidence, source detail, or concrete context before using it."
+            "This is a marked scaffold, not the accepted final output. Replace every bracketed marker with verified author evidence, source detail, or concrete context before using it."
         )
         lines.append("")
         lines.append("```text")
-        lines.append(str(educational.get("draft_text", "")).strip())
+        lines.append(str(marked_mitigation.get("draft_text", "")).strip())
         lines.append("```")
         lines.append("")
-        changes = educational.get("changes") or []
+        changes = marked_mitigation.get("changes") or []
         if changes:
             lines.append("| # | Signal | What To Supply |")
             lines.append("|---|--------|----------------|")

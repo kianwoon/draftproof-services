@@ -104,7 +104,7 @@ _AI_DENSITY_GENERIC_RE = re.compile(
     r"\b(?:important|significant|major|strong|influential|different|many|"
     r"various|complex|global|modern|today|society|culture|system|country|"
     r"world|success|challenge|opportunity|influence|impact|role|feature|"
-    r"strength|development|diversity|economy|education|people)\b",
+    r"strength|development|diversity|economy|people)\b",
     re.I,
 )
 
@@ -2315,18 +2315,18 @@ def _manual_summary_from_ai_mitigation(ai_mitigation: dict | None, limit: int = 
     return rows
 
 
-_EDUCATIONAL_COMPONENT_NOTES = {
-    "generic_assertion_risk": "make this broad claim specific to your class, unit, task, or source",
+_MARKED_MITIGATION_COMPONENT_NOTES = {
+    "generic_assertion_risk": "make this broad claim specific to your task, condition, source, or context",
     "unsupported_claim_risk": "add the evidence for this claim, or soften the claim if evidence is limited",
     "source_grounding_risk": "name the source and explain how it supports this sentence",
     "citation_weakness_risk": "attach the correct citation and explain the cited evidence",
-    "broad_claim_risk": "limit this claim to the exact learner group, task, or condition",
-    "lived_detail_risk": "add a real class, client, workplace, or process detail",
+    "broad_claim_risk": "limit this claim to the exact group, task, or condition",
+    "lived_detail_risk": "add a real observed context, workplace, task, or process detail",
     "qualifying_text_ai_density": "rebuild this paragraph around context, evidence, your reasoning, and a limited conclusion",
 }
 
 
-def _educational_sentence_note(sentence: str, ai_mitigation: dict | None, used_components: set[str]) -> dict | None:
+def _marked_mitigation_sentence_note(sentence: str, ai_mitigation: dict | None, used_components: set[str]) -> dict | None:
     actions = [
         action
         for action in ((ai_mitigation or {}).get("component_actions") or [])
@@ -2340,7 +2340,7 @@ def _educational_sentence_note(sentence: str, ai_mitigation: dict | None, used_c
         preferred.extend(["generic_assertion_risk", "unsupported_claim_risk", "broad_claim_risk"])
     if any(marker in text for marker in ("according to", "source", "citation", "research", "study")):
         preferred.extend(["source_grounding_risk", "citation_weakness_risk"])
-    if any(marker in text for marker in ("i ", "my ", "observed", "class", "workshop", "client", "learner")):
+    if any(marker in text for marker in ("i ", "my ", "observed", "workshop", "case", "task", "condition")):
         preferred.append("lived_detail_risk")
 
     by_component = {str(action.get("component") or ""): action for action in actions}
@@ -2360,7 +2360,7 @@ def _educational_sentence_note(sentence: str, ai_mitigation: dict | None, used_c
 
     component = str(selected.get("component") or "reviewed_context")
     used_components.add(component)
-    note = _EDUCATIONAL_COMPONENT_NOTES.get(
+    note = _MARKED_MITIGATION_COMPONENT_NOTES.get(
         component,
         selected.get("action") or "add verified author context before using this sentence",
     )
@@ -2372,13 +2372,13 @@ def _educational_sentence_note(sentence: str, ai_mitigation: dict | None, used_c
     }
 
 
-def _build_educational_mitigation_rewrite(
+def _build_marked_mitigation_rewrite(
     text: str,
     ai_mitigation: dict | None,
     *,
     max_marked_sentences: int = 8,
 ) -> dict:
-    """Create a marked learning draft for user-led AI mitigation.
+    """Create a marked draft for user-led AI mitigation.
 
     This is intentionally not an accepted rewrite. It shows the shape of the
     rewrite and marks every missing fact/source/detail so the user can replace
@@ -2398,7 +2398,7 @@ def _build_educational_mitigation_rewrite(
         parts.append(text[cursor:match.start()])
         replacement = sentence
         if marked < max_marked_sentences and len(sentence.split()) >= 8:
-            note = _educational_sentence_note(sentence, ai_mitigation, used_components)
+            note = _marked_mitigation_sentence_note(sentence, ai_mitigation, used_components)
             if note:
                 insert = f" [[ADD VERIFIED DETAIL: {note['note']}]]"
                 stripped = sentence.rstrip()
@@ -2423,7 +2423,7 @@ def _build_educational_mitigation_rewrite(
     if not changes:
         return {}
     return {
-        "kind": "educational_marked_rewrite",
+        "kind": "marked_mitigation_rewrite",
         "auto_apply": False,
         "status": "requires_author_completion",
         "draft_text": draft,
@@ -2510,12 +2510,12 @@ def _build_author_evidence_completion_layer(
         )
         if source_grounding_risk >= 60 or unsupported_claim_risk >= 65:
             instruction = (
-                "add one real source, classroom example, assignment artefact, feedback note, "
+                "add one real source, task example, work artefact, feedback note, "
                 "or observation that proves this claim"
             )
         elif lived_detail_risk >= 65:
             instruction = (
-                "add one real classroom, workplace, learner, assessment, or feedback detail "
+                "add one real context, workplace, task, assessment, or feedback detail "
                 "that you can defend"
             )
         else:
@@ -2749,16 +2749,16 @@ def _build_author_evidence_intake_layer(
         role = str(slot.get("paragraph_role") or "generic_claim_heavy")
         preview = str(slot.get("target_paragraph_preview") or "").strip()
         if role == "source_summary_heavy":
-            question = "What source, reading, class material, or citation supports this paragraph's claim?"
+            question = "What source, reading, reference material, or citation supports this paragraph's claim?"
             answer_type = "source_or_citation"
         elif role == "technical_process_rich":
-            question = "What concrete task, process step, learner action, or feedback moment did you personally observe?"
+            question = "What concrete task, process step, participant action, or feedback moment did you personally observe?"
             answer_type = "practice_observation"
         elif role == "conclusion_template_risk":
             question = "What limitation, judgement, or specific takeaway would you personally add to make this ending less generic?"
             answer_type = "author_judgement"
         else:
-            question = "What real example, classroom/workplace observation, assignment detail, or feedback note proves this claim?"
+            question = "What real example, workplace/context observation, task detail, or feedback note proves this claim?"
             answer_type = "real_example_or_observation"
         questions.append({
             "id": f"anchor_{index}",
@@ -2937,11 +2937,11 @@ _SOURCE_SEARCH_STOPWORDS = {
     "while", "will", "were", "what", "who", "why", "how", "they", "them",
 }
 _SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS = {
-    "education", "evidence", "information", "learning", "report", "research",
-    "school", "schools", "student", "students", "study", "teacher", "teachers",
+    "evidence", "information", "report", "research", "study", "source",
+    "sources", "claim", "claims", "analysis", "context",
 }
 
-_SOURCE_SEARCH_CREDIBLE_TERMS = "evidence research education study report"
+_SOURCE_SEARCH_CREDIBLE_TERMS = "evidence research study report"
 _SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS = {
     "instagram.com", "facebook.com", "tiktok.com", "x.com", "twitter.com",
     "pinterest.com", "reddit.com", "youtube.com", "getyourteachon.com",
@@ -3019,19 +3019,6 @@ def _source_search_keywords(text: str, limit: int = 10) -> list[str]:
 def _source_grounding_query(claim: str) -> str:
     claim_text = re.sub(r"\s+", " ", str(claim or "").strip())
     lower = claim_text.lower()
-    if any(term in lower for term in ("broader aims", "educational frameworks", "student development", "lifelong learning", "curiosity", "judgment", "judgement")):
-        return "21st century skills critical thinking lifelong learning student development education evidence research report"
-    if any(term in lower for term in ("draft", "feedback", "discussion", "reflection", "improvement", "learning process")):
-        return "formative assessment feedback learning process education evidence research study"
-    if any(term in lower for term in ("trust", "accurate", "misleading", "sources", "information")):
-        return "information literacy evaluating online sources students education evidence research study"
-    if any(term in lower for term in ("youtube", "social media", "online course", "ai tool", "search engine")):
-        return "students learn from social media online courses AI tools education evidence research study"
-    if any(term in lower for term in ("teacher", "teachers", "guide", "questions", "viewpoints")):
-        return "teacher guidance information literacy students education evidence research study"
-    if any(term in lower for term in ("exam", "grades", "assessment", "understanding")):
-        return "AI tools assessment student understanding education evidence research study"
-
     themes: list[str] = []
 
     def add_theme(*items: str) -> None:
@@ -3039,16 +3026,16 @@ def _source_grounding_query(claim: str) -> str:
             if item and item not in themes:
                 themes.append(item)
 
-    if any(term in lower for term in ("youtube", "social media", "online course", "ai tool", "search engine")):
-        add_theme("students", "digital learning", "social media", "AI tools", "online learning")
+    if any(term in lower for term in ("youtube", "tiktok", "social media", "online course", "ai tool", "search engine")):
+        add_theme("social media", "online platforms", "AI tools")
     if any(term in lower for term in ("trust", "accurate", "misleading", "sources", "information")):
-        add_theme("information literacy", "evaluating online sources", "students")
-    if any(term in lower for term in ("draft", "feedback", "discussion", "reflection", "improvement", "learning process")):
-        add_theme("formative assessment", "feedback", "student learning", "reflection")
-    if any(term in lower for term in ("teacher", "teachers", "guide", "questions", "viewpoints")):
-        add_theme("teacher guidance", "student judgement", "information literacy")
-    if any(term in lower for term in ("exam", "grades", "assessment", "understanding")):
-        add_theme("assessment", "student understanding", "AI in education")
+        add_theme("information literacy", "evaluating online sources")
+    if any(term in lower for term in ("feedback", "discussion", "reflection", "improvement", "process")):
+        add_theme("feedback", "reflection", "process improvement")
+    if any(term in lower for term in ("guide", "questions", "viewpoints", "judgment", "judgement")):
+        add_theme("critical thinking", "judgement", "source evaluation")
+    if any(term in lower for term in ("assessment", "understanding", "measurement", "evaluation")):
+        add_theme("assessment", "understanding", "evaluation")
 
     keywords = _source_search_keywords(claim_text, limit=8)
     for keyword in keywords:
@@ -3624,7 +3611,7 @@ def _source_grounding_repair_prompt(
         "- remove a broad unsupported sentence when it cannot be sourced\n"
         "- keep the paragraph less polished; avoid generic academic connectors\n\n"
         "Forbidden:\n"
-        "- do not create lived experience, classroom observation, or author-owned evidence\n"
+        "- do not create lived experience, local observation, or author-owned evidence\n"
         "- do not create statistics, dates, names, citations, or claims not present in the source candidates\n"
         "- do not add a citation if only the title/url is available and the source support is unclear\n"
         "- do not rewrite the paragraph into a smoother generic explanation\n"
@@ -3737,8 +3724,8 @@ def _internet_reinforced_reauthor_prompt(
         "- Use source-supported claims where the evidence cards clearly support them.\n"
         "- Remove generic filler that does not add source support, author reasoning, or required coverage.\n"
         "- Keep the prose direct and uneven enough to avoid polished academic template flow.\n"
-        "- Use fewer broad claims. Prefer bounded claims tied to the sources or the document's existing educational context.\n"
-        "- Do not create author-owned observations, lived experience, classroom events, personal examples, new institutions, new dates, new statistics, or fake citations.\n"
+        "- Use fewer broad claims. Prefer bounded claims tied to the sources or the submitted document context.\n"
+        "- Do not create author-owned observations, lived experience, local events, personal examples, new institutions, new dates, new statistics, or fake citations.\n"
         "- Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
         "- Do not add markdown links or bibliography. Mention source titles only when useful and supported by the card.\n"
         "- Do not use generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion.\n\n"
@@ -4036,27 +4023,18 @@ def _deterministic_topk_route_sentence(sentence: str) -> tuple[str, list[str]]:
                 break
 
     replacements = [
-        (r"^Inclusive learning design\b", r"For this haircutting unit, inclusive learning design", "domain_opening_route"),
         (r"^This becomes clear when\b", r"The gap shows up when", "this_opening_route"),
         (r"^The challenge is more than\b", r"The challenge is not just", "challenge_opening_route"),
         (r"^The challenge in ([^.]+?) does not only appear\b", r"In \1, the issue does not only appear", "challenge_scope_route"),
-        (r"^Learners must\b", r"Learners still have to", "learner_modal_route"),
-        (r"^Learners need\b", r"What learners need is", "learner_need_route"),
-        (r"^Many learners can\b", r"A lot of learners can", "learner_group_route"),
-        (r"^Some learners\b", r"Some learners, not all,", "learner_group_route"),
-        (r"^When learners\b", r"Once learners", "when_route"),
-        (r"^In haircutting,\b", r"With haircutting,", "domain_route"),
-        (r"^In practical haircutting classes,\b", r"On the practical floor,", "classroom_route"),
-        (r"^In the salon classroom,\b", r"In the salon classroom,", "classroom_route"),
+        (r"^When ([A-Za-z][^.]{2,80}?)\b", r"Once \1", "when_route"),
         (r"^A demonstration reveals\b", r"A demonstration can show", "demonstration_route"),
-        (r"^Universal Design for Learning helps\b", r"Universal Design for Learning is useful when it helps", "udl_route"),
-        (r"^Reasonable adjustment should not be misunderstood as\b", r"Reasonable adjustment is not", "reasonable_adjustment_route"),
-        (r"^Classroom limits remain\.$", r"Classroom limits remain. That part is hard to ignore.", "short_followup_route"),
+        (r"^(.{4,80}?) should not be misunderstood as\b", r"\1 is not", "misunderstood_as_route"),
+        (r"^(.{4,80}?) limits remain\.$", r"\1 limits remain. That part is hard to ignore.", "short_followup_route"),
         (r"^This connects with\b", r"That links back to", "this_opening_route"),
         (r"^This creates\b", r"That creates", "this_opening_route"),
         (r"^This does not\b", r"It does not", "this_opening_route"),
         (r"^Instead, it comes from\b", r"Instead, the control comes from", "instead_route"),
-        (r"^Competency should not depend on\b", r"Competency cannot be left to", "competency_route"),
+        (r"^([A-Z][A-Za-z ]{2,60}) should not depend on\b", r"\1 cannot be left to", "dependency_route"),
         (r"^The ([A-Z][A-Za-z ]{2,60}) is often described as ", r"\1 is often described this way: ", "opening_route"),
         (r"^It has shaped ", r"Its influence reaches into ", "pronoun_opening_route"),
         (r"^The country has ", r"Inside the country, there is ", "country_opening_route"),
@@ -4329,12 +4307,12 @@ def _topk_safe_band_snapshot_prompt(text: str, report_dict: dict | None) -> str:
         "- use plain concrete wording even when varying sentence routes\n"
         "- keep sentence spacing clean; every sentence must have a space after punctuation\n\n"
         "Sentence texture examples:\n"
-        "Original: The United States has a strong cultural influence.\n"
-        "Route: American culture appears far outside the country. Films, music, sport, and online platforms are the clearest examples.\n"
-        "Original: Despite its success, the United States also faces many serious issues.\n"
-        "Route: The success is real. That sounds tidy, but it leaves out cost, division, access, and trust.\n"
-        "Original: Technology and innovation continue to shape the future of the United States.\n"
-        "Route: Technology still shapes the country. Not every change is simple or fair.\n\n"
+        "Original: The organisation has a strong public influence.\n"
+        "Route: Its influence appears through several channels. Some are visible, others are easier to miss.\n"
+        "Original: Despite its success, the project also faces serious issues.\n"
+        "Route: The success is real. That sounds tidy, but it leaves out cost, access, and trust.\n"
+        "Original: Technology and innovation continue to shape the future.\n"
+        "Route: Technology still shapes the work. Not every change is simple or fair.\n\n"
         "Return only the rewritten prose. No explanation.\n\n"
         "SOURCE DOCUMENT:\n"
         f"{str(text or '')[:12000]}"
@@ -4385,12 +4363,12 @@ def _topk_plain_spoken_snapshot_prompt(text: str, report_dict: dict | None) -> s
         "- no generic admiration list of strengths\n"
         "- no new statistics or invented citations\n\n"
         "Plain route examples:\n"
-        "Original: The United States is influential in global culture.\n"
-        "Rewrite: American culture reaches many countries. The clearest channels are entertainment, sport, technology, and social media.\n"
-        "Original: The country has many strengths but also many challenges.\n"
-        "Rewrite: The strengths are visible. That is not the full picture. Inequality, political division, health costs, and access still matter.\n"
-        "Original: Technology companies shape the modern world.\n"
-        "Rewrite: Large technology companies affect daily life. Their products change work, communication, shopping, and study.\n\n"
+        "Original: The topic is influential in public life.\n"
+        "Rewrite: Its influence reaches beyond one setting. The clearest channels depend on the specific case.\n"
+        "Original: The topic has many strengths but also many challenges.\n"
+        "Rewrite: The strengths are visible. That is not the full picture. Cost, access, and trust still matter.\n"
+        "Original: Technology changes modern work.\n"
+        "Rewrite: Technology affects daily routines. It changes how people communicate, decide, and check information.\n\n"
         "Return only the rewritten prose. No explanation.\n\n"
         "SOURCE DOCUMENT:\n"
         f"{str(text or '')[:12000]}"
@@ -4488,12 +4466,12 @@ def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report:
         "- do not return a one-sentence patch when many high-risk sentences are listed\n"
         "- candidate 1 should use direct plain contrast; candidate 2 should use plain sentence splitting and clause movement\n\n"
         "Examples:\n"
-        "Original: The United States has a strong cultural influence.\n"
-        "Replacement: American culture is visible outside the country. Film, music, sport, and social media are the main routes.\n"
-        "Original: Despite its success, the United States also faces many serious issues.\n"
-        "Replacement: The country has clear strengths. That is not the whole story. Cost, division, access, and trust remain problems.\n"
-        "Original: The country was built on ideas such as freedom, democracy, and individual rights.\n"
-        "Replacement: Freedom, democracy, and individual rights were central ideas. In practice, Americans have argued over those ideas from the beginning.\n\n"
+        "Original: The topic has a strong influence.\n"
+        "Replacement: The influence is visible in several places. The exact routes depend on the case.\n"
+        "Original: Despite its success, the project also faces serious issues.\n"
+        "Replacement: The strengths are clear. That is not the whole story. Cost, access, and trust remain problems.\n"
+        "Original: The system was built on several important ideas.\n"
+        "Replacement: Those ideas mattered from the start. People still argue over how they should work.\n\n"
         "Return valid JSON only:\n"
         '{"candidates":[{"patches":[{"original_sentence":"...","replacement_sentence":"..."}]}]}\n'
         "Return 2 candidates with different sentence routes. Each candidate should patch all listed sentences. Do not repeat the same openings across replacements.\n\n"
@@ -4701,7 +4679,7 @@ _POST_TOPK_TEMPLATE_OPENING_RE = re.compile(
 _POST_TOPK_LOW_VALUE_PARAGRAPH_RE = re.compile(
     r"\b(?:in\s+the\s+end|overall|in\s+conclusion|real\s+work\s+of|"
     r"important|essential|crucial|significant|changing\s+world|system|"
-    r"students?\s+(?:need|should|must)|teachers?\s+(?:need|should|must))\b",
+    r"(?:people|users|readers|participants)\s+(?:need|should|must))\b",
     re.I,
 )
 
@@ -5780,7 +5758,7 @@ def _author_anchor_keywords(text: str) -> set[str]:
         "could", "every", "from", "have", "into", "more", "most", "only", "other",
         "should", "some", "that", "their", "them", "then", "there", "these", "they",
         "this", "through", "when", "where", "which", "while", "with", "would",
-        "students", "student", "education", "school", "schools", "class", "learning",
+        "topic", "context", "process", "practice",
     }
     words = re.findall(r"\b[A-Za-z][A-Za-z']{3,}\b", str(text or "").lower())
     normalized = set()
@@ -9516,7 +9494,7 @@ def _human_anchor_marker_density(text: str) -> dict:
         }
     marker_re = re.compile(
         r"\b(?:\d+|during|when|after|before|feedback|testing|case|example|"
-        r"classroom|school|in practice|I would|I think|I worry|we observed|"
+        r"in practice|I would|I think|I worry|we observed|"
         r"what (?:I|we) (?:would|need|want)|my judgement)\b",
         re.I,
     )
@@ -10328,10 +10306,6 @@ def _deterministic_masked_span_replacements(mask_text: str) -> list[str]:
         "this can encourage": ["This may lead to", "It can lead to"],
         "this makes assessment": ["Assessment becomes"],
         "in other words": ["Put simply", "Simply"],
-        "today's education": ["The education"],
-        "today’s education": ["The education"],
-        "students received knowledge": ["Students learned"],
-        "a student with": ["One student with"],
     }.get(key, [])
     unique: list[str] = []
     for item in replacements:
@@ -11468,7 +11442,7 @@ def _reconstruction_gate_controls(prior_attempts: list[dict] | None) -> dict:
         ):
             add(
                 "human_contribution_regressed",
-                "Do not replace author-owned classroom reasoning with smoother academic explanation; keep or increase first-person operational judgement, process detail, and local constraint language.",
+                "Do not replace author-owned reasoning with smoother academic explanation; keep or increase first-person operational judgement, process detail, and local constraint language.",
             )
         if "ai_transformation_reduction" in failed_components or (
             isinstance(item.get("ai_transformation_delta"), (int, float))
@@ -11476,7 +11450,7 @@ def _reconstruction_gate_controls(prior_attempts: list[dict] | None) -> dict:
         ):
             add(
                 "ai_transformation_regressed",
-                "Avoid outline-to-essay expansion, symmetrical paragraph routes, and polished summary cadence; use uneven paragraph jobs with concrete haircutting decisions.",
+                "Avoid outline-to-essay expansion, symmetrical paragraph routes, and polished summary cadence; use uneven paragraph jobs with concrete task decisions.",
             )
         if "ai_authorship_reduction" in failed_components or (
             isinstance(item.get("ai_authorship_delta"), (int, float))
@@ -11814,10 +11788,10 @@ def _staged_reconstruction_section_prompt(
         if anchor_lock_mapping
         else required_anchors
     )
-    if strategy_name == "plain_student_voice_rebuild":
+    if strategy_name == "plain_direct_voice_rebuild":
         strategy_controls = [
-            "PLAIN_STUDENT_VOICE_REBUILD is active.",
-            "Write like a real student draft, not like a polished model answer.",
+            "PLAIN_DIRECT_VOICE_REBUILD is active.",
+            "Write like a plain submitted draft, not like a polished model answer.",
             "Use simple vocabulary and direct sentences. Repeating ordinary words is acceptable.",
             "Do not upgrade the essay into academic style. Do not add sophisticated connectors or balanced paragraph architecture.",
             "Keep some uneven development: one idea may be short, another may be a little over-explained, and not every link needs a transition.",
@@ -12223,7 +12197,7 @@ def _build_regeneration_blueprint(source_text: str, raw_json: dict | None, strat
         target_by_paragraph.setdefault(pid, []).append(segment)
 
     family_shapes = {
-        "plain_student_voice_rebuild": [
+        "plain_direct_voice_rebuild": [
             "simple_claim",
             "plain_problem",
             "short_reason",
@@ -12376,7 +12350,7 @@ def _build_regeneration_blueprint(source_text: str, raw_json: dict | None, strat
             "same-length paragraphs",
             "claim followed by generic explanation",
             "smooth motivational summary",
-            "broad education/technology statements without local narrowing",
+            "broad topic statements without local narrowing",
         ],
         "candidate_family_requirements": [
             "do not use the original sentence order as scaffold",
@@ -12533,22 +12507,22 @@ _SYNTHETIC_ANCHOR_RE = re.compile(
     r"\b(?:In my chair|During consultation|For example|In my notes|"
     r"During sectioning|Specifically|In my experience|During the cut|"
     r"In practice|For this task|During the practical work|In assessment|"
-    r"When learners are cutting|During feedback):",
+    r"When the task is underway|During feedback):",
     re.I,
 )
 _DANGLING_FRAGMENT_JOIN_RE = re.compile(
     r"\b(?:can|could|should|would|will|may|might|must|to|and|but|or|"
     r"while|because|if|before|after|adjust)\s+"
-    r"(?:With only|Learners gain|A competent|The standard|Conclusion|"
-    r"Introduction|This review|In Certificate|Inclusive learning)\b",
+    r"(?:With only|People gain|A competent|The standard|Conclusion|"
+    r"Introduction|This review|In this section|The issue)\b",
     re.I,
 )
 _GENERIC_PRAISE_TERMS_RE = re.compile(
     r"\b(?:strengths?|power(?:ful)?|influential|influence|global|worldwide|"
     r"remarkable|major|prestige|respected|successful|success|icons?|iconic|"
     r"innovation|innovative|entrepreneurship|thrives?|opportunit(?:y|ies)|"
-    r"diversity|cultural|fame|famous|leadership|stability|democratic values?|"
-    r"american dream|fresh starts?|creativity|self-expression)\b",
+    r"diversity|cultural|fame|famous|leadership|stability|"
+    r"fresh starts?|creativity|self-expression)\b",
     re.I,
 )
 _GENERIC_PRAISE_PHRASES_RE = re.compile(
@@ -12557,7 +12531,7 @@ _GENERIC_PRAISE_PHRASES_RE = re.compile(
     r"(?:shaped|shapes) (?:the )?(?:modern )?world|"
     r"(?:economic|cultural|global) influence|(?:economic|military) power|"
     r"(?:global|major) (?:companies|icons|force|forces|alliances)|"
-    r"attract(?:s|ing)? students (?:from|worldwide)|"
+    r"attract(?:s|ing)? (?:people|participants|visitors|users) (?:from|worldwide)|"
     r"symbolize(?:s)? national identity|forces molding world history)\b",
     re.I,
 )
@@ -12586,67 +12560,46 @@ _ABSTRACT_LIST_TERMS_RE = re.compile(
     r"identity|self-expression|values?|progress|responsibility)\b",
     re.I,
 )
-_KNOWN_HEADING_FOLLOWERS = [
-    ("Introduction", "Inclusive learning design"),
-    ("When learners start to get lost", "The challenge"),
-    ("Showing the haircut clearly", "A demonstration"),
-    ("Reasonable adjustment and classroom reality", "Inclusive learning design"),
-    ("Maintaining standards while improving access", "Inclusive learning design"),
-    ("Conclusion", "This review"),
-]
-
-
 def _normalize_known_heading_boundaries(text: str) -> tuple[str, list[str]]:
-    """Separate known document headings that were flattened into prose."""
+    """Separate common document headings that were flattened into prose."""
     if not isinstance(text, str) or not text:
         return text, []
     repaired = text
     repairs: list[str] = []
-
+    heading_re = (
+        r"Introduction|Conclusion|References|Bibliography|Abstract|Background|"
+        r"Discussion|Methodology|Method|Methods|Results|Findings|Appendix"
+    )
     next_text = re.sub(
-        r"\A(\s*[^\n.!?]{12,180}?)\s+Introduction(?=(?:\s+|\n+)Inclusive learning design\b|\n\n)",
-        r"\1\n\nIntroduction",
+        rf"\A(\s*[^\n.!?]{{12,180}}?)\s+({heading_re})\s+(?=[A-Z])",
+        r"\1\n\n\2\n\n",
         repaired,
         flags=re.I,
         count=1,
     )
     if next_text != repaired:
         repaired = next_text
-        repairs.append("split_title_from_introduction")
+        repairs.append("split_title_from_heading")
 
-    for heading, following in _KNOWN_HEADING_FOLLOWERS:
-        heading_re = re.escape(heading)
-        following_re = re.escape(following)
+    next_text = re.sub(
+        rf"(?<=[.!?])\s+({heading_re})\s+(?=[A-Z])",
+        r"\n\n\1\n\n",
+        repaired,
+        flags=re.I,
+    )
+    if next_text != repaired:
+        repaired = next_text
+        repairs.append("split_sentence_before_heading")
 
-        next_text = re.sub(
-            rf"(?<=[.!?])\s+({heading_re})\s+(?={following_re}\b)",
-            r"\n\n\1\n\n",
-            repaired,
-            flags=re.I,
-        )
-        if next_text != repaired:
-            repaired = next_text
-            repairs.append(f"split_sentence_before_heading:{heading}")
-
-        next_text = re.sub(
-            rf"(?<=[.!?])\s+({heading_re})(?=\s*(?:\n\n|$))",
-            r"\n\n\1",
-            repaired,
-            flags=re.I,
-        )
-        if next_text != repaired:
-            repaired = next_text
-            repairs.append(f"split_orphaned_heading:{heading}")
-
-        next_text = re.sub(
-            rf"(^|\n\n)({heading_re})\s+(?={following_re}\b)",
-            r"\1\2\n\n",
-            repaired,
-            flags=re.I,
-        )
-        if next_text != repaired:
-            repaired = next_text
-            repairs.append(f"split_merged_heading:{heading}")
+    next_text = re.sub(
+        rf"(?m)^({heading_re})\s+(?=[A-Z])",
+        r"\1\n\n",
+        repaired,
+        flags=re.I,
+    )
+    if next_text != repaired:
+        repaired = next_text
+        repairs.append("split_merged_heading")
 
     return repaired, repairs
 
@@ -12706,11 +12659,6 @@ def _repeated_sentence_opening_reason(text: str) -> str:
         if len(words) < 3:
             continue
         opening = " ".join(words[:3])
-        if opening in {
-            "the united states",
-            "the u s",
-        }:
-            continue
         counts[opening] = counts.get(opening, 0) + 1
     if not counts:
         return ""
@@ -12803,53 +12751,33 @@ def _neutralize_external_detector_style_artifacts(text: str) -> tuple[str, list[
     repairs: list[str] = []
     replacements: list[tuple[str, str, str]] = [
         (
-            r"\bSilicon Valley giants:\s*Apple,\s*Microsoft,\s*Google,\s*Tesla\s+carve innovation'?s edge\.",
-            "Companies such as Apple, Microsoft, Google, and Tesla are often used as examples of the country's technology sector.",
-            "silicon_valley_giants_neutral",
+            r"\b([^.!?]{0,140}?)\s+carve(?:s|d)? innovation'?s edge\.",
+            r"\1 are linked to technology and business.",
+            "innovation_edge_neutral",
         ),
         (
-            r"\bEntrepreneurship thrives in (?:the )?U\.?S\.? culture\.",
-            "Business creation is often encouraged in American culture, although access to that path is uneven.",
+            r"\bEntrepreneurship thrives in ([^.!?]{3,80})\.",
+            r"Business creation is visible in \1.",
             "entrepreneurship_thrives_neutral",
         ),
         (
             r"\bGlobal companies wield economic influence worldwide\.",
-            "Large U.S. companies operate across many markets.",
+            "Large companies operate across many markets.",
             "global_companies_neutral",
         ),
         (
-            r"\bUniversities attract international students\.",
-            "Some U.S. universities attract international students.",
-            "universities_neutral",
+            r"\b([^.!?]{0,100}?)\s+ships culture worldwide(?:\s*--\s*[^.!?]+)?\.",
+            r"\1 circulates culture internationally.",
+            "ships_culture_neutral",
         ),
         (
-            r"\bHollywood ships culture worldwide\s*--\s*films, tunes, styles, viral social waves\.",
-            "U.S. entertainment circulates through film, music, fashion, and social media.",
-            "hollywood_ships_neutral",
-        ),
-        (
-            r"\bMusic, film, sports stars:\s*global fame magnets\.",
-            "Some musicians, actors, and athletes gain attention outside the United States.",
+            r"\b([^.!?]{0,100}?):\s*global fame magnets\.",
+            r"\1 are known internationally.",
             "fame_magnets_neutral",
         ),
         (
-            r"\bBasketball and American football symbolize national identity\.",
-            "Basketball and American football are tied to parts of American public culture.",
-            "sports_identity_neutral",
-        ),
-        (
-            r"\bNBA pulls millions beyond U\.?S\.? borders, courts packed worldwide\.",
-            "The NBA also has audiences outside the United States.",
-            "nba_worldwide_neutral",
-        ),
-        (
-            r"\bYounger generations echo calls for individuality, self-expression\.",
-            "Ideas about individuality and self-expression also appear in youth culture.",
-            "youth_self_expression_neutral",
-        ),
-        (
-            r"\bEconomic power, cultural sway, diversity:\s*forces molding world history\.",
-            "Economic power, cultural influence, and diversity are part of the country's impact, but they sit beside inequality and political conflict.",
+            r"\b([^.!?]{0,140}?):\s*forces molding world history\.",
+            r"\1 are part of wider public influence.",
             "forces_molding_neutral",
         ),
     ]
@@ -12876,7 +12804,7 @@ def _neutralize_external_detector_style_artifacts(text: str) -> tuple[str, list[
         (r"\bsocial tapestry\b", "society"),
         (r"\bthrows? a vast shadow\b", "has wide influence"),
         (r"\bchurns? out\b", "produces"),
-        (r"\bhatched stateside\b", "from the United States"),
+        (r"\bhatched stateside\b", "from the same country"),
         (r"\bleans human quirkiness\b", "sounds less mechanically polished"),
         (r"\bpower'?s knobs\b", "centres of power"),
         (r"\bstrands\b", "areas"),
@@ -12884,11 +12812,21 @@ def _neutralize_external_detector_style_artifacts(text: str) -> tuple[str, list[
         (r"\bfolks\b", "people"),
         (r"\bcash\b", "money"),
         (r"\bgrit\b", "effort"),
+        (r"\bglobal fame magnets\b", "people with international recognition"),
+        (r"\b(?:giants|heavyweight ring|throwing heavy punches)\b", "large organizations"),
+        (r"\bships culture worldwide\b", "circulates culture internationally"),
+        (r"\btrumpet(?:s|ed)?\b", "argue for"),
     ]
     for pattern, replacement in neutral_terms:
         updated = re.sub(pattern, replacement, updated, flags=re.I)
-    updated = re.sub(r"\bremarkable strengths\b", "strengths", updated, flags=re.I)
-    updated = re.sub(r"\bprestige\b", "reputation", updated, flags=re.I)
+    generic_plain_terms = [
+        (r"\bremarkable strengths\b", "strengths"),
+        (r"\bprestige\b", "reputation"),
+        (r"\bsymbolize national identity\b", "are part of public culture"),
+        (r"\becho calls for\b", "show interest in"),
+    ]
+    for pattern, replacement in generic_plain_terms:
+        updated = re.sub(pattern, replacement, updated, flags=re.I)
     updated = re.sub(r"[ \t]+", " ", updated)
     updated = re.sub(r"\n{3,}", "\n\n", updated).strip()
     if updated != text:
@@ -12915,7 +12853,7 @@ def _ai_candidate_quality_reject_reason(
         "For this task:",
         "During the practical work:",
         "During feedback:",
-        "When learners are cutting:",
+        "When the task is underway:",
         "In assessment:",
     ):
         if re.search(r"\b" + re.escape(artifact), candidate, re.I):
@@ -13053,71 +12991,9 @@ def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
     if next_text != repaired:
         repaired = next_text
         repairs.append("fixed_broken_with_fragment")
-    next_text = re.sub(
-        r"\bWith only six learners\b",
-        "Because there are only six learners",
-        repaired,
-        flags=re.I,
-    )
-    if next_text != repaired:
-        repaired = next_text
-        repairs.append("normalized_with_only_phrase")
 
     repaired, heading_repairs = _normalize_known_heading_boundaries(repaired)
     repairs.extend(heading_repairs)
-
-    overlap_repairs = [
-        (
-            r"\bI encourage open discussion so learners can "
-            r"(?=(?:With only|Because there are only)\b)",
-            "",
-            "removed_dangling_prefix:learners_can",
-        ),
-        (
-            r"\bA competent learner can explain the steps, identify the guide, "
-            r"check balance, adjust (?=Learners gain confidence\b)",
-            "",
-            "removed_dangling_prefix:adjust",
-        ),
-        (
-            r"\bCAST and Jwad et al\. describe (?=The sources address\b)",
-            "",
-            "removed_dangling_prefix:cast_describe",
-        ),
-        (
-            r"\bFor hairdressing educators, inclusive (?=Competency should not depend\b)",
-            "",
-            "removed_dangling_prefix:inclusive",
-        ),
-        (
-            r"(This review has discussed inclusive learning design in Certificate III "
-            r"Hairdressing\. Demonstration alone does not build competency\. "
-            r"In units before SHBHCUT006,\s+)\1",
-            r"\1",
-            "collapsed_repeated_clause:conclusion_intro",
-        ),
-        (
-            r"\bBillett and Kirschner et al\.\s+Billett and Kirschner et al\.\s+"
-            r"CAST and Jwad et al\. describe multiple learning pathways\.",
-            (
-                "Billett and Kirschner et al. highlight the need for guided practice "
-                "over discovery learning. CAST and Jwad et al. describe multiple "
-                "learning pathways."
-            ),
-            "repaired_conclusion_fragment:guided_practice",
-        ),
-        (
-            r"\b(DEWR defines the boundary for reasonable adjustment and maintaining "
-            r"assessment integrity\.)\s+multiple learning pathways\.",
-            r"\1",
-            "removed_dangling_fragment:multiple_learning_pathways",
-        ),
-    ]
-    for pattern, replacement, note in overlap_repairs:
-        next_text = re.sub(pattern, replacement, repaired, flags=re.I)
-        if next_text != repaired:
-            repaired = next_text
-            repairs.append(note)
 
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", repaired) if p.strip()]
     if paragraphs:
@@ -13137,8 +13013,18 @@ def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
             ]
             for sentence_index, sentence in enumerate(sentences):
                 key = re.sub(r"\s+", " ", sentence).strip().lower()
+                if len(sentence.split()) >= 8 and any(
+                    prior
+                    and prior != key
+                    and len(prior.split()) >= 8
+                    and prior in key
+                    for prior in seen_sentences
+                ):
+                    removed_fragments += 1
+                    repairs.append("removed_dangling_prefix:embedded_prior_sentence")
+                    continue
                 first_alpha = re.search(r"[A-Za-z]", sentence)
-                if first_alpha and first_alpha.group(0).islower() and len(sentence.split()) >= 3:
+                if first_alpha and first_alpha.group(0).islower() and len(sentence.split()) >= 2:
                     contained_elsewhere = any(
                         other_index != sentence_index
                         and key
@@ -13148,10 +13034,10 @@ def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
                     if contained_elsewhere:
                         removed_fragments += 1
                         continue
-                if len(sentence.split()) >= 8 and key in seen_sentences:
+                if len(sentence.split()) >= 4 and key in seen_sentences:
                     removed_duplicates += 1
                     continue
-                if len(sentence.split()) >= 8:
+                if len(sentence.split()) >= 4:
                     seen_sentences.add(key)
                 kept.append(sentence)
             if kept:
@@ -13193,7 +13079,8 @@ def _source_repair_drift_false_positive(candidate: str, reasons: list[str]) -> b
 
 _AI_SEARCH_ENTITY_NOISE = {
     "the", "this", "these", "that", "with", "when", "while", "where",
-    "learners", "learner", "students", "student", "competency",
+    "people", "person", "participants", "participant", "users", "user",
+    "process", "practice", "context",
     "introduction", "conclusion", "however", "therefore", "because",
     "centre", "center",
 }
@@ -13217,7 +13104,7 @@ def _ai_search_drift_false_positive(candidate: str, reasons: list[str], similari
             return False
         if any(word in {"introduction", "conclusion"} for word in words):
             # Full-document drift sees repaired headings such as
-            # "Hairdressing Introduction Inclusive" as lost entities. The
+            # "Topic Introduction Detail" as lost entities. The
             # protected-span check has already guarded citations/numbers/quotes;
             # this is layout damage, not semantic loss.
             continue
@@ -13235,9 +13122,9 @@ def _ai_search_drift_false_positive(candidate: str, reasons: list[str], similari
 
 
 _AI_SEARCH_CRITICAL_ENTITY_RE = re.compile(
-    r"\b(?:Box Hill Institute|Certificate III|SHBHCUT\d+|CESE|Chandler|"
-    r"Sweller|Billett|Kirschner|CAST|Jwad|DEWR)\b",
-    re.I,
+    r"\b(?:[A-Z]{2,}[A-Z0-9-]{2,}|\d{3,4}|"
+    r"[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3}\s+"
+    r"(?:Institute|Institution|University|College|Centre|Center|School|Department|Agency|Authority|Council|Group|Corporation|Company))\b",
 )
 
 
@@ -13257,6 +13144,9 @@ def _ai_search_entity_drift_scan_allowed(candidate: str, reasons: list[str], sim
             return False
         entity = re.sub(r"\s+", " ", match.group(1)).strip()
         if entity.lower() in candidate_l:
+            continue
+        words = [word.lower() for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", entity)]
+        if words and all(word in _AI_SEARCH_ENTITY_NOISE for word in words):
             continue
         if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
             return False
@@ -13305,6 +13195,9 @@ def _document_recreate_drift_scan_allowed(
             return False
         entity = re.sub(r"\s+", " ", match.group(1)).strip()
         if entity.lower() in candidate_l:
+            continue
+        words = [word.lower() for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", entity)]
+        if words and all(word in _AI_SEARCH_ENTITY_NOISE for word in words):
             continue
         if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
             return False
@@ -13512,7 +13405,7 @@ def _ai_search_prompt(
         ],
         "confirmed_anchor_claim_narrowing": [
             "Strategy: confirmed-anchor claim narrowing.",
-            "Use confirmed author anchors to narrow broad claims into a specific condition, classroom/practice situation, or observed consequence.",
+            "Use confirmed author anchors to narrow broad claims into a specific condition, practical situation, or observed consequence.",
             "If an anchor does not directly support a claim, do not use it there.",
             "Prefer a smaller true claim over a broader polished claim.",
         ],
@@ -13529,7 +13422,7 @@ def _ai_search_prompt(
         "This is not copyediting. This is not polish. This is detector-targeted reconstruction.",
         *strategy_lines,
         "Use the detector signals as rewrite levers:",
-        "- High generic assertion risk: replace broad claims with narrower claims tied to existing source, classroom, client, task, or process details.",
+        "- High generic assertion risk: replace broad claims with narrower claims tied to existing source, task, condition, or process details.",
         "- High qualifying AI density: change paragraph architecture, not just words; vary where claims, examples, and source relations appear.",
         "- High top-k predictability: rebuild clause order, split/merge sentence routes, and use less expected verbs while preserving meaning.",
         "- Source/citation gaps: narrow or qualify the claim unless the source already exists in the draft.",
@@ -13612,7 +13505,7 @@ def _ai_search_feedback_prompt(
         "- Specifically reduce generic assertions, qualifying-text AI density, and top-k predictability.\n"
         "- If earlier candidates only changed wording, change paragraph structure and claim order this time.\n"
         "- Rewrite the highest-driver paragraphs more aggressively while preserving all protected facts.\n"
-        "- Rebuild paragraph flow where needed: start from classroom/salon action, learner behavior, or source relation before broad claims.\n"
+        "- Rebuild paragraph flow where needed: start from local action, participant behavior, or source relation before broad claims.\n"
         "- Do not add fake facts. If evidence is missing, narrow the claim instead of inventing support.\n"
         "- Avoid mechanical anchor prefixes and visible review markers in the final document.\n"
         "- Repair inherited source damage: broken words, merged headings, and duplicate sentence fragments.\n"
@@ -13737,7 +13630,7 @@ def _exact_blocking_target_from_context(
         ])
     if "predictability" in title:
         preferred_patterns.extend([
-            r"\bwhen learners\b",
+            r"\bwhen people\b",
             r"\bthis does not\b",
             r"\bstill must\b",
             r"\bthere are\b",
@@ -13984,7 +13877,9 @@ def _paragraph_role(paragraph: str, drivers: dict | None = None, *, is_last: boo
     citation_count = len(_PARAGRAPH_CITATION_RE.findall(text))
     first_person_count = len(re.findall(r"\b(?:I|my|me)\b", text))
     process_count = len(re.findall(
-        r"\b(?:SHBHCUT\d+|sectioning|projection|guide|parting|haircut|mannequin|client|elbow|wrist|finger|scissor|comb|tension|subsection)\b",
+        r"\b(?:task|process|method|procedure|tool|material|step|check|review|"
+        r"feedback|draft|participant|client|user|case|condition|constraint|"
+        r"measurement|test|testing|observed|practice|workflow)\b",
         text,
         flags=re.I,
     ))
@@ -14027,10 +13922,10 @@ def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> l
         re.I,
     )
     concrete_re = re.compile(
-        r"\b(?:SHBHCUT\d+|CESE|Chandler|Sweller|Billett|Kirschner|CAST|Jwad|DEWR|"
-        r"Box Hill|HBB26|\d+(?:\.\d+)?%?|\([A-Z][A-Za-z]+,\s*\d{4}\)|"
-        r"\bI\b|\bmy\b|\bmannequin|client|sectioning|projection|guide|scissor|comb|elbow)\b",
-        re.I,
+        r"\b(?:[A-Z]{2,}[A-Z0-9-]{2,}|\d+(?:\.\d+)?%?|"
+        r"\([A-Z][A-Za-z]+,\s*\d{4}\)|I|my|"
+        r"(?i:case|client|participant|user|tool|method|procedure|task|workflow|"
+        r"condition|constraint|measurement|test|feedback|observed|practice))\b"
     )
     for index, paragraph in enumerate(paragraphs):
         words = paragraph.split()
@@ -14213,13 +14108,13 @@ def _paragraph_component_prompt(
         + min_word_rule
         +
         "- Keep the replacement near the original length or shorter unless an anchor must be preserved.\n"
-        "- Break generic assertion flow: avoid broad claims unless tied to the local haircutting/classroom process.\n"
-        "- Start from concrete action, learner behavior, source relation, or assessment consequence before broad explanation.\n"
+        "- Break generic assertion flow: avoid broad claims unless tied to the local process.\n"
+        "- Start from concrete action, participant behavior, source relation, or practical consequence before broad explanation.\n"
         "- Change paragraph architecture: reorder claim/example/source relation where meaning allows.\n"
         "- Convert generic claims into specific process observations using only anchors already present nearby.\n"
         "- Vary sentence length and clause order enough that this is not a synonym swap.\n"
         "- Change sentence openings and sentence routes. Do not polish with academic filler.\n"
-        "- Keep author voice and first-person classroom observation where it already exists.\n"
+        "- Keep author voice and first-person observation where it already exists.\n"
         "- Remove duplicate fragments if present inside the target paragraph.\n"
         "- Copy every required [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.\n"
         f"- Batch attempt {attempt_index}: make each option materially different from generic rephrasing.\n\n"
@@ -14306,7 +14201,7 @@ def _human_signal_amplification_prompt(
         ),
         "source_summary_heavy": (
             "For this role, keep the source claim intact and add one sentence that explains how "
-            "the source changes a teaching, assessment, or practice decision already present nearby."
+            "the source changes a practical decision already present nearby."
         ),
         "conclusion_template_risk": (
             "For this role, reduce the neat closing-summary shape and add one limitation, tension, "
@@ -14329,7 +14224,7 @@ def _human_signal_amplification_prompt(
         "- Do not end with a polished implication sentence.\n"
         "- Keep the paragraph close to the original length or shorter.\n\n"
         "Allowed:\n"
-        "- connect a source claim to a teaching/practice decision already present in the context\n"
+        "- connect a source claim to a practical decision already present in the context\n"
         "- add one limitation or condition already implied by the paragraph\n"
         "- add one author judgement or reasoning trace if it changes no factual claim\n"
         "- make a claim more specific using existing local context\n"
@@ -14633,7 +14528,7 @@ def _content_pruning_candidates(
                 ))
                 concrete_sentence_hits = len(re.findall(
                     r"\b(?:\d+(?:\.\d+)?%?|\bI\b|\bmy\b|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|"
-                    r"teacher|student|class|feedback|draft|source|practice|assessment)\b",
+                    r"source|citation|reference|example|evidence|case|condition)\b",
                     sentence,
                     flags=re.I,
                 ))
@@ -14686,38 +14581,32 @@ def _content_pruning_candidates(
 
 def _narrow_generic_claim_text(text: str) -> str:
     replacements = [
-        (
-            r"\b[Tt]oday's education system is changing faster than many schools can comfortably manage\b",
-            "In many schools, education is changing faster than existing routines can comfortably absorb",
-        ),
-        (r"\b[Kk]nowledge is no longer scarce\b", "Information is easier to reach than before"),
-        (r"\b[Aa]ccess is no longer the biggest problem\b", "Access is not the only problem"),
         (r"\b[Tt]he real challenge is\b", "A harder challenge is"),
-        (
-            r"\b[Tt]his has created a new kind of learning environment\b",
-            "This has changed the learning environment in practical ways",
-        ),
+        (r"\b[Tt]he main challenge is\b", "One challenge is"),
+        (r"\b[Tt]his has created\b", "This can create"),
         (r"\b[Tt]his shift has made\b", "This shift can make"),
         (r"\b[Tt]his is a serious concern because\b", "The concern is practical because"),
-        (
-            r"\b[Tt]he modern world does not only reward\b",
-            "Many current settings do not only reward",
-        ),
-        (r"\b[Ss]chools should still teach\b", "Schools still need to teach"),
-        (r"\b[Tt]hey must also teach\b", "they also need room to teach"),
         (r"\b[Tt]he goal should not be\b", "The goal does not need to be"),
         (r"\b[Tt]he goal should be\b", "A more useful goal is"),
-        (r"\b[Mm]any schools continue to\b", "Some schools still"),
-        (r"\b[Ss]tudents may become too dependent\b", "Some students may become too dependent"),
-        (r"\b[Nn]ot every student has equal access\b", "Some students do not have equal access"),
         (r"\b[Ii]t is important to consider that\b", "In this situation,"),
+        (r"\b[Ii]t is important to note that\b", ""),
+        (r"\b[Pp]lays? (?:a )?(?:crucial|significant|important|major) role in\b", "affects"),
+        (r"\b[Hh]as (?:a )?(?:crucial|significant|important|major) impact on\b", "affects"),
+        (r"\b[Tt]his (?:demonstrates|highlights|underscores|shows) that\b", "This suggests that"),
+        (r"\b[Ii]n today's (?:world|society|environment)\b", "Now"),
+        (r"\b[Ii]n the modern (?:world|society|environment)\b", "Now"),
     ]
     narrowed = str(text or "")
     for pattern, replacement in replacements:
         narrowed = re.sub(pattern, replacement, narrowed)
-    narrowed = re.sub(r"\bmust\b", "need to", narrowed)
+    narrowed = re.sub(r"\b[Ee]veryone\b", "Many people", narrowed)
+    narrowed = re.sub(r"\b[Aa]ll\b", "Many", narrowed)
+    narrowed = re.sub(r"\bmust\b", "may need to", narrowed)
     narrowed = re.sub(r"\bwill\b", "may", narrowed)
     narrowed = re.sub(r"\balways\b", "often", narrowed, flags=re.I)
+    narrowed = re.sub(r"\bnever\b", "rarely", narrowed, flags=re.I)
+    narrowed = re.sub(r"[ \t]{2,}", " ", narrowed)
+    narrowed = re.sub(r"\s+([,.!?;:])", r"\1", narrowed)
     return narrowed
 
 
@@ -14728,91 +14617,19 @@ def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
     updated = text
     applied: list[str] = []
     replacements: list[tuple[str, str, str]] = [
-        (
-            r"\bSchools must reconsider their approach to measuring learning\.",
-            "Schools need to rethink how learning is measured.",
-            "schools_measurement_plain",
-        ),
-        (
-            r"\bAn overemphasis on grades and exams often shifts student priorities toward merely passing rather than achieving true comprehension\.",
-            "Too much focus on grades and exams can make students study only to pass, rather than understand the topic properly.",
-            "grades_overemphasis_plain",
-        ),
-        (
-            r"\bWith the aid of AI tools, students can craft seemingly perfect responses without a deep understanding of the material\.",
-            "With AI tools, students can produce polished answers without fully understanding the topic.",
-            "ai_answers_plain",
-        ),
-        (
-            r"\bTherefore, it is crucial for education to emphasize the learning journey, incorporating elements like drafts, feedback, discussions, reflections, and continuous improvement\.",
-            "Because of this, education should pay more attention to the learning process: drafts, feedback, discussion, reflection, and improvement.",
-            "learning_journey_plain",
-        ),
-        (
-            r"\bEducation should not only prepare students for exams but also equip them for life\b",
-            "In the end, education should not only prepare students for exams. It should prepare them for life",
-            "equip_life_plain",
-        ),
-        (
-            r"\bWhile students need knowledge, they also require judgment, patience, curiosity, and the ability to keep learning, which can be challenging to foster in an environment overly focused on grades\.",
-            "Students need knowledge, but they also need judgment, patience, curiosity, and the ability to keep learning. That is harder to build when grades take over.",
-            "require_judgement_plain",
-        ),
-        (
-            r"\bEducation should not merely focus on preparing students for exams; it needs to also ready them for life in a world filled with information and distractions\.",
-            "In the end, education should not only prepare students for exams. It should also prepare them for life in a world full of information and distractions.",
-            "merely_exams_plain",
-        ),
-        (
-            r"\bReevaluating how learning is assessed is crucial for schools today\.",
-            "Schools need to rethink how learning is measured.",
-            "reevaluating_assessment_plain",
-        ),
-        (
-            r"\bWhen too much weight is placed on grades and exams, students may only aim to meet minimum passing requirements\.",
-            "Too much focus on grades and exams can make students study only to pass.",
-            "minimum_passing_plain",
-        ),
-        (
-            r"\bThe advent of AI tools allows students to create refined answers without grasping the underlying concepts\.",
-            "With AI tools, students can produce polished answers without fully understanding the topic.",
-            "advent_refined_plain",
-        ),
-        (
-            r"\bThis situation calls for a shift in education's focus towards the learning process itself, emphasizing drafts, feedback, discussions, reflections, and ongoing improvement\.",
-            "Because of this, education should pay more attention to the learning process: drafts, feedback, discussion, reflection, and improvement.",
-            "shift_focus_plain",
-        ),
-        (
-            r"\bHowever, this shift may also lead to challenges in ensuring that all educators are equipped to facilitate this more nuanced approach effectively\.",
-            "That is not easy for every teacher.",
-            "nuanced_approach_plain",
-        ),
-        (
-            r"\bWhile students require knowledge, the struggle to foster judgment, patience, curiosity, and lifelong learning skills remains a significant hurdle that traditional educational frameworks frequently fail to adequately address\.",
-            "Students need knowledge, but they also need judgment, patience, curiosity, and the ability to keep learning. Schools do not always build those habits well.",
-            "framework_hurdle_plain",
-        ),
-        (
-            r"\bI would reflect on the fact that when a student searches almost any topic, an answer can appear within seconds, which might affect their engagement with the material\.",
-            "I would note that when a student searches almost any topic, an answer can appear within seconds.",
-            "reflect_engagement_plain",
-        ),
-        (
-            r"\bcan lead some students to study primarily to pass\b",
-            "can make some students study mainly to pass",
-            "primarily_pass_plain",
-        ),
         (r"\bTherefore,\s*", "Because of this, ", "therefore_plain"),
         (r"\bUltimately,\s*", "In the end, ", "ultimately_plain"),
         (r"\bSimultaneously,\s*", "At the same time, ", "simultaneously_plain"),
         (r"\bCrucially,\s*", "More importantly, ", "crucially_plain"),
+        (r"\bFurthermore,\s*", "", "furthermore_plain"),
+        (r"\bMoreover,\s*", "", "moreover_plain"),
+        (r"\bAdditionally,\s*", "", "additionally_plain"),
         (r"\bYet,\s*", "But ", "yet_plain"),
         (r"\bOn one hand\b", "On one side", "on_one_hand_plain"),
         (r"\bresembles\b", "feels like", "resembles_plain"),
         (r"\bamid constant motion\b", "while everything is moving around it", "amid_motion_plain"),
         (r"\bpersists\b", "still exists", "persists_plain"),
-        (r"\bdeliver content\b", "explain lessons", "deliver_content_plain"),
+        (r"\bdeliver content\b", "explain the material", "deliver_content_plain"),
         (r"\bgauge progress\b", "measure progress", "gauge_progress_plain"),
         (r"\bshifted dramatically\b", "changed a lot", "shifted_dramatically_plain"),
         (r"\bremarkably immediate\b", "very quick", "immediate_plain"),
@@ -14823,15 +14640,12 @@ def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
         (r"\bunfolds more gradually\b", "is slower than that", "unfolds_plain"),
         (r"\bremain vital\b", "still matter", "vital_plain"),
         (r"\bextends beyond\b", "is more than", "extends_plain"),
-        (r"\bencourage students to pause and reflect\b", "help students slow down and think", "encourage_pause_plain"),
         (r"\bdistinguishing reliable information from unreliable sources\b", "telling useful information from weak information", "distinguish_sources_plain"),
         (r"\bintensifies these concerns\b", "makes this more urgent", "intensifies_plain"),
         (r"\bfocus on passing tests rather than truly grasping material\b", "focus on passing rather than really understanding", "grasping_material_plain"),
         (r"\bnurture confidence or independent inquiry\b", "build confidence or independent thinking", "nurture_plain"),
-        (r"\bserves as a learning tool\b", "is used as a learning tool", "serves_tool_plain"),
+        (r"\bserves as a\b", "is used as a", "serves_plain"),
         (r"\bsubstitute original thought\b", "replace their own thinking", "substitute_plain"),
-        (r"\brisks hollow learning\b", "can mean the learning is missing", "hollow_plain"),
-        (r"\beducators should inquire\b", "teachers should ask", "educators_inquire_plain"),
         (r"\bPlacing greater emphasis on\b", "Paying more attention to", "placing_emphasis_plain"),
         (r"\bflawless final submission\b", "perfect final submission", "flawless_plain"),
         (r"\bEquity also demands attention\b", "Fairness is another issue", "equity_plain"),
@@ -14840,10 +14654,7 @@ def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
         (r"\bdisparities\b", "gaps", "disparities_plain"),
         (r"\bhold value\b", "still matter", "hold_value_plain"),
         (r"\bconfront the realities\b", "be honest about the world", "confront_plain"),
-        (r"\blearners require\b", "students need", "learners_require_plain"),
         (r"\bcultivate\b", "build", "cultivate_plain"),
-        (r"\bpersist when learning proves difficult\b", "keep learning when things are not easy", "persist_plain"),
-        (r"\bThis ongoing effort defines education's true purpose in the present age\.", "That is the real work of education today.", "true_purpose_plain"),
         (r"\bit is crucial for\b", "it matters for", "crucial_plain"),
         (r"\bcrucial\b", "important", "crucial_word_plain"),
         (r"\bvital\b", "important", "vital_word_plain"),
@@ -14851,13 +14662,11 @@ def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
         (r"\bfrequently\b", "often", "frequently_plain"),
         (r"\bmerely\b", "only", "merely_plain"),
         (r"\bsignificant hurdle\b", "harder problem", "hurdle_plain"),
-        (r"\btraditional educational frameworks\b", "schools", "frameworks_plain"),
-        (r"\btraditional teachers\b", "teachers", "traditional_teachers_plain"),
         (r"\bvarious sources such as\b", "sources such as", "various_sources_plain"),
         (r"\bindividuals they follow\b", "people they follow", "individuals_plain"),
         (r"\bunderlying concepts\b", "topic", "underlying_concepts_plain"),
         (r"\brefined answers\b", "polished answers", "refined_answers_plain"),
-        (r"\bthe advent of AI tools\b", "AI tools", "advent_plain"),
+        (r"\bthe advent of\b", "", "advent_plain"),
         (r"\bfrequently fail to adequately address\b", "do not always build well", "fail_address_plain"),
         (r"\bfilled with\b", "full of", "filled_plain"),
         (r"\bready them\b", "prepare them", "ready_plain"),
@@ -14865,7 +14674,7 @@ def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
         (r"\bprimarily\b", "mainly", "primarily_plain"),
         (r"\bengagement with the material\b", "attention to the topic", "engagement_material_plain"),
         (r"\btrue comprehension\b", "understanding", "comprehension_plain"),
-        (r"\blearning journey\b", "learning process", "journey_plain"),
+        (r"\bjourney\b", "process", "journey_plain"),
         (r"\bcontinuous improvement\b", "improvement", "continuous_improvement_plain"),
         (r"\boveremphasis\b", "too much focus", "overemphasis_plain"),
         (r"\bequip them for life\b", "prepare them for life", "equip_plain"),
@@ -14921,26 +14730,11 @@ def _final_score_drag_sentence_prune_text(text: str) -> tuple[str, list[str]]:
     min_words = int(source_words * min_ratio)
     remaining_words = source_words
     sentence_patterns: list[tuple[str, str]] = [
-        (
-            r"\bthe world outside school has changed much faster than the classroom\b",
-            "outside_school_changed_faster",
-        ),
-        (
-            r"\bin the classroom and outside it,\s+information is everywhere\b",
-            "information_everywhere",
-        ),
-        (
-            r"\bworld full of information and distractions\b",
-            "world_information_distractions",
-        ),
-        (
-            r"\bknowledge is no longer scarce\b",
-            "knowledge_no_longer_scarce",
-        ),
-        (
-            r"\baccess is no longer the biggest problem\b",
-            "access_no_longer_biggest_problem",
-        ),
+        (r"\b(?:the )?world (?:outside|around) [a-z ]+ has changed much faster\b", "outside_context_changed_faster"),
+        (r"\bin [a-z ]+ and outside it,\s+information is everywhere\b", "information_everywhere"),
+        (r"\bworld full of information and distractions\b", "world_information_distractions"),
+        (r"\bknowledge is no longer scarce\b", "knowledge_no_longer_scarce"),
+        (r"\baccess is no longer the biggest problem\b", "access_no_longer_biggest_problem"),
     ]
     protected_pattern = re.compile(
         r"(?:\"[^\"]+\"|“[^”]+”|\[[^\]]+\]|\([A-Za-z]+,\s*\d{4}\)|\b\d+(?:\.\d+)?%?\b|"
@@ -15009,7 +14803,7 @@ def _compress_score_drag_paragraph(paragraph: str, *, max_remove: int = 2) -> st
         ))
         anchor_hits = len(re.findall(
             r"\b(?:\d+(?:\.\d+)?%?|\"[^\"]+\"|“[^”]+”|\bI\b|\bmy\b|"
-            r"YouTube|TikTok|AI|teacher|student|assessment|feedback|draft|source)\b",
+            r"source|citation|reference|example|evidence|case|condition)\b",
             sentence,
             flags=re.I,
         ))
@@ -15027,8 +14821,7 @@ _GENERIC_ASSERTION_TERMS_RE = re.compile(
     r"\b(?:important|significant|essential|crucial|supports?|helps?|allows?|"
     r"enables?|creates?|means|shows?|suggests?|highlights?|underscores?|"
     r"challenge|issue|goal|system|world|framework|approach|outcomes?|success|"
-    r"effective|clear|improve|develop|ensure|provide|promote|enhance|"
-    r"commercial expectations|technical skills|inclusive learning design)\b",
+    r"effective|clear|improve|develop|ensure|provide|promote|enhance)\b",
     re.I,
 )
 
@@ -15036,9 +14829,8 @@ _GENERIC_ASSERTION_PROTECTED_SENTENCE_RE = re.compile(
     r"(?:\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b|\b\d+(?:\.\d+)?%?\b|"
     r"\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)|"
     r"\b[A-Z][A-Za-z]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z]+)?\s*\(\d{4}\)|"
-    r"\b(?:I|my|me|Box Hill|HBB26|SHBHCUT|CESE|CAST|DEWR|Billett|Kirschner|"
-    r"Chandler|Sweller|Jwad|sectioning|projection|guide|parting|mannequin|client|"
-    r"elbow|wrist|finger|scissor|comb|tension|subsection)\b)",
+    r"\b(?:I|my|me|source|citation|reference|evidence|example|case|condition|"
+    r"quote|quoted|observed|measured|tested|reported)\b)",
     re.I,
 )
 
@@ -15048,7 +14840,8 @@ def _generic_assertion_sentence_score(sentence: str) -> float:
     generic_hits = len(_GENERIC_ASSERTION_TERMS_RE.findall(sentence))
     modal_hits = len(re.findall(r"\b(?:should|must|need(?:s|ed)?|can|will|may)\b", sentence, flags=re.I))
     broad_noun_hits = len(re.findall(
-        r"\b(?:learners?|students?|teachers?|educators?|schools?|education|training|practice|skills?)\b",
+        r"\b(?:people|participants?|users?|readers?|writers?|work(?:ers)?|"
+        r"teams?|systems?|process(?:es)?|practice|skills?|tasks?)\b",
         sentence,
         flags=re.I,
     ))
@@ -15475,7 +15268,7 @@ def _human_anchor_amplifier_candidates(
 
     anchor_re = re.compile(
         r"\b(?:\d+|during|when|after|before|feedback|testing|case|example|"
-        r"classroom|school|in practice|I would|I think|I worry|we observed|"
+        r"in practice|I would|I think|I worry|we observed|"
         r"what (?:I|we) (?:would|need|want)|my judgement)\b",
         re.I,
     )
@@ -16142,7 +15935,7 @@ def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dic
     ]
     generic_re = re.compile(
         r"\b(?:important|significant|various|many|different|modern|today|society|"
-        r"education|culture|technology|system|people|students|community|global|"
+        r"culture|technology|system|people|community|global|"
         r"impact|influence|development|opportunity|challenge|supports?|helps?|"
         r"plays? a role|continues? to|it is clear|this shows|this means)\b",
         re.I,
@@ -16150,7 +15943,7 @@ def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dic
     human_anchor_re = re.compile(
         r"\b(?:I|my|we|our|when|during|after|before|in practice|for me|"
         r"what I|what we|I noticed|I would|the issue is|this depends|"
-        r"checked|feedback|mistake|draft|practice|classroom|workshop|client)\b",
+        r"checked|feedback|mistake|draft|practice|workshop|observed|tested)\b",
         re.I,
     )
     connector_re = re.compile(
@@ -17041,10 +16834,9 @@ def _human_signal_construction_candidates(
 ) -> list[tuple[str, str, dict]]:
     """Construct visible author reasoning density from existing claims.
 
-    This is broader than repair but still bounded: it rewrites sentence frames
-    around claims already present, using education/process terms already implied
-    by the document. It does not introduce citations, statistics, names, or
-    external evidence.
+    This delegates to the domain-agnostic Human Anchor amplifier. Older
+    topic-specific sentence replacement tables were removed because they caused
+    cross-domain leakage when a fixture shared only superficial wording.
     """
     if not _env_flag("DRAFTPROOF_HUMAN_SIGNAL_CONSTRUCTION", True):
         return []
@@ -17077,135 +16869,7 @@ def _human_signal_construction_candidates(
             )
             for strategy, candidate, meta in generic_anchor_candidates[:max(1, int(limit or 1))]
         ]
-
-    replacements: list[tuple[re.Pattern, str, str]] = [
-        (
-            re.compile(r"\bSchools still follow a familiar pattern\.", re.I),
-            "The classroom pattern remains.",
-            "classroom_frame",
-        ),
-        (
-            re.compile(r"\bStudents attend classes, teachers explain lessons, homework is given, and exams are used to measure progress\.", re.I),
-            "During the week, students attend classes, hear explanations, finish homework, and sit exams.",
-            "during_school_week",
-        ),
-        (
-            re.compile(r"\bThis structure is useful because it gives students routine and direction\.", re.I),
-            "I think that structure still matters because it gives students routine and direction.",
-            "author_judgement_structure",
-        ),
-        (
-            re.compile(r"\bStudents today do not only learn from teachers or textbooks\.", re.I),
-            "When learning now, students look beyond teachers and textbooks.",
-            "when_students_learn",
-        ),
-        (
-            re.compile(r"\bStudents can use many online tools, and this is important because it helps learning in many ways\.", re.I),
-            "When students use many online tools, I think the learning value depends on how those tools are checked and discussed.",
-            "online_tools_condition",
-        ),
-        (
-            re.compile(r"\bThis shows that education needs to change for the modern world\.", re.I),
-            "One case is that education has to respond to that change without treating every online answer as learning.",
-            "education_change_example",
-        ),
-        (
-            re.compile(r"\bInformation is everywhere\.", re.I),
-            "In the classroom and outside it, information is everywhere.",
-            "example_information",
-        ),
-        (
-            re.compile(r"\bA student can search for almost any topic and get an answer within seconds\.", re.I),
-            "When a student searches almost any topic, an answer can appear within seconds.",
-            "search_moment",
-        ),
-        (
-            re.compile(r"\bThe real challenge now is knowing what to trust\.", re.I),
-            "I think the harder challenge now is knowing what to trust.",
-            "trust_judgement",
-        ),
-        (
-            re.compile(r"\bSome online content is helpful, but some is incomplete, misleading, or made only to attract attention\.", re.I),
-            "One case is online content that looks helpful but is incomplete, misleading, or made only to attract attention.",
-            "online_content_example",
-        ),
-        (
-            re.compile(r"\bMany videos show the final result but hide the effort behind it\.", re.I),
-            "When a video shows only the final result, it can hide the effort behind it.",
-            "video_process_gap",
-        ),
-        (
-            re.compile(r"\bThis is why teachers still play an important role\.", re.I),
-            "In my judgement, this is why teachers still play an important role.",
-            "teacher_judgement",
-        ),
-        (
-            re.compile(r"\bTeachers can help students ask questions and understand information\.", re.I),
-            "In practice, teachers can help students ask questions and understand information.",
-            "teacher_practice",
-        ),
-        (
-            re.compile(r"\bA good teacher does more than deliver information\.", re.I),
-            "I would not describe a good teacher as someone who only delivers information.",
-            "teacher_definition",
-        ),
-        (
-            re.compile(r"\bAt the same time, schools need to rethink how learning is measured\.", re.I),
-            "I also think schools need to rethink how learning is measured.",
-            "assessment_judgement",
-        ),
-        (
-            re.compile(r"\bToo much focus on grades and exams can make students study only to pass\.", re.I),
-            "When grades and exams dominate the lesson, students can end up studying only to pass.",
-            "grades_condition",
-        ),
-        (
-            re.compile(r"\bWith AI tools, students can now produce polished answers without fully understanding the topic\.", re.I),
-            "When students use AI tools, they can now produce polished answers without fully understanding the topic.",
-            "ai_tool_condition",
-        ),
-        (
-            re.compile(r"\bIn the end, education should not only prepare students for exams\.", re.I),
-            "For me, education should not only prepare students for exams.",
-            "conclusion_stance",
-        ),
-    ]
-
-    def build(max_changes: int) -> tuple[str, list[dict]]:
-        updated = str(source_text or "")
-        changes = []
-        for pattern, replacement, operation in replacements:
-            if len(changes) >= max_changes:
-                break
-            updated_next, count = pattern.subn(replacement, updated, count=1)
-            if count <= 0 or updated_next == updated:
-                continue
-            updated = updated_next
-            changes.append({"operation": operation, "replacement": replacement})
-        return updated, changes
-
-    candidates: list[tuple[str, str, dict]] = []
-    max_limit = max(1, int(limit or 1))
-    profiles = [
-        ("human_signal_construction_medium", 8),
-        ("human_signal_construction_strong", 12),
-    ]
-    for strategy, max_changes in profiles[:max_limit]:
-        candidate, changes = build(max_changes)
-        if not changes or candidate.strip() == str(source_text or "").strip():
-            continue
-        candidates.append((
-            strategy,
-            candidate,
-            {
-                "operation": "human_signal_construction",
-                "changed_sentence_frames": len(changes),
-                "changes": changes,
-                "lived_detail_risk": lived_risk,
-                "broad_claim_risk": broad_risk,
-            },
-        ))
-    return candidates[:max_limit]
+    return []
 
 
 def _author_stance_thread_candidates(
@@ -17221,81 +16885,10 @@ def _author_stance_thread_candidates(
     The scanner/gate still rejects any authorship, drift, review, or severity
     regression.
     """
-    if not _env_flag("DRAFTPROOF_AUTHOR_STANCE_THREADING", True):
-        return []
-    paragraphs = _logical_paragraphs(source_text)
-    if len(paragraphs) < 2:
-        return []
-    targets = _paragraph_component_targets(source_text, report_dict or {}, limit=max(limit * 3, 4))
-    protected = detect_protected_spans(source_text)
-
-    def paragraph_has_protected_anchor(index: int) -> bool:
-        before = _join_logical_paragraphs(paragraphs[:index])
-        start = len(before) + (2 if before else 0)
-        end = start + len(paragraphs[index])
-        return any(span.start_char >= start and span.end_char <= end for span in protected)
-
-    replacements = [
-        (
-            re.compile(r"\bThe real challenge now is knowing what to trust\.", re.I),
-            "I think the harder issue now is knowing what to trust.",
-            "trust_judgement",
-        ),
-        (
-            re.compile(r"\bThis is why teachers still play an important role\.", re.I),
-            "This is why I still see teachers as important.",
-            "teacher_role_judgement",
-        ),
-        (
-            re.compile(r"\bAt the same time, schools need to rethink how learning is measured\.", re.I),
-            "I also think schools need to rethink how learning is measured.",
-            "assessment_judgement",
-        ),
-        (
-            re.compile(r"\bIn the end, education should not only prepare students for exams\.", re.I),
-            "For me, education should not only prepare students for exams.",
-            "conclusion_stance",
-        ),
-        (
-            re.compile(r"\bBut having more information does not always mean better learning\.", re.I),
-            "But I do not think more information automatically means better learning.",
-            "information_learning_judgement",
-        ),
-    ]
-    candidates: list[tuple[str, str, dict]] = []
-    seen: set[str] = set()
-    for target in targets:
-        if len(candidates) >= max(1, limit):
-            break
-        index = int(target.get("index", 0) or 0)
-        if index < 0 or index >= len(paragraphs) or paragraph_has_protected_anchor(index):
-            continue
-        paragraph = paragraphs[index]
-        if re.search(r"\b(?:I|my|me|for me)\b", paragraph, flags=re.I):
-            continue
-        for pattern, replacement, operation in replacements:
-            if len(candidates) >= max(1, limit):
-                break
-            updated_paragraph, count = pattern.subn(replacement, paragraph, count=1)
-            if count <= 0 or updated_paragraph.strip() == paragraph.strip():
-                continue
-            updated = list(paragraphs)
-            updated[index] = updated_paragraph
-            candidate = _join_logical_paragraphs(updated)
-            if candidate.strip() == source_text.strip() or candidate in seen:
-                continue
-            seen.add(candidate)
-            candidates.append((
-                f"author_stance_thread_p{index + 1}_{operation}",
-                candidate,
-                {
-                    "operation": operation,
-                    "paragraph_index": index,
-                    "paragraph_role": target.get("role"),
-                    "paragraph_driver_score": target.get("score"),
-                },
-            ))
-    return candidates[:max(1, limit)]
+    # Personal stance insertion is too easy to turn into synthetic voice. Keep
+    # this hook inert unless a future implementation can derive stance from
+    # existing first-person author material without fixed topic templates.
+    return []
 
 
 def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, str]]:
@@ -17324,10 +16917,10 @@ def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, 
         re.I,
     )
     review_notes = [
-        "[[REVIEW: For example, add the exact source, client moment, or salon observation that proves this point.]]",
+        "[[REVIEW: For example, add the exact source, observed moment, or local detail that proves this point.]]",
         "[[REVIEW: Add the specific evidence behind this claim, or soften it if the evidence is only limited.]]",
         "[[REVIEW: Name the source or concrete example the reader should connect to this sentence.]]",
-        "[[REVIEW: Add one real detail from the task, workplace, class, or client situation before keeping this claim.]]",
+        "[[REVIEW: Add one real detail from the task, workplace, context, or observed situation before keeping this claim.]]",
         "[[REVIEW: If this is based on experience, add what was seen, who was involved, and what changed.]]",
         "[[REVIEW: Add a citation or replace this with a narrower claim the draft can support.]]",
         "[[REVIEW: Give one concrete process step here, not just the general conclusion.]]",
@@ -17354,7 +16947,7 @@ def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, 
         "For this task, ",
         "During the practical work, ",
         "In assessment, ",
-        "When learners are cutting, ",
+        "When the task is underway, ",
         "During feedback, ",
     ]
 
@@ -17379,8 +16972,8 @@ def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, 
         if not stripped:
             return stripped
         if re.match(
-            r"^(?:this|it|these|they|learners|competency|demonstration|"
-            r"reasonable adjustment|inclusive learning design|the challenge|the standard)\b",
+            r"^(?:this|it|these|they|people|participants|users|the process|"
+            r"the task|the method|the challenge|the standard)\b",
             stripped,
             re.I,
         ):
@@ -17905,9 +17498,9 @@ def run_rewrite_pipeline(
         result.summary["ai_mitigation_blocked_auto_rewrite"] = not allow_auto_with_author_gaps
         if not allow_auto_with_author_gaps:
             result.summary["outcome"] = "suggestion_only"
-        educational_rewrite = _build_educational_mitigation_rewrite(text, ai_mitigation_contract)
-        if educational_rewrite:
-            result.summary["educational_mitigation_rewrite"] = educational_rewrite
+        marked_rewrite = _build_marked_mitigation_rewrite(text, ai_mitigation_contract)
+        if marked_rewrite:
+            result.summary["marked_mitigation_rewrite"] = marked_rewrite
         suggestions = result.summary.setdefault("manual_suggestions", [])
         existing_keys = {
             (
@@ -19080,7 +18673,7 @@ def run_rewrite_pipeline(
                 )
                 if reconstruction_enabled:
                     reconstruction_strategies = [
-                        "plain_student_voice_rebuild",
+                        "plain_direct_voice_rebuild",
                         "authorship_distribution_repair",
                         "low_smoothness_rebuild",
                         "asymmetric_paragraph_route",

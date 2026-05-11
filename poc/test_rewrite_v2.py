@@ -3479,7 +3479,7 @@ assert_test(
     "scanner_gate_feedback.v1" in reconstruction_prompt
     and "Preserve every source-to-claim relation" in reconstruction_prompt
     and "AUTHORSHIP_TEXTURE_REPAIR" in reconstruction_prompt
-    and "Do not replace author-owned classroom reasoning" in reconstruction_prompt,
+    and "Do not replace author-owned reasoning" in reconstruction_prompt,
     "reconstruction prompt converts scanner/gate failures into next-generation controls",
 )
 assert_test(
@@ -3822,10 +3822,10 @@ assert_test(
     "AI search allows repeated publisher names inside reference lists",
 )
 damaged_source = (
-    "Maintaining standards while improving access Inclusive learning design does not lower the standard. "
-    "ith only six learners, I can watch the technique more closely. "
-    "This does not simplify the work, but it clarifies the learning steps. "
-    "This does not simplify the work, but it clarifies the learning steps."
+    "Maintaining standards while improving access The process design does not lower the standard. "
+    "ith only six participants, I can watch the method more closely. "
+    "This does not simplify the work, but it clarifies the process steps. "
+    "This does not simplify the work, but it clarifies the process steps."
 )
 repair_brief = _source_repair_brief(damaged_source)
 assert_test(
@@ -3838,22 +3838,21 @@ assert_test(
     "AI search prompt tells LLM to repair damaged source text",
 )
 repaired_candidate, repair_notes = _repair_candidate_source_damage(
-    "Introduction Inclusive learning design starts here. "
-    "ith only six learners, I can observe closely. "
-    "This does not simplify the work, but it clarifies the learning steps. "
-    "This does not simplify the work, but it clarifies the learning steps. "
+    "Introduction Process design starts here. "
+    "ith only six participants, I can observe closely. "
+    "This does not simplify the work, but it clarifies the process steps. "
+    "This does not simplify the work, but it clarifies the process steps. "
     "Conclusion This review ends here."
 )
 assert_test(
     not re.search(r"\bith only\b", repaired_candidate, re.I)
-    and "Introduction Inclusive" not in repaired_candidate
+    and "Introduction Process" not in repaired_candidate
     and "Conclusion This" not in repaired_candidate,
     "AI search repairs inherited source damage before candidate gates",
 )
 assert_test(
     "fixed_broken_with_fragment" in repair_notes
-    and "normalized_with_only_phrase" in repair_notes
-    and any(note.startswith("split_merged_heading") for note in repair_notes),
+    and any(note.startswith("split_") for note in repair_notes),
     "AI search records source damage repairs on candidates",
 )
 assert_test(
@@ -3862,20 +3861,20 @@ assert_test(
     "AI search removes repeated exact sentences before candidate gates",
 )
 overlap_damaged, overlap_notes = _repair_candidate_source_damage(
-    "With only six learners in my current HBB26 intake, smaller class sizes let me observe technique. "
-    "I encourage open discussion so learners can With only six learners in my current HBB26 intake, smaller class sizes let me observe technique. "
-    "I encourage open discussion so learners can describe how they perceive the haircut shape. "
-    "describe how they perceive the haircut shape. "
-    "Learners gain confidence when their ideas are acknowledged. "
-    "A competent learner can explain the steps, identify the guide, check balance, adjust Learners gain confidence when their ideas are acknowledged. "
-    "A competent learner can explain the steps, identify the guide, check balance, adjust projection, and apply the technique to real clients. "
-    "projection, and apply the technique to real clients."
+    "With only six participants in the current review, smaller groups let me observe the method. "
+    "I encourage open discussion so participants can With only six participants in the current review, smaller groups let me observe the method. "
+    "I encourage open discussion so participants can describe how they perceive the process shape. "
+    "describe how they perceive the process shape. "
+    "People gain confidence when their ideas are acknowledged. "
+    "A competent participant can explain the steps, identify the guide, check balance, adjust People gain confidence when their ideas are acknowledged. "
+    "A competent participant can explain the steps, identify the guide, check balance, adjust the plan, and apply the method to real cases. "
+    "the plan, and apply the method to real cases."
 )
 assert_test(
-    "learners can With only" not in overlap_damaged
-    and "adjust Learners gain" not in overlap_damaged
+    "participants can With only" not in overlap_damaged
+    and "adjust People gain" not in overlap_damaged
     and not re.search(r"(?<!can )describe how they perceive", overlap_damaged)
-    and overlap_damaged.count("projection, and apply") == 1,
+    and overlap_damaged.count("the plan, and apply") == 1,
     "AI search repairs overlapping fragment damage before quality gates",
 )
 assert_test(
@@ -3884,39 +3883,38 @@ assert_test(
     "AI search records overlapping fragment repairs",
 )
 latest_selected_damage, latest_selected_notes = _repair_candidate_source_damage(
-    "Inclusive Learning Design in Certificate III Hairdressing Introduction\n\n"
-    "Inclusive learning design starts here. Competency should not depend on chance. "
-    "When learners start to get lost\n\n"
+    "Project Process Review Introduction\n\n"
+    "The process design starts here. The standard should not depend on chance. "
+    "Background\n\n"
     "The challenge begins here. They must practise, receive corrections, and repeat the skill. "
-    "Showing the haircut clearly\n\n"
-    "A demonstration reveals the educator's actions. "
-    "The sources address different aspects of the classroom challenge. "
-    "CESE and Chandler and Sweller focus on cognitive overload. "
-    "Billett and Kirschner et al. Billett and Kirschner et al. "
-    "CAST and Jwad et al. describe multiple learning pathways. "
-    "DEWR defines the boundary for reasonable adjustment and maintaining assessment integrity. "
-    "multiple learning pathways. Competency should not depend on chance in practice."
+    "Method\n\n"
+    "A demonstration reveals the facilitator's actions. "
+    "The sources address different aspects of the practical challenge. "
+    "Group A and Group B focus on overload. "
+    "Group C and Group D. Group C and Group D. "
+    "Group E and Group F describe multiple pathways. "
+    "The policy defines the boundary for adjustment and maintaining assessment integrity. "
+    "multiple pathways. The standard should not depend on chance in practice."
 )
 assert_test(
-    "Hairdressing Introduction" not in latest_selected_damage
-    and "chance.\n\nWhen learners start to get lost" in latest_selected_damage
-    and "skill.\n\nShowing the haircut clearly" in latest_selected_damage,
+    "Review Introduction" not in latest_selected_damage
+    and "chance.\n\nBackground" in latest_selected_damage
+    and "skill.\n\nMethod" in latest_selected_damage,
     "AI search repairs selected-candidate heading placement before final output",
 )
 assert_test(
-    "Billett and Kirschner et al. Billett and Kirschner et al." not in latest_selected_damage
-    and "guided practice over discovery learning" in latest_selected_damage
-    and "integrity. multiple learning pathways." not in latest_selected_damage,
+    "Group C and Group D. Group C and Group D." not in latest_selected_damage
+    and "integrity. multiple pathways." not in latest_selected_damage,
     "AI search repairs selected-candidate conclusion source fragments",
 )
 assert_test(
-    "split_title_from_introduction" in latest_selected_notes
+    "split_title_from_heading" in latest_selected_notes
     and any(
         note.startswith("split_sentence_before_heading")
         or note.startswith("split_orphaned_heading")
         for note in latest_selected_notes
     )
-    and "repaired_conclusion_fragment:guided_practice" in latest_selected_notes,
+    and "removed_duplicate_sentences:1" in latest_selected_notes,
     "AI search records selected-candidate source artifact repairs",
 )
 assert_test(
@@ -4292,9 +4290,9 @@ assert_test(
     "paragraph role detects conclusion template risk for amplification",
 )
 anchor_rich_role = _paragraph_role(
-    "In my practice I noticed that my learners handled sectioning, projection, guide control, "
-    "parting, comb tension, wrist position, elbow height, scissor angle, client consultation, "
-    "mannequin practice, and subsection checks more confidently after I slowed the demonstration.",
+    "In my practice I noticed that my participants handled the task, process, method, "
+    "procedure, tool choice, workflow, condition, constraint, measurement, testing, "
+    "feedback, and case review more confidently after I slowed the demonstration.",
     {"word_count": 35, "generic_assertion_hits": 2, "source_gap": True},
 )
 assert_test(
@@ -4776,9 +4774,9 @@ assert_test(
     "source grounding query converts broad claims into concise research search terms",
 )
 assert_test(
-    "21st century skills" in framework_query
-    and "lifelong learning" in framework_query,
-    "source grounding query maps broad curriculum-aim claims to evidence-friendly terms",
+    "educational" in framework_query
+    and "evidence research study report" in framework_query,
+    "source grounding query maps broad claims to evidence-friendly terms without topic-specific expansions",
 )
 depolished_text, depolish_repairs = _plain_language_depolish_text(
     "Therefore, it is crucial for education to emphasize the learning journey, "
@@ -6559,14 +6557,14 @@ assert_test(
     guided_summary.get("ai_mitigation_search", {}).get("enabled") is not True,
     "test disables AI search while preserving guidance output",
 )
-educational_rewrite = guided_summary.get("educational_mitigation_rewrite") or {}
+marked_mitigation_rewrite = guided_summary.get("marked_mitigation_rewrite") or {}
 assert_test(
-    educational_rewrite.get("draft_text") and "[[ADD VERIFIED DETAIL:" in educational_rewrite.get("draft_text"),
-    "guided mitigation produces educational marked rewrite content",
+    marked_mitigation_rewrite.get("draft_text") and "[[ADD VERIFIED DETAIL:" in marked_mitigation_rewrite.get("draft_text"),
+    "guided mitigation produces marked rewrite content",
 )
 assert_test(
-    educational_rewrite.get("auto_apply") is False,
-    "educational mitigation rewrite is not auto-applied",
+    marked_mitigation_rewrite.get("auto_apply") is False,
+    "marked mitigation rewrite is not auto-applied",
 )
 
 
@@ -7563,9 +7561,8 @@ stance_candidates = _author_stance_thread_candidates(
     limit=3,
 )
 assert_test(
-    bool(stance_candidates)
-    and any("I think" in candidate or "For me" in candidate for _strategy, candidate, _meta in stance_candidates),
-    "author stance threading creates implied author-judgement candidates without new evidence",
+    stance_candidates == [],
+    "author stance threading does not synthesize first-person judgement without source stance material",
 )
 target_push_report_at_goal = json.loads(json.dumps(target_push_report))
 target_push_report_at_goal["integrity_layers"]["layers"]["human_contribution_signal"]["score"] = 82.0
