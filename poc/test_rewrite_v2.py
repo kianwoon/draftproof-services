@@ -226,6 +226,7 @@ from rewrite_pipeline import (
     _post_density_human_anchor_probe_acceptance,
     _contribution_scores,
     _integrity_scores,
+    _sync_rewrite_llm_call_totals,
     _record_rewrite_llm_calls,
     _human_anchor_driver_contract,
     _human_anchor_positive_burden_gate_status,
@@ -8898,6 +8899,24 @@ assert_test(
     and llm_summary_probe.get("ai_search_llm_calls_used") == 2
     and llm_summary_probe.get("formula_convergence_llm_calls_used") == 4,
     "rewrite summary aggregates phase LLM call counts instead of reporting zero after budgeted calls",
+)
+llm_budget_probe = RewriteRunBudget(max_seconds=90, max_scans=14, max_llm_calls=10, started_at=0)
+llm_budget_probe.record_stage("ai_mitigation_search", seconds=1, scans=6, llm_calls=4)
+llm_budget_probe.record_stage("formula_convergence_controller", seconds=1, scans=0, llm_calls=1)
+llm_budget_probe.record_stage("segment_window_density_controller", seconds=1, scans=3, llm_calls=3)
+stale_llm_summary_probe = {
+    "llm_calls_used": 5,
+    "ai_search_llm_calls_used": 4,
+    "formula_convergence_llm_calls_used": 1,
+    "segment_window_density_controller": {"llm_calls": 3},
+}
+llm_sync_breakdown = _sync_rewrite_llm_call_totals(stale_llm_summary_probe, llm_budget_probe)
+assert_test(
+    stale_llm_summary_probe.get("llm_calls_used") == 8
+    and stale_llm_summary_probe.get("global_llm_calls_used") == 8
+    and stale_llm_summary_probe.get("segment_window_llm_calls_used") == 3
+    and llm_sync_breakdown.get("legacy_incremental_total_before_sync") == 5,
+    "final rewrite summary reconciles legacy LLM total with global ledger including segment-window calls",
 )
 
 formula_gap_budget = formula_gap_budget_contract()

@@ -722,6 +722,60 @@ def _record_rewrite_llm_calls(summary: dict, phase_key: str, calls: int | float 
     return call_count
 
 
+def _sync_rewrite_llm_call_totals(summary: dict, budget: RewriteRunBudget | None = None) -> dict:
+    """Reconcile legacy phase counters with the final global controller ledger."""
+    if not isinstance(summary, dict):
+        return {}
+    global_llm_calls = 0
+    global_stage_names: set[str] = set()
+    if isinstance(budget, RewriteRunBudget):
+        global_llm_calls = max(0, int(budget.llm_calls_used or 0))
+        global_stage_names = {
+            str(stage.get("stage") or "")
+            for stage in (budget.stages or [])
+            if isinstance(stage, dict)
+        }
+    non_global_phase_calls: dict[str, int] = {}
+    if "authenticity_mitigation" not in global_stage_names:
+        try:
+            authenticity_calls = int(summary.get("authenticity_llm_calls_used") or 0)
+        except (TypeError, ValueError):
+            authenticity_calls = 0
+        if authenticity_calls > 0:
+            non_global_phase_calls["authenticity_mitigation"] = authenticity_calls
+
+    total_calls = global_llm_calls + sum(non_global_phase_calls.values())
+    try:
+        legacy_total = max(0, int(summary.get("llm_calls_used") or 0))
+    except (TypeError, ValueError):
+        legacy_total = 0
+    if total_calls <= 0:
+        total_calls = legacy_total
+
+    summary["global_llm_calls_used"] = global_llm_calls
+    segment_summary = summary.get("segment_window_density_controller")
+    if isinstance(segment_summary, dict):
+        try:
+            summary["segment_window_llm_calls_used"] = max(0, int(segment_summary.get("llm_calls") or 0))
+        except (TypeError, ValueError):
+            summary["segment_window_llm_calls_used"] = 0
+    compiler_summary = summary.get("rewrite_compiler")
+    if isinstance(compiler_summary, dict):
+        try:
+            summary["rewrite_compiler_llm_calls_used"] = max(0, int(compiler_summary.get("llm_calls_used") or 0))
+        except (TypeError, ValueError):
+            summary["rewrite_compiler_llm_calls_used"] = 0
+    summary["llm_calls_used"] = total_calls
+    summary["llm_calls_breakdown"] = {
+        "source": "global_controller_ledger_plus_non_global_phases",
+        "global_controller_llm_calls": global_llm_calls,
+        "non_global_phase_llm_calls": non_global_phase_calls,
+        "legacy_incremental_total_before_sync": legacy_total,
+        "total": total_calls,
+    }
+    return summary["llm_calls_breakdown"]
+
+
 def _post_selection_ai_density_breaker_candidates(
     current_text: str,
     current_report: dict | None,
@@ -28368,6 +28422,7 @@ def run_rewrite_pipeline(
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["full_scan_cache"] = dict(full_scan_cache_stats)
+    _sync_rewrite_llm_call_totals(result.summary, global_rewrite_budget)
     result.summary["global_rewrite_budget"] = global_rewrite_budget.summary()
     result.summary["global_candidate_ledger"] = global_candidate_ledger.summary()
     result.summary["stage_timings"] = stage_timings
