@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 from difflib import SequenceMatcher
+from itertools import combinations
 from typing import Any
 
 from detect.turnitin_like import turnitin_like_ai_profile_from_report
@@ -46,6 +47,24 @@ _TRANSITION_RE = re.compile(
     r"overall|despite|at the same time|another important|one of the|this means|this shows|"
     r"this highlights|on the other hand)\b",
     re.I,
+)
+_CONNECTOR_PREFIX_RE = re.compile(
+    r"^\s*(?:however|therefore|furthermore|moreover|additionally|in addition|in conclusion|"
+    r"overall|at the same time|on the other hand|this means that|this shows that|"
+    r"this highlights that)\s*,?\s*",
+    re.I,
+)
+_GENERIC_COMPRESSIONS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bis frequently recognized as\b", re.I), "is"),
+    (re.compile(r"\bone of the most\b", re.I), "a"),
+    (re.compile(r"\bone of the biggest\b", re.I), "a major"),
+    (re.compile(r"\banother important feature\b", re.I), "another feature"),
+    (re.compile(r"\bplays? a (?:major|central|significant|important) role\b", re.I), "matters"),
+    (re.compile(r"\bhas become\b", re.I), "is"),
+    (re.compile(r"\bsignificant challenges\b", re.I), "problems"),
+    (re.compile(r"\bwide range of\b", re.I), "many"),
+    (re.compile(r"\bglobal impact\b", re.I), "global reach"),
+    (re.compile(r"\bstrong influence\b", re.I), "influence"),
 )
 _ANCHOR_STOPWORDS = {
     "Another",
@@ -83,6 +102,24 @@ def _num(value: Any, default: float = 0.0) -> float:
 
 def _word_count(text: str) -> int:
     return len(_WORD_RE.findall(str(text or "")))
+
+
+def _sentence_key(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _capitalize_sentence(text: str) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return value
+    return value[0].upper() + value[1:]
+
+
+def _finish_sentence(text: str, fallback_punctuation: str = ".") -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    if value and value[-1] not in ".!?":
+        value += fallback_punctuation or "."
+    return value
 
 
 def _targeted_drivers_for_family(family: str) -> list[str]:
@@ -366,6 +403,298 @@ def compare_window_coverage_density(
     }
 
 
+def _window_variant_record(
+    row: dict[str, Any],
+    replacement: str,
+    operator: str,
+) -> dict[str, Any] | None:
+    original = str(row.get("sentence") or "").strip()
+    replacement = _finish_sentence(replacement)
+    replacement = re.sub(r"\ba\s+([aeiouAEIOU])", r"an \1", replacement)
+    replacement = re.sub(r"\ban influential countries\b", "an influential country", replacement, flags=re.I)
+    if not original or not replacement or _sentence_key(original) == _sentence_key(replacement):
+        return None
+    if _word_count(replacement) < 4:
+        return None
+    if re.search(r"\.\s+[a-z]", replacement):
+        return None
+    if re.search(r"\b(?:rather|because|and|but|or)\.$", replacement, re.I):
+        return None
+    anchors = _patch_anchor_terms(original, limit=12)
+    for anchor in anchors:
+        if str(anchor) not in replacement:
+            return None
+    original_words = _word_count(original)
+    replacement_words = _word_count(replacement)
+    if replacement_words > max(original_words + 6, int(original_words * 1.25)):
+        return None
+    compression_gain = max(0, original_words - replacement_words)
+    predicted = (
+        float(row.get("coverage_leverage") or 0.0)
+        + float(row.get("generic_pressure") or 0.0) * 9.0
+        + int(row.get("unsafe_window_count") or 0) * 7.5
+        + compression_gain * 3.0
+    )
+    return {
+        "sentence_index": int(row.get("sentence_index") or 0),
+        "operator": operator,
+        "original_text": original,
+        "replacement_text": replacement,
+        "original_word_count": original_words,
+        "replacement_word_count": replacement_words,
+        "word_delta": replacement_words - original_words,
+        "protected_anchor_terms": anchors,
+        "coverage_leverage": row.get("coverage_leverage"),
+        "unsafe_window_count": row.get("unsafe_window_count"),
+        "generic_pressure": row.get("generic_pressure"),
+        "predicted_impact": round(predicted, 3),
+    }
+
+
+def _deterministic_sentence_variants(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Generate small local edits for one anchor-light high-coverage sentence."""
+
+    sentence = str(row.get("sentence") or "").strip()
+    if (
+        not sentence
+        or not row.get("editable")
+        or row.get("canonical_fact_preserve")
+        or _patch_anchor_terms(sentence, limit=12)
+        or is_canonical_fact_sentence(sentence)
+    ):
+        return []
+    variants: list[dict[str, Any]] = []
+
+    def add(replacement: str, operator: str) -> None:
+        item = _window_variant_record(row, replacement, operator)
+        if not item:
+            return
+        if any(_sentence_key(existing.get("replacement_text")) == _sentence_key(item.get("replacement_text")) for existing in variants):
+            return
+        variants.append(item)
+
+    connector_removed = _CONNECTOR_PREFIX_RE.sub("", sentence, count=1).strip()
+    if connector_removed and connector_removed != sentence:
+        add(_capitalize_sentence(connector_removed), "REMOVE_GENERIC_CONNECTOR")
+
+    compressed = sentence
+    for pattern, replacement in _GENERIC_COMPRESSIONS:
+        compressed = pattern.sub(replacement, compressed)
+    compressed = re.sub(r"\s+", " ", compressed).strip()
+    if compressed != sentence:
+        add(compressed, "COMPRESS_GENERIC_PHRASE")
+
+    if _word_count(sentence) >= 18:
+        for separator in ("; ",):
+            if separator in sentence:
+                left, right = sentence.split(separator, 1)
+                if _word_count(left) >= 6 and _word_count(right) >= 5:
+                    add(
+                        f"{_finish_sentence(left.rstrip(',;:'))} {_capitalize_sentence(_finish_sentence(right))}",
+                        "SPLIT_OVER_SMOOTH_SENTENCE",
+                    )
+                    break
+
+    trimmed = re.sub(
+        r",?\s+(?:which|that)\s+(?:shows|reflects|highlights|demonstrates)\b.*?([.!?])?$",
+        ".",
+        sentence,
+        flags=re.I,
+    )
+    if trimmed != sentence:
+        add(trimmed, "TRIM_META_EXPLANATION")
+
+    return variants
+
+
+def window_coverage_deterministic_variants(
+    text: str,
+    report_dict: dict | None,
+    *,
+    sentence_limit: int = 8,
+    variant_limit: int = 32,
+) -> list[dict[str, Any]]:
+    """Return deterministic micro-variants for anchor-light high-coverage sentences."""
+
+    coverage_map = build_window_coverage_map(text, report_dict, sentence_limit=max(20, sentence_limit * 2))
+    variants: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
+    for row in coverage_map.get("top_coverage_sentences") or []:
+        if len({item.get("sentence_index") for item in variants}) >= max(1, sentence_limit):
+            break
+        for variant in _deterministic_sentence_variants(row):
+            key = (int(variant.get("sentence_index") or 0), _sentence_key(variant.get("replacement_text")))
+            if key in seen:
+                continue
+            seen.add(key)
+            variants.append(variant)
+            if len(variants) >= max(0, variant_limit):
+                break
+        if len(variants) >= max(0, variant_limit):
+            break
+    variants.sort(
+        key=lambda item: (
+            float(item.get("predicted_impact") or 0.0),
+            -abs(int(item.get("word_delta") or 0)),
+        ),
+        reverse=True,
+    )
+    return variants[: max(0, int(variant_limit or 0))]
+
+
+def _apply_sentence_variants(
+    source_text: str,
+    variants: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]], str]:
+    source = str(source_text or "")
+    sentences = split_sentences(source)
+    if not sentences:
+        return "", [], "empty_source"
+    next_text = source
+    applied: list[dict[str, Any]] = []
+    touched: set[int] = set()
+    for variant in variants:
+        try:
+            index = int(variant.get("sentence_index"))
+        except (TypeError, ValueError):
+            continue
+        if index in touched or index < 0 or index >= len(sentences):
+            continue
+        original = sentences[index]
+        if is_canonical_fact_sentence(original):
+            continue
+        replacement = str(variant.get("replacement_text") or "").strip()
+        if not replacement:
+            continue
+        for anchor in _patch_anchor_terms(original, limit=12):
+            if str(anchor) not in replacement:
+                return "", applied, f"protected_anchor_lost {anchor}"
+        replaced = next_text.replace(original, replacement, 1)
+        if replaced == next_text:
+            continue
+        next_text = replaced
+        touched.add(index)
+        applied.append({
+            "sentence_index": index,
+            "operator": variant.get("operator"),
+            "original_text": original,
+            "replacement_text": replacement,
+            "original_word_count": _word_count(original),
+            "replacement_word_count": _word_count(replacement),
+            "predicted_impact": variant.get("predicted_impact"),
+        })
+    if len(applied) < 2:
+        return "", applied, "insufficient_applicable_sentence_patches"
+    candidate = next_text.strip()
+    if candidate == source.strip():
+        return "", applied, "unchanged_after_sentence_patches"
+    return candidate, applied, ""
+
+
+def window_coverage_portfolio_candidates(
+    text: str,
+    report_dict: dict | None,
+    *,
+    variants: list[dict[str, Any]] | None = None,
+    portfolio_limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Assemble deterministic variants into small portfolio candidates."""
+
+    variants = list(variants or window_coverage_deterministic_variants(text, report_dict))
+    if not variants:
+        return []
+    by_sentence: dict[int, list[dict[str, Any]]] = {}
+    for variant in variants:
+        by_sentence.setdefault(int(variant.get("sentence_index") or 0), []).append(variant)
+    for values in by_sentence.values():
+        values.sort(key=lambda item: float(item.get("predicted_impact") or 0.0), reverse=True)
+
+    sentence_indexes = sorted(
+        by_sentence,
+        key=lambda idx: float(by_sentence[idx][0].get("predicted_impact") or 0.0),
+        reverse=True,
+    )[:8]
+    portfolios: list[dict[str, Any]] = []
+    seen_texts: set[str] = set()
+    for size in (4, 3, 2):
+        for indexes in combinations(sentence_indexes, size):
+            selected = [by_sentence[index][0] for index in indexes if by_sentence.get(index)]
+            if len(selected) != size:
+                continue
+            candidate_text, applied, reason = _apply_sentence_variants(text, selected)
+            if not candidate_text:
+                continue
+            text_key = _sentence_key(candidate_text)
+            if text_key in seen_texts:
+                continue
+            seen_texts.add(text_key)
+            predicted = sum(float(item.get("predicted_impact") or 0.0) for item in selected)
+            edited_words = sum(abs(int(item.get("word_delta") or 0)) for item in selected)
+            portfolios.append({
+                "strategy": f"window_coverage_portfolio_{len(portfolios) + 1}",
+                "source": "deterministic_portfolio",
+                "candidate_text": candidate_text,
+                "applied_sentence_patches": applied,
+                "variants": selected,
+                "predicted_rank": round(predicted - edited_words * 0.6, 3),
+                "reason": reason or "assembled",
+            })
+            if len(portfolios) >= max(0, portfolio_limit):
+                break
+        if len(portfolios) >= max(0, portfolio_limit):
+            break
+    portfolios.sort(
+        key=lambda item: (
+            float(item.get("predicted_rank") or 0.0),
+            -len(item.get("applied_sentence_patches") or []),
+        ),
+        reverse=True,
+    )
+    return portfolios[: max(0, int(portfolio_limit or 0))]
+
+
+def window_coverage_ablation_candidates(
+    source_text: str,
+    applied: list[dict[str, Any]] | None,
+    *,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """Build reduced patch bundles from a scanned candidate that failed late gates."""
+
+    patches = [
+        item for item in (applied or [])
+        if isinstance(item, dict)
+        and str(item.get("original_text") or "").strip()
+        and str(item.get("replacement_text") or "").strip()
+    ]
+    if len(patches) < 3:
+        return []
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for drop_index in range(len(patches)):
+        subset = [patch for idx, patch in enumerate(patches) if idx != drop_index]
+        candidate_text, subset_applied, reason = _apply_sentence_variants(source_text, subset)
+        if not candidate_text:
+            continue
+        key = _sentence_key(candidate_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        predicted = sum(float(item.get("predicted_impact") or 0.0) for item in subset_applied)
+        candidates.append({
+            "strategy": f"window_coverage_ablation_drop_{drop_index + 1}",
+            "source": "patch_ablation",
+            "candidate_text": candidate_text,
+            "applied_sentence_patches": subset_applied,
+            "dropped_patch": patches[drop_index],
+            "predicted_rank": round(predicted, 3),
+            "reason": reason or "assembled",
+        })
+        if len(candidates) >= max(0, limit):
+            break
+    return candidates
+
+
 def window_coverage_tasks(
     text: str,
     report_dict: dict | None,
@@ -544,6 +873,9 @@ def assemble_window_coverage_candidate(
         touched.add(index)
         applied.append({
             "sentence_index": index,
+            "operator": payload.get("strategy") or task.get("family"),
+            "original_text": original,
+            "replacement_text": replacement,
             "original_word_count": _word_count(original),
             "replacement_word_count": _word_count(replacement),
         })

@@ -99,12 +99,15 @@ from rewrite_controller import (
     assemble_window_coverage_candidate,
     build_window_coverage_map,
     compare_window_coverage_density,
+    window_coverage_ablation_candidates,
     segment_patchwork_budget,
     segment_window_candidate_prompt,
     segment_window_is_canonical_fact_sentence,
     segment_window_tasks,
     window_coverage_candidate_prompt,
+    window_coverage_deterministic_variants,
     window_coverage_patchwork_budget,
+    window_coverage_portfolio_candidates,
     window_coverage_tasks,
 )
 from detect.topk_calibration import calibrate_topk_risk
@@ -9489,6 +9492,23 @@ assert_test(
 )
 window_coverage_map = build_window_coverage_map(segment_window_text, segment_window_report)
 window_coverage_task_list = window_coverage_tasks(segment_window_text, segment_window_report, limit=5)
+window_deterministic_variants = window_coverage_deterministic_variants(
+    segment_window_text,
+    segment_window_report,
+    sentence_limit=8,
+    variant_limit=24,
+)
+window_portfolio_candidates = window_coverage_portfolio_candidates(
+    segment_window_text,
+    segment_window_report,
+    variants=window_deterministic_variants,
+    portfolio_limit=6,
+)
+window_ablation_candidates = window_coverage_ablation_candidates(
+    segment_window_text,
+    (window_portfolio_candidates[0]["applied_sentence_patches"] if window_portfolio_candidates else []),
+    limit=2,
+)
 window_coverage_prompt = window_coverage_candidate_prompt(
     segment_window_text,
     segment_window_report,
@@ -9553,6 +9573,24 @@ assert_test(
     and "Patch 2 to 4 sentences" in window_coverage_prompt
     and "1776" in window_coverage_prompt,
     "window-coverage prompt preserves canonical facts and forbids personal voice",
+)
+assert_test(
+    bool(window_deterministic_variants)
+    and all(not variant.get("protected_anchor_terms") for variant in window_deterministic_variants)
+    and all("1776" not in str(variant.get("original_text") or "") for variant in window_deterministic_variants),
+    "window-coverage deterministic variants target anchor-light sentences and preserve canonical facts",
+)
+assert_test(
+    bool(window_portfolio_candidates)
+    and all(2 <= len(candidate.get("applied_sentence_patches") or []) <= 4 for candidate in window_portfolio_candidates)
+    and window_portfolio_candidates[0]["predicted_rank"] >= window_portfolio_candidates[-1]["predicted_rank"],
+    "window-coverage portfolio assembler builds ranked 2-4 sentence candidates",
+)
+assert_test(
+    bool(window_ablation_candidates)
+    and len(window_ablation_candidates[0].get("applied_sentence_patches") or [])
+    < len(window_portfolio_candidates[0].get("applied_sentence_patches") or []),
+    "window-coverage ablation helper builds reduced patch bundles from failed portfolios",
 )
 assert_test(
     window_payload is not None

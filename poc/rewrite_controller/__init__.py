@@ -54,8 +54,11 @@ from .window_coverage_density import (
     build_window_coverage_map,
     compare_window_coverage_density,
     extract_window_coverage_payload,
+    window_coverage_ablation_candidates,
     window_coverage_candidate_prompt,
+    window_coverage_deterministic_variants,
     window_coverage_patchwork_budget,
+    window_coverage_portfolio_candidates,
     window_coverage_tasks,
 )
 
@@ -102,7 +105,10 @@ __all__ = [
     "build_window_coverage_map",
     "compare_window_coverage_density",
     "extract_window_coverage_payload",
+    "window_coverage_ablation_candidates",
     "window_coverage_candidate_prompt",
+    "window_coverage_deterministic_variants",
     "window_coverage_patchwork_budget",
+    "window_coverage_portfolio_candidates",
     "window_coverage_tasks",
 ]
