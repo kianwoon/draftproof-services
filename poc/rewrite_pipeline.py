@@ -18,6 +18,7 @@ import json
 import time
 import re
 import argparse
+import copy
 import math
 import statistics
 import requests
@@ -1785,6 +1786,29 @@ def _ai_search_selected_by_final_safety_gate(
     """Return true when AI-search selection should bypass legacy AI-first rollback."""
     if not ai_search_selected or not isinstance(selection_status, dict):
         return False
+    if selection_status.get("selectable"):
+        turnitin_gate = selection_status.get("turnitin_like_ai_gate") or {}
+        formula_contract = selection_status.get("formula_gap_contract") or {}
+        turnitin_drop = turnitin_gate.get("score_drop")
+        formula_drop = formula_contract.get("score_drop")
+        weighted_formula_drop = formula_contract.get("weighted_formula_score_drop")
+        measured_formula_drops = [
+            float(value)
+            for value in (weighted_formula_drop, formula_drop, turnitin_drop)
+            if isinstance(value, (int, float))
+        ]
+        non_worsening_formula = bool(measured_formula_drops) and all(
+            value >= 0.0 for value in measured_formula_drops
+        )
+        if non_worsening_formula:
+            return True
+    reason = str(selection_status.get("reason") or "")
+    if reason.startswith((
+        "accepted_partial_turnitin_like",
+        "accepted_turnitin_like",
+        "accepted_formula_convergence",
+    )):
+        return True
     return any(
         bool(selection_status.get(key))
         for key in (
@@ -1792,12 +1816,37 @@ def _ai_search_selected_by_final_safety_gate(
             "human_signal_amplification",
             "safe_authorship_suppression",
             "score_drag_removal",
+            "turnitin_like_mitigation",
+            "partial_turnitin_like_mitigation",
+            "formula_convergence_controller",
             "ai_footprint_mitigation",
             "partial_ai_footprint_mitigation",
             "topk_blocker_progress",
             "safe_partial_quality_improvement",
         )
     )
+
+
+def _ai_search_final_selection_status(summary: dict | None) -> dict:
+    """Return the selection status the final rollback layer should honor."""
+    if not isinstance(summary, dict):
+        return {}
+    search = summary.get("ai_mitigation_search")
+    if not isinstance(search, dict):
+        return {}
+    candidates = [
+        search.get("selection_status"),
+        (search.get("best_attempt") or {}).get("selection_status")
+        if isinstance(search.get("best_attempt"), dict) else None,
+        (search.get("selected_candidate") or {}).get("selection_status")
+        if isinstance(search.get("selected_candidate"), dict) else None,
+        (search.get("best_candidate") or {}).get("selection_status")
+        if isinstance(search.get("best_candidate"), dict) else None,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+    return {}
 
 
 def _clear_stale_rollback_for_kept_ai_mitigation(summary: dict, source: str) -> None:
@@ -8697,14 +8746,16 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
     topk_rounds = _topk_safe_band_patch_rounds_default(source_text, report_dict)
     topk_phase = 1 + topk_rounds + 1  # masked route + snapshot + patch rounds
     extra_seconds = 60 if topk_gap.get("band") == "saturated" else 30 if topk_gap.get("band") == "high" else 0
+    scan_budget = _verified_candidate_scan_budget(source_text, report_dict)
     if words <= 700:
         base = {
             "word_count": words,
             "size_band": "short",
             "max_seconds": 90 + extra_seconds,
             "max_llm_calls": max(4, topk_phase + 1),
-            "max_candidate_scans": 16,
-            "max_candidate_scan_hard_cap": 22,
+            "max_candidate_scans": scan_budget["max_candidate_scans"],
+            "max_candidate_scan_hard_cap": scan_budget["max_candidate_scan_hard_cap"],
+            "candidate_scoring_controller": scan_budget,
             "phase_budget": {
                 "topk_safe_band_rebuild": topk_phase,
                 "authorship_transformation_texture_controller": 1,
@@ -8719,8 +8770,9 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
             "size_band": "medium",
             "max_seconds": 150 + extra_seconds,
             "max_llm_calls": max(6, topk_phase + 3),
-            "max_candidate_scans": 24,
-            "max_candidate_scan_hard_cap": 32,
+            "max_candidate_scans": scan_budget["max_candidate_scans"],
+            "max_candidate_scan_hard_cap": scan_budget["max_candidate_scan_hard_cap"],
+            "candidate_scoring_controller": scan_budget,
             "phase_budget": {
                 "topk_safe_band_rebuild": topk_phase,
                 "authorship_transformation_texture_controller": 2,
@@ -8734,8 +8786,9 @@ def _ai_search_budget_policy(source_text: str = "", report_dict: dict | None = N
         "size_band": "long",
         "max_seconds": 240 + extra_seconds,
         "max_llm_calls": max(8, topk_phase + 4),
-        "max_candidate_scans": 36,
-        "max_candidate_scan_hard_cap": 48,
+        "max_candidate_scans": scan_budget["max_candidate_scans"],
+        "max_candidate_scan_hard_cap": scan_budget["max_candidate_scan_hard_cap"],
+        "candidate_scoring_controller": scan_budget,
         "phase_budget": {
             "topk_safe_band_rebuild": topk_phase,
             "authorship_transformation_texture_controller": 3,
@@ -8767,6 +8820,45 @@ def _candidate_scan_hard_cap(search_budget: dict | None) -> int:
     if hard_cap <= 0:
         return max(0, configured)
     return hard_cap
+
+
+def _verified_candidate_scan_budget(source_text: str = "", report_dict: dict | None = None) -> dict:
+    """Return the bounded full-scan budget for verified rewrite finalists.
+
+    Candidate generation can create many local variants. Full detect scans are
+    the expensive verification layer, so the budget scales sublinearly with
+    document size and active AI-driver pressure instead of with raw candidate
+    count.
+    """
+    words = max(1, _text_word_count(source_text))
+    base = max(3, int(math.ceil(math.sqrt(words / 25.0))))
+    blockers = _blocker_scores(report_dict)
+    topk_value = blockers.get("topk_calibrated_risk")
+    density_value = blockers.get("qualifying_text_ai_density")
+    generic_value = blockers.get("generic_assertion_risk")
+    pressure_bonus = 0
+    if isinstance(topk_value, (int, float)) and float(topk_value) >= 75.0:
+        pressure_bonus += 2
+    if isinstance(density_value, (int, float)) and float(density_value) >= 55.0:
+        pressure_bonus += 1
+    if isinstance(generic_value, (int, float)) and float(generic_value) >= 75.0:
+        pressure_bonus += 1
+    verified_scans = base + pressure_bonus
+    reserve = max(2, int(math.ceil(math.sqrt(verified_scans))))
+    return {
+        "policy": "verified_finalist_full_scans",
+        "word_count": words,
+        "base_scans": base,
+        "pressure_bonus": pressure_bonus,
+        "max_candidate_scans": verified_scans,
+        "max_candidate_scan_hard_cap": verified_scans + reserve,
+        "reserve": reserve,
+        "drivers": {
+            "topk_calibrated_risk": topk_value,
+            "qualifying_text_ai_density": density_value,
+            "generic_assertion_risk": generic_value,
+        },
+    }
 
 
 def _extend_candidate_scan_budget(search_budget: dict, current_scans: int, reserve: int | float | str | None) -> int:
@@ -16795,6 +16887,8 @@ def _formula_convergence_controller(
         "why_not_below_20": why_not,
         "stop_reason": stop_reason,
         "phase_budget_contract": resolved_budget,
+        "scans_used": scans_used,
+        "llm_calls_used": llm_calls_used,
         "phase_budget_used": {
             "passes": len(passes),
             "scans": scans_used,
@@ -17632,8 +17726,24 @@ def run_rewrite_pipeline(
         score = (report_dict.get("ai_risk_badge") or {}).get("writing_quality_score")
         return float(score) if isinstance(score, (int, float)) else None
 
+    full_scan_cache: dict[str, dict] = {}
+    full_scan_cache_stats = {
+        "enabled": True,
+        "hits": 0,
+        "misses": 0,
+        "cached_texts": 0,
+    }
+
     def _full_scan_report_dict(scan_text: str) -> dict:
-        return _run_full_scan_report_dict(scan_text)
+        cache_key = str(scan_text or "")
+        if cache_key in full_scan_cache:
+            full_scan_cache_stats["hits"] += 1
+            return copy.deepcopy(full_scan_cache[cache_key])
+        full_scan_cache_stats["misses"] += 1
+        report_dict = _run_full_scan_report_dict(scan_text)
+        full_scan_cache[cache_key] = copy.deepcopy(report_dict)
+        full_scan_cache_stats["cached_texts"] = len(full_scan_cache)
+        return report_dict
 
     # Rewrite candidate scans must be compared against a baseline produced by
     # the same scanner codepath. Otherwise a saved scan from an earlier scanner
@@ -19462,6 +19572,7 @@ def run_rewrite_pipeline(
                 ],
             },
             "llm_calls": 0,
+            "full_candidate_scans": 0,
             "selected": False,
             "candidates": [],
             "model_roles": llm_roles,
@@ -19573,6 +19684,11 @@ def run_rewrite_pipeline(
             _candidate_scan_hard_cap(search_budget),
         )
         search_summary["budget"] = search_budget
+        search_summary["candidate_scoring_controller"] = {
+            **(search_budget.get("candidate_scoring_controller") or {}),
+            "full_scans_used": 0,
+            "candidate_records": 0,
+        }
         phase_budget_contract = _strict_safe_phase_budget_contract(hard_llm_cap, search_source_text, original_report_dict)
         phase_budget_used = {
             key: 0
@@ -19581,6 +19697,21 @@ def run_rewrite_pipeline(
         }
         search_summary["phase_budget_contract"] = phase_budget_contract
         search_summary["phase_budget_used"] = phase_budget_used
+
+        def _verified_candidate_scans_used() -> int:
+            try:
+                return int(search_summary.get("full_candidate_scans") or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        def _record_verified_candidate_scan() -> None:
+            search_summary["full_candidate_scans"] = _verified_candidate_scans_used() + 1
+            controller = search_summary.get("candidate_scoring_controller")
+            if isinstance(controller, dict):
+                controller["full_scans_used"] = search_summary["full_candidate_scans"]
+                # The current candidate has passed local checks and is being
+                # verified before it is appended to the public candidate list.
+                controller["candidate_records"] = len(search_summary.get("candidates", [])) + 1
 
         def _phase_budget_can_spend(phase: str, calls: int = 1) -> bool:
             if phase not in phase_budget_used:
@@ -19676,7 +19807,7 @@ def run_rewrite_pipeline(
                 and int(search_summary.get("llm_calls") or 0) >= int(search_budget["max_llm_calls"])
             ):
                 reason = "budget_exhausted_llm_calls"
-            elif len(search_summary.get("candidates", [])) >= int(search_budget["max_candidate_scans"]):
+            elif _verified_candidate_scans_used() >= int(search_budget["max_candidate_scans"]):
                 reason = "budget_exhausted_candidate_scans"
             if not reason:
                 return False
@@ -19686,7 +19817,8 @@ def run_rewrite_pipeline(
                 "reason": reason,
                 "seconds": round(elapsed, 3),
                 "llm_calls": int(search_summary.get("llm_calls") or 0),
-                "candidate_scans": len(search_summary.get("candidates", [])),
+                "candidate_scans": _verified_candidate_scans_used(),
+                "candidate_records": len(search_summary.get("candidates", [])),
                 **search_budget,
                 "selected_strategy": best_strategy,
                 "has_selectable_candidate": _best_ai_search_selectable(),
@@ -19694,7 +19826,8 @@ def run_rewrite_pipeline(
             search_summary["adaptive_stop"] = {
                 "phase": phase,
                 "reason": reason,
-                "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                "candidate_count_scanned": _verified_candidate_scans_used(),
+                "candidate_records": len(search_summary.get("candidates", [])),
                 "selected_strategy": best_strategy,
                 "selection_status": best_selection_status,
             }
@@ -19736,7 +19869,8 @@ def run_rewrite_pipeline(
                 search_summary["adaptive_stop"] = {
                     "phase": phase,
                     "reason": adaptive_stop_reason,
-                    "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                    "candidate_count_scanned": _verified_candidate_scans_used(),
+                    "candidate_records": len(search_summary.get("candidates", [])),
                     "selected_strategy": best_strategy,
                     "selection_status": best_selection_status,
                 }
@@ -19964,6 +20098,7 @@ def run_rewrite_pipeline(
                 scan_t0 = time.time()
                 candidate_report = _full_scan_report_dict(candidate)
                 candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
+                _record_verified_candidate_scan()
             except Exception as exc:
                 candidate_eval["passed_local_checks"] = False
                 candidate_eval["reason"] = f"candidate_scan_error {exc}"
@@ -20947,7 +21082,7 @@ def run_rewrite_pipeline(
                 scan_reserve = 12
             if scan_reserve > 0:
                 previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                current_scans = len(search_summary.get("candidates", []))
+                current_scans = _verified_candidate_scans_used()
                 _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve)
 
             try:
@@ -21143,6 +21278,7 @@ def run_rewrite_pipeline(
                     scan_t0 = time.time()
                     candidate_report = _full_scan_report_dict(candidate_text)
                     candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
+                    _record_verified_candidate_scan()
                 except Exception as exc:
                     candidate_eval["passed_local_checks"] = False
                     candidate_eval["reason"] = f"candidate_scan_error {exc}"
@@ -21439,7 +21575,7 @@ def run_rewrite_pipeline(
                 search_summary["early_stop"] = {
                     "phase": "deterministic_candidates",
                     "reason": early_stop_reason,
-                    "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                    "candidate_count_scanned": _verified_candidate_scans_used(),
                     "selected_strategy": best_strategy,
                     "selected_ai": best_ai,
                 }
@@ -21475,7 +21611,7 @@ def run_rewrite_pipeline(
                         scan_reserve_added = _post_safe_target_push_scan_reserve(budget_reason)
                         if scan_reserve_added > 0:
                             previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                            current_scans = len(search_summary.get("candidates", []))
+                            current_scans = _verified_candidate_scans_used()
                             _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve_added)
                             search_summary["post_safe_target_push_scan_reserve"] = {
                                 "enabled": True,
@@ -21659,7 +21795,7 @@ def run_rewrite_pipeline(
                 search_summary["adaptive_stop"] = {
                     "phase": "post_safe_win_target_push",
                     "reason": adaptive_stop_reason,
-                    "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                    "candidate_count_scanned": _verified_candidate_scans_used(),
                     "selected_strategy": best_strategy,
                     "selection_status": best_selection_status,
                 }
@@ -21976,7 +22112,7 @@ def run_rewrite_pipeline(
                                     search_summary["adaptive_stop"] = {
                                         "phase": "post_safe_win_target_push",
                                         "reason": adaptive_stop_reason,
-                                        "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                                        "candidate_count_scanned": _verified_candidate_scans_used(),
                                         "selected_strategy": best_strategy,
                                         "selection_status": best_selection_status,
                                     }
@@ -22083,13 +22219,13 @@ def run_rewrite_pipeline(
             scan_reserve_reason = str(adaptive_stop_reason or "")
             if (
                 scan_reserve_reason != "budget_exhausted_candidate_scans"
-                and len(search_summary.get("candidates", [])) >= int(search_budget.get("max_candidate_scans") or 0)
+                and _verified_candidate_scans_used() >= int(search_budget.get("max_candidate_scans") or 0)
             ):
                 scan_reserve_reason = "budget_exhausted_candidate_scans"
             scan_reserve = _final_topk_texture_scan_reserve(scan_reserve_reason)
             if scan_reserve > 0:
                 previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                current_scans = len(search_summary.get("candidates", []))
+                current_scans = _verified_candidate_scans_used()
                 _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve)
                 adaptive_stop_reason = ""
                 summary["scan_reserve"] = {
@@ -22266,7 +22402,7 @@ def run_rewrite_pipeline(
             )
             if reserve > 0:
                 previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                current_scans = len(search_summary.get("candidates", []))
+                current_scans = _verified_candidate_scans_used()
                 _extend_candidate_scan_budget(search_budget, current_scans, reserve)
             if str(adaptive_stop_reason or "").startswith("budget_exhausted"):
                 adaptive_stop_reason = ""
@@ -22559,7 +22695,7 @@ def run_rewrite_pipeline(
                     reserve = _topk_safe_band_scan_reserve()
                     if reserve > 0 and not safe_band_summary.get("scan_reserve_added"):
                         previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                        current_scans = len(search_summary.get("candidates", []))
+                        current_scans = _verified_candidate_scans_used()
                         _extend_candidate_scan_budget(search_budget, current_scans, reserve)
                         safe_band_summary["scan_reserve_added"] = {
                             "reserve_added": reserve,
@@ -22940,7 +23076,7 @@ def run_rewrite_pipeline(
                     search_summary["adaptive_stop"] = {
                         "phase": "strict_safe_controller",
                         "reason": adaptive_stop_reason,
-                        "candidate_count_scanned": len(search_summary.get("candidates", [])),
+                        "candidate_count_scanned": _verified_candidate_scans_used(),
                         "selected_strategy": best_strategy,
                         "selection_status": best_selection_status,
                     }
@@ -24532,7 +24668,7 @@ def run_rewrite_pipeline(
                 if _best_ai_search_selectable():
                     if (
                         _env_flag("DRAFTPROOF_FINAL_CLEANUP_AFTER_SCAN_BUDGET", True)
-                        and len(search_summary.get("candidates", [])) >= int(search_budget.get("max_candidate_scans") or 0)
+                        and _verified_candidate_scans_used() >= int(search_budget.get("max_candidate_scans") or 0)
                     ):
                         try:
                             cleanup_reserve = max(
@@ -24543,7 +24679,7 @@ def run_rewrite_pipeline(
                             cleanup_reserve = 2
                         if cleanup_reserve > 0:
                             previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                            current_scans = len(search_summary.get("candidates", []))
+                            current_scans = _verified_candidate_scans_used()
                             _extend_candidate_scan_budget(search_budget, current_scans, cleanup_reserve)
                             if str(adaptive_stop_reason or "") == "budget_exhausted_candidate_scans":
                                 adaptive_stop_reason = ""
@@ -24693,6 +24829,10 @@ def run_rewrite_pipeline(
                 "reason": "blocked optimistic LLM attempt exceeded reported counter",
             }
             search_summary["llm_calls"] = hard_llm_cap
+        controller = search_summary.get("candidate_scoring_controller")
+        if isinstance(controller, dict):
+            controller["full_scans_used"] = _verified_candidate_scans_used()
+            controller["candidate_records"] = len(search_summary.get("candidates", []))
         result.summary["ai_mitigation_search"] = search_summary
         _record_rewrite_llm_calls(
             result.summary,
@@ -24703,6 +24843,7 @@ def run_rewrite_pipeline(
             "stage": "ai_mitigation_search",
             "seconds": search_summary["seconds"],
             "candidates": len(search_summary.get("candidates", [])),
+            "full_candidate_scans": search_summary.get("full_candidate_scans"),
             "selected": search_summary.get("selected", False),
         })
 
@@ -25201,9 +25342,10 @@ def run_rewrite_pipeline(
     ai_first_delta = ai_first_gate["delta"]
     ai_first_success = ai_first_gate["success"]
     ai_first_required = ai_first_gate["required"]
+    final_ai_search_selection_status = _ai_search_final_selection_status(result.summary)
     ai_search_selected_by_authenticity = _ai_search_selected_by_final_safety_gate(
         ai_search_selected,
-        (result.summary.get("ai_mitigation_search") or {}).get("selection_status"),
+        final_ai_search_selection_status,
     )
     if (
         ai_first_required
@@ -25938,11 +26080,7 @@ def run_rewrite_pipeline(
         weighted_severity_delta=_weighted_severity(rewritten_report_dict) - original_severity,
         critical_high_delta=_critical_high_count(rewritten_report_dict) - saved_critical_high,
     )
-    selected_search_status = (
-        ((result.summary.get("ai_mitigation_search") or {}).get("selection_status") or {})
-        if isinstance(result.summary.get("ai_mitigation_search"), dict)
-        else {}
-    )
+    selected_search_status = _ai_search_final_selection_status(result.summary)
     convergence_candidate_status = (
         (result.summary.get("formula_convergence_controller") or {}).get("selected_formula_portfolio_candidate")
         if isinstance(result.summary.get("formula_convergence_controller"), dict)
@@ -26458,6 +26596,7 @@ def run_rewrite_pipeline(
                 )
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
+    result.summary["full_scan_cache"] = dict(full_scan_cache_stats)
     result.summary["stage_timings"] = stage_timings
     result.sentence_comparison = sentence_comparison
 

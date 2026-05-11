@@ -91,6 +91,7 @@ from rewrite_pipeline import (
     _strict_safe_candidate_rank,
     _safe_topk_limit,
     _ai_search_selected_by_final_safety_gate,
+    _ai_search_final_selection_status,
     _allow_ai_search_llm_after_deterministic,
     _load_local_env,
     _repair_candidate_source_damage,
@@ -260,6 +261,7 @@ from rewrite_pipeline import (
     _llm_call_budget_exhausted_before_send,
     _ai_search_budget_policy,
     _ai_search_llm_hard_cap,
+    _verified_candidate_scan_budget,
     _extend_candidate_scan_budget,
     _resolve_stage_llm_budget,
 )
@@ -1073,6 +1075,53 @@ assert_test(
         {"safe_partial_quality_improvement": True},
     ),
     "final rollback gate preserves selected safe partial quality improvements",
+)
+assert_test(
+    _ai_search_selected_by_final_safety_gate(
+        True,
+        {
+            "selectable": True,
+            "reason": "accepted_partial_turnitin_like_mitigation",
+            "turnitin_like_ai_gate": {"score_drop": 2.562},
+            "formula_gap_contract": {"score_drop": 2.562, "weighted_formula_score_drop": 2.562},
+        },
+    ),
+    "final rollback gate preserves selected partial Turnitin-like formula improvements",
+)
+assert_test(
+    _ai_search_selected_by_final_safety_gate(
+        True,
+        {
+            "selectable": True,
+            "reason": "accepted_formula_convergence_step",
+            "formula_gap_contract": {"score_drop": 0.0, "weighted_formula_score_drop": 0.0},
+        },
+    ),
+    "final rollback gate preserves selected non-worsening formula convergence candidates",
+)
+assert_test(
+    not _ai_search_selected_by_final_safety_gate(
+        True,
+        {
+            "selectable": True,
+            "turnitin_like_ai_gate": {"score_drop": 0.1},
+            "formula_gap_contract": {"score_drop": -0.1, "weighted_formula_score_drop": -0.1},
+        },
+    ),
+    "final rollback gate rejects selected candidates when measured formula score worsens",
+)
+assert_test(
+    _ai_search_final_selection_status({
+        "ai_mitigation_search": {
+            "best_attempt": {
+                "selection_status": {
+                    "selectable": True,
+                    "partial_turnitin_like_mitigation": True,
+                }
+            }
+        }
+    }).get("partial_turnitin_like_mitigation"),
+    "final rollback gate reads nested best-attempt selection status",
 )
 def make_footprint_report(
     *,
@@ -2802,22 +2851,31 @@ finally:
         os.environ["DRAFTPROOF_AI_SEARCH_HARD_MAX_LLM_CALLS"] = old_hard_cap
 assert_test(
     short_policy["max_llm_calls"] == 6
-    and short_policy["max_candidate_scans"] == 16
+    and short_policy["max_candidate_scans"] == 4
+    and short_policy["candidate_scoring_controller"]["policy"] == "verified_finalist_full_scans"
     and medium_policy["max_llm_calls"] == 10
-    and medium_policy["max_candidate_scans"] == 24
+    and medium_policy["max_candidate_scans"] == 6
     and saturated_medium_policy["max_llm_calls"] == 15
-    and saturated_medium_policy["max_candidate_scan_hard_cap"] == 32
+    and saturated_medium_policy["max_candidate_scans"] == 8
+    and saturated_medium_policy["max_candidate_scan_hard_cap"] == 11
     and long_policy["max_llm_calls"] == 17
-    and long_policy["max_candidate_scans"] == 36
+    and long_policy["max_candidate_scans"] == 12
     and default_hard_cap == 10
     and explicit_hard_cap == 10,
-    "AI search budget policy caps scan-heavy candidate search and hard LLM cap honors explicit overrides",
+    "AI search budget policy verifies bounded finalists instead of full-scanning raw candidate volume",
 )
-scan_budget_probe = {"max_candidate_scans": 24, "max_candidate_scan_hard_cap": 32}
-_extend_candidate_scan_budget(scan_budget_probe, 24, 12)
-_extend_candidate_scan_budget(scan_budget_probe, 32, 12)
+verified_budget_probe = _verified_candidate_scan_budget("word " * 900, saturated_topk_report)
 assert_test(
-    scan_budget_probe["max_candidate_scans"] == 32,
+    verified_budget_probe["max_candidate_scans"] == 8
+    and verified_budget_probe["max_candidate_scan_hard_cap"] == 11
+    and verified_budget_probe["pressure_bonus"] == 2,
+    "verified finalist scan budget scales sublinearly with document size and active driver pressure",
+)
+scan_budget_probe = {"max_candidate_scans": 8, "max_candidate_scan_hard_cap": 11}
+_extend_candidate_scan_budget(scan_budget_probe, 8, 12)
+_extend_candidate_scan_budget(scan_budget_probe, 11, 12)
+assert_test(
+    scan_budget_probe["max_candidate_scans"] == 11,
     "AI search scan reserves cannot grow beyond the size-policy hard cap",
 )
 medium_topk_prompt = _topk_safe_band_snapshot_prompt(
@@ -7466,8 +7524,11 @@ assert_test(
     and convergence_result["selected_text"] == convergence_better_text
     and convergence_result["score_after"] < convergence_result["score_before"]
     and convergence_result["formula_convergence_passes"][0]["selected"]
+    and convergence_result["scans_used"] == 2
+    and convergence_result["llm_calls_used"] == 0
+    and convergence_result["phase_budget_used"]["scans"] == 2
     and planner_scores_seen[0] == _turnitin_like_ai_profile(convergence_current_report)["score"],
-    "formula convergence controller replans from current best and keeps the best safe formula drop",
+    "formula convergence controller replans from current best, records budget usage, and keeps the best safe formula drop",
 )
 assert_test(
     any(
