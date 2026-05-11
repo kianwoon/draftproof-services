@@ -67,9 +67,17 @@ from rewrite_compiler.selector import evaluate_scanned_candidate as compiler_eva
 from rewrite_compiler.validator import validate_candidate as compiler_validate_candidate
 from rewrite_controller import (
     CandidateLedger,
+    build_candidate_decision,
     RewriteRunBudget,
     build_candidate_record,
+    classify_ai_search_candidate,
     evaluate_text_quality_regression,
+    extract_formula_gap_candidate_payload,
+    formula_gap_budget_contract,
+    formula_gap_candidate_prompt,
+    formula_gap_named_entity_inventory,
+    formula_gap_plan,
+    formula_gap_portfolio_families,
 )
 from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
@@ -1149,6 +1157,7 @@ assert_test(
 )
 cleanup_formula_only_status = {
     "selectable": True,
+    "reference_ai": 54.62,
     "partial_turnitin_like_mitigation": True,
     "ai_footprint_outcome_class": "cleanup_improved",
     "authenticity_gate": {
@@ -1200,6 +1209,7 @@ cleanup_formula_only_status = {
 }
 topk_driver_progress_status = {
     "selectable": True,
+    "reference_ai": 54.62,
     "partial_turnitin_like_mitigation": True,
     "topk_blocker_progress": True,
     "ai_footprint_outcome_class": "ai_footprint_blocked_by_texture",
@@ -1251,6 +1261,11 @@ topk_driver_progress_status = {
     },
 }
 assert_test(
+    classify_ai_search_candidate(cleanup_formula_only_status)["class"] == "formula_progress"
+    and classify_ai_search_candidate(topk_driver_progress_status)["class"] == "detector_progress",
+    "AI-search selection policy classifies formula-only progress separately from detector-driver progress",
+)
+assert_test(
     _detector_progress_rank(topk_driver_progress_status)
     > _detector_progress_rank(cleanup_formula_only_status),
     "detector progress rank prefers Top-k/AI-likelihood/authorship movement over cleanup-only formula gain",
@@ -1278,7 +1293,102 @@ assert_test(
         original_weighted_severity=133,
         original_finding_total=67,
     ),
-    "AI-search selector chooses core detector-driver movement before deletion/cleanup formula wins",
+    "AI-search selector rejects headline AI regression before choosing formula-only progress",
+)
+cleanup_formula_no_ai_regression_status = dict(cleanup_formula_only_status)
+cleanup_formula_no_ai_regression_status["reference_ai"] = 54.62
+assert_test(
+    _goal_climb_candidate_rank(
+        cleanup_formula_no_ai_regression_status,
+        {},
+        candidate_ai=54.62,
+        candidate_review_burden=51,
+        candidate_weighted_severity=127,
+        candidate_finding_total=64,
+        original_review_burden=54,
+        original_weighted_severity=133,
+        original_finding_total=67,
+    )
+    > _goal_climb_candidate_rank(
+        topk_driver_progress_status,
+        {},
+        candidate_ai=52.83,
+        candidate_review_burden=51,
+        candidate_weighted_severity=127,
+        candidate_finding_total=64,
+        original_review_burden=54,
+        original_weighted_severity=133,
+        original_finding_total=67,
+    ),
+    "AI-search selector chooses the larger measured formula drop when headline AI does not regress",
+)
+low_weight_raw_movement_status = {
+    "selectable": True,
+    "reference_ai": 50.0,
+    "partial_turnitin_like_mitigation": True,
+    "authenticity_gate": {
+        "human_delta": 0.0,
+        "candidate_human": 50.0,
+        "ai_authorship_delta": 0.0,
+        "ai_transformation_delta": 0.0,
+    },
+    "turnitin_like_ai_gate": {
+        "safety_clean": True,
+        "improved": True,
+        "score_drop": 1.6,
+        "component_drops": {"patchwork_expansion": 1.6},
+    },
+    "formula_gap_contract": {
+        "target_met": False,
+        "score_drop": 1.6,
+        "weighted_formula_score_drop": 1.6,
+        "weighted_driver_drop_efficiency": 0.1,
+    },
+}
+high_weight_smaller_raw_status = {
+    "selectable": True,
+    "reference_ai": 50.0,
+    "partial_turnitin_like_mitigation": True,
+    "authenticity_gate": {
+        "human_delta": 0.0,
+        "candidate_human": 50.0,
+        "ai_authorship_delta": 1.0,
+        "ai_transformation_delta": 0.0,
+    },
+    "ai_footprint_gate": {
+        "drops": {"ai_likelihood": 5.0},
+    },
+    "turnitin_like_ai_gate": {
+        "safety_clean": True,
+        "improved": True,
+        "score_drop": 2.25,
+        "component_drops": {"ai_likelihood": 2.25},
+    },
+    "formula_gap_contract": {
+        "target_met": False,
+        "score_drop": 2.25,
+        "weighted_formula_score_drop": 2.25,
+        "weighted_driver_drop_efficiency": 0.1,
+    },
+}
+assert_test(
+    _goal_climb_candidate_rank(
+        high_weight_smaller_raw_status,
+        {},
+        candidate_ai=49.0,
+        original_review_burden=10,
+        original_weighted_severity=10,
+        original_finding_total=10,
+    )
+    > _goal_climb_candidate_rank(
+        low_weight_raw_movement_status,
+        {},
+        candidate_ai=49.0,
+        original_review_burden=10,
+        original_weighted_severity=10,
+        original_finding_total=10,
+    ),
+    "AI-search selector follows weighted formula impact, not raw signal movement size",
 )
 def make_footprint_report(
     *,
@@ -8693,6 +8803,102 @@ assert_test(
     and llm_summary_probe.get("ai_search_llm_calls_used") == 2
     and llm_summary_probe.get("formula_convergence_llm_calls_used") == 4,
     "rewrite summary aggregates phase LLM call counts instead of reporting zero after budgeted calls",
+)
+
+formula_gap_budget = formula_gap_budget_contract()
+assert_test(
+    formula_gap_budget.get("deterministic_probe_scans") == 2
+    and formula_gap_budget.get("llm_candidate_calls") == 5
+    and formula_gap_budget.get("finalist_scans") == 5
+    and formula_gap_budget.get("total_scan_cap") == 10,
+    "formula-gap orchestrator reserves LLM budget and caps deterministic probe scans",
+)
+formula_families = formula_gap_portfolio_families(5)
+assert_test(
+    formula_families == [
+        "STATISTICAL_TEXTURE_REBUILD",
+        "SEMANTIC_VARIANCE_RESTRUCTURE",
+        "HUMAN_ANCHOR_SUPPRESSION_GAIN",
+        "HYBRID_TEXTURE_ANCHOR",
+        "LOW_VALUE_COMPRESS_REMOVE",
+    ],
+    "formula-gap orchestrator exposes the five portfolio LLM candidate families",
+)
+valid_formula_payload = json.dumps({
+    "strategy": "STATISTICAL_TEXTURE_REBUILD",
+    "targeted_drivers": ["ai_likelihood", "rewrite_smoothness"],
+    "changed_blocks": [1],
+    "fact_inventory_preserved": True,
+    "core_claims_preserved_or_merged": True,
+    "protected_anchors_preserved": True,
+    "unsupported_new_facts": False,
+    "candidate_text": "The United States began with independence in 1776. Its later growth mixed political power, industry, immigration, and cultural influence.",
+})
+accepted_payload, accepted_reason = extract_formula_gap_candidate_payload(valid_formula_payload)
+rejected_payload, rejected_reason = extract_formula_gap_candidate_payload(
+    valid_formula_payload.replace('"unsupported_new_facts": false', '"unsupported_new_facts": true')
+)
+assert_test(
+    accepted_payload is not None
+    and not accepted_reason
+    and rejected_payload is None
+    and rejected_reason == "unsupported_new_facts_declared",
+    "formula-gap LLM JSON contract accepts valid candidates and rejects declared unsupported facts",
+)
+fake_formula_report = {
+    "ai_risk_badge": {
+        "ai_components": {
+            "ai_likelihood": 50,
+            "topk_calibrated_risk": 40,
+            "semantic_uniformity_risk": 30,
+            "rewrite_smoothness": 30,
+            "outline_to_text_expansion": 20,
+            "section_style_variance": 10,
+            "signal_agreement_score": 50,
+        },
+        "human_anchor_discount": 12,
+    }
+}
+formula_plan_probe = formula_gap_plan(fake_formula_report)
+prompt_probe = formula_gap_candidate_prompt(
+    "The United States was founded in 1776.",
+    fake_formula_report,
+    "LOW_VALUE_COMPRESS_REMOVE",
+    protected_anchors=[{"text": "1776", "reason": "numeric"}],
+)
+entity_probe = formula_gap_named_entity_inventory(
+    "The United States joined NATO work with New York City, Hollywood, and The Civil Rights Movement as examples."
+)
+assert_test(
+    formula_plan_probe.get("target_score") == 20.0
+    and "remaining_weighted_drivers" in formula_plan_probe
+    and "LOW_VALUE_COMPRESS_REMOVE" in prompt_probe
+    and "1776" in prompt_probe,
+    "formula-gap plan and prompt expose weighted drivers, strict target, and protected anchors",
+)
+assert_test(
+    "The United States" in entity_probe
+    and "New York City" in entity_probe
+    and "The Civil Rights Movement" in entity_probe,
+    "formula-gap prompt inventory preserves named entities that semantic drift would otherwise reject",
+)
+decision_probe = build_candidate_decision(
+    {
+        "selectable": True,
+        "reason": "accepted_partial_turnitin_like_mitigation",
+        "turnitin_like_ai_gate": {"improved": True, "safety_clean": True, "score_drop": 4.5},
+        "formula_gap_contract": {"score_drop": 4.5, "target_met": False},
+        "reference_ai": 60,
+    },
+    {"formula_gap_contract": {"score_drop": 4.5, "target_met": False}},
+    candidate_ai=55,
+)
+assert_test(
+    decision_probe.selectable
+    and decision_probe.formula_score_drop == 4.5
+    and decision_probe.headline_ai_drop == 5.0
+    and decision_probe.to_dict().get("rank"),
+    "candidate selector exposes CandidateDecision with visible rank and headline drops",
 )
 
 

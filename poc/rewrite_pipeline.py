@@ -32,6 +32,19 @@ from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_f
 from rewrite import run_rewrite, RewriteConfig, RewriteModuleResult
 from rewrite.auto_repair_controller import AutoRepairDependencies, run_auto_repair_controller
 from rewrite_controller import CandidateLedger, RewriteRunBudget, build_candidate_record
+from rewrite_controller.ai_search_selection import (
+    ai_search_candidate_rank,
+    build_candidate_decision,
+    detector_progress_rank as _detector_progress_rank,
+)
+from rewrite_controller.formula_gap_orchestrator import (
+    budget_contract as _formula_gap_orchestrator_budget_contract,
+    extract_candidate_payload as _extract_formula_gap_candidate_payload,
+    formula_gap_candidate_prompt as _formula_gap_candidate_prompt,
+    named_entity_inventory as _formula_gap_named_entity_inventory,
+    formula_gap_plan as _formula_gap_orchestrator_plan,
+    portfolio_families as _formula_gap_portfolio_families,
+)
 from rewrite_compiler import CompilerConfig, CompilerDependencies, run_rewrite_compiler
 from rewrite.guards import detect_protected_spans, check_semantic_drift
 from report.pdf import render_pdf
@@ -9817,87 +9830,6 @@ def _is_better_human_shift_candidate(candidate_gate: dict | None, best_gate: dic
     return _human_shift_rank_key(candidate_gate) > _human_shift_rank_key(best_gate)
 
 
-def _detector_progress_rank(selection_status: dict | None, candidate_eval: dict | None = None) -> tuple:
-    """Rank candidates by actual detector-driver movement before cleanup/formula polish.
-
-    A candidate can reduce the Turnitin-like formula by deleting or compressing
-    low-value text while leaving Top-k, AI likelihood, authorship, and qualifying
-    density pinned. That is useful cleanup, but it should not beat a candidate
-    that moves the unsafe AI-footprint drivers.
-    """
-    status = selection_status or {}
-    eval_data = candidate_eval or {}
-    gate = status.get("authenticity_gate") if isinstance(status.get("authenticity_gate"), dict) else status
-    footprint_gate = status.get("ai_footprint_gate") if isinstance(status.get("ai_footprint_gate"), dict) else {}
-    footprint_outcome = str(
-        status.get("ai_footprint_outcome_class")
-        or footprint_gate.get("outcome_class")
-        or ""
-    )
-    footprint_priority = {
-        "ai_mitigated": 4,
-        "partially_ai_mitigated": 3,
-        "cleanup_improved": 1,
-    }.get(footprint_outcome, 0)
-    if status.get("topk_blocker_progress"):
-        footprint_priority = max(footprint_priority, 2)
-    if status.get("human_anchor_amplifier"):
-        footprint_priority = max(footprint_priority, 3)
-    if status.get("topk_safe_band_achieved"):
-        footprint_priority = max(footprint_priority, 5)
-    footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
-    components = (
-        status.get("human_shift_components")
-        if isinstance(status.get("human_shift_components"), dict)
-        else gate.get("human_shift_components")
-        if isinstance(gate.get("human_shift_components"), dict)
-        else {}
-    )
-
-    def num(value, default=0.0) -> float:
-        return float(value) if isinstance(value, (int, float)) else float(default)
-
-    external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"))
-    topk_drop = num(footprint_drops.get("topk_calibrated_risk"))
-    qualifying_density_drop = num(footprint_drops.get("qualifying_text_ai_density"))
-    ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"))
-    ai_authorship_drop = num(gate.get("ai_authorship_delta"))
-    rewrite_smoothness_reduction = num(components.get("rewrite_smoothness_reduction"))
-    detector_progress_priority = footprint_priority
-    if status.get("topk_safe_band_achieved"):
-        detector_progress_priority = max(detector_progress_priority, 5)
-    if status.get("ai_footprint_mitigation"):
-        detector_progress_priority = max(detector_progress_priority, 4)
-    if status.get("partial_ai_footprint_mitigation"):
-        detector_progress_priority = max(detector_progress_priority, 3)
-    if status.get("topk_blocker_progress"):
-        detector_progress_priority = max(detector_progress_priority, 2)
-    if (
-        status.get("partial_turnitin_like_mitigation")
-        and footprint_outcome == "cleanup_improved"
-        and not status.get("topk_blocker_progress")
-        and not status.get("partial_ai_footprint_mitigation")
-    ):
-        detector_progress_priority = min(detector_progress_priority, 1)
-    detector_driver_drop_score = (
-        max(0.0, ai_likelihood_drop) * 4.0
-        + max(0.0, topk_drop) * 3.0
-        + max(0.0, ai_authorship_drop) * 2.0
-        + max(0.0, qualifying_density_drop) * 2.0
-        + max(0.0, external_flag_drop) * 1.5
-        + max(0.0, rewrite_smoothness_reduction)
-    )
-    return (
-        detector_progress_priority,
-        detector_driver_drop_score,
-        max(0.0, ai_likelihood_drop),
-        max(0.0, topk_drop),
-        max(0.0, ai_authorship_drop),
-        max(0.0, external_flag_drop),
-        footprint_priority,
-    )
-
-
 def _goal_climb_candidate_rank(
     selection_status: dict | None,
     candidate_eval: dict | None,
@@ -9918,59 +9850,14 @@ def _goal_climb_candidate_rank(
     status = selection_status or {}
     eval_data = candidate_eval or {}
     gate = status.get("authenticity_gate") if isinstance(status.get("authenticity_gate"), dict) else status
-    components = (
-        status.get("human_shift_components")
-        if isinstance(status.get("human_shift_components"), dict)
-        else gate.get("human_shift_components")
-        if isinstance(gate.get("human_shift_components"), dict)
-        else {}
-    )
 
     def num(value, default=-9999.0) -> float:
         return float(value) if isinstance(value, (int, float)) else float(default)
 
-    human_shift = num(status.get("human_shift_score", gate.get("human_shift_score")))
-    human_delta = num(gate.get("human_delta"))
     candidate_human = num(gate.get("candidate_human", eval_data.get("human_contribution")))
-    ai_authorship_delta = num(gate.get("ai_authorship_delta"))
-    ai_transform_delta = num(gate.get("ai_transformation_delta"))
     stage_target = _human_gain_stage_target(candidate_human)
     target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
-    review_reduction = num(original_review_burden, 0.0) - num(candidate_review_burden, 0.0)
-    severity_reduction = num(original_weighted_severity, 0.0) - num(candidate_weighted_severity, 0.0)
-    finding_reduction = num(original_finding_total, 0.0) - num(candidate_finding_total, 0.0)
-    semantic_uniformity_reduction = num(components.get("semantic_uniformity_reduction"), 0.0)
-    rewrite_smoothness_reduction = num(components.get("rewrite_smoothness_reduction"), 0.0)
-    footprint_gate = status.get("ai_footprint_gate") if isinstance(status.get("ai_footprint_gate"), dict) else {}
-    footprint_outcome = str(
-        status.get("ai_footprint_outcome_class")
-        or footprint_gate.get("outcome_class")
-        or ""
-    )
-    footprint_priority = {
-        "ai_mitigated": 4,
-        "partially_ai_mitigated": 3,
-        "cleanup_improved": 1,
-    }.get(footprint_outcome, 0)
-    if status.get("topk_blocker_progress"):
-        footprint_priority = max(footprint_priority, 2)
-    if status.get("human_anchor_amplifier"):
-        footprint_priority = max(footprint_priority, 3)
-    if status.get("topk_safe_band_achieved"):
-        footprint_priority = max(footprint_priority, 5)
-    footprint_drops = footprint_gate.get("drops") if isinstance(footprint_gate.get("drops"), dict) else {}
     turnitin_gate = status.get("turnitin_like_ai_gate") if isinstance(status.get("turnitin_like_ai_gate"), dict) else {}
-    turnitin_drops = (
-        turnitin_gate.get("component_drops")
-        if isinstance(turnitin_gate.get("component_drops"), dict)
-        else {}
-    )
-    turnitin_priority = (
-        5 if turnitin_gate.get("safe_band")
-        else 3 if turnitin_gate.get("improved") and turnitin_gate.get("safety_clean")
-        else 0
-    )
-    turnitin_score_drop = num(turnitin_gate.get("score_drop"), 0.0)
     formula_gap_contract = (
         status.get("formula_gap_contract")
         if isinstance(status.get("formula_gap_contract"), dict)
@@ -9978,70 +9865,19 @@ def _goal_climb_candidate_rank(
         if isinstance(eval_data.get("formula_gap_contract"), dict)
         else {}
     )
-    formula_gap_rank = _formula_gap_candidate_rank(formula_gap_contract, turnitin_gate)
-    external_flag_drop = num(footprint_drops.get("external_ai_flag_risk"), 0.0)
-    topk_drop = num(footprint_drops.get("topk_calibrated_risk"), 0.0)
-    qualifying_density_drop = num(footprint_drops.get("qualifying_text_ai_density"), 0.0)
-    ai_likelihood_drop = num(footprint_drops.get("ai_likelihood"), 0.0)
-    ai_authorship_drop = num(gate.get("ai_authorship_delta"), ai_authorship_delta)
-    detector_progress_rank = _detector_progress_rank(status, eval_data)
-    anchor_contract = (
-        status.get("human_anchor_driver_contract")
-        if isinstance(status.get("human_anchor_driver_contract"), dict)
-        else eval_data.get("human_anchor_driver_contract")
-        if isinstance(eval_data.get("human_anchor_driver_contract"), dict)
-        else {}
-    )
-    anchor_deltas = anchor_contract.get("deltas") if isinstance(anchor_contract.get("deltas"), dict) else {}
-    human_anchor_gain = num(anchor_deltas.get("human_anchor_score"), 0.0)
-    lived_detail_drop = num(anchor_deltas.get("lived_detail_risk"), 0.0)
-    multi_signal = (
-        status.get("multi_signal_contract")
-        if isinstance(status.get("multi_signal_contract"), dict)
-        else eval_data.get("multi_signal_contract")
-        if isinstance(eval_data.get("multi_signal_contract"), dict)
-        else {}
-    )
-    severe_backfire_count = len(multi_signal.get("severe_backfires") or [])
-    balance_score = num(multi_signal.get("balance_score"), 0.0)
-
-    return (
-        1 if status.get("selectable") else 0,
-        1 if formula_gap_contract.get("target_met") else 0,
-        detector_progress_rank,
-        turnitin_priority,
-        num(formula_gap_contract.get("score_drop"), turnitin_score_drop),
-        formula_gap_rank,
-        num(formula_gap_contract.get("weighted_driver_drop_efficiency"), 0.0),
-        turnitin_score_drop,
-        num(turnitin_drops.get("ai_likelihood"), 0.0),
-        num(turnitin_drops.get("topk_calibrated_risk"), 0.0),
-        num(turnitin_drops.get("semantic_uniformity"), 0.0),
-        num(turnitin_drops.get("rewrite_smoothness"), 0.0),
-        num(turnitin_drops.get("patchwork_expansion"), 0.0),
-        num(turnitin_drops.get("human_anchor_suppression"), 0.0),
-        qualifying_density_drop,
-        lived_detail_drop,
-        human_anchor_gain,
-        topk_drop,
-        -severe_backfire_count,
-        balance_score,
-        ai_authorship_drop,
-        ai_likelihood_drop,
-        external_flag_drop,
-        rewrite_smoothness_reduction,
-        1 if candidate_human >= target_human else 0,
-        1 if candidate_human >= stage_target else 0,
-        1 if human_shift > 0 else 0,
-        human_shift,
-        human_delta,
-        ai_authorship_delta,
-        ai_transform_delta,
-        semantic_uniformity_reduction,
-        review_reduction,
-        severity_reduction,
-        finding_reduction,
-        -(num(candidate_ai, 9999.0)),
+    return ai_search_candidate_rank(
+        status,
+        eval_data,
+        candidate_ai=candidate_ai,
+        candidate_review_burden=candidate_review_burden,
+        candidate_weighted_severity=candidate_weighted_severity,
+        candidate_finding_total=candidate_finding_total,
+        original_review_burden=original_review_burden,
+        original_weighted_severity=original_weighted_severity,
+        original_finding_total=original_finding_total,
+        target_human=target_human,
+        stage_target=stage_target,
+        formula_gap_rank=_formula_gap_candidate_rank(formula_gap_contract, turnitin_gate),
     )
 
 
@@ -19480,6 +19316,14 @@ def run_rewrite_pipeline(
         base_strategies = strategies[:search_limit]
         strategies = confirmed_anchor_strategies + base_strategies
         search_source_text, search_source_repairs = _repair_candidate_source_damage(text)
+        formula_gap_orchestrator_enabled = _env_flag("DRAFTPROOF_FORMULA_GAP_CANDIDATE_ORCHESTRATOR", True)
+        formula_gap_plan = _formula_gap_orchestrator_plan(original_report_dict)
+        formula_gap_budget_contract = _formula_gap_orchestrator_budget_contract(
+            deterministic_probes=int(_float_env("DRAFTPROOF_FORMULA_GAP_DETERMINISTIC_PROBES", 2.0)),
+            llm_candidates=int(_float_env("DRAFTPROOF_FORMULA_GAP_LLM_CANDIDATES", 5.0)),
+            finalist_scans=int(_float_env("DRAFTPROOF_FORMULA_GAP_FINALIST_SCANS", 5.0)),
+            total_scan_cap=int(_float_env("DRAFTPROOF_FORMULA_GAP_TOTAL_SCAN_CAP", 10.0)),
+        )
         deterministic_candidates = []
         if search_source_repairs and search_source_text.strip() != text.strip():
             deterministic_candidates.append((
@@ -19697,6 +19541,17 @@ def run_rewrite_pipeline(
                 "strategies": confirmed_anchor_strategies,
                 "base_candidate_limit": len(base_strategies),
             },
+            "formula_gap_candidate_orchestrator": {
+                "enabled": formula_gap_orchestrator_enabled,
+                "budget_contract": formula_gap_budget_contract,
+                "formula_gap_plan": formula_gap_plan,
+                "portfolio_families": _formula_gap_portfolio_families(
+                    int(formula_gap_budget_contract.get("llm_candidate_calls") or 0)
+                ),
+                "deterministic_probe_scans_used": 0,
+                "llm_calls_used": 0,
+                "candidate_frontier": [],
+            },
             "content_pruning_repair": {
                 "enabled": _env_flag("DRAFTPROOF_CONTENT_PRUNING_REPAIR", True),
                 "candidate_count": len(pruning_candidates),
@@ -19797,6 +19652,36 @@ def run_rewrite_pipeline(
             int(search_budget["max_candidate_scans"]),
             _candidate_scan_hard_cap(search_budget),
         )
+        if formula_gap_orchestrator_enabled:
+            formula_scan_cap = max(
+                int(formula_gap_budget_contract.get("total_scan_cap") or 10),
+                int(formula_gap_budget_contract.get("deterministic_probe_scans") or 0)
+                + int(formula_gap_budget_contract.get("finalist_scans") or 0),
+            )
+            formula_llm_cap = min(
+                hard_llm_cap,
+                int(formula_gap_budget_contract.get("llm_candidate_calls") or 5),
+            )
+            search_budget["max_llm_calls"] = max(
+                int(search_budget.get("max_llm_calls") or 0),
+                formula_llm_cap,
+            )
+            search_budget["max_candidate_scans"] = min(
+                _candidate_scan_hard_cap(search_budget),
+                formula_scan_cap,
+            )
+            search_budget["max_candidate_scan_hard_cap"] = min(
+                int(search_budget.get("max_candidate_scan_hard_cap") or formula_scan_cap),
+                formula_scan_cap,
+            )
+            search_budget["formula_gap_orchestrator"] = {
+                "deterministic_probe_scan_cap": int(
+                    formula_gap_budget_contract.get("deterministic_probe_scans") or 0
+                ),
+                "reserved_llm_candidate_calls": formula_llm_cap,
+                "finalist_scan_cap": int(formula_gap_budget_contract.get("finalist_scans") or 0),
+                "total_scan_cap": formula_scan_cap,
+            }
         search_summary["budget"] = search_budget
         search_summary["candidate_scoring_controller"] = {
             **(search_budget.get("candidate_scoring_controller") or {}),
@@ -19896,6 +19781,7 @@ def run_rewrite_pipeline(
             }
 
         adaptive_stop_reason = ""
+        formula_gap_orchestrator_completed = False
 
         def _search_budget_exhausted(phase: str, *, before_llm: bool = False) -> bool:
             nonlocal adaptive_stop_reason
@@ -20288,6 +20174,13 @@ def run_rewrite_pipeline(
                 isinstance(ai_delta, (int, float))
                 and ai_delta < -float(ai_score_regression_tolerance or 0.0)
             )
+            if (
+                candidate_eval.get("formula_gap_candidate_orchestrator")
+                and isinstance(ai_delta, (int, float))
+                and ai_delta < 0.0
+            ):
+                ai_score_regressed = True
+                ai_score_regression_tolerance = 0.0
             authenticity_status = _authenticity_gate_status(
                 original_report_dict,
                 candidate_report,
@@ -21137,6 +21030,20 @@ def run_rewrite_pipeline(
                 original_weighted_severity=original_severity,
                 original_finding_total=original_total,
             )
+            candidate_decision = build_candidate_decision(
+                selection_status,
+                candidate_eval,
+                candidate_ai=candidate_ai,
+                candidate_review_burden=candidate_review_burden,
+                candidate_weighted_severity=candidate_weighted_severity,
+                candidate_finding_total=_finding_total(candidate_report),
+                original_review_burden=original_review_burden,
+                original_weighted_severity=original_severity,
+                original_finding_total=original_total,
+                formula_gap_rank=tuple(candidate_eval.get("formula_gap_rank") or ()),
+            )
+            candidate_eval["candidate_decision"] = candidate_decision.to_dict()
+            selection_status["candidate_decision"] = candidate_decision.to_dict()
             topk_safe_frontier_blocked = bool(
                 _selection_status_topk_safe(best_selection_status)
                 and not _selection_status_topk_safe(selection_status)
@@ -21656,8 +21563,40 @@ def run_rewrite_pipeline(
             )
         except ValueError:
             min_deterministic_scans = len(deterministic_candidates) or 1
+        if formula_gap_orchestrator_enabled:
+            deterministic_probe_cap = max(
+                0,
+                int(formula_gap_budget_contract.get("deterministic_probe_scans") or 0),
+            )
+            if deterministic_probe_cap <= 0:
+                min_deterministic_scans = 0
+            else:
+                min_deterministic_scans = min(
+                    max(1, min_deterministic_scans),
+                    deterministic_probe_cap,
+                )
+            orchestrator_summary = search_summary.setdefault(
+                "formula_gap_candidate_orchestrator",
+                {},
+            )
+            orchestrator_summary.update({
+                "deterministic_probe_candidates_total": len(deterministic_candidates),
+                "deterministic_probe_scan_cap": deterministic_probe_cap,
+                "deterministic_candidates_skipped_for_llm_reserve": max(
+                    0,
+                    len(deterministic_candidates) - deterministic_probe_cap,
+                ),
+            })
         early_stop_reason = ""
         for index, deterministic_item in enumerate(deterministic_candidates, start=1):
+            if (
+                formula_gap_orchestrator_enabled
+                and index > max(0, int(formula_gap_budget_contract.get("deterministic_probe_scans") or 0))
+            ):
+                search_summary.setdefault("formula_gap_candidate_orchestrator", {})[
+                    "deterministic_probe_stop_reason"
+                ] = "llm_budget_reserved"
+                break
             strategy, candidate = deterministic_item[0], deterministic_item[1]
             deterministic_extra = (
                 deterministic_item[2]
@@ -21676,9 +21615,18 @@ def run_rewrite_pipeline(
                 deterministic=True,
                 extra=deterministic_extra,
             )
+            if formula_gap_orchestrator_enabled:
+                search_summary.setdefault("formula_gap_candidate_orchestrator", {})[
+                    "deterministic_probe_scans_used"
+                ] = min(index, _verified_candidate_scans_used())
             if adaptive_stop_reason:
                 break
             if index < min_deterministic_scans:
+                continue
+            if formula_gap_orchestrator_enabled:
+                # The formula-gap redesign treats deterministic repair as a probe.
+                # It must not fast-accept or adaptive-stop before the reserved
+                # portfolio LLM candidates have a chance to run.
                 continue
             early_stop_reason = (
                 _ai_search_fast_accept_reason(ai_search_reference, best_ai)
@@ -22248,6 +22196,14 @@ def run_rewrite_pipeline(
 
         def _run_final_topk_texture_repair(trigger_phase: str) -> None:
             nonlocal adaptive_stop_reason
+            if formula_gap_orchestrator_completed:
+                search_summary["final_topk_texture_repair"] = {
+                    "enabled": bool(_env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_REPAIR", True)),
+                    "skipped": True,
+                    "reason": "formula_gap_candidate_orchestrator_completed",
+                    "trigger_phase": trigger_phase,
+                }
+                return
             if not _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_REPAIR", True):
                 search_summary["final_topk_texture_repair"] = {
                     "enabled": False,
@@ -22680,13 +22636,171 @@ def run_rewrite_pipeline(
                     frequency_penalty=ai_search_sampling["frequency_penalty"],
                 ))
                 gateway = _budget_gateway(gateway, "ai_search_llm")
+                formula_gap_orchestrator_completed = False
+                if formula_gap_orchestrator_enabled:
+                    orchestrator_summary = search_summary.setdefault(
+                        "formula_gap_candidate_orchestrator",
+                        {},
+                    )
+                    families = _formula_gap_portfolio_families(
+                        int(formula_gap_budget_contract.get("llm_candidate_calls") or 0)
+                    )
+                    protected_anchor_brief = [
+                        {
+                            "text": span.text or search_source_text[span.start_char:span.end_char],
+                            "reason": span.reason,
+                        }
+                        for span in source_protected[:80]
+                    ]
+                    protected_anchor_brief.extend(
+                        {
+                            "text": entity,
+                            "reason": "named_entity",
+                        }
+                        for entity in _formula_gap_named_entity_inventory(search_source_text)
+                    )
+                    orchestrator_summary.update({
+                        "enabled": True,
+                        "started": True,
+                        "portfolio_families": families,
+                        "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
+                        "candidate_frontier": orchestrator_summary.get("candidate_frontier") or [],
+                    })
+                    for family_index, family in enumerate(families, start=1):
+                        if _search_budget_exhausted("formula_gap_portfolio_llm", before_llm=True):
+                            orchestrator_summary["stop_reason"] = adaptive_stop_reason or "budget_exhausted"
+                            break
+                        report_progress(
+                            min(89, 78 + family_index),
+                            f"Trying formula-gap portfolio candidate {family_index}/{len(families)}",
+                        )
+                        candidate_record = {
+                            "strategy": f"formula_gap_portfolio_{family.lower()}",
+                            "family": family,
+                            "passed_local_checks": False,
+                            "formula_gap_candidate_orchestrator": True,
+                        }
+                        try:
+                            prompt = _formula_gap_candidate_prompt(
+                                best_text if _best_ai_search_selectable() else search_source_text,
+                                best_report if _best_ai_search_selectable() else original_report_dict,
+                                family,
+                                protected_anchors=protected_anchor_brief,
+                            )
+                            search_summary["llm_calls"] += 1
+                            orchestrator_summary["llm_calls_used"] = int(
+                                orchestrator_summary.get("llm_calls_used") or 0
+                            ) + 1
+                            response = gateway.chat(
+                                prompt,
+                                system=(
+                                    "You are DraftProof's formula-gap portfolio candidate generator. "
+                                    "Return only valid JSON that matches the requested schema."
+                                ),
+                                **_phase_chat_sampling_kwargs(
+                                    "DRAFTPROOF_FORMULA_GAP_PORTFOLIO",
+                                    temperature_env="DRAFTPROOF_FORMULA_GAP_PORTFOLIO_TEMPERATURE",
+                                    temperature_default=0.50,
+                                    max_tokens_env="DRAFTPROOF_FORMULA_GAP_PORTFOLIO_MAX_TOKENS",
+                                    max_tokens_default=6500,
+                                ),
+                            )
+                            payload, payload_reason = _extract_formula_gap_candidate_payload(
+                                response.content,
+                            )
+                            if not payload:
+                                candidate_record["reason"] = payload_reason or "invalid_formula_gap_payload"
+                                search_summary["candidates"].append(candidate_record)
+                                orchestrator_summary["candidate_frontier"].append(candidate_record)
+                                continue
+                            candidate = _clean_full_document_candidate(
+                                str(payload.get("candidate_text") or ""),
+                                best_text if _best_ai_search_selectable() else search_source_text,
+                            )
+                            if not candidate:
+                                candidate_record["reason"] = "empty_or_unchanged_candidate"
+                                candidate_record["payload_strategy"] = payload.get("strategy")
+                                search_summary["candidates"].append(candidate_record)
+                                orchestrator_summary["candidate_frontier"].append(candidate_record)
+                                continue
+                            _evaluate_ai_search_candidate(
+                                candidate_record["strategy"],
+                                candidate,
+                                deterministic=False,
+                                extra={
+                                    "formula_gap_candidate_orchestrator": True,
+                                    "formula_gap_portfolio_family": family,
+                                    "targeted_drivers": payload.get("targeted_drivers"),
+                                    "changed_blocks": payload.get("changed_blocks"),
+                                    "fact_inventory_preserved": payload.get("fact_inventory_preserved"),
+                                    "core_claims_preserved_or_merged": payload.get("core_claims_preserved_or_merged"),
+                                    "protected_anchors_preserved": payload.get("protected_anchors_preserved"),
+                                    "unsupported_new_facts": payload.get("unsupported_new_facts"),
+                                },
+                            )
+                        except Exception as exc:
+                            candidate_record["reason"] = f"llm_error {exc}"
+                            search_summary["candidates"].append(candidate_record)
+                            orchestrator_summary["candidate_frontier"].append(candidate_record)
+                            if adaptive_stop_reason:
+                                orchestrator_summary["stop_reason"] = adaptive_stop_reason
+                                break
+                    formula_gap_orchestrator_completed = True
+                    orchestrator_summary.update({
+                        "completed": True,
+                        "selected_strategy_after": best_strategy,
+                        "selected_candidate_reason": best_selection_status.get("reason"),
+                        "best_attempt": search_summary.get("best_attempt"),
+                        "llm_calls_used": int(orchestrator_summary.get("llm_calls_used") or 0),
+                        "candidate_scans_used": _verified_candidate_scans_used(),
+                    })
+                    search_summary["llm_candidate_frontier"] = [
+                        {
+                            "strategy": item.get("strategy"),
+                            "family": item.get("formula_gap_portfolio_family") or item.get("family"),
+                            "passed_local_checks": item.get("passed_local_checks"),
+                            "reason": item.get("reason"),
+                            "ai": item.get("ai"),
+                            "human_contribution": item.get("human_contribution"),
+                            "ai_authorship": item.get("ai_authorship"),
+                            "ai_transformation": item.get("ai_transformation"),
+                            "selection_status": item.get("selection_status"),
+                            "candidate_decision": item.get("candidate_decision"),
+                            "formula_gap_contract": item.get("formula_gap_contract"),
+                        }
+                        for item in (search_summary.get("candidates") or [])
+                        if str(item.get("strategy") or "").startswith("formula_gap_portfolio_")
+                    ]
+                    if not best_selection_status.get("turnitin_like_mitigation"):
+                        search_summary["ceiling_detection"] = {
+                            "status": (
+                                "ceiling_reached"
+                                if not _best_ai_search_selectable()
+                                else "unsafe_partial_improvement"
+                            ),
+                            "reason": (
+                                "no_formula_gap_candidate_reduced_score_safely"
+                                if not _best_ai_search_selectable()
+                                else "target_below_20_not_reached"
+                            ),
+                        }
+                    adaptive_stop_reason = "adaptive_stop_after_formula_gap_candidate_orchestrator"
+                    search_summary["adaptive_stop"] = {
+                        "phase": "formula_gap_candidate_orchestrator",
+                        "reason": adaptive_stop_reason,
+                        "candidate_count_scanned": _verified_candidate_scans_used(),
+                        "candidate_records": len(search_summary.get("candidates", [])),
+                        "selected_strategy": best_strategy,
+                        "selection_status": best_selection_status,
+                    }
+                    search_summary["llm_reason"] = adaptive_stop_reason
                 paragraph_search_enabled = os.environ.get(
                     "DRAFTPROOF_PARAGRAPH_COMPONENT_SEARCH",
                     "1",
                 ) != "0"
                 component_source_text = best_text if _best_ai_search_selectable() else search_source_text
                 component_base_text, component_base_repairs = _repair_candidate_source_damage(component_source_text)
-                if _env_flag("DRAFTPROOF_TOPK_ROUTE_OPTIMIZER", True):
+                if (not formula_gap_orchestrator_completed) and _env_flag("DRAFTPROOF_TOPK_ROUTE_OPTIMIZER", True):
                     route_base_report = best_report if _best_ai_search_selectable() else original_report_dict
                     route_map = _topk_repair_map(component_base_text, route_base_report)
                     topk_summary = search_summary.setdefault("topk_route_optimizer", {})
@@ -22764,7 +22878,7 @@ def run_rewrite_pipeline(
                             topk_summary["llm_error"] = str(exc)
                     else:
                         topk_summary["llm_stage_skipped"] = "topk_not_saturated"
-                if _env_flag("DRAFTPROOF_TOPK_SAFE_BAND_REBUILD", True):
+                if (not formula_gap_orchestrator_completed) and _env_flag("DRAFTPROOF_TOPK_SAFE_BAND_REBUILD", True):
                     safe_band_summary = search_summary.setdefault("topk_safe_band_rebuild", {
                         "enabled": True,
                         "selected": False,
@@ -23158,6 +23272,8 @@ def run_rewrite_pipeline(
                     and not _strict_ai_safe_band_status(best_report).get("achieved")
                 )
                 strict_safe_legacy_llm_skipped = bool(
+                    formula_gap_orchestrator_completed
+                    or
                     (
                         _best_ai_search_selectable()
                         and (
@@ -23173,7 +23289,9 @@ def run_rewrite_pipeline(
                     search_summary["legacy_llm_after_topk_safe"] = {
                         "skipped": True,
                         "reason": (
-                            "strict_ai_phase_budget_only"
+                            "formula_gap_candidate_orchestrator_completed"
+                            if formula_gap_orchestrator_completed
+                            else "strict_ai_phase_budget_only"
                             if strict_phase_budget_only_active
                             else
                             "preserve_remaining_budget_for_topk_controlled_candidate"
@@ -23186,14 +23304,15 @@ def run_rewrite_pipeline(
                         "selected_topk_calibrated_drop": selected_topk_drop,
                         "strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
                     }
-                    adaptive_stop_reason = "adaptive_stop_after_strict_safe_phase_budget"
-                    search_summary["adaptive_stop"] = {
-                        "phase": "strict_safe_controller",
-                        "reason": adaptive_stop_reason,
-                        "candidate_count_scanned": _verified_candidate_scans_used(),
-                        "selected_strategy": best_strategy,
-                        "selection_status": best_selection_status,
-                    }
+                    if not formula_gap_orchestrator_completed:
+                        adaptive_stop_reason = "adaptive_stop_after_strict_safe_phase_budget"
+                        search_summary["adaptive_stop"] = {
+                            "phase": "strict_safe_controller",
+                            "reason": adaptive_stop_reason,
+                            "candidate_count_scanned": _verified_candidate_scans_used(),
+                            "selected_strategy": best_strategy,
+                            "selection_status": best_selection_status,
+                        }
                 internet_priority = _internet_reauthor_priority_status(original_report_dict, component_base_text)
                 paragraph_component_first = bool(
                     paragraph_search_enabled
@@ -24136,7 +24255,10 @@ def run_rewrite_pipeline(
                             if adaptive_stop_reason:
                                 break
 
-                if adaptive_stop_reason and adaptive_stop_reason != "adaptive_stop_after_strict_safe_phase_budget":
+                if adaptive_stop_reason and adaptive_stop_reason not in {
+                    "adaptive_stop_after_strict_safe_phase_budget",
+                    "adaptive_stop_after_formula_gap_candidate_orchestrator",
+                }:
                     _run_post_safe_win_target_push("post_llm_adaptive_stop")
                     search_summary["llm_reason"] = adaptive_stop_reason
                 elif adaptive_stop_reason:
@@ -24947,6 +25069,41 @@ def run_rewrite_pipeline(
         if isinstance(controller, dict):
             controller["full_scans_used"] = _verified_candidate_scans_used()
             controller["candidate_records"] = len(search_summary.get("candidates", []))
+        if formula_gap_orchestrator_enabled:
+            selected_formula_contract = (
+                best_selection_status.get("formula_gap_contract")
+                if isinstance(best_selection_status, dict) else None
+            )
+            selected_formula_contract = (
+                selected_formula_contract if isinstance(selected_formula_contract, dict) else {}
+            )
+            search_summary["formula_gap_plan"] = formula_gap_plan
+            search_summary["selected_candidate_reason"] = (
+                best_selection_status.get("reason")
+                if isinstance(best_selection_status, dict) else None
+            )
+            search_summary["remaining_weighted_drivers"] = (
+                selected_formula_contract.get("remaining_formula_drivers")
+                or formula_gap_plan.get("remaining_weighted_drivers")
+            )
+            if selected_formula_contract:
+                search_summary["remaining_formula_gap"] = selected_formula_contract.get("remaining_formula_gap")
+                search_summary["selected_formula_gap_contract"] = selected_formula_contract
+            if not search_summary.get("llm_candidate_frontier"):
+                search_summary["llm_candidate_frontier"] = [
+                    {
+                        "strategy": item.get("strategy"),
+                        "family": item.get("formula_gap_portfolio_family") or item.get("family"),
+                        "passed_local_checks": item.get("passed_local_checks"),
+                        "reason": item.get("reason"),
+                        "ai": item.get("ai"),
+                        "selection_status": item.get("selection_status"),
+                        "candidate_decision": item.get("candidate_decision"),
+                        "formula_gap_contract": item.get("formula_gap_contract"),
+                    }
+                    for item in (search_summary.get("candidates") or [])
+                    if str(item.get("strategy") or "").startswith("formula_gap_portfolio_")
+                ]
         result.summary["ai_mitigation_search"] = search_summary
         _record_rewrite_llm_calls(
             result.summary,
