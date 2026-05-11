@@ -6,13 +6,18 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.config import UPLOAD_DIR
 from app.models.db import async_session, ScanJob, CreditAccount, CreditReservation
+from app.services import progress_stream
 
 
 FREE_SCAN_WORD_LIMIT = 300
+_STALE_THRESHOLD = timedelta(minutes=10)
+_PROCESSING_HEARTBEAT_STALE_THRESHOLD = timedelta(minutes=5)
+_ACTIVE_SCAN_STATUSES = ("pending", "processing", "retrying")
+_PROCESSING_SCAN_STATUSES = ("processing",)
 
 
 def _scan_cost(word_count: int) -> int:
@@ -35,6 +40,69 @@ def _read_document_text_sync(document_id: str) -> str:
             with open(path, encoding="utf-8") as f:
                 return f.read()
     return ""
+
+
+def _redis_stream_event_time(event_id: str) -> datetime | None:
+    try:
+        millis = int(str(event_id).split("-", 1)[0])
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(millis / 1000, tz=timezone.utc)
+
+
+async def _processing_scan_is_stale(job: ScanJob, *, now: datetime | None = None) -> bool:
+    """Detect a processing scan whose worker heartbeat has stopped.
+
+    Redis progress events are the lightweight worker heartbeat. If Redis is
+    unavailable or the stream is missing, keep the existing hard stale timeout
+    so live scans are not killed incorrectly.
+    """
+    if job.status not in _PROCESSING_SCAN_STATUSES or not job.created_at:
+        return False
+
+    now = now or datetime.now(timezone.utc)
+    age = now - job.created_at
+    if age > _STALE_THRESHOLD:
+        return True
+
+    latest = await progress_stream.read_latest_scan_progress(str(job.id))
+    if latest is None:
+        return False
+
+    event_time = _redis_stream_event_time(latest[0])
+    if event_time is None:
+        return False
+
+    return now - event_time > _PROCESSING_HEARTBEAT_STALE_THRESHOLD
+
+
+async def _release_active_scan_reservations(session, job_id: uuid.UUID) -> int:
+    reservations = await session.execute(
+        select(CreditReservation).where(
+            CreditReservation.job_type == "scan",
+            CreditReservation.job_id == job_id,
+            CreditReservation.status == "active",
+        )
+    )
+    released_tokens = 0
+    for reservation in reservations.scalars().all():
+        reservation.status = "released"
+        acct_result = await session.execute(
+            select(CreditAccount).where(CreditAccount.id == reservation.credit_account_id)
+        )
+        account = acct_result.scalar_one_or_none()
+        if account:
+            account.reserved_tokens = max(0, account.reserved_tokens - reservation.tokens_reserved)
+            released_tokens += reservation.tokens_reserved
+    return released_tokens
+
+
+async def _mark_scan_interrupted(session, job: ScanJob) -> int:
+    job.status = "failed"
+    job.error = "Scan interrupted during worker restart"
+    job.progress_message = "Scan worker restarted. Please retry."
+    job.completed_at = datetime.now(timezone.utc)
+    return await _release_active_scan_reservations(session, job.id)
 
 
 async def create_scan(document_id: str, user_id: str | None = None, text: str | None = None) -> dict:
@@ -110,21 +178,19 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
     async with async_session() as session:
         from sqlalchemy import func
 
-        # Only run stale recovery if user has active jobs
-        active_count = await session.scalar(
-            select(func.count()).select_from(ScanJob)
+        # Only run stale recovery if user has active jobs.
+        active_result = await session.execute(
+            select(ScanJob)
             .where(ScanJob.user_id == uid)
-            .where(ScanJob.status.in_(["processing", "pending"]))
+            .where(ScanJob.status.in_(_ACTIVE_SCAN_STATUSES))
         )
-        if active_count and active_count > 0:
-            cutoff = datetime.now(timezone.utc) - _STALE_THRESHOLD
-            await session.execute(
-                update(ScanJob)
-                .where(ScanJob.user_id == uid)
-                .where(ScanJob.status.in_(["processing", "pending"]))
-                .where(ScanJob.created_at < cutoff)
-                .values(status="failed", progress_message="Scan timed out")
-            )
+        active_jobs = active_result.scalars().all()
+        if active_jobs:
+            now = datetime.now(timezone.utc)
+            for active_job in active_jobs:
+                age = now - active_job.created_at if active_job.created_at else timedelta(0)
+                if age > _STALE_THRESHOLD or await _processing_scan_is_stale(active_job, now=now):
+                    await _mark_scan_interrupted(session, active_job)
             await session.commit()
 
         count_result = await session.execute(
@@ -166,10 +232,6 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
             "pages": (total + per_page - 1) // per_page,
         }
 
-
-_STALE_THRESHOLD = timedelta(minutes=10)
-
-
 async def _mark_stale_jobs_failed(user_id: uuid.UUID | None = None) -> None:
     """Bulk-mark processing/pending jobs older than threshold as failed.
 
@@ -180,89 +242,48 @@ async def _mark_stale_jobs_failed(user_id: uuid.UUID | None = None) -> None:
     log = logging.getLogger("scan_service.stale")
     cutoff = datetime.now(timezone.utc) - _STALE_THRESHOLD
     async with async_session() as session:
-        # Find stale job IDs first
-        q = select(ScanJob.id).where(
-            ScanJob.status.in_(["processing", "pending"]),
+        # Find stale jobs first
+        q = select(ScanJob).where(
+            ScanJob.status.in_(_ACTIVE_SCAN_STATUSES),
             ScanJob.created_at < cutoff,
         )
         if user_id:
             q = q.where(ScanJob.user_id == user_id)
         result = await session.execute(q)
-        stale_ids = [row[0] for row in result.all()]
+        stale_jobs = result.scalars().all()
 
-        if not stale_ids:
+        if not stale_jobs:
             return
 
-        # Mark jobs as failed
-        await session.execute(
-            update(ScanJob)
-            .where(ScanJob.id.in_(stale_ids))
-            .values(status="failed", progress_message="Scan timed out")
-        )
-
-        # Release active credit reservations for those jobs
-        reservations = await session.execute(
-            select(CreditReservation).where(
-                CreditReservation.job_id.in_(stale_ids),
-                CreditReservation.status == "active",
-            )
-        )
         released_count = 0
-        for res in reservations.scalars().all():
-            res.status = "released"
-            # Return reserved tokens back to available
-            acct = await session.execute(
-                select(CreditAccount).where(CreditAccount.id == res.credit_account_id)
-            )
-            account = acct.scalar_one_or_none()
-            if account:
-                account.reserved_tokens -= res.tokens_reserved
-                released_count += res.tokens_reserved
-            log.info(
-                "Released reservation %s: %d tokens for job %s",
-                res.id, res.tokens_reserved, res.job_id,
-            )
+        for stale_job in stale_jobs:
+            released_count += await _mark_scan_interrupted(session, stale_job)
 
         await session.commit()
         if released_count:
-            log.info("Stale job cleanup: %d jobs, %d tokens released", len(stale_ids), released_count)
+            log.info("Stale job cleanup: %d jobs, %d tokens released", len(stale_jobs), released_count)
 
 
 async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
     """Look up scan_job by ID, optionally scoped to a user.
 
-    Auto-marks jobs stuck in 'processing' or 'pending' for >10 min as 'failed'.
+    Auto-marks jobs stuck in active states as failed. Processing scans use the
+    Redis progress heartbeat so deploy-killed workers do not leave scans stuck.
     """
     async with async_session() as session:
         q = select(ScanJob).where(ScanJob.id == uuid.UUID(scan_id))
         if user_id:
             q = q.where(ScanJob.user_id == uuid.UUID(user_id))
+        q = q.with_for_update()
         result = await session.execute(q)
         job = result.scalar_one_or_none()
         if not job:
             return None
 
-        # Auto-recover stale processing/pending jobs
-        if job.status in ("processing", "pending") and job.created_at:
+        if job.status in _ACTIVE_SCAN_STATUSES and job.created_at:
             age = datetime.now(timezone.utc) - job.created_at
-            if age > _STALE_THRESHOLD:
-                job.status = "failed"
-                job.progress_message = "Scan timed out"
-                # Release any active credit reservation
-                res_result = await session.execute(
-                    select(CreditReservation).where(
-                        CreditReservation.job_id == job.id,
-                        CreditReservation.status == "active",
-                    )
-                )
-                for res in res_result.scalars().all():
-                    res.status = "released"
-                    acct_result = await session.execute(
-                        select(CreditAccount).where(CreditAccount.id == res.credit_account_id)
-                    )
-                    account = acct_result.scalar_one_or_none()
-                    if account:
-                        account.reserved_tokens -= res.tokens_reserved
+            if age > _STALE_THRESHOLD or await _processing_scan_is_stale(job):
+                await _mark_scan_interrupted(session, job)
                 await session.commit()
                 await session.refresh(job)
 

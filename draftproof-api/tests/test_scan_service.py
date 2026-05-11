@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -39,6 +40,10 @@ class FakeScanTask:
         self.calls.append(args)
 
 
+def _stream_id(at: datetime) -> str:
+    return f"{int(at.timestamp() * 1000)}-0"
+
+
 def test_scan_cost_is_free_through_300_words():
     assert scan_service._scan_cost(1) == 0
     assert scan_service._scan_cost(300) == 0
@@ -73,3 +78,87 @@ async def test_create_free_scan_does_not_require_credit_account(monkeypatch):
     assert len(fake_session.added) == 1
     assert fake_session.added[0].word_count == 300
     assert len(fake_task.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_processing_scan_is_stale_when_heartbeat_stops(monkeypatch):
+    now = datetime(2026, 5, 11, 0, 0, tzinfo=timezone.utc)
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000001",
+        status="processing",
+        created_at=now - timedelta(minutes=8),
+    )
+
+    async def fake_latest(_scan_id):
+        return (_stream_id(now - timedelta(minutes=6)), {"status": "processing"})
+
+    monkeypatch.setattr(
+        scan_service.progress_stream,
+        "read_latest_scan_progress",
+        fake_latest,
+    )
+
+    assert await scan_service._processing_scan_is_stale(job, now=now) is True
+
+
+@pytest.mark.asyncio
+async def test_processing_scan_is_not_stale_with_recent_heartbeat(monkeypatch):
+    now = datetime(2026, 5, 11, 0, 0, tzinfo=timezone.utc)
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000002",
+        status="processing",
+        created_at=now - timedelta(minutes=8),
+    )
+
+    async def fake_latest(_scan_id):
+        return (_stream_id(now - timedelta(minutes=1)), {"status": "processing"})
+
+    monkeypatch.setattr(
+        scan_service.progress_stream,
+        "read_latest_scan_progress",
+        fake_latest,
+    )
+
+    assert await scan_service._processing_scan_is_stale(job, now=now) is False
+
+
+@pytest.mark.asyncio
+async def test_processing_scan_falls_back_to_hard_stale_threshold(monkeypatch):
+    now = datetime(2026, 5, 11, 0, 0, tzinfo=timezone.utc)
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000003",
+        status="processing",
+        created_at=now - scan_service._STALE_THRESHOLD - timedelta(seconds=1),
+    )
+
+    async def fake_latest(_scan_id):
+        return None
+
+    monkeypatch.setattr(
+        scan_service.progress_stream,
+        "read_latest_scan_progress",
+        fake_latest,
+    )
+
+    assert await scan_service._processing_scan_is_stale(job, now=now) is True
+
+
+@pytest.mark.asyncio
+async def test_processing_scan_without_heartbeat_uses_conservative_fallback(monkeypatch):
+    now = datetime(2026, 5, 11, 0, 0, tzinfo=timezone.utc)
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000004",
+        status="processing",
+        created_at=now - timedelta(minutes=8),
+    )
+
+    async def fake_latest(_scan_id):
+        return None
+
+    monkeypatch.setattr(
+        scan_service.progress_stream,
+        "read_latest_scan_progress",
+        fake_latest,
+    )
+
+    assert await scan_service._processing_scan_is_stale(job, now=now) is False

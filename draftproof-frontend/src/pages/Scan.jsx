@@ -7,7 +7,10 @@ import CodeTexture from '../components/CodeTexture';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
+const START_SCAN_TIMEOUT_MS = 20000;
 const FREE_SCAN_WORD_LIMIT = 300;
+const START_SCAN_TIMEOUT_MESSAGE =
+  'The scan server is restarting. Please try again in a moment.';
 
 export default function Scan() {
   const [text, setText] = useState('');
@@ -171,7 +174,10 @@ export default function Scan() {
       setStatus('Queuing scan...');
       setProgressPercent(3);
       setProgressMessage('Queuing scan');
-      ({ data: scan } = await startScanWithText(text));
+      ({ data: scan } = await startScanWithText(text, {
+        signal: controller.signal,
+        timeout: START_SCAN_TIMEOUT_MS,
+      }));
 
       setStatus('Scanning...');
       setProgressPercent(scan.progress_percent || 5);
@@ -186,6 +192,15 @@ export default function Scan() {
       }
     } catch (err) {
       if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+      const isStartTimeout = err.code === 'ECONNABORTED' || (
+        err.message && err.message.toLowerCase().includes('timeout')
+      );
+      if (isStartTimeout) {
+        setShowProgress(false);
+        setProgressMessage(null);
+        setServerError(START_SCAN_TIMEOUT_MESSAGE);
+        return;
+      }
       const msg = err.response?.data?.detail || 'Scan failed';
       const httpStatus = err.response?.status;
       const isAuthExpired = httpStatus === 401 || (

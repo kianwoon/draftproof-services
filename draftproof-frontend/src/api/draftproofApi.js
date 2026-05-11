@@ -21,8 +21,10 @@ export const uploadText = (text) =>
 export const getDocument = (id) => api.get(`/documents/${id}`);
 
 // Scans
-export const startScan = (documentId) => api.post('/scans/', { document_id: documentId });
-export const startScanWithText = (text) => api.post('/scans/', { document_id: 'paste', text });
+export const startScan = (documentId, opts = {}) =>
+  api.post('/scans/', { document_id: documentId }, opts);
+export const startScanWithText = (text, opts = {}) =>
+  api.post('/scans/', { document_id: 'paste', text }, opts);
 export const getScanStatus = (scanId, opts = {}) => api.get(`/scans/${scanId}`, opts);
 export const listScans = (page = 1, perPage = 10, opts = {}) =>
   api.get('/scans/', { params: { page, per_page: perPage }, signal: opts.signal });
