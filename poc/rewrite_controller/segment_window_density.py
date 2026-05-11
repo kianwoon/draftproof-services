@@ -283,16 +283,13 @@ def build_segment_density_windows(
 
 
 def segment_window_tasks(text: str, report_dict: dict | None, *, limit: int = 3) -> list[dict[str, Any]]:
-    windows = build_segment_density_windows(text, report_dict, limit=max(3, int(limit or 3)))
-    families = WINDOW_FAMILIES[: max(0, int(limit or 3))]
+    task_limit = max(0, int(limit or 3))
+    windows = build_segment_density_windows(text, report_dict, limit=max(3, task_limit))
     tasks: list[dict[str, Any]] = []
-    for index, family in enumerate(families):
-        if not windows:
-            break
-        if family == "WINDOW_DENSITY_BREAK_HYBRID" and len(windows) >= 2:
-            target_windows = windows[:2]
-        else:
-            target_windows = [windows[min(index, len(windows) - 1)]]
+
+    def add_task(family: str, target_windows: list[dict[str, Any]], suffix: str) -> None:
+        if not target_windows or len(tasks) >= task_limit:
+            return
         editable_indexes = []
         for window in target_windows:
             editable_indexes.extend(
@@ -300,13 +297,40 @@ def segment_window_tasks(text: str, report_dict: dict | None, *, limit: int = 3)
                 for row in (window.get("editable_sentences") or [])
                 if isinstance(row, dict) and row.get("sentence_index") is not None
             )
+        if not editable_indexes:
+            return
         tasks.append({
             "family": family,
-            "task_id": f"{family.lower()}_{index + 1}",
+            "task_id": f"{family.lower()}_{suffix}",
             "windows": target_windows,
             "editable_sentence_indexes": sorted(set(editable_indexes)),
             "targeted_drivers": _targeted_drivers_for_family(family),
         })
+
+    if not windows or task_limit <= 0:
+        return tasks
+
+    for index, window in enumerate(windows):
+        if len(tasks) >= task_limit:
+            break
+        family = "WINDOW_TEXTURE_REBUILD" if index == 0 else "WINDOW_COMPRESS_REFRAME"
+        add_task(family, [window], f"{index + 1}")
+        if len(tasks) >= task_limit:
+            break
+        if index == 0 and len(windows) >= 2:
+            add_task("WINDOW_DENSITY_BREAK_HYBRID", windows[:2], f"{index + 1}")
+
+    cursor = 0
+    while len(tasks) < task_limit and windows:
+        family = WINDOW_FAMILIES[len(tasks) % len(WINDOW_FAMILIES)]
+        if family == "WINDOW_DENSITY_BREAK_HYBRID" and len(windows) >= 2:
+            first = cursor % len(windows)
+            second = (cursor + 1) % len(windows)
+            target_windows = [windows[first], windows[second]]
+        else:
+            target_windows = [windows[cursor % len(windows)]]
+        add_task(family, target_windows, f"extended_{len(tasks) + 1}")
+        cursor += 1
     return tasks
 
 

@@ -16431,6 +16431,45 @@ def _rewrite_phase_budget_plan(
         post_segment_llm = 0
         unallocated_scan_reserve = 2 if total_scans >= 12 else 1 if total_scans >= 8 else 0
         unallocated_llm_reserve = 1 if total_llm >= 8 else 0
+        base_scan_contract = 14
+        base_llm_contract = 10
+        extra_scans = max(0, total_scans - base_scan_contract)
+        extra_llm = max(0, total_llm - base_llm_contract)
+        if extra_scans > 0:
+            segment_goal_scan_cap = max(
+                segment_scans,
+                int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_GOAL_MAX_SCANS", 12.0)),
+            )
+            formula_goal_scan_cap = max(
+                formula_scans,
+                int(_float_env("DRAFTPROOF_FORMULA_CONVERGENCE_GOAL_MAX_SCANS", 6.0)),
+            )
+            post_goal_scan_cap = max(
+                post_segment_scans,
+                int(_float_env("DRAFTPROOF_POST_SEGMENT_GOAL_MAX_SCANS", 3.0)),
+            )
+            segment_extra = min(extra_scans, max(0, segment_goal_scan_cap - segment_scans))
+            segment_scans += segment_extra
+            extra_scans -= segment_extra
+            formula_extra = min(extra_scans, max(0, formula_goal_scan_cap - formula_scans))
+            formula_scans += formula_extra
+            extra_scans -= formula_extra
+            post_extra = min(extra_scans, max(0, post_goal_scan_cap - post_segment_scans))
+            post_segment_scans += post_extra
+        if extra_llm > 0:
+            segment_goal_llm_cap = max(
+                segment_llm,
+                int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_GOAL_MAX_LLM_CALLS", 10.0)),
+            )
+            formula_goal_llm_cap = max(
+                formula_llm,
+                int(_float_env("DRAFTPROOF_FORMULA_CONVERGENCE_GOAL_MAX_LLM_CALLS", 3.0)),
+            )
+            segment_llm_extra = min(extra_llm, max(0, segment_goal_llm_cap - segment_llm))
+            segment_llm += segment_llm_extra
+            extra_llm -= segment_llm_extra
+            formula_llm_extra = min(extra_llm, max(0, formula_goal_llm_cap - formula_llm))
+            formula_llm += formula_llm_extra
     else:
         formula_scans = min(int(formula_default.get("max_scans") or 0), 3)
         formula_llm = min(int(formula_default.get("max_llm_calls") or 0), 1)
@@ -16458,7 +16497,13 @@ def _rewrite_phase_budget_plan(
     return {
         "version": "phase_budget_plan_v1",
         "enabled": True,
-        "reason": "segment_density_or_topk_priority" if segment_needed else "standard_formula_priority",
+        "reason": (
+            "segment_density_or_topk_goal_first_extended"
+            if segment_needed and (total_scans > 14 or total_llm > 10)
+            else "segment_density_or_topk_priority"
+            if segment_needed
+            else "standard_formula_priority"
+        ),
         "total": {
             "max_scans": total_scans,
             "max_llm_calls": total_llm,
@@ -26508,6 +26553,170 @@ def run_rewrite_pipeline(
             "post_selection_ai_density_breaker",
             seconds=round(time.time() - density_t0, 3),
             scans=int(stored_density_breaker_result.get("scans_used") or 0),
+        )
+
+    segment_window_followup_should_run = (
+        _env_flag("DRAFTPROOF_SEGMENT_WINDOW_FOLLOWUP_CONTROLLER", True)
+        and _env_flag("DRAFTPROOF_SEGMENT_WINDOW_DENSITY_CONTROLLER", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    )
+    if segment_window_followup_should_run:
+        followup_profile = _turnitin_like_ai_profile(rewritten_report_dict)
+        followup_density = _eligible_span_density_contract(rewritten_text, rewritten_report_dict)
+        followup_components = (
+            followup_profile.get("components")
+            if isinstance(followup_profile.get("components"), dict)
+            else {}
+        )
+        segment_window_followup_should_run = bool(
+            not followup_profile.get("target_met")
+            and (
+                not followup_density.get("safe")
+                or float(followup_components.get("topk_calibrated_risk") or 0.0)
+                >= _safe_topk_calibrated_limit()
+            )
+        )
+    if segment_window_followup_should_run and not global_rewrite_budget.can_run(
+        min_seconds=8.0,
+        min_scans=1,
+        min_llm_calls=1,
+    ):
+        stored_segment_window_followup_result = _global_phase_budget_skip(
+            "segment_window_density_controller_followup",
+            min_seconds=8.0,
+            min_scans=1,
+            min_llm_calls=1,
+        ) or {}
+        result.summary["segment_window_density_controller_followup"] = stored_segment_window_followup_result
+        stage_timings.append({
+            "stage": "segment_window_density_controller_followup",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_segment_window_followup_result.get("reason"),
+        })
+    elif segment_window_followup_should_run:
+        report_progress(83, "Running follow-up segment-window density controller")
+        segment_followup_t0 = time.time()
+        try:
+            remaining_scans = global_rewrite_budget.remaining_scans()
+            remaining_llm = global_rewrite_budget.remaining_llm_calls()
+            followup_scan_cap = max(0, int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_FOLLOWUP_MAX_SCANS", 4.0)))
+            followup_llm_cap = max(0, int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_FOLLOWUP_MAX_LLM_CALLS", 4.0)))
+            max_followup_scans = min(
+                followup_scan_cap,
+                remaining_scans if remaining_scans is not None else followup_scan_cap,
+            )
+            max_followup_llm = min(
+                followup_llm_cap,
+                remaining_llm if remaining_llm is not None else followup_llm_cap,
+            )
+            followup_key = (
+                api_key
+                or os.environ.get("OPENROUTER_API_KEY")
+                or os.environ.get("LLM_API_KEY")
+            )
+            followup_gateway = (
+                LLMGateway(LLMConfig(
+                    api_key=followup_key,
+                    model=generator_model,
+                    base_url=base_url,
+                    timeout=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_TIMEOUT", "90")),
+                    max_retries=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_RETRIES", "1")),
+                    max_tokens=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_MAX_TOKENS", "2600")),
+                    temperature=float(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_TEMPERATURE", "0.42")),
+                ))
+                if followup_key and max_followup_llm > 0
+                else None
+            )
+            segment_window_followup_result = _segment_window_density_controller(
+                rewritten_text,
+                rewritten_report_dict,
+                original_report_dict,
+                gateway=followup_gateway,
+                scan_func=_full_scan_report_dict,
+                max_scans=max_followup_scans,
+                max_llm_calls=max_followup_llm,
+            )
+        except Exception as exc:
+            segment_window_followup_result = {
+                "enabled": True,
+                "selected": False,
+                "reason": f"segment_window_density_controller_followup_error {exc}",
+            }
+        stored_segment_window_followup_result = {
+            key: value
+            for key, value in segment_window_followup_result.items()
+            if key not in {"selected_text", "selected_report"}
+        }
+        result.summary["segment_window_density_controller_followup"] = stored_segment_window_followup_result
+        if (
+            segment_window_followup_result.get("selected")
+            and _global_controller_phase_accepted(
+                "segment_window_density_controller_followup",
+                segment_window_followup_result,
+                stored_segment_window_followup_result,
+            )
+        ):
+            selected_report = segment_window_followup_result.get("selected_report")
+            selected_text = segment_window_followup_result.get("selected_text")
+            if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                rewritten_text = selected_text
+                rewritten_report_dict = selected_report
+                attempted_report_dict = rewritten_report_dict
+                rewritten_ai = _badge_ai(rewritten_report_dict)
+                rewritten_wq = _badge_wq(rewritten_report_dict)
+                rewritten_total = _finding_total(rewritten_report_dict)
+                rewritten_review_burden = _review_burden(rewritten_report_dict)
+                rewritten_severity = _weighted_severity(rewritten_report_dict)
+                rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                if result.mp_result:
+                    result.mp_result.final_text = rewritten_text
+                    result.mp_result.converged = True
+                    result.mp_result.convergence_reason = (
+                        "Selected follow-up segment-window density candidate: "
+                        f"{segment_window_followup_result.get('selected_strategy')}"
+                    )
+                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                ai_search_selected = True
+                _clear_stale_rollback_for_kept_ai_mitigation(
+                    result.summary,
+                    "follow-up segment-window density controller",
+                )
+                result.summary["selected_strategy"] = segment_window_followup_result.get("selected_strategy")
+                result.summary["selected_segment_window_followup_strategy"] = (
+                    segment_window_followup_result.get("selected_strategy")
+                )
+                result.summary["detect_scores"].update({
+                    "rewritten_ai": rewritten_ai,
+                    "rewritten_writing_quality": rewritten_wq,
+                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                    "rewritten_findings": rewritten_total,
+                    "rewritten_review_burden": rewritten_review_burden,
+                    "rewritten_weighted_severity": rewritten_severity,
+                })
+        stage_timings.append({
+            "stage": "segment_window_density_controller_followup",
+            "seconds": round(time.time() - segment_followup_t0, 3),
+            "candidates": len(stored_segment_window_followup_result.get("candidate_frontier") or []),
+            "scans": stored_segment_window_followup_result.get("scans_used"),
+            "llm_calls": stored_segment_window_followup_result.get("llm_calls"),
+            "selected": bool(segment_window_followup_result.get("selected")),
+            "stop_reason": segment_window_followup_result.get("reason"),
+        })
+        global_rewrite_budget.record_stage(
+            "segment_window_density_controller_followup",
+            seconds=round(time.time() - segment_followup_t0, 3),
+            scans=int(stored_segment_window_followup_result.get("scans_used") or 0),
+            llm_calls=int(stored_segment_window_followup_result.get("llm_calls") or 0),
         )
 
     post_density_anchor_selected = False

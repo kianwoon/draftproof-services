@@ -8595,6 +8595,38 @@ assert_test(
     and planned_llm_total <= 10,
     "phase budget plan caps AI search before it can consume segment-window and follow-up budget",
 )
+goal_first_phase_budget_plan = _rewrite_phase_budget_plan(
+    auto_repair_source,
+    unsafe_density_report_for_budget,
+    unsafe_density_report_for_budget,
+    max_scans=30,
+    max_llm_calls=20,
+    ai_search_policy={"max_candidate_scans": 8, "max_llm_calls": 10},
+    formula_gap_budget=formula_gap_budget_contract(),
+)
+goal_phase_budgets = goal_first_phase_budget_plan["phases"]
+goal_planned_scan_total = (
+    goal_phase_budgets["ai_mitigation_search"]["max_scans"]
+    + goal_phase_budgets["formula_convergence_controller"]["max_scans"]
+    + goal_phase_budgets["segment_window_density_controller"]["max_scans"]
+    + goal_phase_budgets["post_segment_followup"]["max_scans"]
+)
+goal_planned_llm_total = (
+    goal_phase_budgets["ai_mitigation_search"]["max_llm_calls"]
+    + goal_phase_budgets["formula_convergence_controller"]["max_llm_calls"]
+    + goal_phase_budgets["segment_window_density_controller"]["max_llm_calls"]
+    + goal_phase_budgets["post_segment_followup"]["max_llm_calls"]
+)
+assert_test(
+    goal_first_phase_budget_plan["reason"] == "segment_density_or_topk_goal_first_extended"
+    and goal_phase_budgets["segment_window_density_controller"]["max_scans"] > 3
+    and goal_phase_budgets["segment_window_density_controller"]["max_llm_calls"] > 3
+    and goal_phase_budgets["formula_convergence_controller"]["max_scans"] > 2
+    and goal_phase_budgets["post_segment_followup"]["max_scans"] > 1
+    and goal_planned_scan_total <= 30
+    and goal_planned_llm_total <= 20,
+    "goal-first phase budget sends extra global budget to density and formula phases",
+)
 worker_tasks_source = Path("worker/app/tasks.py").read_text()
 assert_test(
     "segment_window_density_controller" in worker_tasks_source
@@ -9168,6 +9200,7 @@ segment_window_report = {
 }
 segment_windows = build_segment_density_windows(segment_window_text, segment_window_report, limit=3)
 segment_tasks = segment_window_tasks(segment_window_text, segment_window_report, limit=3)
+extended_segment_tasks = segment_window_tasks(segment_window_text, segment_window_report, limit=6)
 segment_prompt = segment_window_candidate_prompt(segment_window_text, segment_window_report, segment_tasks[0])
 segment_payload, segment_payload_reason = extract_segment_window_payload(json.dumps({
     "strategy": "WINDOW_TEXTURE_REBUILD",
@@ -9196,6 +9229,12 @@ assert_test(
     and 5 <= segment_windows[0]["sentence_count"] <= 10
     and segment_windows[0]["editable_sentence_count"] >= 1,
     "segment-window controller ranks overlapping 5-10 sentence density windows",
+)
+assert_test(
+    len(extended_segment_tasks) > len(segment_tasks)
+    and len(extended_segment_tasks) <= 6
+    and all(task.get("editable_sentence_indexes") for task in extended_segment_tasks),
+    "segment-window task generator uses extra LLM budget across additional windows",
 )
 assert_test(
     segment_window_is_canonical_fact_sentence("The United States was founded in 1776 after independence from Britain.")
