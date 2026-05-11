@@ -8428,6 +8428,14 @@ assert_test(
     and '"selected_human_anchor_probe_strategy"' in worker_tasks_source,
     "worker debug export includes post-density Human Anchor probe details",
 )
+assert_test(
+    '"debug_export_version": "rewrite_controller_debug_passthrough_v3"' in worker_tasks_source
+    and '"rewrite_compiler"' in worker_tasks_source
+    and '"deterministic_rewrite_compiler"' in worker_tasks_source
+    and '"selected_rewrite_compiler_strategy"' in worker_tasks_source
+    and '"llm_calls_used": stage.get("llm_calls")' in worker_tasks_source,
+    "worker debug export includes deterministic rewrite compiler details and fallback timing fields",
+)
 
 llm_summary_probe = {}
 _record_rewrite_llm_calls(llm_summary_probe, "ai_search_llm_calls_used", 2)

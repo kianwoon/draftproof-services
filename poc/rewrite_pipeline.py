@@ -26760,6 +26760,13 @@ def run_rewrite_pipeline(
         ),
     }
     result.summary["detector_safe_label_status"] = detector_safe_label_status
+    if (
+        not result.summary.get("selected_rewrite_compiler_strategy")
+        and str(result.summary.get("selected_strategy") or "").startswith("compiler_")
+    ):
+        result.summary["selected_rewrite_compiler_strategy"] = result.summary.get("selected_strategy")
+    if result.summary.get("rewrite_compiler") is None and isinstance(result.summary.get("deterministic_rewrite_compiler"), dict):
+        result.summary["rewrite_compiler"] = result.summary.get("deterministic_rewrite_compiler")
     texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("authorship_transformation_texture_controller")
     if not isinstance(texture_summary, dict):
         texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("post_topk_optimizer")

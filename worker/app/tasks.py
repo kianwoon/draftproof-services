@@ -609,8 +609,24 @@ def _build_rewrite_debug_log(
         }
 
     def _controller_phase_value(key: str, stage_name: str) -> dict | None:
-        value = summary.get(key) if isinstance(summary, dict) else None
+        aliases = [key]
+        if key == "rewrite_compiler":
+            aliases.append("deterministic_rewrite_compiler")
+        value = None
+        if isinstance(summary, dict):
+            for alias in aliases:
+                candidate = summary.get(alias)
+                if candidate is not None:
+                    value = candidate
+                    break
         if value is not None:
+            if isinstance(value, dict):
+                enriched = dict(value)
+                if key == "rewrite_compiler":
+                    selected_strategy = summary.get("selected_rewrite_compiler_strategy") or summary.get("selected_strategy")
+                    if selected_strategy and str(selected_strategy).startswith("compiler_"):
+                        enriched.setdefault("selected_strategy", selected_strategy)
+                return enriched
             return value
         stage = next(
             (
@@ -627,11 +643,32 @@ def _build_rewrite_debug_log(
             "reason": stage.get("stop_reason"),
             "candidate_count": stage.get("candidates"),
             "scans_used": stage.get("scans"),
+            "mode": stage.get("mode"),
+            "llm_calls_used": stage.get("llm_calls"),
+            "outcome_class": stage.get("outcome_class"),
+            "selected_strategy": (
+                summary.get("selected_rewrite_compiler_strategy") or summary.get("selected_strategy")
+                if key == "rewrite_compiler"
+                and str(summary.get("selected_strategy") or "").startswith("compiler_")
+                else None
+            ),
             "reporting_fallback": True,
         }
 
+    def _selected_rewrite_compiler_strategy() -> str | None:
+        value = summary.get("selected_rewrite_compiler_strategy") if isinstance(summary, dict) else None
+        if value:
+            return value
+        selected = summary.get("selected_strategy") if isinstance(summary, dict) else None
+        if selected and str(selected).startswith("compiler_"):
+            return selected
+        compiler = _controller_phase_value("rewrite_compiler", "rewrite_compiler")
+        if isinstance(compiler, dict) and compiler.get("selected_strategy"):
+            return compiler.get("selected_strategy")
+        return None
+
     log_data = {
-        "debug_export_version": "rewrite_controller_debug_passthrough_v2",
+        "debug_export_version": "rewrite_controller_debug_passthrough_v3",
         "debug_export_source": "worker.app.tasks._build_rewrite_debug_log",
         "runtime_code_sha": os.environ.get("DRAFTPROOF_RUNTIME_CODE_SHA"),
         "rewrite_id": rewrite_id,
@@ -723,7 +760,7 @@ def _build_rewrite_debug_log(
             "selected_density_breaker_strategy": summary.get("selected_density_breaker_strategy"),
             "selected_human_anchor_probe_strategy": summary.get("selected_human_anchor_probe_strategy"),
             "selected_auto_repair_strategy": summary.get("selected_auto_repair_strategy"),
-            "selected_rewrite_compiler_strategy": summary.get("selected_rewrite_compiler_strategy"),
+            "selected_rewrite_compiler_strategy": _selected_rewrite_compiler_strategy(),
             "ai_mitigation_search": summary.get("ai_mitigation_search"),
             "formula_convergence_controller": summary.get("formula_convergence_controller"),
             "post_selection_ai_density_breaker": _controller_phase_value(
@@ -739,6 +776,10 @@ def _build_rewrite_debug_log(
                 "auto_repair_controller",
             ),
             "rewrite_compiler": _controller_phase_value(
+                "rewrite_compiler",
+                "rewrite_compiler",
+            ),
+            "deterministic_rewrite_compiler": _controller_phase_value(
                 "rewrite_compiler",
                 "rewrite_compiler",
             ),
