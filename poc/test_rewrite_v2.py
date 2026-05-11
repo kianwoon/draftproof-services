@@ -71,8 +71,10 @@ from rewrite_controller import (
     RewriteRunBudget,
     build_candidate_record,
     classify_ai_search_candidate,
+    assemble_formula_gap_candidate,
     evaluate_text_quality_regression,
     extract_formula_gap_candidate_payload,
+    formula_gap_block_portfolio_tasks,
     formula_gap_budget_contract,
     formula_gap_candidate_prompt,
     formula_gap_named_entity_inventory,
@@ -8834,16 +8836,35 @@ valid_formula_payload = json.dumps({
     "unsupported_new_facts": False,
     "candidate_text": "The United States began with independence in 1776. Its later growth mixed political power, industry, immigration, and cultural influence.",
 })
+valid_patch_payload = json.dumps({
+    "strategy": "STATISTICAL_TEXTURE_REBUILD",
+    "targeted_drivers": ["ai_likelihood", "rewrite_smoothness"],
+    "changed_blocks": [1],
+    "fact_inventory_preserved": True,
+    "core_claims_preserved_or_merged": True,
+    "protected_anchors_preserved": True,
+    "unsupported_new_facts": False,
+    "patches": [
+        {
+            "block_index": 1,
+            "operation": "replace",
+            "replacement_text": "Culture still carries weight, but not in a neat list. Films, sport, music, and technology pull in different directions, and that uneven mix is part of the point.",
+        }
+    ],
+})
 accepted_payload, accepted_reason = extract_formula_gap_candidate_payload(valid_formula_payload)
+accepted_patch_payload, accepted_patch_reason = extract_formula_gap_candidate_payload(valid_patch_payload)
 rejected_payload, rejected_reason = extract_formula_gap_candidate_payload(
     valid_formula_payload.replace('"unsupported_new_facts": false', '"unsupported_new_facts": true')
 )
 assert_test(
     accepted_payload is not None
+    and accepted_patch_payload is not None
     and not accepted_reason
+    and not accepted_patch_reason
     and rejected_payload is None
     and rejected_reason == "unsupported_new_facts_declared",
-    "formula-gap LLM JSON contract accepts valid candidates and rejects declared unsupported facts",
+    "formula-gap LLM JSON contract accepts full candidates or block patches and rejects declared unsupported facts",
 )
 fake_formula_report = {
     "ai_risk_badge": {
@@ -8859,12 +8880,23 @@ fake_formula_report = {
         "human_anchor_discount": 12,
     }
 }
+block_source_probe = (
+    "The United States was founded in 1776 after the colonies declared independence from Britain.\n\n"
+    "One of the most important features of the country is its economy and culture. It has become influential in many areas and plays a major role around the world.\n\n"
+    "In conclusion, the country remains powerful and important because of its history, economy, and culture."
+)
+block_tasks_probe = formula_gap_block_portfolio_tasks(block_source_probe, fake_formula_report, limit=5)
+assembled_patch_text, applied_patch_rows, assembly_reason = assemble_formula_gap_candidate(
+    block_source_probe,
+    accepted_patch_payload or {},
+)
 formula_plan_probe = formula_gap_plan(fake_formula_report)
 prompt_probe = formula_gap_candidate_prompt(
-    "The United States was founded in 1776.",
+    block_source_probe,
     fake_formula_report,
     "LOW_VALUE_COMPRESS_REMOVE",
     protected_anchors=[{"text": "1776", "reason": "numeric"}],
+    block_task=block_tasks_probe[-1] if block_tasks_probe else None,
 )
 entity_probe = formula_gap_named_entity_inventory(
     "The United States joined NATO work with New York City, Hollywood, and The Civil Rights Movement as examples."
@@ -8875,6 +8907,22 @@ assert_test(
     and "LOW_VALUE_COMPRESS_REMOVE" in prompt_probe
     and "1776" in prompt_probe,
     "formula-gap plan and prompt expose weighted drivers, strict target, and protected anchors",
+)
+assert_test(
+    len(block_tasks_probe) == 5
+    and all(task.get("block_indexes") for task in block_tasks_probe)
+    and "patches" in prompt_probe
+    and "Selected source blocks" in prompt_probe
+    and "assembler will copy unchanged blocks exactly" in prompt_probe,
+    "formula-gap orchestrator divides five LLM calls into block-scoped patch tasks",
+)
+assert_test(
+    applied_patch_rows
+    and not assembly_reason
+    and assembled_patch_text.startswith("The United States was founded in 1776")
+    and "Culture still carries weight" in assembled_patch_text
+    and assembled_patch_text.endswith("history, economy, and culture."),
+    "formula-gap assembler applies JSON patches while preserving untouched source blocks",
 )
 assert_test(
     "The United States" in entity_probe

@@ -38,6 +38,8 @@ from rewrite_controller.ai_search_selection import (
     detector_progress_rank as _detector_progress_rank,
 )
 from rewrite_controller.formula_gap_orchestrator import (
+    assemble_candidate_from_payload as _assemble_formula_gap_candidate,
+    block_portfolio_tasks as _formula_gap_block_portfolio_tasks,
     budget_contract as _formula_gap_orchestrator_budget_contract,
     extract_candidate_payload as _extract_formula_gap_candidate_payload,
     formula_gap_candidate_prompt as _formula_gap_candidate_prompt,
@@ -22642,9 +22644,22 @@ def run_rewrite_pipeline(
                         "formula_gap_candidate_orchestrator",
                         {},
                     )
-                    families = _formula_gap_portfolio_families(
-                        int(formula_gap_budget_contract.get("llm_candidate_calls") or 0)
+                    orchestrator_base_text = best_text if _best_ai_search_selectable() else search_source_text
+                    orchestrator_base_report = best_report if _best_ai_search_selectable() else original_report_dict
+                    block_tasks = _formula_gap_block_portfolio_tasks(
+                        orchestrator_base_text,
+                        orchestrator_base_report,
+                        limit=int(formula_gap_budget_contract.get("llm_candidate_calls") or 0),
                     )
+                    families = [str(task.get("family") or "") for task in block_tasks]
+                    if not families:
+                        families = _formula_gap_portfolio_families(
+                            int(formula_gap_budget_contract.get("llm_candidate_calls") or 0)
+                        )
+                        block_tasks = [
+                            {"family": family, "operation": "whole_candidate_fallback", "blocks": [], "block_indexes": []}
+                            for family in families
+                        ]
                     protected_anchor_brief = [
                         {
                             "text": span.text or search_source_text[span.start_char:span.end_char],
@@ -22663,29 +22678,54 @@ def run_rewrite_pipeline(
                         "enabled": True,
                         "started": True,
                         "portfolio_families": families,
+                        "portfolio_tasks": [
+                            {
+                                "family": task.get("family"),
+                                "operation": task.get("operation"),
+                                "block_indexes": task.get("block_indexes"),
+                                "targeted_drivers": task.get("targeted_drivers"),
+                                "blocks": [
+                                    {
+                                        "index": row.get("index"),
+                                        "role": row.get("role"),
+                                        "word_count": row.get("word_count"),
+                                        "weighted_drag": row.get("weighted_drag"),
+                                        "remove_safe": row.get("remove_safe"),
+                                        "protected_anchor_terms": row.get("protected_anchor_terms"),
+                                    }
+                                    for row in (task.get("blocks") or [])
+                                    if isinstance(row, dict)
+                                ],
+                            }
+                            for task in block_tasks
+                        ],
                         "base_strategy": best_strategy if _best_ai_search_selectable() else "source",
                         "candidate_frontier": orchestrator_summary.get("candidate_frontier") or [],
                     })
-                    for family_index, family in enumerate(families, start=1):
+                    for family_index, block_task in enumerate(block_tasks, start=1):
+                        family = str(block_task.get("family") or families[min(family_index - 1, len(families) - 1)])
                         if _search_budget_exhausted("formula_gap_portfolio_llm", before_llm=True):
                             orchestrator_summary["stop_reason"] = adaptive_stop_reason or "budget_exhausted"
                             break
                         report_progress(
                             min(89, 78 + family_index),
-                            f"Trying formula-gap portfolio candidate {family_index}/{len(families)}",
+                            f"Trying formula-gap block candidate {family_index}/{len(block_tasks)}",
                         )
                         candidate_record = {
-                            "strategy": f"formula_gap_portfolio_{family.lower()}",
+                            "strategy": f"formula_gap_portfolio_{family.lower()}_b{'_'.join(str(i) for i in (block_task.get('block_indexes') or []))}",
                             "family": family,
+                            "block_indexes": block_task.get("block_indexes") or [],
+                            "operation": block_task.get("operation"),
                             "passed_local_checks": False,
                             "formula_gap_candidate_orchestrator": True,
                         }
                         try:
                             prompt = _formula_gap_candidate_prompt(
-                                best_text if _best_ai_search_selectable() else search_source_text,
-                                best_report if _best_ai_search_selectable() else original_report_dict,
+                                orchestrator_base_text,
+                                orchestrator_base_report,
                                 family,
                                 protected_anchors=protected_anchor_brief,
+                                block_task=block_task,
                             )
                             search_summary["llm_calls"] += 1
                             orchestrator_summary["llm_calls_used"] = int(
@@ -22713,12 +22753,13 @@ def run_rewrite_pipeline(
                                 search_summary["candidates"].append(candidate_record)
                                 orchestrator_summary["candidate_frontier"].append(candidate_record)
                                 continue
-                            candidate = _clean_full_document_candidate(
-                                str(payload.get("candidate_text") or ""),
-                                best_text if _best_ai_search_selectable() else search_source_text,
+                            assembled_candidate, applied_patches, assembly_reason = _assemble_formula_gap_candidate(
+                                orchestrator_base_text,
+                                payload,
                             )
+                            candidate = _clean_full_document_candidate(assembled_candidate, orchestrator_base_text)
                             if not candidate:
-                                candidate_record["reason"] = "empty_or_unchanged_candidate"
+                                candidate_record["reason"] = assembly_reason or "empty_or_unchanged_candidate"
                                 candidate_record["payload_strategy"] = payload.get("strategy")
                                 search_summary["candidates"].append(candidate_record)
                                 orchestrator_summary["candidate_frontier"].append(candidate_record)
@@ -22730,6 +22771,13 @@ def run_rewrite_pipeline(
                                 extra={
                                     "formula_gap_candidate_orchestrator": True,
                                     "formula_gap_portfolio_family": family,
+                                    "block_scoped_portfolio_task": {
+                                        "family": block_task.get("family"),
+                                        "operation": block_task.get("operation"),
+                                        "block_indexes": block_task.get("block_indexes"),
+                                        "targeted_drivers": block_task.get("targeted_drivers"),
+                                    },
+                                    "applied_formula_gap_patches": applied_patches,
                                     "targeted_drivers": payload.get("targeted_drivers"),
                                     "changed_blocks": payload.get("changed_blocks"),
                                     "fact_inventory_preserved": payload.get("fact_inventory_preserved"),
@@ -22767,6 +22815,8 @@ def run_rewrite_pipeline(
                             "selection_status": item.get("selection_status"),
                             "candidate_decision": item.get("candidate_decision"),
                             "formula_gap_contract": item.get("formula_gap_contract"),
+                            "block_scoped_portfolio_task": item.get("block_scoped_portfolio_task"),
+                            "applied_formula_gap_patches": item.get("applied_formula_gap_patches"),
                         }
                         for item in (search_summary.get("candidates") or [])
                         if str(item.get("strategy") or "").startswith("formula_gap_portfolio_")
