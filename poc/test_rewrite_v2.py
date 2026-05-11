@@ -60,6 +60,11 @@ from rewrite.auto_repair_controller import (
     candidate_pool as auto_repair_candidate_pool,
     run_auto_repair_controller,
 )
+from rewrite_compiler import CompilerConfig, CompilerDependencies, run_rewrite_compiler
+from rewrite_compiler.evaluator import evaluate_quality as compiler_evaluate_quality
+from rewrite_compiler.planner import build_plan as compiler_build_plan
+from rewrite_compiler.selector import evaluate_scanned_candidate as compiler_evaluate_scanned_candidate
+from rewrite_compiler.validator import validate_candidate as compiler_validate_candidate
 from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
 from rewrite_pipeline import (
@@ -8170,6 +8175,106 @@ assert_test(
     and auto_repair_result.get("accepted_rounds") >= 1
     and (auto_repair_result.get("score_drop") or 0) > 0,
     "auto-repair controller rescans bounded candidates and keeps safe Pareto progress",
+)
+
+compiler_deps = CompilerDependencies(
+    split_sentences=_split_sentences,
+    text_word_count=_text_word_count,
+    geometry_risk_map=_geometry_risk_map,
+    is_canonical_fact_sentence=_ai_density_breaker_canonical_fact_sentence,
+    splice_sentence=_splice_sentence_for_auto_repair,
+    repair_aggression_score=_repair_aggression_score,
+    locality_score=_locality_score,
+    detect_protected_spans=detect_protected_spans,
+    protected_loss_reason=_ai_search_protected_loss_reason,
+    concept_origin_reject_reason=_candidate_concept_origin_reject_reason,
+    drift_checker=lambda _source, _candidate, **_kwargs: SimpleNamespace(accepted=True, similarity=0.99, reasons=[]),
+    scan_func=lambda candidate: auto_repair_improved if "One strength of" in candidate or "At the same time" not in candidate else auto_repair_base,
+    turnitin_profile=_turnitin_like_ai_profile,
+    turnitin_gate_status=_turnitin_like_ai_gate_status,
+    strict_safe_status=_strict_ai_safe_band_status,
+    contribution_scores=_contribution_scores,
+    integrity_scores=_integrity_scores,
+    badge_ai=lambda report: ((report or {}).get("ai_risk_badge") or {}).get("ai_likelihood_score"),
+    finding_total=_simple_report_finding_total,
+    review_burden=_simple_report_review_burden,
+    weighted_severity=_simple_report_weighted_severity,
+    critical_high_count=lambda report: len(((report or {}).get("findings") or {}).get("critical", []))
+    + len(((report or {}).get("findings") or {}).get("high", [])),
+)
+compiler_plan = compiler_build_plan(auto_repair_source, auto_repair_base, compiler_deps, max_windows=4)
+assert_test(
+    any(row.get("classification") == "canonical_fact_preserve" and "1776" in row.get("sentence", "") for row in compiler_plan.get("sentence_risk_map") or [])
+    and any(row.get("classification") == "generic_expansion_target" for row in compiler_plan.get("selected_windows") or []),
+    "rewrite compiler preserves canonical facts and targets generic expansion/template sentences",
+)
+fact_loss_candidate = auto_repair_source.replace("1776", "the founding year", 1)
+fact_loss_validation = compiler_validate_candidate(
+    auto_repair_source,
+    fact_loss_candidate,
+    {"operator": "COMPRESS_ABSTRACT_CLAIM"},
+    compiler_deps,
+)
+assert_test(
+    fact_loss_validation.get("passed") is False
+    and any("lost" in reason for reason in fact_loss_validation.get("reject_reasons") or []),
+    "rewrite compiler validator blocks fact/anchor loss",
+)
+overcompressed_quality = compiler_evaluate_quality(
+    auto_repair_source,
+    "The United States has influence.",
+    {"operator": "REMOVE_LOW_VALUE_GENERIC_BLOCK"},
+    compiler_deps,
+)
+assert_test(
+    overcompressed_quality.get("passed") is False
+    and "over_compressed_document" in (overcompressed_quality.get("reject_reasons") or []),
+    "rewrite compiler evaluator rejects over-compressed output",
+)
+compiler_candidate = auto_repair_source.replace(
+    "One of the biggest strengths of the United States is its economic power.",
+    "One strength of the United States is its economic power.",
+)
+compiler_validation = compiler_validate_candidate(
+    auto_repair_source,
+    compiler_candidate,
+    {"operator": "COMPRESS_ABSTRACT_CLAIM"},
+    compiler_deps,
+)
+compiler_quality = compiler_evaluate_quality(
+    auto_repair_source,
+    compiler_candidate,
+    {"operator": "COMPRESS_ABSTRACT_CLAIM"},
+    compiler_deps,
+)
+compiler_candidate_eval = compiler_evaluate_scanned_candidate(
+    auto_repair_source,
+    auto_repair_base,
+    compiler_candidate,
+    auto_repair_improved,
+    auto_repair_base,
+    compiler_deps,
+    validation=compiler_validation,
+    quality=compiler_quality,
+)
+assert_test(
+    compiler_candidate_eval.get("accepted") is True
+    and compiler_candidate_eval.get("outcome_class") == "unsafe_partial_improvement"
+    and (compiler_candidate_eval.get("strict_ai_safe_band") or {}).get("achieved") is False,
+    "rewrite compiler preserves useful formula drops but labels unsafe detector drivers honestly",
+)
+compiler_result = run_rewrite_compiler(
+    auto_repair_source,
+    auto_repair_base,
+    auto_repair_base,
+    compiler_deps,
+    config=CompilerConfig(mode="compiler_strict", max_rounds=1, max_scans=4, candidate_pool_limit=8, shortlist_limit=4),
+)
+assert_test(
+    compiler_result.get("selected") is True
+    and compiler_result.get("llm_calls_used") == 0
+    and (compiler_result.get("score_drop") or 0) > 0,
+    "rewrite compiler strict mode selects deterministic scanned progress without LLM calls",
 )
 
 density_smoothness_slippage_report = {

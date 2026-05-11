@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_from_json
 from rewrite import run_rewrite, RewriteConfig, RewriteModuleResult
 from rewrite.auto_repair_controller import AutoRepairDependencies, run_auto_repair_controller
+from rewrite_compiler import CompilerConfig, CompilerDependencies, run_rewrite_compiler
 from rewrite.guards import detect_protected_spans, check_semantic_drift
 from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
@@ -25274,6 +25275,124 @@ def run_rewrite_pipeline(
             "stop_reason": auto_repair_result.get("reason"),
         })
 
+    rewrite_compiler_selected = False
+    if (
+        _env_flag("DRAFTPROOF_REWRITE_COMPILER_ENABLED", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    ):
+        report_progress(88, "Running deterministic rewrite compiler")
+        compiler_t0 = time.time()
+        compiler_mode = os.environ.get("DRAFTPROOF_REWRITE_COMPILER_MODE", "compiler_strict")
+        try:
+            compiler_deps = CompilerDependencies(
+                split_sentences=_split_sentences,
+                text_word_count=_text_word_count,
+                geometry_risk_map=_geometry_risk_map,
+                is_canonical_fact_sentence=_ai_density_breaker_canonical_fact_sentence,
+                splice_sentence=_splice_sentence_for_auto_repair,
+                repair_aggression_score=_repair_aggression_score,
+                locality_score=_locality_score,
+                detect_protected_spans=detect_protected_spans,
+                protected_loss_reason=_ai_search_protected_loss_reason,
+                concept_origin_reject_reason=_candidate_concept_origin_reject_reason,
+                drift_checker=check_semantic_drift,
+                scan_func=_full_scan_report_dict,
+                turnitin_profile=_turnitin_like_ai_profile,
+                turnitin_gate_status=_turnitin_like_ai_gate_status,
+                strict_safe_status=_strict_ai_safe_band_status,
+                contribution_scores=_contribution_scores,
+                integrity_scores=_integrity_scores,
+                badge_ai=_badge_ai,
+                finding_total=_finding_total,
+                review_burden=_review_burden,
+                weighted_severity=_weighted_severity,
+                critical_high_count=_critical_high_count,
+            )
+            compiler_result = run_rewrite_compiler(
+                rewritten_text,
+                rewritten_report_dict,
+                original_report_dict,
+                compiler_deps,
+                config=CompilerConfig(
+                    mode=compiler_mode,
+                    max_rounds=int(_float_env("DRAFTPROOF_REWRITE_COMPILER_MAX_ROUNDS", 1.0)),
+                    max_scans=int(_float_env("DRAFTPROOF_REWRITE_COMPILER_MAX_SCANS", 4.0)),
+                    candidate_pool_limit=int(_float_env("DRAFTPROOF_REWRITE_COMPILER_CANDIDATE_LIMIT", 14.0)),
+                    shortlist_limit=int(_float_env("DRAFTPROOF_REWRITE_COMPILER_SHORTLIST_LIMIT", 4.0)),
+                    max_llm_calls=int(_float_env("DRAFTPROOF_REWRITE_COMPILER_MAX_LLM_CALLS", 0.0)),
+                ),
+            )
+        except Exception as exc:
+            compiler_result = {
+                "enabled": True,
+                "selected": False,
+                "reason": f"rewrite_compiler_error {exc}",
+                "mode": compiler_mode,
+            }
+        stored_compiler_result = {
+            key: value
+            for key, value in compiler_result.items()
+            if key not in {"selected_text", "selected_report"}
+        }
+        result.summary["rewrite_compiler"] = stored_compiler_result
+        result.summary["deterministic_rewrite_compiler"] = stored_compiler_result
+        if compiler_result.get("selected"):
+            selected_report = compiler_result.get("selected_report")
+            selected_text = compiler_result.get("selected_text")
+            if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                rewritten_text = selected_text
+                rewritten_report_dict = selected_report
+                attempted_report_dict = rewritten_report_dict
+                rewritten_ai = _badge_ai(rewritten_report_dict)
+                rewritten_wq = _badge_wq(rewritten_report_dict)
+                rewritten_total = _finding_total(rewritten_report_dict)
+                rewritten_review_burden = _review_burden(rewritten_report_dict)
+                rewritten_severity = _weighted_severity(rewritten_report_dict)
+                rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                if result.mp_result:
+                    result.mp_result.final_text = rewritten_text
+                    result.mp_result.converged = True
+                    result.mp_result.convergence_reason = (
+                        "Selected deterministic rewrite compiler candidate: "
+                        f"{compiler_result.get('selected_strategy')}"
+                    )
+                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                ai_search_selected = True
+                rewrite_compiler_selected = True
+                _clear_stale_rollback_for_kept_ai_mitigation(
+                    result.summary,
+                    "deterministic rewrite compiler",
+                )
+                result.summary["selected_strategy"] = compiler_result.get("selected_strategy")
+                result.summary["selected_rewrite_compiler_strategy"] = compiler_result.get("selected_strategy")
+                result.summary["rewrite_compiler_outcome_class"] = compiler_result.get("outcome_class")
+                result.summary["detect_scores"].update({
+                    "rewritten_ai": rewritten_ai,
+                    "rewritten_writing_quality": rewritten_wq,
+                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                    "rewritten_findings": rewritten_total,
+                    "rewritten_review_burden": rewritten_review_burden,
+                    "rewritten_weighted_severity": rewritten_severity,
+                })
+        stage_timings.append({
+            "stage": "rewrite_compiler",
+            "seconds": round(time.time() - compiler_t0, 3),
+            "mode": stored_compiler_result.get("mode"),
+            "candidates": len(stored_compiler_result.get("candidates") or []),
+            "scans": stored_compiler_result.get("scans_used"),
+            "llm_calls": stored_compiler_result.get("llm_calls_used"),
+            "selected": bool(compiler_result.get("selected")),
+            "outcome_class": stored_compiler_result.get("outcome_class"),
+            "stop_reason": compiler_result.get("reason"),
+        })
+
     ai_regression_tolerance = 0.25
     writing_quality_regression_tolerance = 1.0
 
@@ -26612,6 +26731,35 @@ def run_rewrite_pipeline(
             )
         )
     )
+    unsafe_detector_drivers = [
+        row for row in (final_strict_safe_band.get("remaining") or [])
+        if isinstance(row, dict)
+        and str(row.get("driver") or "") in {
+            "topk_calibrated_risk",
+            "external_ai_flag_risk",
+            "ai_authorship",
+            "ai_transformation",
+            "qualifying_text_ai_density",
+        }
+    ]
+    detector_safe_label_status = {
+        "detector_safe": bool(final_strict_safe_band.get("achieved") and final_turnitin_like_gate.get("target_met")),
+        "strict_ai_safe_band_achieved": bool(final_strict_safe_band.get("achieved")),
+        "turnitin_like_target_met": bool(final_turnitin_like_gate.get("target_met")),
+        "turnitin_like_score_drop": final_turnitin_like_gate.get("score_drop"),
+        "unsafe_partial": bool(
+            rewritten_text != text
+            and isinstance(final_turnitin_like_gate.get("score_drop"), (int, float))
+            and float(final_turnitin_like_gate.get("score_drop") or 0.0) > 0.001
+            and unsafe_detector_drivers
+        ),
+        "unsafe_drivers": unsafe_detector_drivers,
+        "label_rule": (
+            "ai_mitigated requires Turnitin-like score below target and all strict detector drivers in safe band; "
+            "otherwise a score drop is unsafe_partial_improvement."
+        ),
+    }
+    result.summary["detector_safe_label_status"] = detector_safe_label_status
     texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("authorship_transformation_texture_controller")
     if not isinstance(texture_summary, dict):
         texture_summary = (result.summary.get("ai_mitigation_search") or {}).get("post_topk_optimizer")
@@ -26690,6 +26838,7 @@ def run_rewrite_pipeline(
         if ai_search_selected:
             ai_footprint_outcome = str(final_ai_footprint_gate.get("outcome_class") or "")
             turnitin_like_outcome = str(final_turnitin_like_gate.get("outcome_class") or "")
+            unsafe_partial = bool((result.summary.get("detector_safe_label_status") or {}).get("unsafe_partial"))
             texture_blockers = [
                 blocker for blocker in (final_ai_footprint_gate.get("texture_blockers") or [])
                 if isinstance(blocker, dict)
@@ -26698,8 +26847,14 @@ def run_rewrite_pipeline(
                 str(blocker.get("driver") or "") in {"topk_calibrated_risk", "topk_pattern"}
                 for blocker in texture_blockers
             )
-            if ai_footprint_outcome == "ai_mitigated" and final_turnitin_like_gate.get("safe_band"):
+            if (
+                ai_footprint_outcome == "ai_mitigated"
+                and final_turnitin_like_gate.get("safe_band")
+                and bool((result.summary.get("detector_safe_label_status") or {}).get("detector_safe"))
+            ):
                 result.summary["outcome"] = "ai_mitigated"
+            elif unsafe_partial:
+                result.summary["outcome"] = "unsafe_partial_improvement"
             elif turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"}:
                 result.summary["outcome"] = "partially_ai_mitigated"
             else:
@@ -26744,7 +26899,7 @@ def run_rewrite_pipeline(
         pipeline_status = "topk_blocked"
     elif summary.get("rollback_applied") or summary.get("no_text_change"):
         pipeline_status = "original_preserved"
-    elif summary.get("outcome") in {"partially_improved", "partially_ai_mitigated", "cleanup_improved"}:
+    elif summary.get("outcome") in {"partially_improved", "partially_ai_mitigated", "cleanup_improved", "unsafe_partial_improvement"}:
         pipeline_status = summary.get("outcome")
     else:
         pipeline_status = "rewritten"
