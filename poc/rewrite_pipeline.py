@@ -16321,6 +16321,130 @@ def _formula_convergence_budget(source_text: str, budget: dict | None = None) ->
     return resolved
 
 
+def _rewrite_phase_budget_plan(
+    source_text: str,
+    current_report: dict | None,
+    original_report: dict | None,
+    *,
+    max_scans: int = 14,
+    max_llm_calls: int = 10,
+    ai_search_policy: dict | None = None,
+    formula_gap_budget: dict | None = None,
+) -> dict:
+    """Allocate the shared rewrite budget before high-cost phases start.
+
+    The global ledger records what happened after each phase. This planner
+    decides what each major controller is allowed to spend before AI search can
+    consume the whole run-level budget.
+    """
+
+    total_scans = max(0, int(max_scans or 0))
+    total_llm = max(0, int(max_llm_calls or 0))
+    ai_policy = ai_search_policy if isinstance(ai_search_policy, dict) else {}
+    formula_contract = formula_gap_budget if isinstance(formula_gap_budget, dict) else {}
+    formula_default = _formula_convergence_budget(source_text)
+    profile = _turnitin_like_ai_profile(current_report if isinstance(current_report, dict) else original_report or {})
+    density = _eligible_span_density_contract(source_text, current_report if isinstance(current_report, dict) else {})
+    components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
+    topk_risk = float(components.get("topk_calibrated_risk") or 0.0)
+    density_unsafe = not bool(density.get("safe"))
+    target_unmet = not bool(profile.get("target_met"))
+    segment_needed = bool(
+        _env_flag("DRAFTPROOF_SEGMENT_WINDOW_DENSITY_CONTROLLER", True)
+        and target_unmet
+        and (density_unsafe or topk_risk >= _safe_topk_calibrated_limit())
+    )
+
+    try:
+        ai_desired_scans = int(ai_policy.get("max_candidate_scans") or 0)
+    except (TypeError, ValueError):
+        ai_desired_scans = 0
+    if ai_desired_scans <= 0:
+        ai_desired_scans = int(_verified_candidate_scan_budget(source_text, original_report).get("max_candidate_scans") or 0)
+    try:
+        ai_desired_llm = int(ai_policy.get("max_llm_calls") or 0)
+    except (TypeError, ValueError):
+        ai_desired_llm = 0
+    if ai_desired_llm <= 0:
+        ai_desired_llm = min(total_llm or 10, int(formula_contract.get("llm_candidate_calls") or 5))
+
+    if segment_needed:
+        formula_scans = min(int(formula_default.get("max_scans") or 0), 2)
+        formula_llm = min(int(formula_default.get("max_llm_calls") or 0), 1)
+        segment_scans = min(3, total_scans)
+        segment_llm = min(3, total_llm)
+        post_segment_scans = min(1, total_scans)
+        post_segment_llm = 0
+        unallocated_scan_reserve = 2 if total_scans >= 12 else 1 if total_scans >= 8 else 0
+        unallocated_llm_reserve = 1 if total_llm >= 8 else 0
+    else:
+        formula_scans = min(int(formula_default.get("max_scans") or 0), 3)
+        formula_llm = min(int(formula_default.get("max_llm_calls") or 0), 1)
+        segment_scans = 0
+        segment_llm = 0
+        post_segment_scans = 0
+        post_segment_llm = 0
+        unallocated_scan_reserve = 1 if total_scans >= 8 else 0
+        unallocated_llm_reserve = 0
+
+    reserved_scans = formula_scans + segment_scans + post_segment_scans + unallocated_scan_reserve
+    reserved_llm = formula_llm + segment_llm + post_segment_llm + unallocated_llm_reserve
+    ai_max_scans = max(0, total_scans - reserved_scans) if total_scans else ai_desired_scans
+    ai_max_llm = max(0, total_llm - reserved_llm) if total_llm else ai_desired_llm
+    if segment_needed and total_scans >= 10:
+        ai_max_scans = min(ai_max_scans, 6)
+    if segment_needed and total_llm >= 8:
+        ai_max_llm = min(ai_max_llm, 5)
+
+    ai_scans = max(0, min(ai_desired_scans, ai_max_scans))
+    ai_llm = max(0, min(ai_desired_llm, ai_max_llm))
+    used_scans = ai_scans + formula_scans + segment_scans + post_segment_scans
+    used_llm = ai_llm + formula_llm + segment_llm + post_segment_llm
+
+    return {
+        "version": "phase_budget_plan_v1",
+        "enabled": True,
+        "reason": "segment_density_or_topk_priority" if segment_needed else "standard_formula_priority",
+        "total": {
+            "max_scans": total_scans,
+            "max_llm_calls": total_llm,
+        },
+        "drivers": {
+            "turnitin_like_target_met": bool(profile.get("target_met")),
+            "eligible_span_density_safe": bool(density.get("safe")),
+            "topk_calibrated_risk": round(topk_risk, 3),
+            "segment_window_needed": segment_needed,
+        },
+        "phases": {
+            "ai_mitigation_search": {
+                "max_scans": ai_scans,
+                "max_llm_calls": ai_llm,
+                "desired_scans": ai_desired_scans,
+                "desired_llm_calls": ai_desired_llm,
+            },
+            "formula_convergence_controller": {
+                "max_scans": formula_scans,
+                "max_llm_calls": formula_llm,
+            },
+            "segment_window_density_controller": {
+                "max_scans": segment_scans,
+                "max_llm_calls": segment_llm,
+                "needed": segment_needed,
+            },
+            "post_segment_followup": {
+                "max_scans": post_segment_scans,
+                "max_llm_calls": post_segment_llm,
+            },
+            "unallocated_reserve": {
+                "max_scans": max(0, total_scans - used_scans) if total_scans else 0,
+                "max_llm_calls": max(0, total_llm - used_llm) if total_llm else 0,
+                "planned_floor_scans": unallocated_scan_reserve,
+                "planned_floor_llm_calls": unallocated_llm_reserve,
+            },
+        },
+    }
+
+
 def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dict:
     """Estimate block-level formula drag for convergence planning.
 
@@ -20080,6 +20204,43 @@ def run_rewrite_pipeline(
                 "finalist_scan_cap": int(formula_gap_budget_contract.get("finalist_scans") or 0),
                 "total_scan_cap": formula_scan_cap,
             }
+        rewrite_phase_budget_plan = _rewrite_phase_budget_plan(
+            rewritten_text,
+            rewritten_report_dict,
+            original_report_dict,
+            max_scans=global_rewrite_budget.max_scans,
+            max_llm_calls=global_rewrite_budget.max_llm_calls,
+            ai_search_policy=budget_policy,
+            formula_gap_budget=formula_gap_budget_contract,
+        )
+        result.summary["rewrite_phase_budget_plan"] = rewrite_phase_budget_plan
+        ai_phase_budget = (rewrite_phase_budget_plan.get("phases") or {}).get("ai_mitigation_search") or {}
+        ai_phase_scan_cap = int(ai_phase_budget.get("max_scans") or 0)
+        ai_phase_llm_cap = int(ai_phase_budget.get("max_llm_calls") or 0)
+        if ai_phase_scan_cap > 0:
+            search_budget["max_candidate_scans"] = min(
+                int(search_budget.get("max_candidate_scans") or 0),
+                ai_phase_scan_cap,
+            )
+            search_budget["max_candidate_scan_hard_cap"] = min(
+                int(search_budget.get("max_candidate_scan_hard_cap") or search_budget["max_candidate_scans"]),
+                ai_phase_scan_cap,
+            )
+        if ai_phase_llm_cap > 0:
+            search_budget["max_llm_calls"] = min(
+                int(search_budget.get("max_llm_calls") or 0),
+                ai_phase_llm_cap,
+            )
+        search_budget["phase_budget_plan"] = {
+            "version": rewrite_phase_budget_plan.get("version"),
+            "reason": rewrite_phase_budget_plan.get("reason"),
+            "allocation": ai_phase_budget,
+            "downstream_reserved": {
+                key: value
+                for key, value in (rewrite_phase_budget_plan.get("phases") or {}).items()
+                if key != "ai_mitigation_search"
+            },
+        }
         ai_search_uncapped_seconds = float(search_budget.get("max_seconds") or 0.0)
         post_ai_search_reserve = post_ai_search_reserve_seconds(_text_word_count(search_source_text))
         capped_ai_search_seconds = cap_phase_seconds_for_reserve(
@@ -25769,8 +25930,19 @@ def run_rewrite_pipeline(
         if reserve_needed:
             remaining_scans_for_reserve = global_rewrite_budget.remaining_scans()
             remaining_llm_for_reserve = global_rewrite_budget.remaining_llm_calls()
-            target_scans = int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_RESERVED_SCANS", 3.0))
-            target_llm = int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_RESERVED_LLM_CALLS", 3.0))
+            phase_plan = result.summary.get("rewrite_phase_budget_plan")
+            segment_phase_plan = (
+                ((phase_plan or {}).get("phases") or {}).get("segment_window_density_controller")
+                if isinstance(phase_plan, dict) else {}
+            )
+            target_scans = int(
+                (segment_phase_plan or {}).get("max_scans")
+                or _float_env("DRAFTPROOF_SEGMENT_WINDOW_RESERVED_SCANS", 3.0)
+            )
+            target_llm = int(
+                (segment_phase_plan or {}).get("max_llm_calls")
+                or _float_env("DRAFTPROOF_SEGMENT_WINDOW_RESERVED_LLM_CALLS", 3.0)
+            )
             segment_window_budget_reserve.update({
                 "needed": True,
                 "reason": "density_or_topk_unsafe",
@@ -25784,6 +25956,11 @@ def run_rewrite_pipeline(
                 ),
                 "eligible_span_density_safe": bool(reserve_density.get("safe")),
                 "topk_calibrated_risk": round(float(reserve_components.get("topk_calibrated_risk") or 0.0), 3),
+                "source": (
+                    "rewrite_phase_budget_plan"
+                    if isinstance(segment_phase_plan, dict) and segment_phase_plan
+                    else "legacy_segment_window_reserve"
+                ),
             })
         else:
             segment_window_budget_reserve.update({
@@ -25829,10 +26006,24 @@ def run_rewrite_pipeline(
                     else None
                 )
                 convergence_budget = _formula_convergence_budget(rewritten_text)
+                phase_plan = result.summary.get("rewrite_phase_budget_plan")
+                formula_phase_plan = (
+                    ((phase_plan or {}).get("phases") or {}).get("formula_convergence_controller")
+                    if isinstance(phase_plan, dict) else {}
+                )
                 remaining_scans_for_convergence = global_rewrite_budget.remaining_scans()
                 remaining_llm_for_convergence = global_rewrite_budget.remaining_llm_calls()
                 reserved_scans = int(segment_window_budget_reserve.get("reserved_scans") or 0)
                 reserved_llm = int(segment_window_budget_reserve.get("reserved_llm_calls") or 0)
+                if isinstance(formula_phase_plan, dict) and formula_phase_plan:
+                    convergence_budget["max_scans"] = min(
+                        int(convergence_budget.get("max_scans") or 0),
+                        int(formula_phase_plan.get("max_scans") or 0),
+                    )
+                    convergence_budget["max_llm_calls"] = min(
+                        int(convergence_budget.get("max_llm_calls") or 0),
+                        int(formula_phase_plan.get("max_llm_calls") or 0),
+                    )
                 if remaining_scans_for_convergence is not None:
                     convergence_budget["max_scans"] = min(
                         int(convergence_budget.get("max_scans") or 0),
@@ -26023,8 +26214,21 @@ def run_rewrite_pipeline(
             segment_t0 = time.time()
             remaining_scans = global_rewrite_budget.remaining_scans()
             remaining_llm = global_rewrite_budget.remaining_llm_calls()
-            max_segment_scans = min(3, remaining_scans if remaining_scans is not None else 3)
-            max_segment_llm = min(3, remaining_llm if remaining_llm is not None else 3)
+            phase_plan = result.summary.get("rewrite_phase_budget_plan")
+            segment_phase_plan = (
+                ((phase_plan or {}).get("phases") or {}).get("segment_window_density_controller")
+                if isinstance(phase_plan, dict) else {}
+            )
+            segment_scan_allocation = int((segment_phase_plan or {}).get("max_scans") or 3)
+            segment_llm_allocation = int((segment_phase_plan or {}).get("max_llm_calls") or 3)
+            max_segment_scans = min(
+                segment_scan_allocation,
+                remaining_scans if remaining_scans is not None else segment_scan_allocation,
+            )
+            max_segment_llm = min(
+                segment_llm_allocation,
+                remaining_llm if remaining_llm is not None else segment_llm_allocation,
+            )
             try:
                 segment_key = (
                     api_key
@@ -26158,16 +26362,26 @@ def run_rewrite_pipeline(
         report_progress(82, "Running post-selection AI-density breaker")
         density_t0 = time.time()
         try:
+            phase_plan = result.summary.get("rewrite_phase_budget_plan")
+            post_segment_plan = (
+                ((phase_plan or {}).get("phases") or {}).get("post_segment_followup")
+                if isinstance(phase_plan, dict) else {}
+            )
+            post_segment_scan_allocation = int((post_segment_plan or {}).get("max_scans") or 0)
+            remaining_density_scans = global_rewrite_budget.remaining_scans()
+            density_max_scans = (
+                remaining_density_scans
+                if remaining_density_scans is not None
+                else None
+            )
+            if post_segment_scan_allocation > 0 and density_max_scans is not None:
+                density_max_scans = min(density_max_scans, post_segment_scan_allocation)
             density_breaker_result = _post_selection_ai_density_breaker(
                 rewritten_text,
                 rewritten_report_dict,
                 original_report_dict,
                 scan_func=_full_scan_report_dict,
-                max_scans=(
-                    global_rewrite_budget.remaining_scans()
-                    if global_rewrite_budget.remaining_scans() is not None
-                    else None
-                ),
+                max_scans=density_max_scans,
             )
         except Exception as exc:
             density_breaker_result = {

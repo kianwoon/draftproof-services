@@ -214,6 +214,7 @@ from rewrite_pipeline import (
     _formula_portfolio_candidates,
     _formula_block_driver_map,
     _formula_convergence_budget,
+    _rewrite_phase_budget_plan,
     _formula_convergence_controller,
     _formula_convergence_llm_patch_candidates,
     _ai_density_breaker_canonical_fact_sentence,
@@ -8542,6 +8543,56 @@ assert_test(
     and reserved_segment_scans == 3
     and reserved_segment_llm == 3,
     "formula convergence reserves scan and LLM budget for segment-window density controller",
+)
+unsafe_density_report_for_budget = make_footprint_report(
+    ai_authorship=58,
+    human=42,
+    ai_transformation=58,
+    grounding=40,
+    human_anchor=22,
+    smoothness=72,
+    semantic_uniformity=65,
+    ai_likelihood=68,
+    topk_pattern=100,
+    topk_calibrated_risk=92,
+    generic_assertion_risk=72,
+    qualifying_text_ai_density=70,
+    unsupported_claim_risk=45,
+    broad_claim_risk=50,
+    discourse=55,
+)
+phase_budget_plan = _rewrite_phase_budget_plan(
+    auto_repair_source,
+    unsafe_density_report_for_budget,
+    unsafe_density_report_for_budget,
+    max_scans=14,
+    max_llm_calls=10,
+    ai_search_policy={"max_candidate_scans": 8, "max_llm_calls": 10},
+    formula_gap_budget=formula_gap_budget_contract(),
+)
+phase_budgets = phase_budget_plan["phases"]
+planned_scan_total = (
+    phase_budgets["ai_mitigation_search"]["max_scans"]
+    + phase_budgets["formula_convergence_controller"]["max_scans"]
+    + phase_budgets["segment_window_density_controller"]["max_scans"]
+    + phase_budgets["post_segment_followup"]["max_scans"]
+)
+planned_llm_total = (
+    phase_budgets["ai_mitigation_search"]["max_llm_calls"]
+    + phase_budgets["formula_convergence_controller"]["max_llm_calls"]
+    + phase_budgets["segment_window_density_controller"]["max_llm_calls"]
+    + phase_budgets["post_segment_followup"]["max_llm_calls"]
+)
+assert_test(
+    phase_budget_plan["drivers"]["segment_window_needed"] is True
+    and phase_budgets["ai_mitigation_search"]["max_scans"] <= 6
+    and phase_budgets["ai_mitigation_search"]["max_llm_calls"] <= 5
+    and phase_budgets["segment_window_density_controller"]["max_scans"] == 3
+    and phase_budgets["segment_window_density_controller"]["max_llm_calls"] == 3
+    and phase_budgets["post_segment_followup"]["max_scans"] == 1
+    and planned_scan_total <= 14
+    and planned_llm_total <= 10,
+    "phase budget plan caps AI search before it can consume segment-window and follow-up budget",
 )
 worker_tasks_source = Path("worker/app/tasks.py").read_text()
 assert_test(
