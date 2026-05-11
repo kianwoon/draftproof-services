@@ -20,6 +20,10 @@ from .formula_gap_orchestrator import (
     named_entity_inventory as formula_gap_named_entity_inventory,
     portfolio_families as formula_gap_portfolio_families,
 )
+from .eligible_span_density import (
+    build_eligible_span_density_contract,
+    compare_eligible_span_density,
+)
 
 __all__ = [
     "CandidateLedger",
@@ -39,4 +43,6 @@ __all__ = [
     "formula_gap_named_entity_inventory",
     "formula_gap_plan",
     "formula_gap_portfolio_families",
+    "build_eligible_span_density_contract",
+    "compare_eligible_span_density",
 ]

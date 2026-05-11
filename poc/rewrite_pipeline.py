@@ -47,6 +47,10 @@ from rewrite_controller.formula_gap_orchestrator import (
     formula_gap_plan as _formula_gap_orchestrator_plan,
     portfolio_families as _formula_gap_portfolio_families,
 )
+from rewrite_controller.eligible_span_density import (
+    build_eligible_span_density_contract as _eligible_span_density_contract,
+    compare_eligible_span_density as _eligible_span_density_comparison,
+)
 from rewrite_compiler import CompilerConfig, CompilerDependencies, run_rewrite_compiler
 from rewrite.guards import detect_protected_spans, check_semantic_drift
 from report.pdf import render_pdf
@@ -20404,6 +20408,13 @@ def run_rewrite_pipeline(
                 candidate_report,
             )
             candidate_eval["multi_signal_contract"] = multi_signal_contract
+            eligible_span_density_gate = _eligible_span_density_comparison(
+                search_source_text,
+                original_report_dict,
+                candidate,
+                candidate_report,
+            )
+            candidate_eval["eligible_span_density_gate"] = eligible_span_density_gate
             ai_footprint_outcome = str(ai_footprint_gate.get("outcome_class") or "")
             footprint_drops = ai_footprint_gate.get("drops") if isinstance(ai_footprint_gate.get("drops"), dict) else {}
             if candidate_eval.get("human_anchor_amplifier"):
@@ -20476,6 +20487,10 @@ def run_rewrite_pipeline(
                 and (
                     ai_footprint_outcome != "ai_mitigated"
                     or turnitin_like_gate.get("safe_band")
+                )
+                and (
+                    ai_footprint_outcome != "ai_mitigated"
+                    or eligible_span_density_gate.get("safe")
                 )
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
@@ -20657,6 +20672,7 @@ def run_rewrite_pipeline(
                 turnitin_like_full_mitigation = bool(
                     turnitin_like_gate.get("safe_band")
                     and ai_footprint_gate.get("safe_band")
+                    and eligible_span_density_gate.get("safe")
                 )
                 selection_status.update({
                     "success": True,
@@ -20935,6 +20951,7 @@ def run_rewrite_pipeline(
             selection_status["formula_gap_contract"] = formula_gap_contract
             selection_status["formula_gap_rank"] = candidate_eval["formula_gap_rank"]
             selection_status["multi_signal_contract"] = multi_signal_contract
+            selection_status["eligible_span_density_gate"] = eligible_span_density_gate
             selection_status["dominant_blocker_gate"] = dominant_blocker_status
             selection_status["human_formula_driver_gate"] = human_formula_status
             selection_status["human_anchor_driver_contract"] = human_anchor_contract
@@ -22815,6 +22832,7 @@ def run_rewrite_pipeline(
                             "selection_status": item.get("selection_status"),
                             "candidate_decision": item.get("candidate_decision"),
                             "formula_gap_contract": item.get("formula_gap_contract"),
+                            "eligible_span_density_gate": item.get("eligible_span_density_gate"),
                             "block_scoped_portfolio_task": item.get("block_scoped_portfolio_task"),
                             "applied_formula_gap_patches": item.get("applied_formula_gap_patches"),
                         }
@@ -27176,6 +27194,19 @@ def run_rewrite_pipeline(
             "additional_anchor_sentences_needed": final_human_anchor_contract.get("additional_anchor_sentences_needed"),
         }
     ] if not final_human_anchor_contract.get("achieved_next_band") else []
+    final_eligible_span_density_gate = _eligible_span_density_comparison(
+        text,
+        original_report_dict,
+        rewritten_text,
+        rewritten_report_dict,
+    )
+    result.summary["eligible_span_density_contract"] = final_eligible_span_density_gate
+    result.summary["eligible_span_density_before"] = final_eligible_span_density_gate.get("before")
+    result.summary["eligible_span_density_after"] = final_eligible_span_density_gate.get("after")
+    result.summary["eligible_span_density_safe"] = bool(final_eligible_span_density_gate.get("safe"))
+    result.summary["eligible_span_density_needs_author_context"] = bool(
+        final_eligible_span_density_gate.get("needs_author_context")
+    )
     final_strict_safe_band = _strict_ai_safe_band_status(rewritten_report_dict)
     result.summary["strict_ai_safe_band_achieved"] = bool(final_strict_safe_band.get("achieved"))
     result.summary["remaining_strict_safe_band_drivers"] = final_strict_safe_band.get("remaining") or []
@@ -27206,6 +27237,8 @@ def run_rewrite_pipeline(
             formula_row = row.get("formula_gap_contract")
             if not isinstance(formula_row, dict):
                 formula_row = ((row.get("selection_status") or {}).get("formula_gap_contract") or {})
+            density_row = row.get("eligible_span_density_gate") if isinstance(row.get("eligible_span_density_gate"), dict) else {}
+            density_after = density_row.get("after") if isinstance(density_row.get("after"), dict) else {}
             frontier_rows.append({
                 "strategy": row.get("strategy"),
                 "selectable": bool((row.get("selection_status") or {}).get("selectable")),
@@ -27216,6 +27249,9 @@ def run_rewrite_pipeline(
                 "formula_score_drop": formula_row.get("score_drop"),
                 "formula_remaining_gap": formula_row.get("remaining_formula_gap"),
                 "formula_drop_efficiency": formula_row.get("weighted_driver_drop_efficiency"),
+                "eligible_span_density_safe": density_row.get("safe"),
+                "unsafe_eligible_word_ratio": density_after.get("unsafe_eligible_word_ratio"),
+                "longest_unsafe_span_words": density_after.get("longest_unsafe_span_words"),
                 "turnitin_like_ai_score": turnitin_row.get("score_after"),
                 "turnitin_like_ai_score_drop": turnitin_row.get("score_drop"),
                 "turnitin_like_outcome_class": turnitin_row.get("outcome_class"),
@@ -27306,19 +27342,31 @@ def run_rewrite_pipeline(
         }
     ]
     detector_safe_label_status = {
-        "detector_safe": bool(final_strict_safe_band.get("achieved") and final_turnitin_like_gate.get("target_met")),
+        "detector_safe": bool(
+            final_strict_safe_band.get("achieved")
+            and final_turnitin_like_gate.get("target_met")
+            and final_eligible_span_density_gate.get("safe")
+        ),
         "strict_ai_safe_band_achieved": bool(final_strict_safe_band.get("achieved")),
         "turnitin_like_target_met": bool(final_turnitin_like_gate.get("target_met")),
+        "eligible_span_density_safe": bool(final_eligible_span_density_gate.get("safe")),
+        "eligible_span_density": {
+            "unsafe_eligible_word_ratio": ((final_eligible_span_density_gate.get("after") or {}).get("unsafe_eligible_word_ratio")),
+            "longest_unsafe_span_words": ((final_eligible_span_density_gate.get("after") or {}).get("longest_unsafe_span_words")),
+            "unsafe_cluster_count": ((final_eligible_span_density_gate.get("after") or {}).get("unsafe_cluster_count")),
+            "needs_author_context": final_eligible_span_density_gate.get("needs_author_context"),
+        },
         "turnitin_like_score_drop": final_turnitin_like_gate.get("score_drop"),
         "unsafe_partial": bool(
             rewritten_text != text
             and isinstance(final_turnitin_like_gate.get("score_drop"), (int, float))
             and float(final_turnitin_like_gate.get("score_drop") or 0.0) > 0.001
-            and unsafe_detector_drivers
+            and (unsafe_detector_drivers or not final_eligible_span_density_gate.get("safe"))
         ),
         "unsafe_drivers": unsafe_detector_drivers,
         "label_rule": (
-            "ai_mitigated requires Turnitin-like score below target and all strict detector drivers in safe band; "
+            "ai_mitigated requires Turnitin-like score below target, all strict detector drivers in safe band, "
+            "and eligible prose density in safe band; "
             "otherwise a score drop is unsafe_partial_improvement."
         ),
     }
@@ -27374,6 +27422,11 @@ def run_rewrite_pipeline(
         "qualifying_text_ai_density_before": final_before_semantic.get("qualifying_text_ai_density"),
         "qualifying_text_ai_density_after": final_after_semantic.get("qualifying_text_ai_density"),
         "qualifying_text_ai_density_drop": final_footprint_drops.get("qualifying_text_ai_density"),
+        "eligible_span_unsafe_ratio_before": ((final_eligible_span_density_gate.get("before") or {}).get("unsafe_eligible_word_ratio")),
+        "eligible_span_unsafe_ratio_after": ((final_eligible_span_density_gate.get("after") or {}).get("unsafe_eligible_word_ratio")),
+        "eligible_span_longest_unsafe_words_before": ((final_eligible_span_density_gate.get("before") or {}).get("longest_unsafe_span_words")),
+        "eligible_span_longest_unsafe_words_after": ((final_eligible_span_density_gate.get("after") or {}).get("longest_unsafe_span_words")),
+        "eligible_span_density_safe": final_eligible_span_density_gate.get("safe"),
         "ai_footprint_outcome_class": final_ai_footprint_gate.get("outcome_class"),
         "remaining_ai_footprint_drivers": final_ai_footprint_gate.get("remaining_ai_footprint_drivers"),
     })

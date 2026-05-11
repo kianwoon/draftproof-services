@@ -95,6 +95,11 @@ def _turnitin_gate(status: dict) -> dict:
     return gate if isinstance(gate, dict) else {}
 
 
+def _eligible_span_density_gate(status: dict) -> dict:
+    gate = status.get("eligible_span_density_gate")
+    return gate if isinstance(gate, dict) else {}
+
+
 def _human_shift_components(status: dict) -> dict:
     gate = _authenticity_gate(status)
     components = status.get("human_shift_components")
@@ -152,9 +157,13 @@ def classify_ai_search_candidate(selection_status: dict | None, candidate_eval: 
         or ""
     )
     turnitin = _turnitin_gate(status)
+    density_gate = _eligible_span_density_gate(status)
     formula = _formula_contract(status, candidate_eval)
     metrics = detector_progress_metrics(status)
     target_met = bool(formula.get("target_met") or turnitin.get("safe_band"))
+    density_gate_present = bool(density_gate)
+    density_safe = bool(not density_gate_present or density_gate.get("safe"))
+    density_improved = bool(density_gate.get("improved"))
     core_driver_progress = any(
         max(0.0, float(metrics.get(name, 0.0))) >= floor
         for name, floor in CORE_DRIVER_PROGRESS_FLOORS.items()
@@ -166,9 +175,10 @@ def classify_ai_search_candidate(selection_status: dict | None, candidate_eval: 
         or status.get("topk_blocker_progress")
         or footprint_outcome in {"ai_mitigated", "partially_ai_mitigated", "ai_footprint_blocked_by_texture"}
         or core_driver_progress
+        or density_improved
     )
 
-    if target_met and (status.get("turnitin_like_mitigation") or footprint_outcome == "ai_mitigated"):
+    if target_met and density_safe and (status.get("turnitin_like_mitigation") or footprint_outcome == "ai_mitigated"):
         cls = CLASS_DETECTOR_SAFE
     elif real_detector_progress:
         cls = CLASS_DETECTOR_PROGRESS
@@ -192,6 +202,7 @@ def classify_ai_search_candidate(selection_status: dict | None, candidate_eval: 
         "detector_progress": metrics,
         "footprint_outcome": footprint_outcome,
         "target_met": target_met,
+        "eligible_span_density_safe": density_safe,
     }
 
 

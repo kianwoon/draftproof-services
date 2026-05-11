@@ -72,6 +72,8 @@ from rewrite_controller import (
     build_candidate_record,
     classify_ai_search_candidate,
     assemble_formula_gap_candidate,
+    build_eligible_span_density_contract,
+    compare_eligible_span_density,
     evaluate_text_quality_regression,
     extract_formula_gap_candidate_payload,
     formula_gap_block_portfolio_tasks,
@@ -8929,6 +8931,85 @@ assert_test(
     and "New York City" in entity_probe
     and "The Civil Rights Movement" in entity_probe,
     "formula-gap prompt inventory preserves named entities that semantic drift would otherwise reject",
+)
+span_density_text = (
+    "The United States was founded in 1776 after the colonies declared independence from Britain. "
+    "One of the most important features of the country is its strong global influence. "
+    "Furthermore, it plays a major role in politics, economics, culture, and education. "
+    "This shows that the country has become a significant force in the modern world. "
+    "In conclusion, the country remains important because of its history and culture."
+)
+span_density_report = {
+    "ai_risk_badge": {
+        "ai_likelihood_score": 62,
+        "ai_components": {
+            "topk_calibrated_risk": 88,
+            "qualifying_text_ai_density": 72,
+        },
+        "writing_components": {
+            "lived_detail_risk": 80,
+            "domain_grounding_strength": 30,
+        },
+    },
+    "predictability": {
+        "all_sentences": [
+            {"sentence_id": f"s{idx + 1:03d}", "sentence": sentence, "top10_ratio": 0.74, "top50_ratio": 0.9, "predictability_risk": 0.55}
+            for idx, sentence in enumerate([s for s in span_density_text.split(". ") if s])
+        ]
+    },
+}
+span_density_candidate_text = (
+    "The United States was founded in 1776 after the colonies declared independence from Britain. "
+    "Its global influence is broad, but the effects do not land evenly. "
+    "Politics, economics, culture, and education each show that influence in different ways."
+)
+span_density_candidate_report = {
+    **span_density_report,
+    "predictability": {
+        "all_sentences": [
+            {"sentence_id": "s001", "sentence": "The United States was founded in 1776 after the colonies declared independence from Britain.", "top10_ratio": 0.74, "top50_ratio": 0.9, "predictability_risk": 0.55},
+            {"sentence_id": "s002", "sentence": "Its global influence is broad, but the effects do not land evenly.", "top10_ratio": 0.42, "top50_ratio": 0.65, "predictability_risk": 0.25},
+            {"sentence_id": "s003", "sentence": "Politics, economics, culture, and education each show that influence in different ways.", "top10_ratio": 0.45, "top50_ratio": 0.7, "predictability_risk": 0.22},
+        ]
+    },
+}
+span_density_contract = build_eligible_span_density_contract(span_density_text, span_density_report)
+span_density_comparison = compare_eligible_span_density(
+    span_density_text,
+    span_density_report,
+    span_density_candidate_text,
+    span_density_candidate_report,
+)
+span_unsafe_class = classify_ai_search_candidate({
+    "selectable": True,
+    "turnitin_like_mitigation": True,
+    "turnitin_like_ai_gate": {"safe_band": True},
+    "formula_gap_contract": {"target_met": True},
+    "eligible_span_density_gate": {"safe": False, "improved": False},
+})
+span_safe_class = classify_ai_search_candidate({
+    "selectable": True,
+    "turnitin_like_mitigation": True,
+    "turnitin_like_ai_gate": {"safe_band": True},
+    "formula_gap_contract": {"target_met": True},
+    "eligible_span_density_gate": {"safe": True, "improved": True},
+})
+assert_test(
+    span_density_contract["safe"] is False
+    and span_density_contract["top_sentence_targets"][0]["sentence_index"] != 0
+    and span_density_contract["needs_author_context"] is True,
+    "eligible span density map preserves canonical facts and flags unsafe generic prose needing author context",
+)
+assert_test(
+    span_density_comparison["improved"] is True
+    and span_density_comparison["safe"] is True
+    and span_density_comparison["unsafe_eligible_word_ratio_drop"] > 0,
+    "eligible span density comparison measures material unsafe-span reduction",
+)
+assert_test(
+    span_unsafe_class["class"] != "detector_safe"
+    and span_safe_class["class"] == "detector_safe",
+    "selector cannot label detector-safe while eligible span density remains unsafe",
 )
 decision_probe = build_candidate_decision(
     {
