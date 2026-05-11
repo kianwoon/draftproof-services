@@ -1,6 +1,11 @@
 """Shared rewrite controller primitives."""
 
-from .budget import RewriteRunBudget
+from .budget import (
+    RewriteRunBudget,
+    cap_phase_seconds_for_reserve,
+    post_ai_search_reserve_seconds,
+    resolve_global_rewrite_seconds,
+)
 from .quality_gate import evaluate_text_quality_regression
 from .selector import CandidateLedger, build_candidate_record
 from .ai_search_selection import (
@@ -29,6 +34,9 @@ __all__ = [
     "CandidateLedger",
     "CandidateDecision",
     "RewriteRunBudget",
+    "cap_phase_seconds_for_reserve",
+    "post_ai_search_reserve_seconds",
+    "resolve_global_rewrite_seconds",
     "ai_search_candidate_rank",
     "build_candidate_record",
     "build_candidate_decision",

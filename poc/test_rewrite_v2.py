@@ -70,7 +70,10 @@ from rewrite_controller import (
     build_candidate_decision,
     RewriteRunBudget,
     build_candidate_record,
+    cap_phase_seconds_for_reserve,
     classify_ai_search_candidate,
+    post_ai_search_reserve_seconds,
+    resolve_global_rewrite_seconds,
     assemble_formula_gap_candidate,
     build_eligible_span_density_contract,
     compare_eligible_span_density,
@@ -9028,6 +9031,29 @@ assert_test(
     and decision_probe.headline_ai_drop == 5.0
     and decision_probe.to_dict().get("rank"),
     "candidate selector exposes CandidateDecision with visible rank and headline drops",
+)
+resolved_global_seconds = resolve_global_rewrite_seconds(
+    legacy_seconds=30,
+    controller_policy_seconds=210,
+    env_seconds=None,
+)
+medium_reserve_seconds = post_ai_search_reserve_seconds(888)
+capped_ai_search_seconds = cap_phase_seconds_for_reserve(
+    max_seconds=210,
+    remaining_seconds=205,
+    reserve_seconds=medium_reserve_seconds,
+)
+tight_ai_search_seconds = cap_phase_seconds_for_reserve(
+    max_seconds=210,
+    remaining_seconds=40,
+    reserve_seconds=medium_reserve_seconds,
+)
+assert_test(
+    resolved_global_seconds == 210
+    and medium_reserve_seconds == 55
+    and capped_ai_search_seconds == 150
+    and 0 < tight_ai_search_seconds < 40,
+    "global rewrite budget uses controller policy and reserves time for post-search phases",
 )
 
 

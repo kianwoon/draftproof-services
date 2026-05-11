@@ -7,6 +7,74 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def resolve_global_rewrite_seconds(
+    *,
+    legacy_seconds: float = 0.0,
+    controller_policy_seconds: float = 0.0,
+    env_seconds: float | None = None,
+    default_seconds: float = 90.0,
+) -> float:
+    """Resolve the run-level controller budget.
+
+    `RewriteConfig.max_rewrite_seconds` is a legacy pre-controller setting.  It
+    can be lower than the policy needed by the modern multi-stage AI mitigation
+    controller, so it must not silently starve downstream phases.
+    """
+
+    candidates = [
+        float(default_seconds or 0.0),
+        float(legacy_seconds or 0.0),
+        float(controller_policy_seconds or 0.0),
+    ]
+    if env_seconds is not None:
+        candidates.append(float(env_seconds or 0.0))
+    return max(candidates)
+
+
+def post_ai_search_reserve_seconds(word_count: int | float) -> float:
+    """Time reserve for post-selection repair/density phases.
+
+    The first AI-search phase is allowed to spend most of the runtime, but not
+    all of it.  These reserves keep at least one downstream controller phase
+    alive after the initial LLM candidate set is scanned.
+    """
+
+    words = max(0, int(word_count or 0))
+    if words <= 700:
+        return 35.0
+    if words <= 1800:
+        return 55.0
+    return 75.0
+
+
+def cap_phase_seconds_for_reserve(
+    *,
+    max_seconds: float,
+    remaining_seconds: float,
+    reserve_seconds: float,
+    min_phase_seconds: float = 20.0,
+) -> float:
+    """Cap one phase so later phases keep a usable time reserve."""
+
+    phase_limit = max(0.0, float(max_seconds or 0.0))
+    remaining = max(0.0, float(remaining_seconds or 0.0))
+    reserve = max(0.0, float(reserve_seconds or 0.0))
+    minimum = max(0.0, float(min_phase_seconds or 0.0))
+    if phase_limit <= 0.0 or remaining <= 0.0 or reserve <= 0.0:
+        return phase_limit
+    if remaining > reserve:
+        capped = remaining - reserve
+    else:
+        # Budget is already tight. Split the remaining time instead of letting
+        # the current phase consume it all.
+        capped = remaining * 0.55
+    if capped >= minimum:
+        return min(phase_limit, capped)
+    if remaining > minimum + reserve:
+        return min(phase_limit, minimum)
+    return min(phase_limit, capped)
+
+
 @dataclass
 class RewriteRunBudget:
     """One shared budget across all post-rewrite phases.

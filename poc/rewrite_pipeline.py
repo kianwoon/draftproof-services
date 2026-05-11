@@ -31,7 +31,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_from_json
 from rewrite import run_rewrite, RewriteConfig, RewriteModuleResult
 from rewrite.auto_repair_controller import AutoRepairDependencies, run_auto_repair_controller
-from rewrite_controller import CandidateLedger, RewriteRunBudget, build_candidate_record
+from rewrite_controller import (
+    CandidateLedger,
+    RewriteRunBudget,
+    build_candidate_record,
+    cap_phase_seconds_for_reserve,
+    post_ai_search_reserve_seconds,
+    resolve_global_rewrite_seconds,
+)
 from rewrite_controller.ai_search_selection import (
     ai_search_candidate_rank,
     build_candidate_decision,
@@ -17765,13 +17772,23 @@ def run_rewrite_pipeline(
         "rewritten_weighted_severity": rewritten_severity,
     }
 
-    configured_global_seconds = (
+    global_policy_for_budget = _ai_search_budget_policy(text, original_report_dict)
+    legacy_global_seconds = (
         float(getattr(rewrite_config, "max_rewrite_seconds", 0) or 0)
         if rewrite_config is not None
         else 0.0
     )
-    if configured_global_seconds <= 0:
-        configured_global_seconds = _float_env("DRAFTPROOF_GLOBAL_REWRITE_MAX_SECONDS", 90.0)
+    env_global_seconds = (
+        _float_env("DRAFTPROOF_GLOBAL_REWRITE_MAX_SECONDS", 90.0)
+        if os.environ.get("DRAFTPROOF_GLOBAL_REWRITE_MAX_SECONDS") is not None
+        else None
+    )
+    configured_global_seconds = resolve_global_rewrite_seconds(
+        legacy_seconds=legacy_global_seconds,
+        controller_policy_seconds=float(global_policy_for_budget.get("max_seconds") or 0.0),
+        env_seconds=env_global_seconds,
+        default_seconds=90.0,
+    )
     global_rewrite_budget = RewriteRunBudget(
         max_seconds=configured_global_seconds,
         max_scans=int(_float_env("DRAFTPROOF_GLOBAL_REWRITE_MAX_SCANS", 14.0)),
@@ -17781,7 +17798,10 @@ def run_rewrite_pipeline(
     global_rewrite_budget.record_stage("rewrite_engine", seconds=engine_elapsed)
     result.summary["global_rewrite_budget_contract"] = {
         "version": "global_rewrite_budget_v1",
-        "source": "rewrite_config.max_rewrite_seconds" if rewrite_config is not None else "DRAFTPROOF_GLOBAL_REWRITE_MAX_SECONDS",
+        "source": "max(controller_policy, rewrite_config.max_rewrite_seconds, DRAFTPROOF_GLOBAL_REWRITE_MAX_SECONDS)",
+        "legacy_rewrite_config_seconds": legacy_global_seconds,
+        "controller_policy_seconds": float(global_policy_for_budget.get("max_seconds") or 0.0),
+        "env_seconds": env_global_seconds,
         "max_seconds": configured_global_seconds,
         "max_scans": global_rewrite_budget.max_scans,
         "max_llm_calls": global_rewrite_budget.max_llm_calls,
@@ -19688,6 +19708,27 @@ def run_rewrite_pipeline(
                 "finalist_scan_cap": int(formula_gap_budget_contract.get("finalist_scans") or 0),
                 "total_scan_cap": formula_scan_cap,
             }
+        ai_search_uncapped_seconds = float(search_budget.get("max_seconds") or 0.0)
+        post_ai_search_reserve = post_ai_search_reserve_seconds(_text_word_count(search_source_text))
+        capped_ai_search_seconds = cap_phase_seconds_for_reserve(
+            max_seconds=ai_search_uncapped_seconds,
+            remaining_seconds=global_rewrite_budget.remaining_seconds(),
+            reserve_seconds=post_ai_search_reserve,
+            min_phase_seconds=20.0,
+        )
+        if (
+            capped_ai_search_seconds > 0.0
+            and ai_search_uncapped_seconds > 0.0
+            and capped_ai_search_seconds < ai_search_uncapped_seconds
+        ):
+            search_budget["max_seconds"] = round(capped_ai_search_seconds, 3)
+            search_budget["uncapped_max_seconds"] = round(ai_search_uncapped_seconds, 3)
+            search_budget["global_post_phase_reserve_seconds"] = round(post_ai_search_reserve, 3)
+            search_budget["global_remaining_seconds_at_ai_search_start"] = round(
+                global_rewrite_budget.remaining_seconds(),
+                3,
+            )
+            search_budget["time_cap_reason"] = "preserve_post_ai_search_controller_budget"
         search_summary["budget"] = search_budget
         search_summary["candidate_scoring_controller"] = {
             **(search_budget.get("candidate_scoring_controller") or {}),
