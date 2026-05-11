@@ -722,6 +722,7 @@ def _build_rewrite_debug_log(
             "selected_strategy": summary.get("selected_strategy"),
             "selected_density_breaker_strategy": summary.get("selected_density_breaker_strategy"),
             "selected_human_anchor_probe_strategy": summary.get("selected_human_anchor_probe_strategy"),
+            "selected_auto_repair_strategy": summary.get("selected_auto_repair_strategy"),
             "ai_mitigation_search": summary.get("ai_mitigation_search"),
             "formula_convergence_controller": summary.get("formula_convergence_controller"),
             "post_selection_ai_density_breaker": _controller_phase_value(
@@ -731,6 +732,10 @@ def _build_rewrite_debug_log(
             "post_density_human_anchor_probe": _controller_phase_value(
                 "post_density_human_anchor_probe",
                 "post_density_human_anchor_probe",
+            ),
+            "auto_repair_controller": _controller_phase_value(
+                "auto_repair_controller",
+                "auto_repair_controller",
             ),
             "generation_layer": summary.get("generation_layer"),
             "authenticity_mitigation": summary.get("authenticity_mitigation"),
@@ -767,10 +772,12 @@ def _build_rewrite_debug_log(
         "selected_strategy",
         "selected_density_breaker_strategy",
         "selected_human_anchor_probe_strategy",
+        "selected_auto_repair_strategy",
         "selected_formula_strategy",
         "formula_convergence_controller",
         "post_selection_ai_density_breaker",
         "post_density_human_anchor_probe",
+        "auto_repair_controller",
         "ai_footprint_gate",
         "turnitin_like_ai_gate",
         "formula_gap_contract",
@@ -795,7 +802,7 @@ def _build_rewrite_debug_log(
     } if isinstance(summary, dict) else {}
     for key in controller_debug_keys:
         if isinstance(summary, dict) and key in summary:
-            if key in {"post_selection_ai_density_breaker", "post_density_human_anchor_probe"}:
+            if key in {"post_selection_ai_density_breaker", "post_density_human_anchor_probe", "auto_repair_controller"}:
                 rewrite_debug[key] = _controller_phase_value(key, key)
             else:
                 rewrite_debug[key] = summary.get(key)
@@ -807,6 +814,7 @@ def _build_rewrite_debug_log(
             "formula_convergence_controller",
             "post_selection_ai_density_breaker",
             "post_density_human_anchor_probe",
+            "auto_repair_controller",
         }
     ] if isinstance(summary, dict) else []
     return json.dumps(log_data, indent=2, ensure_ascii=False, default=str)

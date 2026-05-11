@@ -54,6 +54,12 @@ from rewrite.rewrite import (
     run_rewrite,
 )
 from rewrite.mitigation import build_mitigation_plan
+from rewrite.auto_repair_controller import (
+    AutoRepairDependencies,
+    compile_plan as auto_repair_compile_plan,
+    candidate_pool as auto_repair_candidate_pool,
+    run_auto_repair_controller,
+)
 from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
 from rewrite_pipeline import (
@@ -118,9 +124,13 @@ from rewrite_pipeline import (
     _restore_anchor_placeholders,
     _freeze_anchor_payload,
     _repair_aggression_score,
+    _split_sentences,
+    _text_word_count,
     _sentence_texture_risk_map,
+    _ordered_concept_origin_terms,
     _micro_texture_window,
     _splice_sentence_window,
+    _splice_sentence_for_auto_repair,
     _locality_score,
     _micro_texture_repair_prompt,
     _clean_micro_texture_candidate,
@@ -176,6 +186,8 @@ from rewrite_pipeline import (
     _post_selection_ai_density_breaker_acceptance,
     _post_density_human_anchor_probe_candidates,
     _post_density_human_anchor_probe_acceptance,
+    _contribution_scores,
+    _integrity_scores,
     _record_rewrite_llm_calls,
     _human_anchor_driver_contract,
     _human_anchor_positive_burden_gate_status,
@@ -8039,6 +8051,125 @@ assert_test(
     accepted_micro_density.get("selectable") is True
     and 0 < accepted_micro_density.get("formula_score_drop", 0) < 0.25,
     "density breaker keeps safety-clean micro formula drops instead of applying a minimum-drop cliff",
+)
+
+auto_repair_source = (
+    "The United States was founded in 1776 after the American colonies declared independence from Britain. "
+    "The Constitution later set out a federal structure with separate branches of government. "
+    "One of the biggest strengths of the United States is its economic power. "
+    "Universities, technology firms, sports leagues, and films all contribute to its global presence. "
+    "Apple, Microsoft, Google, and Tesla are often named in discussions about American business influence. "
+    "NASA is also associated with space research and national scientific ambition. "
+    "At the same time, diversity has also created challenges related to inequality and social tension. "
+    "These tensions do not erase the country's influence, but they complicate how that influence is understood."
+)
+auto_repair_base = make_footprint_report(
+    ai_authorship=55,
+    human=53,
+    ai_transformation=47,
+    grounding=45,
+    human_anchor=25,
+    smoothness=48,
+    semantic_uniformity=56,
+    ai_likelihood=55,
+    topk_pattern=100,
+    topk_calibrated_risk=100,
+    generic_assertion_risk=70,
+    qualifying_text_ai_density=65,
+    unsupported_claim_risk=30,
+    broad_claim_risk=45,
+    discourse=40,
+    expansion=35,
+    section_style=20,
+    signal_agreement=50,
+)
+auto_repair_improved = make_footprint_report(
+    ai_authorship=55,
+    human=54,
+    ai_transformation=46,
+    grounding=45,
+    human_anchor=25,
+    smoothness=47,
+    semantic_uniformity=55,
+    ai_likelihood=54,
+    topk_pattern=100,
+    topk_calibrated_risk=100,
+    generic_assertion_risk=68,
+    qualifying_text_ai_density=64,
+    unsupported_claim_risk=30,
+    broad_claim_risk=45,
+    discourse=40,
+    expansion=35,
+    section_style=20,
+    signal_agreement=49,
+)
+
+def _simple_report_finding_total(report):
+    findings = (report or {}).get("findings") or {}
+    return sum(len(findings.get(tier, [])) for tier in ("critical", "high", "medium", "low"))
+
+def _simple_report_review_burden(report):
+    findings = (report or {}).get("findings") or {}
+    return sum(len(findings.get(tier, [])) for tier in ("critical", "high", "medium"))
+
+def _simple_report_weighted_severity(report):
+    findings = (report or {}).get("findings") or {}
+    weights = {"critical": 8, "high": 5, "medium": 2, "low": 1}
+    return sum(len(findings.get(tier, [])) * weight for tier, weight in weights.items())
+
+auto_repair_deps = AutoRepairDependencies(
+    split_sentences=_split_sentences,
+    text_word_count=_text_word_count,
+    geometry_risk_map=_geometry_risk_map,
+    sentence_texture_risk_map=_sentence_texture_risk_map,
+    ordered_concept_terms=_ordered_concept_origin_terms,
+    is_canonical_fact_sentence=_ai_density_breaker_canonical_fact_sentence,
+    splice_sentence=_splice_sentence_for_auto_repair,
+    repair_aggression_score=_repair_aggression_score,
+    locality_score=_locality_score,
+    detect_protected_spans=detect_protected_spans,
+    protected_loss_reason=_ai_search_protected_loss_reason,
+    concept_origin_reject_reason=_candidate_concept_origin_reject_reason,
+    drift_checker=lambda _source, _candidate, **_kwargs: SimpleNamespace(accepted=True, similarity=0.99, reasons=[]),
+    scan_func=lambda candidate: auto_repair_improved if "One strength of" in candidate or "At the same time" not in candidate else auto_repair_base,
+    turnitin_profile=_turnitin_like_ai_profile,
+    turnitin_gate_status=_turnitin_like_ai_gate_status,
+    strict_safe_status=_strict_ai_safe_band_status,
+    contribution_scores=_contribution_scores,
+    integrity_scores=_integrity_scores,
+    badge_ai=lambda report: ((report or {}).get("ai_risk_badge") or {}).get("ai_likelihood_score"),
+    finding_total=_simple_report_finding_total,
+    review_burden=_simple_report_review_burden,
+    weighted_severity=_simple_report_weighted_severity,
+    critical_high_count=lambda report: len(((report or {}).get("findings") or {}).get("critical", []))
+    + len(((report or {}).get("findings") or {}).get("high", [])),
+)
+auto_repair_plan = auto_repair_compile_plan(auto_repair_source, auto_repair_base, auto_repair_deps, max_windows=2)
+assert_test(
+    any(row.get("canonical_fact_preserve") for row in auto_repair_plan.get("risk_map") or [])
+    and any(row.get("operators") for row in auto_repair_plan.get("selected_windows") or []),
+    "auto-repair compiler preserves canonical facts while compiling editable operator windows",
+)
+auto_repair_pool = auto_repair_candidate_pool(auto_repair_source, auto_repair_plan, auto_repair_deps, limit=6)
+assert_test(
+    bool(auto_repair_pool)
+    and all((meta.get("operator_contract") or {}).get("must_not_add_claims") is True for _s, _c, meta in auto_repair_pool),
+    "auto-repair compiler generates operator-bound patch candidates instead of open-ended rewrites",
+)
+auto_repair_result = run_auto_repair_controller(
+    auto_repair_source,
+    auto_repair_base,
+    auto_repair_base,
+    auto_repair_deps,
+    max_rounds=2,
+    max_scans=4,
+    target_human=80,
+)
+assert_test(
+    auto_repair_result.get("selected") is True
+    and auto_repair_result.get("accepted_rounds") >= 1
+    and (auto_repair_result.get("score_drop") or 0) > 0,
+    "auto-repair controller rescans bounded candidates and keeps safe Pareto progress",
 )
 
 density_smoothness_slippage_report = {

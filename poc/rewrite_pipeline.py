@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_from_json
 from rewrite import run_rewrite, RewriteConfig, RewriteModuleResult
+from rewrite.auto_repair_controller import AutoRepairDependencies, run_auto_repair_controller
 from rewrite.guards import detect_protected_spans, check_semantic_drift
 from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
@@ -10184,6 +10185,15 @@ def _splice_sentence_window(text: str, start: int, end: int, replacement: str) -
         return text
     rebuilt = sentences[:start] + replacement_sentences + sentences[end:]
     return " ".join(rebuilt).strip()
+
+
+def _splice_sentence_for_auto_repair(text: str, sentence_index: int, replacement: str) -> str:
+    sentences = _split_sentences(text)
+    if sentence_index < 0 or sentence_index >= len(sentences):
+        return text
+    replacement_sentences = _split_sentences(replacement)
+    rebuilt = sentences[:sentence_index] + replacement_sentences + sentences[sentence_index + 1:]
+    return " ".join(sentence.strip() for sentence in rebuilt if sentence and sentence.strip()).strip()
 
 
 def _micro_texture_repair_prompt(
@@ -25154,6 +25164,114 @@ def run_rewrite_pipeline(
             "scans": stored_anchor_probe_result.get("scans_used"),
             "selected": bool(anchor_probe_result.get("selected")),
             "stop_reason": anchor_probe_result.get("reason"),
+        })
+
+    auto_repair_selected = False
+    if (
+        _env_flag("DRAFTPROOF_AUTO_REPAIR_CONTROLLER", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    ):
+        report_progress(86, "Running automated repair compiler")
+        auto_repair_t0 = time.time()
+        try:
+            auto_repair_deps = AutoRepairDependencies(
+                split_sentences=_split_sentences,
+                text_word_count=_text_word_count,
+                geometry_risk_map=_geometry_risk_map,
+                sentence_texture_risk_map=_sentence_texture_risk_map,
+                ordered_concept_terms=_ordered_concept_origin_terms,
+                is_canonical_fact_sentence=_ai_density_breaker_canonical_fact_sentence,
+                splice_sentence=_splice_sentence_for_auto_repair,
+                repair_aggression_score=_repair_aggression_score,
+                locality_score=_locality_score,
+                detect_protected_spans=detect_protected_spans,
+                protected_loss_reason=_ai_search_protected_loss_reason,
+                concept_origin_reject_reason=_candidate_concept_origin_reject_reason,
+                drift_checker=check_semantic_drift,
+                scan_func=_full_scan_report_dict,
+                turnitin_profile=_turnitin_like_ai_profile,
+                turnitin_gate_status=_turnitin_like_ai_gate_status,
+                strict_safe_status=_strict_ai_safe_band_status,
+                contribution_scores=_contribution_scores,
+                integrity_scores=_integrity_scores,
+                badge_ai=_badge_ai,
+                finding_total=_finding_total,
+                review_burden=_review_burden,
+                weighted_severity=_weighted_severity,
+                critical_high_count=_critical_high_count,
+            )
+            auto_repair_result = run_auto_repair_controller(
+                rewritten_text,
+                rewritten_report_dict,
+                original_report_dict,
+                auto_repair_deps,
+                max_rounds=int(_float_env("DRAFTPROOF_AUTO_REPAIR_MAX_ROUNDS", 2.0)),
+                max_scans=int(_float_env("DRAFTPROOF_AUTO_REPAIR_MAX_SCANS", 4.0)),
+                target_human=float(_float_env("DRAFTPROOF_TARGET_HUMAN_CONTRIBUTION", 80.0)),
+            )
+        except Exception as exc:
+            auto_repair_result = {
+                "enabled": True,
+                "selected": False,
+                "reason": f"auto_repair_controller_error {exc}",
+            }
+        stored_auto_repair_result = {
+            key: value
+            for key, value in auto_repair_result.items()
+            if key not in {"selected_text", "selected_report"}
+        }
+        result.summary["auto_repair_controller"] = stored_auto_repair_result
+        if auto_repair_result.get("selected"):
+            selected_report = auto_repair_result.get("selected_report")
+            selected_text = auto_repair_result.get("selected_text")
+            if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                rewritten_text = selected_text
+                rewritten_report_dict = selected_report
+                attempted_report_dict = rewritten_report_dict
+                rewritten_ai = _badge_ai(rewritten_report_dict)
+                rewritten_wq = _badge_wq(rewritten_report_dict)
+                rewritten_total = _finding_total(rewritten_report_dict)
+                rewritten_review_burden = _review_burden(rewritten_report_dict)
+                rewritten_severity = _weighted_severity(rewritten_report_dict)
+                rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                if result.mp_result:
+                    result.mp_result.final_text = rewritten_text
+                    result.mp_result.converged = True
+                    result.mp_result.convergence_reason = (
+                        "Selected auto-repair compiler candidate: "
+                        f"{auto_repair_result.get('selected_strategy')}"
+                    )
+                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                ai_search_selected = True
+                auto_repair_selected = True
+                _clear_stale_rollback_for_kept_ai_mitigation(
+                    result.summary,
+                    "auto-repair compiler",
+                )
+                result.summary["selected_strategy"] = auto_repair_result.get("selected_strategy")
+                result.summary["selected_auto_repair_strategy"] = auto_repair_result.get("selected_strategy")
+                result.summary["detect_scores"].update({
+                    "rewritten_ai": rewritten_ai,
+                    "rewritten_writing_quality": rewritten_wq,
+                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                    "rewritten_findings": rewritten_total,
+                    "rewritten_review_burden": rewritten_review_burden,
+                    "rewritten_weighted_severity": rewritten_severity,
+                })
+        stage_timings.append({
+            "stage": "auto_repair_controller",
+            "seconds": round(time.time() - auto_repair_t0, 3),
+            "candidates": len(stored_auto_repair_result.get("candidates") or []),
+            "scans": stored_auto_repair_result.get("scans_used"),
+            "selected": bool(auto_repair_result.get("selected")),
+            "stop_reason": auto_repair_result.get("reason"),
         })
 
     ai_regression_tolerance = 0.25
