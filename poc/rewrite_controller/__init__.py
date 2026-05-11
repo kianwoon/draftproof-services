@@ -7,6 +7,13 @@ from .budget import (
     resolve_global_rewrite_seconds,
 )
 from .quality_gate import evaluate_text_quality_regression
+from .progress_policy import (
+    CLEANUP_PROGRESS_THRESHOLDS,
+    MEANINGFUL_AI_PROGRESS_THRESHOLDS,
+    cleanup_progress_gate,
+    final_rewrite_outcome_label,
+    meaningful_ai_progress_gate,
+)
 from .selector import CandidateLedger, build_candidate_record
 from .ai_search_selection import (
     ai_search_candidate_rank,
@@ -69,6 +76,11 @@ __all__ = [
     "cap_phase_seconds_for_reserve",
     "post_ai_search_reserve_seconds",
     "resolve_global_rewrite_seconds",
+    "CLEANUP_PROGRESS_THRESHOLDS",
+    "MEANINGFUL_AI_PROGRESS_THRESHOLDS",
+    "cleanup_progress_gate",
+    "final_rewrite_outcome_label",
+    "meaningful_ai_progress_gate",
     "ai_search_candidate_rank",
     "build_candidate_record",
     "build_candidate_decision",

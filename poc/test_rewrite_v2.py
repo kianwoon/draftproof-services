@@ -73,6 +73,9 @@ from rewrite_controller import (
     build_candidate_record,
     cap_phase_seconds_for_reserve,
     classify_ai_search_candidate,
+    cleanup_progress_gate,
+    final_rewrite_outcome_label,
+    meaningful_ai_progress_gate,
     post_ai_search_reserve_seconds,
     resolve_global_rewrite_seconds,
     assemble_formula_gap_candidate,
@@ -1216,7 +1219,7 @@ cleanup_formula_only_status = {
     "turnitin_like_ai_gate": {
         "safety_clean": True,
         "improved": True,
-        "score_drop": 2.562,
+        "score_drop": 1.5,
         "component_drops": {
             "ai_likelihood": -0.005,
             "topk_calibrated_risk": 0.0,
@@ -1227,8 +1230,8 @@ cleanup_formula_only_status = {
     },
     "formula_gap_contract": {
         "target_met": False,
-        "score_drop": 2.562,
-        "weighted_formula_score_drop": 2.562,
+        "score_drop": 1.5,
+        "weighted_formula_score_drop": 1.5,
         "weighted_driver_drop_efficiency": 0.077,
         "weighted_driver_drops": {
             "ai_likelihood": {"drop": -0.005},
@@ -1334,6 +1337,15 @@ assert_test(
 )
 cleanup_formula_no_ai_regression_status = dict(cleanup_formula_only_status)
 cleanup_formula_no_ai_regression_status["reference_ai"] = 54.62
+cleanup_formula_no_ai_regression_status["turnitin_like_ai_gate"] = {
+    **cleanup_formula_no_ai_regression_status["turnitin_like_ai_gate"],
+    "score_drop": 3.5,
+}
+cleanup_formula_no_ai_regression_status["formula_gap_contract"] = {
+    **cleanup_formula_no_ai_regression_status["formula_gap_contract"],
+    "score_drop": 3.5,
+    "weighted_formula_score_drop": 3.5,
+}
 assert_test(
     _goal_climb_candidate_rank(
         cleanup_formula_no_ai_regression_status,
@@ -9706,6 +9718,59 @@ assert_test(
     and decision_probe.headline_ai_drop == 5.0
     and decision_probe.to_dict().get("rank"),
     "candidate selector exposes CandidateDecision with visible rank and headline drops",
+)
+micro_ai_progress_gate = meaningful_ai_progress_gate(
+    turnitin_like_ai_score_drop=0.7,
+    ai_score_drop=0.4,
+    ai_authorship_drop=0.5,
+    unsafe_eligible_density_drop=1.2,
+)
+assert_test(
+    not micro_ai_progress_gate["meaningful"],
+    "meaningful AI progress gate rejects micro detector movement",
+)
+meaningful_ai_progress = meaningful_ai_progress_gate(ai_authorship_drop=2.0)
+assert_test(
+    meaningful_ai_progress["meaningful"]
+    and meaningful_ai_progress["drivers"][0]["driver"] == "ai_authorship_drop",
+    "meaningful AI progress gate accepts material authorship movement",
+)
+cleanup_progress = cleanup_progress_gate(findings_drop=1)
+assert_test(
+    cleanup_progress["cleanup"]
+    and final_rewrite_outcome_label(
+        detector_safe=False,
+        text_changed=True,
+        meaningful_ai_progress=False,
+        cleanup_progress=True,
+    ) == "cleanup_only",
+    "cleanup progress is labelled cleanup_only, not unsafe partial mitigation",
+)
+assert_test(
+    final_rewrite_outcome_label(
+        detector_safe=False,
+        text_changed=True,
+        meaningful_ai_progress=True,
+        cleanup_progress=False,
+    ) == "unsafe_partial_improvement",
+    "unsafe partial requires meaningful AI progress when detector gates remain unsafe",
+)
+formula_micro_status = {
+    "selectable": True,
+    "partial_turnitin_like_mitigation": True,
+    "turnitin_like_ai_gate": {"improved": True, "safety_clean": True, "score_drop": 0.5},
+    "formula_gap_contract": {"score_drop": 0.5, "target_met": False},
+    "eligible_span_density_gate": {
+        "safe": False,
+        "improved": True,
+        "unsafe_eligible_word_ratio_drop": 1.0,
+    },
+}
+formula_micro_classification = classify_ai_search_candidate(formula_micro_status)
+assert_test(
+    formula_micro_classification["class"] == "formula_progress"
+    and not formula_micro_classification["meaningful_ai_progress_gate"]["meaningful"],
+    "AI-search classifier keeps micro formula movement out of detector-progress lane",
 )
 resolved_global_seconds = resolve_global_rewrite_seconds(
     legacy_seconds=30,

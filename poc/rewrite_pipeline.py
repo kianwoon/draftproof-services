@@ -37,7 +37,10 @@ from rewrite_controller import (
     RewriteRunBudget,
     build_candidate_record,
     cap_phase_seconds_for_reserve,
+    cleanup_progress_gate,
     evaluate_text_quality_regression,
+    final_rewrite_outcome_label,
+    meaningful_ai_progress_gate,
     post_ai_search_reserve_seconds,
     resolve_global_rewrite_seconds,
 )
@@ -22050,6 +22053,19 @@ def run_rewrite_pipeline(
                 candidate_report,
             )
             candidate_eval["eligible_span_density_gate"] = eligible_span_density_gate
+            candidate_meaningful_ai_progress_gate = meaningful_ai_progress_gate(
+                turnitin_like_ai_score_drop=formula_gap_contract.get("score_drop"),
+                ai_score_drop=ai_delta,
+                ai_authorship_drop=ai_authorship_delta,
+                ai_transformation_drop=candidate_ai_transform_delta,
+                positive_ai_burden_drop=(
+                    (formula_gap_contract.get("positive_ai_burden") or {}).get("drop")
+                    if isinstance(formula_gap_contract.get("positive_ai_burden"), dict)
+                    else None
+                ),
+                unsafe_eligible_density_drop=eligible_span_density_gate.get("unsafe_eligible_word_ratio_drop"),
+            )
+            candidate_eval["meaningful_ai_progress_gate"] = candidate_meaningful_ai_progress_gate
             ai_footprint_outcome = str(ai_footprint_gate.get("outcome_class") or "")
             footprint_drops = ai_footprint_gate.get("drops") if isinstance(ai_footprint_gate.get("drops"), dict) else {}
             if candidate_eval.get("human_anchor_amplifier"):
@@ -22139,6 +22155,7 @@ def run_rewrite_pipeline(
                 _env_flag("DRAFTPROOF_TURNITIN_LIKE_GATE_ENABLED", True)
                 and turnitin_like_gate.get("safety_clean")
                 and turnitin_like_gate.get("improved")
+                and candidate_meaningful_ai_progress_gate.get("meaningful")
                 and not authenticity_status.get("ai_authorship_regression_blocked")
                 and not authenticity_status.get("critical_high_regressed")
                 and candidate_critical_high <= saved_critical_high
@@ -29783,6 +29800,25 @@ def run_rewrite_pipeline(
             "qualifying_text_ai_density",
         }
     ]
+    final_positive_ai_burden = (
+        final_formula_gap_contract.get("positive_ai_burden")
+        if isinstance(final_formula_gap_contract.get("positive_ai_burden"), dict)
+        else {}
+    )
+    final_meaningful_ai_progress_gate = meaningful_ai_progress_gate(
+        turnitin_like_ai_score_drop=final_turnitin_like_gate.get("score_drop"),
+        ai_score_drop=final_ai_drop_for_acceptance,
+        ai_authorship_drop=final_authorship_drop_for_acceptance,
+        ai_transformation_drop=final_transformation_drop_for_acceptance,
+        positive_ai_burden_drop=final_positive_ai_burden.get("drop"),
+        ai_window_vote_ratio_drop=result.summary.get("ai_sentence_vote_ratio_drop"),
+        unsafe_eligible_density_drop=final_eligible_span_density_gate.get("unsafe_eligible_word_ratio_drop"),
+    )
+    final_cleanup_progress_gate = cleanup_progress_gate(
+        findings_drop=_finding_total(original_report_dict) - _finding_total(rewritten_report_dict),
+        review_burden_drop=original_review_burden - _review_burden(rewritten_report_dict),
+        weighted_severity_drop=original_severity - _weighted_severity(rewritten_report_dict),
+    )
     detector_safe_label_status = {
         "detector_safe": bool(
             final_strict_safe_band.get("achieved")
@@ -29799,17 +29835,21 @@ def run_rewrite_pipeline(
             "needs_author_context": final_eligible_span_density_gate.get("needs_author_context"),
         },
         "turnitin_like_score_drop": final_turnitin_like_gate.get("score_drop"),
+        "meaningful_ai_progress": bool(final_meaningful_ai_progress_gate.get("meaningful")),
+        "meaningful_ai_progress_gate": final_meaningful_ai_progress_gate,
+        "cleanup_progress": bool(final_cleanup_progress_gate.get("cleanup")),
+        "cleanup_progress_gate": final_cleanup_progress_gate,
         "unsafe_partial": bool(
             rewritten_text != text
-            and isinstance(final_turnitin_like_gate.get("score_drop"), (int, float))
-            and float(final_turnitin_like_gate.get("score_drop") or 0.0) > 0.001
+            and final_meaningful_ai_progress_gate.get("meaningful")
             and (unsafe_detector_drivers or not final_eligible_span_density_gate.get("safe"))
         ),
         "unsafe_drivers": unsafe_detector_drivers,
         "label_rule": (
             "ai_mitigated requires Turnitin-like score below target, all strict detector drivers in safe band, "
-            "and eligible prose density in safe band; "
-            "otherwise a score drop is unsafe_partial_improvement."
+            "eligible prose density in safe band, and no safety regression. "
+            "If detector drivers remain unsafe, unsafe_partial_improvement requires meaningful AI progress; "
+            "cleanup-only gains are labelled cleanup_only."
         ),
     }
     result.summary["detector_safe_label_status"] = detector_safe_label_status
@@ -29918,18 +29958,24 @@ def run_rewrite_pipeline(
                 and bool((result.summary.get("detector_safe_label_status") or {}).get("detector_safe"))
             ):
                 result.summary["outcome"] = "ai_mitigated"
-            elif unsafe_partial:
-                result.summary["outcome"] = "unsafe_partial_improvement"
-            elif turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"}:
-                result.summary["outcome"] = "partially_ai_mitigated"
             else:
-                result.summary["outcome"] = {
-                    "partially_ai_mitigated": "partially_ai_mitigated",
-                    "cleanup_improved": "cleanup_improved",
-                }.get(
-                    ai_footprint_outcome,
-                    "topk_blocked" if topk_still_blocked else "partially_improved",
+                policy_outcome = final_rewrite_outcome_label(
+                    detector_safe=bool((result.summary.get("detector_safe_label_status") or {}).get("detector_safe")),
+                    text_changed=bool(rewritten_text != text),
+                    meaningful_ai_progress=bool((result.summary.get("detector_safe_label_status") or {}).get("meaningful_ai_progress")),
+                    cleanup_progress=bool((result.summary.get("detector_safe_label_status") or {}).get("cleanup_progress")),
+                    current_outcome=result.summary.get("outcome"),
                 )
+                if policy_outcome == "unsafe_partial_improvement" and unsafe_partial:
+                    result.summary["outcome"] = "unsafe_partial_improvement"
+                elif policy_outcome == "cleanup_only":
+                    result.summary["outcome"] = "cleanup_only"
+                elif policy_outcome == "ceiling_reached":
+                    result.summary["outcome"] = "ceiling_reached"
+                elif turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"} and unsafe_partial:
+                    result.summary["outcome"] = "unsafe_partial_improvement"
+                else:
+                    result.summary["outcome"] = policy_outcome
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["full_scan_cache"] = dict(full_scan_cache_stats)

@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .progress_policy import meaningful_ai_progress_gate
+
 
 CLASS_REJECT = "reject"
 CLASS_FALLBACK = "fallback"
@@ -29,11 +31,11 @@ CLASS_PRIORITY = {
 }
 
 CORE_DRIVER_PROGRESS_FLOORS = {
-    "ai_likelihood_drop": 0.25,
-    "topk_calibrated_risk_drop": 1.0,
-    "ai_authorship_drop": 0.5,
-    "qualifying_text_ai_density_drop": 0.25,
-    "rewrite_smoothness_drop": 0.25,
+    "ai_likelihood_drop": 2.0,
+    "topk_calibrated_risk_drop": 2.0,
+    "ai_authorship_drop": 2.0,
+    "qualifying_text_ai_density_drop": 3.0,
+    "rewrite_smoothness_drop": 2.0,
 }
 
 
@@ -163,7 +165,14 @@ def classify_ai_search_candidate(selection_status: dict | None, candidate_eval: 
     target_met = bool(formula.get("target_met") or turnitin.get("safe_band"))
     density_gate_present = bool(density_gate)
     density_safe = bool(not density_gate_present or density_gate.get("safe"))
-    density_improved = bool(density_gate.get("improved"))
+    positive_burden = formula.get("positive_ai_burden") if isinstance(formula.get("positive_ai_burden"), dict) else {}
+    meaningful_progress = meaningful_ai_progress_gate(
+        turnitin_like_ai_score_drop=_num(formula.get("score_drop"), _num(turnitin.get("score_drop"))),
+        ai_authorship_drop=metrics.get("ai_authorship_drop"),
+        positive_ai_burden_drop=positive_burden.get("drop"),
+        unsafe_eligible_density_drop=density_gate.get("unsafe_eligible_word_ratio_drop"),
+        ai_window_vote_ratio_drop=density_gate.get("ai_sentence_vote_ratio_drop"),
+    )
     core_driver_progress = any(
         max(0.0, float(metrics.get(name, 0.0))) >= floor
         for name, floor in CORE_DRIVER_PROGRESS_FLOORS.items()
@@ -174,8 +183,8 @@ def classify_ai_search_candidate(selection_status: dict | None, candidate_eval: 
         or status.get("partial_ai_footprint_mitigation")
         or status.get("topk_blocker_progress")
         or footprint_outcome in {"ai_mitigated", "partially_ai_mitigated", "ai_footprint_blocked_by_texture"}
+        or meaningful_progress.get("passed")
         or core_driver_progress
-        or density_improved
     )
 
     if target_met and density_safe and (status.get("turnitin_like_mitigation") or footprint_outcome == "ai_mitigated"):
@@ -200,6 +209,7 @@ def classify_ai_search_candidate(selection_status: dict | None, candidate_eval: 
         "priority": CLASS_PRIORITY[cls],
         "reason": cls,
         "detector_progress": metrics,
+        "meaningful_ai_progress_gate": meaningful_progress,
         "footprint_outcome": footprint_outcome,
         "target_met": target_met,
         "eligible_span_density_safe": density_safe,
