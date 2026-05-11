@@ -89,10 +89,23 @@ from rewrite_controller import (
     formula_gap_plan,
     formula_gap_portfolio_families,
     assemble_segment_window_candidate,
+    assemble_remaining_cluster_candidate,
+    build_remaining_cluster_map,
+    extract_remaining_cluster_payload,
+    extract_window_coverage_payload,
+    remaining_cluster_candidate_prompt,
+    remaining_cluster_patchwork_budget,
+    remaining_cluster_tasks,
+    assemble_window_coverage_candidate,
+    build_window_coverage_map,
+    compare_window_coverage_density,
     segment_patchwork_budget,
     segment_window_candidate_prompt,
     segment_window_is_canonical_fact_sentence,
     segment_window_tasks,
+    window_coverage_candidate_prompt,
+    window_coverage_patchwork_budget,
+    window_coverage_tasks,
 )
 from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
@@ -222,6 +235,8 @@ from rewrite_pipeline import (
     _post_selection_ai_density_breaker_candidates,
     _post_selection_ai_density_breaker_acceptance,
     _segment_window_density_acceptance,
+    _remaining_cluster_density_acceptance,
+    _window_coverage_density_acceptance,
     _post_density_human_anchor_probe_candidates,
     _post_density_human_anchor_probe_acceptance,
     _contribution_scores,
@@ -8630,9 +8645,10 @@ assert_test(
 worker_tasks_source = Path("worker/app/tasks.py").read_text()
 assert_test(
     "segment_window_density_controller" in worker_tasks_source
+    and "segment_window_density_controller_followup" in worker_tasks_source
     and "segment_window_candidate_frontier" in worker_tasks_source
     and "selected_segment_window_strategy" in worker_tasks_source,
-    "worker debug export exposes segment-window controller details",
+    "worker debug export exposes segment-window controller and follow-up details",
 )
 
 def _ledger_record(stage, source_text, current_text, candidate_text, current_report, candidate_report):
@@ -8906,6 +8922,22 @@ assert_test(
     '"post_density_human_anchor_probe"' in worker_tasks_source
     and '"selected_human_anchor_probe_strategy"' in worker_tasks_source,
     "worker debug export includes post-density Human Anchor probe details",
+)
+assert_test(
+    '"remaining_cluster_density_controller"' in worker_tasks_source
+    and '"remaining_cluster_map"' in worker_tasks_source
+    and '"remaining_cluster_candidate_frontier"' in worker_tasks_source
+    and '"rewrite_phase_budget_plan"' in worker_tasks_source
+    and '"global_rewrite_budget"' in worker_tasks_source,
+    "worker debug export exposes remaining-cluster controller plus budget fields",
+)
+assert_test(
+    '"window_coverage_density_optimizer"' in worker_tasks_source
+    and '"window_coverage_map"' in worker_tasks_source
+    and '"window_coverage_candidate_frontier"' in worker_tasks_source
+    and '"selected_window_coverage_strategy"' in worker_tasks_source
+    and '"ai_sentence_vote_ratio_drop"' in worker_tasks_source,
+    "worker debug export exposes window-coverage optimizer plus vote-density fields",
 )
 assert_test(
     '"debug_export_version": REWRITE_DEBUG_EXPORT_VERSION' in worker_tasks_source
@@ -9299,6 +9331,325 @@ assert_test(
     and segment_small_gain_acceptance["formula_score_drop"] > 0
     and segment_small_gain_acceptance["density_positive"] is True,
     "segment-window acceptance keeps safe small formula and density gains",
+)
+remaining_cluster_map = build_remaining_cluster_map(segment_window_text, segment_window_report, limit=4)
+remaining_cluster_task_list = remaining_cluster_tasks(segment_window_text, segment_window_report, limit=4)
+remaining_cluster_prompt = remaining_cluster_candidate_prompt(
+    segment_window_text,
+    segment_window_report,
+    remaining_cluster_task_list[0],
+)
+cluster = remaining_cluster_task_list[0]["clusters"][0]
+cluster_payload, cluster_payload_reason = extract_remaining_cluster_payload(json.dumps({
+    "strategy": "CLUSTER_COMPRESS_GENERIC",
+    "targeted_drivers": ["qualifying_text_ai_density", "semantic_uniformity"],
+    "fact_inventory_preserved": True,
+    "protected_anchors_preserved": True,
+    "unsupported_new_facts": False,
+    "cluster_patches": [
+        {
+            "cluster_id": cluster["cluster_id"],
+            "start_sentence": cluster["start_sentence"],
+            "end_sentence": cluster["end_sentence"],
+            "replacement_text": "Its influence is broad, but the effects do not fall into one neat pattern. Economic and cultural examples matter more than a general summary here.",
+        }
+    ],
+}))
+remaining_cluster_candidate, remaining_cluster_applied, remaining_cluster_reason = assemble_remaining_cluster_candidate(
+    segment_window_text,
+    cluster_payload or {},
+    remaining_cluster_task_list[0],
+)
+fact_loss_task = {
+    "family": "CLUSTER_COMPRESS_GENERIC",
+    "clusters": [{
+        "cluster_id": "rc_fact_000_001",
+        "start_sentence": 0,
+        "end_sentence": 1,
+        "protected_anchor_terms": ["1776", "Britain", "Constitution"],
+        "editable_sentence_indexes": [0, 1],
+    }],
+    "editable_sentence_indexes": [0, 1],
+}
+fact_loss_payload, _fact_loss_reason = extract_remaining_cluster_payload(json.dumps({
+    "strategy": "CLUSTER_COMPRESS_GENERIC",
+    "targeted_drivers": ["qualifying_text_ai_density"],
+    "fact_inventory_preserved": True,
+    "protected_anchors_preserved": True,
+    "unsupported_new_facts": False,
+    "cluster_patches": [{
+        "cluster_id": "rc_fact_000_001",
+        "start_sentence": 0,
+        "end_sentence": 1,
+        "replacement_text": "The country began after independence and later formed a government system.",
+    }],
+}))
+_fact_loss_candidate, _fact_loss_applied, fact_loss_assembly_reason = assemble_remaining_cluster_candidate(
+    segment_window_text,
+    fact_loss_payload or {},
+    fact_loss_task,
+)
+assert_test(
+    bool(remaining_cluster_map.get("clusters"))
+    and remaining_cluster_map["clusters"][0]["unsafe_word_count"] >= remaining_cluster_map["clusters"][-1]["unsafe_word_count"]
+    and remaining_cluster_map["clusters"][0].get("editable_sentence_indexes"),
+    "remaining-cluster map ranks the largest editable unsafe cluster first",
+)
+assert_test(
+    len(remaining_cluster_task_list) <= 4
+    and {task.get("family") for task in remaining_cluster_task_list}.issubset({
+        "CLUSTER_COMPRESS_GENERIC",
+        "CLUSTER_REBUILD_ASYMMETRIC",
+        "CLUSTER_REMOVE_LOW_VALUE",
+        "CLUSTER_HYBRID",
+    })
+    and "No personal voice" in remaining_cluster_prompt,
+    "remaining-cluster controller builds bounded cluster JSON tasks without personal voice",
+)
+assert_test(
+    cluster_payload is not None
+    and not cluster_payload_reason
+    and remaining_cluster_candidate
+    and remaining_cluster_applied
+    and not remaining_cluster_reason
+    and remaining_cluster_patchwork_budget(segment_window_text, remaining_cluster_candidate, remaining_cluster_applied)["accepted"] is True,
+    "remaining-cluster assembler applies scoped cluster patches inside patchwork budget",
+)
+assert_test(
+    "lost" in fact_loss_assembly_reason,
+    "remaining-cluster assembler rejects patches that lose canonical fact anchors",
+)
+remaining_cluster_gain_sentences = [
+    sentence.strip()
+    for sentence in re.split(r"(?<=[.!?])\s+", remaining_cluster_candidate)
+    if sentence.strip()
+]
+remaining_cluster_gain_report = {
+    **segment_window_report,
+    "ai_risk_badge": {
+        **segment_window_report["ai_risk_badge"],
+        "ai_likelihood_score": 61,
+        "ai_components": {
+            **segment_window_report["ai_risk_badge"]["ai_components"],
+            "topk_calibrated_risk": 86,
+            "qualifying_text_ai_density": 68,
+        },
+        "transformation_classification": {
+            "features": {
+                "semantic_uniformity_risk": 0.54,
+                "rewrite_smoothness": 0.50,
+                "outline_to_text_expansion": 0.38,
+                "section_style_variance": 0.42,
+                "signal_agreement_score": 0.48,
+            }
+        },
+    },
+    "predictability": {
+        "all_sentences": [
+            {
+                "sentence_id": f"s{idx + 1:03d}",
+                "sentence_index": idx,
+                "sentence": sentence,
+                "top10_ratio": 0.48 if idx >= int(cluster["start_sentence"]) else 0.78,
+                "top50_ratio": 0.70 if idx >= int(cluster["start_sentence"]) else 0.91,
+                "predictability_risk": 0.28 if idx >= int(cluster["start_sentence"]) else 0.60,
+            }
+            for idx, sentence in enumerate(remaining_cluster_gain_sentences)
+        ]
+    },
+}
+remaining_cluster_acceptance = _remaining_cluster_density_acceptance(
+    segment_window_text,
+    segment_window_report,
+    remaining_cluster_candidate,
+    remaining_cluster_gain_report,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+remaining_cluster_worse_formula = _remaining_cluster_density_acceptance(
+    segment_window_text,
+    segment_window_report,
+    remaining_cluster_candidate,
+    segment_window_report,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    remaining_cluster_acceptance.get("selectable") is True
+    and remaining_cluster_acceptance.get("formula_score_drop", 0) > 0
+    and remaining_cluster_acceptance.get("unsafe_eligible_word_ratio_drop", 0) >= 0,
+    "remaining-cluster selector accepts best safe formula and density drops",
+)
+assert_test(
+    remaining_cluster_worse_formula.get("selectable") is False
+    and remaining_cluster_worse_formula.get("reason") == "formula_score_not_reduced",
+    "remaining-cluster selector rejects density-only candidates when formula score does not drop",
+)
+window_coverage_map = build_window_coverage_map(segment_window_text, segment_window_report)
+window_coverage_task_list = window_coverage_tasks(segment_window_text, segment_window_report, limit=5)
+window_coverage_prompt = window_coverage_candidate_prompt(
+    segment_window_text,
+    segment_window_report,
+    window_coverage_task_list[0],
+)
+window_patch_indexes = list(window_coverage_task_list[0]["editable_sentence_indexes"][:2])
+window_payload, window_payload_reason = extract_window_coverage_payload(json.dumps({
+    "strategy": "COVERAGE_MULTI_SENTENCE_HYBRID",
+    "targeted_drivers": ["ai_likelihood", "topk_calibrated_risk", "qualifying_text_ai_density"],
+    "fact_inventory_preserved": True,
+    "protected_anchors_preserved": True,
+    "unsupported_new_facts": False,
+    "sentence_patches": [
+        {
+            "sentence_index": window_patch_indexes[0],
+            "replacement_text": "Its influence is wide, but it shows up unevenly across politics, money, culture, and classrooms."
+        },
+        {
+            "sentence_index": window_patch_indexes[1],
+            "replacement_text": "That power is easier to see through a few examples than through one broad summary."
+        },
+    ],
+}))
+window_coverage_candidate, window_coverage_applied, window_coverage_reason = assemble_window_coverage_candidate(
+    segment_window_text,
+    window_payload or {},
+    window_coverage_task_list[0],
+)
+outside_payload, _outside_payload_reason = extract_window_coverage_payload(json.dumps({
+    "strategy": "COVERAGE_GENERIC_COMPRESS",
+    "targeted_drivers": ["qualifying_text_ai_density"],
+    "fact_inventory_preserved": True,
+    "protected_anchors_preserved": True,
+    "unsupported_new_facts": False,
+    "sentence_patches": [
+        {"sentence_index": 0, "replacement_text": "The founding fact changed."},
+        {"sentence_index": 1, "replacement_text": "The government fact changed."},
+    ],
+}))
+_outside_candidate, _outside_applied, outside_reason = assemble_window_coverage_candidate(
+    segment_window_text,
+    outside_payload or {},
+    window_coverage_task_list[0],
+)
+assert_test(
+    window_coverage_map.get("windows")
+    and window_coverage_map["window_policy"]["stride"] == 1
+    and any(
+        str(row.get("window_id") or "").startswith("cw001_")
+        for row in window_coverage_map.get("windows") or []
+    ),
+    "window-coverage optimizer builds overlapping 5-10 sentence windows with one-sentence stride",
+)
+assert_test(
+    window_coverage_map.get("top_coverage_sentences")
+    and window_coverage_map["top_coverage_sentences"][0]["unsafe_window_count"]
+    >= window_coverage_map["top_coverage_sentences"][-1]["unsafe_window_count"],
+    "window-coverage map ranks top coverage sentences by unsafe window coverage",
+)
+assert_test(
+    "No personal voice" in window_coverage_prompt
+    and "Patch 2 to 4 sentences" in window_coverage_prompt
+    and "1776" in window_coverage_prompt,
+    "window-coverage prompt preserves canonical facts and forbids personal voice",
+)
+assert_test(
+    window_payload is not None
+    and not window_payload_reason
+    and window_coverage_candidate
+    and window_coverage_applied
+    and not window_coverage_reason
+    and window_coverage_patchwork_budget(segment_window_text, window_coverage_candidate, window_coverage_applied)["accepted"] is True,
+    "window-coverage assembler applies scoped high-coverage sentence patches",
+)
+assert_test(
+    not _outside_candidate
+    and "insufficient" in outside_reason,
+    "window-coverage assembler rejects patches outside editable high-coverage sentences",
+)
+window_coverage_gain_sentences = [
+    sentence.strip()
+    for sentence in re.split(r"(?<=[.!?])\s+", window_coverage_candidate)
+    if sentence.strip()
+]
+window_coverage_gain_report = {
+    **segment_window_report,
+    "ai_risk_badge": {
+        **segment_window_report["ai_risk_badge"],
+        "ai_likelihood_score": 59,
+        "ai_components": {
+            **segment_window_report["ai_risk_badge"]["ai_components"],
+            "topk_calibrated_risk": 83,
+            "qualifying_text_ai_density": 62,
+        },
+        "transformation_classification": {
+            "features": {
+                "semantic_uniformity_risk": 0.48,
+                "rewrite_smoothness": 0.45,
+                "outline_to_text_expansion": 0.34,
+                "section_style_variance": 0.38,
+                "signal_agreement_score": 0.44,
+            }
+        },
+    },
+    "predictability": {
+        "all_sentences": [
+            {
+                "sentence_id": f"s{idx + 1:03d}",
+                "sentence_index": idx,
+                "sentence": sentence,
+                "top10_ratio": 0.42 if idx in set(window_patch_indexes) else 0.78,
+                "top50_ratio": 0.64 if idx in set(window_patch_indexes) else 0.91,
+                "predictability_risk": 0.22 if idx in set(window_patch_indexes) else 0.60,
+            }
+            for idx, sentence in enumerate(window_coverage_gain_sentences)
+        ]
+    },
+}
+window_coverage_comparison = compare_window_coverage_density(
+    segment_window_text,
+    segment_window_report,
+    window_coverage_candidate,
+    window_coverage_gain_report,
+)
+window_coverage_acceptance = _window_coverage_density_acceptance(
+    segment_window_text,
+    segment_window_report,
+    window_coverage_candidate,
+    window_coverage_gain_report,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+window_coverage_worse_formula = _window_coverage_density_acceptance(
+    segment_window_text,
+    segment_window_report,
+    window_coverage_candidate,
+    segment_window_report,
+    review_burden_delta=0,
+    weighted_severity_delta=0,
+    critical_high_delta=0,
+)
+assert_test(
+    window_coverage_comparison.get("unsafe_window_count_drop", 0) >= 0
+    and window_coverage_comparison.get("ai_sentence_vote_ratio_drop", 0) >= 0,
+    "window-coverage comparison exposes unsafe-window and sentence-vote movement",
+)
+assert_test(
+    window_coverage_acceptance.get("selectable") is True
+    and window_coverage_acceptance.get("formula_score_drop", 0) > 0
+    and (
+        window_coverage_acceptance.get("unsafe_window_count_drop", 0) > 0
+        or window_coverage_acceptance.get("ai_sentence_vote_ratio_drop", 0) > 0
+        or window_coverage_acceptance.get("unsafe_eligible_word_ratio_drop", 0) > 0
+    ),
+    "window-coverage selector accepts safe formula and unsafe-window density drops",
+)
+assert_test(
+    window_coverage_worse_formula.get("selectable") is False
+    and window_coverage_worse_formula.get("reason") == "formula_score_not_reduced",
+    "window-coverage selector rejects density-only candidates when formula score does not drop",
 )
 decision_probe = build_candidate_decision(
     {

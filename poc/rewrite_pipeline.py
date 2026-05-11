@@ -68,6 +68,25 @@ from rewrite_controller.segment_window_density import (
     segment_window_candidate_prompt as _segment_window_candidate_prompt,
     segment_window_tasks as _segment_window_tasks,
 )
+from rewrite_controller.remaining_cluster_density import (
+    REMAINING_CLUSTER_CONTROLLER_VERSION as _REMAINING_CLUSTER_CONTROLLER_VERSION,
+    assemble_remaining_cluster_candidate as _assemble_remaining_cluster_candidate,
+    build_remaining_cluster_map as _remaining_cluster_map,
+    extract_remaining_cluster_payload as _extract_remaining_cluster_payload,
+    remaining_cluster_candidate_prompt as _remaining_cluster_candidate_prompt,
+    remaining_cluster_patchwork_budget as _remaining_cluster_patchwork_budget,
+    remaining_cluster_tasks as _remaining_cluster_tasks,
+)
+from rewrite_controller.window_coverage_density import (
+    WINDOW_COVERAGE_CONTROLLER_VERSION as _WINDOW_COVERAGE_CONTROLLER_VERSION,
+    assemble_window_coverage_candidate as _assemble_window_coverage_candidate,
+    build_window_coverage_map as _window_coverage_map,
+    compare_window_coverage_density as _window_coverage_comparison,
+    extract_window_coverage_payload as _extract_window_coverage_payload,
+    window_coverage_candidate_prompt as _window_coverage_candidate_prompt,
+    window_coverage_patchwork_budget as _window_coverage_patchwork_budget,
+    window_coverage_tasks as _window_coverage_tasks,
+)
 from rewrite_compiler import CompilerConfig, CompilerDependencies, run_rewrite_compiler
 from rewrite.guards import detect_protected_spans, check_semantic_drift
 from report.pdf import render_pdf
@@ -759,6 +778,24 @@ def _sync_rewrite_llm_call_totals(summary: dict, budget: RewriteRunBudget | None
             summary["segment_window_llm_calls_used"] = max(0, int(segment_summary.get("llm_calls") or 0))
         except (TypeError, ValueError):
             summary["segment_window_llm_calls_used"] = 0
+    segment_followup_summary = summary.get("segment_window_density_controller_followup")
+    if isinstance(segment_followup_summary, dict):
+        try:
+            summary["segment_window_followup_llm_calls_used"] = max(0, int(segment_followup_summary.get("llm_calls") or 0))
+        except (TypeError, ValueError):
+            summary["segment_window_followup_llm_calls_used"] = 0
+    remaining_cluster_summary = summary.get("remaining_cluster_density_controller")
+    if isinstance(remaining_cluster_summary, dict):
+        try:
+            summary["remaining_cluster_llm_calls_used"] = max(0, int(remaining_cluster_summary.get("llm_calls") or 0))
+        except (TypeError, ValueError):
+            summary["remaining_cluster_llm_calls_used"] = 0
+    window_coverage_summary = summary.get("window_coverage_density_optimizer")
+    if isinstance(window_coverage_summary, dict):
+        try:
+            summary["window_coverage_llm_calls_used"] = max(0, int(window_coverage_summary.get("llm_calls") or 0))
+        except (TypeError, ValueError):
+            summary["window_coverage_llm_calls_used"] = 0
     compiler_summary = summary.get("rewrite_compiler")
     if isinstance(compiler_summary, dict):
         try:
@@ -1439,6 +1476,752 @@ def _segment_window_density_controller(
     elif summary["candidate_frontier"]:
         summary["reason"] = "ceiling_reached"
         summary["why_not_below_20"] = "No segment-window candidate reduced both formula score and eligible-span density without safety regression."
+    return summary
+
+
+def _remaining_cluster_density_acceptance(
+    current_text: str,
+    current_report: dict | None,
+    candidate_text: str,
+    candidate_report: dict | None,
+    *,
+    review_burden_delta: int | float,
+    weighted_severity_delta: int | float,
+    critical_high_delta: int | float,
+) -> dict:
+    """Acceptance policy for remaining unsafe-cluster candidates."""
+    base_profile = _turnitin_like_ai_profile(current_report)
+    candidate_profile = _turnitin_like_ai_profile(candidate_report)
+    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
+    density_gate = _eligible_span_density_comparison(
+        current_text,
+        current_report,
+        candidate_text,
+        candidate_report,
+    )
+    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
+    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
+
+    def drop(key: str) -> float:
+        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
+
+    driver_drops = {
+        key: drop(key)
+        for key in (
+            "topk_calibrated_risk",
+            "qualifying_text_ai_density",
+            "external_ai_flag_risk",
+            "ai_likelihood",
+            "rewrite_smoothness",
+            "ai_authorship",
+            "ai_transformation",
+            "semantic_uniformity",
+        )
+    }
+    current_ai = _report_badge_ai(current_report)
+    candidate_ai = _report_badge_ai(candidate_report)
+    headline_ai_drop = (
+        round(float(current_ai) - float(candidate_ai), 3)
+        if isinstance(current_ai, (int, float)) and isinstance(candidate_ai, (int, float))
+        else 0.0
+    )
+    unsafe_ratio_drop = float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0)
+    longest_span_drop = float(density_gate.get("longest_unsafe_span_words_drop") or 0.0)
+    reject_reasons: list[str] = []
+    if formula_drop <= 0.001:
+        reject_reasons.append("formula_score_not_reduced")
+    if unsafe_ratio_drop < -0.001 or longest_span_drop < -0.001:
+        reject_reasons.append("eligible_span_density_regressed")
+    if headline_ai_drop < -0.001:
+        reject_reasons.append("headline_ai_score_regressed")
+    for key in (
+        "ai_authorship",
+        "ai_transformation",
+        "topk_calibrated_risk",
+        "ai_likelihood",
+        "external_ai_flag_risk",
+    ):
+        if driver_drops.get(key, 0.0) < -0.001:
+            reject_reasons.append(f"{key}_regressed")
+    if float(review_burden_delta or 0.0) > 0.0:
+        reject_reasons.append("review_burden_regressed")
+    if float(weighted_severity_delta or 0.0) > 0.0:
+        reject_reasons.append("weighted_severity_regressed")
+    if float(critical_high_delta or 0.0) > 0.0:
+        reject_reasons.append("critical_high_regressed")
+    selectable = not reject_reasons
+    return {
+        "version": "remaining_cluster_density_acceptance_v1",
+        "selectable": selectable,
+        "reason": "accepted_remaining_cluster_formula_density_improvement" if selectable else reject_reasons[0],
+        "formula_score_before": base_profile.get("score"),
+        "formula_score_after": candidate_profile.get("score"),
+        "formula_score_drop": formula_drop,
+        "target_met": bool(candidate_profile.get("target_met")),
+        "headline_ai_drop": headline_ai_drop,
+        "driver_drops": driver_drops,
+        "eligible_span_density_gate": density_gate,
+        "unsafe_eligible_word_ratio_drop": density_gate.get("unsafe_eligible_word_ratio_drop"),
+        "longest_unsafe_span_words_drop": density_gate.get("longest_unsafe_span_words_drop"),
+        "review_burden_delta": review_burden_delta,
+        "weighted_severity_delta": weighted_severity_delta,
+        "critical_high_delta": critical_high_delta,
+    }
+
+
+def _remaining_cluster_density_controller(
+    current_text: str,
+    current_report: dict | None,
+    original_report: dict | None,
+    *,
+    gateway: LLMGateway | None = None,
+    scan_func=None,
+    drift_checker=check_semantic_drift,
+    max_scans: int | None = None,
+    max_llm_calls: int | None = None,
+) -> dict:
+    """Run scoped cluster-level patches after segment-window density repair."""
+    if not _env_flag("DRAFTPROOF_REMAINING_CLUSTER_DENSITY_CONTROLLER", True):
+        return {"enabled": False, "reason": "disabled"}
+    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
+        return {"enabled": False, "reason": "missing_current_selection"}
+    scan_func = scan_func or _run_full_scan_report_dict
+    max_scans = max(
+        0,
+        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_REMAINING_CLUSTER_MAX_SCANS", 4.0)),
+    )
+    max_llm_calls = max(
+        0,
+        int(max_llm_calls if isinstance(max_llm_calls, int) else _float_env("DRAFTPROOF_REMAINING_CLUSTER_MAX_LLM_CALLS", 4.0)),
+    )
+    current_profile = _turnitin_like_ai_profile(current_report)
+    cluster_map = _remaining_cluster_map(current_text, current_report)
+    density_before = (cluster_map.get("eligible_span_density") or _eligible_span_density_contract(current_text, current_report))
+    components = current_profile.get("components") if isinstance(current_profile.get("components"), dict) else {}
+    topk_before = float(components.get("topk_calibrated_risk") or 0.0)
+    ai_likelihood_before = float(components.get("ai_likelihood") or 0.0)
+    if bool(current_profile.get("target_met")) and bool(density_before.get("safe")):
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "already_turnitin_and_density_safe",
+            "remaining_cluster_map": cluster_map,
+        }
+    if bool(density_before.get("safe")) and topk_before < _safe_topk_calibrated_limit():
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "density_and_topk_already_safe",
+            "remaining_cluster_map": cluster_map,
+        }
+    if gateway is None or max_llm_calls <= 0:
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "no_llm_budget_or_gateway",
+            "remaining_cluster_map": cluster_map,
+            "remaining_cluster_density_before": density_before,
+        }
+    if max_scans <= 0:
+        return {"enabled": True, "selected": False, "reason": "scan_budget_zero", "remaining_cluster_map": cluster_map}
+
+    tasks = _remaining_cluster_tasks(current_text, current_report, limit=max_llm_calls)
+    summary = {
+        "enabled": True,
+        "version": _REMAINING_CLUSTER_CONTROLLER_VERSION,
+        "selected": False,
+        "selected_text": current_text,
+        "selected_report": current_report,
+        "selected_strategy": None,
+        "llm_calls": 0,
+        "scans_used": 0,
+        "candidate_count": 0,
+        "remaining_cluster_map": cluster_map,
+        "remaining_cluster_density_before": density_before,
+        "base_summary": {
+            "turnitin_like_ai_score": current_profile.get("score"),
+            "target_met": current_profile.get("target_met"),
+            "topk_calibrated_risk": topk_before,
+            "ai_likelihood": ai_likelihood_before,
+        },
+        "candidate_frontier": [],
+        "reason": "no_candidate_selected",
+    }
+    if not tasks:
+        summary["reason"] = "no_remaining_cluster_tasks"
+        return summary
+
+    protected = detect_protected_spans(current_text)
+    best_eval = None
+    best_rank = None
+    best_text = current_text
+    best_report = current_report
+    seen = {current_text.strip()}
+    for task_index, task in enumerate(tasks, start=1):
+        if summary["llm_calls"] >= max_llm_calls or summary["scans_used"] >= max_scans:
+            break
+        strategy = f"remaining_cluster_{str(task.get('family') or 'cluster').lower()}_{task_index}"
+        candidate_eval = {
+            "strategy": strategy,
+            "task": task,
+            "passed_local_checks": False,
+        }
+        try:
+            prompt = _remaining_cluster_candidate_prompt(current_text, current_report, task)
+            summary["llm_calls"] += 1
+            response = gateway.chat(
+                prompt,
+                system=(
+                    "You are DraftProof's remaining-cluster density controller. "
+                    "Return only JSON cluster patches for the selected unsafe cluster."
+                ),
+                **_phase_chat_sampling_kwargs(
+                    "DRAFTPROOF_REMAINING_CLUSTER_DENSITY",
+                    temperature_env="DRAFTPROOF_REMAINING_CLUSTER_TEMPERATURE",
+                    temperature_default=0.42,
+                    max_tokens_env="DRAFTPROOF_REMAINING_CLUSTER_MAX_TOKENS",
+                    max_tokens_default=3200,
+                ),
+            )
+            payload, payload_reason = _extract_remaining_cluster_payload(response.content)
+        except Exception as exc:
+            candidate_eval["reason"] = f"llm_error {exc}"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        if not payload:
+            candidate_eval["reason"] = payload_reason or "invalid_remaining_cluster_payload"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        assembled, applied, assembly_reason = _assemble_remaining_cluster_candidate(current_text, payload, task)
+        candidate_text = _clean_full_document_candidate(assembled, current_text)
+        candidate_eval.update({
+            "payload_strategy": payload.get("strategy"),
+            "applied_cluster_patches": applied,
+            "targeted_drivers": payload.get("targeted_drivers"),
+        })
+        if not candidate_text:
+            candidate_eval["reason"] = assembly_reason or "empty_or_unchanged_candidate"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        if candidate_text.strip() in seen:
+            candidate_eval["reason"] = "duplicate_candidate"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        seen.add(candidate_text.strip())
+        local_reason = _ai_candidate_quality_reject_reason(candidate_text)
+        if local_reason:
+            candidate_eval["reason"] = local_reason
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        patchwork = _remaining_cluster_patchwork_budget(current_text, candidate_text, applied)
+        candidate_eval["patchwork_budget"] = patchwork
+        if not patchwork.get("accepted"):
+            candidate_eval["reason"] = patchwork.get("reason") or "remaining_cluster_patchwork_budget_exceeded"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        quality_gate = evaluate_text_quality_regression(
+            current_text,
+            candidate_text,
+            changed_sentence_ratio=patchwork.get("edited_sentence_ratio"),
+        )
+        candidate_eval["quality_gate"] = quality_gate
+        if not quality_gate.get("passed"):
+            candidate_eval["reason"] = (quality_gate.get("reject_reasons") or ["quality_gate_failed"])[0]
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        protected_loss = _ai_search_protected_loss_reason(current_text, candidate_text, protected)
+        if protected_loss:
+            candidate_eval["reason"] = "protected_span_lost " + protected_loss
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        try:
+            drift = drift_checker(current_text, candidate_text, threshold=0.80)
+        except TypeError:
+            drift = drift_checker(current_text, candidate_text)
+        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
+        if not bool(getattr(drift, "accepted", True)):
+            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
+            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        try:
+            candidate_report = scan_func(candidate_text)
+        except Exception as exc:
+            candidate_eval["reason"] = f"candidate_scan_error {exc}"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        summary["scans_used"] += 1
+        review_delta = _report_review_burden(candidate_report) - _report_review_burden(current_report)
+        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(current_report)
+        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(current_report)
+        acceptance = _remaining_cluster_density_acceptance(
+            current_text,
+            current_report,
+            candidate_text,
+            candidate_report,
+            review_burden_delta=review_delta,
+            weighted_severity_delta=severity_delta,
+            critical_high_delta=critical_delta,
+        )
+        candidate_eval.update({
+            "passed_local_checks": True,
+            "acceptance": acceptance,
+            "selectable": acceptance.get("selectable"),
+            "reason": acceptance.get("reason"),
+            "formula_score": acceptance.get("formula_score_after"),
+            "formula_score_drop": acceptance.get("formula_score_drop"),
+            "eligible_span_density_gate": acceptance.get("eligible_span_density_gate"),
+            "driver_drops": acceptance.get("driver_drops"),
+        })
+        summary["candidate_frontier"].append(candidate_eval)
+        if not acceptance.get("selectable"):
+            continue
+        density_gate = acceptance.get("eligible_span_density_gate") or {}
+        rank = (
+            1 if acceptance.get("target_met") and density_gate.get("safe") else 0,
+            float(acceptance.get("formula_score_drop") or 0.0),
+            float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
+            -float((acceptance.get("formula_score_after") or 100.0)),
+        )
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_eval = candidate_eval
+            best_text = candidate_text
+            best_report = candidate_report
+
+    summary["candidate_count"] = len(summary.get("candidate_frontier") or [])
+    if best_eval:
+        best_eval["selected"] = True
+        final_density = _eligible_span_density_comparison(
+            current_text,
+            current_report,
+            best_text,
+            best_report,
+        )
+        final_profile = _turnitin_like_ai_profile(best_report)
+        final_components = final_profile.get("components") if isinstance(final_profile.get("components"), dict) else {}
+        summary.update({
+            "selected": True,
+            "selected_text": best_text,
+            "selected_report": best_report,
+            "selected_strategy": best_eval.get("strategy"),
+            "selected_candidate": {
+                key: best_eval.get(key)
+                for key in (
+                    "strategy",
+                    "formula_score",
+                    "formula_score_drop",
+                    "eligible_span_density_gate",
+                    "driver_drops",
+                    "patchwork_budget",
+                    "drift_similarity",
+                    "applied_cluster_patches",
+                    "acceptance",
+                )
+            },
+            "remaining_cluster_density_after": final_density.get("after"),
+            "remaining_cluster_density_drop": final_density.get("unsafe_eligible_word_ratio_drop"),
+            "remaining_cluster_topk_before": topk_before,
+            "remaining_cluster_topk_after": final_components.get("topk_calibrated_risk"),
+            "remaining_cluster_topk_drop": round(topk_before - float(final_components.get("topk_calibrated_risk") or 0.0), 3),
+            "reason": best_eval.get("reason"),
+            "final_summary": {
+                "turnitin_like_ai_score": final_profile.get("score"),
+                "target_met": final_profile.get("target_met"),
+                "eligible_span_density_safe": final_density.get("safe"),
+            },
+        })
+    elif summary["candidate_frontier"]:
+        summary["reason"] = "ceiling_reached"
+        summary["why_not_below_20"] = "No remaining-cluster candidate reduced total formula score without density or AI-driver regression."
+    return summary
+
+
+def _window_coverage_density_acceptance(
+    current_text: str,
+    current_report: dict | None,
+    candidate_text: str,
+    candidate_report: dict | None,
+    *,
+    review_burden_delta: int | float,
+    weighted_severity_delta: int | float,
+    critical_high_delta: int | float,
+) -> dict:
+    """Acceptance policy for sliding-window coverage candidates."""
+    base_profile = _turnitin_like_ai_profile(current_report)
+    candidate_profile = _turnitin_like_ai_profile(candidate_report)
+    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
+    density_gate = _eligible_span_density_comparison(
+        current_text,
+        current_report,
+        candidate_text,
+        candidate_report,
+    )
+    coverage_gate = _window_coverage_comparison(
+        current_text,
+        current_report,
+        candidate_text,
+        candidate_report,
+    )
+    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
+    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
+
+    def drop(key: str) -> float:
+        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
+
+    driver_drops = {
+        key: drop(key)
+        for key in (
+            "topk_calibrated_risk",
+            "qualifying_text_ai_density",
+            "external_ai_flag_risk",
+            "ai_likelihood",
+            "rewrite_smoothness",
+            "ai_authorship",
+            "ai_transformation",
+            "semantic_uniformity",
+        )
+    }
+    current_ai = _report_badge_ai(current_report)
+    candidate_ai = _report_badge_ai(candidate_report)
+    headline_ai_drop = (
+        round(float(current_ai) - float(candidate_ai), 3)
+        if isinstance(current_ai, (int, float)) and isinstance(candidate_ai, (int, float))
+        else 0.0
+    )
+    unsafe_ratio_drop = float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0)
+    longest_span_drop = float(density_gate.get("longest_unsafe_span_words_drop") or 0.0)
+    unsafe_window_drop = float(coverage_gate.get("unsafe_window_count_drop") or 0.0)
+    vote_ratio_drop = float(coverage_gate.get("ai_sentence_vote_ratio_drop") or 0.0)
+    reject_reasons: list[str] = []
+    if formula_drop <= 0.001:
+        reject_reasons.append("formula_score_not_reduced")
+    if unsafe_window_drop < -0.001 or vote_ratio_drop < -0.001:
+        reject_reasons.append("window_coverage_regressed")
+    if unsafe_ratio_drop < -0.001 or longest_span_drop < -0.001:
+        reject_reasons.append("eligible_span_density_regressed")
+    if not (unsafe_window_drop > 0.001 or vote_ratio_drop > 0.001 or unsafe_ratio_drop > 0.001):
+        reject_reasons.append("unsafe_density_not_improved")
+    if headline_ai_drop < -0.001:
+        reject_reasons.append("headline_ai_score_regressed")
+    for key in (
+        "ai_authorship",
+        "ai_transformation",
+        "topk_calibrated_risk",
+        "ai_likelihood",
+        "external_ai_flag_risk",
+    ):
+        if driver_drops.get(key, 0.0) < -0.001:
+            reject_reasons.append(f"{key}_regressed")
+    if float(review_burden_delta or 0.0) > 0.0:
+        reject_reasons.append("review_burden_regressed")
+    if float(weighted_severity_delta or 0.0) > 0.0:
+        reject_reasons.append("weighted_severity_regressed")
+    if float(critical_high_delta or 0.0) > 0.0:
+        reject_reasons.append("critical_high_regressed")
+    selectable = not reject_reasons
+    return {
+        "version": "window_coverage_density_acceptance_v1",
+        "selectable": selectable,
+        "reason": "accepted_window_coverage_formula_density_improvement" if selectable else reject_reasons[0],
+        "formula_score_before": base_profile.get("score"),
+        "formula_score_after": candidate_profile.get("score"),
+        "formula_score_drop": formula_drop,
+        "target_met": bool(candidate_profile.get("target_met")),
+        "headline_ai_drop": headline_ai_drop,
+        "driver_drops": driver_drops,
+        "eligible_span_density_gate": density_gate,
+        "window_coverage_gate": coverage_gate,
+        "unsafe_window_count_drop": coverage_gate.get("unsafe_window_count_drop"),
+        "ai_sentence_vote_ratio_drop": coverage_gate.get("ai_sentence_vote_ratio_drop"),
+        "unsafe_eligible_word_ratio_drop": density_gate.get("unsafe_eligible_word_ratio_drop"),
+        "longest_unsafe_span_words_drop": density_gate.get("longest_unsafe_span_words_drop"),
+        "review_burden_delta": review_burden_delta,
+        "weighted_severity_delta": weighted_severity_delta,
+        "critical_high_delta": critical_high_delta,
+    }
+
+
+def _window_coverage_density_optimizer(
+    current_text: str,
+    current_report: dict | None,
+    original_report: dict | None,
+    *,
+    gateway: LLMGateway | None = None,
+    scan_func=None,
+    drift_checker=check_semantic_drift,
+    max_scans: int | None = None,
+    max_llm_calls: int | None = None,
+) -> dict:
+    """Run scoped patches for high-leverage unsafe sliding-window coverage."""
+    if not _env_flag("DRAFTPROOF_WINDOW_COVERAGE_DENSITY_OPTIMIZER", True):
+        return {"enabled": False, "reason": "disabled"}
+    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
+        return {"enabled": False, "reason": "missing_current_selection"}
+    scan_func = scan_func or _run_full_scan_report_dict
+    max_scans = max(
+        0,
+        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_SCANS", 5.0)),
+    )
+    max_llm_calls = max(
+        0,
+        int(max_llm_calls if isinstance(max_llm_calls, int) else _float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_LLM_CALLS", 5.0)),
+    )
+    current_profile = _turnitin_like_ai_profile(current_report)
+    coverage_map = _window_coverage_map(current_text, current_report)
+    density_before = coverage_map.get("eligible_span_density") or _eligible_span_density_contract(current_text, current_report)
+    if bool(current_profile.get("target_met")) and bool(density_before.get("safe")):
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "already_turnitin_and_density_safe",
+            "window_coverage_map": coverage_map,
+        }
+    if bool(density_before.get("safe")) and int(coverage_map.get("unsafe_window_count") or 0) <= 0:
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "density_and_window_coverage_already_safe",
+            "window_coverage_map": coverage_map,
+        }
+    if gateway is None or max_llm_calls <= 0:
+        return {
+            "enabled": True,
+            "selected": False,
+            "reason": "no_llm_budget_or_gateway",
+            "window_coverage_map": coverage_map,
+            "eligible_span_density_before": density_before,
+        }
+    if max_scans <= 0:
+        return {"enabled": True, "selected": False, "reason": "scan_budget_zero", "window_coverage_map": coverage_map}
+
+    tasks = _window_coverage_tasks(current_text, current_report, limit=max_llm_calls)
+    summary = {
+        "enabled": True,
+        "version": _WINDOW_COVERAGE_CONTROLLER_VERSION,
+        "selected": False,
+        "selected_text": current_text,
+        "selected_report": current_report,
+        "selected_strategy": None,
+        "llm_calls": 0,
+        "scans_used": 0,
+        "candidate_count": 0,
+        "window_coverage_map": coverage_map,
+        "top_coverage_sentences": coverage_map.get("top_coverage_sentences"),
+        "eligible_span_density_before": density_before,
+        "unsafe_window_count_before": coverage_map.get("unsafe_window_count"),
+        "ai_sentence_vote_ratio_before": coverage_map.get("ai_sentence_vote_ratio"),
+        "base_summary": {
+            "turnitin_like_ai_score": current_profile.get("score"),
+            "target_met": current_profile.get("target_met"),
+        },
+        "candidate_frontier": [],
+        "reason": "no_candidate_selected",
+    }
+    if not tasks:
+        summary["reason"] = "no_window_coverage_tasks"
+        return summary
+
+    protected = detect_protected_spans(current_text)
+    best_eval = None
+    best_rank = None
+    best_text = current_text
+    best_report = current_report
+    seen = {current_text.strip()}
+    for task_index, task in enumerate(tasks, start=1):
+        if summary["llm_calls"] >= max_llm_calls or summary["scans_used"] >= max_scans:
+            break
+        strategy = f"window_coverage_{str(task.get('family') or 'coverage').lower()}_{task_index}"
+        candidate_eval = {
+            "strategy": strategy,
+            "task": task,
+            "passed_local_checks": False,
+        }
+        try:
+            prompt = _window_coverage_candidate_prompt(current_text, current_report, task)
+            summary["llm_calls"] += 1
+            response = gateway.chat(
+                prompt,
+                system=(
+                    "You are DraftProof's window-coverage density optimizer. "
+                    "Return only JSON sentence patches for the selected high-coverage sentences."
+                ),
+                **_phase_chat_sampling_kwargs(
+                    "DRAFTPROOF_WINDOW_COVERAGE_DENSITY",
+                    temperature_env="DRAFTPROOF_WINDOW_COVERAGE_TEMPERATURE",
+                    temperature_default=0.42,
+                    max_tokens_env="DRAFTPROOF_WINDOW_COVERAGE_MAX_TOKENS",
+                    max_tokens_default=3200,
+                ),
+            )
+            payload, payload_reason = _extract_window_coverage_payload(response.content)
+        except Exception as exc:
+            candidate_eval["reason"] = f"llm_error {exc}"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        if not payload:
+            candidate_eval["reason"] = payload_reason or "invalid_window_coverage_payload"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        assembled, applied, assembly_reason = _assemble_window_coverage_candidate(current_text, payload, task)
+        candidate_text = _clean_full_document_candidate(assembled, current_text)
+        candidate_eval.update({
+            "payload_strategy": payload.get("strategy"),
+            "applied_sentence_patches": applied,
+            "targeted_drivers": payload.get("targeted_drivers"),
+        })
+        if not candidate_text:
+            candidate_eval["reason"] = assembly_reason or "empty_or_unchanged_candidate"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        if candidate_text.strip() in seen:
+            candidate_eval["reason"] = "duplicate_candidate"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        seen.add(candidate_text.strip())
+        local_reason = _ai_candidate_quality_reject_reason(candidate_text)
+        if local_reason:
+            candidate_eval["reason"] = local_reason
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        patchwork = _window_coverage_patchwork_budget(current_text, candidate_text, applied)
+        candidate_eval["patchwork_budget"] = patchwork
+        if not patchwork.get("accepted"):
+            candidate_eval["reason"] = patchwork.get("reason") or "window_coverage_patchwork_budget_exceeded"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        quality_gate = evaluate_text_quality_regression(
+            current_text,
+            candidate_text,
+            changed_sentence_ratio=patchwork.get("edited_sentence_ratio"),
+        )
+        candidate_eval["quality_gate"] = quality_gate
+        if not quality_gate.get("passed"):
+            candidate_eval["reason"] = (quality_gate.get("reject_reasons") or ["quality_gate_failed"])[0]
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        protected_loss = _ai_search_protected_loss_reason(current_text, candidate_text, protected)
+        if protected_loss:
+            candidate_eval["reason"] = "protected_span_lost " + protected_loss
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        try:
+            drift = drift_checker(current_text, candidate_text, threshold=0.80)
+        except TypeError:
+            drift = drift_checker(current_text, candidate_text)
+        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
+        if not bool(getattr(drift, "accepted", True)):
+            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
+            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        try:
+            candidate_report = scan_func(candidate_text)
+        except Exception as exc:
+            candidate_eval["reason"] = f"candidate_scan_error {exc}"
+            summary["candidate_frontier"].append(candidate_eval)
+            continue
+        summary["scans_used"] += 1
+        review_delta = _report_review_burden(candidate_report) - _report_review_burden(current_report)
+        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(current_report)
+        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(current_report)
+        acceptance = _window_coverage_density_acceptance(
+            current_text,
+            current_report,
+            candidate_text,
+            candidate_report,
+            review_burden_delta=review_delta,
+            weighted_severity_delta=severity_delta,
+            critical_high_delta=critical_delta,
+        )
+        candidate_eval.update({
+            "passed_local_checks": True,
+            "acceptance": acceptance,
+            "selectable": acceptance.get("selectable"),
+            "reason": acceptance.get("reason"),
+            "formula_score": acceptance.get("formula_score_after"),
+            "formula_score_drop": acceptance.get("formula_score_drop"),
+            "window_coverage_gate": acceptance.get("window_coverage_gate"),
+            "eligible_span_density_gate": acceptance.get("eligible_span_density_gate"),
+            "driver_drops": acceptance.get("driver_drops"),
+        })
+        summary["candidate_frontier"].append(candidate_eval)
+        if not acceptance.get("selectable"):
+            continue
+        coverage_gate = acceptance.get("window_coverage_gate") or {}
+        density_gate = acceptance.get("eligible_span_density_gate") or {}
+        rank = (
+            1 if acceptance.get("target_met") and coverage_gate.get("safe") and density_gate.get("safe") else 0,
+            float(acceptance.get("formula_score_drop") or 0.0),
+            float(coverage_gate.get("unsafe_window_count_drop") or 0.0),
+            float(coverage_gate.get("ai_sentence_vote_ratio_drop") or 0.0),
+            float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
+            float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
+            -float((acceptance.get("formula_score_after") or 100.0)),
+        )
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_eval = candidate_eval
+            best_text = candidate_text
+            best_report = candidate_report
+
+    summary["candidate_count"] = len(summary.get("candidate_frontier") or [])
+    if best_eval:
+        best_eval["selected"] = True
+        final_coverage = _window_coverage_comparison(
+            current_text,
+            current_report,
+            best_text,
+            best_report,
+        )
+        final_density = _eligible_span_density_comparison(
+            current_text,
+            current_report,
+            best_text,
+            best_report,
+        )
+        final_profile = _turnitin_like_ai_profile(best_report)
+        summary.update({
+            "selected": True,
+            "selected_text": best_text,
+            "selected_report": best_report,
+            "selected_strategy": best_eval.get("strategy"),
+            "selected_candidate": {
+                key: best_eval.get(key)
+                for key in (
+                    "strategy",
+                    "formula_score",
+                    "formula_score_drop",
+                    "window_coverage_gate",
+                    "eligible_span_density_gate",
+                    "driver_drops",
+                    "patchwork_budget",
+                    "drift_similarity",
+                    "applied_sentence_patches",
+                    "acceptance",
+                )
+            },
+            "window_coverage_after": final_coverage.get("after"),
+            "unsafe_window_count_after": (final_coverage.get("after") or {}).get("unsafe_window_count"),
+            "unsafe_window_count_drop": final_coverage.get("unsafe_window_count_drop"),
+            "ai_sentence_vote_ratio_after": (final_coverage.get("after") or {}).get("ai_sentence_vote_ratio"),
+            "ai_sentence_vote_ratio_drop": final_coverage.get("ai_sentence_vote_ratio_drop"),
+            "eligible_span_density_after": final_density.get("after"),
+            "eligible_span_density_drop": final_density.get("unsafe_eligible_word_ratio_drop"),
+            "reason": best_eval.get("reason"),
+            "final_summary": {
+                "turnitin_like_ai_score": final_profile.get("score"),
+                "target_met": final_profile.get("target_met"),
+                "eligible_span_density_safe": final_density.get("safe"),
+                "window_coverage_safe": final_coverage.get("safe"),
+            },
+        })
+    elif summary["candidate_frontier"]:
+        summary["reason"] = "ceiling_reached"
+        summary["why_not_below_20"] = "No window-coverage candidate reduced total formula score and unsafe window coverage without safety regression."
     return summary
 
 
@@ -26717,6 +27500,340 @@ def run_rewrite_pipeline(
             seconds=round(time.time() - segment_followup_t0, 3),
             scans=int(stored_segment_window_followup_result.get("scans_used") or 0),
             llm_calls=int(stored_segment_window_followup_result.get("llm_calls") or 0),
+        )
+
+    remaining_cluster_selected = False
+    remaining_cluster_should_run = (
+        _env_flag("DRAFTPROOF_REMAINING_CLUSTER_DENSITY_CONTROLLER", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    )
+    if remaining_cluster_should_run:
+        cluster_profile = _turnitin_like_ai_profile(rewritten_report_dict)
+        cluster_density = _eligible_span_density_contract(rewritten_text, rewritten_report_dict)
+        cluster_components = (
+            cluster_profile.get("components")
+            if isinstance(cluster_profile.get("components"), dict)
+            else {}
+        )
+        remaining_cluster_should_run = bool(
+            not cluster_profile.get("target_met")
+            and (
+                not cluster_density.get("safe")
+                or float(cluster_components.get("topk_calibrated_risk") or 0.0)
+                >= _safe_topk_calibrated_limit()
+            )
+        )
+    if remaining_cluster_should_run and not global_rewrite_budget.can_run(
+        min_seconds=8.0,
+        min_scans=1,
+        min_llm_calls=1,
+    ):
+        stored_remaining_cluster_result = _global_phase_budget_skip(
+            "remaining_cluster_density_controller",
+            min_seconds=8.0,
+            min_scans=1,
+            min_llm_calls=1,
+        ) or {}
+        result.summary["remaining_cluster_density_controller"] = stored_remaining_cluster_result
+        stage_timings.append({
+            "stage": "remaining_cluster_density_controller",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_remaining_cluster_result.get("reason"),
+        })
+    elif remaining_cluster_should_run:
+        report_progress(84, "Running remaining-cluster density controller")
+        remaining_cluster_t0 = time.time()
+        try:
+            remaining_scans = global_rewrite_budget.remaining_scans()
+            remaining_llm = global_rewrite_budget.remaining_llm_calls()
+            cluster_scan_cap = max(0, int(_float_env("DRAFTPROOF_REMAINING_CLUSTER_MAX_SCANS", 4.0)))
+            cluster_llm_cap = max(0, int(_float_env("DRAFTPROOF_REMAINING_CLUSTER_MAX_LLM_CALLS", 4.0)))
+            max_cluster_scans = min(
+                cluster_scan_cap,
+                remaining_scans if remaining_scans is not None else cluster_scan_cap,
+            )
+            max_cluster_llm = min(
+                cluster_llm_cap,
+                remaining_llm if remaining_llm is not None else cluster_llm_cap,
+            )
+            cluster_key = (
+                api_key
+                or os.environ.get("OPENROUTER_API_KEY")
+                or os.environ.get("LLM_API_KEY")
+            )
+            cluster_gateway = (
+                LLMGateway(LLMConfig(
+                    api_key=cluster_key,
+                    model=generator_model,
+                    base_url=base_url,
+                    timeout=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_TIMEOUT", "90")),
+                    max_retries=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_RETRIES", "1")),
+                    max_tokens=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_MAX_TOKENS", "3200")),
+                    temperature=float(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_TEMPERATURE", "0.42")),
+                ))
+                if cluster_key and max_cluster_llm > 0
+                else None
+            )
+            remaining_cluster_result = _remaining_cluster_density_controller(
+                rewritten_text,
+                rewritten_report_dict,
+                original_report_dict,
+                gateway=cluster_gateway,
+                scan_func=_full_scan_report_dict,
+                max_scans=max_cluster_scans,
+                max_llm_calls=max_cluster_llm,
+            )
+        except Exception as exc:
+            remaining_cluster_result = {
+                "enabled": True,
+                "selected": False,
+                "reason": f"remaining_cluster_density_controller_error {exc}",
+            }
+        stored_remaining_cluster_result = {
+            key: value
+            for key, value in remaining_cluster_result.items()
+            if key not in {"selected_text", "selected_report"}
+        }
+        result.summary["remaining_cluster_density_controller"] = stored_remaining_cluster_result
+        result.summary["remaining_cluster_map"] = stored_remaining_cluster_result.get("remaining_cluster_map")
+        result.summary["remaining_cluster_candidate_frontier"] = stored_remaining_cluster_result.get("candidate_frontier")
+        result.summary["selected_remaining_cluster_strategy"] = stored_remaining_cluster_result.get("selected_strategy")
+        if (
+            remaining_cluster_result.get("selected")
+            and _global_controller_phase_accepted(
+                "remaining_cluster_density_controller",
+                remaining_cluster_result,
+                stored_remaining_cluster_result,
+            )
+        ):
+            selected_report = remaining_cluster_result.get("selected_report")
+            selected_text = remaining_cluster_result.get("selected_text")
+            if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                rewritten_text = selected_text
+                rewritten_report_dict = selected_report
+                attempted_report_dict = rewritten_report_dict
+                rewritten_ai = _badge_ai(rewritten_report_dict)
+                rewritten_wq = _badge_wq(rewritten_report_dict)
+                rewritten_total = _finding_total(rewritten_report_dict)
+                rewritten_review_burden = _review_burden(rewritten_report_dict)
+                rewritten_severity = _weighted_severity(rewritten_report_dict)
+                rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                if result.mp_result:
+                    result.mp_result.final_text = rewritten_text
+                    result.mp_result.converged = True
+                    result.mp_result.convergence_reason = (
+                        "Selected remaining-cluster density candidate: "
+                        f"{remaining_cluster_result.get('selected_strategy')}"
+                    )
+                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                ai_search_selected = True
+                remaining_cluster_selected = True
+                _clear_stale_rollback_for_kept_ai_mitigation(
+                    result.summary,
+                    "remaining-cluster density controller",
+                )
+                result.summary["selected_strategy"] = remaining_cluster_result.get("selected_strategy")
+                result.summary["selected_remaining_cluster_strategy"] = remaining_cluster_result.get("selected_strategy")
+                result.summary["detect_scores"].update({
+                    "rewritten_ai": rewritten_ai,
+                    "rewritten_writing_quality": rewritten_wq,
+                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                    "rewritten_findings": rewritten_total,
+                    "rewritten_review_burden": rewritten_review_burden,
+                    "rewritten_weighted_severity": rewritten_severity,
+                })
+        stage_timings.append({
+            "stage": "remaining_cluster_density_controller",
+            "seconds": round(time.time() - remaining_cluster_t0, 3),
+            "candidates": len(stored_remaining_cluster_result.get("candidate_frontier") or []),
+            "scans": stored_remaining_cluster_result.get("scans_used"),
+            "llm_calls": stored_remaining_cluster_result.get("llm_calls"),
+            "selected": bool(remaining_cluster_result.get("selected")),
+            "stop_reason": remaining_cluster_result.get("reason"),
+        })
+        global_rewrite_budget.record_stage(
+            "remaining_cluster_density_controller",
+            seconds=round(time.time() - remaining_cluster_t0, 3),
+            scans=int(stored_remaining_cluster_result.get("scans_used") or 0),
+            llm_calls=int(stored_remaining_cluster_result.get("llm_calls") or 0),
+        )
+
+    window_coverage_selected = False
+    window_coverage_should_run = (
+        _env_flag("DRAFTPROOF_WINDOW_COVERAGE_DENSITY_OPTIMIZER", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    )
+    if window_coverage_should_run:
+        window_profile = _turnitin_like_ai_profile(rewritten_report_dict)
+        window_density = _eligible_span_density_contract(rewritten_text, rewritten_report_dict)
+        window_coverage_map = _window_coverage_map(rewritten_text, rewritten_report_dict)
+        window_coverage_should_run = bool(
+            not window_profile.get("target_met")
+            and (
+                not window_density.get("safe")
+                or int(window_coverage_map.get("unsafe_window_count") or 0) > 0
+            )
+        )
+    if window_coverage_should_run and not global_rewrite_budget.can_run(
+        min_seconds=8.0,
+        min_scans=1,
+        min_llm_calls=1,
+    ):
+        stored_window_coverage_result = _global_phase_budget_skip(
+            "window_coverage_density_optimizer",
+            min_seconds=8.0,
+            min_scans=1,
+            min_llm_calls=1,
+        ) or {}
+        result.summary["window_coverage_density_optimizer"] = stored_window_coverage_result
+        stage_timings.append({
+            "stage": "window_coverage_density_optimizer",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_window_coverage_result.get("reason"),
+        })
+    elif window_coverage_should_run:
+        report_progress(85, "Running window-coverage density optimizer")
+        window_coverage_t0 = time.time()
+        try:
+            remaining_scans = global_rewrite_budget.remaining_scans()
+            remaining_llm = global_rewrite_budget.remaining_llm_calls()
+            window_scan_cap = max(0, int(_float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_SCANS", 5.0)))
+            window_llm_cap = max(0, int(_float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_LLM_CALLS", 5.0)))
+            max_window_scans = min(
+                window_scan_cap,
+                remaining_scans if remaining_scans is not None else window_scan_cap,
+            )
+            max_window_llm = min(
+                window_llm_cap,
+                remaining_llm if remaining_llm is not None else window_llm_cap,
+            )
+            window_key = (
+                api_key
+                or os.environ.get("OPENROUTER_API_KEY")
+                or os.environ.get("LLM_API_KEY")
+            )
+            window_gateway = (
+                LLMGateway(LLMConfig(
+                    api_key=window_key,
+                    model=generator_model,
+                    base_url=base_url,
+                    timeout=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_TIMEOUT", "90")),
+                    max_retries=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_RETRIES", "1")),
+                    max_tokens=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_MAX_TOKENS", "3200")),
+                    temperature=float(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_TEMPERATURE", "0.42")),
+                ))
+                if window_key and max_window_llm > 0
+                else None
+            )
+            window_coverage_result = _window_coverage_density_optimizer(
+                rewritten_text,
+                rewritten_report_dict,
+                original_report_dict,
+                gateway=window_gateway,
+                scan_func=_full_scan_report_dict,
+                max_scans=max_window_scans,
+                max_llm_calls=max_window_llm,
+            )
+        except Exception as exc:
+            window_coverage_result = {
+                "enabled": True,
+                "selected": False,
+                "reason": f"window_coverage_density_optimizer_error {exc}",
+            }
+        stored_window_coverage_result = {
+            key: value
+            for key, value in window_coverage_result.items()
+            if key not in {"selected_text", "selected_report"}
+        }
+        result.summary["window_coverage_density_optimizer"] = stored_window_coverage_result
+        result.summary["window_coverage_map"] = stored_window_coverage_result.get("window_coverage_map")
+        result.summary["top_coverage_sentences"] = stored_window_coverage_result.get("top_coverage_sentences")
+        result.summary["window_coverage_candidate_frontier"] = stored_window_coverage_result.get("candidate_frontier")
+        result.summary["selected_window_coverage_strategy"] = stored_window_coverage_result.get("selected_strategy")
+        result.summary["unsafe_window_count_before"] = stored_window_coverage_result.get("unsafe_window_count_before")
+        result.summary["unsafe_window_count_after"] = stored_window_coverage_result.get("unsafe_window_count_after")
+        result.summary["unsafe_window_count_drop"] = stored_window_coverage_result.get("unsafe_window_count_drop")
+        result.summary["ai_sentence_vote_ratio_before"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_before")
+        result.summary["ai_sentence_vote_ratio_after"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_after")
+        result.summary["ai_sentence_vote_ratio_drop"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_drop")
+        if (
+            window_coverage_result.get("selected")
+            and _global_controller_phase_accepted(
+                "window_coverage_density_optimizer",
+                window_coverage_result,
+                stored_window_coverage_result,
+            )
+        ):
+            selected_report = window_coverage_result.get("selected_report")
+            selected_text = window_coverage_result.get("selected_text")
+            if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                rewritten_text = selected_text
+                rewritten_report_dict = selected_report
+                attempted_report_dict = rewritten_report_dict
+                rewritten_ai = _badge_ai(rewritten_report_dict)
+                rewritten_wq = _badge_wq(rewritten_report_dict)
+                rewritten_total = _finding_total(rewritten_report_dict)
+                rewritten_review_burden = _review_burden(rewritten_report_dict)
+                rewritten_severity = _weighted_severity(rewritten_report_dict)
+                rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                if result.mp_result:
+                    result.mp_result.final_text = rewritten_text
+                    result.mp_result.converged = True
+                    result.mp_result.convergence_reason = (
+                        "Selected window-coverage density candidate: "
+                        f"{window_coverage_result.get('selected_strategy')}"
+                    )
+                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                ai_search_selected = True
+                window_coverage_selected = True
+                _clear_stale_rollback_for_kept_ai_mitigation(
+                    result.summary,
+                    "window-coverage density optimizer",
+                )
+                result.summary["selected_strategy"] = window_coverage_result.get("selected_strategy")
+                result.summary["selected_window_coverage_strategy"] = window_coverage_result.get("selected_strategy")
+                result.summary["detect_scores"].update({
+                    "rewritten_ai": rewritten_ai,
+                    "rewritten_writing_quality": rewritten_wq,
+                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                    "rewritten_findings": rewritten_total,
+                    "rewritten_review_burden": rewritten_review_burden,
+                    "rewritten_weighted_severity": rewritten_severity,
+                })
+        stage_timings.append({
+            "stage": "window_coverage_density_optimizer",
+            "seconds": round(time.time() - window_coverage_t0, 3),
+            "candidates": len(stored_window_coverage_result.get("candidate_frontier") or []),
+            "scans": stored_window_coverage_result.get("scans_used"),
+            "llm_calls": stored_window_coverage_result.get("llm_calls"),
+            "selected": bool(window_coverage_result.get("selected")),
+            "stop_reason": window_coverage_result.get("reason"),
+        })
+        global_rewrite_budget.record_stage(
+            "window_coverage_density_optimizer",
+            seconds=round(time.time() - window_coverage_t0, 3),
+            scans=int(stored_window_coverage_result.get("scans_used") or 0),
+            llm_calls=int(stored_window_coverage_result.get("llm_calls") or 0),
         )
 
     post_density_anchor_selected = False

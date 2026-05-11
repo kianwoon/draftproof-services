@@ -39,6 +39,25 @@ from .segment_window_density import (
     segment_window_candidate_prompt,
     segment_window_tasks,
 )
+from .remaining_cluster_density import (
+    REMAINING_CLUSTER_CONTROLLER_VERSION,
+    assemble_remaining_cluster_candidate,
+    build_remaining_cluster_map,
+    extract_remaining_cluster_payload,
+    remaining_cluster_candidate_prompt,
+    remaining_cluster_patchwork_budget,
+    remaining_cluster_tasks,
+)
+from .window_coverage_density import (
+    WINDOW_COVERAGE_CONTROLLER_VERSION,
+    assemble_window_coverage_candidate,
+    build_window_coverage_map,
+    compare_window_coverage_density,
+    extract_window_coverage_payload,
+    window_coverage_candidate_prompt,
+    window_coverage_patchwork_budget,
+    window_coverage_tasks,
+)
 
 __all__ = [
     "CandidateLedger",
@@ -71,4 +90,19 @@ __all__ = [
     "segment_window_candidate_prompt",
     "segment_window_is_canonical_fact_sentence",
     "segment_window_tasks",
+    "REMAINING_CLUSTER_CONTROLLER_VERSION",
+    "assemble_remaining_cluster_candidate",
+    "build_remaining_cluster_map",
+    "extract_remaining_cluster_payload",
+    "remaining_cluster_candidate_prompt",
+    "remaining_cluster_patchwork_budget",
+    "remaining_cluster_tasks",
+    "WINDOW_COVERAGE_CONTROLLER_VERSION",
+    "assemble_window_coverage_candidate",
+    "build_window_coverage_map",
+    "compare_window_coverage_density",
+    "extract_window_coverage_payload",
+    "window_coverage_candidate_prompt",
+    "window_coverage_patchwork_budget",
+    "window_coverage_tasks",
 ]
