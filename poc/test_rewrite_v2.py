@@ -77,6 +77,8 @@ from rewrite_pipeline import (
     _formula_gap_contract,
     _formula_gap_candidate_rank,
     _formula_gap_changed_word_count,
+    _candidate_concept_origin_reject_reason,
+    _formula_convergence_primary_burden_gate_status,
     _formula_portfolio_plan,
     _multi_signal_candidate_contract,
     _ai_footprint_gate_status,
@@ -1520,6 +1522,107 @@ assert_test(
     _formula_gap_candidate_rank(formula_gap, turnitin_gate)
     > _formula_gap_candidate_rank(formula_one_signal_backfire, {"safety_clean": True}),
     "Formula-gap rank selects total formula closure over isolated signal movement",
+)
+concept_guard_source = (
+    "The United States has a strong cultural influence. "
+    "American movies, music, fashion, and social media trends are consumed globally."
+)
+concept_guard_bad = (
+    "The useful check is whether the student can explain the steps, not only show the final answer. "
+    "The United States has a strong cultural influence. "
+    "American movies, music, fashion, and social media trends are consumed globally."
+)
+concept_guard_good = (
+    "The United States has a strong cultural influence. "
+    "American movies, music, fashion, and social media trends are consumed globally. "
+    "This point should stay tied to united and states, not treated as a wider claim."
+)
+assert_test(
+    "unsupported_concept_origin" in _candidate_concept_origin_reject_reason(
+        concept_guard_source,
+        concept_guard_bad,
+    )
+    and not _candidate_concept_origin_reject_reason(
+        concept_guard_source,
+        concept_guard_good,
+    ),
+    "concept-origin guard rejects unsupported imported concepts without topic-specific hardcoding",
+)
+primary_pinned_current = make_footprint_report(
+    ai_authorship=53,
+    human=56,
+    ai_transformation=44,
+    grounding=45,
+    human_anchor=36,
+    smoothness=45.63,
+    semantic_uniformity=55.1,
+    ai_likelihood=52.52,
+    topk_pattern=100,
+    topk_calibrated_risk=92.634,
+    generic_assertion_risk=90,
+    qualifying_text_ai_density=60.27,
+    unsupported_claim_risk=25,
+    broad_claim_risk=25,
+    discourse=45,
+    expansion=65,
+    section_style=65,
+    signal_agreement=46.67,
+)
+anchor_heavy_candidate = make_footprint_report(
+    ai_authorship=51,
+    human=64,
+    ai_transformation=36,
+    grounding=45,
+    human_anchor=48,
+    smoothness=45.29,
+    semantic_uniformity=46.3,
+    ai_likelihood=51.08,
+    topk_pattern=96,
+    topk_calibrated_risk=91.489,
+    generic_assertion_risk=90,
+    qualifying_text_ai_density=60.27,
+    unsupported_claim_risk=25,
+    broad_claim_risk=25,
+    discourse=45,
+    expansion=45,
+    section_style=45,
+    signal_agreement=46.67,
+)
+primary_driver_candidate = make_footprint_report(
+    ai_authorship=50,
+    human=60,
+    ai_transformation=40,
+    grounding=45,
+    human_anchor=42,
+    smoothness=44,
+    semantic_uniformity=50,
+    ai_likelihood=48,
+    topk_pattern=90,
+    topk_calibrated_risk=86,
+    generic_assertion_risk=85,
+    qualifying_text_ai_density=56,
+    unsupported_claim_risk=25,
+    broad_claim_risk=25,
+    discourse=42,
+    expansion=45,
+    section_style=45,
+    signal_agreement=46.67,
+)
+anchor_heavy_gate = _formula_convergence_primary_burden_gate_status(
+    primary_pinned_current,
+    anchor_heavy_candidate,
+    _formula_gap_contract(primary_pinned_current, anchor_heavy_candidate),
+)
+primary_driver_gate = _formula_convergence_primary_burden_gate_status(
+    primary_pinned_current,
+    primary_driver_candidate,
+    _formula_gap_contract(primary_pinned_current, primary_driver_candidate),
+)
+assert_test(
+    not anchor_heavy_gate["accepted"]
+    and anchor_heavy_gate["reason"] == "dominant_positive_ai_burden_not_reduced"
+    and primary_driver_gate["accepted"],
+    "formula convergence rejects anchor-heavy gains when dominant AI burden remains pinned",
 )
 assert_test(
     _formula_gap_changed_word_count("one two three", "one two four five") == 2,
@@ -7248,15 +7351,18 @@ assert_test(
     "coordinated micro perturbation creates deterministic geometry candidates",
 )
 convergence_current_text = (
-    "Schools can feel predictable. Students need judgement in class. "
+    "Schools can feel predictable when quick answers hide work. "
+    "Students need judgement in class. "
     "Teachers still guide the process."
 )
 convergence_bad_text = (
-    "Schools can feel predictable. Students need judgement in class. "
+    "Schools can feel predictable when quick answers hide work. "
+    "Students need judgement in class. "
     "Teachers still guide the process, overall."
 )
 convergence_better_text = (
-    "Schools can feel uneven. Students need judgement in class, especially when a quick answer hides the work. "
+    "Schools can feel predictable. "
+    "Students need judgement in class when quick answers hide work. "
     "Teachers still guide the process."
 )
 convergence_current_report = make_footprint_report(
@@ -7374,7 +7480,8 @@ assert_test(
     "formula convergence controller rejects one-signal movement when total formula score worsens",
 )
 unsupported_regression_text = (
-    "Schools can feel uneven. In practice, students need judgement when a quick answer hides the work. "
+    "Schools can feel predictable. "
+    "Students need judgement in class when quick answers hide work. "
     "Teachers still guide the process."
 )
 unsupported_regression_report = make_footprint_report(

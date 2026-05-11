@@ -115,6 +115,174 @@ _AI_DENSITY_TRANSITION_RE = re.compile(
     re.I,
 )
 
+_CONCEPT_ORIGIN_STOPWORDS = {
+    "about", "above", "across", "after", "again", "against", "almost", "along",
+    "also", "although", "always", "among", "another", "around", "because",
+    "before", "being", "below", "between", "both", "cannot", "could", "does",
+    "doing", "done", "each", "either", "else", "enough", "even", "every",
+    "everything", "from", "further", "general", "have", "having", "here",
+    "however", "into", "itself", "just", "like", "many", "might", "more",
+    "most", "much", "must", "need", "needed", "needs", "only", "other",
+    "others", "over", "same", "should", "since", "some", "still", "such",
+    "than", "that", "their", "them", "then", "there", "these", "they",
+    "thing", "things", "this", "those", "through", "under", "until", "very",
+    "what", "when", "where", "which", "while", "with", "within", "without",
+    "would", "important", "significant", "major", "modern", "strong",
+    "global", "different", "various", "clear", "useful", "practical",
+    "actual", "really", "simple", "simply", "point", "points", "issue",
+    "issues", "question", "questions", "condition", "conditions", "case",
+    "cases", "example", "examples", "process", "reason", "reasons",
+    "claim", "claims", "general", "limit", "limited", "connect", "connected",
+    "relate", "related", "paragraph", "statement", "stated", "wide", "wider",
+    "treat", "treated",
+}
+
+
+def _concept_origin_normalize_term(term: str) -> str:
+    value = re.sub(r"[^a-z0-9]", "", str(term or "").lower())
+    if len(value) <= 3:
+        return ""
+    if value.endswith("ies") and len(value) > 5:
+        value = value[:-3] + "y"
+    elif value.endswith(("ing", "ers")) and len(value) > 6:
+        value = value[:-3]
+    elif value.endswith(("ed", "es")) and len(value) > 5:
+        value = value[:-2]
+    elif value.endswith("s") and len(value) > 5:
+        value = value[:-1]
+    if len(value) <= 3 or value in _CONCEPT_ORIGIN_STOPWORDS:
+        return ""
+    return value
+
+
+def _concept_origin_terms(text: str) -> set[str]:
+    """Return lightweight content terms for concept-origin validation.
+
+    This is intentionally domain-agnostic. It does not label any topic as bad;
+    it only checks whether candidate concepts were already locally supported.
+    """
+    terms: set[str] = set()
+    for token in re.findall(r"[A-Za-z][A-Za-z0-9'_-]{2,}", str(text or "")):
+        normalized = _concept_origin_normalize_term(token)
+        if normalized:
+            terms.add(normalized)
+    return terms
+
+
+def _ordered_concept_origin_terms(text: str, *, limit: int = 6) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for token in re.findall(r"[A-Za-z][A-Za-z0-9'_-]{2,}", str(text or "")):
+        normalized = _concept_origin_normalize_term(token)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
+        if len(ordered) >= limit:
+            break
+    return ordered
+
+
+def _concept_origin_protected_terms(text: str) -> set[str]:
+    protected = set()
+    for token in re.findall(r"\b\d+(?:[.,]\d+)?%?\b", str(text or "")):
+        normalized = _concept_origin_normalize_term(token)
+        if normalized:
+            protected.add(normalized)
+    for match in re.findall(r"\b[A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,4}\b", str(text or "")):
+        for token in re.findall(r"[A-Za-z0-9]+", match):
+            normalized = _concept_origin_normalize_term(token)
+            if normalized:
+                protected.add(normalized)
+    for token in re.findall(r"\b[A-Z]{2,}[A-Z0-9-]*\b", str(text or "")):
+        normalized = _concept_origin_normalize_term(token)
+        if normalized:
+            protected.add(normalized)
+    return protected
+
+
+def _best_source_paragraph_index(candidate_paragraph: str, source_paragraphs: list[str]) -> int:
+    if not source_paragraphs:
+        return 0
+    best_index = 0
+    best_ratio = -1.0
+    candidate = str(candidate_paragraph or "").lower()
+    for index, source_paragraph in enumerate(source_paragraphs):
+        ratio = SequenceMatcher(None, candidate, str(source_paragraph or "").lower(), autojunk=False).ratio()
+        if ratio > best_ratio:
+            best_index = index
+            best_ratio = ratio
+    return best_index
+
+
+def _candidate_concept_origin_reject_reason(
+    source_text: str,
+    candidate_text: str,
+    *,
+    unsupported_term_limit: int = 4,
+    unsupported_sentence_limit: int = 3,
+) -> str:
+    """Reject candidates that import unsupported concepts into changed regions.
+
+    The support window is the matched source paragraph plus its immediate
+    neighbors, with document-level names/numbers allowed as protected inventory.
+    This blocks domain leakage without hardcoding any specific subject.
+    """
+    source = str(source_text or "").strip()
+    candidate = str(candidate_text or "").strip()
+    if not source or not candidate or source == candidate:
+        return ""
+    source_paragraphs = _logical_paragraphs(source)
+    candidate_paragraphs = _logical_paragraphs(candidate)
+    if not source_paragraphs or not candidate_paragraphs:
+        return ""
+    protected_terms = _concept_origin_protected_terms(source)
+    full_source_terms = _concept_origin_terms(source)
+    for candidate_index, paragraph in enumerate(candidate_paragraphs):
+        paragraph = str(paragraph or "").strip()
+        if not paragraph:
+            continue
+        if any(SequenceMatcher(None, paragraph.lower(), src.lower(), autojunk=False).ratio() >= 0.96 for src in source_paragraphs):
+            continue
+        source_index = _best_source_paragraph_index(paragraph, source_paragraphs)
+        support_parts = []
+        for support_index in range(max(0, source_index - 1), min(len(source_paragraphs), source_index + 2)):
+            support_parts.append(source_paragraphs[support_index])
+        support_text = " ".join(support_parts)
+        local_terms = _concept_origin_terms(support_text) | protected_terms
+        candidate_terms = _concept_origin_terms(paragraph)
+        unsupported = sorted(
+            term for term in (candidate_terms - local_terms)
+            if term not in protected_terms
+        )
+        if len(unsupported) >= unsupported_term_limit:
+            return (
+                "unsupported_concept_origin "
+                f"paragraph={candidate_index} source_paragraph={source_index} "
+                f"terms={','.join(unsupported[:8])}"
+            )
+        source_sentences = _split_sentences(support_text)
+        for sentence in _split_sentences(paragraph):
+            stripped_sentence = str(sentence or "").strip()
+            if len(stripped_sentence.split()) < 7:
+                continue
+            if any(
+                SequenceMatcher(None, stripped_sentence.lower(), src_sentence.lower(), autojunk=False).ratio() >= 0.82
+                for src_sentence in source_sentences
+            ):
+                continue
+            sentence_terms = _concept_origin_terms(stripped_sentence)
+            unsupported_sentence_terms = sorted(
+                term for term in (sentence_terms - local_terms)
+                if term not in protected_terms and term not in full_source_terms
+            )
+            if len(unsupported_sentence_terms) >= unsupported_sentence_limit:
+                return (
+                    "unsupported_concept_origin_sentence "
+                    f"paragraph={candidate_index} source_paragraph={source_index} "
+                    f"terms={','.join(unsupported_sentence_terms[:8])}"
+                )
+    return ""
+
 
 def _ai_density_breaker_canonical_fact_sentence(sentence: str) -> bool:
     """Preserve canonical factual/anchor-heavy sentences in the add-on layer."""
@@ -1010,52 +1178,20 @@ def _post_selection_ai_density_breaker(
 def _post_density_human_anchor_probe_context(sentence: str, paragraph: str = "") -> tuple[str, str]:
     """Return bounded implied-context text for the Human Anchor probe.
 
-    This deliberately avoids personal voice. The additions are process or
-    limitation checks already implied by the surrounding claim, so this layer
-    cannot turn predictable factual prose into synthetic autobiography.
+    This deliberately avoids personal voice and topic-specific canned content.
+    The addition is derived from concepts already present in the local sentence
+    or paragraph so predictable prose is not turned into synthetic autobiography.
     """
-    sentence_lower = str(sentence or "").lower()
-    paragraph_lower = str(paragraph or "").lower()
-
-    def matches(pattern: str) -> bool:
-        return bool(
-            re.search(pattern, sentence_lower)
-            or (not sentence_lower.strip() and re.search(pattern, paragraph_lower))
-        )
-
-    if matches(r"\b(?:student|students|teacher|teachers|classroom|school|education|learning|exam|grade|homework|essay)\b"):
+    local_text = str(sentence or "").strip() or str(paragraph or "").strip()
+    terms = _ordered_concept_origin_terms(local_text, limit=4)
+    if len(terms) >= 2:
         return (
-            "In practice, the useful check is whether the work shows the reasoning behind the answer, not only the answer itself.",
-            "education_process_check",
-        )
-    if matches(r"\b(?:ai|tool|tools|online|youtube|tiktok|search|social media|internet)\b"):
-        return (
-            "The practical risk is that a quick answer can sound complete before anyone has checked how it was judged.",
-            "digital_verification_check",
-        )
-    if matches(r"\b(?:founded|colonies|constitution|independence|government|democracy|rights|war|history|historical)\b"):
-        return (
-            "A useful check is what changed after the event, not only the date or institution attached to it.",
-            "historical_change_check",
-        )
-    if matches(r"\b(?:economy|economic|business|companies|corporation|corporations|apple|microsoft|google|tesla|innovation|trade|money)\b"):
-        return (
-            "In practice, that point needs to show what changes for people or institutions, not only name the scale of the economy.",
-            "economic_effect_check",
-        )
-    if matches(r"\b(?:culture|hollywood|music|films|sport|sports|football|basketball|celebrity|celebrities|university|universities)\b"):
-        return (
-            "The practical question is where this influence is actually seen, and where it reaches people unevenly.",
-            "cultural_influence_limit",
-        )
-    if matches(r"\b(?:inequality|challenge|problem|tension|health|safety|gap|unequal|pressure|diverse|diversity)\b"):
-        return (
-            "That limit matters because the same condition can help one group while leaving another under pressure.",
-            "social_limit_check",
+            f"This point should stay tied to {terms[0]} and {terms[1]}, not treated as a wider claim.",
+            "local_concept_scope_limit",
         )
     return (
-        "In practice, the point needs to show what would be checked in the actual case, not only sound clear.",
-        "general_process_check",
+        "This point should stay tied to the local context already stated, not treated as a wider claim.",
+        "local_scope_limit",
     )
 
 
@@ -6729,16 +6865,98 @@ def _formula_gap_candidate_rank(contract: dict | None, gate: dict | None = None)
         1 if gate.get("safety_clean", True) else 0,
         1 if contract.get("target_met") else 0,
         float(contract.get("score_drop") or 0.0),
-        float(contract.get("weighted_driver_drop_efficiency") or 0.0),
-        drop("human_anchor_suppression"),
+        float(((contract.get("positive_ai_burden") or {}).get("drop")) or 0.0),
         drop("ai_likelihood"),
         drop("topk_calibrated_risk"),
         drop("semantic_uniformity"),
         drop("rewrite_smoothness"),
         drop("patchwork_expansion"),
         drop("signal_agreement"),
+        drop("human_anchor_suppression"),
+        float(contract.get("weighted_driver_drop_efficiency") or 0.0),
         -float(contract.get("score_after") if isinstance(contract.get("score_after"), (int, float)) else 100.0),
     )
+
+
+def _formula_convergence_primary_burden_gate_status(
+    current_report: dict | None,
+    candidate_report: dict | None,
+    contract: dict | None,
+) -> dict:
+    """Require real positive-burden movement when dominant AI drivers are pinned."""
+    contract = contract if isinstance(contract, dict) else {}
+    current_profile = _turnitin_like_ai_profile(current_report)
+    candidate_profile = _turnitin_like_ai_profile(candidate_report)
+    current_footprint = _ai_footprint_flatten(_ai_footprint_profile(current_report))
+    candidate_footprint = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
+    drops = contract.get("weighted_driver_drops") if isinstance(contract.get("weighted_driver_drops"), dict) else {}
+
+    def weighted_drop(driver: str) -> float:
+        row = drops.get(driver) if isinstance(drops.get(driver), dict) else {}
+        return float(row.get("drop") or row.get("gain") or 0.0)
+
+    def raw_drop(driver: str) -> float:
+        row = drops.get(driver) if isinstance(drops.get(driver), dict) else {}
+        return float(row.get("raw_drop") or row.get("gain") or 0.0)
+
+    positive_ai_burden_drop = float(((contract.get("positive_ai_burden") or {}).get("drop")) or 0.0)
+    score_drop = float(contract.get("score_drop") or 0.0)
+    current_topk = float((current_profile.get("components") or {}).get("topk_calibrated_risk") or 0.0)
+    current_ai_likelihood = float((current_profile.get("components") or {}).get("ai_likelihood") or 0.0)
+    current_authorship = float(current_footprint.get("ai_authorship") or 0.0)
+    current_density = float(current_footprint.get("qualifying_text_ai_density") or 0.0)
+    candidate_density = float(candidate_footprint.get("qualifying_text_ai_density") or 0.0)
+    density_drop = current_density - candidate_density
+    primary_raw_drop = max(
+        raw_drop("ai_likelihood"),
+        raw_drop("topk_calibrated_risk"),
+        density_drop,
+    )
+    primary_weighted_drop = weighted_drop("ai_likelihood") + weighted_drop("topk_calibrated_risk")
+    human_anchor_gain = weighted_drop("human_anchor_suppression")
+    target_met = bool(candidate_profile.get("target_met"))
+    primary_pinned = bool(
+        current_topk >= 75.0
+        or current_authorship > _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0) + 10.0
+        or current_density > _float_env("DRAFTPROOF_QUALIFYING_AI_DENSITY_SAFE_BAND", 35.0) + 20.0
+        or current_ai_likelihood >= 55.0
+    )
+    min_positive_drop = max(1.0, min(4.0, score_drop * 0.45))
+    min_primary_raw_drop = 2.0 if primary_pinned else 0.5
+    accepted = bool(
+        target_met
+        or not primary_pinned
+        or (
+            positive_ai_burden_drop >= min_positive_drop
+            and primary_raw_drop >= min_primary_raw_drop
+        )
+    )
+    reason = "accepted"
+    if not accepted:
+        reason = (
+            "dominant_positive_ai_burden_not_reduced"
+            if positive_ai_burden_drop < min_positive_drop
+            else "dominant_primary_driver_not_reduced"
+        )
+    return {
+        "version": "formula_convergence_primary_burden_gate_v1",
+        "accepted": accepted,
+        "reason": reason,
+        "primary_pinned": primary_pinned,
+        "target_met": target_met,
+        "score_drop": round(score_drop, 3),
+        "positive_ai_burden_drop": round(positive_ai_burden_drop, 3),
+        "required_positive_ai_burden_drop": round(min_positive_drop, 3),
+        "primary_raw_drop": round(primary_raw_drop, 3),
+        "required_primary_raw_drop": round(min_primary_raw_drop, 3),
+        "primary_weighted_drop": round(primary_weighted_drop, 3),
+        "human_anchor_gain": round(human_anchor_gain, 3),
+        "current_topk_calibrated_risk": round(current_topk, 3),
+        "current_ai_likelihood": round(current_ai_likelihood, 3),
+        "current_ai_authorship": round(current_authorship, 3),
+        "current_qualifying_text_ai_density": round(current_density, 3),
+        "candidate_qualifying_text_ai_density": round(candidate_density, 3),
+    }
 
 
 def _formula_feasibility_estimator(
@@ -15327,44 +15545,21 @@ def _human_anchor_amplifier_candidates(
         ),
     ]
 
-    context_operations: list[tuple[re.Pattern, str, str]] = [
-        (
-            re.compile(r"\b(?:student|students|learner|learners|homework|essay|answer|assignment)\b", re.I),
-            " The useful check is whether the student can explain the steps, not only show the final answer.",
-            "student_reasoning_check",
-        ),
-        (
-            re.compile(r"\b(?:teacher|teachers|classroom|school|lesson|education|learning|exam|grade|feedback)\b", re.I),
-            " That is where the teacher has to look at the process, not only the completed work.",
-            "classroom_process_context",
-        ),
-        (
-            re.compile(r"\b(?:AI|online|search engine|social media|YouTube|TikTok|tool|tools)\b", re.I),
-            " The practical risk is that a quick answer can sound complete before the student has checked whether it is right.",
-            "digital_verification_context",
-        ),
-        (
-            re.compile(r"\b(?:salon|client|hair|haircut|cutting|assessment|unit|practice|angle|tension|section)\b", re.I),
-            " In practice, the result still has to be checked against the section, angle, timing, or client condition.",
-            "practice_check_context",
-        ),
-        (
-            re.compile(r"\b(?:source|citation|evidence|claim|reference|example)\b", re.I),
-            " The claim needs to stay tied to the exact source or example being used.",
-            "source_claim_context",
-        ),
-    ]
-
     def contextualize(sentence: str) -> tuple[str, str]:
         stripped = sentence.strip()
         if not stripped:
             return "", ""
-        for pattern, addition, label in context_operations:
-            if pattern.search(stripped):
-                if stripped.endswith(addition.strip()):
-                    return "", ""
-                return stripped + addition, label
-        return "", ""
+        terms = _ordered_concept_origin_terms(stripped, limit=4)
+        if len(terms) < 2:
+            return "", ""
+        first, second = terms[0], terms[1]
+        addition = (
+            f" This point should stay tied to {first} and {second}, "
+            "rather than treated as a general claim."
+        )
+        if addition.strip().lower() in stripped.lower():
+            return "", ""
+        return stripped + addition, "local_concept_limit"
 
     target_pool = [
         {**row, "contextual_operation": contextualize(str(row.get("sentence") or ""))}
@@ -15637,19 +15832,12 @@ def _human_anchor_suppression_frontier(
 
 
 def _anchor_sentence_for_paragraph(paragraph: str, variant: str = "process") -> str:
-    lower = str(paragraph or "").lower()
-    if any(term in lower for term in ("ai", "tool", "youtube", "tiktok", "online", "search")):
+    terms = _ordered_concept_origin_terms(paragraph, limit=4)
+    if len(terms) >= 2:
+        first, second = terms[0], terms[1]
         if variant == "limitation":
-            return "The limit I would place on this point is simple: the tool may give an answer, but the student still has to explain how they judged it."
-        return "In practice, the useful check is whether the student can explain the steps without leaning on the tool."
-    if any(term in lower for term in ("exam", "grade", "assessment", "test", "homework")):
-        if variant == "limitation":
-            return "This does not mean exams have no value; it means the result needs to be checked against the student's actual reasoning."
-        return "I would look at the work behind the result, because a correct answer can still hide weak understanding."
-    if any(term in lower for term in ("teacher", "class", "classroom", "school", "student")):
-        if variant == "limitation":
-            return "This depends on what the teacher can actually see in the student's work, not only on how polished the final response looks."
-        return "In a classroom, this is where the teacher has to notice whether the student is thinking or only repeating."
+            return f"This point should stay limited to {first} and {second}, not stretched into a wider claim."
+        return f"The useful check is how {first} relates to {second} in the paragraph itself."
     if variant == "limitation":
         return "This point should be read as a limited judgement, not as a claim that every case will work the same way."
     return "The practical issue is how this would be checked in the actual work, not only how clear the statement sounds."
@@ -16337,6 +16525,9 @@ def _formula_convergence_candidate_public(row: dict | None) -> dict:
             "component_drops": gate.get("component_drops"),
         },
         "anti_smoothing_guard": row.get("anti_smoothing_guard"),
+        "primary_burden_gate": row.get("primary_burden_gate"),
+        "concept_origin_guard": row.get("concept_origin_guard"),
+        "applied_formula_convergence_patches": row.get("applied_formula_convergence_patches"),
         "selection_status": {
             "selectable": status.get("selectable", row.get("selectable")),
             "reason": row.get("reason") or status.get("reason"),
@@ -16539,6 +16730,19 @@ def _formula_convergence_controller(
                 candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
                 candidates.append(candidate_eval)
                 continue
+            concept_origin_reason = _candidate_concept_origin_reject_reason(best_text, candidate_text)
+            if concept_origin_reason:
+                candidate_eval["reason"] = concept_origin_reason
+                candidate_eval["concept_origin_guard"] = {
+                    "accepted": False,
+                    "reason": concept_origin_reason,
+                }
+                candidate_eval["selection_status"] = {
+                    "selectable": False,
+                    "reason": concept_origin_reason,
+                }
+                candidates.append(candidate_eval)
+                continue
             try:
                 drift = drift_checker(best_text, candidate_text, threshold=0.15)
             except TypeError:
@@ -16608,6 +16812,11 @@ def _formula_convergence_controller(
                 candidate_report,
                 strict=bool(candidate_eval.get("coordinated_micro_perturbation") or candidate_eval.get("geometry_mode")),
             )
+            primary_burden_gate = _formula_convergence_primary_burden_gate_status(
+                best_report,
+                candidate_report,
+                contract_vs_current,
+            )
             if (
                 candidate_eval.get("coordinated_micro_perturbation")
                 or candidate_eval.get("geometry_mode")
@@ -16615,6 +16824,8 @@ def _formula_convergence_controller(
                 reject_reasons.append(str(anti_smoothing.get("reason") or "anti_smoothing_guard_failed"))
             if num(contract_vs_current.get("score_drop"), 0.0) <= 0.05:
                 reject_reasons.append("no_safe_formula_drop")
+            if not primary_burden_gate.get("accepted"):
+                reject_reasons.append(str(primary_burden_gate.get("reason") or "primary_burden_gate_failed"))
             if review_delta > 0:
                 reject_reasons.append("review_burden_regressed")
             if severity_delta > 0:
@@ -16661,6 +16872,11 @@ def _formula_convergence_controller(
                 "formula_gap_contract": contract_vs_current,
                 "formula_gap_contract_vs_original": contract_vs_original,
                 "anti_smoothing_guard": anti_smoothing,
+                "primary_burden_gate": primary_burden_gate,
+                "concept_origin_guard": {
+                    "accepted": True,
+                    "reason": "accepted",
+                },
                 "turnitin_like_ai_gate": turnitin_gate,
                 "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
                 "selection_status": {
@@ -20095,6 +20311,29 @@ def run_rewrite_pipeline(
                 candidate_eval["reason"] = "protected_span_lost " + protected_loss
                 search_summary["candidates"].append(candidate_eval)
                 return
+            concept_guard_required = bool(
+                candidate_eval.get("human_anchor_amplifier")
+                or candidate_eval.get("human_signal_amplification")
+                or (extra or {}).get("formula_portfolio_candidate")
+                or (extra or {}).get("topk_route_optimizer")
+                or (extra or {}).get("post_topk_optimizer")
+                or (extra or {}).get("strict_safe_candidate")
+                or (extra or {}).get("final_topk_texture_repair")
+            )
+            if concept_guard_required:
+                concept_origin_reason = _candidate_concept_origin_reject_reason(search_source_text, candidate)
+                if concept_origin_reason:
+                    candidate_eval["reason"] = concept_origin_reason
+                    candidate_eval["concept_origin_guard"] = {
+                        "accepted": False,
+                        "reason": concept_origin_reason,
+                    }
+                    search_summary["candidates"].append(candidate_eval)
+                    return
+                candidate_eval["concept_origin_guard"] = {
+                    "accepted": True,
+                    "reason": "accepted",
+                }
             drift = check_semantic_drift(search_source_text, candidate, threshold=0.15)
             candidate_eval["drift_similarity"] = round(drift.similarity, 3)
             if not drift.accepted:
