@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from rewrite_controller.quality_gate import evaluate_text_quality_regression
+
 from .signals import content_terms, logical_paragraphs, protected_anchor_terms, split_sentences
 
 
@@ -52,14 +54,18 @@ def evaluate_quality(
         reject_reasons.append("synthetic_personal_voice_added")
     if re.search(r"\b(?:sort of|kind of|you know|honestly)\b", candidate_text, re.I):
         reject_reasons.append("academic_tone_degraded")
+    malformed = evaluate_text_quality_regression(current_text, candidate_text)
+    if not malformed.get("passed", True):
+        reject_reasons.extend(malformed.get("reject_reasons") or ["malformed_text_regression"])
     return {
         "passed": not reject_reasons,
-        "reject_reasons": reject_reasons,
+        "reject_reasons": sorted(set(reject_reasons)),
         "term_preservation_ratio": term_ratio,
         "source_words": source_words,
         "candidate_words": candidate_words,
         "paragraph_count_before": len(source_paragraphs),
         "paragraph_count_after": len(candidate_paragraphs),
+        "malformed_text_guard": malformed,
         "quality_guard": {
             "argument_continuity": "pass" if not reject_reasons else "fail",
             "min_required_claims_preserved": term_ratio >= min_term_preservation,

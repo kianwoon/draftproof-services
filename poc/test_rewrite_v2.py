@@ -65,6 +65,12 @@ from rewrite_compiler.evaluator import evaluate_quality as compiler_evaluate_qua
 from rewrite_compiler.planner import build_plan as compiler_build_plan
 from rewrite_compiler.selector import evaluate_scanned_candidate as compiler_evaluate_scanned_candidate
 from rewrite_compiler.validator import validate_candidate as compiler_validate_candidate
+from rewrite_controller import (
+    CandidateLedger,
+    RewriteRunBudget,
+    build_candidate_record,
+    evaluate_text_quality_regression,
+)
 from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import TURNITIN_LIKE_TARGET_AI_SCORE, turnitin_like_ai_profile
 from rewrite_pipeline import (
@@ -8230,6 +8236,101 @@ assert_test(
     overcompressed_quality.get("passed") is False
     and "over_compressed_document" in (overcompressed_quality.get("reject_reasons") or []),
     "rewrite compiler evaluator rejects over-compressed output",
+)
+malformed_quality = compiler_evaluate_quality(
+    auto_repair_source,
+    auto_repair_source.replace(
+        "One of the biggest strengths of the United States is its economic power.",
+        "Mixed has led to mixed opinions. its economic power.",
+    ),
+    {"operator": "REDUCE_SYMMETRIC_CADENCE"},
+    compiler_deps,
+)
+assert_test(
+    malformed_quality.get("passed") is False
+    and any("artifact" in reason or "orphan" in reason for reason in malformed_quality.get("reject_reasons") or []),
+    "rewrite compiler evaluator rejects malformed sentence artifacts before scan selection",
+)
+budget_check = RewriteRunBudget(max_seconds=30, max_scans=8, max_llm_calls=2, started_at=0)
+budget_check.record_stage("ai_mitigation_search", seconds=29.0, scans=8, llm_calls=2)
+assert_test(
+    budget_check.can_run(min_seconds=5, min_scans=1, min_llm_calls=1) is False
+    and budget_check.skip_reason("rewrite_compiler", min_seconds=5, min_scans=1, min_llm_calls=1).get("reason") in {
+        "global_time_budget_exhausted",
+        "global_scan_budget_exhausted",
+        "global_llm_budget_exhausted",
+    },
+    "global rewrite budget blocks late phases after the shared cap is exhausted",
+)
+
+def _ledger_record(stage, source_text, current_text, candidate_text, current_report, candidate_report):
+    metrics = {
+        "turnitin_profile": _turnitin_like_ai_profile(candidate_report),
+        "current_turnitin_profile": _turnitin_like_ai_profile(current_report),
+        "original_turnitin_profile": _turnitin_like_ai_profile(current_report),
+        "strict_safe": _strict_ai_safe_band_status(candidate_report),
+        "footprint": _ai_footprint_profile(candidate_report),
+        "current_footprint": _ai_footprint_profile(current_report),
+        "ai_authorship": _integrity_scores(candidate_report).get("ai_authorship"),
+        "current_ai_authorship": _integrity_scores(current_report).get("ai_authorship"),
+        "ai_transformation": _contribution_scores(candidate_report).get("ai_transformation"),
+        "current_ai_transformation": _contribution_scores(current_report).get("ai_transformation"),
+        "review_burden": _simple_report_review_burden(candidate_report),
+        "current_review_burden": _simple_report_review_burden(current_report),
+        "weighted_severity": _simple_report_weighted_severity(candidate_report),
+        "current_weighted_severity": _simple_report_weighted_severity(current_report),
+        "critical_high": 0,
+        "current_critical_high": 0,
+        "finding_total": _simple_report_finding_total(candidate_report),
+        "current_finding_total": _simple_report_finding_total(current_report),
+        "changed_sentence_ratio": 0.05,
+    }
+    return build_candidate_record(
+        stage=stage,
+        strategy=stage,
+        text=candidate_text,
+        report=candidate_report,
+        original_text=source_text,
+        original_report=current_report,
+        current_text=current_text,
+        current_report=current_report,
+        metrics=metrics,
+    )
+
+pinned_tiny_report = make_footprint_report(
+    ai_authorship=55,
+    human=54,
+    ai_transformation=46,
+    grounding=45,
+    human_anchor=25,
+    smoothness=51,
+    semantic_uniformity=55,
+    ai_likelihood=54.8,
+    topk_pattern=100,
+    topk_calibrated_risk=100,
+    generic_assertion_risk=68,
+    qualifying_text_ai_density=64,
+    unsupported_claim_risk=30,
+    broad_claim_risk=45,
+    discourse=40,
+    expansion=35,
+    section_style=20,
+    signal_agreement=49,
+)
+ledger = CandidateLedger(min_formula_drop=0.001, min_late_formula_drop_when_pinned=1.0)
+ledger.seed(_ledger_record("seed", auto_repair_source, auto_repair_source, auto_repair_source, auto_repair_base, auto_repair_base))
+tiny_decision = ledger.consider(_ledger_record(
+    "rewrite_compiler",
+    auto_repair_source,
+    auto_repair_source,
+    auto_repair_source.replace("One of the biggest strengths of", "One strength of"),
+    auto_repair_base,
+    pinned_tiny_report,
+))
+assert_test(
+    tiny_decision.get("accepted") is False
+    and "pinned_topk" in str(tiny_decision.get("reason")),
+    "global selector rejects tiny late gains when Top-k stays pinned and smoothness regresses",
 )
 compiler_candidate = auto_repair_source.replace(
     "One of the biggest strengths of the United States is its economic power.",

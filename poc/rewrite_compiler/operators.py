@@ -118,10 +118,20 @@ def _candidate_for_operator(sentence: str, operator: str, deps: Any) -> str:
                     candidate = f"{left}. {lead}{right[0].lower() + right[1:] if len(right) > 1 else right}"
                     break
     elif operator == "REDUCE_SYMMETRIC_CADENCE":
-        if "," in candidate:
-            first, rest = candidate.split(",", 1)
-            if 3 <= deps.text_word_count(first) <= 9 and deps.text_word_count(rest) >= 6:
-                candidate = f"{rest.strip()} {first.strip().lower()}."
+        # Keep this operator conservative. Earlier versions moved the first
+        # comma clause to the end, which produced orphan fragments like
+        # "its economic power." and repeated-word artifacts. Removing a bland
+        # lead-in gives useful cadence movement without breaking syntax.
+        updated = re.sub(
+            r"^(?:One of the|Another|A key|An important|A major)\s+"
+            r"(?:biggest\s+)?(?:strengths?|features?|parts?)\s+(?:of|is)\s+",
+            "",
+            candidate,
+            count=1,
+            flags=re.I,
+        )
+        if updated != candidate and deps.text_word_count(updated) >= max(6, int(deps.text_word_count(candidate) * 0.55)):
+            candidate = updated
     elif operator == "COMPRESS_ABSTRACT_CLAIM":
         replacements = (
             (r"\bis often described as one of the most influential\b", "has wide influence"),

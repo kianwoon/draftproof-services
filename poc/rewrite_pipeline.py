@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from rewrite.parse_detect import DetectJSONParser, DetectJSONContext, findings_from_json
 from rewrite import run_rewrite, RewriteConfig, RewriteModuleResult
 from rewrite.auto_repair_controller import AutoRepairDependencies, run_auto_repair_controller
+from rewrite_controller import CandidateLedger, RewriteRunBudget, build_candidate_record
 from rewrite_compiler import CompilerConfig, CompilerDependencies, run_rewrite_compiler
 from rewrite.guards import detect_protected_spans, check_semantic_drift
 from report.pdf import render_pdf
@@ -17840,6 +17841,28 @@ def run_rewrite_pipeline(
         "rewritten_weighted_severity": rewritten_severity,
     }
 
+    configured_global_seconds = (
+        float(getattr(rewrite_config, "max_rewrite_seconds", 0) or 0)
+        if rewrite_config is not None
+        else 0.0
+    )
+    if configured_global_seconds <= 0:
+        configured_global_seconds = _float_env("DRAFTPROOF_GLOBAL_REWRITE_MAX_SECONDS", 90.0)
+    global_rewrite_budget = RewriteRunBudget(
+        max_seconds=configured_global_seconds,
+        max_scans=int(_float_env("DRAFTPROOF_GLOBAL_REWRITE_MAX_SCANS", 14.0)),
+        max_llm_calls=int(_float_env("DRAFTPROOF_GLOBAL_REWRITE_MAX_LLM_CALLS", 10.0)),
+        started_at=t0,
+    )
+    global_rewrite_budget.record_stage("rewrite_engine", seconds=engine_elapsed)
+    result.summary["global_rewrite_budget_contract"] = {
+        "version": "global_rewrite_budget_v1",
+        "source": "rewrite_config.max_rewrite_seconds" if rewrite_config is not None else "DRAFTPROOF_GLOBAL_REWRITE_MAX_SECONDS",
+        "max_seconds": configured_global_seconds,
+        "max_scans": global_rewrite_budget.max_scans,
+        "max_llm_calls": global_rewrite_budget.max_llm_calls,
+    }
+
     # The controller must use the same fresh baseline scan as the selector.
     # The initial parsed context can be a lightweight wrapper with no integrity
     # layers, which would make Human Contribution appear missing and allow
@@ -24855,6 +24878,12 @@ def run_rewrite_pipeline(
             "full_candidate_scans": search_summary.get("full_candidate_scans"),
             "selected": search_summary.get("selected", False),
         })
+        global_rewrite_budget.record_stage(
+            "ai_mitigation_search",
+            seconds=float(search_summary.get("seconds") or 0.0),
+            scans=int(search_summary.get("full_candidate_scans") or 0),
+            llm_calls=int(search_summary.get("llm_calls") or 0),
+        )
 
         result.summary["detect_scores"].update({
             "rewritten_ai": rewritten_ai,
@@ -24885,6 +24914,105 @@ def run_rewrite_pipeline(
             "selected": False,
             "skipped_reason": "requires_author_input",
         })
+        global_rewrite_budget.record_stage("ai_mitigation_search", seconds=0.0)
+
+    global_candidate_ledger = CandidateLedger(
+        min_formula_drop=_float_env("DRAFTPROOF_GLOBAL_MIN_FORMULA_DROP", 0.05),
+        min_late_formula_drop_when_pinned=_float_env("DRAFTPROOF_GLOBAL_PINNED_TOPK_MIN_DROP", 1.0),
+        target_score=TURNITIN_LIKE_TARGET_AI_SCORE,
+    )
+
+    def _controller_changed_sentence_ratio(before: str, after: str) -> float:
+        before_sentences = [re.sub(r"\s+", " ", s).strip() for s in _split_sentences(before)]
+        after_sentences = [re.sub(r"\s+", " ", s).strip() for s in _split_sentences(after)]
+        if not before_sentences and not after_sentences:
+            return 0.0
+        return round(1.0 - SequenceMatcher(None, before_sentences, after_sentences).ratio(), 3)
+
+    def _controller_metrics(candidate_report: dict, current_report: dict, before_text: str, after_text: str) -> dict:
+        candidate_integrity = _integrity_scores(candidate_report)
+        current_integrity = _integrity_scores(current_report)
+        candidate_contribution = _contribution_scores(candidate_report)
+        current_contribution = _contribution_scores(current_report)
+        return {
+            "turnitin_profile": _turnitin_like_ai_profile(candidate_report),
+            "current_turnitin_profile": _turnitin_like_ai_profile(current_report),
+            "original_turnitin_profile": _turnitin_like_ai_profile(original_report_dict),
+            "strict_safe": _strict_ai_safe_band_status(candidate_report),
+            "footprint": _ai_footprint_profile(candidate_report),
+            "current_footprint": _ai_footprint_profile(current_report),
+            "ai_authorship": candidate_integrity.get("ai_authorship"),
+            "current_ai_authorship": current_integrity.get("ai_authorship"),
+            "ai_transformation": candidate_contribution.get("ai_transformation"),
+            "current_ai_transformation": current_contribution.get("ai_transformation"),
+            "review_burden": _review_burden(candidate_report),
+            "current_review_burden": _review_burden(current_report),
+            "weighted_severity": _weighted_severity(candidate_report),
+            "current_weighted_severity": _weighted_severity(current_report),
+            "critical_high": _critical_high_count(candidate_report),
+            "current_critical_high": _critical_high_count(current_report),
+            "finding_total": _finding_total(candidate_report),
+            "current_finding_total": _finding_total(current_report),
+            "changed_sentence_ratio": _controller_changed_sentence_ratio(before_text, after_text),
+        }
+
+    def _controller_record(stage: str, strategy: str | None, candidate_text: str, candidate_report: dict) -> dict:
+        return build_candidate_record(
+            stage=stage,
+            strategy=strategy,
+            text=candidate_text,
+            report=candidate_report,
+            original_text=text,
+            original_report=original_report_dict,
+            current_text=rewritten_text,
+            current_report=rewritten_report_dict,
+            metrics=_controller_metrics(candidate_report, rewritten_report_dict, rewritten_text, candidate_text),
+        )
+
+    def _seed_global_candidate_ledger(stage: str, strategy: str = "current_best_before_post_phases") -> None:
+        global_candidate_ledger.seed(_controller_record(stage, strategy, rewritten_text, rewritten_report_dict))
+
+    def _global_phase_budget_skip(stage: str, *, min_seconds: float = 5.0, min_scans: int = 1, min_llm_calls: int = 0) -> dict | None:
+        if global_rewrite_budget.can_run(
+            min_seconds=min_seconds,
+            min_scans=min_scans,
+            min_llm_calls=min_llm_calls,
+        ):
+            return None
+        skipped = global_rewrite_budget.skip_reason(
+            stage,
+            min_seconds=min_seconds,
+            min_scans=min_scans,
+            min_llm_calls=min_llm_calls,
+        )
+        return {
+            "enabled": False,
+            "selected": False,
+            "reason": skipped.get("reason"),
+            "global_controller_skip": skipped,
+        }
+
+    def _global_controller_phase_accepted(stage: str, phase_result: dict, stored_result: dict) -> bool:
+        selected_report = phase_result.get("selected_report")
+        selected_text = phase_result.get("selected_text")
+        if not isinstance(selected_report, dict) or not isinstance(selected_text, str):
+            decision = {"accepted": False, "reason": "missing_selected_text_or_report"}
+        else:
+            record = _controller_record(
+                stage,
+                phase_result.get("selected_strategy") or phase_result.get("strategy"),
+                selected_text,
+                selected_report,
+            )
+            decision = global_candidate_ledger.consider(record)
+        stored_result["global_controller_decision"] = decision
+        phase_result["global_controller_decision"] = decision
+        if not decision.get("accepted"):
+            phase_result["selected"] = False
+            return False
+        return True
+
+    _seed_global_candidate_ledger("post_ai_search_current")
 
     convergence_selected = False
     if (
@@ -24895,7 +25023,10 @@ def run_rewrite_pipeline(
         and str(rewritten_text or "").strip()
     ):
         current_formula_profile = _turnitin_like_ai_profile(rewritten_report_dict)
-        if not bool(current_formula_profile.get("target_met")):
+        if (
+            not bool(current_formula_profile.get("target_met"))
+            and global_rewrite_budget.can_run(min_seconds=6.0, min_scans=1)
+        ):
             report_progress(78, "Running formula convergence controller")
             convergence_t0 = time.time()
             try:
@@ -24956,7 +25087,14 @@ def run_rewrite_pipeline(
                 "formula_convergence_llm_calls_used",
                 convergence_llm_calls,
             )
-            if convergence_result.get("selected"):
+            if (
+                convergence_result.get("selected")
+                and _global_controller_phase_accepted(
+                    "formula_convergence_controller",
+                    convergence_result,
+                    stored_convergence_result,
+                )
+            ):
                 selected_report = convergence_result.get("selected_report")
                 selected_text = convergence_result.get("selected_text")
                 if isinstance(selected_report, dict) and isinstance(selected_text, str):
@@ -25005,16 +25143,53 @@ def run_rewrite_pipeline(
                 "target_met": bool(convergence_result.get("target_met")),
                 "stop_reason": convergence_result.get("stop_reason") or convergence_result.get("reason"),
             })
+            global_rewrite_budget.record_stage(
+                "formula_convergence_controller",
+                seconds=round(time.time() - convergence_t0, 3),
+                scans=len(stored_convergence_result.get("candidates") or []),
+                llm_calls=convergence_llm_calls,
+            )
+        elif not bool(current_formula_profile.get("target_met")):
+            stored_convergence_result = _global_phase_budget_skip(
+                "formula_convergence_controller",
+                min_seconds=6.0,
+                min_scans=1,
+            ) or {}
+            result.summary["formula_convergence_controller"] = stored_convergence_result
+            stage_timings.append({
+                "stage": "formula_convergence_controller",
+                "seconds": 0.0,
+                "candidates": 0,
+                "selected": False,
+                "skipped": True,
+                "stop_reason": stored_convergence_result.get("reason"),
+            })
 
     density_breaker_selected = False
-    if (
+    density_breaker_should_run = (
         _env_flag("DRAFTPROOF_POST_SELECTION_AI_DENSITY_BREAKER", True)
         and not ai_search_blocked_by_author_gaps
         and isinstance(rewritten_report_dict, dict)
         and isinstance(original_report_dict, dict)
         and str(rewritten_text or "").strip()
         and str(rewritten_text or "").strip() != str(text or "").strip()
-    ):
+    )
+    if density_breaker_should_run and not global_rewrite_budget.can_run(min_seconds=5.0, min_scans=1):
+        stored_density_breaker_result = _global_phase_budget_skip(
+            "post_selection_ai_density_breaker",
+            min_seconds=5.0,
+            min_scans=1,
+        ) or {}
+        result.summary["post_selection_ai_density_breaker"] = stored_density_breaker_result
+        stage_timings.append({
+            "stage": "post_selection_ai_density_breaker",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_density_breaker_result.get("reason"),
+        })
+    elif density_breaker_should_run:
         report_progress(82, "Running post-selection AI-density breaker")
         density_t0 = time.time()
         try:
@@ -25036,7 +25211,14 @@ def run_rewrite_pipeline(
             if key not in {"selected_text", "selected_report"}
         }
         result.summary["post_selection_ai_density_breaker"] = stored_density_breaker_result
-        if density_breaker_result.get("selected"):
+        if (
+            density_breaker_result.get("selected")
+            and _global_controller_phase_accepted(
+                "post_selection_ai_density_breaker",
+                density_breaker_result,
+                stored_density_breaker_result,
+            )
+        ):
             selected_report = density_breaker_result.get("selected_report")
             selected_text = density_breaker_result.get("selected_text")
             if isinstance(selected_report, dict) and isinstance(selected_text, str):
@@ -25084,16 +25266,38 @@ def run_rewrite_pipeline(
             "selected": bool(density_breaker_result.get("selected")),
             "stop_reason": density_breaker_result.get("reason"),
         })
+        global_rewrite_budget.record_stage(
+            "post_selection_ai_density_breaker",
+            seconds=round(time.time() - density_t0, 3),
+            scans=int(stored_density_breaker_result.get("scans_used") or 0),
+        )
 
     post_density_anchor_selected = False
-    if (
+    anchor_probe_should_run = (
         _env_flag("DRAFTPROOF_POST_DENSITY_HUMAN_ANCHOR_PROBE", True)
         and not ai_search_blocked_by_author_gaps
         and isinstance(rewritten_report_dict, dict)
         and isinstance(original_report_dict, dict)
         and str(rewritten_text or "").strip()
         and str(rewritten_text or "").strip() != str(text or "").strip()
-    ):
+    )
+    if anchor_probe_should_run and not global_rewrite_budget.can_run(min_seconds=5.0, min_scans=1):
+        stored_anchor_probe_result = _global_phase_budget_skip(
+            "post_density_human_anchor_probe",
+            min_seconds=5.0,
+            min_scans=1,
+        ) or {}
+        result.summary["post_density_human_anchor_probe"] = stored_anchor_probe_result
+        result.summary["human_anchor_suppression_frontier"] = None
+        stage_timings.append({
+            "stage": "post_density_human_anchor_probe",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_anchor_probe_result.get("reason"),
+        })
+    elif anchor_probe_should_run:
         report_progress(84, "Running post-density Human Anchor probe")
         anchor_probe_t0 = time.time()
         try:
@@ -25118,7 +25322,14 @@ def run_rewrite_pipeline(
         result.summary["human_anchor_suppression_frontier"] = stored_anchor_probe_result.get(
             "human_anchor_suppression_frontier"
         )
-        if anchor_probe_result.get("selected"):
+        if (
+            anchor_probe_result.get("selected")
+            and _global_controller_phase_accepted(
+                "post_density_human_anchor_probe",
+                anchor_probe_result,
+                stored_anchor_probe_result,
+            )
+        ):
             selected_report = anchor_probe_result.get("selected_report")
             selected_text = anchor_probe_result.get("selected_text")
             if isinstance(selected_report, dict) and isinstance(selected_text, str):
@@ -25166,16 +25377,37 @@ def run_rewrite_pipeline(
             "selected": bool(anchor_probe_result.get("selected")),
             "stop_reason": anchor_probe_result.get("reason"),
         })
+        global_rewrite_budget.record_stage(
+            "post_density_human_anchor_probe",
+            seconds=round(time.time() - anchor_probe_t0, 3),
+            scans=int(stored_anchor_probe_result.get("scans_used") or 0),
+        )
 
     auto_repair_selected = False
-    if (
+    auto_repair_should_run = (
         _env_flag("DRAFTPROOF_AUTO_REPAIR_CONTROLLER", True)
         and not ai_search_blocked_by_author_gaps
         and isinstance(rewritten_report_dict, dict)
         and isinstance(original_report_dict, dict)
         and str(rewritten_text or "").strip()
         and str(rewritten_text or "").strip() != str(text or "").strip()
-    ):
+    )
+    if auto_repair_should_run and not global_rewrite_budget.can_run(min_seconds=5.0, min_scans=1):
+        stored_auto_repair_result = _global_phase_budget_skip(
+            "auto_repair_controller",
+            min_seconds=5.0,
+            min_scans=1,
+        ) or {}
+        result.summary["auto_repair_controller"] = stored_auto_repair_result
+        stage_timings.append({
+            "stage": "auto_repair_controller",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_auto_repair_result.get("reason"),
+        })
+    elif auto_repair_should_run:
         report_progress(86, "Running automated repair compiler")
         auto_repair_t0 = time.time()
         try:
@@ -25226,7 +25458,14 @@ def run_rewrite_pipeline(
             if key not in {"selected_text", "selected_report"}
         }
         result.summary["auto_repair_controller"] = stored_auto_repair_result
-        if auto_repair_result.get("selected"):
+        if (
+            auto_repair_result.get("selected")
+            and _global_controller_phase_accepted(
+                "auto_repair_controller",
+                auto_repair_result,
+                stored_auto_repair_result,
+            )
+        ):
             selected_report = auto_repair_result.get("selected_report")
             selected_text = auto_repair_result.get("selected_text")
             if isinstance(selected_report, dict) and isinstance(selected_text, str):
@@ -25274,16 +25513,38 @@ def run_rewrite_pipeline(
             "selected": bool(auto_repair_result.get("selected")),
             "stop_reason": auto_repair_result.get("reason"),
         })
+        global_rewrite_budget.record_stage(
+            "auto_repair_controller",
+            seconds=round(time.time() - auto_repair_t0, 3),
+            scans=int(stored_auto_repair_result.get("scans_used") or 0),
+        )
 
     rewrite_compiler_selected = False
-    if (
+    compiler_should_run = (
         _env_flag("DRAFTPROOF_REWRITE_COMPILER_ENABLED", True)
         and not ai_search_blocked_by_author_gaps
         and isinstance(rewritten_report_dict, dict)
         and isinstance(original_report_dict, dict)
         and str(rewritten_text or "").strip()
         and str(rewritten_text or "").strip() != str(text or "").strip()
-    ):
+    )
+    if compiler_should_run and not global_rewrite_budget.can_run(min_seconds=5.0, min_scans=1):
+        stored_compiler_result = _global_phase_budget_skip(
+            "rewrite_compiler",
+            min_seconds=5.0,
+            min_scans=1,
+        ) or {}
+        result.summary["rewrite_compiler"] = stored_compiler_result
+        result.summary["deterministic_rewrite_compiler"] = stored_compiler_result
+        stage_timings.append({
+            "stage": "rewrite_compiler",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_compiler_result.get("reason"),
+        })
+    elif compiler_should_run:
         report_progress(88, "Running deterministic rewrite compiler")
         compiler_t0 = time.time()
         compiler_mode = os.environ.get("DRAFTPROOF_REWRITE_COMPILER_MODE", "compiler_strict")
@@ -25340,7 +25601,14 @@ def run_rewrite_pipeline(
         }
         result.summary["rewrite_compiler"] = stored_compiler_result
         result.summary["deterministic_rewrite_compiler"] = stored_compiler_result
-        if compiler_result.get("selected"):
+        if (
+            compiler_result.get("selected")
+            and _global_controller_phase_accepted(
+                "rewrite_compiler",
+                compiler_result,
+                stored_compiler_result,
+            )
+        ):
             selected_report = compiler_result.get("selected_report")
             selected_text = compiler_result.get("selected_text")
             if isinstance(selected_report, dict) and isinstance(selected_text, str):
@@ -25392,6 +25660,12 @@ def run_rewrite_pipeline(
             "outcome_class": stored_compiler_result.get("outcome_class"),
             "stop_reason": compiler_result.get("reason"),
         })
+        global_rewrite_budget.record_stage(
+            "rewrite_compiler",
+            seconds=round(time.time() - compiler_t0, 3),
+            scans=int(stored_compiler_result.get("scans_used") or 0),
+            llm_calls=int(stored_compiler_result.get("llm_calls_used") or 0),
+        )
 
     ai_regression_tolerance = 0.25
     writing_quality_regression_tolerance = 1.0
@@ -26875,6 +27149,8 @@ def run_rewrite_pipeline(
             result.summary["converged"] = True
     result.summary["detect_scan_rewritten"] = _extract_scan_summary(rewritten_report_dict)
     result.summary["full_scan_cache"] = dict(full_scan_cache_stats)
+    result.summary["global_rewrite_budget"] = global_rewrite_budget.summary()
+    result.summary["global_candidate_ledger"] = global_candidate_ledger.summary()
     result.summary["stage_timings"] = stage_timings
     result.sentence_comparison = sentence_comparison
 
