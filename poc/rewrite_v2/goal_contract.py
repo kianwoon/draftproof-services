@@ -81,7 +81,10 @@ def needs_author_context(scan_report: dict | None) -> bool:
         if isinstance(current, dict):
             for key, value in current.items():
                 key_text = str(key).lower()
-                if key_text in explicit_keys and bool(value):
+                if key_text in explicit_keys and (
+                    value is True
+                    or (isinstance(value, str) and value.strip().lower() in {"true", "yes", "required", "blocked"})
+                ):
                     return True
                 if key_text in {"status", "outcome", "stop_reason", "blocker", "reason"}:
                     text = str(value).lower()

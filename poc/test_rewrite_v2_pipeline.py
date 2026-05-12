@@ -8,7 +8,7 @@ import tempfile
 
 from rewrite.guards import check_semantic_drift
 from rewrite_v2 import run_rewrite_pipeline_v2
-from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal
+from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.selection import CandidateLane, decide_candidate
 from rewrite_v2.strategy import StrategyKind, route_strategies
 
@@ -179,6 +179,17 @@ assert_test(
     len(context_summary.get("candidate_trace") or []) == 0,
     "V2 does not spend candidate budget after author-context fail-fast",
 )
+counter_only_scan = {
+    **scan_json,
+    "ai_mitigation": {
+        "counts": {"needs_author_context": 3, "needs_author_evidence": 3},
+        "readiness": {"requires_user_input": True},
+    },
+}
+assert_test(
+    not needs_author_context(counter_only_scan),
+    "V2 does not treat author-context counters as hard rewrite blockers",
+)
 
 original_report = {
     "ai_risk_badge": {"ai_likelihood_score": 54.62, "ai_components": {"topk_calibrated_risk": 80}},
@@ -226,6 +237,34 @@ review_decision = decide_candidate(
 assert_test(
     review_decision.lane != CandidateLane.GOAL_MET,
     "V2 does not classify detector-safe but semantic-review candidates as final success",
+)
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    near_miss_result = run_rewrite_pipeline_v2(
+        detect_json=scan_json,
+        output_dir=tmpdir,
+        replay_candidate_records=[{
+            "strategy": "safe_near_miss_score_target",
+            "text": "The United States has influenced politics, technology, and culture.",
+            "report": {
+                "ai_risk_badge": {
+                    "ai_likelihood_score": 49.0,
+                    "writing_quality_score": 58.0,
+                    "ai_components": {"topk_calibrated_risk": 58},
+                },
+                "integrity_layers": {"layers": {"ai_authorship": {"score": 48}, "ai_transformation": {"score": 44}}},
+                "findings": {"critical": [], "high": [{"id": "f001"}], "medium": [], "low": []},
+            },
+        }],
+    )
+near_miss_summary = near_miss_result["result"].summary
+assert_test(
+    near_miss_summary["final_text"] != scan_json["input_text"],
+    "V2 applies score-target safe near-miss candidates as rewritten output",
+)
+assert_test(
+    near_miss_result["status"] == RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
+    "V2 does not label applied safe near-miss candidates as strict success",
 )
 
 entity_start_drift = check_semantic_drift(

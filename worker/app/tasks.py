@@ -765,7 +765,15 @@ def _build_rewrite_debug_log(
             ),
         },
         "rewrite_summary": {
+            "rewrite_pipeline_version": summary.get("rewrite_pipeline_version"),
             "outcome": summary.get("outcome"),
+            "rewrite_goal_status": summary.get("rewrite_goal_status"),
+            "reference_ai": summary.get("reference_ai"),
+            "required_ai_drop": summary.get("required_ai_drop"),
+            "target_ai_score": summary.get("target_ai_score"),
+            "strategy_trace": summary.get("strategy_trace"),
+            "candidate_trace": summary.get("candidate_trace"),
+            "selected_candidate": summary.get("selected_candidate"),
             "ai_mitigation": summary.get("ai_mitigation"),
             "ai_mitigation_blocked_auto_rewrite": summary.get("ai_mitigation_blocked_auto_rewrite"),
             "rewrite_runtime_version": summary.get("rewrite_runtime_version"),
@@ -860,6 +868,7 @@ def _build_rewrite_debug_log(
             "attempted_scores": _badge_scores(attempted_scan),
             "final_scores": _badge_scores(final_scan),
             "detect_scores": summary.get("detect_scores"),
+            "detect_scan_rewritten": summary.get("detect_scan_rewritten"),
             "effective_rewrite_plan": effective_plan,
             "effective_target_context": _target_contexts(
                 effective_plan.get("auto_fixable"),
