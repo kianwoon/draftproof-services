@@ -3,6 +3,7 @@ set -e
 
 MODEL="${PREDICTABILITY_MODEL:-gpt2}"
 SEMANTIC_MODEL="${SEMANTIC_EMBEDDING_MODEL:-all-MiniLM-L6-v2}"
+CELERY_WORKER_CONCURRENCY="${CELERY_WORKER_CONCURRENCY:-1}"
 CACHE_DIR="${HF_HOME}/hub"
 SAFE_MODEL="${MODEL//\//_}"
 SAFE_SEMANTIC_MODEL="${SEMANTIC_MODEL//\//_}"
@@ -25,6 +26,7 @@ echo "[entrypoint] SEMANTIC_EMBEDDING_MODEL=${SEMANTIC_MODEL}"
 echo "[entrypoint] OMP_NUM_THREADS=${OMP_NUM_THREADS}"
 echo "[entrypoint] MKL_NUM_THREADS=${MKL_NUM_THREADS}"
 echo "[entrypoint] TORCH_NUM_THREADS=${TORCH_NUM_THREADS}"
+echo "[entrypoint] CELERY_WORKER_CONCURRENCY=${CELERY_WORKER_CONCURRENCY}"
 echo "[entrypoint] Marker: ${MODEL_MARKER}"
 echo "[entrypoint] Semantic marker: ${SEMANTIC_MARKER}"
 echo "[entrypoint] ============================================"
@@ -104,7 +106,7 @@ echo "[entrypoint] Starting Celery worker..."
 cd /app/worker
 exec celery -A app.celery_app worker \
     --loglevel=info \
-    --concurrency=1 \
+    --concurrency="${CELERY_WORKER_CONCURRENCY}" \
     --pool=prefork \
     -Q default,scan \
     --without-heartbeat \
