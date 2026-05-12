@@ -19,7 +19,13 @@ from rewrite.guards import check_semantic_drift, detect_protected_spans, protect
 
 from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from .goal_contract import RewriteGoalEvaluation
-from .selection import CandidateLane, decide_candidate, select_best_candidate
+from .selection import (
+    CandidateLane,
+    decide_candidate,
+    select_best_applicable_candidate,
+    select_best_candidate,
+    select_best_safe_progress_candidate,
+)
 from .strategy import (
     build_single_paragraph_reconstruction_prompt,
     build_strategy_prompt,
@@ -35,6 +41,10 @@ def _semantic_scan_allowed(strategy_kind: str | None, semantic_safe: bool) -> bo
     if strategy_kind == "full_rewrite":
         return True
     return os.environ.get("DRAFTPROOF_REWRITE_V2_SCAN_REVIEW_CANDIDATES", "1").lower() not in {"0", "false", "no"}
+
+
+def _close_partial_max_gap() -> float:
+    return float(os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP", "1.0") or 1.0)
 
 
 def _extract_original_text(detect_json: dict[str, Any]) -> str:
@@ -153,6 +163,11 @@ def _compose_full_doc_delta_winners(
         return original_text, []
     winners: dict[str, dict[str, Any]] = {}
     for row in rows:
+        decision = row.get("decision") if isinstance(row.get("decision"), dict) else {}
+        if not decision.get("quality_safe") or not decision.get("semantic_safe"):
+            continue
+        if row.get("protected_anchors_safe") is False or row.get("semantic_safe") is False:
+            continue
         paragraph_id = str(row.get("paragraph_id") or "")
         candidate_ai = row.get("candidate_ai")
         if not paragraph_id or not isinstance(candidate_ai, (int, float)):
@@ -208,6 +223,58 @@ def _paragraph_target_map(scan_report: dict | None, original_text: str = "") -> 
         if paragraph_id and paragraph and paragraph_id not in result:
             result[paragraph_id] = paragraph
     return result
+
+
+def _entities_from_target_text(text: str) -> list[str]:
+    values: list[str] = []
+    for match in re.finditer(r"\b[A-Z][A-Za-z0-9&'.-]{2,}(?:\s+[A-Z][A-Za-z0-9&'.-]{2,}){0,4}\b", text or ""):
+        entity = re.sub(r"\s+", " ", match.group(0)).strip(" ,.;:")
+        if entity and entity not in values:
+            values.append(entity)
+    for match in re.finditer(r"\b(?:\d{4}|\d+(?:\.\d+)?%?)\b", text or ""):
+        value = match.group(0)
+        if value not in values:
+            values.append(value)
+    return values[:24]
+
+
+def _keywords_from_target_text(text: str) -> list[str]:
+    values: list[str] = []
+    stop = {
+        "about", "after", "also", "because", "between", "could", "from", "have", "into",
+        "more", "most", "over", "that", "their", "there", "these", "this", "those",
+        "through", "under", "when", "where", "which", "while", "with", "would",
+    }
+    for token in re.findall(r"\b[A-Za-z][A-Za-z'-]{3,}\b", text or ""):
+        lowered = token.lower()
+        if lowered not in stop and lowered not in values:
+            values.append(lowered)
+    return values[:40]
+
+
+def _enrich_paragraph_brief_with_target(brief: dict[str, Any], paragraph_targets: dict[str, str]) -> dict[str, Any]:
+    paragraph_id = str(brief.get("paragraph_id") or "")
+    target = paragraph_targets.get(paragraph_id) or ""
+    if not target:
+        return brief
+    enriched = {**brief}
+    required_entities = list(enriched.get("required_entities") or [])
+    for entity in _entities_from_target_text(target):
+        if entity not in required_entities:
+            required_entities.append(entity)
+    context_keywords = list(enriched.get("context_keywords") or [])
+    for keyword in _keywords_from_target_text(target):
+        if keyword not in context_keywords:
+            context_keywords.append(keyword)
+    enriched["required_entities"] = required_entities[:24]
+    enriched["context_keywords"] = context_keywords[:48]
+    word_count = len(target.split())
+    if word_count:
+        enriched["target_word_range"] = {
+            "min": max(35, int(word_count * 0.75)),
+            "max": max(65, int(word_count * 1.15)),
+        }
+    return enriched
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -818,7 +885,10 @@ def _generate_candidates(
     candidates = []
     for strategy in strategies:
         if getattr(strategy, "kind", None).value == "targeted":
-            paragraph_briefs = targeted_paragraph_briefs(scan_report)
+            paragraph_briefs = [
+                _enrich_paragraph_brief_with_target(brief, paragraph_targets)
+                for brief in targeted_paragraph_briefs(scan_report)
+            ]
             tactics = _paragraph_tactics()
             for brief in paragraph_briefs:
                 paragraph_id = str(brief.get("paragraph_id") or "")
@@ -1140,7 +1210,11 @@ def run_rewrite_pipeline_v2(
                     "report": candidate_report,
                     "text": composed_text,
                 })
-        frontier = select_best_candidate(candidate_rows)
+        close_partial_max_gap = _close_partial_max_gap()
+        frontier = (
+            select_best_applicable_candidate(candidate_rows, close_partial_max_gap=close_partial_max_gap)
+            or select_best_safe_progress_candidate(candidate_rows)
+        )
         frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
         rescue_enabled = os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"}
         if (
@@ -1164,7 +1238,12 @@ def run_rewrite_pipeline_v2(
                 starting_cost=len(candidate_rows),
             )
             candidate_rows.extend(rescue_rows)
-    best = select_best_candidate(candidate_rows)
+    close_partial_max_gap = _close_partial_max_gap()
+    diagnostic_best = select_best_candidate(candidate_rows)
+    best = (
+        select_best_applicable_candidate(candidate_rows, close_partial_max_gap=close_partial_max_gap)
+        or diagnostic_best
+    )
     best_decision = best.get("decision") if isinstance(best, dict) else {}
     best_lane = (best_decision or {}).get("lane")
     best_applicable_near_miss = bool(
@@ -1175,7 +1254,6 @@ def run_rewrite_pipeline_v2(
         and (best_decision or {}).get("semantic_safe")
     )
     close_partial_gap = (best_decision or {}).get("ai_target_gap")
-    close_partial_max_gap = float(os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP", "1.0") or 1.0)
     best_applicable_close_partial = bool(
         best
         and os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_CLOSE_PARTIAL", "1").lower() not in {"0", "false", "no"}

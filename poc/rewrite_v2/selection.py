@@ -136,3 +136,51 @@ def select_best_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | 
     if not selectable:
         return None
     return max(selectable, key=lambda row: tuple(row["decision"].get("rank") or ()))
+
+
+def candidate_is_applicable(
+    candidate: dict[str, Any],
+    *,
+    close_partial_max_gap: float | None = None,
+) -> bool:
+    decision = candidate.get("decision") if isinstance(candidate, dict) else None
+    if not isinstance(decision, dict):
+        return False
+    if not decision.get("quality_safe") or not decision.get("semantic_safe"):
+        return False
+    lane = str(decision.get("lane") or "")
+    if lane == CandidateLane.GOAL_MET.value:
+        return True
+    if lane == CandidateLane.SAFE_NEAR_MISS.value and decision.get("required_drop_met"):
+        return True
+    if lane == CandidateLane.PARTIAL_DIAGNOSTIC.value and close_partial_max_gap is not None:
+        gap = decision.get("ai_target_gap")
+        return isinstance(gap, (int, float)) and float(gap) <= float(close_partial_max_gap)
+    return False
+
+
+def select_best_applicable_candidate(
+    candidates: list[dict[str, Any]],
+    *,
+    close_partial_max_gap: float | None = None,
+) -> dict[str, Any] | None:
+    applicable = [
+        row for row in candidates
+        if candidate_is_applicable(row, close_partial_max_gap=close_partial_max_gap)
+    ]
+    if not applicable:
+        return None
+    return max(applicable, key=lambda row: tuple((row.get("decision") or {}).get("rank") or ()))
+
+
+def select_best_safe_progress_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    safe_progress = [
+        row for row in candidates
+        if isinstance(row.get("decision"), dict)
+        and str(row["decision"].get("lane")) != CandidateLane.REJECT.value
+        and row["decision"].get("quality_safe")
+        and row["decision"].get("semantic_safe")
+    ]
+    if not safe_progress:
+        return None
+    return max(safe_progress, key=lambda row: tuple(row["decision"].get("rank") or ()))

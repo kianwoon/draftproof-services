@@ -369,6 +369,7 @@ def build_single_paragraph_reconstruction_prompt(
         "Prefer minimal factual carrier sentences over polished summary prose.\n"
         "Do not explain the paragraph's importance or evaluate the topic. State the content plainly.\n"
         "Keep plain student analytical prose. No ornate, promotional, encyclopedic, or marketing language.\n"
+        "Every item in paragraph_brief.required_entities must appear verbatim in rewritten_paragraph.\n"
         "Preserve all required entities, numbers, protected spans, and meaning implied by the keywords.\n"
         "Do not add unsupported facts, examples, citations, author experience, or commentary.\n"
         "Return valid JSON only with keys: paragraph_id, rewritten_paragraph, rationale.\n\n"

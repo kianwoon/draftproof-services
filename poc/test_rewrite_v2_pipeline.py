@@ -8,9 +8,9 @@ import tempfile
 
 from rewrite.guards import check_semantic_drift
 from rewrite_v2 import run_rewrite_pipeline_v2
-from rewrite_v2.pipeline import _cluster_text_from_gate, _paragraph_target_map, _replace_once_flexible
+from rewrite_v2.pipeline import _cluster_text_from_gate, _compose_full_doc_delta_winners, _paragraph_target_map, _replace_once_flexible
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
-from rewrite_v2.selection import CandidateLane, decide_candidate
+from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import StrategyKind, route_strategies
 
 
@@ -238,6 +238,70 @@ review_decision = decide_candidate(
 assert_test(
     review_decision.lane != CandidateLane.GOAL_MET,
     "V2 does not classify detector-safe but semantic-review candidates as final success",
+)
+
+unsafe_low_ai = {
+    "strategy": "unsafe_low_ai",
+    "candidate_ai": 34.0,
+    "decision": {
+        "lane": CandidateLane.PARTIAL_DIAGNOSTIC.value,
+        "quality_safe": True,
+        "semantic_safe": False,
+        "required_drop_met": True,
+        "ai_target_gap": 0.0,
+        "rank": [1, 1, 0, 0, 20, 20, 1, 0, -1],
+    },
+}
+safe_close_partial = {
+    "strategy": "safe_close_partial",
+    "candidate_ai": 50.0,
+    "decision": {
+        "lane": CandidateLane.PARTIAL_DIAGNOSTIC.value,
+        "quality_safe": True,
+        "semantic_safe": True,
+        "required_drop_met": False,
+        "ai_target_gap": 0.38,
+        "rank": [1, 0, 0, -0.38, 4.62, 4.62, 1, 1, -2],
+    },
+}
+assert_test(
+    select_best_applicable_candidate([unsafe_low_ai, safe_close_partial], close_partial_max_gap=1.0)["strategy"] == "safe_close_partial",
+    "V2 selector prefers applicable safe frontiers over lower-scoring semantic-unsafe diagnostics",
+)
+
+compose_text, compose_patches = _compose_full_doc_delta_winners(
+    "Paragraph one about Apple.\n\nParagraph two about Tesla.",
+    [
+        {
+            "paragraph_id": "p001",
+            "candidate_ai": 40.0,
+            "decision": {"quality_safe": True, "semantic_safe": False},
+            "semantic_safe": False,
+            "protected_anchors_safe": True,
+            "patches": [{
+                "applied": True,
+                "target_paragraph": "Paragraph one about Apple.",
+                "rewritten_paragraph": "Paragraph one without Apple.",
+            }],
+        },
+        {
+            "paragraph_id": "p002",
+            "candidate_ai": 45.0,
+            "decision": {"quality_safe": True, "semantic_safe": True},
+            "semantic_safe": True,
+            "protected_anchors_safe": True,
+            "patches": [{
+                "applied": True,
+                "target_paragraph": "Paragraph two about Tesla.",
+                "rewritten_paragraph": "Tesla appears in the second paragraph.",
+            }],
+        },
+    ],
+    54.62,
+)
+assert_test(
+    "Paragraph one about Apple." in compose_text and len(compose_patches) == 1,
+    "V2 composition skips semantic-unsafe paragraph winners",
 )
 
 with tempfile.TemporaryDirectory() as tmpdir:
