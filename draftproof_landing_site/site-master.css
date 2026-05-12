@@ -694,6 +694,87 @@ td:first-child {
   color: var(--green);
 }
 
+/* Strategies */
+
+.strategies-section {
+  background:
+    radial-gradient(circle at 16% 12%, rgba(35, 92, 170, .08), transparent 24rem),
+    linear-gradient(180deg, #ffffff, var(--surface-soft));
+}
+
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(219, 228, 239, .92);
+  border-radius: var(--radius-lg);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.strategy-card {
+  min-height: 190px;
+  padding: 1.15rem;
+  border-right: 1px solid rgba(219, 228, 239, .82);
+  border-bottom: 1px solid rgba(219, 228, 239, .82);
+  background:
+    linear-gradient(180deg, rgba(248, 251, 255, .94), rgba(255, 255, 255, .82));
+}
+
+.strategy-card:nth-child(4n) {
+  border-right: 0;
+}
+
+.strategy-card:nth-last-child(-n+4) {
+  border-bottom: 0;
+}
+
+.strategy-card span {
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  margin-bottom: 1.4rem;
+  padding: .28rem .58rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.strategy-card h3 {
+  max-width: 210px;
+  margin-bottom: .65rem;
+}
+
+.strategy-card p {
+  margin: 0;
+  font-size: .86rem;
+  line-height: 1.48;
+}
+
+.strategy-proof {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.25rem;
+  margin-top: 1.1rem;
+  padding: 1rem 1.1rem;
+  border-left: 4px solid var(--green);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--surface-mint);
+}
+
+.strategy-proof strong {
+  color: #237c4e;
+}
+
+.strategy-proof span {
+  max-width: 680px;
+  color: var(--muted);
+  font-size: .86rem;
+  line-height: 1.5;
+}
+
 /* Report */
 
 .report-section {
@@ -870,8 +951,25 @@ td:first-child {
     grid-template-columns: 1fr;
   }
 
-  .feature-grid {
+  .feature-grid,
+  .strategy-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .strategy-card:nth-child(4n) {
+    border-right: 1px solid rgba(219, 228, 239, .82);
+  }
+
+  .strategy-card:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .strategy-card:nth-last-child(-n+4) {
+    border-bottom: 1px solid rgba(219, 228, 239, .82);
+  }
+
+  .strategy-card:nth-last-child(-n+2) {
+    border-bottom: 0;
   }
 
   .summary-card {
@@ -909,9 +1007,28 @@ td:first-child {
   .belief-grid,
   .process-line,
   .feature-grid,
+  .strategy-grid,
   .audience-grid,
   .site-footer {
     grid-template-columns: 1fr;
+  }
+
+  .strategy-card,
+  .strategy-card:nth-child(3n),
+  .strategy-card:nth-child(4n) {
+    border-right: 0;
+  }
+
+  .strategy-card:nth-last-child(-n+2) {
+    border-bottom: 1px solid rgba(219, 228, 239, .82);
+  }
+
+  .strategy-card:last-child {
+    border-bottom: 0;
+  }
+
+  .strategy-proof {
+    flex-direction: column;
   }
 
   .metric-grid,

@@ -38,6 +38,49 @@ const whyCards = [
   },
 ];
 
+const contentStrategies = [
+  {
+    type: 'Broad explanatory essay',
+    strategy: 'Author-thesis rewrite',
+    detail: 'Keeps the main argument visible while strengthening the author’s line of reasoning.',
+  },
+  {
+    type: 'Academic cited text',
+    strategy: 'Citation-preserving rewrite',
+    detail: 'Protects source claims, citation placement, and evidence relationships while improving weak passages.',
+  },
+  {
+    type: 'Technical content',
+    strategy: 'Technical-preserving rewrite',
+    detail: 'Maintains definitions, constraints, methods, and terminology instead of smoothing away precision.',
+  },
+  {
+    type: 'Legal, policy, or medical',
+    strategy: 'Minimal targeted rewrite',
+    detail: 'Uses author context and conservative edits where over-rewriting could change meaning or risk.',
+  },
+  {
+    type: 'Structured list or table',
+    strategy: 'Structure-preserving rewrite',
+    detail: 'Keeps the format intact so findings, rows, bullets, and comparisons remain usable.',
+  },
+  {
+    type: 'Short text',
+    strategy: 'Expansion or more context',
+    detail: 'Expands only when there is enough signal; otherwise asks for context instead of guessing.',
+  },
+  {
+    type: 'Personal reflection',
+    strategy: 'Author-grounded rewrite',
+    detail: 'Preserves lived context, personal framing, and voice rather than making the text generic.',
+  },
+  {
+    type: 'Creative marketing',
+    strategy: 'Genre-specific rewrite',
+    detail: 'Matches the intent, audience, and format while avoiding one-size-fits-all academic tone.',
+  },
+];
+
 const beliefs = [
   'Every AI-like sentence is not misconduct.',
   'Every similarity match is not plagiarism.',
@@ -58,7 +101,8 @@ export default function Landing() {
             </h1>
             <p className="lead">
               DraftProof reviews your writing for citation gaps, source integrity,
-              generic phrasing, and authorship signals so you can fix issues before submission.
+              generic phrasing, and authorship signals, then applies the right strategy for
+              the content type before you submit.
             </p>
 
             <div className="hero-actions" id="check">
@@ -108,6 +152,7 @@ export default function Landing() {
           <span>1 token per 1,000 words</span>
           <span>PDF report</span>
           <span>Citation + source grounding</span>
+          <span>Content-aware rewrite strategy</span>
         </div>
       </section>
 
@@ -124,6 +169,40 @@ export default function Landing() {
                 <small>{card.note}</small>
               </article>
             ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="strategies" className="landing-section strategy-section">
+        <div className="section-inner">
+          <div className="strategy-heading">
+            <div>
+              <p className="eyebrow">Content-Aware Rewrite Engine</p>
+              <h2>One rewrite strategy does not fit every document.</h2>
+            </div>
+            <p>
+              DraftProof identifies the writing type first, then chooses a review path
+              that preserves what matters: citations, technical meaning, structure,
+              author context, or genre intent.
+            </p>
+          </div>
+
+          <div className="strategy-grid" aria-label="DraftProof content-aware rewrite strategies">
+            {contentStrategies.map((item) => (
+              <article className="strategy-card" key={item.type}>
+                <span>{item.type}</span>
+                <h3>{item.strategy}</h3>
+                <p>{item.detail}</p>
+              </article>
+            ))}
+          </div>
+
+          <div className="strategy-proof">
+            <strong>Content-aware rewriting, not generic humanizing.</strong>
+            <span>
+              DraftProof avoids shallow tactics like synonym swapping, random sentence breaks,
+              or rewriting low-risk text just to chase a score.
+            </span>
           </div>
         </div>
       </section>
