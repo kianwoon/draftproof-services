@@ -49,6 +49,8 @@ class CandidateDecision:
     rank: tuple
     formula_score_drop: float
     headline_ai_drop: float
+    target_ai_score: float | None
+    ai_target_gap: float | None
     detector_driver_drop_score: float
     target_met: bool
 
@@ -60,6 +62,8 @@ class CandidateDecision:
             "rank": list(self.rank),
             "formula_score_drop": self.formula_score_drop,
             "headline_ai_drop": self.headline_ai_drop,
+            "target_ai_score": self.target_ai_score,
+            "ai_target_gap": self.ai_target_gap,
             "detector_driver_drop_score": self.detector_driver_drop_score,
             "target_met": self.target_met,
         }
@@ -270,15 +274,29 @@ def ai_search_candidate_rank(
     ai_transform_delta = _num(gate.get("ai_transformation_delta"), -9999.0)
     reference_ai = _optional_num(status.get("reference_ai"))
     actual_ai = _optional_num(candidate_ai)
+    target_ai = _optional_num(status.get("target_ai_score"))
+    if target_ai is None:
+        target_ai = _optional_num(status.get("target"))
     headline_ai_drop = (
         reference_ai - actual_ai
         if reference_ai is not None and actual_ai is not None
         else 0.0
     )
+    ai_target_gap = (
+        max(0.0, actual_ai - target_ai)
+        if actual_ai is not None and target_ai is not None
+        else 9999.0
+    )
     headline_ai_not_worse = (
         reference_ai is None
         or actual_ai is None
         or headline_ai_drop >= 0.0
+    )
+    ai_drop_success = bool(
+        status.get("ai_drop_success")
+        or status.get("success")
+        or formula.get("target_met")
+        or turnitin.get("safe_band")
     )
     review_reduction = _num(original_review_burden) - _num(candidate_review_burden)
     severity_reduction = _num(original_weighted_severity) - _num(candidate_weighted_severity)
@@ -289,12 +307,18 @@ def ai_search_candidate_rank(
     return (
         1 if status.get("selectable") else 0,
         1 if formula.get("target_met") else 0,
+        1 if ai_drop_success else 0,
         1 if headline_ai_not_worse else 0,
+        -ai_target_gap,
+        headline_ai_drop,
+        1 if human_shift >= 0 else 0,
+        human_shift,
+        -_num(candidate_ai, 9999.0),
+        detector_rank,
+        int(classification["priority"]),
         measured_score_drop,
         tuple(formula_gap_rank or ()),
         _num(formula.get("weighted_driver_drop_efficiency")),
-        int(classification["priority"]),
-        detector_rank,
         5 if turnitin.get("safe_band") else 3 if turnitin.get("improved") and turnitin.get("safety_clean") else 0,
         _num(turnitin.get("score_drop")),
         _num(turnitin_drops.get("ai_likelihood")),
@@ -312,15 +336,12 @@ def ai_search_candidate_rank(
         1 if candidate_human >= target_human else 0,
         1 if candidate_human >= stage_target else 0,
         1 if human_shift > 0 else 0,
-        human_shift,
         human_delta,
-        headline_ai_drop,
         ai_transform_delta,
         _num(components.get("semantic_uniformity_reduction")),
         review_reduction,
         severity_reduction,
         finding_reduction,
-        -_num(candidate_ai, 9999.0),
     )
 
 
@@ -363,10 +384,18 @@ def build_candidate_decision(
     )
     reference_ai = _optional_num(status.get("reference_ai"))
     actual_ai = _optional_num(candidate_ai)
+    target_ai = _optional_num(status.get("target_ai_score"))
+    if target_ai is None:
+        target_ai = _optional_num(status.get("target"))
     headline_ai_drop = (
         reference_ai - actual_ai
         if reference_ai is not None and actual_ai is not None
         else 0.0
+    )
+    ai_target_gap = (
+        max(0.0, actual_ai - target_ai)
+        if actual_ai is not None and target_ai is not None
+        else None
     )
     return CandidateDecision(
         selectable=bool(status.get("selectable")),
@@ -375,6 +404,8 @@ def build_candidate_decision(
         rank=rank,
         formula_score_drop=_num(formula.get("score_drop"), _num(turnitin.get("score_drop"))),
         headline_ai_drop=float(headline_ai_drop),
+        target_ai_score=target_ai,
+        ai_target_gap=ai_target_gap,
         detector_driver_drop_score=float(metrics.get("driver_drop_score") or 0.0),
         target_met=bool(formula.get("target_met") or turnitin.get("safe_band")),
     )

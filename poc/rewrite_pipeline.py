@@ -1170,6 +1170,21 @@ def _mark_ai_search_progress_selection(
     return selection_status
 
 
+def _ai_search_selected_candidate_reaches_goal(selection_status: dict | None) -> bool:
+    """Return true only when a selected candidate satisfies an AI-mitigation goal."""
+    status = selection_status if isinstance(selection_status, dict) else {}
+    if bool(status.get("success") or status.get("ai_drop_success")):
+        return True
+    goal_flags = (
+        "ai_footprint_mitigation",
+        "turnitin_like_mitigation",
+        "strict_ai_safe_band_achieved",
+        "topk_safe_band_achieved",
+        "detector_safe",
+    )
+    return any(bool(status.get(flag)) for flag in goal_flags)
+
+
 def _safe_partial_quality_improvement_status(
     authenticity_status: dict | None,
     human_shift: dict | None,
@@ -6847,6 +6862,7 @@ def run_rewrite_pipeline(
     ai_first_target = float(os.environ.get("DRAFTPROOF_AI_FIRST_TARGET", "60.0"))
     ai_first_required_min_ai = float(os.environ.get("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", "50.0"))
     ai_search_selected = False
+    ai_search_fail_fast_partial = False
     authenticity_mitigation_selected = False
     integrity_original = _integrity_scores(original_report_dict)
     ai_authorship_mitigation_needed = bool(
@@ -9181,6 +9197,10 @@ def run_rewrite_pipeline(
                 target=ai_first_target,
                 required_min_ai=ai_first_required_min_ai,
             )
+            selection_status.update({
+                "required_ai_drop": ai_first_min_drop,
+                "target_ai_score": ai_search_target_score,
+            })
             ai_delta = (
                 ai_search_reference - candidate_ai
                 if isinstance(ai_search_reference, (int, float)) and isinstance(candidate_ai, (int, float))
@@ -13024,6 +13044,38 @@ def run_rewrite_pipeline(
             scans=int(search_summary.get("full_candidate_scans") or 0),
             llm_calls=int(search_summary.get("llm_calls") or 0),
         )
+        selected_status = (
+            search_summary.get("selection_status")
+            if isinstance(search_summary.get("selection_status"), dict)
+            else {}
+        )
+        ai_search_goal_reached = _ai_search_selected_candidate_reaches_goal(selected_status)
+        search_summary["selected_candidate_goal_reached"] = bool(ai_search_goal_reached)
+        if (
+            _env_flag("DRAFTPROOF_FAIL_FAST_ON_PARTIAL_AI_SEARCH", True)
+            and bool(search_summary.get("selected"))
+            and selected_status
+            and not ai_search_goal_reached
+        ):
+            ai_search_fail_fast_partial = True
+            selected_status.setdefault("reason", "best_candidate_below_required_ai_drop")
+            search_summary["goal_not_reached_reason"] = selected_status.get("reason")
+            search_summary["post_selection_controllers_skipped"] = True
+            search_summary["post_selection_skip_reason"] = "selected_candidate_below_ai_mitigation_goal"
+            result.summary["mitigation_goal_status"] = {
+                "goal": "mitigate rewritten content so detector-safe output is unlikely to be flagged as AI-generated",
+                "reached": False,
+                "reason": "selected_candidate_below_ai_mitigation_goal",
+                "reference_ai": search_summary.get("reference_ai"),
+                "target_ai_score": search_summary.get("target_ai_score"),
+                "required_ai_drop": search_summary.get("required_ai_drop"),
+                "selected_ai": search_summary.get("selected_ai"),
+                "selected_ai_delta_vs_reference": search_summary.get("selected_ai_delta_vs_reference"),
+            }
+            if int(global_rewrite_budget.max_scans or 0) > 0:
+                global_rewrite_budget.max_scans = int(global_rewrite_budget.scans_used)
+            if int(global_rewrite_budget.max_llm_calls or 0) > 0:
+                global_rewrite_budget.max_llm_calls = int(global_rewrite_budget.llm_calls_used)
 
         result.summary["detect_scores"].update({
             "rewritten_ai": rewritten_ai,
@@ -16221,13 +16273,21 @@ def run_rewrite_pipeline(
                     current_outcome=result.summary.get("outcome"),
                 )
                 if policy_outcome == "unsafe_partial_improvement" and unsafe_partial:
-                    result.summary["outcome"] = "unsafe_partial_improvement"
+                    result.summary["outcome"] = (
+                        "mitigation_failed_no_safe_candidate"
+                        if ai_search_fail_fast_partial
+                        else "unsafe_partial_improvement"
+                    )
                 elif policy_outcome == "cleanup_only":
                     result.summary["outcome"] = "cleanup_only"
                 elif policy_outcome == "ceiling_reached":
                     result.summary["outcome"] = "ceiling_reached"
                 elif turnitin_like_outcome in {"ai_mitigated", "partially_ai_mitigated"} and unsafe_partial:
-                    result.summary["outcome"] = "unsafe_partial_improvement"
+                    result.summary["outcome"] = (
+                        "mitigation_failed_no_safe_candidate"
+                        if ai_search_fail_fast_partial
+                        else "unsafe_partial_improvement"
+                    )
                 else:
                     result.summary["outcome"] = policy_outcome
             result.summary["converged"] = True
@@ -16267,7 +16327,13 @@ def run_rewrite_pipeline(
         pipeline_status = "topk_blocked"
     elif summary.get("rollback_applied") or summary.get("no_text_change"):
         pipeline_status = "original_preserved"
-    elif summary.get("outcome") in {"partially_improved", "partially_ai_mitigated", "cleanup_improved", "unsafe_partial_improvement"}:
+    elif summary.get("outcome") in {
+        "partially_improved",
+        "partially_ai_mitigated",
+        "cleanup_improved",
+        "unsafe_partial_improvement",
+        "mitigation_failed_no_safe_candidate",
+    }:
         pipeline_status = summary.get("outcome")
     else:
         pipeline_status = "rewritten"

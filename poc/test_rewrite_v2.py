@@ -124,6 +124,7 @@ from rewrite_pipeline import (
     _ai_search_fast_accept_reason,
     _ai_search_candidate_selection_status,
     _mark_ai_search_progress_selection,
+    _ai_search_selected_candidate_reaches_goal,
     _review_marker_notes,
     _ai_candidate_quality_reject_reason,
     _source_repair_brief,
@@ -1132,6 +1133,36 @@ assert_test(
     and required_drop_status["ai_drop_success"],
     "AI search preserves success when progress also meets the required AI-drop threshold",
 )
+selector_formula_status = _mark_ai_search_progress_selection(
+    _ai_search_candidate_selection_status(54.62, 50.84, True, min_drop=5.0, target=49.62),
+    reason="accepted_topk_blocker_progress",
+    topk_blocker_progress=True,
+)
+selector_formula_status.update({
+    "target_ai_score": 49.62,
+    "formula_gap_contract": {"target_met": False, "score_drop": 5.508, "weighted_driver_drop_efficiency": 0.027818},
+})
+selector_hybrid_status = _mark_ai_search_progress_selection(
+    _ai_search_candidate_selection_status(54.62, 50.63, True, min_drop=5.0, target=49.62),
+    reason="accepted_partial_turnitin_like_mitigation",
+    partial_turnitin_like_mitigation=True,
+)
+selector_hybrid_status.update({
+    "target_ai_score": 49.62,
+    "formula_gap_contract": {"target_met": False, "score_drop": 5.328, "weighted_driver_drop_efficiency": 0.014677},
+})
+formula_decision = build_candidate_decision(selector_formula_status, {}, candidate_ai=50.84)
+hybrid_decision = build_candidate_decision(selector_hybrid_status, {}, candidate_ai=50.63)
+assert_test(
+    hybrid_decision.rank > formula_decision.rank
+    and hybrid_decision.to_dict()["ai_target_gap"] < formula_decision.to_dict()["ai_target_gap"],
+    "AI search selector prefers the candidate closest to the AI target over a larger formula-only drop",
+)
+assert_test(
+    not _ai_search_selected_candidate_reaches_goal(selector_formula_status)
+    and _ai_search_selected_candidate_reaches_goal(required_drop_status),
+    "AI search fail-fast distinguishes unsafe partial progress from goal-reaching mitigation",
+)
 safe_partial_status = _safe_partial_quality_improvement_status(
     {
         "human_delta": 0.0,
@@ -1384,17 +1415,6 @@ cleanup_formula_no_ai_regression_status["formula_gap_contract"] = {
 }
 assert_test(
     _goal_climb_candidate_rank(
-        cleanup_formula_no_ai_regression_status,
-        {},
-        candidate_ai=54.62,
-        candidate_review_burden=51,
-        candidate_weighted_severity=127,
-        candidate_finding_total=64,
-        original_review_burden=54,
-        original_weighted_severity=133,
-        original_finding_total=67,
-    )
-    > _goal_climb_candidate_rank(
         topk_driver_progress_status,
         {},
         candidate_ai=52.83,
@@ -1404,8 +1424,19 @@ assert_test(
         original_review_burden=54,
         original_weighted_severity=133,
         original_finding_total=67,
+    )
+    > _goal_climb_candidate_rank(
+        cleanup_formula_no_ai_regression_status,
+        {},
+        candidate_ai=54.62,
+        candidate_review_burden=51,
+        candidate_weighted_severity=127,
+        candidate_finding_total=64,
+        original_review_burden=54,
+        original_weighted_severity=133,
+        original_finding_total=67,
     ),
-    "AI-search selector chooses the larger measured formula drop when headline AI does not regress",
+    "AI-search selector prefers stronger AI-score movement over larger formula-only movement",
 )
 low_weight_raw_movement_status = {
     "selectable": True,
