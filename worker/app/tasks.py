@@ -1375,18 +1375,29 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             raise_if_canceled()
             heartbeat_thread.start()
             try:
-                result = run_rewrite_pipeline(
-                    detect_json=report_json,
-                    output_dir=tmpdir,
-                    max_passes=3,
-                    max_detect_loops=0,
-                    ai_only=True,
-                    verbose=False,
-                    api_key=llm_api_key or None,
-                    model=settings.LLM_MODEL or None,
-                    base_url=settings.LLM_BASE_URL or None,
-                    progress_callback=report_rewrite_progress,
-                )
+                if settings.DRAFTPROOF_REWRITE_V2_ENABLED:
+                    from rewrite_v2 import run_rewrite_pipeline_v2
+                    result = run_rewrite_pipeline_v2(
+                        detect_json=report_json,
+                        output_dir=tmpdir,
+                        api_key=llm_api_key or None,
+                        model=settings.LLM_MODEL or None,
+                        base_url=settings.LLM_BASE_URL or None,
+                        progress_callback=report_rewrite_progress,
+                    )
+                else:
+                    result = run_rewrite_pipeline(
+                        detect_json=report_json,
+                        output_dir=tmpdir,
+                        max_passes=3,
+                        max_detect_loops=0,
+                        ai_only=True,
+                        verbose=False,
+                        api_key=llm_api_key or None,
+                        model=settings.LLM_MODEL or None,
+                        base_url=settings.LLM_BASE_URL or None,
+                        progress_callback=report_rewrite_progress,
+                    )
             finally:
                 heartbeat_stop.set()
                 heartbeat_thread.join(timeout=1.0)

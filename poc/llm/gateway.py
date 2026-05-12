@@ -13,7 +13,7 @@ import logging
 import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 
@@ -39,6 +39,10 @@ class LLMConfig:
     top_k: Optional[int] = None
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
+    repetition_penalty: Optional[float] = None
+    seed: Optional[int] = None
+    response_format: Optional[dict[str, Any]] = None
+    provider: Optional[dict[str, Any]] = None
     max_retries: int = 3
     timeout: int = 120
     site_url: Optional[str] = None       # OpenRouter optional headers
@@ -176,6 +180,10 @@ class LLMGateway:
         self.top_k = cfg.top_k
         self.presence_penalty = cfg.presence_penalty
         self.frequency_penalty = cfg.frequency_penalty
+        self.repetition_penalty = cfg.repetition_penalty
+        self.seed = cfg.seed
+        self.response_format = cfg.response_format
+        self.provider = cfg.provider
         self.max_retries = cfg.max_retries
         self.timeout = cfg.timeout
         self.site_url = cfg.site_url or os.environ.get("LLM_SITE_URL")
@@ -199,6 +207,10 @@ class LLMGateway:
         top_k: Optional[int] = None,
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        seed: Optional[int] = None,
+        response_format: Optional[dict[str, Any]] = None,
+        provider: Optional[dict[str, Any]] = None,
     ) -> LLMResponse:
         """Send a single-turn chat completion request."""
         messages = []
@@ -213,6 +225,10 @@ class LLMGateway:
             top_k=top_k,
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
+            repetition_penalty=repetition_penalty,
+            seed=seed,
+            response_format=response_format,
+            provider=provider,
         )
 
     def chat_multi(
@@ -225,6 +241,10 @@ class LLMGateway:
         top_k: Optional[int] = None,
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        seed: Optional[int] = None,
+        response_format: Optional[dict[str, Any]] = None,
+        provider: Optional[dict[str, Any]] = None,
     ) -> LLMResponse:
         """Send a multi-turn chat completion request with full message history."""
         return self._complete(
@@ -235,6 +255,10 @@ class LLMGateway:
             top_k=top_k,
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
+            repetition_penalty=repetition_penalty,
+            seed=seed,
+            response_format=response_format,
+            provider=provider,
         )
 
     # --- Internal ---
@@ -260,6 +284,10 @@ class LLMGateway:
         top_k: Optional[int] = None,
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        seed: Optional[int] = None,
+        response_format: Optional[dict[str, Any]] = None,
+        provider: Optional[dict[str, Any]] = None,
     ) -> LLMResponse:
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -276,12 +304,22 @@ class LLMGateway:
         effective_frequency_penalty = (
             frequency_penalty if frequency_penalty is not None else self.frequency_penalty
         )
+        effective_repetition_penalty = (
+            repetition_penalty if repetition_penalty is not None else self.repetition_penalty
+        )
+        effective_seed = seed if seed is not None else self.seed
+        effective_response_format = (
+            response_format if response_format is not None else self.response_format
+        )
+        effective_provider = provider if provider is not None else self.provider
         requested_sampling = {
             "temperature": payload["temperature"],
             "top_p": effective_top_p,
             "top_k": effective_top_k,
             "presence_penalty": effective_presence_penalty,
             "frequency_penalty": effective_frequency_penalty,
+            "repetition_penalty": effective_repetition_penalty,
+            "seed": effective_seed,
         }
         caps = _model_capabilities(self.model)
         if effective_top_p is not None:
@@ -292,9 +330,17 @@ class LLMGateway:
             payload["presence_penalty"] = effective_presence_penalty
         if effective_frequency_penalty is not None:
             payload["frequency_penalty"] = effective_frequency_penalty
+        if effective_repetition_penalty is not None:
+            payload["repetition_penalty"] = effective_repetition_penalty
+        if effective_seed is not None:
+            payload["seed"] = effective_seed
+        if effective_response_format is not None:
+            payload["response_format"] = effective_response_format
+        if effective_provider is not None:
+            payload["provider"] = effective_provider
         effective_sampling = {
             key: payload[key]
-            for key in ("temperature", "top_p", "top_k", "presence_penalty", "frequency_penalty")
+            for key in ("temperature", "top_p", "top_k", "presence_penalty", "frequency_penalty", "repetition_penalty", "seed")
             if key in payload
         }
 
