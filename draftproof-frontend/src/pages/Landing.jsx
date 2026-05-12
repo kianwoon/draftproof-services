@@ -40,44 +40,44 @@ const whyCards = [
 
 const contentStrategies = [
   {
-    type: 'Broad explanatory essay',
-    strategy: 'Author-thesis rewrite',
-    detail: 'Keeps the main argument visible while strengthening the author’s line of reasoning.',
+    type: 'Essay',
+    strategy: 'Make the argument clearer',
+    detail: 'Keep your main point and make the reasoning easier to follow.',
   },
   {
-    type: 'Academic cited text',
-    strategy: 'Citation-preserving rewrite',
-    detail: 'Protects source claims, citation placement, and evidence relationships while improving weak passages.',
+    type: 'Research with citations',
+    strategy: 'Improve wording without moving sources',
+    detail: 'Clean up weak sentences while keeping citations and source claims in place.',
   },
   {
-    type: 'Technical content',
-    strategy: 'Technical-preserving rewrite',
-    detail: 'Maintains definitions, constraints, methods, and terminology instead of smoothing away precision.',
+    type: 'Technical writing',
+    strategy: 'Keep exact meaning intact',
+    detail: 'Protect terms, steps, definitions, and requirements from being over-polished.',
   },
   {
-    type: 'Legal, policy, or medical',
-    strategy: 'Minimal targeted rewrite',
-    detail: 'Uses author context and conservative edits where over-rewriting could change meaning or risk.',
+    type: 'Legal, policy, or medical text',
+    strategy: 'Make careful edits only',
+    detail: 'Change only what needs attention where wording mistakes can create risk.',
   },
   {
-    type: 'Structured list or table',
-    strategy: 'Structure-preserving rewrite',
-    detail: 'Keeps the format intact so findings, rows, bullets, and comparisons remain usable.',
+    type: 'Lists and tables',
+    strategy: 'Keep the structure easy to follow',
+    detail: 'Improve wording without breaking rows, bullets, comparisons, or findings.',
   },
   {
-    type: 'Short text',
-    strategy: 'Expansion or more context',
-    detail: 'Expands only when there is enough signal; otherwise asks for context instead of guessing.',
+    type: 'Short answers',
+    strategy: 'Add context or ask for more',
+    detail: 'Tell you when the text is too short to judge instead of guessing.',
   },
   {
     type: 'Personal reflection',
-    strategy: 'Author-grounded rewrite',
-    detail: 'Preserves lived context, personal framing, and voice rather than making the text generic.',
+    strategy: 'Keep your own voice',
+    detail: 'Preserve your experience and viewpoint instead of making it sound generic.',
   },
   {
-    type: 'Creative marketing',
-    strategy: 'Genre-specific rewrite',
-    detail: 'Matches the intent, audience, and format while avoiding one-size-fits-all academic tone.',
+    type: 'Marketing copy',
+    strategy: 'Match the audience and format',
+    detail: 'Improve the message without forcing it into an academic writing style.',
   },
 ];
 
@@ -177,13 +177,13 @@ export default function Landing() {
         <div className="section-inner">
           <div className="strategy-heading">
             <div>
-              <p className="eyebrow">Content-Aware Rewrite Engine</p>
-              <h2>One rewrite strategy does not fit every document.</h2>
+              <p className="eyebrow">Content-Aware Help</p>
+              <h2>Different writing needs different help.</h2>
             </div>
             <p>
-              DraftProof identifies the writing type first, then chooses a review path
-              that preserves what matters: citations, technical meaning, structure,
-              author context, or genre intent.
+              An essay, a research paragraph, a policy note, and a personal reflection
+              should not be rewritten the same way. DraftProof first understands what
+              you wrote, then suggests the safest way to improve it.
             </p>
           </div>
 
@@ -198,10 +198,9 @@ export default function Landing() {
           </div>
 
           <div className="strategy-proof">
-            <strong>Content-aware rewriting, not generic humanizing.</strong>
+            <strong>DraftProof does not blindly humanize text.</strong>
             <span>
-              DraftProof avoids shallow tactics like synonym swapping, random sentence breaks,
-              or rewriting low-risk text just to chase a score.
+              It helps you fix the right thing for the kind of writing you actually have.
             </span>
           </div>
         </div>
