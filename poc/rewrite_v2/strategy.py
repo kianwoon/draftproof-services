@@ -311,7 +311,7 @@ def build_single_paragraph_reconstruction_prompt(
         "specific_noun_action": "Start with a concrete noun and action. Avoid abstract summary openings.",
         "minimal_carrier": "Use short factual carrier sentences. Keep verbs simple. Break broad claims into small plain statements.",
         "compressed_power": "Compress the paragraph into fewer concrete claims. Prefer nouns and observable examples over explanation language.",
-        "broken_choppy": "Use deliberately uneven short sentences. Some sentence fragments are acceptable when meaning stays clear.",
+        "broken_choppy": "Use uneven but complete sentences. Do not use sentence fragments.",
         "simple_subject_stack": "Start most sentences with concrete subjects from the keyword/entity list. Avoid abstract framing.",
     }
     payload = {
@@ -367,6 +367,8 @@ def build_single_paragraph_reconstruction_prompt(
         "Do not infer or recreate the original sentence order.\n"
         "Break predictable spans, repeated openings, transition rhythm, and paragraph-level uniformity.\n"
         "Prefer minimal factual carrier sentences over polished summary prose.\n"
+        "Use complete sentences. Do not create sentence fragments or one-word list sentences.\n"
+        "Keep most sentences between 8 and 24 words unless a required entity forces a longer sentence.\n"
         "Do not explain the paragraph's importance or evaluate the topic. State the content plainly.\n"
         "Keep plain student analytical prose. No ornate, promotional, encyclopedic, or marketing language.\n"
         "Every item in paragraph_brief.required_entities must appear verbatim in rewritten_paragraph.\n"

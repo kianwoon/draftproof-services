@@ -108,12 +108,17 @@ def _extract_named_entities(text: str) -> Set[str]:
         "furthermore", "however", "instead", "meanwhile", "moreover",
         "second", "therefore", "thus", "when", "while",
     }
+    quantifier_prefixes = {
+        "another", "different", "many", "millions", "several", "some",
+        "throughout", "various",
+    }
 
     # Multi-word capitalized sequences (always proper nouns), but do not treat
     # headings joined to the first sentence across a newline as entities.
     for m in re.finditer(r'\b([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)\b', text):
         entity = m.group(1)
-        if entity.split()[0].lower() in heading_words:
+        first = entity.split()[0].lower()
+        if first in heading_words or first in discourse_words or first in quantifier_prefixes:
             continue
         entities.add(entity)
 

@@ -38,13 +38,21 @@ from .strategy import (
 def _semantic_scan_allowed(strategy_kind: str | None, semantic_safe: bool) -> bool:
     if semantic_safe:
         return True
-    if strategy_kind == "full_rewrite":
+    if strategy_kind in {"full_rewrite", "entity_locked_full_reconstruction"}:
         return True
     return os.environ.get("DRAFTPROOF_REWRITE_V2_SCAN_REVIEW_CANDIDATES", "1").lower() not in {"0", "false", "no"}
 
 
 def _close_partial_max_gap() -> float:
     return float(os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP", "2.0") or 2.0)
+
+
+def _composition_partial_max_gap() -> float:
+    return float(os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_COMPOSITION_MAX_GAP", "3.0") or 3.0)
+
+
+def _composition_ai_penalty_max() -> float:
+    return float(os.environ.get("DRAFTPROOF_REWRITE_V2_COMPOSITION_AI_PENALTY_MAX", "2.0") or 2.0)
 
 
 def _llm_call_timeout_seconds(default: int = 30) -> int:
@@ -54,6 +62,18 @@ def _llm_call_timeout_seconds(default: int = 30) -> int:
     except (TypeError, ValueError):
         value = default
     return max(5, min(60, value))
+
+
+def _generation_budget_seconds(max_runtime_seconds: int) -> int:
+    raw = os.environ.get("DRAFTPROOF_REWRITE_V2_GENERATION_BUDGET_SECONDS")
+    if raw:
+        try:
+            configured = int(float(raw))
+        except (TypeError, ValueError):
+            configured = 0
+        if configured > 0:
+            return max(30, min(configured, max(30, int(max_runtime_seconds) - 30)))
+    return max(30, min(180, int(max_runtime_seconds * 0.65), max(30, int(max_runtime_seconds) - 60)))
 
 
 def _effective_config(
@@ -71,13 +91,17 @@ def _effective_config(
         "has_api_key": bool(api_key),
         "max_runtime_seconds": int(max_runtime_seconds),
         "llm_call_timeout_seconds": _llm_call_timeout_seconds(),
+        "generation_budget_seconds": _generation_budget_seconds(max_runtime_seconds),
         "apply_partial_max_gap": _close_partial_max_gap(),
+        "apply_composition_max_gap": _composition_partial_max_gap(),
+        "composition_ai_penalty_max": _composition_ai_penalty_max(),
         "targeted_paragraphs": int(os.environ.get("DRAFTPROOF_REWRITE_V2_TARGETED_PARAGRAPHS", "4") or 4),
         "targeted_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_TARGETED_CANDIDATES", "4") or 4),
         "tactics": _paragraph_tactics(),
         "use_paragraph_local_score": _use_paragraph_local_score_gate(),
         "unsafe_cluster_rescue": os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"},
         "allow_full_after_targeted": os.environ.get("DRAFTPROOF_REWRITE_V2_ALLOW_FULL_AFTER_TARGETED", "0").lower() in {"1", "true", "yes"},
+        "entity_locked_full_reconstruction": os.environ.get("DRAFTPROOF_REWRITE_V2_ENTITY_LOCKED_FULL_RECONSTRUCTION", "1").lower() not in {"0", "false", "no"},
     }
 
 
@@ -240,6 +264,69 @@ def _compose_full_doc_delta_winners(
     return text, applied
 
 
+def _candidate_patch_coverage(candidate: dict[str, Any] | None) -> int:
+    if not isinstance(candidate, dict):
+        return 0
+    composed = candidate.get("composed_patches")
+    if isinstance(composed, list):
+        return len(composed)
+    count = candidate.get("applied_patch_count")
+    if isinstance(count, (int, float)):
+        return int(count)
+    patches = candidate.get("patches")
+    if isinstance(patches, list):
+        return sum(1 for patch in patches if isinstance(patch, dict) and patch.get("applied"))
+    return 0
+
+
+def _is_safe_partial_candidate(candidate: dict[str, Any] | None, *, max_gap: float) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
+    if decision.get("lane") != CandidateLane.PARTIAL_DIAGNOSTIC.value:
+        return False
+    if not decision.get("quality_safe") or not decision.get("semantic_safe"):
+        return False
+    gap = decision.get("ai_target_gap")
+    return isinstance(gap, (int, float)) and float(gap) <= float(max_gap)
+
+
+def _select_best_v2_frontier(candidate_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    close_gap = _close_partial_max_gap()
+    best = (
+        select_best_applicable_candidate(candidate_rows, close_partial_max_gap=close_gap)
+        or select_best_safe_progress_candidate(candidate_rows)
+    )
+    if not best:
+        return None
+    best_ai = best.get("candidate_ai")
+    if not isinstance(best_ai, (int, float)):
+        return best
+    best_coverage = _candidate_patch_coverage(best)
+    composition_candidates = [
+        row for row in candidate_rows
+        if row.get("strategy") == "scan_targeted_composed_full_doc_delta_winners"
+        and _candidate_patch_coverage(row) >= max(2, best_coverage + 2)
+        and isinstance(row.get("candidate_ai"), (int, float))
+        and _is_safe_partial_candidate(row, max_gap=_composition_partial_max_gap())
+    ]
+    if not composition_candidates:
+        return best
+    composition = min(composition_candidates, key=lambda row: float(row.get("candidate_ai") or 999.0))
+    ai_penalty = float(composition.get("candidate_ai") or 999.0) - float(best_ai)
+    if ai_penalty <= _composition_ai_penalty_max():
+        composition["coverage_preferred_over"] = {
+            "strategy": best.get("strategy"),
+            "paragraph_id": best.get("paragraph_id"),
+            "candidate_ai": best.get("candidate_ai"),
+            "coverage": best_coverage,
+            "ai_penalty": round(ai_penalty, 3),
+            "reason": "safe_composition_covers_more_paragraphs_with_bounded_ai_penalty",
+        }
+        return composition
+    return best
+
+
 def _paragraph_target_map(scan_report: dict | None, original_text: str = "") -> dict[str, str]:
     result: dict[str, str] = {}
     paragraphs = [
@@ -261,7 +348,7 @@ def _paragraph_target_map(scan_report: dict | None, original_text: str = "") -> 
 
 def _entities_from_target_text(text: str) -> list[str]:
     values: list[str] = []
-    for match in re.finditer(r"\b[A-Z][A-Za-z0-9&'.-]{2,}(?:\s+[A-Z][A-Za-z0-9&'.-]{2,}){0,4}\b", text or ""):
+    for match in re.finditer(r"\b[A-Z][A-Za-z0-9&'-]{2,}(?:\s+[A-Z][A-Za-z0-9&'-]{2,}){0,4}\b", text or ""):
         entity = re.sub(r"\s+", " ", match.group(0)).strip(" ,.;:")
         if entity and entity not in values:
             values.append(entity)
@@ -269,7 +356,7 @@ def _entities_from_target_text(text: str) -> list[str]:
         value = match.group(0)
         if value not in values:
             values.append(value)
-    return values[:24]
+    return values[:80]
 
 
 def _keywords_from_target_text(text: str) -> list[str]:
@@ -284,6 +371,72 @@ def _keywords_from_target_text(text: str) -> list[str]:
         if lowered not in stop and lowered not in values:
             values.append(lowered)
     return values[:40]
+
+
+def _required_entities_for_full_reconstruction(text: str) -> list[str]:
+    stop = {
+        "another", "although", "also", "because", "cities", "critics", "despite", "education",
+        "healthcare", "however", "immigration", "many", "millions", "one", "organizations",
+        "political", "some", "sports", "supporters", "technology", "the", "this", "throughout",
+        "understanding", "university", "while",
+    }
+    values: list[str] = []
+    seen: set[str] = set()
+    source = str(text or "")
+    pattern = re.compile(r"\b[A-Z][A-Za-z0-9&'-]{2,}(?:\s+[A-Z][A-Za-z0-9&'-]{2,}){0,4}\b")
+    for match in pattern.finditer(source):
+        entity = re.sub(r"\s+", " ", match.group(0)).strip(" ,.;:")
+        if "." in entity:
+            continue
+        lowered = entity.lower()
+        first_token = lowered.split()[0] if lowered.split() else ""
+        if first_token in {"another", "many", "millions", "some", "throughout", "different", "several", "various"}:
+            continue
+        if lowered in stop:
+            continue
+        before = source[:match.start()].rstrip()
+        starts_sentence = not before or before[-1:] in {".", "!", "?", "\n"}
+        single_token = len(entity.split()) == 1
+        is_acronym = entity.isupper() and len(entity) > 1
+        has_internal_capital = any(char.isupper() for char in entity[1:])
+        if single_token and starts_sentence and not is_acronym and not has_internal_capital:
+            continue
+        key = lowered
+        if key not in seen:
+            values.append(entity)
+            seen.add(key)
+    for match in re.finditer(r"\b(?:\d{4}|\d+(?:\.\d+)?%?)\b", source):
+        entity = match.group(0)
+        if entity not in seen:
+            values.append(entity)
+            seen.add(entity)
+    return values[:48]
+
+
+def _paragraph_inventory_for_full_reconstruction(scan_report: dict | None, original_text: str) -> list[dict[str, Any]]:
+    targets = _paragraph_target_map(scan_report, original_text)
+    rows: list[dict[str, Any]] = []
+    for paragraph_id in sorted(targets):
+        paragraph = targets[paragraph_id]
+        if not paragraph.strip():
+            continue
+        rows.append({
+            "paragraph_id": paragraph_id,
+            "required_entities": _required_entities_for_full_reconstruction(paragraph)[:10],
+            "keywords": _keywords_from_target_text(paragraph)[:16],
+            "approx_words": len(paragraph.split()),
+        })
+    return rows
+
+
+def _expected_full_reconstruction_paragraph_count(scan_report: dict | None, original_text: str) -> int:
+    ids: set[str] = set()
+    for brief in (scan_report or {}).get("rewrite_edit_briefs") or []:
+        if isinstance(brief, dict) and str(brief.get("paragraph_id") or "").strip():
+            ids.add(str(brief.get("paragraph_id")).strip())
+    if ids:
+        return len(ids)
+    return _paragraph_count(original_text)
 
 
 def _enrich_paragraph_brief_with_target(brief: dict[str, Any], paragraph_targets: dict[str, str]) -> dict[str, Any]:
@@ -648,6 +801,29 @@ def _targeted_candidate_payloads(payload: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
+def _surface_quality_failures(text: str) -> list[str]:
+    failures: list[str] = []
+    sentences = _split_sentences(text)
+    if not sentences:
+        return ["empty_sentence_sequence"]
+    word_counts = [len(re.findall(r"\b[\w'-]+\b", sentence)) for sentence in sentences]
+    if len(sentences) >= 3:
+        short_count = sum(1 for count in word_counts if count <= 4)
+        if short_count / len(sentences) > 0.2:
+            failures.append("fragment_sentence_ratio_high")
+    if sum(1 for count in word_counts if count <= 2) >= 2:
+        failures.append("one_or_two_word_sentence_count_high")
+    fragment_openers = {"from", "in", "between", "through", "across", "after", "before", "with", "without", "like", "also"}
+    opener_hits = 0
+    for sentence in sentences:
+        first = (re.findall(r"\b[A-Za-z']+\b", sentence.lower()) or [""])[0]
+        if first in fragment_openers and len(re.findall(r"\b[\w'-]+\b", sentence)) <= 8:
+            opener_hits += 1
+    if opener_hits:
+        failures.append("prepositional_fragment_sentence")
+    return failures
+
+
 def _patch_filter_failures(patches: list[dict[str, Any]]) -> list[str]:
     failures: list[str] = []
     banned = [
@@ -694,9 +870,42 @@ def _patch_filter_failures(patches: list[dict[str, Any]]) -> list[str]:
             continue
         if target and rewrite == target:
             failures.append("unchanged_target_sentence")
+        for failure in _surface_quality_failures(rewrite):
+            failures.append(f"surface_quality:{failure}")
         for phrase in banned:
             if phrase in lowered:
                 failures.append(f"banned_phrase:{phrase}")
+    return failures
+
+
+def _paragraph_count(text: str) -> int:
+    return len([part for part in re.split(r"\n\s*\n", str(text or "")) if part.strip()])
+
+
+def _full_reconstruction_filter_failures(
+    *,
+    original_text: str,
+    candidate_text: str,
+    required_entities: list[str],
+    expected_paragraph_count: int | None = None,
+) -> list[str]:
+    failures: list[str] = []
+    if not candidate_text.strip():
+        return ["empty_rewrite"]
+    original_paragraphs = expected_paragraph_count or _paragraph_count(original_text)
+    candidate_paragraphs = _paragraph_count(candidate_text)
+    if original_paragraphs and candidate_paragraphs != original_paragraphs:
+        failures.append(f"paragraph_count:{candidate_paragraphs}_expected:{original_paragraphs}")
+    lowered = candidate_text.lower()
+    if re.search(r"\b(rewritten essay|here's|here is|this version|let me know|markdown)\b", candidate_text, re.I):
+        failures.append("meta_text_leak")
+    for entity in required_entities:
+        alternate = entity[4:] if entity.startswith("The ") else ""
+        if entity and entity not in candidate_text and (not alternate or alternate not in candidate_text):
+            failures.append(f"missing_required_entity:{entity}")
+    for paragraph in [part.strip() for part in re.split(r"\n\s*\n", candidate_text) if part.strip()]:
+        for failure in _surface_quality_failures(paragraph):
+            failures.append(f"surface_quality:{failure}")
     return failures
 
 
@@ -745,6 +954,111 @@ def _paragraph_response_format() -> dict[str, Any]:
     }
 
 
+def _targeted_batch_response_format() -> dict[str, Any]:
+    patch_schema = {
+        "type": "object",
+        "properties": {
+            "paragraph_id": {"type": "string"},
+            "rewritten_paragraph": {"type": "string"},
+            "rationale": {"type": "string"},
+        },
+        "required": ["paragraph_id", "rewritten_paragraph", "rationale"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "targeted_paragraph_batch",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "candidates": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "candidate_id": {"type": "string"},
+                                "patches": {"type": "array", "items": patch_schema},
+                            },
+                            "required": ["candidate_id", "patches"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["candidates"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _build_targeted_batch_prompt(briefs: list[dict[str, Any]], strategy: Any, tactics: list[str]) -> str:
+    payload = {
+        "strategy": strategy.to_dict() if hasattr(strategy, "to_dict") else {},
+        "task": "Create candidate patch sets for all paragraph briefs.",
+        "candidate_count": max(1, len(tactics)),
+        "candidate_tactics": tactics,
+        "required_patch_count_per_candidate": len(briefs),
+        "paragraph_rewrite_briefs": briefs,
+        "output_schema": {
+            "candidates": [{
+                "candidate_id": "variant_1",
+                "patches": [{
+                    "paragraph_id": "string",
+                    "rewritten_paragraph": "replacement paragraph only",
+                    "rationale": "short reason tied to rhythm, predictable spans, and preservation",
+                }],
+            }]
+        },
+    }
+    return (
+        "DraftProof targeted paragraph batch reconstruction.\n"
+        f"Create exactly {max(1, len(tactics))} candidate patch sets.\n"
+        f"Each candidate must include exactly {len(briefs)} patches, one for every paragraph_brief.\n"
+        "Regenerate each paragraph from structured context only; original paragraph prose is intentionally not provided.\n"
+        "Every required entity in each paragraph brief must appear verbatim in that paragraph's rewrite.\n"
+        "Break predictable token paths, repeated openings, transition rhythm, and paragraph-level uniformity.\n"
+        "Use the candidate_tactics to make the variants meaningfully different.\n"
+        "Keep plain student analytical prose. Avoid ornate, promotional, encyclopedic, or marketing language.\n"
+        "Use complete sentences. Do not create sentence fragments or one-word list sentences.\n"
+        "Keep most sentences between 8 and 24 words unless a required entity forces a longer sentence.\n"
+        "Do not add unsupported facts, examples, citations, author experience, or commentary.\n"
+        "Return valid JSON only, matching the schema.\n\n"
+        f"TARGETED_BATCH_JSON:\n{json.dumps(payload, indent=2, default=str)[:30000]}"
+    )
+
+
+def _build_entity_locked_full_reconstruction_prompt(
+    *,
+    original_text: str,
+    required_entities: list[str],
+    paragraph_inventory: list[dict[str, Any]],
+    expected_paragraph_count: int,
+    variant: int,
+) -> str:
+    variant_instruction = {
+        1: "Keep the original ten paragraph topics in order. Remove broad filler and make examples do more work.",
+        2: "Rewrite from structured memory rather than sentence-by-sentence paraphrase. Keep enough detail from each original paragraph.",
+    }.get(variant, "Prefer grounded, limited claims over sweeping claims while preserving the original topics.")
+    return (
+        "Output only the rewritten essay. No title, no notes, no markdown, no explanation.\n"
+        f"Return exactly {expected_paragraph_count} paragraphs, separated by blank lines. Do not merge paragraph topics.\n"
+        "Treat the original as a fact inventory, not prose to paraphrase sentence by sentence.\n"
+        "Use the original facts only. Do not add new named people, places, organizations, dates, statistics, sources, or events.\n"
+        f"Every required entity must appear at least once: {json.dumps(required_entities, ensure_ascii=False)}\n"
+        f"Follow this paragraph inventory in order: {json.dumps(paragraph_inventory, ensure_ascii=False)}\n"
+        "Use complete sentences only. No fragments. No bullet lists.\n"
+        "Avoid these phrases: often described, one of the most, in modern history, key role, significant, significantly, complex and influential, shaped the modern world, at the same time, land of opportunity, cultural powerhouse.\n"
+        "Use varied paragraph openings. Avoid starting most paragraphs with \"The United States\".\n"
+        "Rebuild each paragraph with 2 to 4 sentences. Prefer concrete noun-verb sentences over broad summary claims.\n"
+        "Change sentence openings, clause order, and rhythm across the essay while preserving meaning.\n"
+        "Keep a careful student essay tone: plain, specific, readable, not polished marketing copy.\n"
+        f"{variant_instruction}\n\n"
+        f"ORIGINAL:\n{original_text}"
+    )
+
+
 def _supports_openai_penalties(model: str | None) -> bool:
     normalized = str(model or "").strip().lower()
     return normalized in {
@@ -765,10 +1079,28 @@ def _supports_repetition_penalty(model: str | None) -> bool:
 def _paragraph_tactics() -> list[str]:
     raw = os.environ.get(
         "DRAFTPROOF_REWRITE_V2_TACTICS",
-        "minimal_carrier,compressed_power,broken_choppy,choppy_analytic,simple_subject_stack,specific_noun_action",
+        "minimal_carrier,compressed_power,choppy_analytic,simple_subject_stack,specific_noun_action",
     )
     tactics = [item.strip() for item in raw.split(",") if item.strip()]
+    if os.environ.get("DRAFTPROOF_REWRITE_V2_ALLOW_FRAGMENT_TACTICS", "0").lower() not in {"1", "true", "yes"}:
+        tactics = [item for item in tactics if item not in {"broken_choppy"}]
     return tactics or ["plain_student_draft"]
+
+
+def _topk_calibrated_risk(report: dict | None) -> float:
+    value = (((report or {}).get("ai_risk_badge") or {}).get("ai_components") or {}).get("topk_calibrated_risk")
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _density_risk(report: dict | None) -> float:
+    value = (((report or {}).get("ai_risk_badge") or {}).get("ai_components") or {}).get("qualifying_text_ai_density")
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _should_entity_locked_full_reconstruction(scan_report: dict | None) -> bool:
+    if os.environ.get("DRAFTPROOF_REWRITE_V2_ENTITY_LOCKED_FULL_RECONSTRUCTION", "1").lower() in {"0", "false", "no"}:
+        return False
+    return _topk_calibrated_risk(scan_report) >= 90.0 or _density_risk(scan_report) >= 70.0
 
 
 def _use_paragraph_local_score_gate() -> bool:
@@ -885,7 +1217,16 @@ def _candidate_rows_from_replay(
             decision_payload = decision.to_dict()
         rows.append({
             "strategy": record.get("strategy") or f"replay_candidate_{index}",
+            "strategy_kind": record.get("strategy_kind"),
+            "paragraph_id": record.get("paragraph_id"),
+            "candidate_number": record.get("candidate_number"),
+            "tactic": record.get("tactic"),
             "candidate_ai": _badge_ai(candidate_report),
+            "candidate_wq": _badge_wq(candidate_report),
+            "composed_patches": record.get("composed_patches"),
+            "applied_patch_count": record.get("applied_patch_count"),
+            "patch_count": record.get("patch_count"),
+            "patches": record.get("patches"),
             "goal": goal.to_dict(),
             "decision": decision_payload,
             "report": candidate_report,
@@ -903,6 +1244,7 @@ def _generate_candidates(
     model: str | None,
     base_url: str | None,
     timeout_seconds: int,
+    deadline: float | None = None,
 ) -> list[dict[str, Any]]:
     if not api_key:
         return []
@@ -917,6 +1259,53 @@ def _generate_candidates(
         temperature=0.45,
     ))
     candidates = []
+    if _should_entity_locked_full_reconstruction(scan_report):
+        required_entities = _required_entities_for_full_reconstruction(original_text)
+        expected_paragraph_count = _expected_full_reconstruction_paragraph_count(scan_report, original_text)
+        paragraph_inventory = _paragraph_inventory_for_full_reconstruction(scan_report, original_text)
+        variants = max(1, min(2, int(os.environ.get("DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES", "2") or 2)))
+        for number in range(1, variants + 1):
+            if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+                return candidates
+            prompt = _build_entity_locked_full_reconstruction_prompt(
+                original_text=original_text,
+                required_entities=required_entities,
+                paragraph_inventory=paragraph_inventory,
+                expected_paragraph_count=expected_paragraph_count,
+                variant=number,
+            )
+            response = gateway.chat(
+                prompt,
+                system="You rewrite essays naturally while preserving required entities and avoiding unsupported additions.",
+                max_tokens=7000,
+                temperature=0.58 + (number * 0.03),
+                top_p=0.9,
+                presence_penalty=0.05 if _supports_openai_penalties(model) else None,
+                frequency_penalty=0.15 if _supports_openai_penalties(model) else None,
+                repetition_penalty=1.02 if _supports_repetition_penalty(model) else None,
+                seed=4100 + number,
+            )
+            candidate_text = clean_candidate_output(response.content)
+            filter_failures = _full_reconstruction_filter_failures(
+                original_text=original_text,
+                candidate_text=candidate_text,
+                required_entities=required_entities,
+                expected_paragraph_count=expected_paragraph_count,
+            )
+            candidates.append({
+                "strategy": "scan_entity_locked_full_reconstruction",
+                "strategy_kind": "entity_locked_full_reconstruction",
+                "candidate_number": number,
+                "text": candidate_text,
+                "candidate_response": candidate_text,
+                "local_filter_passed": not filter_failures,
+                "local_filter_failures": filter_failures,
+                "required_entities": required_entities,
+                "paragraph_count": _paragraph_count(candidate_text),
+                "expected_paragraph_count": expected_paragraph_count,
+            })
+        if candidates:
+            return candidates
     for strategy in strategies:
         if getattr(strategy, "kind", None).value == "targeted":
             paragraph_briefs = [
@@ -928,6 +1317,8 @@ def _generate_candidates(
                 paragraph_id = str(brief.get("paragraph_id") or "")
                 variant_limit = max(1, int(strategy.max_candidates or 1))
                 for number, tactic in enumerate(tactics[:variant_limit], start=1):
+                    if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+                        return candidates
                     prompt = build_single_paragraph_reconstruction_prompt(brief, strategy, tactic=tactic)
                     response = gateway.chat(
                         prompt,
@@ -971,6 +1362,8 @@ def _generate_candidates(
                     })
             continue
         for number in range(1, max(1, int(strategy.max_candidates or 1)) + 1):
+            if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+                return candidates
             prompt = build_strategy_prompt(original_text, scan_report, strategy)
             response = gateway.chat(
                 prompt,
@@ -1123,13 +1516,14 @@ def run_rewrite_pipeline_v2(
             model=model,
             base_url=base_url,
             timeout_seconds=_llm_call_timeout_seconds(),
+            deadline=started + _generation_budget_seconds(max_runtime_seconds),
         )
         generated_count = len(generated)
-        generation_reason = "generated_candidates" if generated_count else "candidate_generation_failed_no_candidates"
+        generation_reason = "generated_candidates" if generated_count else "candidate_generation_budget_exhausted_no_candidates"
         candidate_rows = []
         protected = detect_protected_spans(original_text)
         for index, generated_candidate in enumerate(generated, start=1):
-            if time.time() - started >= max_runtime_seconds:
+            if candidate_rows and time.time() - started >= max_runtime_seconds:
                 break
             candidate_text = str(generated_candidate.get("text") or "").strip()
             if not candidate_text:
@@ -1260,11 +1654,7 @@ def run_rewrite_pipeline_v2(
                     "report": candidate_report,
                     "text": composed_text,
                 })
-        close_partial_max_gap = _close_partial_max_gap()
-        frontier = (
-            select_best_applicable_candidate(candidate_rows, close_partial_max_gap=close_partial_max_gap)
-            or select_best_safe_progress_candidate(candidate_rows)
-        )
+        frontier = _select_best_v2_frontier(candidate_rows)
         frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
         rescue_enabled = os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"}
         if (
@@ -1290,10 +1680,7 @@ def run_rewrite_pipeline_v2(
             candidate_rows.extend(rescue_rows)
     close_partial_max_gap = _close_partial_max_gap()
     diagnostic_best = select_best_candidate(candidate_rows)
-    best = (
-        select_best_applicable_candidate(candidate_rows, close_partial_max_gap=close_partial_max_gap)
-        or diagnostic_best
-    )
+    best = _select_best_v2_frontier(candidate_rows) or diagnostic_best
     best_decision = best.get("decision") if isinstance(best, dict) else {}
     best_lane = (best_decision or {}).get("lane")
     best_applicable_near_miss = bool(
@@ -1309,7 +1696,13 @@ def run_rewrite_pipeline_v2(
         and os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_CLOSE_PARTIAL", "1").lower() not in {"0", "false", "no"}
         and best_lane == CandidateLane.PARTIAL_DIAGNOSTIC.value
         and isinstance(close_partial_gap, (int, float))
-        and float(close_partial_gap) <= close_partial_max_gap
+        and (
+            float(close_partial_gap) <= close_partial_max_gap
+            or (
+                _candidate_patch_coverage(best) >= 2
+                and float(close_partial_gap) <= _composition_partial_max_gap()
+            )
+        )
         and (best_decision or {}).get("quality_safe")
         and (best_decision or {}).get("semantic_safe")
     )
@@ -1373,6 +1766,8 @@ def run_rewrite_pipeline_v2(
         failure_reason = (
             "candidate_generation_failed_no_candidates"
             if not candidate_rows and generated_count == 0
+            else "candidate_evaluation_skipped_runtime_budget_exhausted"
+            if not candidate_rows and generated_count > 0
             else "no_safe_rewrite_applied"
         )
         final_goal = {

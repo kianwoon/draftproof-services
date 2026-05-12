@@ -8,7 +8,17 @@ import tempfile
 
 from rewrite.guards import check_semantic_drift
 from rewrite_v2 import run_rewrite_pipeline_v2
-from rewrite_v2.pipeline import _cluster_text_from_gate, _compose_full_doc_delta_winners, _paragraph_target_map, _replace_once_flexible
+from rewrite_v2.pipeline import (
+    _cluster_text_from_gate,
+    _compose_full_doc_delta_winners,
+    _expected_full_reconstruction_paragraph_count,
+    _paragraph_inventory_for_full_reconstruction,
+    _paragraph_tactics,
+    _paragraph_target_map,
+    _patch_filter_failures,
+    _required_entities_for_full_reconstruction,
+    _replace_once_flexible,
+)
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import StrategyKind, route_strategies
@@ -413,6 +423,76 @@ assert_test(
 )
 
 with tempfile.TemporaryDirectory() as tmpdir:
+    coverage_result = run_rewrite_pipeline_v2(
+        detect_json=scan_json,
+        output_dir=tmpdir,
+        replay_candidate_records=[
+            {
+                "strategy": "scan_targeted_driver_mitigation",
+                "strategy_kind": "targeted",
+                "paragraph_id": "p003",
+                "applied_patch_count": 1,
+                "text": "Single paragraph rewrite.",
+                "report": {
+                    "ai_risk_badge": {
+                        "ai_likelihood_score": 50.96,
+                        "writing_quality_score": 58.84,
+                        "ai_components": {"topk_calibrated_risk": 60},
+                    },
+                    "integrity_layers": {"layers": {"ai_authorship": {"score": 51}, "ai_transformation": {"score": 44}}},
+                    "findings": {"critical": [], "high": [{"id": "f001"}], "medium": [], "low": []},
+                },
+            },
+            {
+                "strategy": "scan_targeted_composed_full_doc_delta_winners",
+                "strategy_kind": "targeted_composition",
+                "composed_patches": [{"paragraph_id": "p001"}, {"paragraph_id": "p002"}, {"paragraph_id": "p003"}, {"paragraph_id": "p004"}],
+                "text": "Four paragraph composition rewrite.",
+                "report": {
+                    "ai_risk_badge": {
+                        "ai_likelihood_score": 52.36,
+                        "writing_quality_score": 56.06,
+                        "ai_components": {"topk_calibrated_risk": 62},
+                    },
+                    "integrity_layers": {"layers": {"ai_authorship": {"score": 52}, "ai_transformation": {"score": 45}}},
+                    "findings": {"critical": [], "high": [{"id": "f001"}], "medium": [], "low": []},
+                },
+            },
+        ],
+    )
+coverage_summary = coverage_result["result"].summary
+assert_test(
+    (coverage_summary.get("selected_candidate") or {}).get("strategy") == "scan_targeted_composed_full_doc_delta_winners",
+    "V2 prefers safe multi-paragraph composition over one-paragraph frontier within bounded AI penalty",
+)
+assert_test(
+    coverage_summary["final_text"] == "Four paragraph composition rewrite.",
+    "V2 applies the coverage-preferred composed rewrite",
+)
+
+fragment_failures = _patch_filter_failures([{
+    "target_paragraph": "The United States was founded in 1776 after the American colonies declared independence from Britain.",
+    "rewritten_paragraph": "The United States declared independence. From Britain. In 1776. The American Revolutionary War followed. Designed to balance power.",
+}])
+assert_test(
+    any(str(item).startswith("surface_quality:") for item in fragment_failures),
+    "V2 rejects fragment-heavy rewrites that can trigger external AI detectors",
+)
+previous_tactics = os.environ.get("DRAFTPROOF_REWRITE_V2_TACTICS")
+os.environ["DRAFTPROOF_REWRITE_V2_TACTICS"] = "minimal_carrier,broken_choppy,choppy_analytic"
+try:
+    filtered_tactics = _paragraph_tactics()
+finally:
+    if previous_tactics is None:
+        os.environ.pop("DRAFTPROOF_REWRITE_V2_TACTICS", None)
+    else:
+        os.environ["DRAFTPROOF_REWRITE_V2_TACTICS"] = previous_tactics
+assert_test(
+    "broken_choppy" not in filtered_tactics,
+    "V2 disables fragment-prone broken_choppy tactic by default",
+)
+
+with tempfile.TemporaryDirectory() as tmpdir:
     no_candidate_result = run_rewrite_pipeline_v2(
         detect_json=scan_json,
         output_dir=tmpdir,
@@ -435,6 +515,38 @@ paragraph_map = _paragraph_target_map(
 assert_test(
     paragraph_map["p002"] == "Second full paragraph with exact source text.",
     "V2 prefers real document paragraphs over truncated paragraph excerpts",
+)
+
+reconstruction_expected_count = _expected_full_reconstruction_paragraph_count(
+    {"rewrite_edit_briefs": [{"paragraph_id": "p001"}, {"paragraph_id": "p002"}, {"paragraph_id": "p003"}]},
+    "Flattened sentence-map text without blank-line paragraphs.",
+)
+assert_test(
+    reconstruction_expected_count == 3,
+    "V2 full reconstruction guard uses scan paragraph ids instead of flattened sentence-map text",
+)
+
+required_entities = _required_entities_for_full_reconstruction(
+    "The United States declared independence from Britain. This led to the American Revolutionary War."
+)
+assert_test(
+    "Britain. This" not in required_entities and "American Revolutionary War. The" not in required_entities,
+    "V2 full reconstruction entity lock rejects sentence-boundary entity artifacts",
+)
+generic_entities = _required_entities_for_full_reconstruction(
+    "AlphaCom released NovaAI in 2025. Later, Dr. Maria Chen tested it near Singapore."
+)
+assert_test(
+    "AlphaCom" in generic_entities and "NovaAI" in generic_entities and "Singapore" in generic_entities,
+    "V2 full reconstruction entity lock is content-agnostic and preserves dynamic anchors",
+)
+paragraph_inventory = _paragraph_inventory_for_full_reconstruction(
+    {},
+    "AlphaCom released NovaAI in 2025.\n\nDr. Maria Chen tested it near Singapore.",
+)
+assert_test(
+    len(paragraph_inventory) == 2 and paragraph_inventory[0]["paragraph_id"] == "p001",
+    "V2 builds a dynamic paragraph inventory for full reconstruction prompts",
 )
 
 cluster_text = _cluster_text_from_gate(
@@ -463,6 +575,15 @@ entity_start_drift = check_semantic_drift(
 assert_test(
     entity_start_drift.accepted,
     "V2 semantic guard preserves entities moved to sentence starts",
+)
+quantifier_drift = check_semantic_drift(
+    "Many Customers disagreed with the policy. AlphaCom revised it in 2025.",
+    "Customers disagreed with the policy. AlphaCom revised it in 2025.",
+    threshold=0.15,
+)
+assert_test(
+    quantifier_drift.accepted,
+    "V2 semantic guard does not treat quantifier-prefixed noun phrases as named entities",
 )
 
 print("All rewrite V2 pipeline tests passed.")
