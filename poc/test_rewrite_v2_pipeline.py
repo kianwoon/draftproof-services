@@ -8,6 +8,7 @@ import tempfile
 
 from rewrite.guards import check_semantic_drift
 from rewrite_v2 import run_rewrite_pipeline_v2
+from rewrite_v2.pipeline import _paragraph_target_map
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.selection import CandidateLane, decide_candidate
 from rewrite_v2.strategy import StrategyKind, route_strategies
@@ -265,6 +266,43 @@ assert_test(
 assert_test(
     near_miss_result["status"] == RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
     "V2 does not label applied safe near-miss candidates as strict success",
+)
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    close_partial_result = run_rewrite_pipeline_v2(
+        detect_json=scan_json,
+        output_dir=tmpdir,
+        replay_candidate_records=[{
+            "strategy": "close_partial_frontier",
+            "text": "The United States has influenced politics, technology, and culture.",
+            "report": {
+                "ai_risk_badge": {
+                    "ai_likelihood_score": 50.0,
+                    "writing_quality_score": 58.0,
+                    "ai_components": {"topk_calibrated_risk": 58},
+                },
+                "integrity_layers": {"layers": {"ai_authorship": {"score": 48}, "ai_transformation": {"score": 44}}},
+                "findings": {"critical": [], "high": [{"id": "f001"}], "medium": [], "low": []},
+            },
+        }],
+    )
+close_partial_summary = close_partial_result["result"].summary
+assert_test(
+    close_partial_summary["final_text"] != scan_json["input_text"],
+    "V2 applies close safe partial candidates instead of preserving original text",
+)
+assert_test(
+    close_partial_summary["rewrite_goal_status"]["reason"] == "close_score_frontier_applied_but_target_not_met",
+    "V2 reports close partial application without calling it target success",
+)
+
+paragraph_map = _paragraph_target_map(
+    {"rewrite_edit_briefs": [{"paragraph_id": "p002", "paragraph_excerpt": "truncated paragraph"}]},
+    "First full paragraph.\n\nSecond full paragraph with exact source text.",
+)
+assert_test(
+    paragraph_map["p002"] == "Second full paragraph with exact source text.",
+    "V2 prefers real document paragraphs over truncated paragraph excerpts",
 )
 
 entity_start_drift = check_semantic_drift(

@@ -186,8 +186,15 @@ def _compose_full_doc_delta_winners(
     return text, applied
 
 
-def _paragraph_target_map(scan_report: dict | None) -> dict[str, str]:
+def _paragraph_target_map(scan_report: dict | None, original_text: str = "") -> dict[str, str]:
     result: dict[str, str] = {}
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n", str(original_text or ""))
+        if paragraph.strip()
+    ]
+    for index, paragraph in enumerate(paragraphs, start=1):
+        result[f"p{index:03d}"] = paragraph
     for brief in (scan_report or {}).get("rewrite_edit_briefs") or []:
         if not isinstance(brief, dict):
             continue
@@ -519,7 +526,7 @@ def _generate_candidates(
 ) -> list[dict[str, Any]]:
     if not api_key:
         return []
-    paragraph_targets = _paragraph_target_map(scan_report)
+    paragraph_targets = _paragraph_target_map(scan_report, original_text)
     gateway = LLMGateway(LLMConfig(
         api_key=api_key,
         model=model or os.environ.get("LLM_MODEL") or "openai/gpt-4.1-mini",
@@ -864,6 +871,17 @@ def run_rewrite_pipeline_v2(
         and (best_decision or {}).get("quality_safe")
         and (best_decision or {}).get("semantic_safe")
     )
+    close_partial_gap = (best_decision or {}).get("ai_target_gap")
+    close_partial_max_gap = float(os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP", "1.0") or 1.0)
+    best_applicable_close_partial = bool(
+        best
+        and os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_CLOSE_PARTIAL", "1").lower() not in {"0", "false", "no"}
+        and best_lane == CandidateLane.PARTIAL_DIAGNOSTIC.value
+        and isinstance(close_partial_gap, (int, float))
+        and float(close_partial_gap) <= close_partial_max_gap
+        and (best_decision or {}).get("quality_safe")
+        and (best_decision or {}).get("semantic_safe")
+    )
     if best and best_lane == CandidateLane.GOAL_MET.value:
         final_text = str(best.get("text") or original_text)
         final_report = best.get("report") if isinstance(best.get("report"), dict) else original_report
@@ -885,6 +903,20 @@ def run_rewrite_pipeline_v2(
         public_status = RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value
         converged = False
         convergence_reason = "rewrite_v2_score_target_candidate_applied_strict_goal_not_met"
+    elif best_applicable_close_partial:
+        final_text = str(best.get("text") or original_text)
+        final_report = best.get("report") if isinstance(best.get("report"), dict) else original_report
+        close_partial_goal = best.get("goal") if isinstance(best.get("goal"), dict) else {}
+        final_goal = {
+            **close_partial_goal,
+            "status": RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
+            "goal_met": False,
+            "applied_candidate_lane": CandidateLane.PARTIAL_DIAGNOSTIC.value,
+            "reason": "close_score_frontier_applied_but_target_not_met",
+        }
+        public_status = RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value
+        converged = False
+        convergence_reason = "rewrite_v2_close_score_frontier_applied_target_not_met"
     else:
         final_text = original_text
         final_report = original_report
@@ -939,6 +971,7 @@ def run_rewrite_pipeline_v2(
             "selected": bool(
                 public_status == RewriteGoalStatus.AI_MITIGATED.value
                 or best_applicable_near_miss
+                or best_applicable_close_partial
             ),
             "strict_selected": public_status == RewriteGoalStatus.AI_MITIGATED.value,
         }],
