@@ -19,7 +19,7 @@ export default function Pricing() {
           </div>
           <div className="app-hero-stat">
             <span>Base rate</span>
-            <strong>$1.90</strong>
+            <strong>$0.90</strong>
             <small>per 1,000 words</small>
           </div>
         </section>
@@ -30,7 +30,7 @@ export default function Pricing() {
             <h2>Scan</h2>
             <div className="pricing-amount">
               <span className="pricing-currency">$</span>
-              <span className="pricing-value">1.90</span>
+              <span className="pricing-value">0.90</span>
               <span className="pricing-unit">/ 1,000 words</span>
             </div>
           </div>

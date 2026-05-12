@@ -45,7 +45,7 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
 # Token pricing (USD)
-TOKEN_PRICE_USD = 1.90
+TOKEN_PRICE_USD = float(os.getenv("TOKEN_PRICE_USD", "0.90"))
 TOKEN_PACKS = {
     "single": {"tokens": 1, "name": "Single Token"},
     "starter": {"tokens": 5, "name": "Starter Pack"},

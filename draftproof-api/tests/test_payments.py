@@ -68,19 +68,19 @@ class TestGetPacks:
             assert "price_usd" in pack
             assert "tokens" in pack
             assert "name" in pack
-            assert pack["price_usd"] == round(pack["tokens"] * 1.90, 2)
+            assert pack["price_usd"] == round(pack["tokens"] * 0.90, 2)
 
     def test_single_pack_price(self, client):
         resp = client.get("/api/payments/packs")
         data = resp.json()
         single = next(p for p in data if p["id"] == "single")
-        assert single["price_usd"] == 1.90
+        assert single["price_usd"] == 0.90
 
     def test_pro_pack_price(self, client):
         resp = client.get("/api/payments/packs")
         data = resp.json()
         pro = next(p for p in data if p["id"] == "pro")
-        assert pro["price_usd"] == 47.50
+        assert pro["price_usd"] == 22.50
 
 
 # ── POST /checkout ───────────────────────────────────────────────
@@ -120,7 +120,7 @@ class TestCheckout:
 
         line_item = call_kwargs["line_items"][0]
         assert line_item["price_data"]["currency"] == "usd"
-        assert line_item["price_data"]["unit_amount"] == 190  # $1.90 = 190 cents
+        assert line_item["price_data"]["unit_amount"] == 90  # $0.90 = 90 cents
         assert "Single Token" in line_item["price_data"]["product_data"]["name"]
         assert line_item["quantity"] == 1
 
@@ -141,7 +141,7 @@ class TestCheckout:
 
         assert resp.status_code == 200
         line_item = mock_create.call_args[1]["line_items"][0]
-        assert line_item["price_data"]["unit_amount"] == 4750  # $47.50 = 4750 cents
+        assert line_item["price_data"]["unit_amount"] == 2250  # $22.50 = 2250 cents
 
     @patch("app.routes.payments.stripe.checkout.Session.create")
     def test_metadata_contains_user_and_pack(self, mock_create, client, auth_cookie):
@@ -224,10 +224,10 @@ class TestCheckout:
         mock_create.return_value = mock_session
 
         expected = {
-            "single": 190,
-            "starter": 950,
-            "standard": 1900,
-            "pro": 4750,
+            "single": 90,
+            "starter": 450,
+            "standard": 900,
+            "pro": 2250,
         }
 
         for pack_id, expected_cents in expected.items():

@@ -146,7 +146,7 @@ function buildSchema(meta, url) {
       description: meta.description,
       offers: {
         '@type': 'Offer',
-        price: '1.90',
+        price: '0.90',
         priceCurrency: 'USD',
         description: 'Pre-submission writing integrity review per 1,000 words',
       },
