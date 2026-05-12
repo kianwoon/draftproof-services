@@ -16,6 +16,18 @@ class StrategyKind(str, Enum):
 
 
 @dataclass(frozen=True)
+class ContentRoute:
+    content_mode: str
+    confidence: float
+    reasons: list[str]
+    allowed_strategy_families: list[str]
+    blocked_strategy_families: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class RewriteStrategy:
     strategy_id: str
     kind: StrategyKind
@@ -29,6 +41,136 @@ class RewriteStrategy:
         payload = asdict(self)
         payload["kind"] = self.kind.value
         return payload
+
+
+_FULL_DOC_FAMILIES = {
+    "entity_locked_full_reconstruction",
+    "keyword_locked_short_texture",
+    "author_stance_thesis_reframe",
+    "author_stance_texture_pass",
+}
+_ALL_STRATEGY_FAMILIES = {
+    "targeted_paragraph_reconstruction",
+    "unsafe_cluster_rescue",
+    *_FULL_DOC_FAMILIES,
+}
+
+
+def _paragraph_count(text: str) -> int:
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", str(text or "").strip()) if p.strip()]
+    if len(paragraphs) > 1:
+        return len(paragraphs)
+    sentences = re.findall(r"[^.!?]+[.!?]", str(text or ""))
+    return max(1, min(12, len(sentences) // 4)) if sentences else 0
+
+
+def _citation_count(text: str) -> int:
+    patterns = [
+        r"\([A-Z][A-Za-z' -]+,\s*(?:19|20)\d{2}(?:,\s*p\.?\s*\d+)?\)",
+        r"\[(?:\d+|[A-Za-z]+(?:,\s*(?:19|20)\d{2})?)\]",
+        r"\b(?:doi|DOI):\s*10\.\d{4,9}/[-._;()/:A-Z0-9]+\b",
+        r"\b(?:et al\.|References|Bibliography|Works Cited)\b",
+    ]
+    return sum(len(re.findall(pattern, text, flags=re.IGNORECASE)) for pattern in patterns)
+
+
+def _quote_count(text: str) -> int:
+    return len(re.findall(r"[\"“][^\"”]{8,}[\"”]", text or ""))
+
+
+def _bullet_line_ratio(lines: list[str]) -> float:
+    if not lines:
+        return 0.0
+    bullet_lines = [
+        line for line in lines
+        if re.match(r"^\s*(?:[-*•]|\d+[.)]|[A-Za-z][.)])\s+", line)
+    ]
+    return len(bullet_lines) / max(1, len(lines))
+
+
+def _has_first_person_stance(text: str) -> bool:
+    lowered = text.lower()
+    return bool(re.search(r"\b(i think|i find|i believe|i argue|i feel|i noticed|my view|my experience|in my opinion)\b", lowered))
+
+
+def _route_payload(mode: str, confidence: float, reasons: list[str]) -> ContentRoute:
+    allowed_by_mode = {
+        "broad_explanatory_essay": {
+            "targeted_paragraph_reconstruction",
+            "unsafe_cluster_rescue",
+            "entity_locked_full_reconstruction",
+            "keyword_locked_short_texture",
+            "author_stance_thesis_reframe",
+            "author_stance_texture_pass",
+        },
+        "academic_cited_text": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
+        "technical_content": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
+        "regulated_policy_content": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
+        "structured_list_table": {"targeted_paragraph_reconstruction"},
+        "quote_heavy": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
+        "short_text": {"targeted_paragraph_reconstruction"},
+        "personal_reflection": {
+            "targeted_paragraph_reconstruction",
+            "unsafe_cluster_rescue",
+            "author_stance_thesis_reframe",
+            "author_stance_texture_pass",
+        },
+        "creative_marketing": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
+        "generic_expository": {
+            "targeted_paragraph_reconstruction",
+            "unsafe_cluster_rescue",
+            "entity_locked_full_reconstruction",
+            "keyword_locked_short_texture",
+            "author_stance_thesis_reframe",
+            "author_stance_texture_pass",
+        },
+    }
+    allowed = sorted(allowed_by_mode.get(mode, {"targeted_paragraph_reconstruction"}))
+    blocked = sorted(_ALL_STRATEGY_FAMILIES - set(allowed))
+    return ContentRoute(
+        content_mode=mode,
+        confidence=round(max(0.0, min(1.0, confidence)), 3),
+        reasons=reasons[:8],
+        allowed_strategy_families=allowed,
+        blocked_strategy_families=blocked,
+    )
+
+
+def classify_content_route(original_text: str, scan_report: dict | None = None) -> ContentRoute:
+    """Classify document shape so V2 only runs strategies appropriate to the content."""
+    text = str(original_text or "")
+    stripped = text.strip()
+    words = re.findall(r"\b[\w'-]+\b", stripped)
+    word_count = len(words)
+    paragraphs = _paragraph_count(stripped)
+    lines = [line for line in stripped.splitlines() if line.strip()]
+    bullet_ratio = _bullet_line_ratio(lines)
+    citation_count = _citation_count(stripped)
+    quote_count = _quote_count(stripped)
+    lowered = stripped.lower()
+    sentence_map_size = len((scan_report or {}).get("sentence_map") or {})
+
+    if bullet_ratio >= 0.35 or re.search(r"\|.+\|", stripped):
+        return _route_payload("structured_list_table", 0.86, [f"bullet_line_ratio={bullet_ratio:.2f}", "structured lines require shape preservation"])
+    if citation_count >= 2:
+        return _route_payload("academic_cited_text", 0.84, [f"citation_count={citation_count}", "citation markers require citation-preserving rewrite"])
+    if quote_count >= 3 or (quote_count >= 2 and word_count < 450):
+        return _route_payload("quote_heavy", 0.82, [f"quote_count={quote_count}", "quoted material should remain strict anchors"])
+    if re.search(r"\b(api|sdk|json|yaml|http|endpoint|database|function|class|method|stack trace|schema|repository|deployment|kubernetes|docker)\b", lowered) or re.search(r"[{}<>]|```|/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", stripped):
+        return _route_payload("technical_content", 0.82, ["technical markers detected", "technical content needs term and structure preservation"])
+    if re.search(r"\b(shall|must not|compliance|contract|liability|statutory|regulation|clinical|diagnosis|dosage|patient|medical|legal|terms and conditions)\b", lowered) or re.search(r"\b(?:company|privacy|security|data|workplace|use|refund|billing)\s+policy\b|\bpolicy\s+(?:states|requires|prohibits|allows|applies)\b", lowered):
+        return _route_payload("regulated_policy_content", 0.82, ["regulated wording detected", "obligations and claims need minimal targeted edits"])
+    if _has_first_person_stance(stripped) and re.search(r"\b(my|i|me)\b", lowered):
+        return _route_payload("personal_reflection", 0.78, ["first-person stance markers detected", "author voice already exists"])
+    if paragraphs >= 6 and word_count >= 100:
+        return _route_payload("broad_explanatory_essay", 0.8, [f"paragraphs={paragraphs}", f"word_count={word_count}", "multi-paragraph explanatory essay shape"])
+    if word_count < 120:
+        return _route_payload("short_text", 0.88, [f"word_count={word_count}", "short input limits safe reconstruction context"])
+    if re.search(r"\b(buy|subscribe|limited offer|brand|customers|conversion|campaign|sales|pricing|launch|product)\b", lowered):
+        return _route_payload("creative_marketing", 0.74, ["marketing or product language detected", "essay thesis rewrite would change genre"])
+    if sentence_map_size >= 8 and word_count >= 240:
+        return _route_payload("broad_explanatory_essay", 0.72, [f"sentence_map_size={sentence_map_size}", f"word_count={word_count}", "scan map indicates document-level essay"])
+    return _route_payload("generic_expository", 0.62, [f"paragraphs={paragraphs}", f"word_count={word_count}", "fallback expository mode"])
 
 
 def _component_values(report: dict | None) -> dict[str, float]:
@@ -88,7 +230,12 @@ def _extract_anchors(report: dict | None, limit: int = 24) -> list[str]:
     return anchors[:limit]
 
 
-def route_strategies(scan_report: dict | None, *, full_rewrite_allowed: bool = True) -> list[RewriteStrategy]:
+def route_strategies(
+    scan_report: dict | None,
+    *,
+    full_rewrite_allowed: bool = True,
+    content_route: ContentRoute | dict[str, Any] | None = None,
+) -> list[RewriteStrategy]:
     values = _component_values(scan_report)
     rewrite_briefs = (scan_report or {}).get("rewrite_edit_briefs") or []
     segments = (((scan_report or {}).get("scan_intelligence") or {}).get("document") or {}).get("segments") or []
@@ -116,7 +263,13 @@ def route_strategies(scan_report: dict | None, *, full_rewrite_allowed: bool = T
             max_candidates=max(1, min(6, int(os.environ.get("DRAFTPROOF_REWRITE_V2_TARGETED_CANDIDATES", "4")))),
         ))
     allow_full_after_targeted = os.environ.get("DRAFTPROOF_REWRITE_V2_ALLOW_FULL_AFTER_TARGETED", "0").lower() in {"1", "true", "yes"}
-    if full_rewrite_allowed and (broad_drivers or not localized) and (not localized or allow_full_after_targeted):
+    allowed_families = set()
+    if isinstance(content_route, ContentRoute):
+        allowed_families = set(content_route.allowed_strategy_families)
+    elif isinstance(content_route, dict):
+        allowed_families = set(content_route.get("allowed_strategy_families") or [])
+    full_doc_allowed_by_content = not allowed_families or bool(allowed_families & _FULL_DOC_FAMILIES)
+    if full_rewrite_allowed and full_doc_allowed_by_content and (broad_drivers or not localized) and (not localized or allow_full_after_targeted):
         strategies.append(RewriteStrategy(
             strategy_id="scan_full_document_mitigation",
             kind=StrategyKind.FULL_REWRITE,

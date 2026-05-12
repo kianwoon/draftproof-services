@@ -21,6 +21,7 @@ from rewrite_v2.pipeline import (
     _paragraph_target_map,
     _patch_filter_failures,
     _has_rewrite_meta_text,
+    _select_best_v2_frontier,
     _survey_style_failures,
     _required_entities_for_full_reconstruction,
     _restore_required_anchor_forms,
@@ -29,7 +30,7 @@ from rewrite_v2.pipeline import (
 )
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
-from rewrite_v2.strategy import StrategyKind, route_strategies
+from rewrite_v2.strategy import StrategyKind, classify_content_route, route_strategies
 
 
 def assert_test(condition: bool, message: str) -> None:
@@ -100,6 +101,134 @@ strategies = route_strategies(scan_json, full_rewrite_allowed=True)
 assert_test(
     any(strategy.kind == StrategyKind.FULL_REWRITE for strategy in strategies),
     "V2 router allows full rewrite when no rewrite briefs exist",
+)
+broad_route = classify_content_route(
+    "\n\n".join([
+        "The United States has a large role in world affairs and public debate.",
+        "Its founding history still shapes how people talk about rights and power.",
+        "The economy gives the country unusual weight across markets and companies.",
+        "Culture also matters because films, music, and sports travel far outside its borders.",
+        "Diversity is part of the country's strength, but inequality remains visible.",
+        "Politics can make the country feel divided even when institutions remain strong.",
+        "Healthcare and education show the same mixture of ambition and uneven access.",
+        "Foreign policy gives the country influence, but it also creates criticism.",
+        "Technology keeps the country close to global change and new risks.",
+        "That mix explains why the country remains difficult to judge simply.",
+    ]),
+    scan_json,
+)
+assert_test(
+    broad_route.content_mode == "broad_explanatory_essay"
+    and "author_stance_thesis_reframe" in broad_route.allowed_strategy_families,
+    "V2 content router allows author-thesis for broad explanatory essays",
+)
+academic_route = classify_content_route(
+    "Studies suggest feedback matters for learning (Smith, 2021). Other work reached a similar result [2]. References show the field is still divided.",
+    scan_json,
+)
+assert_test(
+    academic_route.content_mode == "academic_cited_text"
+    and "author_stance_thesis_reframe" in academic_route.blocked_strategy_families,
+    "V2 content router blocks author-thesis for citation-heavy academic text",
+)
+academic_strategies = route_strategies(scan_json, full_rewrite_allowed=True, content_route=academic_route)
+assert_test(
+    not any(strategy.kind == StrategyKind.FULL_REWRITE for strategy in academic_strategies),
+    "V2 strategy router blocks full-document strategies for academic cited text",
+)
+quote_route = classify_content_route(
+    'The interviewee said “I did not know where to begin.” A second student said “the instructions felt unclear.” A teacher added “support arrived too late.”',
+    scan_json,
+)
+assert_test(
+    quote_route.content_mode == "quote_heavy"
+    and "entity_locked_full_reconstruction" in quote_route.blocked_strategy_families,
+    "V2 content router blocks full reconstruction for quote-heavy text",
+)
+structured_route = classify_content_route(
+    "1. Create the report\n2. Review every finding\n3. Export the JSON\n4. Send the result",
+    scan_json,
+)
+assert_test(
+    structured_route.content_mode == "structured_list_table"
+    and structured_route.allowed_strategy_families == ["targeted_paragraph_reconstruction"],
+    "V2 content router keeps structured list/table content on targeted patches only",
+)
+technical_route = classify_content_route(
+    "The API endpoint returns JSON when the database repository raises an exception in the deployment.",
+    scan_json,
+)
+assert_test(
+    technical_route.content_mode == "technical_content"
+    and "author_stance_thesis_reframe" in technical_route.blocked_strategy_families,
+    "V2 content router blocks thesis rewrite for technical content",
+)
+regulated_route = classify_content_route(
+    "The policy states that users must not disclose patient records, and compliance review shall document every exception.",
+    scan_json,
+)
+assert_test(
+    regulated_route.content_mode == "regulated_policy_content"
+    and "entity_locked_full_reconstruction" in regulated_route.blocked_strategy_families,
+    "V2 content router limits regulated policy content to minimal strategies",
+)
+short_route = classify_content_route("This paragraph is too short to safely rebuild without more context.", scan_json)
+assert_test(
+    short_route.content_mode == "short_text"
+    and short_route.allowed_strategy_families == ["targeted_paragraph_reconstruction"],
+    "V2 content router limits very short text candidate budget",
+)
+reflection_route = classify_content_route(
+    "I think the lesson changed how I read evidence because my first answer was too quick and my later notes were more careful.",
+    scan_json,
+)
+assert_test(
+    reflection_route.content_mode == "personal_reflection"
+    and "author_stance_thesis_reframe" in reflection_route.allowed_strategy_families,
+    "V2 content router allows author voice only when personal stance already exists",
+)
+broad_selector_rows = [
+    {
+        "strategy": "scan_entity_locked_full_reconstruction",
+        "strategy_kind": "entity_locked_full_reconstruction",
+        "candidate_ai": 31.22,
+        "decision": {
+            "lane": CandidateLane.SAFE_NEAR_MISS.value,
+            "required_drop_met": True,
+            "quality_safe": True,
+            "semantic_safe": True,
+            "rank": [2, 1, 0, 0, 38.48, 39.0, 1, 1, -1],
+        },
+    },
+    {
+        "strategy": "scan_author_stance_thesis_reframe",
+        "strategy_kind": "author_stance_thesis_reframe",
+        "candidate_ai": 32.54,
+        "decision": {
+            "lane": CandidateLane.SAFE_NEAR_MISS.value,
+            "required_drop_met": True,
+            "quality_safe": True,
+            "semantic_safe": True,
+            "rank": [2, 1, 0, 0, 37.16, 37.16, 1, 1, -4],
+        },
+    },
+    {
+        "strategy": "unsafe_cluster_rescue",
+        "strategy_kind": "unsafe_cluster_rescue",
+        "candidate_ai": 30.7,
+        "decision": {
+            "lane": CandidateLane.SAFE_NEAR_MISS.value,
+            "required_drop_met": True,
+            "quality_safe": True,
+            "semantic_safe": True,
+            "rank": [2, 1, 0, 0, 39.0, 39.0, 1, 1, -7],
+        },
+    },
+]
+broad_selector_best = _select_best_v2_frontier(broad_selector_rows, content_route=broad_route)
+assert_test(
+    broad_selector_best and broad_selector_best.get("strategy") == "scan_author_stance_thesis_reframe",
+    "V2 broad essay selector prefers author-thesis over lower-internal-score rescue near-miss",
 )
 localized_scan = {
     **scan_json,

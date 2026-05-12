@@ -29,6 +29,7 @@ from .selection import (
 from .strategy import (
     build_single_paragraph_reconstruction_prompt,
     build_strategy_prompt,
+    classify_content_route,
     clean_candidate_output,
     route_strategies,
     targeted_paragraph_briefs,
@@ -112,6 +113,15 @@ def _effective_config(
         "author_stance_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_CANDIDATES", "3") or 3),
         "author_stance_texture_pass": os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_TEXTURE_PASS", "0").lower() not in {"0", "false", "no"},
     }
+
+
+def _strategy_family_allowed(content_route: Any, family: str) -> bool:
+    if content_route is None:
+        return True
+    allowed = getattr(content_route, "allowed_strategy_families", None)
+    if allowed is None and isinstance(content_route, dict):
+        allowed = content_route.get("allowed_strategy_families")
+    return family in set(allowed or [])
 
 
 def _extract_original_text(detect_json: dict[str, Any]) -> str:
@@ -300,7 +310,59 @@ def _is_safe_partial_candidate(candidate: dict[str, Any] | None, *, max_gap: flo
     return isinstance(gap, (int, float)) and float(gap) <= float(max_gap)
 
 
-def _select_best_v2_frontier(candidate_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _content_mode_value(content_route: Any | None) -> str:
+    if content_route is None:
+        return ""
+    if isinstance(content_route, dict):
+        return str(content_route.get("content_mode") or "")
+    return str(getattr(content_route, "content_mode", "") or "")
+
+
+def _candidate_lane(candidate: dict[str, Any] | None) -> str:
+    if not isinstance(candidate, dict):
+        return ""
+    decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
+    return str(decision.get("lane") or "")
+
+
+def _prefer_author_stance_frontier(
+    best: dict[str, Any],
+    candidate_rows: list[dict[str, Any]],
+    *,
+    content_route: Any | None = None,
+) -> dict[str, Any]:
+    if _content_mode_value(content_route) != "broad_explanatory_essay":
+        return best
+    if _candidate_lane(best) == CandidateLane.GOAL_MET.value:
+        return best
+    if str(best.get("strategy") or "") == "scan_author_stance_thesis_reframe":
+        return best
+    author_candidates = [
+        row for row in candidate_rows
+        if str(row.get("strategy") or "") == "scan_author_stance_thesis_reframe"
+        and _candidate_lane(row) in {CandidateLane.SAFE_NEAR_MISS.value, CandidateLane.GOAL_MET.value}
+        and ((row.get("decision") or {}).get("quality_safe"))
+        and ((row.get("decision") or {}).get("semantic_safe"))
+    ]
+    if not author_candidates:
+        return best
+    preferred = max(author_candidates, key=lambda row: tuple((row.get("decision") or {}).get("rank") or ()))
+    if _candidate_lane(preferred) == CandidateLane.GOAL_MET.value:
+        return preferred
+    preferred["strategy_preferred_over"] = {
+        "strategy": best.get("strategy"),
+        "strategy_kind": best.get("strategy_kind"),
+        "candidate_ai": best.get("candidate_ai"),
+        "reason": "broad_explanatory_essay_prefers_author_stance_over_rescue_or_reconstruction",
+    }
+    return preferred
+
+
+def _select_best_v2_frontier(
+    candidate_rows: list[dict[str, Any]],
+    *,
+    content_route: Any | None = None,
+) -> dict[str, Any] | None:
     close_gap = _close_partial_max_gap()
     best = (
         select_best_applicable_candidate(candidate_rows, close_partial_max_gap=close_gap)
@@ -308,6 +370,7 @@ def _select_best_v2_frontier(candidate_rows: list[dict[str, Any]]) -> dict[str, 
     )
     if not best:
         return None
+    best = _prefer_author_stance_frontier(best, candidate_rows, content_route=content_route)
     best_ai = best.get("candidate_ai")
     if not isinstance(best_ai, (int, float)):
         return best
@@ -1518,6 +1581,7 @@ def _generate_candidates(
     base_url: str | None,
     timeout_seconds: int,
     deadline: float | None = None,
+    content_route: Any | None = None,
 ) -> list[dict[str, Any]]:
     if not api_key:
         return []
@@ -1532,54 +1596,65 @@ def _generate_candidates(
         temperature=0.45,
     ))
     candidates = []
-    if _should_entity_locked_full_reconstruction(scan_report):
+    full_reconstruction_allowed = _strategy_family_allowed(content_route, "entity_locked_full_reconstruction")
+    author_stance_allowed = _strategy_family_allowed(content_route, "author_stance_thesis_reframe")
+    keyword_texture_allowed = _strategy_family_allowed(content_route, "keyword_locked_short_texture")
+    author_texture_allowed = _strategy_family_allowed(content_route, "author_stance_texture_pass")
+    if (
+        _should_entity_locked_full_reconstruction(scan_report)
+        and (full_reconstruction_allowed or author_stance_allowed or keyword_texture_allowed)
+    ):
         required_entities = _required_entities_for_full_reconstruction(original_text)
         expected_paragraph_count = _expected_full_reconstruction_paragraph_count(scan_report, original_text)
         paragraph_inventory = _paragraph_inventory_for_full_reconstruction(scan_report, original_text)
         variants = max(1, min(2, int(os.environ.get("DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES", "2") or 2)))
-        for number in range(1, variants + 1):
-            if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
-                return candidates
-            prompt = _build_entity_locked_full_reconstruction_prompt(
-                original_text=original_text,
-                required_entities=required_entities,
-                paragraph_inventory=paragraph_inventory,
-                expected_paragraph_count=expected_paragraph_count,
-                variant=number,
-            )
-            response = gateway.chat(
-                prompt,
-                system="You rewrite essays naturally while preserving required entities and avoiding unsupported additions.",
-                max_tokens=7000,
-                temperature=0.58 + (number * 0.03),
-                top_p=0.9,
-                presence_penalty=0.05 if _supports_openai_penalties(model) else None,
-                frequency_penalty=0.15 if _supports_openai_penalties(model) else None,
-                repetition_penalty=1.02 if _supports_repetition_penalty(model) else None,
-                seed=4100 + number,
-            )
-            candidate_text = clean_candidate_output(response.content)
-            filter_failures = _full_reconstruction_filter_failures(
-                original_text=original_text,
-                candidate_text=candidate_text,
-                required_entities=required_entities,
-                expected_paragraph_count=expected_paragraph_count,
-            )
-            candidates.append({
-                "strategy": "scan_entity_locked_full_reconstruction",
-                "strategy_kind": "entity_locked_full_reconstruction",
-                "candidate_number": number,
-                "text": candidate_text,
-                "candidate_response": candidate_text,
-                "local_filter_passed": not filter_failures,
-                "local_filter_failures": filter_failures,
-                "required_entities": required_entities,
-                "paragraph_count": _paragraph_count(candidate_text),
-                "expected_paragraph_count": expected_paragraph_count,
-            })
+        if full_reconstruction_allowed:
+            for number in range(1, variants + 1):
+                if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+                    return candidates
+                prompt = _build_entity_locked_full_reconstruction_prompt(
+                    original_text=original_text,
+                    required_entities=required_entities,
+                    paragraph_inventory=paragraph_inventory,
+                    expected_paragraph_count=expected_paragraph_count,
+                    variant=number,
+                )
+                response = gateway.chat(
+                    prompt,
+                    system="You rewrite essays naturally while preserving required entities and avoiding unsupported additions.",
+                    max_tokens=7000,
+                    temperature=0.58 + (number * 0.03),
+                    top_p=0.9,
+                    presence_penalty=0.05 if _supports_openai_penalties(model) else None,
+                    frequency_penalty=0.15 if _supports_openai_penalties(model) else None,
+                    repetition_penalty=1.02 if _supports_repetition_penalty(model) else None,
+                    seed=4100 + number,
+                )
+                candidate_text = clean_candidate_output(response.content)
+                filter_failures = _full_reconstruction_filter_failures(
+                    original_text=original_text,
+                    candidate_text=candidate_text,
+                    required_entities=required_entities,
+                    expected_paragraph_count=expected_paragraph_count,
+                )
+                candidates.append({
+                    "strategy": "scan_entity_locked_full_reconstruction",
+                    "strategy_kind": "entity_locked_full_reconstruction",
+                    "candidate_number": number,
+                    "text": candidate_text,
+                    "candidate_response": candidate_text,
+                    "local_filter_passed": not filter_failures,
+                    "local_filter_failures": filter_failures,
+                    "required_entities": required_entities,
+                    "paragraph_count": _paragraph_count(candidate_text),
+                    "expected_paragraph_count": expected_paragraph_count,
+                })
+        else:
+            variants = 0
         if (
             os.environ.get("DRAFTPROOF_REWRITE_V2_KEYWORD_LOCKED_SHORT_TEXTURE", "0").lower()
             not in {"0", "false", "no"}
+            and keyword_texture_allowed
             and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
         ):
             prompt = _build_keyword_locked_short_texture_prompt(
@@ -1623,6 +1698,7 @@ def _generate_candidates(
         if (
             os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", "1").lower()
             not in {"0", "false", "no"}
+            and author_stance_allowed
             and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
         ):
             target_paragraph_count = _author_stance_target_paragraph_count()
@@ -1677,6 +1753,7 @@ def _generate_candidates(
                     not filter_failures
                     and os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_TEXTURE_PASS", "0").lower()
                     not in {"0", "false", "no"}
+                    and author_texture_allowed
                     and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
                 ):
                     prompt = _build_author_stance_texture_pass_prompt(
@@ -1838,7 +1915,19 @@ def run_rewrite_pipeline_v2(
         if isinstance(reference_ai, (int, float))
         else None
     )
-    strategies = route_strategies(original_report, full_rewrite_allowed=full_rewrite_allowed)
+    content_route = classify_content_route(original_text, original_report)
+    strategies = route_strategies(
+        original_report,
+        full_rewrite_allowed=full_rewrite_allowed,
+        content_route=content_route,
+    )
+    effective_config = {
+        **effective_config,
+        "content_mode": content_route.content_mode,
+        "content_mode_confidence": content_route.confidence,
+        "allowed_strategy_families": content_route.allowed_strategy_families,
+        "blocked_strategy_families": content_route.blocked_strategy_families,
+    }
     author_context_blocked = (
         needs_author_context(original_report)
         and os.environ.get("DRAFTPROOF_REWRITE_V2_FAIL_FAST_AUTHOR_CONTEXT", "0").lower() in {"1", "true", "yes"}
@@ -1870,6 +1959,7 @@ def run_rewrite_pipeline_v2(
                 "candidate_rows": 0,
                 "reason": "needs_author_context",
             },
+            "content_router_trace": content_route.to_dict(),
             "strategy_trace": [strategy.to_dict() for strategy in strategies],
             "candidate_trace": [],
             "selected_candidate": None,
@@ -1937,6 +2027,7 @@ def run_rewrite_pipeline_v2(
             base_url=base_url,
             timeout_seconds=_llm_call_timeout_seconds(),
             deadline=started + _generation_budget_seconds(max_runtime_seconds),
+            content_route=content_route,
         )
         generated_count = len(generated)
         generation_reason = "generated_candidates" if generated_count else "candidate_generation_budget_exhausted_no_candidates"
@@ -2087,9 +2178,12 @@ def run_rewrite_pipeline_v2(
                     "report": candidate_report,
                     "text": composed_text,
                 })
-        frontier = _select_best_v2_frontier(candidate_rows)
+        frontier = _select_best_v2_frontier(candidate_rows, content_route=content_route)
         frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
-        rescue_enabled = os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"}
+        rescue_enabled = (
+            os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"}
+            and _strategy_family_allowed(content_route, "unsafe_cluster_rescue")
+        )
         if (
             rescue_enabled
             and frontier
@@ -2113,7 +2207,7 @@ def run_rewrite_pipeline_v2(
             candidate_rows.extend(rescue_rows)
     close_partial_max_gap = _close_partial_max_gap()
     diagnostic_best = select_best_candidate(candidate_rows)
-    best = _select_best_v2_frontier(candidate_rows) or diagnostic_best
+    best = _select_best_v2_frontier(candidate_rows, content_route=content_route) or diagnostic_best
     best_decision = best.get("decision") if isinstance(best, dict) else {}
     best_lane = (best_decision or {}).get("lane")
     best_applicable_near_miss = bool(
@@ -2233,6 +2327,7 @@ def run_rewrite_pipeline_v2(
             ),
             "reason": generation_reason,
         },
+        "content_router_trace": content_route.to_dict(),
         "strategy_trace": [strategy.to_dict() for strategy in strategies],
         "candidate_trace": [
             {key: value for key, value in row.items() if key not in {"text", "report"}}
