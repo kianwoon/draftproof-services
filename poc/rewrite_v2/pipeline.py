@@ -38,7 +38,12 @@ from .strategy import (
 def _semantic_scan_allowed(strategy_kind: str | None, semantic_safe: bool) -> bool:
     if semantic_safe:
         return True
-    if strategy_kind in {"full_rewrite", "entity_locked_full_reconstruction"}:
+    if strategy_kind in {
+        "full_rewrite",
+        "entity_locked_full_reconstruction",
+        "author_stance_thesis_reframe",
+        "author_stance_texture_pass",
+    }:
         return True
     return os.environ.get("DRAFTPROOF_REWRITE_V2_SCAN_REVIEW_CANDIDATES", "1").lower() not in {"0", "false", "no"}
 
@@ -102,6 +107,10 @@ def _effective_config(
         "unsafe_cluster_rescue": os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"},
         "allow_full_after_targeted": os.environ.get("DRAFTPROOF_REWRITE_V2_ALLOW_FULL_AFTER_TARGETED", "0").lower() in {"1", "true", "yes"},
         "entity_locked_full_reconstruction": os.environ.get("DRAFTPROOF_REWRITE_V2_ENTITY_LOCKED_FULL_RECONSTRUCTION", "1").lower() not in {"0", "false", "no"},
+        "keyword_locked_short_texture": os.environ.get("DRAFTPROOF_REWRITE_V2_KEYWORD_LOCKED_SHORT_TEXTURE", "0").lower() not in {"0", "false", "no"},
+        "author_stance_thesis_reframe": os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", "1").lower() not in {"0", "false", "no"},
+        "author_stance_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_CANDIDATES", "3") or 3),
+        "author_stance_texture_pass": os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_TEXTURE_PASS", "0").lower() not in {"0", "false", "no"},
     }
 
 
@@ -427,6 +436,44 @@ def _paragraph_inventory_for_full_reconstruction(scan_report: dict | None, origi
             "approx_words": len(paragraph.split()),
         })
     return rows
+
+
+def _entity_acronym(entity: str) -> str:
+    words = re.findall(r"\b[A-Za-z][A-Za-z0-9&'-]*\b", str(entity or ""))
+    skip = {"the", "and", "of", "for", "in", "on", "at", "to"}
+    letters = [word[0].upper() for word in words if word.lower() not in skip]
+    return "".join(letters) if len(letters) >= 2 else ""
+
+
+def _strip_rewrite_meta_text(text: str) -> str:
+    value = clean_candidate_output(text)
+    value = re.sub(r"^\s*(?:here(?:'s| is)[^\n]*|below is[^\n]*|rewritten (?:essay|version)[^\n]*)\n+", "", value, flags=re.I)
+    if "---" in value:
+        parts = [part.strip() for part in value.split("---") if part.strip()]
+        if len(parts) >= 2:
+            value = max(parts, key=len)
+    value = re.sub(r"\n+(?:changes made|kept your|notes?|explanation)\s*:\s*[\s\S]*$", "", value, flags=re.I).strip()
+    return value
+
+
+def _restore_required_anchor_forms(candidate_text: str, required_entities: list[str]) -> str:
+    text = _strip_rewrite_meta_text(candidate_text)
+    for entity in required_entities:
+        entity = str(entity or "").strip()
+        if not entity:
+            continue
+        if re.search(rf"\b{re.escape(entity)}\b", text, flags=re.I):
+            # Preserve exact casing/article form when the candidate only differs by case.
+            text = re.sub(rf"\b{re.escape(entity)}\b", entity, text, count=1, flags=re.I)
+            continue
+        alternate = entity[4:] if entity.startswith("The ") else ""
+        if alternate and re.search(rf"\b{re.escape(alternate)}\b", text, flags=re.I):
+            text = re.sub(rf"\b{re.escape(alternate)}\b", entity, text, count=1, flags=re.I)
+            continue
+        acronym = _entity_acronym(entity)
+        if acronym and re.search(rf"\b{re.escape(acronym)}\b", text):
+            text = re.sub(rf"\b{re.escape(acronym)}\b", entity, text, count=1)
+    return text.strip()
 
 
 def _expected_full_reconstruction_paragraph_count(scan_report: dict | None, original_text: str) -> int:
@@ -882,6 +929,18 @@ def _paragraph_count(text: str) -> int:
     return len([part for part in re.split(r"\n\s*\n", str(text or "")) if part.strip()])
 
 
+def _has_rewrite_meta_text(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    return bool(
+        re.search(r"^\s*(?:here(?:'s| is)\b|below is\b|rewritten (?:essay|version)\b|this version\b)", value, re.I)
+        or re.search(r"\n\s*(?:changes made|notes?|explanation)\s*:\s*", value, re.I)
+        or re.search(r"\blet me know\b", value, re.I)
+        or re.search(r"^\s*```", value)
+    )
+
+
 def _full_reconstruction_filter_failures(
     *,
     original_text: str,
@@ -897,8 +956,10 @@ def _full_reconstruction_filter_failures(
     if original_paragraphs and candidate_paragraphs != original_paragraphs:
         failures.append(f"paragraph_count:{candidate_paragraphs}_expected:{original_paragraphs}")
     lowered = candidate_text.lower()
-    if re.search(r"\b(rewritten essay|here's|here is|this version|let me know|markdown)\b", candidate_text, re.I):
+    if _has_rewrite_meta_text(candidate_text):
         failures.append("meta_text_leak")
+    if os.environ.get("DRAFTPROOF_REWRITE_V2_REJECT_SURVEY_FULL_RECONSTRUCTION", "1").lower() not in {"0", "false", "no"}:
+        failures.extend(_survey_style_failures(candidate_text))
     for entity in required_entities:
         alternate = entity[4:] if entity.startswith("The ") else ""
         if entity and entity not in candidate_text and (not alternate or alternate not in candidate_text):
@@ -907,6 +968,130 @@ def _full_reconstruction_filter_failures(
         for failure in _surface_quality_failures(paragraph):
             failures.append(f"surface_quality:{failure}")
     return failures
+
+
+def _author_stance_thesis_filter_failures(
+    *,
+    candidate_text: str,
+    required_entities: list[str],
+    min_paragraphs: int = 4,
+    max_paragraphs: int = 6,
+    require_author_stance_marker: bool = True,
+    reject_survey_style: bool = False,
+) -> list[str]:
+    failures: list[str] = []
+    if not candidate_text.strip():
+        return ["empty_rewrite"]
+    paragraph_count = _paragraph_count(candidate_text)
+    if paragraph_count < min_paragraphs or paragraph_count > max_paragraphs:
+        failures.append(f"paragraph_count:{paragraph_count}_expected_between:{min_paragraphs}_{max_paragraphs}")
+    if _has_rewrite_meta_text(candidate_text):
+        failures.append("meta_text_leak")
+    missing_entities: list[str] = []
+    for entity in required_entities:
+        alternate = entity[4:] if entity.startswith("The ") else ""
+        if entity and entity not in candidate_text and (not alternate or alternate not in candidate_text):
+            missing_entities.append(entity)
+    if required_entities:
+        coverage = (len(required_entities) - len(missing_entities)) / len(required_entities)
+        if coverage < 0.8:
+            failures.append(f"required_entity_coverage:{coverage:.2f}_missing:{len(missing_entities)}")
+    lowered = candidate_text.lower()
+    if require_author_stance_marker and not re.search(r"\b(i think|i find|i do not|i don't|i see|i would)\b", lowered):
+        failures.append("missing_author_stance_marker")
+    if reject_survey_style:
+        failures.extend(_survey_style_failures(candidate_text))
+    for paragraph in [part.strip() for part in re.split(r"\n\s*\n", candidate_text) if part.strip()]:
+        for failure in _surface_quality_failures(paragraph):
+            failures.append(f"surface_quality:{failure}")
+    return failures
+
+
+def _survey_style_failures(text: str) -> list[str]:
+    failures: list[str] = []
+    banned_openers = {
+        "economically",
+        "culturally",
+        "globally",
+        "internationally",
+        "technologically",
+        "politically",
+        "socially",
+    }
+    for paragraph in [part.strip() for part in re.split(r"\n\s*\n", str(text or "")) if part.strip()]:
+        first_words = " ".join(re.findall(r"\b[A-Za-z']+\b", paragraph.lower())[:4])
+        first_word = first_words.split(" ")[0] if first_words else ""
+        if first_word in banned_openers:
+            failures.append(f"survey_opening:{first_word}")
+        if first_words.startswith("on the global") or first_words.startswith("in conclusion"):
+            failures.append(f"survey_opening:{first_words}")
+    lowered = str(text or "").lower()
+    banned_phrases = [
+        "undeniably powerful",
+        "undeniably strong",
+        "influence is undeniable",
+        "wields immense influence",
+        "massive impact",
+        "global trends",
+        "stabilizing force",
+        "layer of complexity",
+        "unresolved challenges",
+        "internal tensions",
+        "powerhouse",
+        "melting pot",
+        "beacon of opportunity",
+        "remarkable achievements",
+        "significant contradictions",
+        "significant challenges",
+        "dominant role",
+        "complex and influential",
+        "complex force",
+        "shaped the world",
+        "global affairs",
+        "groundbreaking technology",
+        "purely successful or flawed",
+        "pivotal moment",
+        "coexists with",
+        "this duality",
+    ]
+    for phrase in banned_phrases:
+        if phrase in lowered:
+            failures.append(f"survey_phrase:{phrase}")
+    return failures
+
+
+def _required_anchor_coverage(candidate_text: str, required_entities: list[str]) -> float:
+    if not required_entities:
+        return 1.0
+    preserved = 0
+    for entity in required_entities:
+        entity = str(entity or "").strip()
+        if not entity:
+            continue
+        alternate = entity[4:] if entity.startswith("The ") else ""
+        if entity in candidate_text or (alternate and alternate in candidate_text):
+            preserved += 1
+    return preserved / len([entity for entity in required_entities if str(entity or "").strip()] or [""])
+
+
+def _author_strategy_semantic_override_allowed(
+    *,
+    strategy_kind: str,
+    generated_candidate: dict[str, Any],
+    candidate_text: str,
+    semantic_similarity: float | None,
+    anchors_safe: bool,
+) -> bool:
+    if strategy_kind not in {"author_stance_thesis_reframe", "author_stance_texture_pass"}:
+        return False
+    if not anchors_safe:
+        return False
+    if not isinstance(semantic_similarity, (int, float)) or float(semantic_similarity) < 0.75:
+        return False
+    required_entities = generated_candidate.get("required_entities")
+    if not isinstance(required_entities, list):
+        required_entities = []
+    return _required_anchor_coverage(candidate_text, required_entities) >= 0.85
 
 
 def _attach_hidden_paragraph_targets(candidate_payload: dict[str, Any], target_map: dict[str, str]) -> dict[str, Any]:
@@ -1059,6 +1244,85 @@ def _build_entity_locked_full_reconstruction_prompt(
     )
 
 
+def _build_keyword_locked_short_texture_prompt(
+    *,
+    required_entities: list[str],
+    paragraph_inventory: list[dict[str, Any]],
+    expected_paragraph_count: int,
+    original_text: str,
+) -> str:
+    global_keywords = _keywords_from_target_text(original_text)[:55]
+    return (
+        "Output only the rewritten essay. No title, notes, markdown, bullets, numbering, or explanation.\n"
+        f"Return exactly {expected_paragraph_count} paragraphs separated by blank lines.\n"
+        "Generate from structured anchors, not from original sentence phrasing.\n"
+        f"Preserve required entities and numbers exactly where natural: {json.dumps(required_entities, ensure_ascii=False)}\n"
+        f"Use this paragraph inventory in order: {json.dumps(paragraph_inventory, ensure_ascii=False)}\n"
+        f"Keep these topic keywords represented naturally across the essay: {json.dumps(global_keywords, ensure_ascii=False)}\n"
+        "Use 2 to 3 complete sentences per paragraph. Keep semantic coverage, but avoid long generic explanation chains.\n"
+        "Use varied sentence rhythm and concrete subjects. Do not add new facts, examples, named entities, citations, dates, or events.\n"
+        "Avoid stock essay phrases such as in conclusion, often described, one of the most, key role, shaped the modern world, and significant.\n"
+        "The result should read like concise student prose, not notes and not a marketing summary."
+    )
+
+
+def _build_author_stance_thesis_reframe_prompt(
+    *,
+    original_text: str,
+    required_entities: list[str],
+    paragraph_inventory: list[dict[str, Any]],
+    target_paragraph_count: int = 4,
+    variant: int = 1,
+) -> str:
+    global_keywords = _keywords_from_target_text(original_text)[:45]
+    variant_instruction = {
+        1: "Use a skeptical student voice with clear judgment lines. Keep the argument direct.",
+        2: "Start paragraphs with concrete claims, not category labels. Use shorter sentences where the point is simple.",
+        3: "Make the essay feel like a writer thinking through a contradiction, not covering topics evenly.",
+    }.get(variant, "Prioritize plain judgment and uneven rhythm over balanced survey coverage.")
+    return (
+        "Output only the rewritten essay. No title, notes, markdown, bullets, numbering, or explanation.\n"
+        f"Rewrite as a narrow thesis-driven essay in {target_paragraph_count} paragraphs separated by blank lines.\n"
+        "Use first-person analytical stance where natural, such as I think, I find, or I do not see. Do not invent personal experience.\n"
+        "Do not preserve the broad one-topic-per-paragraph survey shape. Merge related topics and prioritize an argument.\n"
+        "Core thesis pattern: this subject is difficult to judge cleanly because its power or importance comes from several places and has contradictions.\n"
+        f"Preserve these required anchors exactly where relevant: {json.dumps(required_entities, ensure_ascii=False)}\n"
+        f"Use this source inventory for factual coverage, but do not copy its structure: {json.dumps(paragraph_inventory, ensure_ascii=False)}\n"
+        f"Represent these topic keywords naturally, without forcing all of them: {json.dumps(global_keywords, ensure_ascii=False)}\n"
+        "Use only source facts. Do not add new named people, places, organizations, dates, statistics, examples, events, or citations.\n"
+        "Do not open paragraphs with category labels such as Economically, Culturally, Technologically, Politically, or On the global stage.\n"
+        "Avoid polished survey phrases and academic nouns such as in conclusion, global impact, key role, significant influence, shaped the modern world, complex and influential, global influence is undeniable, powerhouse, melting pot, beacon of opportunity, systemic issues, narrative of progress, central to understanding, exerts immense influence, deep-seated, coexists, interventionism, societal concerns, duality, remarkable achievements, significant contradictions, significant challenges, global affairs, and defying simple judgment.\n"
+        "Use plain judgment lines instead of formal topic sentences. Prefer sentences like: That picture is incomplete. The harder question is who benefits from it. I do not see that as a simple success story.\n"
+        "Keep the voice readable, slightly uneven, and mildly opinionated, not encyclopedic, not balanced category coverage, and not over-compressed.\n\n"
+        f"{variant_instruction}\n\n"
+        f"SOURCE:\n{original_text}"
+    )
+
+
+def _build_author_stance_texture_pass_prompt(
+    *,
+    source_text: str,
+    draft_text: str,
+    required_entities: list[str],
+    target_paragraph_count: int = 4,
+) -> str:
+    return (
+        "Output only the revised essay. No title, notes, markdown, bullets, numbering, or explanation.\n"
+        f"Keep exactly {target_paragraph_count} paragraphs separated by blank lines.\n"
+        "This is a texture pass, not a new essay. Preserve the same facts, claims, sequence of ideas, and overall stance.\n"
+        f"Keep required anchors where natural and preserve high anchor coverage: {json.dumps(required_entities, ensure_ascii=False)}\n"
+        "Use only facts already present in SOURCE or CURRENT_DRAFT. Do not add new named people, places, organizations, dates, statistics, examples, events, or citations.\n"
+        "Hard rule: no paragraph may begin with a category label or scope label. Banned paragraph openings include Economically, Culturally, Technologically, Politically, Globally, Internationally, On the global stage, and In conclusion.\n"
+        "Use natural claim openings instead. Paragraph 1 should open with a judgment by the writer. Paragraph 2 should open with a concrete contrast. Paragraph 3 should open with public image or culture as part of the argument, not as a category label. Paragraph 4 should open with power outside the subject or wider consequences, not a scope label.\n"
+        "Replace polished survey wording with plain judgment. Avoid phrases such as undeniably powerful, undeniably strong, wields immense influence, massive impact, global trends, stabilizing force, layer of complexity, unresolved challenges, internal tensions, powerhouse, remarkable achievements, significant contradictions, and dominant role.\n"
+        "Vary sentence length naturally. Include 2 to 3 short complete judgment sentences where they fit. Do not create fragments or choppy notes.\n"
+        "Keep first-person analytical stance where natural. Do not invent personal experience or pretend to have lived events.\n"
+        "The result should sound like a careful student revising their own draft, not a balanced encyclopedia summary.\n\n"
+        f"SOURCE:\n{source_text}\n\n"
+        f"CURRENT_DRAFT:\n{draft_text}"
+    )
+
+
 def _supports_openai_penalties(model: str | None) -> bool:
     normalized = str(model or "").strip().lower()
     return normalized in {
@@ -1074,6 +1338,15 @@ def _supports_repetition_penalty(model: str | None) -> bool:
         "deepseek/deepseek-chat",
         "meta-llama/llama-3.3-70b-instruct",
     }
+
+
+def _author_stance_target_paragraph_count() -> int:
+    raw = os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_PARAGRAPHS", "4")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 4
+    return max(3, min(6, value))
 
 
 def _paragraph_tactics() -> list[str]:
@@ -1304,6 +1577,153 @@ def _generate_candidates(
                 "paragraph_count": _paragraph_count(candidate_text),
                 "expected_paragraph_count": expected_paragraph_count,
             })
+        if (
+            os.environ.get("DRAFTPROOF_REWRITE_V2_KEYWORD_LOCKED_SHORT_TEXTURE", "0").lower()
+            not in {"0", "false", "no"}
+            and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
+        ):
+            prompt = _build_keyword_locked_short_texture_prompt(
+                required_entities=required_entities,
+                paragraph_inventory=paragraph_inventory,
+                expected_paragraph_count=expected_paragraph_count,
+                original_text=original_text,
+            )
+            response = gateway.chat(
+                prompt,
+                system="You generate semantically faithful, lower-predictability rewrites from structured anchors.",
+                max_tokens=5000,
+                temperature=0.66,
+                top_p=0.9,
+                presence_penalty=0.08 if _supports_openai_penalties(model) else None,
+                frequency_penalty=0.18 if _supports_openai_penalties(model) else None,
+                repetition_penalty=1.04 if _supports_repetition_penalty(model) else None,
+                seed=11702,
+            )
+            raw_text = clean_candidate_output(response.content)
+            candidate_text = _restore_required_anchor_forms(raw_text, required_entities)
+            filter_failures = _full_reconstruction_filter_failures(
+                original_text=original_text,
+                candidate_text=candidate_text,
+                required_entities=required_entities,
+                expected_paragraph_count=expected_paragraph_count,
+            )
+            candidates.append({
+                "strategy": "scan_keyword_locked_short_texture",
+                "strategy_kind": "entity_locked_full_reconstruction",
+                "candidate_number": variants + 1,
+                "text": candidate_text,
+                "candidate_response": candidate_text,
+                "raw_candidate_response": raw_text,
+                "local_filter_passed": not filter_failures,
+                "local_filter_failures": filter_failures,
+                "required_entities": required_entities,
+                "paragraph_count": _paragraph_count(candidate_text),
+                "expected_paragraph_count": expected_paragraph_count,
+            })
+        if (
+            os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", "1").lower()
+            not in {"0", "false", "no"}
+            and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
+        ):
+            target_paragraph_count = _author_stance_target_paragraph_count()
+            author_variants = max(1, min(4, int(os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_CANDIDATES", "3") or 3)))
+            for author_number in range(1, author_variants + 1):
+                if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+                    break
+                prompt = _build_author_stance_thesis_reframe_prompt(
+                    original_text=original_text,
+                    required_entities=required_entities,
+                    paragraph_inventory=paragraph_inventory,
+                    target_paragraph_count=target_paragraph_count,
+                    variant=author_number,
+                )
+                response = gateway.chat(
+                    prompt,
+                    system=(
+                        "You rewrite broad essays into faithful, thesis-driven student prose. "
+                        "Preserve source anchors and do not invent facts."
+                    ),
+                    max_tokens=5000,
+                    temperature=0.68 + (author_number * 0.04),
+                    top_p=0.9 + (0.01 * min(author_number, 3)),
+                    presence_penalty=0.12 if _supports_openai_penalties(model) else None,
+                    frequency_penalty=0.25 if _supports_openai_penalties(model) else None,
+                    repetition_penalty=1.06 if _supports_repetition_penalty(model) else None,
+                    seed=19000 + author_number,
+                )
+                raw_text = clean_candidate_output(response.content)
+                candidate_text = _restore_required_anchor_forms(raw_text, required_entities)
+                filter_failures = _author_stance_thesis_filter_failures(
+                    candidate_text=candidate_text,
+                    required_entities=required_entities,
+                    min_paragraphs=target_paragraph_count,
+                    max_paragraphs=target_paragraph_count,
+                )
+                candidates.append({
+                    "strategy": "scan_author_stance_thesis_reframe",
+                    "strategy_kind": "author_stance_thesis_reframe",
+                    "candidate_number": variants + 1 + author_number,
+                    "author_variant": author_number,
+                    "text": candidate_text,
+                    "candidate_response": candidate_text,
+                    "raw_candidate_response": raw_text,
+                    "local_filter_passed": not filter_failures,
+                    "local_filter_failures": filter_failures,
+                    "required_entities": required_entities,
+                    "paragraph_count": _paragraph_count(candidate_text),
+                    "expected_paragraph_count": target_paragraph_count,
+                })
+                if (
+                    not filter_failures
+                    and os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_TEXTURE_PASS", "0").lower()
+                    not in {"0", "false", "no"}
+                    and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
+                ):
+                    prompt = _build_author_stance_texture_pass_prompt(
+                        source_text=original_text,
+                        draft_text=candidate_text,
+                        required_entities=required_entities,
+                        target_paragraph_count=target_paragraph_count,
+                    )
+                    response = gateway.chat(
+                        prompt,
+                        system=(
+                            "You revise essay texture while preserving facts. "
+                            "Reduce formal survey rhythm without adding information."
+                        ),
+                        max_tokens=5000,
+                        temperature=0.78,
+                        top_p=0.94,
+                        presence_penalty=0.18 if _supports_openai_penalties(model) else None,
+                        frequency_penalty=0.32 if _supports_openai_penalties(model) else None,
+                        repetition_penalty=1.08 if _supports_repetition_penalty(model) else None,
+                        seed=19100 + author_number,
+                    )
+                    raw_text = clean_candidate_output(response.content)
+                    texture_text = _restore_required_anchor_forms(raw_text, required_entities)
+                    texture_failures = _author_stance_thesis_filter_failures(
+                        candidate_text=texture_text,
+                        required_entities=required_entities,
+                        min_paragraphs=target_paragraph_count,
+                        max_paragraphs=target_paragraph_count,
+                        require_author_stance_marker=False,
+                        reject_survey_style=True,
+                    )
+                    candidates.append({
+                        "strategy": "scan_author_stance_texture_pass",
+                        "strategy_kind": "author_stance_texture_pass",
+                        "candidate_number": variants + 1 + author_variants + author_number,
+                        "author_variant": author_number,
+                        "text": texture_text,
+                        "candidate_response": texture_text,
+                        "raw_candidate_response": raw_text,
+                        "local_filter_passed": not texture_failures,
+                        "local_filter_failures": texture_failures,
+                        "required_entities": required_entities,
+                        "paragraph_count": _paragraph_count(texture_text),
+                        "expected_paragraph_count": target_paragraph_count,
+                        "source_strategy": "scan_author_stance_thesis_reframe",
+                    })
         if candidates:
             return candidates
     for strategy in strategies:
@@ -1559,8 +1979,19 @@ def run_rewrite_pipeline_v2(
                     continue
             semantic = check_semantic_drift(original_text, candidate_text, threshold=0.15)
             anchors_safe = protected_spans_preserved(original_text, candidate_text, protected)
-            semantic_safe = bool(semantic.accepted)
             strategy_kind = str(generated_candidate.get("strategy_kind") or "")
+            semantic_similarity = getattr(semantic, "similarity", None)
+            semantic_safe = bool(semantic.accepted)
+            semantic_override = False
+            if not semantic_safe and _author_strategy_semantic_override_allowed(
+                strategy_kind=strategy_kind,
+                generated_candidate=generated_candidate,
+                candidate_text=candidate_text,
+                semantic_similarity=semantic_similarity,
+                anchors_safe=bool(anchors_safe),
+            ):
+                semantic_safe = True
+                semantic_override = True
             if not anchors_safe or not _semantic_scan_allowed(strategy_kind, semantic_safe):
                 candidate_rows.append({
                     **generated_candidate,
@@ -1572,8 +2003,9 @@ def run_rewrite_pipeline_v2(
                     "semantic_safe": semantic_safe,
                     "protected_anchors_safe": bool(anchors_safe),
                     "semantic_review_required": not semantic_safe,
-                    "semantic_similarity": getattr(semantic, "similarity", None),
+                    "semantic_similarity": semantic_similarity,
                     "semantic_reasons": getattr(semantic, "reasons", None),
+                    "semantic_override_applied": semantic_override,
                 })
                 continue
             progress(min(80, 64 + index * 4), f"Scanning V2 candidate {index}")
@@ -1605,8 +2037,9 @@ def run_rewrite_pipeline_v2(
                 "semantic_safe": semantic_safe,
                 "protected_anchors_safe": bool(anchors_safe),
                 "semantic_review_required": not semantic_safe,
-                "semantic_similarity": getattr(semantic, "similarity", None),
+                "semantic_similarity": semantic_similarity,
                 "semantic_reasons": getattr(semantic, "reasons", None),
+                "semantic_override_applied": semantic_override,
                 "report": candidate_report,
                 "text": candidate_text,
             })

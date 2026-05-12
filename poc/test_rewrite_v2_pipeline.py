@@ -9,6 +9,10 @@ import tempfile
 from rewrite.guards import check_semantic_drift
 from rewrite_v2 import run_rewrite_pipeline_v2
 from rewrite_v2.pipeline import (
+    _author_stance_thesis_filter_failures,
+    _author_strategy_semantic_override_allowed,
+    _build_author_stance_texture_pass_prompt,
+    _build_author_stance_thesis_reframe_prompt,
     _cluster_text_from_gate,
     _compose_full_doc_delta_winners,
     _expected_full_reconstruction_paragraph_count,
@@ -16,8 +20,12 @@ from rewrite_v2.pipeline import (
     _paragraph_tactics,
     _paragraph_target_map,
     _patch_filter_failures,
+    _has_rewrite_meta_text,
+    _survey_style_failures,
     _required_entities_for_full_reconstruction,
+    _restore_required_anchor_forms,
     _replace_once_flexible,
+    _strip_rewrite_meta_text,
 )
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
@@ -547,6 +555,136 @@ paragraph_inventory = _paragraph_inventory_for_full_reconstruction(
 assert_test(
     len(paragraph_inventory) == 2 and paragraph_inventory[0]["paragraph_id"] == "p001",
     "V2 builds a dynamic paragraph inventory for full reconstruction prompts",
+)
+cleaned_meta = _strip_rewrite_meta_text(
+    "Here's a rewritten version:\n\n---\n\nParagraph one.\n\nParagraph two.\n\n---\n\nChanges made:\n- varied wording"
+)
+assert_test(
+    cleaned_meta == "Paragraph one.\n\nParagraph two.",
+    "V2 strips LLM wrapper/meta text from generated candidates",
+)
+anchor_repaired = _restore_required_anchor_forms(
+    "Hollywood and the National Basketball Association appear here. The UN and NATO are involved.",
+    ["The National Basketball Association", "United Nations", "North Atlantic Treaty Organization"],
+)
+assert_test(
+    "The National Basketball Association" in anchor_repaired
+    and "United Nations" in anchor_repaired
+    and "North Atlantic Treaty Organization" in anchor_repaired,
+    "V2 restores generic acronym and article anchor forms before rescoring",
+)
+author_prompt = _build_author_stance_thesis_reframe_prompt(
+    original_text="AlphaCom released NovaAI in 2025. It created debate about schools.",
+    required_entities=["AlphaCom", "NovaAI"],
+    paragraph_inventory=[{"paragraph_id": "p001", "keywords": ["released", "debate", "schools"]}],
+    target_paragraph_count=4,
+)
+assert_test(
+    "4 paragraphs" in author_prompt and "Do not preserve the broad one-topic-per-paragraph survey shape" in author_prompt,
+    "V2 author-stance thesis prompt requests merged argument structure instead of survey shape",
+)
+author_filter_failures = _author_stance_thesis_filter_failures(
+    candidate_text=(
+        "I find AlphaCom hard to judge because NovaAI looks useful and risky.\n\n"
+        "I think the school debate matters because a tool can help work without settling trust.\n\n"
+        "The stronger point is not that technology is good or bad. It is that people still need rules.\n\n"
+        "I do not see NovaAI as a simple success story, because adoption is easier than judgment."
+    ),
+    required_entities=["AlphaCom", "NovaAI"],
+    min_paragraphs=4,
+    max_paragraphs=4,
+)
+assert_test(
+    not author_filter_failures,
+    "V2 author-stance thesis filter accepts anchored four-paragraph argument candidates",
+)
+assert_test(
+    "powerhouse" in author_prompt and "Do not open paragraphs with category labels" in author_prompt,
+    "V2 author-stance thesis prompt discourages formal survey phrases without blocking rescoring",
+)
+anchor_coverage_failures = _author_stance_thesis_filter_failures(
+    candidate_text=(
+        "I find AlphaCom difficult to judge because NovaAI solves one problem and creates another.\n\n"
+        "I think the useful part is clear, but the public cost is harder to settle.\n\n"
+        "That picture is incomplete without asking who controls the tool.\n\n"
+        "I do not see it as a simple success story."
+    ),
+    required_entities=["AlphaCom", "NovaAI", "tool", "success", "Singapore"],
+    min_paragraphs=4,
+    max_paragraphs=4,
+)
+assert_test(
+    not anchor_coverage_failures,
+    "V2 author-stance thesis filter allows high anchor coverage before semantic rescoring",
+)
+texture_prompt = _build_author_stance_texture_pass_prompt(
+    source_text="AlphaCom released NovaAI in 2025. Schools debated its use.",
+    draft_text=(
+        "Economically, AlphaCom is undeniably powerful because NovaAI changed schools.\n\n"
+        "Culturally, the tool complicates its legacy.\n\n"
+        "Globally, people debated the same question.\n\n"
+        "I do not see this as simple."
+    ),
+    required_entities=["AlphaCom", "NovaAI"],
+    target_paragraph_count=4,
+)
+assert_test(
+    "texture pass, not a new essay" in texture_prompt
+    and "Hard rule: no paragraph may begin with a category label" in texture_prompt
+    and "Use only facts already present" in texture_prompt,
+    "V2 author texture pass preserves facts while targeting formal survey rhythm",
+)
+texture_filter_failures = _author_stance_thesis_filter_failures(
+    candidate_text=(
+        "AlphaCom is hard to judge because NovaAI solves one problem and creates another.\n\n"
+        "The useful part is clear, but the public cost is harder to settle.\n\n"
+        "That picture is incomplete without asking who controls the tool.\n\n"
+        "It is not a simple success story."
+    ),
+    required_entities=["AlphaCom", "NovaAI", "tool", "success"],
+    min_paragraphs=4,
+    max_paragraphs=4,
+    require_author_stance_marker=False,
+)
+assert_test(
+    not texture_filter_failures,
+    "V2 author texture pass can rescore plain-stance candidates without first-person markers",
+)
+assert_test(
+    not _has_rewrite_meta_text("Power here is both creative and uneven."),
+    "V2 meta-text detector does not reject normal prose containing here is",
+)
+assert_test(
+    _has_rewrite_meta_text("Here is the rewritten essay:\n\nAlphaCom changed the debate."),
+    "V2 meta-text detector still rejects wrapper text",
+)
+survey_failures = _survey_style_failures(
+    "Economically, AlphaCom is a powerhouse.\n\nCulturally, NovaAI has massive impact."
+)
+assert_test(
+    any(str(item).startswith("survey_opening:") for item in survey_failures)
+    and any(str(item).startswith("survey_phrase:") for item in survey_failures),
+    "V2 survey-style filter catches category openings and polished detector-risk phrases",
+)
+assert_test(
+    _author_strategy_semantic_override_allowed(
+        strategy_kind="author_stance_texture_pass",
+        generated_candidate={"required_entities": ["AlphaCom", "NovaAI", "schools", "Singapore"]},
+        candidate_text="AlphaCom and NovaAI changed schools, but the question stayed local in Singapore.",
+        semantic_similarity=0.78,
+        anchors_safe=True,
+    ),
+    "V2 author texture pass can use high-similarity anchor coverage semantic override",
+)
+assert_test(
+    not _author_strategy_semantic_override_allowed(
+        strategy_kind="author_stance_texture_pass",
+        generated_candidate={"required_entities": ["AlphaCom", "NovaAI", "schools", "Singapore"]},
+        candidate_text="AlphaCom changed the debate.",
+        semantic_similarity=0.78,
+        anchors_safe=True,
+    ),
+    "V2 author texture semantic override rejects low anchor coverage",
 )
 
 cluster_text = _cluster_text_from_gate(
