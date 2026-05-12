@@ -135,8 +135,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
 summary = result["result"].summary
 candidate_trace = summary.get("candidate_trace") or []
 assert_test(
-    result["status"] == RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
-    "V2 replay reports failed mitigation instead of unsafe partial success",
+    result["status"] == "safe_partial_mitigation_applied",
+    "V2 replay applies safe partial mitigation without claiming strict success",
 )
 assert_test(
     summary["rewrite_goal_status"]["status"] == RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
@@ -328,8 +328,12 @@ assert_test(
     "V2 applies score-target safe near-miss candidates as rewritten output",
 )
 assert_test(
-    near_miss_result["status"] == RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
-    "V2 does not label applied safe near-miss candidates as strict success",
+    near_miss_result["status"] == "safe_near_miss_applied",
+    "V2 exposes applied safe near-miss separately from strict success",
+)
+assert_test(
+    near_miss_summary["rewrite_goal_status"]["status"] == RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
+    "V2 keeps strict goal status failed for applied safe near-miss candidates",
 )
 
 with tempfile.TemporaryDirectory() as tmpdir:
@@ -358,6 +362,10 @@ assert_test(
 assert_test(
     close_partial_summary["rewrite_goal_status"]["reason"] == "close_score_frontier_applied_but_target_not_met",
     "V2 reports close partial application without calling it target success",
+)
+assert_test(
+    close_partial_result["status"] == "safe_partial_mitigation_applied",
+    "V2 top-level status no longer says no safe candidate when safe partial text is applied",
 )
 assert_test(
     close_partial_summary.get("rewrite_effective_config", {}).get("apply_partial_max_gap") == 2.0,
@@ -398,6 +406,10 @@ assert_test(
 assert_test(
     production_gap_summary["rewrite_goal_status"]["reason"] == "close_score_frontier_applied_but_target_not_met",
     "V2 reports production-like safe partial as applied but not strict success",
+)
+assert_test(
+    production_gap_result["status"] == "safe_partial_mitigation_applied",
+    "V2 production-like safe partial does not return misleading no-safe-candidate status",
 )
 
 with tempfile.TemporaryDirectory() as tmpdir:

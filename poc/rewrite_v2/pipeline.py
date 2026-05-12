@@ -1331,7 +1331,7 @@ def run_rewrite_pipeline_v2(
             "applied_candidate_lane": CandidateLane.SAFE_NEAR_MISS.value,
             "reason": "score_target_met_but_strict_detector_safe_goal_not_met",
         }
-        public_status = RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value
+        public_status = "safe_near_miss_applied"
         converged = False
         convergence_reason = "rewrite_v2_score_target_candidate_applied_strict_goal_not_met"
     elif best_applicable_close_partial:
@@ -1345,7 +1345,7 @@ def run_rewrite_pipeline_v2(
             "applied_candidate_lane": CandidateLane.PARTIAL_DIAGNOSTIC.value,
             "reason": "close_score_frontier_applied_but_target_not_met",
         }
-        public_status = RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value
+        public_status = "safe_partial_mitigation_applied"
         converged = False
         convergence_reason = "rewrite_v2_close_score_frontier_applied_target_not_met"
     else:
@@ -1388,6 +1388,7 @@ def run_rewrite_pipeline_v2(
     summary = {
         "rewrite_pipeline_version": "rewrite_v2_scan_driven",
         "outcome": public_status,
+        "strict_goal_status": final_goal.get("status") if isinstance(final_goal, dict) else public_status,
         "rewrite_goal_status": final_goal,
         "reference_ai": reference_ai,
         "required_ai_drop": required_ai_drop,
@@ -1423,6 +1424,7 @@ def run_rewrite_pipeline_v2(
             "candidates": len(candidate_rows),
             "selected": bool(
                 public_status == RewriteGoalStatus.AI_MITIGATED.value
+                or public_status in {"safe_near_miss_applied", "safe_partial_mitigation_applied"}
                 or best_applicable_near_miss
                 or best_applicable_close_partial
             ),
