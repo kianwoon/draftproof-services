@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 
-from rewrite.guards import check_semantic_drift
+from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 from rewrite_v2 import run_rewrite_pipeline_v2
 from rewrite_v2.pipeline import (
     _author_stance_thesis_filter_failures,
@@ -722,6 +722,26 @@ quantifier_drift = check_semantic_drift(
 assert_test(
     quantifier_drift.accepted,
     "V2 semantic guard does not treat quantifier-prefixed noun phrases as named entities",
+)
+soft_quote_original = 'Education should focus on “what students know,” but also on “how students think.”'
+soft_quote_candidate = "Education should focus on knowledge, but also on student reasoning."
+soft_quote_protected = detect_protected_spans(soft_quote_original)
+soft_quote_drift = check_semantic_drift(soft_quote_original, soft_quote_candidate, threshold=0.15)
+assert_test(
+    all(span.reason != "direct_quote" for span in soft_quote_protected)
+    and protected_spans_preserved(soft_quote_original, soft_quote_candidate, soft_quote_protected)
+    and all(not reason.startswith("quote_lost") for reason in soft_quote_drift.reasons),
+    "V2 quote guard treats short conceptual emphasis quotes as soft semantic content",
+)
+hard_quote_original = 'A learner may say “I do not know where to begin” during assessment.'
+hard_quote_candidate = "A learner may say they are unsure during assessment."
+hard_quote_protected = detect_protected_spans(hard_quote_original)
+hard_quote_drift = check_semantic_drift(hard_quote_original, hard_quote_candidate, threshold=0.15)
+assert_test(
+    any(span.reason == "direct_quote" for span in hard_quote_protected)
+    and not protected_spans_preserved(hard_quote_original, hard_quote_candidate, hard_quote_protected)
+    and any(reason.startswith("quote_lost") for reason in hard_quote_drift.reasons),
+    "V2 quote guard still hard-protects attributed direct quotes",
 )
 
 print("All rewrite V2 pipeline tests passed.")

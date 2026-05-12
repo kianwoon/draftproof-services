@@ -29,6 +29,46 @@ _SINGLE_QUOTE_RE = re.compile(r"(?:(?<=[\s(\[{,])[''']|['''](?=\s))['''].+?[''']
 # Numeric patterns (standalone numbers, percentages, dates)
 _NUMBER_RE = re.compile(r'\b\d+(?:\.\d+)?%?\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4}\b', re.I)
 
+_QUOTE_ATTRIBUTION_RE = re.compile(
+    r"\b(?:according to|said|says|stated|wrote|reported|argued|argues|claimed|claims|"
+    r"explained|explains|notes?|observed|observes|found|finds|concluded|concludes|"
+    r"interview|survey|participant|respondent|learner|teacher|student may say|may say)\b",
+    re.I,
+)
+
+
+def _quote_content(quote: str) -> str:
+    return str(quote or "").strip().strip('"“”\'‘’').strip()
+
+
+def _quote_words(quote: str) -> List[str]:
+    return re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", _quote_content(quote))
+
+
+def _is_hard_quote(text: str, start: int, end: int, quote: str) -> bool:
+    """Return True for quotes that should be preserved exactly.
+
+    Short writer-emphasis phrases such as "what students know" are soft
+    semantic content. Direct/evidence quotes, attributed quotes, long quotes,
+    and citation-adjacent quotes remain hard protected anchors.
+    """
+    content = _quote_content(quote)
+    if not content:
+        return False
+    words = _quote_words(quote)
+    if len(words) >= 8:
+        return True
+    context = text[max(0, start - 90): min(len(text), end + 90)]
+    if _QUOTE_ATTRIBUTION_RE.search(context):
+        return True
+    if re.search(r"\([A-Z][^)]*\d{4}[^)]*\)|\[[0-9,\-\s]+\]", context):
+        return True
+    if content.endswith("?") and len(words) <= 10:
+        return False
+    if re.search(r"[.!?]$", content) and content[:1].isupper() and len(words) >= 4:
+        return True
+    return False
+
 
 def detect_protected_spans(text: str) -> List[ProtectedSpan]:
     """Find spans that must never be auto-rewritten."""
@@ -36,9 +76,10 @@ def detect_protected_spans(text: str) -> List[ProtectedSpan]:
 
     # Direct quotes
     for m in _QUOTE_RE.finditer(text):
-        spans.append(ProtectedSpan(m.start(), m.end(), "direct_quote", m.group()))
+        if _is_hard_quote(text, m.start(), m.end(), m.group()):
+            spans.append(ProtectedSpan(m.start(), m.end(), "direct_quote", m.group()))
     for m in _SINGLE_QUOTE_RE.finditer(text):
-        if len(m.group()) > 4:  # skip apostrophes in contractions
+        if len(m.group()) > 4 and _is_hard_quote(text, m.start(), m.end(), m.group()):
             spans.append(ProtectedSpan(m.start(), m.end(), "direct_quote", m.group()))
 
     # Citation markers
@@ -158,17 +199,10 @@ def _extract_citations(text: str) -> Set[str]:
 
 
 def _extract_quotes(text: str) -> Set[str]:
-    """Extract quoted text — only multi-word quotes (scare quotes excluded)."""
+    """Extract hard quoted text for drift checks."""
     quotes = set()
-    strip_chars = '"“”\'‘’'
     for m in _QUOTE_RE.finditer(text):
-        content = m.group().strip(strip_chars)
-        # Rhetorical question prompts in essays are not source quotes or
-        # evidence anchors; preserving their exact wording is too strict for
-        # rewrite drift control.
-        if content.strip().endswith("?"):
-            continue
-        if len(content.split()) >= 3:
+        if _is_hard_quote(text, m.start(), m.end(), m.group()):
             quotes.add(m.group())
     return quotes
 
