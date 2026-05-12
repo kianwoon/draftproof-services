@@ -123,6 +123,7 @@ from rewrite_pipeline import (
     _clear_stale_rollback_for_kept_ai_mitigation,
     _ai_search_fast_accept_reason,
     _ai_search_candidate_selection_status,
+    _mark_ai_search_progress_selection,
     _review_marker_notes,
     _ai_candidate_quality_reject_reason,
     _source_repair_brief,
@@ -1095,6 +1096,41 @@ assert_test(
     and not tiny_search_status["selectable"]
     and tiny_search_status["reason"] == "best_candidate_below_required_ai_drop",
     "AI search tracks tiny score drops without selecting them as mitigation success",
+)
+topk_partial_status = _mark_ai_search_progress_selection(
+    _ai_search_candidate_selection_status(54.62, 52.57, True, min_drop=5.0),
+    reason="accepted_topk_blocker_progress",
+    topk_blocker_progress=True,
+)
+assert_test(
+    topk_partial_status["selectable"]
+    and not topk_partial_status["success"]
+    and not topk_partial_status["ai_drop_success"]
+    and topk_partial_status["partial_progress"]
+    and topk_partial_status["topk_blocker_progress"],
+    "AI search keeps top-k blocker progress selectable without calling a 2-point drop success",
+)
+turnitin_partial_status = _mark_ai_search_progress_selection(
+    _ai_search_candidate_selection_status(54.62, 52.57, True, min_drop=5.0),
+    reason="accepted_partial_turnitin_like_mitigation",
+    partial_turnitin_like_mitigation=True,
+)
+assert_test(
+    turnitin_partial_status["selectable"]
+    and not turnitin_partial_status["success"]
+    and turnitin_partial_status["partial_progress"],
+    "AI search keeps partial Turnitin-like progress separate from required AI-drop success",
+)
+required_drop_status = _mark_ai_search_progress_selection(
+    _ai_search_candidate_selection_status(54.62, 49.10, True, min_drop=5.0),
+    reason="accepted_topk_blocker_progress",
+    topk_blocker_progress=True,
+)
+assert_test(
+    required_drop_status["selectable"]
+    and required_drop_status["success"]
+    and required_drop_status["ai_drop_success"],
+    "AI search preserves success when progress also meets the required AI-drop threshold",
 )
 safe_partial_status = _safe_partial_quality_improvement_status(
     {

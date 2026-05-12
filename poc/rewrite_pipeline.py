@@ -1148,6 +1148,28 @@ def _ai_search_candidate_selection_status(
     return status
 
 
+def _mark_ai_search_progress_selection(
+    selection_status: dict,
+    *,
+    reason: str,
+    full_success: bool = False,
+    **flags,
+) -> dict:
+    """Mark a candidate as selectable progress without overclaiming AI success."""
+    ai_drop_success = bool(selection_status.get("success"))
+    progress_flags = {key: bool(value) for key, value in flags.items()}
+    selection_status.update({
+        "success": bool(full_success or ai_drop_success),
+        "ai_drop_success": ai_drop_success,
+        "selectable": True,
+        "partial_progress": not bool(full_success),
+        "progress_reason": reason,
+        "reason": reason,
+        **progress_flags,
+    })
+    return selection_status
+
+
 def _safe_partial_quality_improvement_status(
     authenticity_status: dict | None,
     human_shift: dict | None,
@@ -9265,13 +9287,12 @@ def run_rewrite_pipeline(
                 ai_score_regressed=ai_score_regressed,
             )
             if bounded_blocked_tradeoff.get("allowed"):
-                selection_status.update({
-                    "success": True,
-                    "selectable": True,
-                    "reason": "accepted_blocked_human_winner_bounded_tradeoff",
-                    "blocked_human_winner_repair": True,
-                    "bounded_quality_tradeoff": bounded_blocked_tradeoff,
-                })
+                _mark_ai_search_progress_selection(
+                    selection_status,
+                    reason="accepted_blocked_human_winner_bounded_tradeoff",
+                    blocked_human_winner_repair=True,
+                )
+                selection_status["bounded_quality_tradeoff"] = bounded_blocked_tradeoff
             elif candidate_eval.get("blocked_human_winner_repair"):
                 selection_status["bounded_quality_tradeoff"] = bounded_blocked_tradeoff
             incremental_authenticity_selectable = bool(
@@ -9663,27 +9684,27 @@ def run_rewrite_pipeline(
                 and not authenticity_status.get("ai_authorship_regression_blocked")
             )
             if ai_footprint_selectable:
-                selection_status.update({
-                    "success": True,
-                    "selectable": True,
-                    "reason": (
+                ai_footprint_full_mitigation = bool(ai_footprint_outcome == "ai_mitigated")
+                _mark_ai_search_progress_selection(
+                    selection_status,
+                    reason=(
                         "accepted_ai_footprint_mitigation"
-                        if ai_footprint_outcome == "ai_mitigated"
+                        if ai_footprint_full_mitigation
                         else "accepted_partial_ai_footprint_mitigation"
                     ),
-                    "ai_footprint_mitigation": bool(ai_footprint_outcome == "ai_mitigated"),
-                    "partial_ai_footprint_mitigation": bool(ai_footprint_outcome == "partially_ai_mitigated"),
-                })
+                    full_success=ai_footprint_full_mitigation,
+                    ai_footprint_mitigation=ai_footprint_full_mitigation,
+                    partial_ai_footprint_mitigation=bool(ai_footprint_outcome == "partially_ai_mitigated"),
+                )
             if turnitin_like_selectable:
                 turnitin_like_full_mitigation = bool(
                     turnitin_like_gate.get("safe_band")
                     and ai_footprint_gate.get("safe_band")
                     and eligible_span_density_gate.get("safe")
                 )
-                selection_status.update({
-                    "success": True,
-                    "selectable": True,
-                    "reason": (
+                _mark_ai_search_progress_selection(
+                    selection_status,
+                    reason=(
                         selection_status.get("reason")
                         if selection_status.get("ai_footprint_mitigation")
                         else (
@@ -9692,31 +9713,28 @@ def run_rewrite_pipeline(
                             else "accepted_partial_turnitin_like_mitigation"
                         )
                     ),
-                    "turnitin_like_mitigation": turnitin_like_full_mitigation,
-                    "partial_turnitin_like_mitigation": not turnitin_like_full_mitigation,
-                })
+                    full_success=turnitin_like_full_mitigation,
+                    turnitin_like_mitigation=turnitin_like_full_mitigation,
+                    partial_turnitin_like_mitigation=not turnitin_like_full_mitigation,
+                )
             if topk_blocker_progress_selectable:
-                selection_status.update({
-                    "success": True,
-                    "selectable": True,
-                    "reason": "accepted_topk_blocker_progress",
-                    "topk_blocker_progress": True,
-                })
+                _mark_ai_search_progress_selection(
+                    selection_status,
+                    reason="accepted_topk_blocker_progress",
+                    topk_blocker_progress=True,
+                )
             if topk_safe_band_rebuild_selectable:
-                selection_status.update({
-                    "success": True,
-                    "selectable": True,
-                    "reason": "accepted_topk_safe_band_rebuild",
-                    "topk_safe_band_rebuild": True,
-                    "topk_safe_band_achieved": True,
-                    "topk_calibrated_risk": round(float(candidate_topk_calibrated), 3),
-                })
+                _mark_ai_search_progress_selection(
+                    selection_status,
+                    reason="accepted_topk_safe_band_rebuild",
+                    topk_safe_band_rebuild=True,
+                    topk_safe_band_achieved=True,
+                )
+                selection_status["topk_calibrated_risk"] = round(float(candidate_topk_calibrated), 3)
             if human_amplification_selectable:
-                selection_status.update({
-                    "success": True,
-                    "selectable": True,
-                    "human_signal_amplification": True,
-                    "reason": (
+                _mark_ai_search_progress_selection(
+                    selection_status,
+                    reason=(
                         selection_status.get("reason")
                         if selection_status.get("ai_footprint_mitigation")
                         or selection_status.get("partial_ai_footprint_mitigation")
@@ -9724,13 +9742,12 @@ def run_rewrite_pipeline(
                         or selection_status.get("topk_safe_band_achieved")
                         else "accepted_human_signal_amplification"
                     ),
-                })
+                    human_signal_amplification=True,
+                )
             if human_anchor_amplification_selectable:
-                selection_status.update({
-                    "success": True,
-                    "selectable": True,
-                    "human_anchor_amplifier": True,
-                    "reason": (
+                _mark_ai_search_progress_selection(
+                    selection_status,
+                    reason=(
                         selection_status.get("reason")
                         if selection_status.get("ai_footprint_mitigation")
                         or selection_status.get("partial_ai_footprint_mitigation")
@@ -9738,7 +9755,8 @@ def run_rewrite_pipeline(
                         or selection_status.get("topk_safe_band_achieved")
                         else "accepted_human_anchor_amplifier"
                     ),
-                })
+                    human_anchor_amplifier=True,
+                )
             if (
                 not selection_status.get("selectable")
                 and (
@@ -9760,57 +9778,53 @@ def run_rewrite_pipeline(
                     or post_safe_target_climb_selectable
                 )
             ):
-                selection_status.update({
-                    "success": True,
-                    "selectable": True,
-                    "reason": (
-                        "accepted_blocker_elimination"
-                        if blocker_elimination_selectable
+                fallback_reason = (
+                    "accepted_blocker_elimination"
+                    if blocker_elimination_selectable
+                    else (
+                        "accepted_human_primary_progress"
+                        if human_primary_selectable
                         else (
-                            "accepted_human_primary_progress"
-                            if human_primary_selectable
-                            else (
-                                    "accepted_turnitin_like_mitigation"
-                                    if turnitin_like_selectable and turnitin_like_gate.get("safe_band") and ai_footprint_gate.get("safe_band")
+                                "accepted_turnitin_like_mitigation"
+                                if turnitin_like_selectable and turnitin_like_gate.get("safe_band") and ai_footprint_gate.get("safe_band")
+                                else (
+                                    "accepted_partial_turnitin_like_mitigation"
+                                    if turnitin_like_selectable
                                     else (
-                                        "accepted_partial_turnitin_like_mitigation"
-                                        if turnitin_like_selectable
+                                        "accepted_ai_footprint_mitigation"
+                                        if ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"
                                         else (
-                                            "accepted_ai_footprint_mitigation"
-                                            if ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"
+                                            "accepted_partial_ai_footprint_mitigation"
+                                            if ai_footprint_selectable
                                             else (
-                                                "accepted_partial_ai_footprint_mitigation"
-                                                if ai_footprint_selectable
+                                                "accepted_topk_blocker_progress"
+                                                if topk_blocker_progress_selectable
                                                 else (
-                                                    "accepted_topk_blocker_progress"
-                                                    if topk_blocker_progress_selectable
+                                                    "accepted_topk_safe_band_rebuild"
+                                                    if topk_safe_band_rebuild_selectable
                                                     else (
-                                                        "accepted_topk_safe_band_rebuild"
-                                                        if topk_safe_band_rebuild_selectable
+                                                        "accepted_human_signal_amplification"
+                                                        if human_amplification_selectable
                                                         else (
-                                                            "accepted_human_signal_amplification"
-                                                            if human_amplification_selectable
+                                                            "accepted_human_anchor_amplifier"
+                                                            if human_anchor_amplification_selectable
                                                             else (
-                                                                "accepted_human_anchor_amplifier"
-                                                                if human_anchor_amplification_selectable
+                                                                "accepted_post_safe_target_climb"
+                                                                if post_safe_target_climb_selectable
                                                                 else (
-                                                                    "accepted_post_safe_target_climb"
-                                                                    if post_safe_target_climb_selectable
+                                                                    "accepted_score_drag_removal"
+                                                                    if score_drag_removal_selectable
                                                                     else (
-                                                                        "accepted_score_drag_removal"
-                                                                        if score_drag_removal_selectable
+                                                                        "accepted_safe_partial_quality_improvement"
+                                                                        if safe_partial_quality_selectable
                                                                         else (
-                                                                            "accepted_safe_partial_quality_improvement"
-                                                                            if safe_partial_quality_selectable
-                                                                            else (
-                                                                                (
-                                                                                    "accepted_incremental_human_target_progress"
-                                                                                    if _radar_goal_requires_human_progress(radar_goal_controller)
-                                                                                    else "accepted_safe_authorship_suppression"
-                                                                                )
-                                                                                if safe_authorship_suppression_selectable
-                                                                                else "accepted_incremental_authenticity_progress"
+                                                                            (
+                                                                                "accepted_incremental_human_target_progress"
+                                                                                if _radar_goal_requires_human_progress(radar_goal_controller)
+                                                                                else "accepted_safe_authorship_suppression"
                                                                             )
+                                                                            if safe_authorship_suppression_selectable
+                                                                            else "accepted_incremental_authenticity_progress"
                                                                         )
                                                                     )
                                                                 )
@@ -9818,40 +9832,49 @@ def run_rewrite_pipeline(
                                                         )
                                                     )
                                                 )
-                                        )
+                                            )
                                     )
                                 )
                             )
                         )
-                    ),
-                    "blocker_elimination": bool(blocker_elimination_selectable),
-                    "human_primary_progress": bool(human_primary_selectable),
-                    "turnitin_like_mitigation": bool(
+                    )
+                )
+                fallback_full_success = bool(
+                    (turnitin_like_selectable and turnitin_like_gate.get("safe_band") and ai_footprint_gate.get("safe_band"))
+                    or (ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated")
+                )
+                _mark_ai_search_progress_selection(
+                    selection_status,
+                    reason=fallback_reason,
+                    full_success=fallback_full_success,
+                    blocker_elimination=bool(blocker_elimination_selectable),
+                    human_primary_progress=bool(human_primary_selectable),
+                    turnitin_like_mitigation=bool(
                         turnitin_like_selectable
                         and turnitin_like_gate.get("safe_band")
                         and ai_footprint_gate.get("safe_band")
                     ),
-                    "partial_turnitin_like_mitigation": bool(
+                    partial_turnitin_like_mitigation=bool(
                         turnitin_like_selectable
                         and not (
                             turnitin_like_gate.get("safe_band")
                             and ai_footprint_gate.get("safe_band")
                         )
                     ),
-                    "ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"),
-                    "partial_ai_footprint_mitigation": bool(ai_footprint_selectable and ai_footprint_outcome == "partially_ai_mitigated"),
-                    "topk_blocker_progress": bool(topk_blocker_progress_selectable),
-                    "topk_safe_band_rebuild": bool(topk_safe_band_rebuild_selectable),
-                    "topk_safe_band_achieved": bool(topk_safe_band_rebuild_selectable),
-                    "cleanup_improved": bool(safe_partial_quality_selectable and ai_footprint_outcome == "cleanup_improved"),
-                    "authenticity_incremental": bool(incremental_authenticity_selectable),
-                    "human_signal_amplification": bool(human_amplification_selectable),
-                    "human_anchor_amplifier": bool(human_anchor_amplification_selectable),
-                    "safe_authorship_suppression": bool(safe_authorship_suppression_selectable),
-                    "safe_partial_quality_improvement": bool(safe_partial_quality_selectable),
-                    "score_drag_removal": bool(score_drag_removal_selectable),
-                    "post_safe_target_climb": bool(post_safe_target_climb_selectable),
-                })
+                    ai_footprint_mitigation=bool(ai_footprint_selectable and ai_footprint_outcome == "ai_mitigated"),
+                    partial_ai_footprint_mitigation=bool(ai_footprint_selectable and ai_footprint_outcome == "partially_ai_mitigated"),
+                    topk_blocker_progress=bool(topk_blocker_progress_selectable),
+                    topk_safe_band_rebuild=bool(topk_safe_band_rebuild_selectable),
+                    topk_safe_band_achieved=bool(topk_safe_band_rebuild_selectable),
+                    cleanup_improved=bool(safe_partial_quality_selectable and ai_footprint_outcome == "cleanup_improved"),
+                    authenticity_incremental=bool(incremental_authenticity_selectable),
+                    human_signal_amplification=bool(human_amplification_selectable),
+                    human_anchor_amplifier=bool(human_anchor_amplification_selectable),
+                    safe_authorship_suppression=bool(safe_authorship_suppression_selectable),
+                    safe_partial_quality_improvement=bool(safe_partial_quality_selectable),
+                    score_drag_removal=bool(score_drag_removal_selectable),
+                    post_safe_target_climb=bool(post_safe_target_climb_selectable),
+                )
             if human_amplification_score:
                 selection_status["human_signal_amplification_score"] = human_amplification_score
             if candidate_eval.get("human_anchor_amplifier_status"):
