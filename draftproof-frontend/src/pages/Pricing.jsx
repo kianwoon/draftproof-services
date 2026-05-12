@@ -75,7 +75,7 @@ export default function Pricing() {
             <h2>Guided revision</h2>
             <div className="pricing-amount">
               <span className="pricing-currency">$</span>
-              <span className="pricing-value">3.80</span>
+              <span className="pricing-value">2.70</span>
               <span className="pricing-unit">/ 1,000 words</span>
             </div>
           </div>
@@ -83,7 +83,7 @@ export default function Pricing() {
           <ul className="pricing-features">
             <li>
               <span className="check" aria-hidden="true">&#10003;</span>
-              <span><strong>2 tokens</strong> per guided revision</span>
+              <span><strong>3 tokens</strong> per guided revision</span>
             </li>
             <li>
               <span className="check" aria-hidden="true">&#10003;</span>

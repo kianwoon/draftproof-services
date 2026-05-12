@@ -28,8 +28,8 @@ def _scan_cost(word_count: int) -> int:
 
 
 def _rewrite_cost(word_count: int) -> int:
-    """2 tokens per 1,000 words (ceiling). 1–1000 = 2, 1001–2000 = 4, etc."""
-    return max(2, -(-word_count // 1000) * 2)
+    """3 tokens per 1,000 words (ceiling). 1–1000 = 3, 1001–2000 = 6, etc."""
+    return max(3, -(-word_count // 1000) * 3)
 
 
 def _read_document_text_sync(document_id: str) -> str:
