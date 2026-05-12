@@ -8,7 +8,7 @@ import tempfile
 
 from rewrite.guards import check_semantic_drift
 from rewrite_v2 import run_rewrite_pipeline_v2
-from rewrite_v2.pipeline import _paragraph_target_map
+from rewrite_v2.pipeline import _cluster_text_from_gate, _paragraph_target_map, _replace_once_flexible
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.selection import CandidateLane, decide_candidate
 from rewrite_v2.strategy import StrategyKind, route_strategies
@@ -303,6 +303,24 @@ paragraph_map = _paragraph_target_map(
 assert_test(
     paragraph_map["p002"] == "Second full paragraph with exact source text.",
     "V2 prefers real document paragraphs over truncated paragraph excerpts",
+)
+
+cluster_text = _cluster_text_from_gate(
+    "First sentence. Second sentence. Third sentence. Fourth sentence.",
+    {"start_sentence": 1, "end_sentence": 2},
+)
+assert_test(
+    cluster_text == "Second sentence. Third sentence.",
+    "V2 extracts unsafe cluster text by sentence window",
+)
+rewritten_cluster_text, cluster_applied = _replace_once_flexible(
+    "First sentence.\n\nSecond sentence.   Third sentence.\n\nFourth sentence.",
+    "Second sentence. Third sentence.",
+    "Second sentence changed. Third sentence changed.",
+)
+assert_test(
+    cluster_applied and "Second sentence changed. Third sentence changed." in rewritten_cluster_text,
+    "V2 replaces unsafe cluster text across whitespace differences",
 )
 
 entity_start_drift = check_semantic_drift(

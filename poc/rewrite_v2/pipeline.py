@@ -74,6 +74,11 @@ def _badge_wq(report: dict | None) -> float | None:
     return float(score) if isinstance(score, (int, float)) else None
 
 
+def _rewrite_smoothness(report: dict | None) -> float | None:
+    value = (((report or {}).get("ai_risk_badge") or {}).get("ai_components") or {}).get("rewrite_smoothness")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 def _first_applied_paragraph_patch(candidate: dict[str, Any]) -> dict[str, Any] | None:
     for patch in candidate.get("patches") or []:
         if isinstance(patch, dict) and patch.get("applied") and patch.get("target_paragraph") and patch.get("rewritten_paragraph"):
@@ -203,6 +208,280 @@ def _paragraph_target_map(scan_report: dict | None, original_text: str = "") -> 
         if paragraph_id and paragraph and paragraph_id not in result:
             result[paragraph_id] = paragraph
     return result
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", str(text or "").strip())
+        if sentence.strip()
+    ]
+
+
+def _cluster_text_from_gate(text: str, cluster: dict[str, Any]) -> str:
+    sentences = _split_sentences(text)
+    start = cluster.get("start_sentence")
+    end = cluster.get("end_sentence")
+    if not isinstance(start, int) or not isinstance(end, int):
+        return ""
+    start = max(0, start)
+    end = min(len(sentences) - 1, end)
+    if start > end:
+        return ""
+    return " ".join(sentences[start:end + 1]).strip()
+
+
+def _replace_once_flexible(text: str, target: str, replacement: str) -> tuple[str, bool]:
+    if not target or not replacement or target.strip() == replacement.strip():
+        return text, False
+    if target in text:
+        return text.replace(target, replacement, 1), True
+    pattern = re.sub(r"\\\s+", r"\\s+", re.escape(target.strip()))
+    rewritten, count = re.subn(pattern, replacement.strip(), text, count=1)
+    return rewritten, bool(count)
+
+
+def _cluster_response_format() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "unsafe_cluster_rescue",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "replacement_text": {
+                        "type": "string",
+                        "description": "Replacement text for the exact unsafe cluster.",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Short reason tied to reducing density, top-k predictability, and smoothness.",
+                    },
+                },
+                "required": ["replacement_text", "rationale"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _build_unsafe_cluster_rescue_prompt(
+    *,
+    cluster_text: str,
+    cluster: dict[str, Any],
+    goal: dict[str, Any] | None,
+    variant: int,
+) -> str:
+    payload = {
+        "variant": variant,
+        "task": "Rewrite this unsafe detector cluster only.",
+        "cluster": {
+            "start_sentence": cluster.get("start_sentence"),
+            "end_sentence": cluster.get("end_sentence"),
+            "word_count": cluster.get("word_count"),
+            "risk_score": cluster.get("risk_score"),
+            "generic_hits": cluster.get("generic_hits"),
+            "transition_count": cluster.get("transition_count"),
+        },
+        "remaining_blockers": {
+            "texture_blockers": ((goal or {}).get("ai_footprint_gate") or {}).get("texture_blockers"),
+            "remaining_ai_footprint_drivers": ((goal or {}).get("ai_footprint_gate") or {}).get("remaining_ai_footprint_drivers"),
+            "turnitin_component_drops": ((goal or {}).get("turnitin_like_gate") or {}).get("component_drops"),
+        },
+        "unsafe_cluster_text": cluster_text,
+    }
+    return (
+        "DraftProof unsafe-cluster rescue.\n"
+        "Rewrite only the provided cluster text. Do not rewrite the full document.\n"
+        "Goal: reduce remaining AI detector flags, especially top-k predictability, unsafe eligible density, and smoothness/bypasser texture.\n"
+        "Use natural uneven student prose, not fragment lists and not polished encyclopedia prose.\n"
+        "Keep paragraph meaning, names, dates, numbers, and claims. Do not add new facts, citations, examples, sources, or personal experience.\n"
+        "Avoid generic transitions such as 'another important feature', 'at the same time', 'in conclusion', 'plays a major role', and 'one of the biggest'.\n"
+        "Prefer concrete sentence routes, varied sentence openings, and a few moderate-length sentences mixed with shorter ones.\n"
+        "Return valid JSON only with keys: replacement_text, rationale.\n\n"
+        f"UNSAFE_CLUSTER_RESCUE_JSON:\n{json.dumps(payload, indent=2, default=str)}"
+    )
+
+
+def _generate_unsafe_cluster_rescue_candidates(
+    *,
+    frontier: dict[str, Any],
+    original_text: str,
+    original_report: dict[str, Any],
+    reference_ai: float | None,
+    required_ai_drop: float,
+    target_ai_score: float | None,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+    timeout_seconds: int,
+    starting_cost: int,
+) -> list[dict[str, Any]]:
+    if not api_key or not frontier:
+        return []
+    frontier_text = str(frontier.get("text") or "")
+    frontier_report = frontier.get("report") if isinstance(frontier.get("report"), dict) else {}
+    frontier_goal = frontier.get("goal") if isinstance(frontier.get("goal"), dict) else {}
+    density = (frontier_goal.get("eligible_span_density_gate") or {})
+    clusters = [
+        cluster for cluster in (density.get("top_unsafe_clusters") or [])
+        if isinstance(cluster, dict)
+    ][:max(1, int(os.environ.get("DRAFTPROOF_REWRITE_V2_RESCUE_CLUSTERS", "1") or 1))]
+    if not frontier_text or not clusters:
+        return []
+    gateway = LLMGateway(LLMConfig(
+        api_key=api_key,
+        model=model or os.environ.get("LLM_MODEL") or "openai/gpt-4.1-mini",
+        base_url=base_url or os.environ.get("LLM_BASE_URL", ""),
+        timeout=timeout_seconds,
+        max_retries=1,
+        max_tokens=3000,
+        temperature=0.55,
+    ))
+    protected = detect_protected_spans(original_text)
+    rows: list[dict[str, Any]] = []
+    variants = max(1, min(4, int(os.environ.get("DRAFTPROOF_REWRITE_V2_RESCUE_CANDIDATES", "2") or 2)))
+    original_smoothness = _rewrite_smoothness(original_report)
+    max_smoothness_regression = float(os.environ.get("DRAFTPROOF_REWRITE_V2_MAX_SMOOTHNESS_REGRESSION", "4.0") or 4.0)
+    for cluster_index, cluster in enumerate(clusters, start=1):
+        cluster_text = _cluster_text_from_gate(frontier_text, cluster)
+        if not cluster_text:
+            continue
+        for variant in range(1, variants + 1):
+            prompt = _build_unsafe_cluster_rescue_prompt(
+                cluster_text=cluster_text,
+                cluster=cluster,
+                goal=frontier_goal,
+                variant=variant,
+            )
+            response = gateway.chat(
+                prompt,
+                system="You are DraftProof's unsafe cluster rescue engine.",
+                max_tokens=2200,
+                temperature=0.62,
+                top_p=0.9,
+                presence_penalty=0.25 if _supports_openai_penalties(model) else None,
+                frequency_penalty=0.35 if _supports_openai_penalties(model) else None,
+                repetition_penalty=1.05 if _supports_repetition_penalty(model) else None,
+                seed=2300 + (cluster_index * 10) + variant,
+                response_format=_cluster_response_format(),
+                provider={"require_parameters": True},
+            )
+            payload = _json_from_response(response.content)
+            replacement = str(payload.get("replacement_text") or "").strip()
+            rescue_text, applied = _replace_once_flexible(frontier_text, cluster_text, replacement)
+            if not applied:
+                rows.append({
+                    "strategy": "unsafe_cluster_rescue",
+                    "strategy_kind": "unsafe_cluster_rescue",
+                    "candidate_number": variant,
+                    "cluster_index": cluster_index,
+                    "candidate_ai": None,
+                    "candidate_response": payload,
+                    "decision": {
+                        "lane": CandidateLane.REJECT.value,
+                        "reason": "unsafe_cluster_target_not_found",
+                        "rank": [],
+                    },
+                })
+                continue
+            filter_failures = _patch_filter_failures([{
+                "target_paragraph": cluster_text,
+                "rewritten_paragraph": replacement,
+            }])
+            if filter_failures:
+                rows.append({
+                    "strategy": "unsafe_cluster_rescue",
+                    "strategy_kind": "unsafe_cluster_rescue",
+                    "candidate_number": variant,
+                    "cluster_index": cluster_index,
+                    "candidate_ai": None,
+                    "candidate_response": payload,
+                    "local_filter_failures": filter_failures,
+                    "decision": {
+                        "lane": CandidateLane.REJECT.value,
+                        "reason": "unsafe_cluster_local_filter_rejected",
+                        "rank": [],
+                    },
+                })
+                continue
+            semantic = check_semantic_drift(original_text, rescue_text, threshold=0.15)
+            anchors_safe = protected_spans_preserved(original_text, rescue_text, protected)
+            if not anchors_safe or not semantic.accepted:
+                rows.append({
+                    "strategy": "unsafe_cluster_rescue",
+                    "strategy_kind": "unsafe_cluster_rescue",
+                    "candidate_number": variant,
+                    "cluster_index": cluster_index,
+                    "decision": {
+                        "lane": CandidateLane.REJECT.value,
+                        "reason": "unsafe_cluster_semantic_or_anchor_rejected",
+                        "rank": [],
+                    },
+                    "semantic_safe": bool(semantic.accepted),
+                    "protected_anchors_safe": bool(anchors_safe),
+                    "semantic_similarity": getattr(semantic, "similarity", None),
+                    "semantic_reasons": getattr(semantic, "reasons", None),
+                })
+                continue
+            candidate_report = _scan_report(rescue_text)
+            goal = evaluate_rewrite_goal(
+                original_text=original_text,
+                candidate_text=rescue_text,
+                original_report=original_report,
+                candidate_report=candidate_report,
+            )
+            decision = decide_candidate(
+                goal=goal,
+                original_report=original_report,
+                candidate_report=candidate_report,
+                reference_ai=reference_ai,
+                required_ai_drop=required_ai_drop,
+                target_ai_score=target_ai_score,
+                semantic_safe=bool(semantic.accepted),
+                quality_safe=anchors_safe,
+                cost=starting_cost + len(rows) + 1,
+            ).to_dict()
+            smoothness = _rewrite_smoothness(candidate_report)
+            smoothness_regression = (
+                round(float(smoothness) - float(original_smoothness), 3)
+                if isinstance(smoothness, (int, float)) and isinstance(original_smoothness, (int, float))
+                else None
+            )
+            if (
+                isinstance(smoothness_regression, (int, float))
+                and smoothness_regression > max_smoothness_regression
+                and decision.get("lane") != CandidateLane.GOAL_MET.value
+            ):
+                decision = {
+                    **decision,
+                    "lane": CandidateLane.REJECT.value,
+                    "reason": "unsafe_cluster_smoothness_regression_rejected",
+                }
+            rows.append({
+                "strategy": "unsafe_cluster_rescue",
+                "strategy_kind": "unsafe_cluster_rescue",
+                "candidate_number": variant,
+                "cluster_index": cluster_index,
+                "cluster": cluster,
+                "cluster_text": cluster_text,
+                "replacement_text": replacement,
+                "candidate_response": payload,
+                "candidate_ai": _badge_ai(candidate_report),
+                "candidate_wq": _badge_wq(candidate_report),
+                "rewrite_smoothness": smoothness,
+                "smoothness_regression": smoothness_regression,
+                "goal": goal.to_dict(),
+                "decision": decision,
+                "semantic_safe": bool(semantic.accepted),
+                "protected_anchors_safe": bool(anchors_safe),
+                "semantic_similarity": getattr(semantic, "similarity", None),
+                "semantic_reasons": getattr(semantic, "reasons", None),
+                "report": candidate_report,
+                "text": rescue_text,
+            })
+    return rows
 
 
 def _json_from_response(raw: str) -> dict[str, Any]:
@@ -861,6 +1140,30 @@ def run_rewrite_pipeline_v2(
                     "report": candidate_report,
                     "text": composed_text,
                 })
+        frontier = select_best_candidate(candidate_rows)
+        frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
+        rescue_enabled = os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"}
+        if (
+            rescue_enabled
+            and frontier
+            and frontier_lane != CandidateLane.GOAL_MET.value
+            and time.time() - started < max_runtime_seconds
+        ):
+            progress(84, "Running V2 unsafe-cluster rescue")
+            rescue_rows = _generate_unsafe_cluster_rescue_candidates(
+                frontier=frontier,
+                original_text=original_text,
+                original_report=original_report,
+                reference_ai=reference_ai,
+                required_ai_drop=required_ai_drop,
+                target_ai_score=target_ai_score,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+                timeout_seconds=max(30, min(120, int(max_runtime_seconds))),
+                starting_cost=len(candidate_rows),
+            )
+            candidate_rows.extend(rescue_rows)
     best = select_best_candidate(candidate_rows)
     best_decision = best.get("decision") if isinstance(best, dict) else {}
     best_lane = (best_decision or {}).get("lane")
