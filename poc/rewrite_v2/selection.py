@@ -80,16 +80,21 @@ def decide_candidate(
         _num((footprint.get("drops") or {}).get("ai_transformation")),
         _num(turnitin.get("score_drop")),
     )
+    external_proxy = goal.external_detector_proxy or {}
+    external_proxy_safe = bool(external_proxy.get("safe", True))
     preservation_safe = bool(quality_safe and semantic_safe)
-    if goal.status == RewriteGoalStatus.AI_MITIGATED and preservation_safe:
+    if goal.status == RewriteGoalStatus.AI_MITIGATED and preservation_safe and external_proxy_safe:
         lane = CandidateLane.GOAL_MET
         reason = "strict_goal_met"
     elif goal.status == RewriteGoalStatus.AI_MITIGATED:
         lane = CandidateLane.SAFE_NEAR_MISS
         reason = "strict_detector_goal_met_but_preservation_review_required"
-    elif quality_safe and semantic_safe and (required_drop_met or goal.detector_safe):
+    elif quality_safe and semantic_safe and external_proxy_safe and (required_drop_met or goal.detector_safe):
         lane = CandidateLane.SAFE_NEAR_MISS
         reason = "safe_near_miss"
+    elif quality_safe and semantic_safe and not external_proxy_safe and (required_drop_met or detector_movement > 0.0 or ai_drop > 0.0):
+        lane = CandidateLane.PARTIAL_DIAGNOSTIC
+        reason = "external_detector_proxy_not_safe"
     elif detector_movement > 0.0 or ai_drop > 0.0:
         lane = CandidateLane.PARTIAL_DIAGNOSTIC
         reason = "partial_progress_not_success"

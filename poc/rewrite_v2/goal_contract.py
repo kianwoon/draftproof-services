@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
+import os
+import re
 from typing import Any
 
 from rewrite_controller.eligible_span_density import build_eligible_span_density_contract
@@ -30,12 +32,174 @@ class RewriteGoalEvaluation:
     ai_footprint_gate: dict[str, Any]
     turnitin_like_gate: dict[str, Any]
     eligible_span_density_gate: dict[str, Any]
+    external_detector_proxy: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["status"] = self.status.value
         payload["version"] = "rewrite_goal_contract_v2"
         return payload
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _num(value: Any, default: float = 0.0) -> float:
+    return float(value) if isinstance(value, (int, float)) else float(default)
+
+
+def _sentences(text: str) -> list[str]:
+    return [item.strip() for item in re.split(r"(?<=[.!?])\s+", str(text or "").strip()) if item.strip()]
+
+
+def _paragraphs(text: str) -> list[str]:
+    return [item.strip() for item in re.split(r"\n\s*\n+", str(text or "").strip()) if item.strip()]
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"\b[\w'-]+\b", str(text or "")))
+
+
+def _coefficient_of_variation(values: list[int | float]) -> float:
+    numeric = [float(value) for value in values if isinstance(value, (int, float)) and float(value) > 0.0]
+    if len(numeric) < 2:
+        return 0.0
+    mean = sum(numeric) / len(numeric)
+    if mean <= 0.0:
+        return 0.0
+    variance = sum((value - mean) ** 2 for value in numeric) / len(numeric)
+    return (variance ** 0.5) / mean
+
+
+def _flat_footprint_after(footprint: dict[str, Any]) -> dict[str, float]:
+    after = footprint.get("after") if isinstance(footprint.get("after"), dict) else {}
+    flat: dict[str, float] = {}
+    for bucket in (
+        "authorship_footprint",
+        "structural_footprint",
+        "semantic_footprint",
+        "grounding_footprint",
+    ):
+        values = after.get(bucket) if isinstance(after.get(bucket), dict) else {}
+        for key, value in values.items():
+            flat[key] = _num(value)
+    flat["external_ai_flag_risk"] = _num(after.get("external_ai_flag_risk"))
+    return flat
+
+
+def _external_detector_proxy_status(
+    *,
+    candidate_text: str,
+    ai_footprint_gate: dict[str, Any],
+    turnitin_like_gate: dict[str, Any],
+    eligible_span_density_gate: dict[str, Any],
+) -> dict[str, Any]:
+    """V2-only external-detector calibration proxy.
+
+    This does not replace the scanner score. It is a stricter acceptance proxy
+    for rewrite candidates, aimed at the external-detector failure mode where a
+    polished candidate passes internal formula/density gates but still reads as
+    generic, smooth, or highly predictable.
+    """
+    after = _flat_footprint_after(ai_footprint_gate)
+    turnitin_after = turnitin_like_gate.get("after") if isinstance(turnitin_like_gate.get("after"), dict) else {}
+    turnitin_components = turnitin_after.get("components") if isinstance(turnitin_after.get("components"), dict) else {}
+    sentences = _sentences(candidate_text)
+    sentence_lengths = [_word_count(sentence) for sentence in sentences]
+    sentence_cv = _coefficient_of_variation(sentence_lengths)
+    paragraphs = _paragraphs(candidate_text)
+    paragraph_lengths = [_word_count(paragraph) for paragraph in paragraphs]
+    paragraph_cv = _coefficient_of_variation(paragraph_lengths)
+    density_ratio = _num(eligible_span_density_gate.get("unsafe_eligible_word_ratio"))
+    human_anchor = _num(eligible_span_density_gate.get("human_anchor_score"))
+
+    low_sentence_variation_penalty = 0.0
+    if len(sentence_lengths) >= 6 and sentence_cv < 0.25:
+        low_sentence_variation_penalty = 18.0
+    elif len(sentence_lengths) >= 6 and sentence_cv < 0.35:
+        low_sentence_variation_penalty = 12.0
+    elif len(sentence_lengths) >= 6 and sentence_cv < 0.45:
+        low_sentence_variation_penalty = 6.0
+
+    paragraph_symmetry_penalty = 0.0
+    if len(paragraph_lengths) >= 4 and paragraph_cv < 0.18:
+        paragraph_symmetry_penalty = 10.0
+    elif len(paragraph_lengths) >= 4 and paragraph_cv < 0.28:
+        paragraph_symmetry_penalty = 6.0
+
+    weak_anchor_penalty = 5.0 if human_anchor and human_anchor < 30.0 else 0.0
+    generic_source_compound_penalty = (
+        8.0
+        if after.get("generic_assertion_risk", 0.0) >= 85.0
+        and after.get("source_grounding_risk", 0.0) >= 85.0
+        and after.get("topk_calibrated_risk", 0.0) > 25.0
+        else 0.0
+    )
+
+    weighted_risk = (
+        after.get("ai_likelihood", 0.0) * 0.20
+        + after.get("topk_calibrated_risk", 0.0) * 0.18
+        + after.get("semantic_uniformity", 0.0) * 0.10
+        + after.get("generic_assertion_risk", 0.0) * 0.09
+        + after.get("unsupported_claim_risk", 0.0) * 0.04
+        + after.get("source_grounding_risk", 0.0) * 0.025
+        + density_ratio * 0.12
+        + after.get("discourse_regularity", 0.0) * 0.05
+        + _num(turnitin_components.get("patchwork_expansion")) * 0.06
+        + low_sentence_variation_penalty
+        + paragraph_symmetry_penalty
+        + weak_anchor_penalty
+        + generic_source_compound_penalty
+    )
+    score = round(min(100.0, max(0.0, weighted_risk)), 3)
+    safe_threshold = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_SAFE_MAX", 38.0)
+    warning_threshold = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_WARN_MAX", 32.0)
+    hard_blockers = []
+    if after.get("topk_calibrated_risk", 0.0) > _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_TOPK_MAX", 25.0):
+        hard_blockers.append("topk_calibrated_risk_above_external_safe_band")
+    if density_ratio > _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_DENSITY_MAX", 12.0):
+        hard_blockers.append("eligible_span_density_above_external_safe_band")
+    if low_sentence_variation_penalty >= 12.0 and after.get("ai_likelihood", 0.0) >= 30.0:
+        hard_blockers.append("low_sentence_variation_with_active_ai_likelihood")
+    safe = bool(score <= safe_threshold and not hard_blockers)
+    if safe:
+        outcome = "external_proxy_safe"
+    elif score <= warning_threshold and hard_blockers:
+        outcome = "external_proxy_blocked_by_hard_signal"
+    else:
+        outcome = "external_proxy_risk_high"
+    return {
+        "version": "external_detector_risk_proxy_v2",
+        "safe": safe,
+        "score": score,
+        "safe_threshold": safe_threshold,
+        "warning_threshold": warning_threshold,
+        "outcome": outcome,
+        "hard_blockers": hard_blockers,
+        "signals": {
+            "ai_likelihood": round(after.get("ai_likelihood", 0.0), 3),
+            "topk_calibrated_risk": round(after.get("topk_calibrated_risk", 0.0), 3),
+            "semantic_uniformity": round(after.get("semantic_uniformity", 0.0), 3),
+            "generic_assertion_risk": round(after.get("generic_assertion_risk", 0.0), 3),
+            "unsupported_claim_risk": round(after.get("unsupported_claim_risk", 0.0), 3),
+            "source_grounding_risk": round(after.get("source_grounding_risk", 0.0), 3),
+            "unsafe_eligible_word_ratio": round(density_ratio, 3),
+            "patchwork_expansion": round(_num(turnitin_components.get("patchwork_expansion")), 3),
+            "sentence_length_cv": round(sentence_cv, 3),
+            "paragraph_length_cv": round(paragraph_cv, 3),
+            "human_anchor_score": round(human_anchor, 3),
+        },
+        "penalties": {
+            "low_sentence_variation": low_sentence_variation_penalty,
+            "paragraph_symmetry": paragraph_symmetry_penalty,
+            "weak_human_anchor": weak_anchor_penalty,
+            "generic_source_compound": generic_source_compound_penalty,
+        },
+    }
 
 
 def _finding_total(report: dict | None) -> int:
@@ -159,10 +323,17 @@ def evaluate_rewrite_goal(
         critical_high_delta=critical_high_delta,
     )
     density = build_eligible_span_density_contract(candidate_text, candidate_report)
+    external_proxy = _external_detector_proxy_status(
+        candidate_text=candidate_text,
+        ai_footprint_gate=footprint,
+        turnitin_like_gate=turnitin,
+        eligible_span_density_gate=density,
+    )
     strict_safe = bool(footprint.get("safe_band"))
     turnitin_target = bool(turnitin.get("target_met") or turnitin.get("safe_band"))
     density_safe = bool(density.get("safe"))
-    detector_safe = bool(strict_safe and turnitin_target and density_safe)
+    external_safe = bool(external_proxy.get("safe"))
+    detector_safe = bool(strict_safe and turnitin_target and density_safe and external_safe)
     if no_text_change:
         status = RewriteGoalStatus.ORIGINAL_PRESERVED
         reason = "no_safe_rewrite_applied"
@@ -186,4 +357,5 @@ def evaluate_rewrite_goal(
         ai_footprint_gate=footprint,
         turnitin_like_gate=turnitin,
         eligible_span_density_gate=density,
+        external_detector_proxy=external_proxy,
     )

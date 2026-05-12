@@ -387,6 +387,76 @@ assert_test(
     "V2 does not classify detector-safe but semantic-review candidates as final success",
 )
 
+risky_external_report = {
+    "ai_risk_badge": {
+        "ai_likelihood_score": 30.7,
+        "ai_components": {
+            "topk_calibrated_risk": 26.114,
+            "generic_assertion_risk": 90.0,
+            "qualifying_text_ai_density": 0.0,
+        },
+        "writing_components": {
+            "unsupported_claim_risk": 55.0,
+            "broad_claim_risk": 35.0,
+            "source_grounding_risk": 100.0,
+        },
+        "transformation_classification": {
+            "features": {
+                "rewrite_smoothness": 0.301,
+                "semantic_uniformity_risk": 0.485,
+                "discourse_regularity_risk": 0.3775,
+            },
+        },
+    },
+    "integrity_layers": {
+        "layers": {
+            "ai_authorship_risk": {"score": 31.0},
+            "ai_transformation_risk": {"score": 18.0},
+        },
+    },
+    "findings": {"critical": [], "high": [], "medium": [], "low": []},
+}
+risky_external_goal = evaluate_rewrite_goal(
+    original_text=scan_json["input_text"],
+    candidate_text=(
+        "The speed of educational change now puts pressure on conventional school models. "
+        "For years, teaching relied heavily on classrooms, textbooks, and instructors guiding lessons. "
+        "Students navigate a world saturated with information from YouTube, TikTok, and countless online resources. "
+        "Schools still try to balance old expectations with new tools.\n\n"
+        "Teachers now have to help students judge information instead of simply delivering it. "
+        "They need to explain concepts, question sources, and guide students through uncertainty. "
+        "Yet schools often cling to outdated practices like high-stakes testing and rigid grading. "
+        "That tension makes reform difficult.\n\n"
+        "Technology creates useful options but also new risks. "
+        "AI-generated tools can support practice, feedback, and explanation. "
+        "They can also hide weak understanding or widen gaps between students. "
+        "The result is a system that looks modern but remains uneven.\n\n"
+        "Education therefore needs more than new devices or software. "
+        "It needs clearer judgment about what learning is for. "
+        "Without that, schools will keep reacting to change instead of shaping it."
+    ),
+    original_report=original_report,
+    candidate_report=risky_external_report,
+)
+risky_external_decision = decide_candidate(
+    goal=risky_external_goal,
+    original_report=original_report,
+    candidate_report=risky_external_report,
+    reference_ai=69.7,
+    required_ai_drop=5.0,
+    target_ai_score=64.7,
+)
+assert_test(
+    risky_external_goal.external_detector_proxy
+    and not risky_external_goal.external_detector_proxy.get("safe"),
+    "V2 external detector proxy flags top-k/generic smooth near-miss risk",
+)
+assert_test(
+    risky_external_decision.lane == CandidateLane.PARTIAL_DIAGNOSTIC
+    and risky_external_decision.reason == "external_detector_proxy_not_safe",
+    "V2 selector does not apply unsafe external-proxy candidates as safe near-miss",
+)
+
 unsafe_low_ai = {
     "strategy": "unsafe_low_ai",
     "candidate_ai": 34.0,
@@ -462,9 +532,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 "ai_risk_badge": {
                     "ai_likelihood_score": 49.0,
                     "writing_quality_score": 58.0,
-                    "ai_components": {"topk_calibrated_risk": 58},
+                    "ai_components": {"topk_calibrated_risk": 20},
                 },
-                "integrity_layers": {"layers": {"ai_authorship": {"score": 48}, "ai_transformation": {"score": 44}}},
+                "integrity_layers": {"layers": {"ai_authorship_risk": {"score": 30}, "ai_transformation_risk": {"score": 40}}},
                 "findings": {"critical": [], "high": [{"id": "f001"}], "medium": [], "low": []},
             },
         }],
