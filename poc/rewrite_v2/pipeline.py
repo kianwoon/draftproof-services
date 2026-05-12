@@ -44,7 +44,41 @@ def _semantic_scan_allowed(strategy_kind: str | None, semantic_safe: bool) -> bo
 
 
 def _close_partial_max_gap() -> float:
-    return float(os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP", "1.0") or 1.0)
+    return float(os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP", "2.0") or 2.0)
+
+
+def _llm_call_timeout_seconds(default: int = 30) -> int:
+    raw = os.environ.get("DRAFTPROOF_REWRITE_V2_LLM_TIMEOUT_SECONDS", str(default))
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        value = default
+    return max(5, min(60, value))
+
+
+def _effective_config(
+    *,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+    max_runtime_seconds: int,
+) -> dict[str, Any]:
+    effective_model = model or os.environ.get("LLM_MODEL") or "openai/gpt-4.1-mini"
+    effective_base_url = base_url or os.environ.get("LLM_BASE_URL", "")
+    return {
+        "model": effective_model,
+        "base_url": effective_base_url,
+        "has_api_key": bool(api_key),
+        "max_runtime_seconds": int(max_runtime_seconds),
+        "llm_call_timeout_seconds": _llm_call_timeout_seconds(),
+        "apply_partial_max_gap": _close_partial_max_gap(),
+        "targeted_paragraphs": int(os.environ.get("DRAFTPROOF_REWRITE_V2_TARGETED_PARAGRAPHS", "4") or 4),
+        "targeted_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_TARGETED_CANDIDATES", "4") or 4),
+        "tactics": _paragraph_tactics(),
+        "use_paragraph_local_score": _use_paragraph_local_score_gate(),
+        "unsafe_cluster_rescue": os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"},
+        "allow_full_after_targeted": os.environ.get("DRAFTPROOF_REWRITE_V2_ALLOW_FULL_AFTER_TARGETED", "0").lower() in {"1", "true", "yes"},
+    }
 
 
 def _extract_original_text(detect_json: dict[str, Any]) -> str:
@@ -980,6 +1014,12 @@ def run_rewrite_pipeline_v2(
     original_text = _extract_original_text(detect_json)
     original_report = detect_json
     reference_ai = _badge_ai(original_report)
+    effective_config = _effective_config(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        max_runtime_seconds=max_runtime_seconds,
+    )
     target_ai_score = (
         float(reference_ai) - float(required_ai_drop)
         if isinstance(reference_ai, (int, float))
@@ -1011,6 +1051,12 @@ def run_rewrite_pipeline_v2(
             "reference_ai": reference_ai,
             "required_ai_drop": required_ai_drop,
             "target_ai_score": target_ai_score,
+            "rewrite_effective_config": effective_config,
+            "candidate_generation_status": {
+                "generated_count": 0,
+                "candidate_rows": 0,
+                "reason": "needs_author_context",
+            },
             "strategy_trace": [strategy.to_dict() for strategy in strategies],
             "candidate_trace": [],
             "selected_candidate": None,
@@ -1059,6 +1105,8 @@ def run_rewrite_pipeline_v2(
         }
     candidate_rows: list[dict[str, Any]]
     if replay_candidate_records is not None:
+        generated_count = len(replay_candidate_records)
+        generation_reason = "replay_candidates"
         candidate_rows = _candidate_rows_from_replay(
             replay_candidate_records,
             original_text=original_text,
@@ -1074,8 +1122,10 @@ def run_rewrite_pipeline_v2(
             api_key=api_key,
             model=model,
             base_url=base_url,
-            timeout_seconds=max(30, min(120, int(max_runtime_seconds))),
+            timeout_seconds=_llm_call_timeout_seconds(),
         )
+        generated_count = len(generated)
+        generation_reason = "generated_candidates" if generated_count else "candidate_generation_failed_no_candidates"
         candidate_rows = []
         protected = detect_protected_spans(original_text)
         for index, generated_candidate in enumerate(generated, start=1):
@@ -1234,7 +1284,7 @@ def run_rewrite_pipeline_v2(
                 api_key=api_key,
                 model=model,
                 base_url=base_url,
-                timeout_seconds=max(30, min(120, int(max_runtime_seconds))),
+                timeout_seconds=_llm_call_timeout_seconds(),
                 starting_cost=len(candidate_rows),
             )
             candidate_rows.extend(rescue_rows)
@@ -1320,10 +1370,20 @@ def run_rewrite_pipeline_v2(
             if preserved_goal.status == RewriteGoalStatus.NEEDS_AUTHOR_CONTEXT
             else RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE
         )
-        final_goal = {**preserved_goal.to_dict(), "status": status.value, "goal_met": False}
+        failure_reason = (
+            "candidate_generation_failed_no_candidates"
+            if not candidate_rows and generated_count == 0
+            else "no_safe_rewrite_applied"
+        )
+        final_goal = {
+            **preserved_goal.to_dict(),
+            "status": status.value,
+            "goal_met": False,
+            "reason": failure_reason,
+        }
         public_status = status.value
         converged = False
-        convergence_reason = "rewrite_v2_no_candidate_met_strict_goal"
+        convergence_reason = f"rewrite_v2_{failure_reason}"
     elapsed = time.time() - started
     summary = {
         "rewrite_pipeline_version": "rewrite_v2_scan_driven",
@@ -1332,6 +1392,18 @@ def run_rewrite_pipeline_v2(
         "reference_ai": reference_ai,
         "required_ai_drop": required_ai_drop,
         "target_ai_score": target_ai_score,
+        "rewrite_effective_config": effective_config,
+        "candidate_generation_status": {
+            "generated_count": generated_count,
+            "candidate_rows": len(candidate_rows),
+            "scored_candidates": sum(1 for row in candidate_rows if row.get("candidate_ai") is not None),
+            "rejected_candidates": sum(
+                1
+                for row in candidate_rows
+                if ((row.get("decision") or {}).get("lane") == CandidateLane.REJECT.value)
+            ),
+            "reason": generation_reason,
+        },
         "strategy_trace": [strategy.to_dict() for strategy in strategies],
         "candidate_trace": [
             {key: value for key, value in row.items() if key not in {"text", "report"}}
@@ -1355,6 +1427,7 @@ def run_rewrite_pipeline_v2(
                 or best_applicable_close_partial
             ),
             "strict_selected": public_status == RewriteGoalStatus.AI_MITIGATED.value,
+            "stop_reason": convergence_reason,
         }],
         "detect_scan_original": original_report,
         "detect_scan_rewritten": final_report,

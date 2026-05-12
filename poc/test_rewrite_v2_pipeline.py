@@ -359,6 +359,62 @@ assert_test(
     close_partial_summary["rewrite_goal_status"]["reason"] == "close_score_frontier_applied_but_target_not_met",
     "V2 reports close partial application without calling it target success",
 )
+assert_test(
+    close_partial_summary.get("rewrite_effective_config", {}).get("apply_partial_max_gap") == 2.0,
+    "V2 records effective close-partial tolerance in rewrite summary",
+)
+
+previous_partial_gap = os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP")
+os.environ["DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP"] = "2.0"
+try:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        production_gap_result = run_rewrite_pipeline_v2(
+            detect_json=scan_json,
+            output_dir=tmpdir,
+            replay_candidate_records=[{
+                "strategy": "production_safe_partial_gap",
+                "text": "The United States has influenced politics, technology, culture, education, and business.",
+                "report": {
+                    "ai_risk_badge": {
+                        "ai_likelihood_score": 51.48,
+                        "writing_quality_score": 56.88,
+                        "ai_components": {"topk_calibrated_risk": 60},
+                    },
+                    "integrity_layers": {"layers": {"ai_authorship": {"score": 51}, "ai_transformation": {"score": 44}}},
+                    "findings": {"critical": [], "high": [{"id": "f001"}], "medium": [], "low": []},
+                },
+            }],
+        )
+finally:
+    if previous_partial_gap is None:
+        os.environ.pop("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP", None)
+    else:
+        os.environ["DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP"] = previous_partial_gap
+production_gap_summary = production_gap_result["result"].summary
+assert_test(
+    production_gap_summary["final_text"] != scan_json["input_text"],
+    "V2 applies safe production-like partial frontier with target gap under 2 points",
+)
+assert_test(
+    production_gap_summary["rewrite_goal_status"]["reason"] == "close_score_frontier_applied_but_target_not_met",
+    "V2 reports production-like safe partial as applied but not strict success",
+)
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    no_candidate_result = run_rewrite_pipeline_v2(
+        detect_json=scan_json,
+        output_dir=tmpdir,
+        api_key=None,
+    )
+no_candidate_summary = no_candidate_result["result"].summary
+assert_test(
+    no_candidate_summary["rewrite_goal_status"]["reason"] == "candidate_generation_failed_no_candidates",
+    "V2 distinguishes zero candidate generation from unsafe candidate selection",
+)
+assert_test(
+    no_candidate_summary["candidate_generation_status"]["generated_count"] == 0,
+    "V2 records zero generated candidates in summary diagnostics",
+)
 
 paragraph_map = _paragraph_target_map(
     {"rewrite_edit_briefs": [{"paragraph_id": "p002", "paragraph_excerpt": "truncated paragraph"}]},
