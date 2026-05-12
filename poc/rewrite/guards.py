@@ -209,7 +209,11 @@ def check_semantic_drift(
     # Named entity preservation
     orig_entities = _extract_named_entities(original)
     new_entities = _extract_named_entities(rewritten)
-    lost_entities = orig_entities - new_entities
+    lost_entities = {
+        entity
+        for entity in orig_entities - new_entities
+        if not re.search(rf"\b{re.escape(entity)}\b", rewritten)
+    }
     if lost_entities:
         for e in list(lost_entities)[:5]:
             reasons.append(f"lost_named_entity: '{e}'")

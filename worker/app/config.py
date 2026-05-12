@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     REWRITE_SOFT_TIME_LIMIT_SECONDS: int = 900
     REWRITE_TIME_LIMIT_SECONDS: int = 1020
     CELERY_VISIBILITY_TIMEOUT_SECONDS: int = 1320
+    DRAFTPROOF_REWRITE_V2_ENABLED: bool = True
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
