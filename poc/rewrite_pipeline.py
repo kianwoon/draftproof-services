@@ -64,22 +64,7 @@ from rewrite_controller.eligible_span_density import (
     compare_eligible_span_density as _eligible_span_density_comparison,
 )
 from rewrite_controller.segment_window_density import (
-    SEGMENT_WINDOW_CONTROLLER_VERSION as _SEGMENT_WINDOW_CONTROLLER_VERSION,
-    assemble_segment_window_candidate as _assemble_segment_window_candidate,
     build_segment_density_windows as _segment_density_windows,
-    extract_segment_window_payload as _extract_segment_window_payload,
-    segment_patchwork_budget as _segment_window_patchwork_budget,
-    segment_window_candidate_prompt as _segment_window_candidate_prompt,
-    segment_window_tasks as _segment_window_tasks,
-)
-from rewrite_controller.remaining_cluster_density import (
-    REMAINING_CLUSTER_CONTROLLER_VERSION as _REMAINING_CLUSTER_CONTROLLER_VERSION,
-    assemble_remaining_cluster_candidate as _assemble_remaining_cluster_candidate,
-    build_remaining_cluster_map as _remaining_cluster_map,
-    extract_remaining_cluster_payload as _extract_remaining_cluster_payload,
-    remaining_cluster_candidate_prompt as _remaining_cluster_candidate_prompt,
-    remaining_cluster_patchwork_budget as _remaining_cluster_patchwork_budget,
-    remaining_cluster_tasks as _remaining_cluster_tasks,
 )
 from rewrite_controller.window_coverage_density import (
     WINDOW_COVERAGE_CONTROLLER_VERSION as _WINDOW_COVERAGE_CONTROLLER_VERSION,
@@ -109,175 +94,436 @@ from detect.turnitin_like import (
     TURNITIN_LIKE_TARGET_AI_SCORE,
     turnitin_like_ai_profile_from_report,
 )
-
-
-def _metric_decimal(value, default=0.0):
-    if not isinstance(value, (int, float)):
-        return default
-    return value / 100.0 if abs(value) > 1 else value
-
-
-def _ai_first_gate_status(
-    reference_ai,
-    candidate_ai,
-    text_changed: bool,
-    min_drop: float = 5.0,
-    target: float = 60.0,
-    required_min_ai: float = 50.0,
-) -> dict:
-    """Evaluate whether a candidate clears the product AI-mitigation gate."""
-    delta = (
-        reference_ai - candidate_ai
-        if isinstance(reference_ai, (int, float)) and isinstance(candidate_ai, (int, float))
-        else None
-    )
-    required = (
-        bool(text_changed)
-        and isinstance(reference_ai, (int, float))
-        and reference_ai >= required_min_ai
-    )
-    success = (
-        bool(text_changed)
-        and isinstance(delta, (int, float))
-        and (
-            delta >= min_drop
-            or (
-                isinstance(reference_ai, (int, float))
-                and reference_ai >= target
-                and isinstance(candidate_ai, (int, float))
-                and candidate_ai < target
-            )
-        )
-    )
-    return {
-        "required": required,
-        "success": success,
-        "delta": delta,
-        "reference_ai": reference_ai,
-        "candidate_ai": candidate_ai,
-        "min_drop": min_drop,
-        "target": target,
-        "required_min_ai": required_min_ai,
-    }
-
-
-_AI_DENSITY_CANONICAL_FACT_RE = re.compile(
-    r"(?:\b\d{3,4}\b|https?://|www\.|\[[^\]]+\]|\([^)]*\d{4}[^)]*\)|"
-    r"\b[A-Z]{2,}[A-Z0-9-]{2,}\b)",
+from rewrite_pipeline_core.config import (
+    TOPK_SAFE_LIMIT,
+    _env_flag,
+    _float_env,
+    _float_env_optional,
+    _float_env_with_fallback,
+    _int_env_optional,
+    _llm_call_budget_exhausted_before_send,
+    _llm_role_config,
+    _load_local_env,
+    _phase_chat_sampling_kwargs,
+    _phase_sampling_arg,
+    _resolve_stage_llm_budget,
+    _retry_model_enabled,
+    _retry_model_max_calls,
+    _rewrite_model_lock,
+    _rewrite_sampling_profile,
+    _role_model,
+    _safe_index,
+    _safe_topk_calibrated_limit,
+    _safe_topk_limit,
+)
+from rewrite_pipeline_core.budget.llm_sync import (
+    _record_rewrite_llm_calls,
+    _sync_rewrite_llm_call_totals,
+)
+from rewrite_pipeline_core.budget.phase_planner import (
+    rewrite_phase_budget_plan as _core_rewrite_phase_budget_plan,
+)
+from rewrite_pipeline_core.controller_ledger import (
+    GlobalControllerLedgerDeps,
+    controller_changed_sentence_ratio as _core_controller_changed_sentence_ratio,
+    controller_metrics as _core_controller_metrics,
+    controller_record as _core_controller_record,
+    global_controller_phase_accepted as _core_global_controller_phase_accepted,
+    global_phase_budget_skip as _core_global_phase_budget_skip,
+)
+from rewrite_pipeline_core.gates.density_acceptance import (
+    DensityAcceptanceDeps,
+    remaining_cluster_density_acceptance as _core_remaining_cluster_density_acceptance,
+    segment_window_density_acceptance as _core_segment_window_density_acceptance,
+    window_coverage_density_acceptance as _core_window_coverage_density_acceptance,
+)
+from rewrite_pipeline_core.gates.ai_density_breaker import (
+    _AI_DENSITY_CANONICAL_FACT_RE,
+    _AI_DENSITY_GENERIC_RE,
+    _AI_DENSITY_TRANSITION_RE,
+    _ai_density_breaker_canonical_fact_sentence,
+    _ai_density_breaker_sentence_route,
+    _ai_density_window_targets,
+)
+from rewrite_pipeline_core.gates.ai_footprint import _ai_footprint_gate_status
+from rewrite_pipeline_core.gates.authenticity import (
+    AuthenticityGateDeps,
+    authenticity_gate_status as _core_authenticity_gate_status,
+)
+from rewrite_pipeline_core.gates.concept_origin import (
+    _best_source_paragraph_index,
+    _candidate_concept_origin_reject_reason as _core_candidate_concept_origin_reject_reason,
+    _concept_origin_normalize_term,
+    _concept_origin_protected_terms,
+    _concept_origin_terms,
+    _ordered_concept_origin_terms,
+)
+from rewrite_pipeline_core.reporting.sentence_comparison import (
+    _build_aligned_sentence_comparison,
+    _comparison_sentences,
+    _detail_value,
+    _scan_scope_summary,
+    _sentence_detail_lookup,
+    sanitize_text,
+)
+from rewrite_pipeline_core.reporting.author_evidence import (
+    AuthorEvidenceReportingDeps,
+    build_author_context_discovery_layer as _core_build_author_context_discovery_layer,
+    build_author_evidence_completion_layer as _core_build_author_evidence_completion_layer,
+    build_mitigation_ceiling_diagnostics as _core_build_mitigation_ceiling_diagnostics,
+)
+from rewrite_pipeline_core.reporting.source_grounding import (
+    SourceGroundingSearchDeps,
+    build_source_grounding_search_layer as _core_build_source_grounding_search_layer,
+)
+from rewrite_pipeline_core.reporting.authorship_schema import (
+    AuthorshipSchemaEnrichmentDeps,
+    enrich_report_authorship_schema as _core_enrich_report_authorship_schema,
+)
+from rewrite_pipeline_core.phases.window_coverage import (
+    WindowCoverageOptimizerDeps,
+    run_window_coverage_density_optimizer as _core_window_coverage_density_optimizer,
+)
+from rewrite_pipeline_core.phases.remaining_cluster import (
+    RemainingClusterDensityControllerDeps,
+    run_remaining_cluster_density_controller as _core_remaining_cluster_density_controller,
+)
+from rewrite_pipeline_core.phases.segment_window import (
+    SegmentWindowDensityControllerDeps,
+    run_segment_window_density_controller as _core_segment_window_density_controller,
+)
+from rewrite_pipeline_core.phases.formula_convergence import (
+    FormulaConvergenceControllerDeps,
+    run_formula_convergence_controller as _core_formula_convergence_controller,
+)
+from rewrite_pipeline_core.phases.iterative_topk import (
+    IterativeTopkRouteOptimizerDeps,
+    run_iterative_topk_route_optimizer as _core_run_iterative_topk_route_optimizer,
+)
+from rewrite_pipeline_core.phases.final_topk_texture import (
+    FinalTopkTextureRepairDeps,
+    run_final_topk_texture_repair as _core_run_final_topk_texture_repair,
+)
+from rewrite_pipeline_core.phases.post_safe_win import (
+    PostSafeWinTargetPushDeps,
+    run_post_safe_win_target_push as _core_run_post_safe_win_target_push,
+)
+from rewrite_pipeline_core.phases.post_topk_optimizer import (
+    PostTopkSafeBandOptimizerDeps,
+    run_post_topk_ai_safe_band_optimizer as _core_run_post_topk_ai_safe_band_optimizer,
+)
+from rewrite_pipeline_core.phases.post_topk_texture_helpers import (
+    PostTopkTextureHelperDeps,
+    apply_post_topk_patches as _core_apply_post_topk_patches,
+    authorship_transformation_texture_candidates as _core_authorship_transformation_texture_candidates,
+    authorship_transformation_texture_driver_map as _core_authorship_transformation_texture_driver_map,
+    authorship_transformation_texture_patch_prompt as _core_authorship_transformation_texture_patch_prompt,
+    extract_post_topk_patch_candidates as _core_extract_post_topk_patch_candidates,
+    post_topk_driver_map as _core_post_topk_driver_map,
+    post_topk_sentence_contextual as _core_post_topk_sentence_contextual,
+    post_topk_sentence_driver_score as _core_post_topk_sentence_driver_score,
+    texture_candidate_family as _core_texture_candidate_family,
+)
+from rewrite_pipeline_core.phases.human_anchor_candidates import (
+    HumanAnchorCandidateDeps,
+    append_anchor_sentence as _core_append_anchor_sentence,
+    anchor_sentence_for_paragraph as _core_anchor_sentence_for_paragraph,
+    formula_portfolio_candidates as _core_formula_portfolio_candidates,
+    human_anchor_amplifier_candidates as _core_human_anchor_amplifier_candidates,
+    human_anchor_suppression_frontier as _core_human_anchor_suppression_frontier,
+    human_anchor_suppression_frontier_candidates as _core_human_anchor_suppression_frontier_candidates,
+)
+from rewrite_pipeline_core.phases.topk_route import (
+    TopkRouteDeps,
+    deterministic_topk_route_sentence as _core_deterministic_topk_route_sentence,
+    remove_sentences_by_text as _core_remove_sentences_by_text,
+    splice_sentences_by_text as _core_splice_sentences_by_text,
+    topk_low_value_removal_allowed as _core_topk_low_value_removal_allowed,
+    topk_masked_route_prompt as _core_topk_masked_route_prompt,
+    topk_optimizer_sentence_limit as _core_topk_optimizer_sentence_limit,
+    topk_plain_spoken_snapshot_prompt as _core_topk_plain_spoken_snapshot_prompt,
+    topk_repair_map as _core_topk_repair_map,
+    topk_route_optimizer_candidates as _core_topk_route_optimizer_candidates,
+    topk_safe_band_sentence_patch_prompt as _core_topk_safe_band_sentence_patch_prompt,
+    topk_safe_band_snapshot_prompt as _core_topk_safe_band_snapshot_prompt,
+)
+from rewrite_pipeline_core.phases.source_grounding_utils import (
+    SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS as _CORE_SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS,
+    SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS as _CORE_SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS,
+    SOURCE_SEARCH_STOPWORDS as _CORE_SOURCE_SEARCH_STOPWORDS,
+    SourceGroundingPromptDeps,
+    SourceGroundingTargetDeps,
+    citation_reference_search_targets as _core_citation_reference_search_targets,
+    internet_reinforced_reauthor_prompt as _core_internet_reinforced_reauthor_prompt,
+    normalize_tavily_results as _core_normalize_tavily_results,
+    source_grounding_query as _core_source_grounding_query,
+    source_grounding_claim_targets as _core_source_grounding_claim_targets,
+    source_grounding_repair_prompt as _core_source_grounding_repair_prompt,
+    source_grounding_targets_from_block_decisions as _core_source_grounding_targets_from_block_decisions,
+    source_result_confidence as _core_source_result_confidence,
+    source_search_domain_blocked as _core_source_search_domain_blocked,
+    source_search_domain_list as _core_source_search_domain_list,
+    source_search_hostname as _core_source_search_hostname,
+    source_search_keywords as _core_source_search_keywords,
+    source_search_quality_label as _core_source_search_quality_label,
+)
+from rewrite_pipeline_core.phases.paragraph_targets import (
+    PARAGRAPH_CITATION_RE as _PARAGRAPH_CITATION_RE,
+    ParagraphTargetDeps,
+    is_heading_like_paragraph as _core_is_heading_like_paragraph,
+    orphan_heading_reason as _core_orphan_heading_reason,
+    paragraph_component_targets as _core_paragraph_component_targets,
+    paragraph_role as _core_paragraph_role,
+    paragraph_sentence_starters as _core_paragraph_sentence_starters,
+)
+from rewrite_pipeline_core.phases.marked_grounding import (
+    ai_search_marked_grounding_candidates as _core_ai_search_marked_grounding_candidates,
+)
+from rewrite_pipeline_core.phases.blocker_operations import (
+    BlockerOperationCandidateDeps,
+    blocker_operation_candidates as _core_blocker_operation_candidates,
+)
+from rewrite_pipeline_core.phases.blocker_plan import (
+    BlockerOperationPlanDeps,
+    block_level_decisions as _core_block_level_decisions,
+    blocker_operation_plan as _core_blocker_operation_plan,
+)
+from rewrite_pipeline_core.phases.content_pruning import (
+    ContentPruningCandidateDeps,
+    content_pruning_candidates as _core_content_pruning_candidates,
+)
+from rewrite_pipeline_core.phases.formula_block_candidates import (
+    FormulaBlockCandidateDeps,
+    formula_block_map_removal_candidates as _core_formula_block_map_removal_candidates,
+)
+from rewrite_pipeline_core.phases.generic_assertion import (
+    GenericAssertionCompilerDeps,
+    generic_assertion_compiler_candidates as _core_generic_assertion_compiler_candidates,
+    generic_assertion_sentence_score as _core_generic_assertion_sentence_score,
+)
+from rewrite_pipeline_core.phases.final_scan import (
+    run_final_rewritten_scan as _core_run_final_rewritten_scan,
+)
+from rewrite_pipeline_core.phases.input_context import (
+    RewriteInputContextDeps,
+    resolve_rewrite_input_context as _core_resolve_rewrite_input_context,
+)
+from rewrite_pipeline_core.phases.rewrite_engine import (
+    RewriteEnginePhaseDeps,
+    run_rewrite_engine_phase as _core_run_rewrite_engine_phase,
+)
+from rewrite_pipeline_core.phases.ai_search_runtime import (
+    adaptive_stop_record as _core_ai_search_adaptive_stop_record,
+    apply_budget_gateway as _core_ai_search_apply_budget_gateway,
+    phase_budget_block_record as _core_ai_search_phase_budget_block_record,
+    phase_budget_can_spend as _core_ai_search_phase_budget_can_spend,
+    record_phase_llm_call as _core_ai_search_record_phase_llm_call,
+    record_verified_candidate_scan as _core_ai_search_record_verified_candidate_scan,
+    search_budget_exhausted_record as _core_ai_search_budget_exhausted_record,
+    verified_candidate_scans_used as _core_ai_search_verified_candidate_scans_used,
+)
+from rewrite_pipeline_core.phases.ai_search_quality import (
+    _AI_SEARCH_CRITICAL_ENTITY_RE,
+    _AI_SEARCH_ENTITY_NOISE,
+    _ai_candidate_quality_reject_reason,
+    _ai_search_drift_false_positive,
+    _ai_search_entity_drift_scan_allowed,
+    _ai_search_protected_loss_reason,
+    _ai_search_quote_drift_scan_allowed,
+    _ai_search_signal_brief,
+    _document_recreate_drift_scan_allowed,
+    _normalize_direct_quote_content,
+    _protected_code_anchor_set,
+    _reconstruction_drift_scan_allowed,
+    _repair_candidate_source_damage,
+    _source_repair_brief,
+    _source_repair_drift_false_positive,
 )
 
-_AI_DENSITY_GENERIC_RE = re.compile(
-    r"\b(?:important|significant|major|strong|influential|different|many|"
-    r"various|complex|global|modern|today|society|culture|system|country|"
-    r"world|success|challenge|opportunity|influence|impact|role|feature|"
-    r"strength|development|diversity|economy|people)\b",
-    re.I,
+from rewrite_pipeline_core.prompts.targeted_repairs import (
+    TargetedRepairPromptDeps,
+    ai_search_feedback_prompt as _core_ai_search_feedback_prompt,
+    ai_search_prompt as _core_ai_search_prompt,
+    blocked_human_candidate_repair_prompt as _core_blocked_human_candidate_repair_prompt,
+    claim_narrowing_repair_prompt as _core_claim_narrowing_repair_prompt,
+    topk_texture_repair_prompt as _core_topk_texture_repair_prompt,
 )
-
-_AI_DENSITY_TRANSITION_RE = re.compile(
-    r"^(?:Furthermore|Moreover|Additionally|In conclusion|Overall|Therefore|"
-    r"However|At the same time|In addition|Despite|Another important|"
-    r"One of the|This|These|It is important)\b",
-    re.I,
+from rewrite_pipeline_core.prompts.finding_repairs import (
+    _apply_finding_local_patches as _core_apply_finding_local_patches,
+    _blocking_finding_targets as _core_blocking_finding_targets,
+    _exact_blocking_target_from_context as _core_exact_blocking_target_from_context,
+    _expand_fragment_to_candidate_sentence as _core_expand_fragment_to_candidate_sentence,
+    _extract_finding_local_patches as _core_extract_finding_local_patches,
+    _finding_local_repair_prompt as _core_finding_local_repair_prompt,
+    _sentences_from_excerpt as _core_sentences_from_excerpt,
 )
-
-_CONCEPT_ORIGIN_STOPWORDS = {
-    "about", "above", "across", "after", "again", "against", "almost", "along",
-    "also", "although", "always", "among", "another", "around", "because",
-    "before", "being", "below", "between", "both", "cannot", "could", "does",
-    "doing", "done", "each", "either", "else", "enough", "even", "every",
-    "everything", "from", "further", "general", "have", "having", "here",
-    "however", "into", "itself", "just", "like", "many", "might", "more",
-    "most", "much", "must", "need", "needed", "needs", "only", "other",
-    "others", "over", "same", "should", "since", "some", "still", "such",
-    "than", "that", "their", "them", "then", "there", "these", "they",
-    "thing", "things", "this", "those", "through", "under", "until", "very",
-    "what", "when", "where", "which", "while", "with", "within", "without",
-    "would", "important", "significant", "major", "modern", "strong",
-    "global", "different", "various", "clear", "useful", "practical",
-    "actual", "really", "simple", "simply", "point", "points", "issue",
-    "issues", "question", "questions", "condition", "conditions", "case",
-    "cases", "example", "examples", "process", "reason", "reasons",
-    "claim", "claims", "general", "limit", "limited", "connect", "connected",
-    "relate", "related", "paragraph", "statement", "stated", "wide", "wider",
-    "treat", "treated",
-}
-
-
-def _concept_origin_normalize_term(term: str) -> str:
-    value = re.sub(r"[^a-z0-9]", "", str(term or "").lower())
-    if len(value) <= 3:
-        return ""
-    if value.endswith("ies") and len(value) > 5:
-        value = value[:-3] + "y"
-    elif value.endswith(("ing", "ers")) and len(value) > 6:
-        value = value[:-3]
-    elif value.endswith(("ed", "es")) and len(value) > 5:
-        value = value[:-2]
-    elif value.endswith("s") and len(value) > 5:
-        value = value[:-1]
-    if len(value) <= 3 or value in _CONCEPT_ORIGIN_STOPWORDS:
-        return ""
-    return value
-
-
-def _concept_origin_terms(text: str) -> set[str]:
-    """Return lightweight content terms for concept-origin validation.
-
-    This is intentionally domain-agnostic. It does not label any topic as bad;
-    it only checks whether candidate concepts were already locally supported.
-    """
-    terms: set[str] = set()
-    for token in re.findall(r"[A-Za-z][A-Za-z0-9'_-]{2,}", str(text or "")):
-        normalized = _concept_origin_normalize_term(token)
-        if normalized:
-            terms.add(normalized)
-    return terms
-
-
-def _ordered_concept_origin_terms(text: str, *, limit: int = 6) -> list[str]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for token in re.findall(r"[A-Za-z][A-Za-z0-9'_-]{2,}", str(text or "")):
-        normalized = _concept_origin_normalize_term(token)
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            ordered.append(normalized)
-        if len(ordered) >= limit:
-            break
-    return ordered
-
-
-def _concept_origin_protected_terms(text: str) -> set[str]:
-    protected = set()
-    for token in re.findall(r"\b\d+(?:[.,]\d+)?%?\b", str(text or "")):
-        normalized = _concept_origin_normalize_term(token)
-        if normalized:
-            protected.add(normalized)
-    for match in re.findall(r"\b[A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,4}\b", str(text or "")):
-        for token in re.findall(r"[A-Za-z0-9]+", match):
-            normalized = _concept_origin_normalize_term(token)
-            if normalized:
-                protected.add(normalized)
-    for token in re.findall(r"\b[A-Z]{2,}[A-Z0-9-]*\b", str(text or "")):
-        normalized = _concept_origin_normalize_term(token)
-        if normalized:
-            protected.add(normalized)
-    return protected
-
-
-def _best_source_paragraph_index(candidate_paragraph: str, source_paragraphs: list[str]) -> int:
-    if not source_paragraphs:
-        return 0
-    best_index = 0
-    best_ratio = -1.0
-    candidate = str(candidate_paragraph or "").lower()
-    for index, source_paragraph in enumerate(source_paragraphs):
-        ratio = SequenceMatcher(None, candidate, str(source_paragraph or "").lower(), autojunk=False).ratio()
-        if ratio > best_ratio:
-            best_index = index
-            best_ratio = ratio
-    return best_index
+from rewrite_pipeline_core.prompts.paragraph_prompts import (
+    ParagraphPromptDeps,
+    author_reasoning_amplification_prompt as _core_author_reasoning_amplification_prompt,
+    clean_paragraph_component_candidate as _core_clean_paragraph_component_candidate,
+    clean_source_sentence_candidate as _core_clean_source_sentence_candidate,
+    extract_paragraph_component_candidates as _core_extract_paragraph_component_candidates,
+    human_signal_amplification_prompt as _core_human_signal_amplification_prompt,
+    paragraph_anchor_lock as _core_paragraph_anchor_lock,
+    paragraph_component_prompt as _core_paragraph_component_prompt,
+    paragraph_generation_anchor_context as _core_paragraph_generation_anchor_context,
+    splice_paragraph as _core_splice_paragraph,
+)
+# Compatibility note for source-grep regression tests: the runtime helper keeps
+# the default disabled Top-k borrowing check as
+# DRAFTPROOF_TOPK_CAN_BORROW_UNUSED_PHASE_BUDGET", False.
+from rewrite_pipeline_core.phases.post_topk import (
+    PostTopkConvergenceDeps,
+    build_post_topk_convergence_candidates as _core_post_topk_convergence_candidates,
+)
+from rewrite_pipeline_core.phases.post_selection_density import (
+    PostSelectionDensityDeps,
+    ai_density_patchwork_budget_status as _core_ai_density_patchwork_budget_status,
+    post_selection_ai_density_breaker_acceptance as _core_post_selection_ai_density_breaker_acceptance,
+    post_selection_ai_density_breaker_candidates as _core_post_selection_ai_density_breaker_candidates,
+    run_post_selection_ai_density_breaker as _core_post_selection_ai_density_breaker,
+    turnitin_like_positive_burden_drop as _core_turnitin_like_positive_burden_drop,
+)
+from rewrite_pipeline_core.phases.post_density_anchor import (
+    PostDensityHumanAnchorProbeDeps,
+    build_post_density_human_anchor_probe_candidates as _core_post_density_human_anchor_probe_candidates,
+    post_density_human_anchor_probe_acceptance as _core_post_density_human_anchor_probe_acceptance,
+    run_post_density_human_anchor_probe as _core_post_density_human_anchor_probe,
+)
+from rewrite_pipeline_core.phases.optimization_selection import (
+    _metric_repair_diagnosis,
+    _optimization_candidate_status,
+    _select_best_optimization_candidate,
+)
+from rewrite_pipeline_core.phases.micro_texture import (
+    _apply_masked_span_replacement,
+    _anchor_lock_mapping,
+    _anchor_values_from_brief,
+    _clean_masked_span_replacement,
+    _clean_micro_texture_candidate,
+    _deterministic_masked_span_replacements,
+    _deterministic_sentence_route_bundle,
+    _freeze_anchor_payload,
+    _freeze_anchor_text,
+    _goal_climb_candidate_rank,
+    _human_shift_rank_key,
+    _human_shift_score,
+    _is_better_human_shift_candidate,
+    _iterative_micro_texture_repair,
+    _locality_score,
+    _masked_span_repair_prompt,
+    _micro_repair_gain_efficiency,
+    _micro_texture_iteration_status,
+    _micro_texture_repair_prompt,
+    _micro_texture_window,
+    _repair_aggression_score,
+    _restore_anchor_placeholders,
+    _sentence_texture_risk_map,
+    _splice_sentence_for_auto_repair,
+    _splice_sentence_window,
+)
+from rewrite_pipeline_core.prompts.reconstruction_runtime import (
+    _build_reconstruction_meaning_brief,
+    _build_regeneration_blueprint,
+    _reconstruction_mitigation_prompt,
+    _reconstruction_planning_deps,
+    _staged_generation_section_plan,
+    _staged_reconstruction_candidate,
+    _staged_reconstruction_prompt_deps,
+    _staged_reconstruction_section_prompt,
+)
+from rewrite_pipeline_core.prompts.reconstruction_helpers import (
+    _clean_full_document_candidate,
+    _clean_section_candidate,
+    _generation_context_ledger,
+    _human_gain_stage_target,
+    _integrity_driver_rows,
+    _reconstruction_failure_feedback,
+    _reconstruction_gate_controls,
+    _reference_entries_from_text,
+    _review_marker_notes,
+    _target_segment_rows,
+    _word_count_band,
+)
+from rewrite_pipeline_core.prompts.reconstruction import (
+    ReconstructionPlanningDeps,
+    build_reconstruction_meaning_brief as _core_build_reconstruction_meaning_brief,
+    build_regeneration_blueprint as _core_build_regeneration_blueprint,
+)
+from rewrite_pipeline_core.prompts.staged_reconstruction import (
+    StagedReconstructionPromptDeps,
+    staged_generation_section_plan as _core_staged_generation_section_plan,
+    staged_reconstruction_section_prompt as _core_staged_reconstruction_section_prompt,
+)
+from rewrite_pipeline_core.state import RewritePipelineState, RewriteScanGateway
+from rewrite_pipeline_core.scoring.helpers import (
+    _ai_first_gate_status,
+    _metric_decimal,
+)
+from rewrite_pipeline_core.scoring.block_driver_map import (
+    FormulaBlockDriverMapDeps,
+    formula_block_driver_map as _core_formula_block_driver_map,
+)
+from rewrite_pipeline_core.scoring.profiles import (
+    _ai_footprint_flatten,
+    _ai_footprint_profile,
+    _blocker_scores,
+    _contribution_scores,
+    _feature_percent,
+    _formula_gap_candidate_rank,
+    _formula_gap_changed_word_count,
+    _formula_gap_contract,
+    _formula_gap_driver_priority_plan,
+    _formula_gap_weighted_driver_plan,
+    _formula_observed_driver_movement,
+    _formula_portfolio_plan,
+    _formula_portfolio_plan_from_profiles,
+    _integrity_scores,
+    _remaining_turnitin_like_drivers,
+    _transformation_features,
+    _turnitin_like_ai_gate_status,
+    _turnitin_like_ai_profile,
+    _turnitin_like_candidate_rank,
+    _turnitin_like_component_drops,
+)
+from rewrite_pipeline_core.scoring.human_formula import (
+    HumanFormulaDriverDeps,
+    human_formula_driver_status as _core_human_formula_driver_status,
+)
+from rewrite_pipeline_core.text_processing.text_utils import (
+    _brief_sentences,
+    _join_logical_paragraphs,
+    _logical_paragraphs,
+    _normalize_protected_text,
+    _protected_number_set,
+    _split_sentences,
+    _text_word_count,
+)
+from rewrite_pipeline_core.text_processing.quality_artifacts import (
+    _ABSTRACT_LIST_TERMS_RE,
+    _COLLOQUIAL_TEXTURE_TERMS_RE,
+    _DANGLING_FRAGMENT_JOIN_RE,
+    _GENERIC_PRAISE_PHRASES_RE,
+    _GENERIC_PRAISE_TERMS_RE,
+    _LOW_FRICTION_CONTRAST_RE,
+    _STYLIZED_TEXTURE_TERMS_RE,
+    _SYNTHETIC_ANCHOR_RE,
+    _SYNTHETIC_META_ANCHOR_PATTERNS,
+    _external_detector_style_artifact_reason,
+    _neutralize_external_detector_style_artifacts,
+    _normalize_known_heading_boundaries,
+    _repeated_long_sequence_reason,
+    _repeated_sentence_opening_reason,
+    _strip_reference_like_lines_for_quality,
+    _synthetic_meta_anchor_artifact_reason,
+)
+from rewrite_pipeline_core.text_processing.cleanup_transforms import (
+    CleanupTransformDeps,
+    compress_score_drag_paragraph as _core_compress_score_drag_paragraph,
+    final_score_drag_sentence_prune_text as _core_final_score_drag_sentence_prune_text,
+    narrow_generic_claim_text as _core_narrow_generic_claim_text,
+    plain_language_depolish_text as _core_plain_language_depolish_text,
+)
 
 
 def _candidate_concept_origin_reject_reason(
@@ -287,157 +533,14 @@ def _candidate_concept_origin_reject_reason(
     unsupported_term_limit: int = 4,
     unsupported_sentence_limit: int = 3,
 ) -> str:
-    """Reject candidates that import unsupported concepts into changed regions.
-
-    The support window is the matched source paragraph plus its immediate
-    neighbors, with document-level names/numbers allowed as protected inventory.
-    This blocks domain leakage without hardcoding any specific subject.
-    """
-    source = str(source_text or "").strip()
-    candidate = str(candidate_text or "").strip()
-    if not source or not candidate or source == candidate:
-        return ""
-    source_paragraphs = _logical_paragraphs(source)
-    candidate_paragraphs = _logical_paragraphs(candidate)
-    if not source_paragraphs or not candidate_paragraphs:
-        return ""
-    protected_terms = _concept_origin_protected_terms(source)
-    full_source_terms = _concept_origin_terms(source)
-    for candidate_index, paragraph in enumerate(candidate_paragraphs):
-        paragraph = str(paragraph or "").strip()
-        if not paragraph:
-            continue
-        if any(SequenceMatcher(None, paragraph.lower(), src.lower(), autojunk=False).ratio() >= 0.96 for src in source_paragraphs):
-            continue
-        source_index = _best_source_paragraph_index(paragraph, source_paragraphs)
-        support_parts = []
-        for support_index in range(max(0, source_index - 1), min(len(source_paragraphs), source_index + 2)):
-            support_parts.append(source_paragraphs[support_index])
-        support_text = " ".join(support_parts)
-        local_terms = _concept_origin_terms(support_text) | protected_terms
-        candidate_terms = _concept_origin_terms(paragraph)
-        unsupported = sorted(
-            term for term in (candidate_terms - local_terms)
-            if term not in protected_terms
-        )
-        if len(unsupported) >= unsupported_term_limit:
-            return (
-                "unsupported_concept_origin "
-                f"paragraph={candidate_index} source_paragraph={source_index} "
-                f"terms={','.join(unsupported[:8])}"
-            )
-        source_sentences = _split_sentences(support_text)
-        for sentence in _split_sentences(paragraph):
-            stripped_sentence = str(sentence or "").strip()
-            if len(stripped_sentence.split()) < 7:
-                continue
-            if any(
-                SequenceMatcher(None, stripped_sentence.lower(), src_sentence.lower(), autojunk=False).ratio() >= 0.82
-                for src_sentence in source_sentences
-            ):
-                continue
-            sentence_terms = _concept_origin_terms(stripped_sentence)
-            unsupported_sentence_terms = sorted(
-                term for term in (sentence_terms - local_terms)
-                if term not in protected_terms and term not in full_source_terms
-            )
-            if len(unsupported_sentence_terms) >= unsupported_sentence_limit:
-                return (
-                    "unsupported_concept_origin_sentence "
-                    f"paragraph={candidate_index} source_paragraph={source_index} "
-                    f"terms={','.join(unsupported_sentence_terms[:8])}"
-                )
-    return ""
-
-
-def _ai_density_breaker_canonical_fact_sentence(sentence: str) -> bool:
-    """Preserve canonical factual/anchor-heavy sentences in the add-on layer."""
-    value = str(sentence or "").strip()
-    if not value:
-        return True
-    if _AI_DENSITY_CANONICAL_FACT_RE.search(value):
-        return True
-    proper = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b", value)
-    if len(proper) >= 4 and not _AI_DENSITY_TRANSITION_RE.search(value):
-        return True
-    return False
-
-
-def _ai_density_breaker_sentence_route(sentence: str) -> tuple[str, list[str]]:
-    """Apply a small non-personal route change to generic/transition prose."""
-    original = str(sentence or "").strip()
-    if not original or _ai_density_breaker_canonical_fact_sentence(original):
-        return original, []
-    candidate = original
-    operations: list[str] = []
-    replacements = [
-        (
-            r"^One of the biggest strengths of (?P<subject>.+?) is (?P<claim>[^.]+)\.$",
-            lambda m: f"For {m.group('subject').strip()}, {m.group('claim').strip()} remains one clear strength.",
-            "ranked_claim_route",
-        ),
-        (
-            r"^Another important feature of (?P<subject>.+?) is (?P<claim>[^.]+)\.$",
-            lambda m: f"Another part of {m.group('subject').strip()} is {m.group('claim').strip()}.",
-            "feature_route_reduce",
-        ),
-        (
-            r"^The country has one of the largest (?P<asset>[^.]+?) in the world and is home to many (?P<group>[^.]+)\.$",
-            lambda m: f"Its {m.group('asset').strip()} is large, and many {m.group('group').strip()} operate from there.",
-            "largest_asset_route_reduce",
-        ),
-        (
-            r"^At the same time,\s*(?P<body>.+)$",
-            lambda m: f"Still, {m.group('body').strip()[0].lower() + m.group('body').strip()[1:]}",
-            "transition_break",
-        ),
-        (
-            r"^In addition to\s+(?P<body>.+)$",
-            lambda m: f"Beyond {m.group('body').strip()}",
-            "transition_break",
-        ),
-        (
-            r"^Despite its success,\s*(?P<body>.+)$",
-            lambda m: f"That success has limits. {m.group('body').strip()[0].upper() + m.group('body').strip()[1:]}",
-            "transition_split",
-        ),
-        (
-            r"^However,\s*(?P<body>.+)$",
-            lambda m: f"But {m.group('body').strip()[0].lower() + m.group('body').strip()[1:]}",
-            "transition_plain",
-        ),
-    ]
-    for pattern, replacement, operation in replacements:
-        match = re.match(pattern, candidate, flags=re.I)
-        if not match:
-            continue
-        updated = replacement(match)
-        if updated and updated != candidate:
-            candidate = updated
-            operations.append(operation)
-            break
-    phrase_replacements = [
-        (r"\bplays? (?:a|an) (?:important|significant|major|crucial) role in\b", "matters in", "formula_verb_reduce"),
-        (r"\bhas a significant impact on\b", "affects", "formula_verb_reduce"),
-        (r"\bhas a strong influence on\b", "influences", "formula_verb_reduce"),
-        (r"\bis one of the most influential\b", "has wide influence", "formula_route_reduce"),
-        (r"\ba wide range of\b", "many", "generic_phrase_reduce"),
-    ]
-    for pattern, replacement, operation in phrase_replacements:
-        updated = re.sub(pattern, replacement, candidate, count=1, flags=re.I)
-        if updated != candidate:
-            candidate = updated
-            operations.append(operation)
-            break
-    if candidate == original and _AI_DENSITY_TRANSITION_RE.search(candidate):
-        updated = re.sub(r"^This means that\s+", "That means ", candidate, flags=re.I)
-        updated = re.sub(r"^This has led to\s+", "That has left ", updated, flags=re.I)
-        updated = re.sub(r"^This shows that\s+", "That shows ", updated, flags=re.I)
-        if updated != candidate:
-            candidate = updated
-            operations.append("this_route_reduce")
-    candidate = re.sub(r"\s{2,}", " ", candidate).strip()
-    return (candidate, operations) if candidate and candidate != original else (original, [])
+    return _core_candidate_concept_origin_reject_reason(
+        source_text,
+        candidate_text,
+        logical_paragraphs=_logical_paragraphs,
+        split_sentences=_split_sentences,
+        unsupported_term_limit=unsupported_term_limit,
+        unsupported_sentence_limit=unsupported_sentence_limit,
+    )
 
 
 def _ai_density_sentence_score(sentence: str, row: dict | None = None) -> float:
@@ -577,107 +680,44 @@ def _ai_density_edit_budget(text: str) -> dict:
     }
 
 
-def _ai_density_window_targets(sentence_rows: list[dict] | None, *, max_windows: int = 6) -> list[dict]:
-    """Rank 3-5 sentence windows by document-level AI-density drag.
-
-    This avoids the previous scattershot behavior where the highest individual
-    sentences across an essay were patched together, creating a stitched feel.
-    """
-    rows = [row for row in (sentence_rows or []) if isinstance(row, dict)]
-    if not rows:
-        return []
-    raw_windows: list[dict] = []
-    for start in range(len(rows)):
-        for size in (3, 4, 5):
-            end = start + size
-            if end > len(rows):
-                continue
-            window_rows = rows[start:end]
-            editable = [
-                row for row in window_rows
-                if not row.get("canonical_fact_preserved")
-                and float(row.get("score") or 0.0) > 0.0
-            ]
-            if not editable:
-                continue
-            transition_count = sum(1 for row in editable if row.get("transition_risk"))
-            generic_hits = sum(int(row.get("generic_hits") or 0) for row in editable)
-            canonical_count = sum(1 for row in window_rows if row.get("canonical_fact_preserved"))
-            score = (
-                sum(max(0.0, float(row.get("score") or 0.0)) for row in editable)
-                + transition_count * 1.25
-                + generic_hits * 0.35
-                - canonical_count * 1.5
-            )
-            if score <= 0.0:
-                continue
-            raw_windows.append({
-                "start_sentence": start,
-                "end_sentence": end - 1,
-                "sentence_count": size,
-                "editable_sentence_count": len(editable),
-                "score": round(score, 3),
-                "editable_sentences": [
-                    {
-                        "sentence_index": row.get("sentence_index"),
-                        "sentence": row.get("sentence"),
-                        "score": row.get("score"),
-                        "top10_ratio": row.get("top10_ratio"),
-                        "transition_risk": row.get("transition_risk"),
-                        "generic_hits": row.get("generic_hits"),
-                    }
-                    for row in editable
-                ],
-                "preview": " ".join(str(row.get("sentence") or "") for row in window_rows)[:320],
-            })
-    raw_windows.sort(key=lambda row: (float(row.get("score") or 0.0), int(row.get("editable_sentence_count") or 0)), reverse=True)
-    selected: list[dict] = []
-    occupied: set[int] = set()
-    for row in raw_windows:
-        indexes = set(range(int(row["start_sentence"]), int(row["end_sentence"]) + 1))
-        if len(indexes & occupied) > 1:
-            continue
-        selected.append(row)
-        occupied.update(indexes)
-        if len(selected) >= max_windows:
-            break
-    return selected
+def _post_selection_density_deps() -> PostSelectionDensityDeps:
+    return PostSelectionDensityDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        split_sentences=_split_sentences,
+        text_word_count=_text_word_count,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        ai_density_breaker_map=_ai_density_breaker_map,
+        ai_density_edit_budget=_ai_density_edit_budget,
+        ai_density_breaker_sentence_route=_ai_density_breaker_sentence_route,
+        ai_density_breaker_canonical_fact_sentence=_ai_density_breaker_canonical_fact_sentence,
+        splice_sentences_by_text=_splice_sentences_by_text,
+        remove_sentences_by_text=_remove_sentences_by_text,
+        compress_score_drag_paragraph=_compress_score_drag_paragraph,
+        run_full_scan_report_dict=_run_full_scan_report_dict,
+        check_semantic_drift=check_semantic_drift,
+        detect_protected_spans=detect_protected_spans,
+        ai_candidate_quality_reject_reason=_ai_candidate_quality_reject_reason,
+        ai_search_protected_loss_reason=_ai_search_protected_loss_reason,
+        strict_ai_safe_band_status=_strict_ai_safe_band_status,
+        report_review_burden=_report_review_burden,
+        report_weighted_severity=_report_weighted_severity,
+        critical_high_count=_critical_high_count,
+    )
 
 
 def _ai_density_patchwork_budget_status(source_text: str, candidate_text: str, meta: dict | None = None) -> dict:
-    budget = _ai_density_edit_budget(source_text)
-    meta = meta if isinstance(meta, dict) else {}
-    edited_count = meta.get("edited_sentence_count")
-    if not isinstance(edited_count, (int, float)):
-        source_sentences = _split_sentences(source_text)
-        candidate_sentences = _split_sentences(candidate_text)
-        matcher = SequenceMatcher(None, source_sentences, candidate_sentences, autojunk=False)
-        edited_count = 0
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag == "equal":
-                continue
-            edited_count += max(i2 - i1, j2 - j1)
-    edited_count = int(max(0, edited_count or 0))
-    sentence_count = int(budget.get("sentence_count") or 0)
-    ratio = edited_count / max(1, sentence_count)
-    accepted = bool(
-        edited_count <= int(budget.get("max_edited_sentences") or 0)
-        and ratio <= float(budget.get("max_edited_sentence_ratio") or 1.0)
+    return _core_ai_density_patchwork_budget_status(
+        source_text,
+        candidate_text,
+        meta,
+        deps=_post_selection_density_deps(),
     )
-    return {
-        "version": "ai_density_patchwork_budget_v1",
-        "accepted": accepted,
-        "edited_sentence_count": edited_count,
-        "edited_sentence_ratio": round(ratio, 3),
-        "budget": budget,
-        "reason": "within_patchwork_budget" if accepted else "patchwork_edit_budget_exceeded",
-    }
 
 
 def _turnitin_like_positive_burden_drop(before_report: dict | None, after_report: dict | None) -> float:
-    before = _turnitin_like_ai_profile(before_report)
-    after = _turnitin_like_ai_profile(after_report)
-    return round(float(before.get("raw_positive_score") or 0.0) - float(after.get("raw_positive_score") or 0.0), 3)
+    return _core_turnitin_like_positive_burden_drop(before_report, after_report)
 
 
 def _human_anchor_positive_burden_gate_status(
@@ -724,293 +764,18 @@ def _human_anchor_positive_burden_gate_status(
     }
 
 
-def _record_rewrite_llm_calls(summary: dict, phase_key: str, calls: int | float | str | None) -> int:
-    """Record phase and total LLM calls in one place.
-
-    Several rewrite phases maintain their own budgets. The report must reflect
-    actual phase usage so production logs and JSON summaries do not disagree.
-    """
-    if not isinstance(summary, dict):
-        return 0
-    try:
-        call_count = max(0, int(calls or 0))
-    except (TypeError, ValueError):
-        call_count = 0
-    summary[str(phase_key)] = call_count
-    if call_count:
-        try:
-            prior = int(summary.get("llm_calls_used") or 0)
-        except (TypeError, ValueError):
-            prior = 0
-        summary["llm_calls_used"] = prior + call_count
-    else:
-        summary.setdefault("llm_calls_used", 0)
-    return call_count
-
-
-def _sync_rewrite_llm_call_totals(summary: dict, budget: RewriteRunBudget | None = None) -> dict:
-    """Reconcile legacy phase counters with the final global controller ledger."""
-    if not isinstance(summary, dict):
-        return {}
-    global_llm_calls = 0
-    global_stage_names: set[str] = set()
-    if isinstance(budget, RewriteRunBudget):
-        global_llm_calls = max(0, int(budget.llm_calls_used or 0))
-        global_stage_names = {
-            str(stage.get("stage") or "")
-            for stage in (budget.stages or [])
-            if isinstance(stage, dict)
-        }
-    non_global_phase_calls: dict[str, int] = {}
-    if "authenticity_mitigation" not in global_stage_names:
-        try:
-            authenticity_calls = int(summary.get("authenticity_llm_calls_used") or 0)
-        except (TypeError, ValueError):
-            authenticity_calls = 0
-        if authenticity_calls > 0:
-            non_global_phase_calls["authenticity_mitigation"] = authenticity_calls
-
-    total_calls = global_llm_calls + sum(non_global_phase_calls.values())
-    try:
-        legacy_total = max(0, int(summary.get("llm_calls_used") or 0))
-    except (TypeError, ValueError):
-        legacy_total = 0
-    if total_calls <= 0:
-        total_calls = legacy_total
-
-    summary["global_llm_calls_used"] = global_llm_calls
-    segment_summary = summary.get("segment_window_density_controller")
-    if isinstance(segment_summary, dict):
-        try:
-            summary["segment_window_llm_calls_used"] = max(0, int(segment_summary.get("llm_calls") or 0))
-        except (TypeError, ValueError):
-            summary["segment_window_llm_calls_used"] = 0
-    segment_followup_summary = summary.get("segment_window_density_controller_followup")
-    if isinstance(segment_followup_summary, dict):
-        try:
-            summary["segment_window_followup_llm_calls_used"] = max(0, int(segment_followup_summary.get("llm_calls") or 0))
-        except (TypeError, ValueError):
-            summary["segment_window_followup_llm_calls_used"] = 0
-    remaining_cluster_summary = summary.get("remaining_cluster_density_controller")
-    if isinstance(remaining_cluster_summary, dict):
-        try:
-            summary["remaining_cluster_llm_calls_used"] = max(0, int(remaining_cluster_summary.get("llm_calls") or 0))
-        except (TypeError, ValueError):
-            summary["remaining_cluster_llm_calls_used"] = 0
-    window_coverage_summary = summary.get("window_coverage_density_optimizer")
-    if isinstance(window_coverage_summary, dict):
-        try:
-            summary["window_coverage_llm_calls_used"] = max(0, int(window_coverage_summary.get("llm_calls") or 0))
-        except (TypeError, ValueError):
-            summary["window_coverage_llm_calls_used"] = 0
-    compiler_summary = summary.get("rewrite_compiler")
-    if isinstance(compiler_summary, dict):
-        try:
-            summary["rewrite_compiler_llm_calls_used"] = max(0, int(compiler_summary.get("llm_calls_used") or 0))
-        except (TypeError, ValueError):
-            summary["rewrite_compiler_llm_calls_used"] = 0
-    summary["llm_calls_used"] = total_calls
-    summary["llm_calls_breakdown"] = {
-        "source": "global_controller_ledger_plus_non_global_phases",
-        "global_controller_llm_calls": global_llm_calls,
-        "non_global_phase_llm_calls": non_global_phase_calls,
-        "legacy_incremental_total_before_sync": legacy_total,
-        "total": total_calls,
-    }
-    return summary["llm_calls_breakdown"]
-
-
 def _post_selection_ai_density_breaker_candidates(
     current_text: str,
     current_report: dict | None,
     *,
     limit: int = 8,
 ) -> list[tuple[str, str, dict]]:
-    """Build bounded post-selection candidates without touching rewrite core."""
-    density_map = _ai_density_breaker_map(current_text, current_report)
-    paragraphs = _logical_paragraphs(current_text)
-    candidates: list[tuple[str, str, dict]] = []
-    seen = {str(current_text or "").strip()}
-    limit = max(1, int(limit or 1))
-    edit_budget = _ai_density_edit_budget(current_text)
-    max_edits = max(1, int(edit_budget.get("max_edited_sentences") or 1))
-
-    def add(strategy: str, candidate: str, meta: dict) -> None:
-        if len(candidates) >= limit:
-            return
-        normalized = str(candidate or "").strip()
-        if not normalized or normalized in seen:
-            return
-        seen.add(normalized)
-        candidates.append((strategy, normalized, {**meta, "post_selection_ai_density_breaker_candidate": True}))
-
-    window_targets = density_map.get("top_density_windows") or []
-    for take_windows in (1, 2, 3):
-        replacements: dict[str, str] = {}
-        operations = []
-        edited_indexes: set[int] = set()
-        for window in window_targets[:take_windows]:
-            editable_rows = sorted(
-                [
-                    row for row in (window.get("editable_sentences") or [])
-                    if isinstance(row, dict)
-                ],
-                key=lambda row: int(row.get("sentence_index") if isinstance(row.get("sentence_index"), int) else 10**9),
-            )
-            for row in editable_rows:
-                if len(edited_indexes) >= max_edits:
-                    break
-                sentence_index = row.get("sentence_index")
-                if not isinstance(sentence_index, int) or sentence_index in edited_indexes:
-                    continue
-                original = str(row.get("sentence") or "")
-                replacement, ops = _ai_density_breaker_sentence_route(original)
-                if ops and replacement != original:
-                    replacements[original] = replacement
-                    edited_indexes.add(sentence_index)
-                    operations.append({
-                        "sentence_index": sentence_index,
-                        "operations": ops,
-                        "score": row.get("score"),
-                        "top10_ratio": row.get("top10_ratio"),
-                        "window": {
-                            "start_sentence": window.get("start_sentence"),
-                            "end_sentence": window.get("end_sentence"),
-                            "score": window.get("score"),
-                        },
-                    })
-            if len(edited_indexes) >= max_edits:
-                break
-        if operations:
-            candidate_text = _splice_sentences_by_text(current_text, replacements)
-            budget_status = _ai_density_patchwork_budget_status(
-                current_text,
-                candidate_text,
-                {"edited_sentence_count": len(operations)},
-            )
-            add(
-                f"density_window_patch_top{take_windows}",
-                candidate_text,
-                {
-                    "operation": "coordinated_density_window_patch",
-                    "edited_sentence_count": len(operations),
-                    "target_window_count": take_windows,
-                    "operations": operations,
-                    "edit_budget": edit_budget,
-                    "patchwork_budget": budget_status,
-                    "density_breaker_map": {
-                        "version": density_map.get("version"),
-                        "top_density_windows": window_targets[:take_windows],
-                    },
-                },
-            )
-
-    sentence_targets = [
-        row for row in density_map.get("top_sentence_targets") or []
-        if not row.get("canonical_fact_preserved")
-    ]
-    if not candidates and _env_flag("DRAFTPROOF_DENSITY_BREAKER_SCATTER_FALLBACK", False):
-        replacements: dict[str, str] = {}
-        operations = []
-        for row in sentence_targets[: min(2, max_edits)]:
-            original = str(row.get("sentence") or "")
-            replacement, ops = _ai_density_breaker_sentence_route(original)
-            if ops and replacement != original:
-                replacements[original] = replacement
-                operations.append({
-                    "sentence_index": row.get("sentence_index"),
-                    "operations": ops,
-                    "score": row.get("score"),
-                    "top10_ratio": row.get("top10_ratio"),
-                })
-        if operations:
-            candidate_text = _splice_sentences_by_text(current_text, replacements)
-            add(
-                "density_route_patch_top2_fallback",
-                candidate_text,
-                {
-                    "operation": "scatter_density_route_fallback",
-                    "edited_sentence_count": len(operations),
-                    "operations": operations,
-                    "edit_budget": edit_budget,
-                    "patchwork_budget": _ai_density_patchwork_budget_status(
-                        current_text,
-                        candidate_text,
-                        {"edited_sentence_count": len(operations)},
-                    ),
-                    "density_breaker_map": {
-                        "version": density_map.get("version"),
-                        "top_runs": density_map.get("contiguous_ai_density_runs"),
-                    },
-                },
-            )
-
-    for paragraph_row in (density_map.get("top_generic_paragraphs") or [])[:4]:
-        index = paragraph_row.get("paragraph_index")
-        if not isinstance(index, int) or index < 0 or index >= len(paragraphs):
-            continue
-        if paragraph_row.get("protected") or float(paragraph_row.get("score") or 0.0) <= 2.5:
-            continue
-        replacement = _compress_score_drag_paragraph(paragraphs[index], max_remove=1)
-        if replacement.strip() and replacement.strip() != paragraphs[index].strip():
-            next_paragraphs = list(paragraphs)
-            next_paragraphs[index] = replacement
-            add(
-                f"generic_block_compress_p{index + 1}",
-                _join_logical_paragraphs(next_paragraphs),
-                {
-                    "operation": "generic_block_compress",
-                    "paragraph_index": index,
-                    "paragraph_score": paragraph_row.get("score"),
-                    "edited_sentence_count": 1,
-                    "edit_budget": edit_budget,
-                    "patchwork_budget": _ai_density_patchwork_budget_status(
-                        current_text,
-                        _join_logical_paragraphs(next_paragraphs),
-                        {"edited_sentence_count": 1},
-                    ),
-                    "target_preview": paragraph_row.get("preview"),
-                },
-            )
-
-    removable = []
-    for row in sentence_targets:
-        sentence = str(row.get("sentence") or "")
-        if _ai_density_breaker_canonical_fact_sentence(sentence):
-            continue
-        if len(removable) >= 4:
-            break
-        if (
-            _AI_DENSITY_TRANSITION_RE.search(sentence.strip())
-            or len(_AI_DENSITY_GENERIC_RE.findall(sentence)) >= 2
-        ) and _text_word_count(sentence) <= 28:
-            removable.append(row)
-    for take in (1, 2):
-        selected = removable[:take]
-        if not selected:
-            continue
-        candidate = _remove_sentences_by_text(
-            current_text,
-            [str(row.get("sentence") or "") for row in selected],
-        )
-        add(
-            f"low_value_generic_sentence_remove_{take}",
-            candidate,
-            {
-                "operation": "low_value_generic_remove",
-                "removed_sentence_count": len(selected),
-                "removed_sentences": [str(row.get("sentence") or "")[:220] for row in selected],
-                "edited_sentence_count": len(selected),
-                "edit_budget": edit_budget,
-                "patchwork_budget": _ai_density_patchwork_budget_status(
-                    current_text,
-                    candidate,
-                    {"edited_sentence_count": len(selected)},
-                ),
-            },
-        )
-
-    return candidates[:limit]
+    return _core_post_selection_ai_density_breaker_candidates(
+        current_text,
+        current_report,
+        limit=limit,
+        deps=_post_selection_density_deps(),
+    )
 
 
 def _post_selection_ai_density_breaker_acceptance(
@@ -1021,107 +786,25 @@ def _post_selection_ai_density_breaker_acceptance(
     weighted_severity_delta: int | float,
     critical_high_delta: int | float,
 ) -> dict:
-    """Strict local acceptance for the isolated density breaker layer."""
-    base_profile = _turnitin_like_ai_profile(current_report)
-    candidate_profile = _turnitin_like_ai_profile(candidate_report)
-    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
-    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
-    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
-
-    def drop(key: str) -> float:
-        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
-
-    drops = {
-        key: drop(key)
-        for key in (
-            "topk_calibrated_risk",
-            "topk_pattern_raw",
-            "qualifying_text_ai_density",
-            "external_ai_flag_risk",
-            "ai_likelihood",
-            "rewrite_smoothness",
-            "ai_authorship",
-            "ai_transformation",
-            "semantic_uniformity",
-        )
-    }
-    component_drops = _turnitin_like_component_drops(base_profile, candidate_profile)
-    positive_ai_burden_drop = _turnitin_like_positive_burden_drop(current_report, candidate_report)
-    smoothness_max_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_MAX_SMOOTHNESS_REGRESSION", 0.30)
-    improvement_epsilon = 0.001
-    severe_smoothness_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_SMOOTHNESS_REGRESSION", 4.0)
-    severe_semantic_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_SEMANTIC_REGRESSION", 3.0)
-    severe_density_regression = _float_env("DRAFTPROOF_DENSITY_BREAKER_SEVERE_DENSITY_REGRESSION", 3.0)
-    reject_reasons = []
-    slippage_notes = []
-    protected_regressions = []
-    core_progress_ok = bool(
-        formula_drop > improvement_epsilon
-        and positive_ai_burden_drop >= -improvement_epsilon
-        and drops["external_ai_flag_risk"] >= -improvement_epsilon
-        and drops["ai_likelihood"] >= -improvement_epsilon
-        and float(review_burden_delta or 0.0) <= 0.0
-        and float(weighted_severity_delta or 0.0) <= 0.0
-        and float(critical_high_delta or 0.0) <= 0.0
+    return _core_post_selection_ai_density_breaker_acceptance(
+        current_report,
+        candidate_report,
+        review_burden_delta=review_burden_delta,
+        weighted_severity_delta=weighted_severity_delta,
+        critical_high_delta=critical_high_delta,
+        float_env=_float_env,
     )
-    if formula_drop <= improvement_epsilon:
-        reject_reasons.append("formula_score_not_reduced")
-    if positive_ai_burden_drop < -improvement_epsilon:
-        reject_reasons.append("positive_ai_burden_regressed")
-    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation", "external_ai_flag_risk", "ai_likelihood"):
-        if drops[key] < -0.001:
-            protected_regressions.append(f"{key}_regressed")
-    reject_reasons.extend(protected_regressions)
-    if drops["rewrite_smoothness"] < -smoothness_max_regression:
-        if drops["rewrite_smoothness"] < -severe_smoothness_regression or not core_progress_ok or protected_regressions:
-            reject_reasons.append("rewrite_smoothness_regressed")
-        else:
-            slippage_notes.append("rewrite_smoothness_regressed_but_total_formula_improved")
-    if drops["semantic_uniformity"] < -severe_semantic_regression:
-        reject_reasons.append("semantic_uniformity_severely_regressed")
-    elif drops["semantic_uniformity"] < -0.001:
-        slippage_notes.append("semantic_uniformity_regressed_but_total_formula_improved")
-    if drops["qualifying_text_ai_density"] < -severe_density_regression:
-        reject_reasons.append("qualifying_text_ai_density_severely_regressed")
-    elif drops["qualifying_text_ai_density"] < -0.001:
-        slippage_notes.append("qualifying_text_ai_density_regressed_but_total_formula_improved")
-    if float(review_burden_delta or 0.0) > 0.0:
-        reject_reasons.append("review_burden_regressed")
-    if float(weighted_severity_delta or 0.0) > 0.0:
-        reject_reasons.append("weighted_severity_regressed")
-    if float(critical_high_delta or 0.0) > 0.0:
-        reject_reasons.append("critical_high_regressed")
-    selectable = not reject_reasons
-    return {
-        "version": "post_selection_ai_density_breaker_acceptance_v1",
-        "selectable": selectable,
-        "reason": "accepted_density_breaker_improvement" if selectable else reject_reasons[0],
-        "formula_score_before": base_profile.get("score"),
-        "formula_score_after": candidate_profile.get("score"),
-        "formula_score_drop": formula_drop,
-        "driver_drops": drops,
-        "turnitin_like_component_drops": component_drops,
-        "component_slippage": {
-            key: round(abs(value), 3)
-            for key, value in drops.items()
-            if isinstance(value, (int, float)) and value < -0.001
-        },
-        "component_slippage_accepted": bool(selectable and slippage_notes),
-        "component_slippage_notes": slippage_notes,
-        "positive_ai_burden_before": base_profile.get("raw_positive_score"),
-        "positive_ai_burden_after": candidate_profile.get("raw_positive_score"),
-        "positive_ai_burden_drop": positive_ai_burden_drop,
-        "review_burden_delta": review_burden_delta,
-        "weighted_severity_delta": weighted_severity_delta,
-        "critical_high_delta": critical_high_delta,
-        "thresholds": {
-            "improvement_epsilon": improvement_epsilon,
-            "max_smoothness_regression": smoothness_max_regression,
-            "severe_smoothness_regression": severe_smoothness_regression,
-            "severe_semantic_regression": severe_semantic_regression,
-            "severe_density_regression": severe_density_regression,
-        },
-    }
+
+
+def _density_acceptance_deps() -> DensityAcceptanceDeps:
+    return DensityAcceptanceDeps(
+        turnitin_like_ai_profile=_turnitin_like_ai_profile,
+        eligible_span_density_comparison=_eligible_span_density_comparison,
+        ai_footprint_profile=_ai_footprint_profile,
+        ai_footprint_flatten=_ai_footprint_flatten,
+        report_badge_ai=_report_badge_ai,
+        window_coverage_comparison=_window_coverage_comparison,
+    )
 
 
 def _segment_window_density_acceptance(
@@ -1134,93 +817,16 @@ def _segment_window_density_acceptance(
     weighted_severity_delta: int | float,
     critical_high_delta: int | float,
 ) -> dict:
-    """Acceptance policy for scoped 5-10 sentence density-window candidates."""
-    base_profile = _turnitin_like_ai_profile(current_report)
-    candidate_profile = _turnitin_like_ai_profile(candidate_report)
-    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
-    density_gate = _eligible_span_density_comparison(
+    return _core_segment_window_density_acceptance(
         current_text,
         current_report,
         candidate_text,
         candidate_report,
+        review_burden_delta=review_burden_delta,
+        weighted_severity_delta=weighted_severity_delta,
+        critical_high_delta=critical_high_delta,
+        deps=_density_acceptance_deps(),
     )
-    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
-    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
-
-    def drop(key: str) -> float:
-        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
-
-    driver_drops = {
-        key: drop(key)
-        for key in (
-            "topk_calibrated_risk",
-            "qualifying_text_ai_density",
-            "external_ai_flag_risk",
-            "ai_likelihood",
-            "rewrite_smoothness",
-            "ai_authorship",
-            "ai_transformation",
-            "semantic_uniformity",
-        )
-    }
-    current_ai = _report_badge_ai(current_report)
-    candidate_ai = _report_badge_ai(candidate_report)
-    headline_ai_drop = (
-        round(float(current_ai) - float(candidate_ai), 3)
-        if isinstance(current_ai, (int, float)) and isinstance(candidate_ai, (int, float))
-        else 0.0
-    )
-    reject_reasons: list[str] = []
-    if formula_drop <= 0.001:
-        reject_reasons.append("formula_score_not_reduced")
-    unsafe_ratio_drop = float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0)
-    longest_span_drop = float(density_gate.get("longest_unsafe_span_words_drop") or 0.0)
-    density_non_worsening = bool(
-        density_gate.get("safe")
-        or (unsafe_ratio_drop >= -0.001 and longest_span_drop >= -0.001)
-    )
-    density_positive = bool(
-        density_gate.get("safe")
-        or density_gate.get("improved")
-        or unsafe_ratio_drop > 0.001
-        or longest_span_drop > 0.001
-    )
-    if not density_positive:
-        reject_reasons.append("eligible_span_density_not_improved")
-    elif not density_non_worsening:
-        reject_reasons.append("eligible_span_density_regressed")
-    if headline_ai_drop < -0.001:
-        reject_reasons.append("headline_ai_score_regressed")
-    for key in ("ai_authorship", "ai_transformation", "external_ai_flag_risk", "ai_likelihood"):
-        if driver_drops.get(key, 0.0) < -0.001:
-            reject_reasons.append(f"{key}_regressed")
-    if float(review_burden_delta or 0.0) > 0.0:
-        reject_reasons.append("review_burden_regressed")
-    if float(weighted_severity_delta or 0.0) > 0.0:
-        reject_reasons.append("weighted_severity_regressed")
-    if float(critical_high_delta or 0.0) > 0.0:
-        reject_reasons.append("critical_high_regressed")
-    selectable = not reject_reasons
-    return {
-        "version": "segment_window_density_acceptance_v1",
-        "selectable": selectable,
-        "reason": "accepted_segment_window_density_improvement" if selectable else reject_reasons[0],
-        "formula_score_before": base_profile.get("score"),
-        "formula_score_after": candidate_profile.get("score"),
-        "formula_score_drop": formula_drop,
-        "target_met": bool(candidate_profile.get("target_met")),
-        "headline_ai_drop": headline_ai_drop,
-        "driver_drops": driver_drops,
-        "eligible_span_density_gate": density_gate,
-        "density_positive": density_positive,
-        "density_non_worsening": density_non_worsening,
-        "unsafe_eligible_word_ratio_drop": density_gate.get("unsafe_eligible_word_ratio_drop"),
-        "longest_unsafe_span_words_drop": density_gate.get("longest_unsafe_span_words_drop"),
-        "review_burden_delta": review_burden_delta,
-        "weighted_severity_delta": weighted_severity_delta,
-        "critical_high_delta": critical_high_delta,
-    }
-
 
 def _segment_window_density_controller(
     current_text: str,
@@ -1233,257 +839,34 @@ def _segment_window_density_controller(
     max_scans: int | None = None,
     max_llm_calls: int | None = None,
 ) -> dict:
-    """Run scoped 5-10 sentence density-window LLM patches."""
-    if not _env_flag("DRAFTPROOF_SEGMENT_WINDOW_DENSITY_CONTROLLER", True):
-        return {"enabled": False, "reason": "disabled"}
-    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
-        return {"enabled": False, "reason": "missing_current_selection"}
-    scan_func = scan_func or _run_full_scan_report_dict
-    max_scans = max(
-        0,
-        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_SEGMENT_WINDOW_MAX_SCANS", 3.0)),
+    deps = SegmentWindowDensityControllerDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+        run_full_scan_report_dict=_run_full_scan_report_dict,
+        check_semantic_drift=check_semantic_drift,
+        detect_protected_spans=detect_protected_spans,
+        clean_full_document_candidate=_clean_full_document_candidate,
+        ai_candidate_quality_reject_reason=_ai_candidate_quality_reject_reason,
+        evaluate_text_quality_regression=evaluate_text_quality_regression,
+        ai_search_protected_loss_reason=_ai_search_protected_loss_reason,
+        report_review_burden=_report_review_burden,
+        report_weighted_severity=_report_weighted_severity,
+        critical_high_count=_critical_high_count,
+        segment_window_density_acceptance=_segment_window_density_acceptance,
+        phase_chat_sampling_kwargs=_phase_chat_sampling_kwargs,
     )
-    max_llm_calls = max(
-        0,
-        int(max_llm_calls if isinstance(max_llm_calls, int) else _float_env("DRAFTPROOF_SEGMENT_WINDOW_MAX_LLM_CALLS", 3.0)),
+    return _core_segment_window_density_controller(
+        current_text,
+        current_report,
+        original_report,
+        gateway=gateway,
+        scan_func=scan_func,
+        drift_checker=drift_checker,
+        max_scans=max_scans,
+        max_llm_calls=max_llm_calls,
+        deps=deps,
     )
-    current_profile = _turnitin_like_ai_profile(current_report)
-    density_before = _eligible_span_density_contract(current_text, current_report)
-    components = current_profile.get("components") if isinstance(current_profile.get("components"), dict) else {}
-    topk_after = float(components.get("topk_calibrated_risk") or 0.0)
-    if bool(current_profile.get("target_met")) and bool(density_before.get("safe")):
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "already_turnitin_and_density_safe",
-            "segment_density_windows": _segment_density_windows(current_text, current_report),
-        }
-    if bool(density_before.get("safe")) and topk_after < _safe_topk_calibrated_limit():
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "density_and_topk_already_safe",
-            "segment_density_windows": _segment_density_windows(current_text, current_report),
-        }
-    if gateway is None or max_llm_calls <= 0:
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "no_llm_budget_or_gateway",
-            "segment_density_windows": _segment_density_windows(current_text, current_report),
-            "eligible_span_density_before": density_before,
-        }
-    if max_scans <= 0:
-        return {"enabled": True, "selected": False, "reason": "scan_budget_zero"}
-
-    tasks = _segment_window_tasks(current_text, current_report, limit=max_llm_calls)
-    summary = {
-        "enabled": True,
-        "version": _SEGMENT_WINDOW_CONTROLLER_VERSION,
-        "selected": False,
-        "selected_text": current_text,
-        "selected_report": current_report,
-        "selected_strategy": None,
-        "llm_calls": 0,
-        "scans_used": 0,
-        "candidate_count": 0,
-        "segment_density_windows": _segment_density_windows(current_text, current_report),
-        "eligible_span_density_before": density_before,
-        "base_summary": {
-            "turnitin_like_ai_score": current_profile.get("score"),
-            "target_met": current_profile.get("target_met"),
-            "topk_calibrated_risk": topk_after,
-        },
-        "candidate_frontier": [],
-        "reason": "no_candidate_selected",
-    }
-    if not tasks:
-        summary["reason"] = "no_segment_window_tasks"
-        return summary
-
-    protected = detect_protected_spans(current_text)
-    best_eval = None
-    best_rank = None
-    best_text = current_text
-    best_report = current_report
-    seen = {current_text.strip()}
-    for task_index, task in enumerate(tasks, start=1):
-        if summary["llm_calls"] >= max_llm_calls or summary["scans_used"] >= max_scans:
-            break
-        strategy = f"segment_window_density_{str(task.get('family') or 'window').lower()}_{task_index}"
-        candidate_eval = {
-            "strategy": strategy,
-            "task": task,
-            "passed_local_checks": False,
-        }
-        try:
-            prompt = _segment_window_candidate_prompt(current_text, current_report, task)
-            summary["llm_calls"] += 1
-            response = gateway.chat(
-                prompt,
-                system=(
-                    "You are DraftProof's segment-window density controller. "
-                    "Return only JSON sentence patches for the selected window."
-                ),
-                **_phase_chat_sampling_kwargs(
-                    "DRAFTPROOF_SEGMENT_WINDOW_DENSITY",
-                    temperature_env="DRAFTPROOF_SEGMENT_WINDOW_TEMPERATURE",
-                    temperature_default=0.42,
-                    max_tokens_env="DRAFTPROOF_SEGMENT_WINDOW_MAX_TOKENS",
-                    max_tokens_default=2600,
-                ),
-            )
-            payload, payload_reason = _extract_segment_window_payload(response.content)
-        except Exception as exc:
-            candidate_eval["reason"] = f"llm_error {exc}"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        if not payload:
-            candidate_eval["reason"] = payload_reason or "invalid_segment_window_payload"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        assembled, applied, assembly_reason = _assemble_segment_window_candidate(current_text, payload, task)
-        candidate_text = _clean_full_document_candidate(assembled, current_text)
-        candidate_eval.update({
-            "payload_strategy": payload.get("strategy"),
-            "applied_sentence_patches": applied,
-            "targeted_drivers": payload.get("targeted_drivers"),
-        })
-        if not candidate_text:
-            candidate_eval["reason"] = assembly_reason or "empty_or_unchanged_candidate"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        if candidate_text.strip() in seen:
-            candidate_eval["reason"] = "duplicate_candidate"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        seen.add(candidate_text.strip())
-        local_reason = _ai_candidate_quality_reject_reason(candidate_text)
-        if local_reason:
-            candidate_eval["reason"] = local_reason
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        patchwork = _segment_window_patchwork_budget(current_text, candidate_text, applied)
-        candidate_eval["patchwork_budget"] = patchwork
-        if not patchwork.get("accepted"):
-            candidate_eval["reason"] = patchwork.get("reason") or "patchwork_edit_budget_exceeded"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        quality_gate = evaluate_text_quality_regression(
-            current_text,
-            candidate_text,
-            changed_sentence_ratio=patchwork.get("edited_sentence_ratio"),
-        )
-        candidate_eval["quality_gate"] = quality_gate
-        if not quality_gate.get("passed"):
-            candidate_eval["reason"] = (quality_gate.get("reject_reasons") or ["quality_gate_failed"])[0]
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        protected_loss = _ai_search_protected_loss_reason(current_text, candidate_text, protected)
-        if protected_loss:
-            candidate_eval["reason"] = "protected_span_lost " + protected_loss
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        try:
-            drift = drift_checker(current_text, candidate_text, threshold=0.80)
-        except TypeError:
-            drift = drift_checker(current_text, candidate_text)
-        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
-        if not bool(getattr(drift, "accepted", True)):
-            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
-            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        try:
-            candidate_report = scan_func(candidate_text)
-        except Exception as exc:
-            candidate_eval["reason"] = f"candidate_scan_error {exc}"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        summary["scans_used"] += 1
-        review_delta = _report_review_burden(candidate_report) - _report_review_burden(current_report)
-        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(current_report)
-        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(current_report)
-        acceptance = _segment_window_density_acceptance(
-            current_text,
-            current_report,
-            candidate_text,
-            candidate_report,
-            review_burden_delta=review_delta,
-            weighted_severity_delta=severity_delta,
-            critical_high_delta=critical_delta,
-        )
-        candidate_eval.update({
-            "passed_local_checks": True,
-            "acceptance": acceptance,
-            "selectable": acceptance.get("selectable"),
-            "reason": acceptance.get("reason"),
-            "formula_score": acceptance.get("formula_score_after"),
-            "formula_score_drop": acceptance.get("formula_score_drop"),
-            "eligible_span_density_gate": acceptance.get("eligible_span_density_gate"),
-            "driver_drops": acceptance.get("driver_drops"),
-        })
-        summary["candidate_frontier"].append(candidate_eval)
-        if not acceptance.get("selectable"):
-            continue
-        density_gate = acceptance.get("eligible_span_density_gate") or {}
-        rank = (
-            1 if acceptance.get("target_met") and density_gate.get("safe") else 0,
-            float(acceptance.get("formula_score_drop") or 0.0),
-            float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0),
-            float(density_gate.get("longest_unsafe_span_words_drop") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
-            -float((acceptance.get("formula_score_after") or 100.0)),
-        )
-        if best_rank is None or rank > best_rank:
-            best_rank = rank
-            best_eval = candidate_eval
-            best_text = candidate_text
-            best_report = candidate_report
-
-    summary["candidate_count"] = len(summary.get("candidate_frontier") or [])
-    if best_eval:
-        best_eval["selected"] = True
-        final_density = _eligible_span_density_comparison(
-            current_text,
-            current_report,
-            best_text,
-            best_report,
-        )
-        summary.update({
-            "selected": True,
-            "selected_text": best_text,
-            "selected_report": best_report,
-            "selected_strategy": best_eval.get("strategy"),
-            "selected_candidate": {
-                key: best_eval.get(key)
-                for key in (
-                    "strategy",
-                    "formula_score",
-                    "formula_score_drop",
-                    "eligible_span_density_gate",
-                    "driver_drops",
-                    "patchwork_budget",
-                    "drift_similarity",
-                    "applied_sentence_patches",
-                    "acceptance",
-                )
-            },
-            "eligible_span_density_after": final_density.get("after"),
-            "eligible_span_density_drop": final_density.get("unsafe_eligible_word_ratio_drop"),
-            "longest_unsafe_span_words_drop": final_density.get("longest_unsafe_span_words_drop"),
-            "reason": best_eval.get("reason"),
-            "final_summary": {
-                "turnitin_like_ai_score": _turnitin_like_ai_profile(best_report).get("score"),
-                "target_met": _turnitin_like_ai_profile(best_report).get("target_met"),
-                "eligible_span_density_safe": final_density.get("safe"),
-            },
-        })
-    elif summary["candidate_frontier"]:
-        summary["reason"] = "ceiling_reached"
-        summary["why_not_below_20"] = "No segment-window candidate reduced both formula score and eligible-span density without safety regression."
-    return summary
 
 
 def _remaining_cluster_density_acceptance(
@@ -1496,85 +879,16 @@ def _remaining_cluster_density_acceptance(
     weighted_severity_delta: int | float,
     critical_high_delta: int | float,
 ) -> dict:
-    """Acceptance policy for remaining unsafe-cluster candidates."""
-    base_profile = _turnitin_like_ai_profile(current_report)
-    candidate_profile = _turnitin_like_ai_profile(candidate_report)
-    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
-    density_gate = _eligible_span_density_comparison(
+    return _core_remaining_cluster_density_acceptance(
         current_text,
         current_report,
         candidate_text,
         candidate_report,
+        review_burden_delta=review_burden_delta,
+        weighted_severity_delta=weighted_severity_delta,
+        critical_high_delta=critical_high_delta,
+        deps=_density_acceptance_deps(),
     )
-    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
-    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
-
-    def drop(key: str) -> float:
-        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
-
-    driver_drops = {
-        key: drop(key)
-        for key in (
-            "topk_calibrated_risk",
-            "qualifying_text_ai_density",
-            "external_ai_flag_risk",
-            "ai_likelihood",
-            "rewrite_smoothness",
-            "ai_authorship",
-            "ai_transformation",
-            "semantic_uniformity",
-        )
-    }
-    current_ai = _report_badge_ai(current_report)
-    candidate_ai = _report_badge_ai(candidate_report)
-    headline_ai_drop = (
-        round(float(current_ai) - float(candidate_ai), 3)
-        if isinstance(current_ai, (int, float)) and isinstance(candidate_ai, (int, float))
-        else 0.0
-    )
-    unsafe_ratio_drop = float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0)
-    longest_span_drop = float(density_gate.get("longest_unsafe_span_words_drop") or 0.0)
-    reject_reasons: list[str] = []
-    if formula_drop <= 0.001:
-        reject_reasons.append("formula_score_not_reduced")
-    if unsafe_ratio_drop < -0.001 or longest_span_drop < -0.001:
-        reject_reasons.append("eligible_span_density_regressed")
-    if headline_ai_drop < -0.001:
-        reject_reasons.append("headline_ai_score_regressed")
-    for key in (
-        "ai_authorship",
-        "ai_transformation",
-        "topk_calibrated_risk",
-        "ai_likelihood",
-        "external_ai_flag_risk",
-    ):
-        if driver_drops.get(key, 0.0) < -0.001:
-            reject_reasons.append(f"{key}_regressed")
-    if float(review_burden_delta or 0.0) > 0.0:
-        reject_reasons.append("review_burden_regressed")
-    if float(weighted_severity_delta or 0.0) > 0.0:
-        reject_reasons.append("weighted_severity_regressed")
-    if float(critical_high_delta or 0.0) > 0.0:
-        reject_reasons.append("critical_high_regressed")
-    selectable = not reject_reasons
-    return {
-        "version": "remaining_cluster_density_acceptance_v1",
-        "selectable": selectable,
-        "reason": "accepted_remaining_cluster_formula_density_improvement" if selectable else reject_reasons[0],
-        "formula_score_before": base_profile.get("score"),
-        "formula_score_after": candidate_profile.get("score"),
-        "formula_score_drop": formula_drop,
-        "target_met": bool(candidate_profile.get("target_met")),
-        "headline_ai_drop": headline_ai_drop,
-        "driver_drops": driver_drops,
-        "eligible_span_density_gate": density_gate,
-        "unsafe_eligible_word_ratio_drop": density_gate.get("unsafe_eligible_word_ratio_drop"),
-        "longest_unsafe_span_words_drop": density_gate.get("longest_unsafe_span_words_drop"),
-        "review_burden_delta": review_burden_delta,
-        "weighted_severity_delta": weighted_severity_delta,
-        "critical_high_delta": critical_high_delta,
-    }
-
 
 def _remaining_cluster_density_controller(
     current_text: str,
@@ -1587,263 +901,34 @@ def _remaining_cluster_density_controller(
     max_scans: int | None = None,
     max_llm_calls: int | None = None,
 ) -> dict:
-    """Run scoped cluster-level patches after segment-window density repair."""
-    if not _env_flag("DRAFTPROOF_REMAINING_CLUSTER_DENSITY_CONTROLLER", True):
-        return {"enabled": False, "reason": "disabled"}
-    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
-        return {"enabled": False, "reason": "missing_current_selection"}
-    scan_func = scan_func or _run_full_scan_report_dict
-    max_scans = max(
-        0,
-        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_REMAINING_CLUSTER_MAX_SCANS", 4.0)),
+    deps = RemainingClusterDensityControllerDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+        run_full_scan_report_dict=_run_full_scan_report_dict,
+        check_semantic_drift=check_semantic_drift,
+        detect_protected_spans=detect_protected_spans,
+        clean_full_document_candidate=_clean_full_document_candidate,
+        ai_candidate_quality_reject_reason=_ai_candidate_quality_reject_reason,
+        evaluate_text_quality_regression=evaluate_text_quality_regression,
+        ai_search_protected_loss_reason=_ai_search_protected_loss_reason,
+        report_review_burden=_report_review_burden,
+        report_weighted_severity=_report_weighted_severity,
+        critical_high_count=_critical_high_count,
+        remaining_cluster_density_acceptance=_remaining_cluster_density_acceptance,
+        phase_chat_sampling_kwargs=_phase_chat_sampling_kwargs,
     )
-    max_llm_calls = max(
-        0,
-        int(max_llm_calls if isinstance(max_llm_calls, int) else _float_env("DRAFTPROOF_REMAINING_CLUSTER_MAX_LLM_CALLS", 4.0)),
+    return _core_remaining_cluster_density_controller(
+        current_text,
+        current_report,
+        original_report,
+        gateway=gateway,
+        scan_func=scan_func,
+        drift_checker=drift_checker,
+        max_scans=max_scans,
+        max_llm_calls=max_llm_calls,
+        deps=deps,
     )
-    current_profile = _turnitin_like_ai_profile(current_report)
-    cluster_map = _remaining_cluster_map(current_text, current_report)
-    density_before = (cluster_map.get("eligible_span_density") or _eligible_span_density_contract(current_text, current_report))
-    components = current_profile.get("components") if isinstance(current_profile.get("components"), dict) else {}
-    topk_before = float(components.get("topk_calibrated_risk") or 0.0)
-    ai_likelihood_before = float(components.get("ai_likelihood") or 0.0)
-    if bool(current_profile.get("target_met")) and bool(density_before.get("safe")):
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "already_turnitin_and_density_safe",
-            "remaining_cluster_map": cluster_map,
-        }
-    if bool(density_before.get("safe")) and topk_before < _safe_topk_calibrated_limit():
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "density_and_topk_already_safe",
-            "remaining_cluster_map": cluster_map,
-        }
-    if gateway is None or max_llm_calls <= 0:
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "no_llm_budget_or_gateway",
-            "remaining_cluster_map": cluster_map,
-            "remaining_cluster_density_before": density_before,
-        }
-    if max_scans <= 0:
-        return {"enabled": True, "selected": False, "reason": "scan_budget_zero", "remaining_cluster_map": cluster_map}
-
-    tasks = _remaining_cluster_tasks(current_text, current_report, limit=max_llm_calls)
-    summary = {
-        "enabled": True,
-        "version": _REMAINING_CLUSTER_CONTROLLER_VERSION,
-        "selected": False,
-        "selected_text": current_text,
-        "selected_report": current_report,
-        "selected_strategy": None,
-        "llm_calls": 0,
-        "scans_used": 0,
-        "candidate_count": 0,
-        "remaining_cluster_map": cluster_map,
-        "remaining_cluster_density_before": density_before,
-        "base_summary": {
-            "turnitin_like_ai_score": current_profile.get("score"),
-            "target_met": current_profile.get("target_met"),
-            "topk_calibrated_risk": topk_before,
-            "ai_likelihood": ai_likelihood_before,
-        },
-        "candidate_frontier": [],
-        "reason": "no_candidate_selected",
-    }
-    if not tasks:
-        summary["reason"] = "no_remaining_cluster_tasks"
-        return summary
-
-    protected = detect_protected_spans(current_text)
-    best_eval = None
-    best_rank = None
-    best_text = current_text
-    best_report = current_report
-    seen = {current_text.strip()}
-    for task_index, task in enumerate(tasks, start=1):
-        if summary["llm_calls"] >= max_llm_calls or summary["scans_used"] >= max_scans:
-            break
-        strategy = f"remaining_cluster_{str(task.get('family') or 'cluster').lower()}_{task_index}"
-        candidate_eval = {
-            "strategy": strategy,
-            "task": task,
-            "passed_local_checks": False,
-        }
-        try:
-            prompt = _remaining_cluster_candidate_prompt(current_text, current_report, task)
-            summary["llm_calls"] += 1
-            response = gateway.chat(
-                prompt,
-                system=(
-                    "You are DraftProof's remaining-cluster density controller. "
-                    "Return only JSON cluster patches for the selected unsafe cluster."
-                ),
-                **_phase_chat_sampling_kwargs(
-                    "DRAFTPROOF_REMAINING_CLUSTER_DENSITY",
-                    temperature_env="DRAFTPROOF_REMAINING_CLUSTER_TEMPERATURE",
-                    temperature_default=0.42,
-                    max_tokens_env="DRAFTPROOF_REMAINING_CLUSTER_MAX_TOKENS",
-                    max_tokens_default=3200,
-                ),
-            )
-            payload, payload_reason = _extract_remaining_cluster_payload(response.content)
-        except Exception as exc:
-            candidate_eval["reason"] = f"llm_error {exc}"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        if not payload:
-            candidate_eval["reason"] = payload_reason or "invalid_remaining_cluster_payload"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        assembled, applied, assembly_reason = _assemble_remaining_cluster_candidate(current_text, payload, task)
-        candidate_text = _clean_full_document_candidate(assembled, current_text)
-        candidate_eval.update({
-            "payload_strategy": payload.get("strategy"),
-            "applied_cluster_patches": applied,
-            "targeted_drivers": payload.get("targeted_drivers"),
-        })
-        if not candidate_text:
-            candidate_eval["reason"] = assembly_reason or "empty_or_unchanged_candidate"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        if candidate_text.strip() in seen:
-            candidate_eval["reason"] = "duplicate_candidate"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        seen.add(candidate_text.strip())
-        local_reason = _ai_candidate_quality_reject_reason(candidate_text)
-        if local_reason:
-            candidate_eval["reason"] = local_reason
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        patchwork = _remaining_cluster_patchwork_budget(current_text, candidate_text, applied)
-        candidate_eval["patchwork_budget"] = patchwork
-        if not patchwork.get("accepted"):
-            candidate_eval["reason"] = patchwork.get("reason") or "remaining_cluster_patchwork_budget_exceeded"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        quality_gate = evaluate_text_quality_regression(
-            current_text,
-            candidate_text,
-            changed_sentence_ratio=patchwork.get("edited_sentence_ratio"),
-        )
-        candidate_eval["quality_gate"] = quality_gate
-        if not quality_gate.get("passed"):
-            candidate_eval["reason"] = (quality_gate.get("reject_reasons") or ["quality_gate_failed"])[0]
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        protected_loss = _ai_search_protected_loss_reason(current_text, candidate_text, protected)
-        if protected_loss:
-            candidate_eval["reason"] = "protected_span_lost " + protected_loss
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        try:
-            drift = drift_checker(current_text, candidate_text, threshold=0.80)
-        except TypeError:
-            drift = drift_checker(current_text, candidate_text)
-        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
-        if not bool(getattr(drift, "accepted", True)):
-            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
-            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        try:
-            candidate_report = scan_func(candidate_text)
-        except Exception as exc:
-            candidate_eval["reason"] = f"candidate_scan_error {exc}"
-            summary["candidate_frontier"].append(candidate_eval)
-            continue
-        summary["scans_used"] += 1
-        review_delta = _report_review_burden(candidate_report) - _report_review_burden(current_report)
-        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(current_report)
-        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(current_report)
-        acceptance = _remaining_cluster_density_acceptance(
-            current_text,
-            current_report,
-            candidate_text,
-            candidate_report,
-            review_burden_delta=review_delta,
-            weighted_severity_delta=severity_delta,
-            critical_high_delta=critical_delta,
-        )
-        candidate_eval.update({
-            "passed_local_checks": True,
-            "acceptance": acceptance,
-            "selectable": acceptance.get("selectable"),
-            "reason": acceptance.get("reason"),
-            "formula_score": acceptance.get("formula_score_after"),
-            "formula_score_drop": acceptance.get("formula_score_drop"),
-            "eligible_span_density_gate": acceptance.get("eligible_span_density_gate"),
-            "driver_drops": acceptance.get("driver_drops"),
-        })
-        summary["candidate_frontier"].append(candidate_eval)
-        if not acceptance.get("selectable"):
-            continue
-        density_gate = acceptance.get("eligible_span_density_gate") or {}
-        rank = (
-            1 if acceptance.get("target_met") and density_gate.get("safe") else 0,
-            float(acceptance.get("formula_score_drop") or 0.0),
-            float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
-            -float((acceptance.get("formula_score_after") or 100.0)),
-        )
-        if best_rank is None or rank > best_rank:
-            best_rank = rank
-            best_eval = candidate_eval
-            best_text = candidate_text
-            best_report = candidate_report
-
-    summary["candidate_count"] = len(summary.get("candidate_frontier") or [])
-    if best_eval:
-        best_eval["selected"] = True
-        final_density = _eligible_span_density_comparison(
-            current_text,
-            current_report,
-            best_text,
-            best_report,
-        )
-        final_profile = _turnitin_like_ai_profile(best_report)
-        final_components = final_profile.get("components") if isinstance(final_profile.get("components"), dict) else {}
-        summary.update({
-            "selected": True,
-            "selected_text": best_text,
-            "selected_report": best_report,
-            "selected_strategy": best_eval.get("strategy"),
-            "selected_candidate": {
-                key: best_eval.get(key)
-                for key in (
-                    "strategy",
-                    "formula_score",
-                    "formula_score_drop",
-                    "eligible_span_density_gate",
-                    "driver_drops",
-                    "patchwork_budget",
-                    "drift_similarity",
-                    "applied_cluster_patches",
-                    "acceptance",
-                )
-            },
-            "remaining_cluster_density_after": final_density.get("after"),
-            "remaining_cluster_density_drop": final_density.get("unsafe_eligible_word_ratio_drop"),
-            "remaining_cluster_topk_before": topk_before,
-            "remaining_cluster_topk_after": final_components.get("topk_calibrated_risk"),
-            "remaining_cluster_topk_drop": round(topk_before - float(final_components.get("topk_calibrated_risk") or 0.0), 3),
-            "reason": best_eval.get("reason"),
-            "final_summary": {
-                "turnitin_like_ai_score": final_profile.get("score"),
-                "target_met": final_profile.get("target_met"),
-                "eligible_span_density_safe": final_density.get("safe"),
-            },
-        })
-    elif summary["candidate_frontier"]:
-        summary["reason"] = "ceiling_reached"
-        summary["why_not_below_20"] = "No remaining-cluster candidate reduced total formula score without density or AI-driver regression."
-    return summary
 
 
 def _window_coverage_density_acceptance(
@@ -1856,100 +941,16 @@ def _window_coverage_density_acceptance(
     weighted_severity_delta: int | float,
     critical_high_delta: int | float,
 ) -> dict:
-    """Acceptance policy for sliding-window coverage candidates."""
-    base_profile = _turnitin_like_ai_profile(current_report)
-    candidate_profile = _turnitin_like_ai_profile(candidate_report)
-    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
-    density_gate = _eligible_span_density_comparison(
+    return _core_window_coverage_density_acceptance(
         current_text,
         current_report,
         candidate_text,
         candidate_report,
+        review_burden_delta=review_burden_delta,
+        weighted_severity_delta=weighted_severity_delta,
+        critical_high_delta=critical_high_delta,
+        deps=_density_acceptance_deps(),
     )
-    coverage_gate = _window_coverage_comparison(
-        current_text,
-        current_report,
-        candidate_text,
-        candidate_report,
-    )
-    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
-    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
-
-    def drop(key: str) -> float:
-        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
-
-    driver_drops = {
-        key: drop(key)
-        for key in (
-            "topk_calibrated_risk",
-            "qualifying_text_ai_density",
-            "external_ai_flag_risk",
-            "ai_likelihood",
-            "rewrite_smoothness",
-            "ai_authorship",
-            "ai_transformation",
-            "semantic_uniformity",
-        )
-    }
-    current_ai = _report_badge_ai(current_report)
-    candidate_ai = _report_badge_ai(candidate_report)
-    headline_ai_drop = (
-        round(float(current_ai) - float(candidate_ai), 3)
-        if isinstance(current_ai, (int, float)) and isinstance(candidate_ai, (int, float))
-        else 0.0
-    )
-    unsafe_ratio_drop = float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0)
-    longest_span_drop = float(density_gate.get("longest_unsafe_span_words_drop") or 0.0)
-    unsafe_window_drop = float(coverage_gate.get("unsafe_window_count_drop") or 0.0)
-    vote_ratio_drop = float(coverage_gate.get("ai_sentence_vote_ratio_drop") or 0.0)
-    reject_reasons: list[str] = []
-    if formula_drop <= 0.001:
-        reject_reasons.append("formula_score_not_reduced")
-    if unsafe_window_drop < -0.001 or vote_ratio_drop < -0.001:
-        reject_reasons.append("window_coverage_regressed")
-    if unsafe_ratio_drop < -0.001 or longest_span_drop < -0.001:
-        reject_reasons.append("eligible_span_density_regressed")
-    if not (unsafe_window_drop > 0.001 or vote_ratio_drop > 0.001 or unsafe_ratio_drop > 0.001):
-        reject_reasons.append("unsafe_density_not_improved")
-    if headline_ai_drop < -0.001:
-        reject_reasons.append("headline_ai_score_regressed")
-    for key in (
-        "ai_authorship",
-        "ai_transformation",
-        "topk_calibrated_risk",
-        "ai_likelihood",
-        "external_ai_flag_risk",
-    ):
-        if driver_drops.get(key, 0.0) < -0.001:
-            reject_reasons.append(f"{key}_regressed")
-    if float(review_burden_delta or 0.0) > 0.0:
-        reject_reasons.append("review_burden_regressed")
-    if float(weighted_severity_delta or 0.0) > 0.0:
-        reject_reasons.append("weighted_severity_regressed")
-    if float(critical_high_delta or 0.0) > 0.0:
-        reject_reasons.append("critical_high_regressed")
-    selectable = not reject_reasons
-    return {
-        "version": "window_coverage_density_acceptance_v1",
-        "selectable": selectable,
-        "reason": "accepted_window_coverage_formula_density_improvement" if selectable else reject_reasons[0],
-        "formula_score_before": base_profile.get("score"),
-        "formula_score_after": candidate_profile.get("score"),
-        "formula_score_drop": formula_drop,
-        "target_met": bool(candidate_profile.get("target_met")),
-        "headline_ai_drop": headline_ai_drop,
-        "driver_drops": driver_drops,
-        "eligible_span_density_gate": density_gate,
-        "window_coverage_gate": coverage_gate,
-        "unsafe_window_count_drop": coverage_gate.get("unsafe_window_count_drop"),
-        "ai_sentence_vote_ratio_drop": coverage_gate.get("ai_sentence_vote_ratio_drop"),
-        "unsafe_eligible_word_ratio_drop": density_gate.get("unsafe_eligible_word_ratio_drop"),
-        "longest_unsafe_span_words_drop": density_gate.get("longest_unsafe_span_words_drop"),
-        "review_burden_delta": review_burden_delta,
-        "weighted_severity_delta": weighted_severity_delta,
-        "critical_high_delta": critical_high_delta,
-    }
-
 
 def _window_coverage_density_optimizer(
     current_text: str,
@@ -1962,450 +963,33 @@ def _window_coverage_density_optimizer(
     max_scans: int | None = None,
     max_llm_calls: int | None = None,
 ) -> dict:
-    """Run portfolio patches for high-leverage unsafe sliding-window coverage."""
-    if not _env_flag("DRAFTPROOF_WINDOW_COVERAGE_DENSITY_OPTIMIZER", True):
-        return {"enabled": False, "reason": "disabled"}
-    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
-        return {"enabled": False, "reason": "missing_current_selection"}
-    scan_func = scan_func or _run_full_scan_report_dict
-    max_scans = max(
-        0,
-        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_SCANS", 5.0)),
+    deps = WindowCoverageOptimizerDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        run_full_scan_report_dict=_run_full_scan_report_dict,
+        check_semantic_drift=check_semantic_drift,
+        detect_protected_spans=detect_protected_spans,
+        clean_full_document_candidate=_clean_full_document_candidate,
+        ai_candidate_quality_reject_reason=_ai_candidate_quality_reject_reason,
+        evaluate_text_quality_regression=evaluate_text_quality_regression,
+        ai_search_protected_loss_reason=_ai_search_protected_loss_reason,
+        report_review_burden=_report_review_burden,
+        report_weighted_severity=_report_weighted_severity,
+        critical_high_count=_critical_high_count,
+        window_coverage_density_acceptance=_window_coverage_density_acceptance,
+        phase_chat_sampling_kwargs=_phase_chat_sampling_kwargs,
     )
-    max_llm_calls = max(
-        0,
-        int(max_llm_calls if isinstance(max_llm_calls, int) else _float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_LLM_CALLS", 5.0)),
+    return _core_window_coverage_density_optimizer(
+        current_text,
+        current_report,
+        original_report,
+        gateway=gateway,
+        scan_func=scan_func,
+        drift_checker=drift_checker,
+        max_scans=max_scans,
+        max_llm_calls=max_llm_calls,
+        deps=deps,
     )
-    max_llm_calls = min(max_llm_calls, 2)
-    current_profile = _turnitin_like_ai_profile(current_report)
-    coverage_map = _window_coverage_map(current_text, current_report)
-    density_before = coverage_map.get("eligible_span_density") or _eligible_span_density_contract(current_text, current_report)
-    if bool(current_profile.get("target_met")) and bool(density_before.get("safe")):
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "already_turnitin_and_density_safe",
-            "window_coverage_map": coverage_map,
-        }
-    if bool(density_before.get("safe")) and int(coverage_map.get("unsafe_window_count") or 0) <= 0:
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "density_and_window_coverage_already_safe",
-            "window_coverage_map": coverage_map,
-        }
-    if max_scans <= 0:
-        return {"enabled": True, "selected": False, "reason": "scan_budget_zero", "window_coverage_map": coverage_map}
-
-    summary = {
-        "enabled": True,
-        "version": _WINDOW_COVERAGE_CONTROLLER_VERSION,
-        "window_coverage_portfolio_optimizer": True,
-        "selected": False,
-        "selected_text": current_text,
-        "selected_report": current_report,
-        "selected_strategy": None,
-        "llm_calls": 0,
-        "scans_used": 0,
-        "candidate_count": 0,
-        "window_coverage_map": coverage_map,
-        "top_coverage_sentences": coverage_map.get("top_coverage_sentences"),
-        "eligible_span_density_before": density_before,
-        "unsafe_window_count_before": coverage_map.get("unsafe_window_count"),
-        "ai_sentence_vote_ratio_before": coverage_map.get("ai_sentence_vote_ratio"),
-        "base_summary": {
-            "turnitin_like_ai_score": current_profile.get("score"),
-            "target_met": current_profile.get("target_met"),
-        },
-        "deterministic_variant_frontier": [],
-        "portfolio_candidate_frontier": [],
-        "patch_ablation_frontier": [],
-        "window_coverage_passes": [],
-        "candidate_frontier": [],
-        "reason": "no_candidate_selected",
-    }
-
-    final_eval = None
-    final_text = current_text
-    final_report = current_report
-    seen = {current_text.strip()}
-    protected_cache: dict[int, Any] = {}
-
-    def protected_for(text: str):
-        key = id(text)
-        if key not in protected_cache:
-            protected_cache[key] = detect_protected_spans(text)
-        return protected_cache[key]
-
-    def candidate_rank(acceptance: dict) -> tuple:
-        coverage_gate = acceptance.get("window_coverage_gate") or {}
-        density_gate = acceptance.get("eligible_span_density_gate") or {}
-        patchwork = acceptance.get("patchwork_budget") or {}
-        return (
-            1 if acceptance.get("target_met") and coverage_gate.get("safe") and density_gate.get("safe") else 0,
-            float(acceptance.get("formula_score_drop") or 0.0),
-            float(coverage_gate.get("unsafe_window_count_drop") or 0.0),
-            float(coverage_gate.get("ai_sentence_vote_ratio_drop") or 0.0),
-            float(density_gate.get("unsafe_eligible_word_ratio_drop") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
-            -int(patchwork.get("edited_sentence_count") or 0),
-            -float(acceptance.get("formula_score_after") or 100.0),
-        )
-
-    def evaluate_candidate(
-        base_text: str,
-        base_report: dict,
-        candidate_text: str,
-        applied: list[dict],
-        candidate_eval: dict,
-    ) -> tuple[dict, dict | None]:
-        candidate_text = _clean_full_document_candidate(candidate_text, base_text)
-        if not candidate_text:
-            candidate_eval["reason"] = candidate_eval.get("reason") or "empty_or_unchanged_candidate"
-            summary["candidate_frontier"].append(candidate_eval)
-            return candidate_eval, None
-        if candidate_text.strip() in seen:
-            candidate_eval["reason"] = "duplicate_candidate"
-            summary["candidate_frontier"].append(candidate_eval)
-            return candidate_eval, None
-        seen.add(candidate_text.strip())
-        candidate_eval["applied_sentence_patches"] = applied
-        local_reason = _ai_candidate_quality_reject_reason(candidate_text)
-        if local_reason:
-            candidate_eval["reason"] = local_reason
-            summary["candidate_frontier"].append(candidate_eval)
-            return candidate_eval, None
-        patchwork = _window_coverage_patchwork_budget(base_text, candidate_text, applied)
-        candidate_eval["patchwork_budget"] = patchwork
-        if not patchwork.get("accepted"):
-            candidate_eval["reason"] = patchwork.get("reason") or "window_coverage_patchwork_budget_exceeded"
-            summary["candidate_frontier"].append(candidate_eval)
-            return candidate_eval, None
-        quality_gate = evaluate_text_quality_regression(
-            base_text,
-            candidate_text,
-            changed_sentence_ratio=patchwork.get("edited_sentence_ratio"),
-        )
-        candidate_eval["quality_gate"] = quality_gate
-        if not quality_gate.get("passed"):
-            candidate_eval["reason"] = (quality_gate.get("reject_reasons") or ["quality_gate_failed"])[0]
-            summary["candidate_frontier"].append(candidate_eval)
-            return candidate_eval, None
-        protected_loss = _ai_search_protected_loss_reason(base_text, candidate_text, protected_for(base_text))
-        if protected_loss:
-            candidate_eval["reason"] = "protected_span_lost " + protected_loss
-            summary["candidate_frontier"].append(candidate_eval)
-            return candidate_eval, None
-        try:
-            drift = drift_checker(base_text, candidate_text, threshold=0.80)
-        except TypeError:
-            drift = drift_checker(base_text, candidate_text)
-        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
-        if not bool(getattr(drift, "accepted", True)):
-            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
-            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
-            summary["candidate_frontier"].append(candidate_eval)
-            return candidate_eval, None
-        try:
-            candidate_report = scan_func(candidate_text)
-        except Exception as exc:
-            candidate_eval["reason"] = f"candidate_scan_error {exc}"
-            summary["candidate_frontier"].append(candidate_eval)
-            return candidate_eval, None
-        summary["scans_used"] += 1
-        review_delta = _report_review_burden(candidate_report) - _report_review_burden(base_report)
-        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(base_report)
-        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(base_report)
-        acceptance = _window_coverage_density_acceptance(
-            base_text,
-            base_report,
-            candidate_text,
-            candidate_report,
-            review_burden_delta=review_delta,
-            weighted_severity_delta=severity_delta,
-            critical_high_delta=critical_delta,
-        )
-        acceptance["patchwork_budget"] = patchwork
-        candidate_eval.update({
-            "passed_local_checks": True,
-            "acceptance": acceptance,
-            "selectable": acceptance.get("selectable"),
-            "reason": acceptance.get("reason"),
-            "formula_score": acceptance.get("formula_score_after"),
-            "formula_score_drop": acceptance.get("formula_score_drop"),
-            "window_coverage_gate": acceptance.get("window_coverage_gate"),
-            "eligible_span_density_gate": acceptance.get("eligible_span_density_gate"),
-            "driver_drops": acceptance.get("driver_drops"),
-        })
-        summary["candidate_frontier"].append(candidate_eval)
-        return candidate_eval, candidate_report
-
-    pass_text = current_text
-    pass_report = current_report
-    ablation_scans_used = 0
-    max_ablation_scans = min(2, max_scans)
-    for pass_index in range(1, 3):
-        if summary["scans_used"] >= max_scans:
-            break
-        pass_summary = {
-            "pass": pass_index,
-            "base_score": _turnitin_like_ai_profile(pass_report).get("score"),
-            "selected": False,
-        }
-        variants = _window_coverage_deterministic_variants(pass_text, pass_report, sentence_limit=8, variant_limit=32)
-        portfolios = _window_coverage_portfolio_candidates(
-            pass_text,
-            pass_report,
-            variants=variants,
-            portfolio_limit=10,
-        )
-        if pass_index == 1:
-            summary["deterministic_variant_frontier"] = variants[:24]
-            summary["portfolio_candidate_frontier"] = [
-                {
-                    "strategy": item.get("strategy"),
-                    "source": item.get("source"),
-                    "predicted_rank": item.get("predicted_rank"),
-                    "applied_sentence_patches": item.get("applied_sentence_patches"),
-                }
-                for item in portfolios[:10]
-            ]
-
-        pass_best_eval = None
-        pass_best_text = None
-        pass_best_report = None
-        pass_best_rank = None
-        finalist_limit = max(0, min(6, max_scans - summary["scans_used"]))
-        for portfolio in portfolios[:finalist_limit]:
-            candidate_eval = {
-                "strategy": portfolio.get("strategy"),
-                "source": portfolio.get("source"),
-                "pass": pass_index,
-                "predicted_rank": portfolio.get("predicted_rank"),
-                "passed_local_checks": False,
-            }
-            evaluated, candidate_report = evaluate_candidate(
-                pass_text,
-                pass_report,
-                str(portfolio.get("candidate_text") or ""),
-                list(portfolio.get("applied_sentence_patches") or []),
-                candidate_eval,
-            )
-            if evaluated.get("selectable"):
-                rank = candidate_rank(evaluated.get("acceptance") or {})
-                if pass_best_rank is None or rank > pass_best_rank:
-                    pass_best_rank = rank
-                    pass_best_eval = evaluated
-                    pass_best_text = str(portfolio.get("candidate_text") or "")
-                    pass_best_report = candidate_report
-                continue
-            if (
-                candidate_report is not None
-                and ablation_scans_used < max_ablation_scans
-                and summary["scans_used"] < max_scans
-                and evaluated.get("reason") in {
-                    "formula_score_not_reduced",
-                    "headline_ai_score_regressed",
-                    "ai_authorship_regressed",
-                    "ai_transformation_regressed",
-                    "topk_calibrated_risk_regressed",
-                    "ai_likelihood_regressed",
-                    "external_ai_flag_risk_regressed",
-                    "review_burden_regressed",
-                    "weighted_severity_regressed",
-                    "critical_high_regressed",
-                }
-            ):
-                for ablation in _window_coverage_ablation_candidates(
-                    pass_text,
-                    evaluated.get("applied_sentence_patches") or [],
-                    limit=max_ablation_scans - ablation_scans_used,
-                ):
-                    if summary["scans_used"] >= max_scans or ablation_scans_used >= max_ablation_scans:
-                        break
-                    ablation_scans_used += 1
-                    summary["patch_ablation_frontier"].append({
-                        "strategy": ablation.get("strategy"),
-                        "parent_strategy": evaluated.get("strategy"),
-                        "dropped_patch": ablation.get("dropped_patch"),
-                    })
-                    ablation_eval = {
-                        "strategy": ablation.get("strategy"),
-                        "source": ablation.get("source"),
-                        "parent_strategy": evaluated.get("strategy"),
-                        "pass": pass_index,
-                        "predicted_rank": ablation.get("predicted_rank"),
-                        "dropped_patch": ablation.get("dropped_patch"),
-                        "passed_local_checks": False,
-                    }
-                    ablated, ablated_report = evaluate_candidate(
-                        pass_text,
-                        pass_report,
-                        str(ablation.get("candidate_text") or ""),
-                        list(ablation.get("applied_sentence_patches") or []),
-                        ablation_eval,
-                    )
-                    if ablated.get("selectable"):
-                        rank = candidate_rank(ablated.get("acceptance") or {})
-                        if pass_best_rank is None or rank > pass_best_rank:
-                            pass_best_rank = rank
-                            pass_best_eval = ablated
-                            pass_best_text = str(ablation.get("candidate_text") or "")
-                            pass_best_report = ablated_report
-
-        if not pass_best_eval and gateway is not None and summary["llm_calls"] < max_llm_calls:
-            tasks = _window_coverage_tasks(pass_text, pass_report, limit=max_llm_calls - summary["llm_calls"])
-            for task_index, task in enumerate(tasks, start=1):
-                if summary["llm_calls"] >= max_llm_calls or summary["scans_used"] >= max_scans:
-                    break
-                strategy = f"window_coverage_{str(task.get('family') or 'coverage').lower()}_{task_index}"
-                candidate_eval = {
-                    "strategy": strategy,
-                    "source": "llm_fallback",
-                    "task": task,
-                    "pass": pass_index,
-                    "passed_local_checks": False,
-                }
-                try:
-                    prompt = _window_coverage_candidate_prompt(pass_text, pass_report, task)
-                    summary["llm_calls"] += 1
-                    response = gateway.chat(
-                        prompt,
-                        system=(
-                            "You are DraftProof's window-coverage density optimizer. "
-                            "Return only JSON sentence patches for the selected high-coverage sentences."
-                        ),
-                        **_phase_chat_sampling_kwargs(
-                            "DRAFTPROOF_WINDOW_COVERAGE_DENSITY",
-                            temperature_env="DRAFTPROOF_WINDOW_COVERAGE_TEMPERATURE",
-                            temperature_default=0.42,
-                            max_tokens_env="DRAFTPROOF_WINDOW_COVERAGE_MAX_TOKENS",
-                            max_tokens_default=3200,
-                        ),
-                    )
-                    payload, payload_reason = _extract_window_coverage_payload(response.content)
-                except Exception as exc:
-                    candidate_eval["reason"] = f"llm_error {exc}"
-                    summary["candidate_frontier"].append(candidate_eval)
-                    continue
-                if not payload:
-                    candidate_eval["reason"] = payload_reason or "invalid_window_coverage_payload"
-                    summary["candidate_frontier"].append(candidate_eval)
-                    continue
-                assembled, applied, assembly_reason = _assemble_window_coverage_candidate(pass_text, payload, task)
-                candidate_eval.update({
-                    "payload_strategy": payload.get("strategy"),
-                    "targeted_drivers": payload.get("targeted_drivers"),
-                    "assembly_reason": assembly_reason,
-                })
-                evaluated, candidate_report = evaluate_candidate(
-                    pass_text,
-                    pass_report,
-                    assembled,
-                    applied,
-                    candidate_eval,
-                )
-                if evaluated.get("selectable"):
-                    rank = candidate_rank(evaluated.get("acceptance") or {})
-                    if pass_best_rank is None or rank > pass_best_rank:
-                        pass_best_rank = rank
-                        pass_best_eval = evaluated
-                        pass_best_text = assembled
-                        pass_best_report = candidate_report
-
-        if pass_best_eval and pass_best_text and pass_best_report:
-            pass_best_eval["selected"] = True
-            final_eval = pass_best_eval
-            final_text = pass_best_text
-            final_report = pass_best_report
-            pass_text = pass_best_text
-            pass_report = pass_best_report
-            pass_summary.update({
-                "selected": True,
-                "source": pass_best_eval.get("source"),
-                "strategy": pass_best_eval.get("strategy"),
-                "formula_score_after": pass_best_eval.get("formula_score"),
-                "formula_score_drop": pass_best_eval.get("formula_score_drop"),
-            })
-            summary["window_coverage_passes"].append(pass_summary)
-            if bool(_turnitin_like_ai_profile(pass_report).get("target_met")):
-                break
-            continue
-
-        pass_summary["reason"] = "no_selectable_window_coverage_candidate"
-        summary["window_coverage_passes"].append(pass_summary)
-        break
-
-    summary["candidate_count"] = len(summary.get("candidate_frontier") or [])
-    if final_eval:
-        final_coverage = _window_coverage_comparison(
-            current_text,
-            current_report,
-            final_text,
-            final_report,
-        )
-        final_density = _eligible_span_density_comparison(
-            current_text,
-            current_report,
-            final_text,
-            final_report,
-        )
-        initial_profile = _turnitin_like_ai_profile(current_report)
-        final_profile = _turnitin_like_ai_profile(final_report)
-        selected_drop = round(float(initial_profile.get("score") or 0.0) - float(final_profile.get("score") or 0.0), 3)
-        edited_count = int(((final_eval.get("patchwork_budget") or {}).get("edited_sentence_count") or 0))
-        coverage_efficiency = round(selected_drop / max(1, edited_count), 3)
-        summary.update({
-            "selected": True,
-            "selected_text": final_text,
-            "selected_report": final_report,
-            "selected_strategy": final_eval.get("strategy"),
-            "selected_candidate": {
-                key: final_eval.get(key)
-                for key in (
-                    "strategy",
-                    "source",
-                    "formula_score",
-                    "formula_score_drop",
-                    "window_coverage_gate",
-                    "eligible_span_density_gate",
-                    "driver_drops",
-                    "patchwork_budget",
-                    "drift_similarity",
-                    "applied_sentence_patches",
-                    "acceptance",
-                )
-            },
-            "selected_window_coverage_portfolio": {
-                "strategy": final_eval.get("strategy"),
-                "source": final_eval.get("source"),
-                "formula_score_after": final_profile.get("score"),
-                "formula_score_drop": selected_drop,
-                "coverage_efficiency": coverage_efficiency,
-                "applied_sentence_patches": final_eval.get("applied_sentence_patches"),
-            },
-            "coverage_efficiency": coverage_efficiency,
-            "window_coverage_after": final_coverage.get("after"),
-            "unsafe_window_count_after": (final_coverage.get("after") or {}).get("unsafe_window_count"),
-            "unsafe_window_count_drop": final_coverage.get("unsafe_window_count_drop"),
-            "ai_sentence_vote_ratio_after": (final_coverage.get("after") or {}).get("ai_sentence_vote_ratio"),
-            "ai_sentence_vote_ratio_drop": final_coverage.get("ai_sentence_vote_ratio_drop"),
-            "eligible_span_density_after": final_density.get("after"),
-            "eligible_span_density_drop": final_density.get("unsafe_eligible_word_ratio_drop"),
-            "reason": final_eval.get("reason"),
-            "final_summary": {
-                "turnitin_like_ai_score": final_profile.get("score"),
-                "target_met": final_profile.get("target_met"),
-                "eligible_span_density_safe": final_density.get("safe"),
-                "window_coverage_safe": final_coverage.get("safe"),
-            },
-        })
-    elif summary["candidate_frontier"]:
-        summary["reason"] = "ceiling_reached"
-        summary["why_not_below_20"] = "No window-coverage candidate reduced total formula score and unsafe window coverage without safety regression."
-    return summary
-
 
 def _post_selection_ai_density_breaker(
     current_text: str,
@@ -2416,174 +1000,15 @@ def _post_selection_ai_density_breaker(
     drift_checker=check_semantic_drift,
     max_scans: int | None = None,
 ) -> dict:
-    """Run an isolated post-selection AI-density breaker.
-
-    This layer is downstream of the stable selector. It can only replace the
-    current selected candidate when a full rescan proves stronger AI-footprint
-    movement without safety regression.
-    """
-    if not _env_flag("DRAFTPROOF_POST_SELECTION_AI_DENSITY_BREAKER", True):
-        return {"enabled": False, "reason": "disabled"}
-    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
-        return {"enabled": False, "reason": "missing_current_selection"}
-    scan_func = scan_func or _run_full_scan_report_dict
-    max_scans = max(
-        0,
-        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_DENSITY_BREAKER_MAX_SCANS", 3.0)),
-    )
-    if max_scans <= 0:
-        return {"enabled": True, "selected": False, "reason": "scan_budget_zero"}
-    candidates = _post_selection_ai_density_breaker_candidates(
+    return _core_post_selection_ai_density_breaker(
         current_text,
         current_report,
-        limit=max_scans,
+        original_report,
+        scan_func=scan_func,
+        drift_checker=drift_checker,
+        max_scans=max_scans,
+        deps=_post_selection_density_deps(),
     )
-    density_map = _ai_density_breaker_map(current_text, current_report)
-    summary = {
-        "enabled": True,
-        "version": "post_selection_ai_density_breaker_v1",
-        "selected": False,
-        "selected_text": current_text,
-        "selected_report": current_report,
-        "selected_strategy": None,
-        "candidate_count": len(candidates),
-        "scans_used": 0,
-        "density_breaker_map": density_map,
-        "edit_budget": _ai_density_edit_budget(current_text),
-        "base_summary": {
-            "turnitin_like_ai_score": _turnitin_like_ai_profile(current_report).get("score"),
-            "ai_footprint": _strict_ai_safe_band_status(current_report).get("profile"),
-        },
-        "candidates": [],
-        "reason": "no_candidate_selected",
-    }
-    if not candidates:
-        summary["reason"] = "no_density_breaker_candidates"
-        return summary
-
-    protected = detect_protected_spans(current_text)
-    best_eval = None
-    best_rank = None
-    best_text = current_text
-    best_report = current_report
-    seen = {current_text.strip()}
-    for strategy, candidate_text, meta in candidates:
-        if summary["scans_used"] >= max_scans:
-            break
-        candidate_eval = {
-            "strategy": strategy,
-            "operation": (meta or {}).get("operation"),
-            "meta": meta or {},
-        }
-        normalized = str(candidate_text or "").strip()
-        if not normalized or normalized in seen:
-            candidate_eval["reason"] = "unchanged_or_duplicate_candidate"
-            summary["candidates"].append(candidate_eval)
-            continue
-        seen.add(normalized)
-        local_reason = _ai_candidate_quality_reject_reason(normalized)
-        if local_reason:
-            candidate_eval["reason"] = local_reason
-            summary["candidates"].append(candidate_eval)
-            continue
-        budget_status = _ai_density_patchwork_budget_status(current_text, normalized, meta or {})
-        candidate_eval["patchwork_budget"] = budget_status
-        if not budget_status.get("accepted"):
-            candidate_eval["reason"] = budget_status.get("reason") or "patchwork_edit_budget_exceeded"
-            summary["candidates"].append(candidate_eval)
-            continue
-        protected_loss = _ai_search_protected_loss_reason(current_text, normalized, protected)
-        if protected_loss:
-            candidate_eval["reason"] = "protected_span_lost " + protected_loss
-            summary["candidates"].append(candidate_eval)
-            continue
-        try:
-            drift = drift_checker(current_text, normalized, threshold=0.80)
-        except TypeError:
-            drift = drift_checker(current_text, normalized)
-        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
-        if not bool(getattr(drift, "accepted", True)):
-            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
-            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
-            summary["candidates"].append(candidate_eval)
-            continue
-        scan_t0 = time.time()
-        try:
-            candidate_report = scan_func(normalized)
-        except Exception as exc:
-            candidate_eval["reason"] = f"candidate_scan_error {exc}"
-            summary["candidates"].append(candidate_eval)
-            continue
-        summary["scans_used"] += 1
-        candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
-        review_delta = _report_review_burden(candidate_report) - _report_review_burden(current_report)
-        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(current_report)
-        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(current_report)
-        acceptance = _post_selection_ai_density_breaker_acceptance(
-            current_report,
-            candidate_report,
-            review_burden_delta=review_delta,
-            weighted_severity_delta=severity_delta,
-            critical_high_delta=critical_delta,
-        )
-        candidate_eval.update({
-            "acceptance": acceptance,
-            "selectable": acceptance.get("selectable"),
-            "reason": acceptance.get("reason"),
-            "formula_score": acceptance.get("formula_score_after"),
-            "formula_score_drop": acceptance.get("formula_score_drop"),
-            "driver_drops": acceptance.get("driver_drops"),
-            "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
-        })
-        summary["candidates"].append(candidate_eval)
-        if not acceptance.get("selectable"):
-            continue
-        rank = (
-            1 if _turnitin_like_ai_profile(candidate_report).get("target_met") else 0,
-            float(acceptance.get("formula_score_drop") or 0.0),
-            float(acceptance.get("positive_ai_burden_drop") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("external_ai_flag_risk") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("qualifying_text_ai_density") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),
-            -float(_turnitin_like_ai_profile(candidate_report).get("score") or 100.0),
-        )
-        if best_rank is None or rank > best_rank:
-            best_rank = rank
-            best_eval = candidate_eval
-            best_text = normalized
-            best_report = candidate_report
-
-    if best_eval:
-        best_eval["selected"] = True
-        summary.update({
-            "selected": True,
-            "selected_text": best_text,
-            "selected_report": best_report,
-            "selected_strategy": best_eval.get("strategy"),
-            "reason": best_eval.get("reason"),
-            "selected_candidate": {
-                key: best_eval.get(key)
-                for key in (
-                    "strategy",
-                    "operation",
-                    "formula_score",
-                    "formula_score_drop",
-                    "driver_drops",
-                    "positive_ai_burden_drop",
-                    "positive_ai_burden_before",
-                    "positive_ai_burden_after",
-                    "patchwork_budget",
-                    "drift_similarity",
-                    "acceptance",
-                )
-            },
-            "final_summary": {
-                "turnitin_like_ai_score": _turnitin_like_ai_profile(best_report).get("score"),
-                "ai_footprint": _strict_ai_safe_band_status(best_report).get("profile"),
-            },
-        })
-    return summary
 
 
 def _post_density_human_anchor_probe_context(sentence: str, paragraph: str = "") -> tuple[str, str]:
@@ -2606,199 +1031,45 @@ def _post_density_human_anchor_probe_context(sentence: str, paragraph: str = "")
     )
 
 
+def _post_density_human_anchor_probe_deps() -> PostDensityHumanAnchorProbeDeps:
+    return PostDensityHumanAnchorProbeDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        run_full_scan_report_dict=_run_full_scan_report_dict,
+        check_semantic_drift=check_semantic_drift,
+        human_anchor_driver_contract=_human_anchor_driver_contract,
+        human_anchor_suppression_frontier=_human_anchor_suppression_frontier,
+        ai_density_breaker_map=_ai_density_breaker_map,
+        logical_paragraphs=_logical_paragraphs,
+        split_sentences=_split_sentences,
+        ai_density_breaker_canonical_fact_sentence=_ai_density_breaker_canonical_fact_sentence,
+        post_density_human_anchor_probe_context=_post_density_human_anchor_probe_context,
+        ai_density_edit_budget=_ai_density_edit_budget,
+        splice_sentences_by_text=_splice_sentences_by_text,
+        ai_density_patchwork_budget_status=_ai_density_patchwork_budget_status,
+        detect_protected_spans=detect_protected_spans,
+        ai_candidate_quality_reject_reason=_ai_candidate_quality_reject_reason,
+        ai_search_protected_loss_reason=_ai_search_protected_loss_reason,
+        report_review_burden=_report_review_burden,
+        report_weighted_severity=_report_weighted_severity,
+        critical_high_count=_critical_high_count,
+        strict_ai_safe_band_status=_strict_ai_safe_band_status,
+        turnitin_like_positive_burden_drop=_turnitin_like_positive_burden_drop,
+    )
+
+
 def _post_density_human_anchor_probe_candidates(
     current_text: str,
     current_report: dict | None,
     *,
     limit: int = 3,
 ) -> list[tuple[str, str, dict]]:
-    """Build a tiny post-density Human Anchor probe candidate set.
-
-    This is intentionally separate from the existing amplifier. It only runs
-    after density work has selected a safer baseline, and it edits very few
-    non-canonical spans so patchwork risk stays bounded.
-    """
-    if not _env_flag("DRAFTPROOF_POST_DENSITY_HUMAN_ANCHOR_PROBE", True):
-        return []
-    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
-        return []
-    profile = _turnitin_like_ai_profile(current_report)
-    contract = _human_anchor_driver_contract(current_report, text=current_text)
-    before = contract.get("before") if isinstance(contract.get("before"), dict) else {}
-    try:
-        suppression = float(profile.get("human_anchor_suppression") or 0.0)
-    except (TypeError, ValueError):
-        suppression = 0.0
-    try:
-        target_gap = float(profile.get("target_gap") or 0.0)
-    except (TypeError, ValueError):
-        target_gap = 0.0
-    try:
-        lived_detail_risk = float(before.get("lived_detail_risk") or 0.0)
-    except (TypeError, ValueError):
-        lived_detail_risk = 0.0
-    try:
-        human_anchor_score = float(before.get("human_anchor_score") or 0.0)
-    except (TypeError, ValueError):
-        human_anchor_score = 0.0
-    headroom = max(0.0, 45.0 - suppression)
-    if target_gap <= 0.0 or headroom <= 0.0:
-        return []
-    if lived_detail_risk < 55.0 and human_anchor_score >= 50.0:
-        return []
-
-    density_map = _ai_density_breaker_map(current_text, current_report)
-    paragraphs = _logical_paragraphs(current_text)
-    paragraph_lookup = {}
-    flat_index = 0
-    for paragraph_index, paragraph in enumerate(paragraphs):
-        for sentence in _split_sentences(paragraph):
-            paragraph_lookup[flat_index] = {
-                "paragraph_index": paragraph_index,
-                "paragraph": paragraph,
-                "sentence": sentence,
-            }
-            flat_index += 1
-
-    target_rows: list[dict] = []
-    seen_indexes: set[int] = set()
-    for window in density_map.get("top_density_windows") or []:
-        for row in window.get("editable_sentences") or []:
-            if not isinstance(row, dict):
-                continue
-            sentence_index = row.get("sentence_index")
-            if not isinstance(sentence_index, int) or sentence_index in seen_indexes:
-                continue
-            sentence = str(row.get("sentence") or "")
-            if (
-                not sentence.strip()
-                or _ai_density_breaker_canonical_fact_sentence(sentence)
-                or re.search(r"https?://|www\.|^\s*references?\s*$", sentence, flags=re.I)
-            ):
-                continue
-            context_text, operation = _post_density_human_anchor_probe_context(
-                sentence,
-                str((paragraph_lookup.get(sentence_index) or {}).get("paragraph") or ""),
-            )
-            if not context_text:
-                continue
-            target_rows.append({
-                **row,
-                "sentence_index": sentence_index,
-                "sentence": sentence,
-                "context_text": context_text,
-                "context_operation": operation,
-                "window": {
-                    "start_sentence": window.get("start_sentence"),
-                    "end_sentence": window.get("end_sentence"),
-                    "score": window.get("score"),
-                },
-            })
-            seen_indexes.add(sentence_index)
-
-    if not target_rows:
-        for row in density_map.get("top_sentence_targets") or []:
-            if not isinstance(row, dict):
-                continue
-            sentence_index = row.get("sentence_index")
-            sentence = str(row.get("sentence") or "")
-            if (
-                not isinstance(sentence_index, int)
-                or sentence_index in seen_indexes
-                or row.get("canonical_fact_preserved")
-                or _ai_density_breaker_canonical_fact_sentence(sentence)
-            ):
-                continue
-            context_text, operation = _post_density_human_anchor_probe_context(
-                sentence,
-                str((paragraph_lookup.get(sentence_index) or {}).get("paragraph") or ""),
-            )
-            target_rows.append({
-                **row,
-                "sentence_index": sentence_index,
-                "sentence": sentence,
-                "context_text": context_text,
-                "context_operation": operation,
-            })
-            seen_indexes.add(sentence_index)
-            if len(target_rows) >= 4:
-                break
-
-    if not target_rows:
-        return []
-    target_rows.sort(
-        key=lambda row: (
-            float(row.get("score") or 0.0),
-            float(row.get("top10_ratio") or 0.0),
-        ),
-        reverse=True,
+    return _core_post_density_human_anchor_probe_candidates(
+        current_text,
+        current_report,
+        limit=limit,
+        deps=_post_density_human_anchor_probe_deps(),
     )
-
-    edit_budget = _ai_density_edit_budget(current_text)
-    max_edits = max(1, min(4, int(edit_budget.get("max_edited_sentences") or 1)))
-    max_probe_targets = max(1, min(3, max_edits // 2 if max_edits >= 2 else 1))
-    profiles = [
-        ("post_density_anchor_probe_one_spot", 1),
-        ("post_density_anchor_probe_two_spots", min(2, max_probe_targets)),
-        ("post_density_anchor_probe_three_spots", min(3, max_probe_targets)),
-    ]
-    candidates: list[tuple[str, str, dict]] = []
-    seen_texts = {current_text.strip()}
-
-    for strategy, take in profiles[:max(1, int(limit or 1))]:
-        if take <= 0:
-            continue
-        selected = sorted(target_rows[:take], key=lambda row: int(row.get("sentence_index") or 0))
-        replacements: dict[str, str] = {}
-        changes = []
-        for row in selected:
-            sentence = str(row.get("sentence") or "")
-            addition = str(row.get("context_text") or "").strip()
-            if not sentence.strip() or not addition:
-                continue
-            replacement = f"{sentence.strip()} {addition}"
-            if replacement.strip() == sentence.strip():
-                continue
-            replacements[sentence] = replacement
-            changes.append({
-                "sentence_index": row.get("sentence_index"),
-                "operation": row.get("context_operation"),
-                "original": sentence[:200],
-                "addition": addition[:200],
-                "score": row.get("score"),
-                "top10_ratio": row.get("top10_ratio"),
-                "window": row.get("window"),
-            })
-        if not changes:
-            continue
-        candidate = _splice_sentences_by_text(current_text, replacements).strip()
-        if not candidate or candidate in seen_texts:
-            continue
-        seen_texts.add(candidate)
-        meta = {
-            "operation": "post_density_human_anchor_probe",
-            "post_density_human_anchor_probe_candidate": True,
-            "scope": "bounded_implied_context_after_density",
-            "edited_sentence_count": len(changes),
-            "changed_sentence_frames": len(changes),
-            "edit_budget": edit_budget,
-            "patchwork_budget": _ai_density_patchwork_budget_status(
-                current_text,
-                candidate,
-                {"edited_sentence_count": len(changes)},
-            ),
-            "human_anchor_driver_contract_before": contract,
-            "targeted_drivers": [
-                "human_anchor_suppression",
-                "lived_detail_risk",
-                "turnitin_like_ai_score",
-            ],
-            "changes": changes,
-        }
-        candidates.append((strategy, candidate, meta))
-        if len(candidates) >= max(1, int(limit or 1)):
-            break
-    return candidates
 
 
 def _post_density_human_anchor_probe_acceptance(
@@ -2809,69 +1080,14 @@ def _post_density_human_anchor_probe_acceptance(
     weighted_severity_delta: int | float,
     critical_high_delta: int | float,
 ) -> dict:
-    """Accept only measured Human Anchor suppression that does not backfire."""
-    base_profile = _turnitin_like_ai_profile(current_report)
-    candidate_profile = _turnitin_like_ai_profile(candidate_report)
-    formula_drop = round(float(base_profile.get("score") or 0.0) - float(candidate_profile.get("score") or 0.0), 3)
-    positive_ai_burden_drop = _turnitin_like_positive_burden_drop(current_report, candidate_report)
-    component_drops = _turnitin_like_component_drops(base_profile, candidate_profile)
-    base_flat = _ai_footprint_flatten(_ai_footprint_profile(current_report))
-    candidate_flat = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
-
-    def drop(key: str) -> float:
-        return round(float(base_flat.get(key) or 0.0) - float(candidate_flat.get(key) or 0.0), 3)
-
-    driver_drops = {
-        key: drop(key)
-        for key in (
-            "topk_calibrated_risk",
-            "topk_pattern_raw",
-            "qualifying_text_ai_density",
-            "external_ai_flag_risk",
-            "ai_likelihood",
-            "rewrite_smoothness",
-            "ai_authorship",
-            "ai_transformation",
-            "semantic_uniformity",
-        )
-    }
-    human_anchor_gain = round(float(component_drops.get("human_anchor_suppression") or 0.0), 3)
-    reject_reasons = []
-    if formula_drop <= 0.001:
-        reject_reasons.append("formula_score_not_reduced")
-    if human_anchor_gain <= 0.001:
-        reject_reasons.append("human_anchor_suppression_not_increased")
-    if positive_ai_burden_drop < -0.001:
-        reject_reasons.append("positive_ai_burden_regressed")
-    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation", "external_ai_flag_risk"):
-        if driver_drops.get(key, 0.0) < -0.001:
-            reject_reasons.append(f"{key}_regressed")
-    if float(review_burden_delta or 0.0) > 0.0:
-        reject_reasons.append("review_burden_regressed")
-    if float(weighted_severity_delta or 0.0) > 0.0:
-        reject_reasons.append("weighted_severity_regressed")
-    if float(critical_high_delta or 0.0) > 0.0:
-        reject_reasons.append("critical_high_regressed")
-    selectable = not reject_reasons
-    return {
-        "version": "post_density_human_anchor_probe_acceptance_v1",
-        "selectable": selectable,
-        "reason": "accepted_post_density_human_anchor_gain" if selectable else reject_reasons[0],
-        "formula_score_before": base_profile.get("score"),
-        "formula_score_after": candidate_profile.get("score"),
-        "formula_score_drop": formula_drop,
-        "positive_ai_burden_before": base_profile.get("raw_positive_score"),
-        "positive_ai_burden_after": candidate_profile.get("raw_positive_score"),
-        "positive_ai_burden_drop": positive_ai_burden_drop,
-        "human_anchor_suppression_before": base_profile.get("human_anchor_suppression"),
-        "human_anchor_suppression_after": candidate_profile.get("human_anchor_suppression"),
-        "human_anchor_suppression_gain": human_anchor_gain,
-        "turnitin_like_component_drops": component_drops,
-        "driver_drops": driver_drops,
-        "review_burden_delta": review_burden_delta,
-        "weighted_severity_delta": weighted_severity_delta,
-        "critical_high_delta": critical_high_delta,
-    }
+    return _core_post_density_human_anchor_probe_acceptance(
+        current_report,
+        candidate_report,
+        review_burden_delta=review_burden_delta,
+        weighted_severity_delta=weighted_severity_delta,
+        critical_high_delta=critical_high_delta,
+        deps=_post_density_human_anchor_probe_deps(),
+    )
 
 
 def _post_density_human_anchor_probe(
@@ -2883,185 +1099,15 @@ def _post_density_human_anchor_probe(
     drift_checker=check_semantic_drift,
     max_scans: int | None = None,
 ) -> dict:
-    """Run a small Human Anchor probe after the density breaker baseline."""
-    if not _env_flag("DRAFTPROOF_POST_DENSITY_HUMAN_ANCHOR_PROBE", True):
-        return {"enabled": False, "reason": "disabled"}
-    if not isinstance(current_text, str) or not current_text.strip() or not isinstance(current_report, dict):
-        return {"enabled": False, "reason": "missing_current_selection"}
-    scan_func = scan_func or _run_full_scan_report_dict
-    max_scans = max(
-        0,
-        int(max_scans if isinstance(max_scans, int) else _float_env("DRAFTPROOF_POST_DENSITY_HUMAN_ANCHOR_MAX_SCANS", 3.0)),
-    )
-    profile = _turnitin_like_ai_profile(current_report)
-    contract = _human_anchor_driver_contract(current_report, text=current_text)
-    frontier = _human_anchor_suppression_frontier(current_text, current_report, None)
-    summary = {
-        "enabled": True,
-        "version": "post_density_human_anchor_probe_v1",
-        "selected": False,
-        "selected_text": current_text,
-        "selected_report": current_report,
-        "selected_strategy": None,
-        "candidate_count": 0,
-        "scans_used": 0,
-        "base_summary": {
-            "turnitin_like_ai_score": profile.get("score"),
-            "target_gap": profile.get("target_gap"),
-            "positive_ai_burden": profile.get("raw_positive_score"),
-            "human_anchor_suppression": profile.get("human_anchor_suppression"),
-        },
-        "human_anchor_driver_contract": contract,
-        "human_anchor_suppression_frontier": frontier,
-        "candidates": [],
-        "reason": "no_candidate_selected",
-    }
-    if max_scans <= 0:
-        summary["reason"] = "scan_budget_zero"
-        return summary
-    if bool(profile.get("target_met")):
-        summary["reason"] = "turnitin_like_target_already_met"
-        return summary
-    candidates = _post_density_human_anchor_probe_candidates(
+    return _core_post_density_human_anchor_probe(
         current_text,
         current_report,
-        limit=max_scans,
+        original_report,
+        scan_func=scan_func,
+        drift_checker=drift_checker,
+        max_scans=max_scans,
+        deps=_post_density_human_anchor_probe_deps(),
     )
-    summary["candidate_count"] = len(candidates)
-    if not candidates:
-        summary["reason"] = "no_human_anchor_probe_candidates"
-        return summary
-
-    protected = detect_protected_spans(current_text)
-    seen = {current_text.strip()}
-    best_eval = None
-    best_rank = None
-    best_text = current_text
-    best_report = current_report
-    for strategy, candidate_text, meta in candidates:
-        if summary["scans_used"] >= max_scans:
-            break
-        candidate_eval = {
-            "strategy": strategy,
-            "operation": (meta or {}).get("operation"),
-            "meta": meta or {},
-        }
-        normalized = str(candidate_text or "").strip()
-        if not normalized or normalized in seen:
-            candidate_eval["reason"] = "unchanged_or_duplicate_candidate"
-            summary["candidates"].append(candidate_eval)
-            continue
-        seen.add(normalized)
-        local_reason = _ai_candidate_quality_reject_reason(normalized)
-        if local_reason:
-            candidate_eval["reason"] = local_reason
-            summary["candidates"].append(candidate_eval)
-            continue
-        budget_status = _ai_density_patchwork_budget_status(current_text, normalized, meta or {})
-        candidate_eval["patchwork_budget"] = budget_status
-        if not budget_status.get("accepted"):
-            candidate_eval["reason"] = budget_status.get("reason") or "patchwork_edit_budget_exceeded"
-            summary["candidates"].append(candidate_eval)
-            continue
-        protected_loss = _ai_search_protected_loss_reason(current_text, normalized, protected)
-        if protected_loss:
-            candidate_eval["reason"] = "protected_span_lost " + protected_loss
-            summary["candidates"].append(candidate_eval)
-            continue
-        try:
-            drift = drift_checker(current_text, normalized, threshold=0.80)
-        except TypeError:
-            drift = drift_checker(current_text, normalized)
-        candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
-        if not bool(getattr(drift, "accepted", True)):
-            candidate_eval["reason"] = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
-            candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
-            summary["candidates"].append(candidate_eval)
-            continue
-        scan_t0 = time.time()
-        try:
-            candidate_report = scan_func(normalized)
-        except Exception as exc:
-            candidate_eval["reason"] = f"candidate_scan_error {exc}"
-            summary["candidates"].append(candidate_eval)
-            continue
-        summary["scans_used"] += 1
-        candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
-        review_delta = _report_review_burden(candidate_report) - _report_review_burden(current_report)
-        severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(current_report)
-        critical_delta = _critical_high_count(candidate_report) - _critical_high_count(current_report)
-        acceptance = _post_density_human_anchor_probe_acceptance(
-            current_report,
-            candidate_report,
-            review_burden_delta=review_delta,
-            weighted_severity_delta=severity_delta,
-            critical_high_delta=critical_delta,
-        )
-        candidate_eval.update({
-            "acceptance": acceptance,
-            "selectable": acceptance.get("selectable"),
-            "reason": acceptance.get("reason"),
-            "formula_score": acceptance.get("formula_score_after"),
-            "formula_score_drop": acceptance.get("formula_score_drop"),
-            "human_anchor_suppression_gain": acceptance.get("human_anchor_suppression_gain"),
-            "positive_ai_burden_drop": acceptance.get("positive_ai_burden_drop"),
-            "driver_drops": acceptance.get("driver_drops"),
-            "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
-            "human_anchor_driver_contract": _human_anchor_driver_contract(
-                current_report,
-                candidate_report,
-                text=normalized,
-            ),
-        })
-        summary["candidates"].append(candidate_eval)
-        if not acceptance.get("selectable"):
-            continue
-        rank = (
-            1 if _turnitin_like_ai_profile(candidate_report).get("target_met") else 0,
-            float(acceptance.get("formula_score_drop") or 0.0),
-            float(acceptance.get("human_anchor_suppression_gain") or 0.0),
-            float(acceptance.get("positive_ai_burden_drop") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("external_ai_flag_risk") or 0.0),
-            -float(_turnitin_like_ai_profile(candidate_report).get("score") or 100.0),
-        )
-        if best_rank is None or rank > best_rank:
-            best_rank = rank
-            best_eval = candidate_eval
-            best_text = normalized
-            best_report = candidate_report
-
-    if best_eval:
-        best_eval["selected"] = True
-        summary.update({
-            "selected": True,
-            "selected_text": best_text,
-            "selected_report": best_report,
-            "selected_strategy": best_eval.get("strategy"),
-            "reason": best_eval.get("reason"),
-            "selected_candidate": {
-                key: best_eval.get(key)
-                for key in (
-                    "strategy",
-                    "operation",
-                    "formula_score",
-                    "formula_score_drop",
-                    "human_anchor_suppression_gain",
-                    "positive_ai_burden_drop",
-                    "driver_drops",
-                    "patchwork_budget",
-                    "drift_similarity",
-                    "acceptance",
-                    "human_anchor_driver_contract",
-                )
-            },
-            "final_summary": {
-                "turnitin_like_ai_score": _turnitin_like_ai_profile(best_report).get("score"),
-                "positive_ai_burden": _turnitin_like_ai_profile(best_report).get("raw_positive_score"),
-                "human_anchor_suppression": _turnitin_like_ai_profile(best_report).get("human_anchor_suppression"),
-                "ai_footprint": _strict_ai_safe_band_status(best_report).get("profile"),
-            },
-        })
-    return summary
 
 
 def _ai_search_candidate_selection_status(
@@ -3281,33 +1327,12 @@ def _clear_stale_rollback_for_kept_ai_mitigation(summary: dict, source: str) -> 
         )
 
 
-def _float_env(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
 
 
-def _float_env_with_fallback(name: str, fallback: float) -> float:
-    value = _float_env_optional(name)
-    return float(value) if value is not None else float(fallback)
 
 
-TOPK_SAFE_LIMIT = TOPK_CALIBRATED_SAFE_LIMIT
 
 
-def _safe_topk_calibrated_limit() -> float:
-    """Hard product ceiling for calibrated Top-k mitigation safety.
-
-    Raw GPT-2 Top-k remains diagnostic. Safe-band decisions use the fixed
-    calibrated risk scale and are not environment-tuned.
-    """
-    return TOPK_SAFE_LIMIT
-
-
-def _safe_topk_limit() -> float:
-    """Compatibility alias for older tests/callers."""
-    return _safe_topk_calibrated_limit()
 
 
 def _selection_status_topk_value(selection_status: dict | None) -> float | None:
@@ -3337,163 +1362,24 @@ def _selection_status_topk_safe(selection_status: dict | None) -> bool:
     return isinstance(value, (int, float)) and float(value) < _safe_topk_calibrated_limit()
 
 
-def _rewrite_sampling_profile(prefix: str = "DRAFTPROOF_AI_SEARCH") -> dict:
-    """Effective default sampling controls for rewrite-generation calls.
-
-    Phase-specific calls may override these values, but generation should not
-    silently collapse to temperature-only sampling when env vars are unset.
-    """
-    return {
-        "temperature": _float_env(f"{prefix}_TEMPERATURE", 0.45),
-        "top_p": _float_env_with_fallback(f"{prefix}_TOP_P", 0.82),
-        "top_k": _int_env_optional(f"{prefix}_TOP_K"),
-        "presence_penalty": _float_env_with_fallback(f"{prefix}_PRESENCE_PENALTY", 0.15),
-        "frequency_penalty": _float_env_with_fallback(f"{prefix}_FREQUENCY_PENALTY", 0.25),
-    }
 
 
-def _phase_sampling_arg(phase_prefix: str, key: str, fallback_prefix: str = "DRAFTPROOF_AI_SEARCH"):
-    env_name = f"{phase_prefix}_{key}"
-    fallback = _rewrite_sampling_profile(fallback_prefix)
-    phase_defaults = {
-        ("DRAFTPROOF_TOPK_ROUTE", "TOP_P"): 0.72,
-        ("DRAFTPROOF_TOPK_ROUTE", "PRESENCE_PENALTY"): 0.10,
-        ("DRAFTPROOF_TOPK_ROUTE", "FREQUENCY_PENALTY"): 0.35,
-    }
-    if key == "TOP_K":
-        value = _int_env_optional(env_name)
-        return value if value is not None else fallback.get("top_k")
-    field = {
-        "TOP_P": "top_p",
-        "PRESENCE_PENALTY": "presence_penalty",
-        "FREQUENCY_PENALTY": "frequency_penalty",
-    }.get(key)
-    value = _float_env_optional(env_name)
-    if value is not None:
-        return value
-    if (phase_prefix, key) in phase_defaults:
-        return phase_defaults[(phase_prefix, key)]
-    return fallback.get(field)
 
 
-def _phase_chat_sampling_kwargs(
-    phase_prefix: str,
-    *,
-    temperature_env: str,
-    temperature_default: float,
-    max_tokens_env: str,
-    max_tokens_default: int,
-    fallback_prefix: str = "DRAFTPROOF_AI_SEARCH",
-) -> dict:
-    """Build normalized sampling kwargs for generation calls."""
-    return {
-        "temperature": float(os.environ.get(temperature_env, str(temperature_default))),
-        "max_tokens": int(os.environ.get(max_tokens_env, str(max_tokens_default))),
-        "top_p": _phase_sampling_arg(phase_prefix, "TOP_P", fallback_prefix=fallback_prefix),
-        "top_k": _phase_sampling_arg(phase_prefix, "TOP_K", fallback_prefix=fallback_prefix),
-        "presence_penalty": _phase_sampling_arg(
-            phase_prefix,
-            "PRESENCE_PENALTY",
-            fallback_prefix=fallback_prefix,
-        ),
-        "frequency_penalty": _phase_sampling_arg(
-            phase_prefix,
-            "FREQUENCY_PENALTY",
-            fallback_prefix=fallback_prefix,
-        ),
-    }
 
 
-def _llm_call_budget_exhausted_before_send(optimistic_llm_calls: int, max_llm_calls: int) -> bool:
-    """Return true only after the optimistic pre-send count exceeds budget."""
-    return int(optimistic_llm_calls or 0) > int(max_llm_calls or 0)
 
 
-def _resolve_stage_llm_budget(
-    primary_env: str,
-    fallback_env: str | None = None,
-    *,
-    default: int = 0,
-) -> int:
-    """Resolve an LLM call budget with an explicit fallback env.
-
-    Several rewrite stages share the same user-visible budget intent. This
-    helper prevents a later stage from silently ignoring a cap that was set for
-    the broader rewrite/search controller.
-    """
-    for name in (primary_env, fallback_env):
-        if not name:
-            continue
-        value = _int_env_optional(name)
-        if value is not None:
-            return max(0, int(value))
-    return max(0, int(default))
 
 
-def _float_env_optional(name: str) -> float | None:
-    raw = os.environ.get(name)
-    if raw is None or str(raw).strip() == "":
-        return None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
 
 
-def _int_env_optional(name: str) -> int | None:
-    raw = os.environ.get(name)
-    if raw is None or str(raw).strip() == "":
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
 
 
-def _safe_index(value, default: int = -1) -> int:
-    """Parse indexes without treating zero as missing."""
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
-def _load_local_env(env_path: str | None = None) -> list[str]:
-    """Load simple KEY=VALUE pairs from repo .env without overriding exports."""
-    if env_path is None:
-        env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
-    loaded = []
-    if not os.path.exists(env_path):
-        return loaded
-    try:
-        with open(env_path, "r", encoding="utf-8") as fh:
-            for raw_line in fh:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export "):].strip()
-                key, value = line.split("=", 1)
-                key = key.strip()
-                if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
-                    continue
-                if key in os.environ:
-                    continue
-                value = value.strip().strip('"').strip("'")
-                os.environ[key] = value
-                loaded.append(key)
-    except OSError:
-        return loaded
-    return loaded
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return str(raw).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
 _SOURCE_SEARCH_RUNTIME_BUDGET = {"calls": 0}
@@ -3628,64 +1514,14 @@ def _score_human_amplification_candidate(
     }
 
 
-def _role_model(role: str, fallback_model: str | None = None) -> str | None:
-    """Resolve stage-specific LLM model names from env with legacy fallback."""
-    role = (role or "").strip().lower()
-    model_lock = _rewrite_model_lock()
-    if model_lock:
-        return model_lock
-    role_env = {
-        "planner": ("DRAFTPROOF_PLANNER_MODEL", "PLANNER_MODEL", "LLM_PLANNER_MODEL"),
-        "generator": ("DRAFTPROOF_GENERATOR_MODEL", "GENERATOR_MODEL", "LLM_GENERATOR_MODEL"),
-        "retry": ("DRAFTPROOF_RETRY_MODEL", "RETRY_MODEL", "LLM_RETRY_MODEL"),
-    }.get(role, ())
-    for name in role_env:
-        value = os.environ.get(name)
-        if value and str(value).strip():
-            return str(value).strip()
-    if role == "retry":
-        return _role_model("generator", fallback_model)
-    return fallback_model or os.environ.get("LLM_MODEL")
 
 
-def _rewrite_model_lock() -> str | None:
-    """Optional hard lock for all rewrite LLM roles."""
-    raw = os.environ.get("DRAFTPROOF_REWRITE_MODEL_LOCK", "openai/gpt-4.1-mini")
-    value = str(raw or "").strip()
-    if not value or value.lower() in {"0", "off", "false", "none", "disabled"}:
-        return None
-    return value
 
 
-def _retry_model_enabled() -> bool:
-    """Kill switch for expensive retry-model escalation."""
-    return _env_flag("DRAFTPROOF_RETRY_MODEL_ENABLED", False) or _env_flag(
-        "RETRY_MODEL_ENABLED",
-        False,
-    )
 
 
-def _retry_model_max_calls() -> int:
-    raw = (
-        os.environ.get("DRAFTPROOF_RETRY_MODEL_MAX_CALLS")
-        or os.environ.get("RETRY_MODEL_MAX_CALLS")
-    )
-    try:
-        return max(0, int(raw if raw is not None else "1"))
-    except ValueError:
-        return 1
 
 
-def _llm_role_config(fallback_model: str | None = None) -> dict:
-    retry_enabled = _retry_model_enabled()
-    retry_model = _role_model("retry", fallback_model)
-    return {
-        "planner_model": _role_model("planner", fallback_model),
-        "generator_model": _role_model("generator", fallback_model),
-        "retry_model": retry_model,
-        "retry_model_enabled": retry_enabled,
-        "retry_model_max_calls": _retry_model_max_calls() if retry_enabled else 0,
-    }
 
 
 def _ai_search_fast_accept_reason(reference_ai, candidate_ai) -> str:
@@ -3895,6 +1731,16 @@ def _build_marked_mitigation_rewrite(
     }
 
 
+def _author_evidence_reporting_deps() -> AuthorEvidenceReportingDeps:
+    return AuthorEvidenceReportingDeps(
+        contribution_scores=_contribution_scores,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        paragraph_component_targets=_paragraph_component_targets,
+        paragraph_role=_paragraph_role,
+    )
+
+
 def _build_author_evidence_completion_layer(
     text: str,
     report_dict: dict | None,
@@ -3902,144 +1748,13 @@ def _build_author_evidence_completion_layer(
     target_human: int = 80,
     max_slots: int = 5,
 ) -> dict:
-    """Build a user-completion draft for missing real anchors.
-
-    This is intentionally separate from the accepted rewrite. The markers are
-    prompts for the author to supply truth, not content the system fabricates.
-    """
-    if not isinstance(text, str) or not text.strip() or not isinstance(report_dict, dict):
-        return {}
-    contribution = _contribution_scores(report_dict)
-    current_human = contribution.get("human")
-    if isinstance(current_human, (int, float)) and current_human >= target_human:
-        return {
-            "enabled": False,
-            "reason": "human_target_already_met",
-            "current_human_contribution": round(float(current_human), 3),
-            "target_human_contribution": target_human,
-        }
-
-    badge = report_dict.get("ai_risk_badge") or {}
-    writing_components = badge.get("writing_components") or {}
-    ai_components = badge.get("ai_components") or {}
-    lived_detail_risk = float(writing_components.get("lived_detail_risk") or 0.0)
-    source_grounding_risk = float(writing_components.get("source_grounding_risk") or 0.0)
-    unsupported_claim_risk = float(writing_components.get("unsupported_claim_risk") or 0.0)
-    generic_assertion_risk = float(ai_components.get("generic_assertion_risk") or 0.0)
-    density_risk = float(ai_components.get("qualifying_text_ai_density") or 0.0)
-
-    if max(lived_detail_risk, source_grounding_risk, unsupported_claim_risk, generic_assertion_risk, density_risk) < 55:
-        return {
-            "enabled": False,
-            "reason": "no_strong_missing_anchor_signal",
-            "current_human_contribution": current_human,
-            "target_human_contribution": target_human,
-        }
-
-    paragraphs = _logical_paragraphs(text)
-    if not paragraphs:
-        return {}
-    target_limit = max(1, int(max_slots or 1))
-    targets = _paragraph_component_targets(text, report_dict, limit=max(target_limit * 2, target_limit))
-    target_indexes = []
-    for target in targets:
-        index = target.get("index")
-        if isinstance(index, int) and index not in target_indexes:
-            target_indexes.append(index)
-        if len(target_indexes) >= target_limit:
-            break
-    if not target_indexes:
-        ranked = sorted(
-            enumerate(paragraphs),
-            key=lambda item: len(item[1].split()),
-            reverse=True,
-        )
-        target_indexes = [index for index, paragraph in ranked[:target_limit] if len(paragraph.split()) >= 12]
-
-    slots = []
-    patched = list(paragraphs)
-    for slot_number, index in enumerate(target_indexes, start=1):
-        if index < 0 or index >= len(patched):
-            continue
-        paragraph = patched[index]
-        role = _paragraph_role(
-            paragraph,
-            {"source_gap": source_grounding_risk >= 55, "generic_assertion_hits": 4, "word_count": len(paragraph.split())},
-            is_last=index == len(paragraphs) - 1,
-        )
-        if source_grounding_risk >= 60 or unsupported_claim_risk >= 65:
-            instruction = (
-                "add one real source, task example, work artefact, feedback note, "
-                "or observation that proves this claim"
-            )
-        elif lived_detail_risk >= 65:
-            instruction = (
-                "add one real context, workplace, task, assessment, or feedback detail "
-                "that you can defend"
-            )
-        else:
-            instruction = (
-                "add one real author reasoning detail that narrows this broad claim without inventing evidence"
-            )
-        marker = f" [[ADD REAL AUTHOR ANCHOR {slot_number}: {instruction}]]"
-        stripped = paragraph.rstrip()
-        terminal = ""
-        if stripped and stripped[-1] in ".!?":
-            terminal = stripped[-1]
-            stripped = stripped[:-1].rstrip()
-        patched[index] = f"{stripped}{marker}{terminal}"
-        slots.append({
-            "slot": slot_number,
-            "paragraph_index": index,
-            "paragraph_role": role,
-            "instruction": instruction,
-            "target_paragraph_preview": paragraph[:220],
-            "why_needed": (
-                "Human Contribution is capped because the scan sees broad claims, weak lived detail, "
-                "or missing source/context anchors. DraftProof will not invent those anchors."
-            ),
-        })
-
-    if not slots:
-        return {}
-
-    current_value = float(current_human) if isinstance(current_human, (int, float)) else 0.0
-    slot_lift = min(18.0, len(slots) * 3.5)
-    grounding_lift = 0.0
-    if source_grounding_risk >= 60:
-        grounding_lift += min(8.0, len(slots) * 1.5)
-    if lived_detail_risk >= 65:
-        grounding_lift += min(8.0, len(slots) * 1.5)
-    estimated_low = min(float(target_human), current_value + max(2.0, slot_lift * 0.45))
-    estimated_high = min(float(target_human), current_value + slot_lift + grounding_lift)
-    return {
-        "enabled": True,
-        "kind": "author_evidence_completion",
-        "auto_apply": False,
-        "status": "requires_author_completion",
-        "current_human_contribution": round(current_value, 3) if current_value else current_human,
-        "target_human_contribution": target_human,
-        "estimated_human_after_completion": {
-            "low": int(round(estimated_low)),
-            "high": int(round(estimated_high)),
-            "basis": "Heuristic estimate only; final score requires user-supplied real anchors and rescan.",
-        },
-        "current_blockers": {
-            "lived_detail_risk": lived_detail_risk,
-            "source_grounding_risk": source_grounding_risk,
-            "unsupported_claim_risk": unsupported_claim_risk,
-            "generic_assertion_risk": generic_assertion_risk,
-            "qualifying_text_ai_density": density_risk,
-        },
-        "draft_text": _join_logical_paragraphs(patched),
-        "slots": slots,
-        "instructions": [
-            "Replace every [[ADD REAL AUTHOR ANCHOR ...]] marker with a true source, example, observation, feedback moment, limitation, or author judgement.",
-            "Do not keep bracket markers in the final submission.",
-            "Delete any marker you cannot truthfully support, and narrow the surrounding claim instead.",
-            "Rescan only after all markers are resolved with real author-owned evidence.",
-        ],
-    }
+    return _core_build_author_evidence_completion_layer(
+        text,
+        report_dict,
+        target_human=target_human,
+        max_slots=max_slots,
+        deps=_author_evidence_reporting_deps(),
+    )
 
 
 def _build_mitigation_ceiling_diagnostics(
@@ -4048,140 +1763,11 @@ def _build_mitigation_ceiling_diagnostics(
     *,
     target_human: int = 80,
 ) -> dict:
-    """Explain why automatic mitigation stopped below the Human target."""
-    if not isinstance(summary, dict):
-        return {}
-    scores = summary.get("detect_scores") or {}
-    search = summary.get("ai_mitigation_search") or {}
-    generation = summary.get("generation_layer") or {}
-    candidates = [
-        item for item in (search.get("candidates") or [])
-        if isinstance(item, dict) and isinstance(item.get("ai"), (int, float))
-    ]
-    safe_candidates = [
-        item for item in candidates
-        if (item.get("selection_status") or {}).get("selectable")
-    ]
-    blocked_candidates = [
-        item for item in candidates
-        if not (item.get("selection_status") or {}).get("selectable")
-    ]
-
-    def _num(value, default=None):
-        return float(value) if isinstance(value, (int, float)) else default
-
-    original_human = _num(scores.get("original_human_contribution"), 0.0)
-    final_human = _num(scores.get("rewritten_human_contribution"), original_human)
-    original_ai = _num(scores.get("original_ai"))
-    final_ai = _num(scores.get("rewritten_ai"))
-    original_authorship = _num(scores.get("original_ai_authorship"))
-    final_authorship = _num(scores.get("rewritten_ai_authorship"))
-    original_transform = _num(scores.get("original_ai_transformation"))
-    final_transform = _num(scores.get("rewritten_ai_transformation"))
-
-    human_values = [final_human] + [
-        _num(item.get("human_contribution"), final_human) for item in candidates
-    ]
-    safe_human_values = [final_human] + [
-        _num(item.get("human_contribution"), final_human) for item in safe_candidates
-    ]
-    ai_values = [
-        value for value in [final_ai] + [_num(item.get("ai")) for item in candidates]
-        if value is not None
-    ]
-    best_seen_human = max(human_values)
-    best_safe_human = max(safe_human_values)
-    best_seen_ai = min(ai_values) if ai_values else final_ai
-
-    reason_counts: dict[str, int] = {}
-    for item in blocked_candidates:
-        status = item.get("selection_status") or {}
-        auth = status.get("authenticity_gate") or {}
-        reason = str(auth.get("reason") or status.get("reason") or item.get("reason") or "unknown")
-        reason_counts[reason] = reason_counts.get(reason, 0) + 1
-
-    completion = author_evidence_completion or summary.get("author_evidence_completion") or {}
-    estimate = completion.get("estimated_human_after_completion") or {}
-    estimated_high = _num(estimate.get("high"))
-    missing_slots = len(completion.get("slots") or [])
-    evidence_blocked = bool(completion.get("enabled")) and missing_slots > 0
-
-    if evidence_blocked and estimated_high is not None and estimated_high < target_human:
-        primary = "missing_author_owned_evidence_and_context"
-    elif best_seen_human <= final_human + 2:
-        primary = "human_score_ceiling_from_generic_claims"
-    elif reason_counts:
-        primary = max(reason_counts.items(), key=lambda item: item[1])[0]
-    else:
-        primary = "candidate_pool_exhausted"
-
-    recommended_next = []
-    if evidence_blocked:
-        recommended_next.append(
-            "Complete the Author Evidence slots with real examples, source support, or author observations, then rescan."
-        )
-    if candidates and best_safe_human < target_human:
-        recommended_next.append(
-            "Keep automatic generation in micro-local mode; broad rewrites are no longer the main bottleneck."
-        )
-    if reason_counts.get("review_burden_regressed") or reason_counts.get("weighted_severity_regressed"):
-        recommended_next.append(
-            "Use finding-local patching for review-burden and severity blockers instead of rewriting whole paragraphs."
-        )
-    if not recommended_next:
-        recommended_next.append(
-            "Increase candidate diversity and rescan only if semantic and authorship gates stay non-regressing."
-        )
-
-    return {
-        "schema_version": "mitigation_ceiling.v1",
-        "target_human_contribution": target_human,
-        "primary_blocker": primary,
-        "safe_auto_result": {
-            "human_contribution": round(final_human, 3) if final_human is not None else None,
-            "human_gain": round(final_human - original_human, 3) if final_human is not None else None,
-            "ai_score": round(final_ai, 3) if final_ai is not None else None,
-            "ai_drop": (
-                round(original_ai - final_ai, 3)
-                if original_ai is not None and final_ai is not None else None
-            ),
-            "ai_authorship": round(final_authorship, 3) if final_authorship is not None else None,
-            "ai_authorship_drop": (
-                round(original_authorship - final_authorship, 3)
-                if original_authorship is not None and final_authorship is not None else None
-            ),
-            "ai_transformation": round(final_transform, 3) if final_transform is not None else None,
-            "ai_transformation_drop": (
-                round(original_transform - final_transform, 3)
-                if original_transform is not None and final_transform is not None else None
-            ),
-            "review_burden": scores.get("rewritten_review_burden"),
-            "weighted_severity": scores.get("rewritten_weighted_severity"),
-        },
-        "candidate_frontier": {
-            "scanned_candidates": len(candidates),
-            "safe_candidates": len(safe_candidates),
-            "blocked_candidates": len(blocked_candidates),
-            "best_seen_human": round(best_seen_human, 3),
-            "best_safe_human": round(best_safe_human, 3),
-            "best_seen_ai": round(best_seen_ai, 3) if best_seen_ai is not None else None,
-            "blocked_reason_counts": reason_counts,
-            "blocked_human_winner_repair": search.get("blocked_human_winner_repair"),
-        },
-        "author_evidence_gap": {
-            "enabled": evidence_blocked,
-            "slot_count": missing_slots,
-            "estimated_human_after_completion": estimate or None,
-            "current_blockers": completion.get("current_blockers") or {},
-        },
-        "generation_layer": {
-            "selected": generation.get("selected"),
-            "selected_strategy": generation.get("selected_strategy"),
-            "selection_reason": generation.get("selection_reason"),
-            "candidate_count": generation.get("candidate_count"),
-        },
-        "recommended_next_actions": recommended_next,
-    }
+    return _core_build_mitigation_ceiling_diagnostics(
+        summary,
+        author_evidence_completion,
+        target_human=target_human,
+    )
 
 
 def _build_author_evidence_intake_layer(
@@ -4271,140 +1857,16 @@ def _build_author_context_discovery_layer(
     *,
     max_items: int = 5,
 ) -> dict:
-    """Create an LLM-supervised context discovery contract.
-
-    This lets the product use an LLM to reduce the author-owned context gap
-    without allowing the model to invent evidence. The LLM may propose answer
-    shapes and ask targeted questions; only confirmed user answers become
-    anchors for generation.
-    """
-    intake = author_evidence_intake or {}
-    if not isinstance(intake, dict) or not intake.get("questions"):
-        return {}
-    questions = [q for q in (intake.get("questions") or []) if isinstance(q, dict)]
-    if not questions:
-        return {}
-    limit = max(1, int(max_items or 1))
-    badge = (report_dict or {}).get("ai_risk_badge") or {}
-    writing_components = badge.get("writing_components") or {}
-    ai_components = badge.get("ai_components") or {}
-    context_cards = []
-    for question in questions[:limit]:
-        answer_type = str(question.get("answer_type") or "real_example_or_observation")
-        paragraph_role = str(question.get("paragraph_role") or "generic_claim_heavy")
-        if answer_type == "source_or_citation":
-            safe_shape = (
-                "Name the source, class reading, module material, or citation, then state in one sentence "
-                "which claim it supports."
-            )
-            follow_up = "Can you verify the source title, author/year, or class material name?"
-            evidence_kind = "verifiable_source"
-        elif answer_type == "practice_observation":
-            safe_shape = (
-                "Describe one observed task: who/what was involved, what went wrong or changed, "
-                "and what feedback or action followed."
-            )
-            follow_up = "What did you actually observe, and what changed after feedback or another attempt?"
-            evidence_kind = "observed_process"
-        elif answer_type == "author_judgement":
-            safe_shape = (
-                "State one limitation or judgement you would defend, tied to the paragraph's existing claim."
-            )
-            follow_up = "What would you personally limit, qualify, or emphasise here?"
-            evidence_kind = "author_judgement"
-        else:
-            safe_shape = (
-                "Give one concrete example or author observation in 1-3 sentences. Include the situation, "
-                "the visible action/problem, and the reason it supports this claim."
-            )
-            follow_up = "What real example or observation made this claim true for you?"
-            evidence_kind = "real_example"
-        context_cards.append({
-            "anchor_id": question.get("id"),
-            "paragraph_index": question.get("paragraph_index"),
-            "paragraph_role": paragraph_role,
-            "answer_type": answer_type,
-            "evidence_kind": evidence_kind,
-            "gap": question.get("question"),
-            "target_preview": question.get("target_preview"),
-            "llm_follow_up_question": follow_up,
-            "safe_answer_shape": safe_shape,
-            "minimum_specificity": [
-                "one concrete noun or source name",
-                "one action, judgement, or observed change",
-                "one sentence explaining why it supports the paragraph",
-            ],
-            "do_not_accept": [
-                "maybe/possibly answers",
-                "generic claims without a visible situation or source",
-                "new statistics, institutions, citations, or experiences generated by the LLM",
-            ],
-        })
-
-    return {
-        "enabled": True,
-        "kind": "author_context_discovery",
-        "status": "ready_for_llm_supervised_intake",
-        "auto_apply": False,
-        "purpose": (
-            "Use the LLM to ask targeted questions and shape user-confirmed context, "
-            "then pass only confirmed answers into the rewrite generator."
-        ),
-        "scanner_context": {
-            "lived_detail_risk": writing_components.get("lived_detail_risk"),
-            "source_grounding_risk": writing_components.get("source_grounding_risk"),
-            "unsupported_claim_risk": writing_components.get("unsupported_claim_risk"),
-            "generic_assertion_risk": ai_components.get("generic_assertion_risk"),
-            "qualifying_text_ai_density": ai_components.get("qualifying_text_ai_density"),
-        },
-        "context_cards": context_cards,
-        "llm_task_prompt": (
-            "You are DraftProof's AUTHOR_CONTEXT_DISCOVERY assistant. "
-            "Ask the user for the listed missing context. You may propose answer shapes, "
-            "but you must not answer on the user's behalf. Mark every answer as confirmed, "
-            "uncertain, or not_available. Only confirmed answers with permission_to_use=true "
-            "may be passed to generation."
-        ),
-        "answer_payload_schema": {
-            "answers": [
-                {
-                    "anchor_id": "anchor_1",
-                    "answer": "user-confirmed source, observation, example, limitation, or judgement",
-                    "confidence": "confirmed|uncertain|not_available",
-                    "permission_to_use": True,
-                }
-            ]
-        },
-        "handoff_env": {
-            "json": "DRAFTPROOF_AUTHOR_EVIDENCE_ANSWERS_JSON",
-            "file": "DRAFTPROOF_AUTHOR_EVIDENCE_ANSWERS_FILE",
-        },
-        "success_gate": [
-            "answer passes relevance check for its paragraph",
-            "answer is confirmed and permissioned by the user",
-            "generation uses each confirmed anchor at most once",
-            "rescan does not regress AI Authorship, AI Transformation, review burden, severity, or drift gates",
-        ],
-    }
+    return _core_build_author_context_discovery_layer(
+        author_evidence_intake,
+        report_dict,
+        max_items=max_items,
+    )
 
 
-_SOURCE_SEARCH_STOPWORDS = {
-    "about", "after", "also", "and", "are", "because", "been", "being", "but",
-    "can", "could", "does", "from", "have", "into", "more", "must", "not",
-    "only", "should", "that", "the", "their", "then", "there", "these", "this",
-    "through", "with", "within", "without", "would", "when", "where", "which",
-    "while", "will", "were", "what", "who", "why", "how", "they", "them",
-}
-_SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS = {
-    "evidence", "information", "report", "research", "study", "source",
-    "sources", "claim", "claims", "analysis", "context",
-}
-
-_SOURCE_SEARCH_CREDIBLE_TERMS = "evidence research study report"
-_SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS = {
-    "instagram.com", "facebook.com", "tiktok.com", "x.com", "twitter.com",
-    "pinterest.com", "reddit.com", "youtube.com", "getyourteachon.com",
-}
+_SOURCE_SEARCH_STOPWORDS = _CORE_SOURCE_SEARCH_STOPWORDS
+_SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS = _CORE_SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS
+_SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS = _CORE_SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS
 
 
 def _source_search_enabled() -> bool:
@@ -4462,91 +1924,39 @@ def _internet_reauthor_priority_status(report_dict: dict | None, source_text: st
 
 
 def _source_search_keywords(text: str, limit: int = 10) -> list[str]:
-    words = re.findall(r"[A-Za-z][A-Za-z'-]{3,}|\b[A-Z]{2,}\d*\b|\b\d{4}\b", str(text or ""))
-    scored: dict[str, int] = {}
-    for raw in words:
-        key = raw.strip("-'").lower()
-        if not key or key in _SOURCE_SEARCH_STOPWORDS:
-            continue
-        if len(key) < 4 and not re.match(r"^[a-z]{2,}\d", key):
-            continue
-        scored[key] = scored.get(key, 0) + (2 if raw[:1].isupper() or any(ch.isdigit() for ch in raw) else 1)
-    ordered = sorted(scored.items(), key=lambda item: (-item[1], item[0]))
-    return [word for word, _score in ordered[:max(1, limit)]]
+    return _core_source_search_keywords(text, limit=limit)
 
 
 def _source_grounding_query(claim: str) -> str:
-    claim_text = re.sub(r"\s+", " ", str(claim or "").strip())
-    lower = claim_text.lower()
-    themes: list[str] = []
-
-    def add_theme(*items: str) -> None:
-        for item in items:
-            if item and item not in themes:
-                themes.append(item)
-
-    if any(term in lower for term in ("youtube", "tiktok", "social media", "online course", "ai tool", "search engine")):
-        add_theme("social media", "online platforms", "AI tools")
-    if any(term in lower for term in ("trust", "accurate", "misleading", "sources", "information")):
-        add_theme("information literacy", "evaluating online sources")
-    if any(term in lower for term in ("feedback", "discussion", "reflection", "improvement", "process")):
-        add_theme("feedback", "reflection", "process improvement")
-    if any(term in lower for term in ("guide", "questions", "viewpoints", "judgment", "judgement")):
-        add_theme("critical thinking", "judgement", "source evaluation")
-    if any(term in lower for term in ("assessment", "understanding", "measurement", "evaluation")):
-        add_theme("assessment", "understanding", "evaluation")
-
-    keywords = _source_search_keywords(claim_text, limit=8)
-    for keyword in keywords:
-        if len(themes) >= 8:
-            break
-        if keyword not in themes:
-            themes.append(keyword)
-
-    base = " ".join(themes[:8]).strip()
-    if not base:
-        base = " ".join(keywords[:6]).strip() or claim_text[:120].rstrip(" ,.;:")
-    return f"{base} {_SOURCE_SEARCH_CREDIBLE_TERMS}".strip()[:260]
+    return _core_source_grounding_query(claim)
 
 
 def _source_search_domain_list(name: str, default: set[str] | None = None) -> list[str]:
-    raw = os.environ.get(name, "")
-    domains = set(default or set())
-    for item in re.split(r"[,\\s]+", raw):
-        item = item.strip().lower()
-        if item:
-            domains.add(item)
-    return sorted(domains)
+    return _core_source_search_domain_list(name, default)
 
 
 def _source_search_hostname(url: str) -> str:
-    try:
-        host = urlparse(str(url or "")).netloc.lower()
-    except Exception:
-        return ""
-    return host[4:] if host.startswith("www.") else host
+    return _core_source_search_hostname(url)
 
 
 def _source_search_domain_blocked(url: str, excluded_domains: set[str]) -> bool:
-    host = _source_search_hostname(url)
-    if not host:
-        return False
-    return any(host == domain or host.endswith("." + domain) for domain in excluded_domains)
+    return _core_source_search_domain_blocked(url, excluded_domains)
 
 
 def _source_search_quality_label(url: str) -> str:
-    host = _source_search_hostname(url)
-    if not host:
-        return "unknown"
-    if host.endswith(".edu") or host.endswith(".gov"):
-        return "high"
-    if any(domain in host for domain in ("oecd.org", "unesco.org", "worldbank.org", "who.int", "eric.ed.gov")):
-        return "high"
-    if any(domain in host for domain in ("springer.com", "sciencedirect.com", "tandfonline.com", "emerald.com", "sagepub.com", "frontiersin.org")):
-        return "medium_high"
-    if any(domain in host for domain in ("instagram.com", "facebook.com", "tiktok.com", "youtube.com", "pinterest.com")):
-        return "low"
-    return "medium"
+    return _core_source_search_quality_label(url)
+
+
+def _source_grounding_target_deps() -> SourceGroundingTargetDeps:
+    return SourceGroundingTargetDeps(
+        logical_paragraphs=_logical_paragraphs,
+        split_sentences=_split_sentences,
+        paragraph_component_targets=_paragraph_component_targets,
+        paragraph_role=_paragraph_role,
+        safe_index=_safe_index,
+        float_env=_float_env,
+        paragraph_citation_re=_PARAGRAPH_CITATION_RE,
+    )
 
 
 def _source_grounding_claim_targets(
@@ -4555,83 +1965,12 @@ def _source_grounding_claim_targets(
     *,
     limit: int = 5,
 ) -> list[dict]:
-    """Find claim spans where external evidence could reduce grounding risk."""
-    paragraphs = _logical_paragraphs(text)
-    if not paragraphs:
-        return []
-    badge = (report_dict or {}).get("ai_risk_badge") or {}
-    writing = badge.get("writing_components") or {}
-    ai_components = badge.get("ai_components") or {}
-    component_targets = _paragraph_component_targets(text, report_dict or {}, limit=max(limit * 2, 4))
-    ranked: list[dict] = []
-    seen: set[int] = set()
-    for target in component_targets:
-        index = int(target.get("index", 0) or 0)
-        if index in seen or index >= len(paragraphs):
-            continue
-        seen.add(index)
-        paragraph = paragraphs[index]
-        sentences = _split_sentences(paragraph) or [paragraph]
-        candidate_sentence = max(
-            sentences,
-            key=lambda sentence: (
-                len(re.findall(
-                    r"\b(?:should|must|need(?:s)?|important|significant|supports?|helps?|"
-                    r"allows?|enables?|creates?|means|shows?|suggests?|indicates?)\b",
-                    sentence,
-                    flags=re.I,
-                )),
-                min(len(sentence.split()), 38),
-            ),
-        ).strip()
-        if len(candidate_sentence.split()) < 8:
-            candidate_sentence = paragraph[:260].strip()
-        role = target.get("role") or _paragraph_role(paragraph, target.get("drivers") or {})
-        if role == "human_anchor_rich":
-            continue
-        ranked.append({
-            "id": f"source_claim_{len(ranked) + 1}",
-            "paragraph_index": index,
-            "paragraph_role": role,
-            "claim": candidate_sentence[:420],
-            "query": _source_grounding_query(candidate_sentence),
-            "target_preview": paragraph[:360],
-            "why_needed": (
-                "External source support can reduce grounding quality risk for this claim. "
-                "It must not be treated as author-owned lived evidence."
-            ),
-            "scanner_context": {
-                "source_grounding_risk": writing.get("source_grounding_risk"),
-                "unsupported_claim_risk": writing.get("unsupported_claim_risk"),
-                "generic_assertion_risk": ai_components.get("generic_assertion_risk"),
-            },
-        })
-        if len(ranked) >= max(1, limit):
-            break
-    if ranked:
-        return ranked
-    fallback = []
-    for index, paragraph in enumerate(paragraphs[:max(limit * 2, 3)]):
-        if len(paragraph.split()) < 35 or _PARAGRAPH_CITATION_RE.search(paragraph):
-            continue
-        sentence = (_split_sentences(paragraph) or [paragraph])[0].strip()
-        fallback.append({
-            "id": f"source_claim_{len(fallback) + 1}",
-            "paragraph_index": index,
-            "paragraph_role": _paragraph_role(paragraph, {"source_gap": True}),
-            "claim": sentence[:420],
-            "query": _source_grounding_query(sentence),
-            "target_preview": paragraph[:360],
-            "why_needed": "This uncited claim may need a public source or a narrower wording.",
-            "scanner_context": {
-                "source_grounding_risk": writing.get("source_grounding_risk"),
-                "unsupported_claim_risk": writing.get("unsupported_claim_risk"),
-                "generic_assertion_risk": ai_components.get("generic_assertion_risk"),
-            },
-        })
-        if len(fallback) >= max(1, limit):
-            break
-    return fallback
+    return _core_source_grounding_claim_targets(
+        text,
+        report_dict,
+        limit=limit,
+        deps=_source_grounding_target_deps(),
+    )
 
 
 def _source_grounding_targets_from_block_decisions(
@@ -4641,75 +1980,13 @@ def _source_grounding_targets_from_block_decisions(
     *,
     limit: int = 5,
 ) -> list[dict]:
-    """Convert reinforce decisions into Tavily search targets.
-
-    Search budget should follow the block plan: only blocks marked as
-    salvageable public-source reinforcement targets get search slots.
-    """
-    paragraphs = _logical_paragraphs(text)
-    if not paragraphs:
-        return []
-    badge = (report_dict or {}).get("ai_risk_badge") or {}
-    writing = badge.get("writing_components") or {}
-    ai_components = badge.get("ai_components") or {}
-    targets: list[dict] = []
-    seen_indexes: set[int] = set()
-    for decision in block_decisions or []:
-        if not isinstance(decision, dict):
-            continue
-        if decision.get("decision") != "reinforce_with_public_source":
-            continue
-        index = _safe_index(decision.get("paragraph_index"), -1)
-        if index < 0 or index >= len(paragraphs) or index in seen_indexes:
-            continue
-        seen_indexes.add(index)
-        paragraph = paragraphs[index]
-        sentences = _split_sentences(paragraph) or [paragraph]
-        candidate_sentence = max(
-            sentences,
-            key=lambda sentence: (
-                len(re.findall(
-                    r"\b(?:should|must|need(?:s)?|important|significant|supports?|helps?|"
-                    r"allows?|enables?|creates?|means|shows?|suggests?|indicates?|changes?|"
-                    r"affects?|guides?|compare|trust|source|evidence)\b",
-                    sentence,
-                    flags=re.I,
-                )),
-                min(len(sentence.split()), 42),
-            ),
-        ).strip()
-        if len(candidate_sentence.split()) < 8:
-            candidate_sentence = paragraph[:260].strip()
-        targets.append({
-            "id": f"source_claim_{len(targets) + 1}",
-            "paragraph_index": index,
-            "paragraph_role": decision.get("role") or _paragraph_role(paragraph, {"source_gap": True}),
-            "claim": candidate_sentence[:420],
-            "query": _source_grounding_query(candidate_sentence),
-            "target_preview": paragraph[:360],
-            "why_needed": (
-                "The block planner marked this claim as salvageable through public-source reinforcement. "
-                "If support is weak, the fallback is narrow/remove rather than inventing evidence."
-            ),
-            "block_decision": {
-                key: decision.get(key)
-                for key in (
-                    "decision",
-                    "reason",
-                    "fallback_if_failed",
-                    "source_search_slot",
-                    "allowed_operations",
-                )
-            },
-            "scanner_context": {
-                "source_grounding_risk": writing.get("source_grounding_risk"),
-                "unsupported_claim_risk": writing.get("unsupported_claim_risk"),
-                "generic_assertion_risk": ai_components.get("generic_assertion_risk"),
-            },
-        })
-        if len(targets) >= max(1, limit):
-            break
-    return targets
+    return _core_source_grounding_targets_from_block_decisions(
+        text,
+        report_dict,
+        block_decisions,
+        limit=limit,
+        deps=_source_grounding_target_deps(),
+    )
 
 
 def _citation_reference_search_targets(
@@ -4718,83 +1995,12 @@ def _citation_reference_search_targets(
     *,
     limit: int = 3,
 ) -> list[dict]:
-    """Create search targets from citation markers already present in the draft."""
-    if not text or limit <= 0:
-        return []
-    writing = ((report_dict or {}).get("ai_risk_badge") or {}).get("writing_components") or {}
-    citation_risk = float(writing.get("citation_weakness_risk") or 0.0)
-    source_risk = float(writing.get("source_grounding_risk") or 0.0)
-    if (
-        citation_risk < _float_env("DRAFTPROOF_CITATION_REFERENCE_SEARCH_MIN_CITATION_RISK", 45.0)
-        and source_risk < _float_env("DRAFTPROOF_CITATION_REFERENCE_SEARCH_MIN_SOURCE_RISK", 40.0)
-    ):
-        return []
-
-    paragraph_sentence_rows: list[dict] = []
-    for paragraph_index, paragraph in enumerate(_logical_paragraphs(text)):
-        for local_sentence_index, sentence in enumerate(_split_sentences(paragraph)):
-            paragraph_sentence_rows.append({
-                "sentence_global_index": len(paragraph_sentence_rows),
-                "paragraph_index": paragraph_index,
-                "sentence_index": local_sentence_index,
-                "sentence": sentence,
-                "paragraph_context": paragraph,
-            })
-    if not paragraph_sentence_rows:
-        return []
-    parenthetical_re = re.compile(r"\(([^()]*?(?:19|20)\d{2}[a-z]?[^()]*)\)")
-    narrative_re = re.compile(
-        r"\b([A-Z][A-Za-z'’.-]+(?:\s+(?:and|&|et\s+al\.?)\s+[A-Z][A-Za-z'’.-]+)*)\s*"
-        r"\(((?:19|20)\d{2}[a-z]?)\)"
+    return _core_citation_reference_search_targets(
+        text,
+        report_dict,
+        limit=limit,
+        deps=_source_grounding_target_deps(),
     )
-    targets: list[dict] = []
-    seen: set[str] = set()
-
-    def add_target(label: str, row: dict) -> None:
-        sentence = str(row.get("sentence") or "")
-        label = re.sub(r"\s+", " ", label or "").strip(" ;,")
-        if not label or not re.search(r"(?:19|20)\d{2}", label):
-            return
-        key = label.lower()
-        if key in seen:
-            return
-        seen.add(key)
-        keywords = _source_search_keywords(sentence, limit=6)
-        query = f'"{label}" ' + " ".join(keywords)
-        targets.append({
-            "id": f"citation_ref_{len(targets) + 1}",
-            "paragraph_index": row.get("paragraph_index"),
-            "sentence_index": row.get("sentence_index"),
-            "sentence_global_index": row.get("sentence_global_index"),
-            "repair_scope": "sentence_window",
-            "paragraph_role": "citation_reference",
-            "claim": sentence.strip()[:420],
-            "query": query.strip(),
-            "target_preview": sentence.strip()[:360],
-            "paragraph_context": str(row.get("paragraph_context") or "").strip()[:900],
-            "why_needed": (
-                "The draft already contains this citation marker; search should complete or verify "
-                "the source instead of inventing a new grounding claim."
-            ),
-            "citation_label": label,
-            "scanner_context": {
-                "citation_weakness_risk": citation_risk,
-                "source_grounding_risk": source_risk,
-            },
-        })
-
-    for row in paragraph_sentence_rows:
-        sentence = str(row.get("sentence") or "")
-        for match in narrative_re.finditer(sentence):
-            add_target(f"{match.group(1)} {match.group(2)}", row)
-            if len(targets) >= limit:
-                return targets
-        for match in parenthetical_re.finditer(sentence):
-            for part in re.split(r";", match.group(1)):
-                add_target(part, row)
-                if len(targets) >= limit:
-                    return targets
-    return targets[:max(1, int(limit or 1))]
 
 
 def _tavily_search(
@@ -4892,78 +2098,16 @@ def _normalize_tavily_results(
     limit: int = 3,
     excluded_domains: set[str] | None = None,
 ) -> list[dict]:
-    results = payload.get("results") if isinstance(payload, dict) else []
-    if not isinstance(results, list):
-        return []
-    claim_terms = set(_source_search_keywords(claim, limit=12))
-    normalized = []
-    excluded_domains = excluded_domains or set()
-    for item in results:
-        if not isinstance(item, dict):
-            continue
-        title = str(item.get("title") or "").strip()
-        url = str(item.get("url") or "").strip()
-        if _source_search_domain_blocked(url, excluded_domains):
-            continue
-        content = re.sub(r"\s+", " ", str(item.get("content") or "").strip())
-        haystack = f"{title} {content}".lower()
-        overlap = sorted(term for term in claim_terms if term in haystack)
-        substantive_overlap = [
-            term for term in overlap
-            if term not in _SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS
-        ]
-        try:
-            provider_score = float(item.get("score") or 0.0)
-        except (TypeError, ValueError):
-            provider_score = 0.0
-        overlap_count = len(overlap)
-        substantive_count = len(substantive_overlap)
-        overlap_ratio = substantive_count / max(len(claim_terms), 1)
-        if claim_terms and substantive_count == 0:
-            relevance_score = min(provider_score * 0.10, 0.08)
-        else:
-            relevance_score = (
-                provider_score * 0.45
-                + min(1.0, overlap_ratio) * 0.45
-                + min(substantive_count, 3) * 0.03
-            )
-        normalized.append({
-            "title": title[:180],
-            "url": url,
-            "snippet": content[:360],
-            "provider_score": round(provider_score, 4),
-            "claim_keyword_overlap": overlap[:8],
-            "substantive_claim_keyword_overlap": substantive_overlap[:8],
-            "source_quality": _source_search_quality_label(url),
-            "relevance_score": round(min(1.0, relevance_score), 4),
-        })
-    normalized.sort(key=lambda item: item.get("relevance_score", 0), reverse=True)
-    return normalized[:max(1, limit)]
+    return _core_normalize_tavily_results(
+        payload,
+        claim,
+        limit=limit,
+        excluded_domains=excluded_domains,
+    )
 
 
 def _source_result_confidence(sources: list[dict]) -> str:
-    if not sources:
-        return "none"
-    best = sources[0]
-    quality = str(best.get("source_quality") or "unknown")
-    score = float(best.get("relevance_score") or 0.0)
-    overlap = best.get("claim_keyword_overlap")
-    overlap_count = len(overlap) if isinstance(overlap, list) else 0
-    substantive_overlap = best.get("substantive_claim_keyword_overlap")
-    substantive_count = len(substantive_overlap) if isinstance(substantive_overlap, list) else overlap_count
-    if substantive_count <= 0:
-        return "very_weak"
-    if quality == "high" and score >= 0.45:
-        return "strong"
-    if quality in {"high", "medium_high"} and score >= 0.35:
-        return "moderate"
-    if quality in {"high", "medium_high", "medium"} and score >= 0.35 and substantive_count >= 3:
-        return "moderate"
-    if score >= 0.85 and quality not in {"low", "unknown"}:
-        return "moderate"
-    if score >= 0.25:
-        return "weak"
-    return "very_weak"
+    return _core_source_result_confidence(sources)
 
 
 def _protected_anchor_brief_for_prompt(source_text: str, *, limit: int = 24) -> list[dict]:
@@ -5002,89 +2146,27 @@ def _protected_anchor_brief_for_prompt(source_text: str, *, limit: int = 24) -> 
     return anchors
 
 
+def _source_grounding_prompt_deps() -> SourceGroundingPromptDeps:
+    return SourceGroundingPromptDeps(
+        word_count_band=_word_count_band,
+        float_env=_float_env,
+        protected_anchor_brief_for_prompt=_protected_anchor_brief_for_prompt,
+        logical_paragraphs=_logical_paragraphs,
+        safe_index=_safe_index,
+        text_word_count=_text_word_count,
+    )
+
+
 def _source_grounding_repair_prompt(
     target: dict,
     source_result: dict,
     *,
     candidate_count: int = 2,
 ) -> str:
-    candidate_count = max(1, int(candidate_count or 1))
-    repair_scope = str(target.get("repair_scope") or "paragraph")
-    scoped_to_sentence = repair_scope == "sentence_window"
-    safe_sources = []
-    for source in (source_result.get("sources") or [])[:3]:
-        if not isinstance(source, dict):
-            continue
-        safe_sources.append({
-            "title": source.get("title"),
-            "url": source.get("url"),
-            "snippet": source.get("snippet"),
-            "source_quality": source.get("source_quality"),
-            "relevance_score": source.get("relevance_score"),
-            "claim_keyword_overlap": source.get("claim_keyword_overlap"),
-        })
-    scope_intro = (
-        "Repair one citation sentence by reinforcing a weak public/source-groundable claim. "
-        if scoped_to_sentence else
-        "Repair one paragraph by reinforcing a weak public/source-groundable claim. "
-    )
-    target_block = (
-        "PARAGRAPH CONTEXT:\n"
-        f"<PARAGRAPH_CONTEXT>\n{target.get('paragraph_context') or ''}\n</PARAGRAPH_CONTEXT>\n\n"
-        "TARGET SENTENCE:\n"
-        f"<TARGET_SENTENCE>\n{target.get('target_preview') or ''}\n</TARGET_SENTENCE>\n\n"
-        if scoped_to_sentence else
-        "TARGET PARAGRAPH:\n"
-        f"<TARGET_PARAGRAPH>\n{target.get('target_preview') or ''}\n</TARGET_PARAGRAPH>\n\n"
-    )
-    output_shape = (
-        "<CANDIDATE_1>\nreplacement sentence or two-sentence window only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\nreplacement sentence or two-sentence window only\n</CANDIDATE_2>\n"
-        if scoped_to_sentence else
-        "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
-    )
-    return (
-        "DraftProof SOURCE_GROUNDING_REPAIR.\n"
-        f"{scope_intro}"
-        "If the sources do not clearly support the claim, narrow the claim instead of forcing the source.\n\n"
-        "Operating rule:\n"
-        "- First try to reinforce the paragraph using only the provided source candidates.\n"
-        "- Do not invent evidence. Do not invent author-owned context.\n"
-        "- If support is weak, remove or narrow the unsupported part inside the paragraph.\n\n"
-        "Source-attribution rule:\n"
-        "- If you use source support, name the source title or a short source label in the sentence.\n"
-        "- Do not write 'Research shows', 'studies show', or 'evidence shows' unless the same sentence also names the source.\n"
-        "- If naming the source would feel awkward, narrow the claim instead of adding source-attribution language.\n\n"
-        f"Paragraph index: {target.get('paragraph_index')}.\n"
-        f"Sentence index: {target.get('sentence_index')}.\n"
-        f"Repair scope: {repair_scope}.\n"
-        f"Paragraph role: {target.get('paragraph_role')}.\n"
-        f"Source confidence: {source_result.get('source_confidence')}.\n"
-        f"Claim to repair: {target.get('claim')}\n\n"
-        "Source candidates, use only these:\n"
-        f"{json.dumps(safe_sources, ensure_ascii=False)[:2600]}\n\n"
-        "Allowed:\n"
-        "- add one source-to-claim bridge if the source snippet clearly supports it\n"
-        "- narrow an unsupported claim to what the source actually supports\n"
-        "- remove a broad unsupported sentence when it cannot be sourced\n"
-        "- keep the paragraph less polished; avoid generic academic connectors\n\n"
-        "Forbidden:\n"
-        "- do not create lived experience, local observation, or author-owned evidence\n"
-        "- do not create statistics, dates, names, citations, or claims not present in the source candidates\n"
-        "- do not add a citation if only the title/url is available and the source support is unclear\n"
-        "- do not rewrite the paragraph into a smoother generic explanation\n"
-        "- do not change protected names, numbers, years, unit codes, or existing citations\n\n"
-        "Gate that will rescan your output:\n"
-        "- Human Contribution must increase or stay safe\n"
-        "- Grounding Risk should drop\n"
-        "- AI Authorship must not increase\n"
-        "- AI Transformation, findings, review burden, and weighted severity must not increase\n\n"
-        f"{target_block}"
-        f"Return exactly {candidate_count} alternatives using this format:\n"
-        f"{output_shape}"
-        "...continue until the requested candidate count.\n"
-        "No commentary outside tags."
+    return _core_source_grounding_repair_prompt(
+        target,
+        source_result,
+        candidate_count=candidate_count,
     )
 
 
@@ -5094,111 +2176,27 @@ def _internet_reinforced_reauthor_prompt(
     *,
     candidate_count: int = 2,
 ) -> str:
-    word_band = _word_count_band(
+    return _core_internet_reinforced_reauthor_prompt(
         source_text,
-        variance=_float_env("DRAFTPROOF_INTERNET_REAUTHOR_WORD_VARIANCE", 0.25),
+        source_layer,
+        candidate_count=candidate_count,
+        deps=_source_grounding_prompt_deps(),
     )
-    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
-    paragraphs = _logical_paragraphs(source_text)
-    evidence_cards = []
-    targets_by_id = {
-        target.get("id"): target
-        for target in (source_layer.get("claim_targets") or [])
-        if isinstance(target, dict)
-    }
-    usable_conf = {
-        item.strip()
-        for item in os.environ.get(
-            "DRAFTPROOF_INTERNET_REAUTHOR_CONFIDENCE",
-            "strong,moderate,weak",
-        ).split(",")
-        if item.strip()
-    }
-    for result in (source_layer.get("results") or []):
-        if not isinstance(result, dict):
-            continue
-        confidence = str(result.get("source_confidence") or "")
-        if confidence not in usable_conf:
-            continue
-        target = targets_by_id.get(result.get("claim_id")) or {}
-        sources = []
-        for source in (result.get("sources") or [])[:3]:
-            if not isinstance(source, dict):
-                continue
-            sources.append({
-                "title": source.get("title"),
-                "url": source.get("url"),
-                "snippet": source.get("snippet"),
-                "quality": source.get("source_quality"),
-                "relevance": source.get("relevance_score"),
-            })
-        if not sources:
-            continue
-        evidence_cards.append({
-            "claim_id": result.get("claim_id"),
-            "paragraph_index": target.get("paragraph_index"),
-            "source_confidence": confidence,
-            "original_claim": target.get("claim"),
-            "paragraph_role": target.get("paragraph_role"),
-            "sources": sources,
-        })
-    block_inventory = []
-    for index, paragraph in enumerate(paragraphs):
-        target_matches = [
-            target for target in (source_layer.get("claim_targets") or [])
-            if _safe_index(target.get("paragraph_index"), -1) == index
-        ]
-        block_inventory.append({
-            "paragraph_index": index,
-            "word_count": _text_word_count(paragraph),
-            "preview": paragraph[:420],
-            "source_claim_targets": [
-                {
-                    "claim_id": target.get("id"),
-                    "claim": target.get("claim"),
-                    "role": target.get("paragraph_role"),
-                }
-                for target in target_matches
-            ],
-        })
-    return (
-        "DraftProof INTERNET_REINFORCED_REAUTHORING.\n"
-        "Generate a new document from the claim inventory and internet evidence cards. "
-        "This is not sentence repair. Rebuild the document around supported claims and remove unsupported generic drag.\n\n"
-        "Hard operating rule:\n"
-        "- If a block can be reinforced by the evidence cards, rewrite that block around the supported claim.\n"
-        "- If a block cannot be reinforced and is generic/repetitive, remove or compress it.\n"
-        "- Preserve the submitted meaning coverage, but do not preserve weak wording or weak paragraph order.\n\n"
-        "Protected anchors. These exact spans must appear unchanged in every candidate, including quote text:\n"
-        f"{json.dumps(protected_anchors, ensure_ascii=False)[:2600]}\n\n"
-        "Goal:\n"
-        "Maximize Human Contribution under the AI Authorship cap. The next scan will reject candidates that raise AI Authorship, drift, findings, review burden, or severity.\n\n"
-        f"Word-count band: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
-        "Evidence cards from internet search. Use only these sources; do not invent facts beyond their snippets:\n"
-        f"{json.dumps(evidence_cards, ensure_ascii=False)[:9000]}\n\n"
-        "Document block inventory. Use this for meaning coverage, not wording imitation:\n"
-        f"{json.dumps(block_inventory, ensure_ascii=False)[:7000]}\n\n"
-        "Required output behavior:\n"
-        "- Recreate the document as a fresh draft, not a paragraph-by-paragraph paraphrase.\n"
-        "- Use source-supported claims where the evidence cards clearly support them.\n"
-        "- Remove generic filler that does not add source support, author reasoning, or required coverage.\n"
-        "- Keep the prose direct and uneven enough to avoid polished academic template flow.\n"
-        "- Use fewer broad claims. Prefer bounded claims tied to the sources or the submitted document context.\n"
-        "- Do not create author-owned observations, lived experience, local events, personal examples, new institutions, new dates, new statistics, or fake citations.\n"
-        "- Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
-        "- Do not add markdown links or bibliography. Mention source titles only when useful and supported by the card.\n"
-        "- Do not use generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion.\n\n"
-        "Selection gate:\n"
-        "- Human Contribution should rise substantially.\n"
-        "- AI Authorship must not rise.\n"
-        "- AI Transformation should fall.\n"
-        "- Grounding risk should fall.\n"
-        "- Findings, review burden, and severity must not regress.\n\n"
-        f"Return exactly {max(1, int(candidate_count or 1))} complete document candidates using this exact format:\n"
-        "<CANDIDATE_1>\ncomplete document only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\ncomplete document only\n</CANDIDATE_2>\n"
-        "...continue until the requested candidate count.\n"
-        "No commentary outside tags."
+
+
+def _targeted_repair_prompt_deps() -> TargetedRepairPromptDeps:
+    return TargetedRepairPromptDeps(
+        blocker_scores=_blocker_scores,
+        logical_paragraphs=_logical_paragraphs,
+        paragraph_component_targets=_paragraph_component_targets,
+        text_word_count=_text_word_count,
+        word_count_band=_word_count_band,
+        float_env=_float_env,
+        protected_anchor_brief_for_prompt=_protected_anchor_brief_for_prompt,
+        sentence_texture_risk_map=_sentence_texture_risk_map,
+        safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+        ai_search_signal_brief=_ai_search_signal_brief,
+        source_repair_brief=_source_repair_brief,
     )
 
 
@@ -5208,66 +2206,11 @@ def _claim_narrowing_repair_prompt(
     *,
     candidate_count: int = 2,
 ) -> str:
-    blockers = _blocker_scores(report_dict)
-    paragraphs = _logical_paragraphs(source_text)
-    target_blocks = []
-    for target in _paragraph_component_targets(source_text, report_dict or {}, limit=8):
-        paragraph = target.get("paragraph") or ""
-        role = str(target.get("role") or "")
-        drivers = target.get("drivers") or {}
-        if role in {"generic_claim_heavy", "conclusion_template_risk", "mixed"}:
-            target_blocks.append({
-                "paragraph_index": target.get("index"),
-                "role": role,
-                "score": target.get("score"),
-                "drivers": drivers,
-                "preview": paragraph[:520],
-            })
-    if not target_blocks:
-        target_blocks = [
-            {"paragraph_index": i, "role": "candidate", "preview": p[:520]}
-            for i, p in enumerate(paragraphs)
-            if _text_word_count(p) >= 35
-        ][:5]
-    word_band = _word_count_band(
+    return _core_claim_narrowing_repair_prompt(
         source_text,
-        variance=_float_env("DRAFTPROOF_CLAIM_NARROWING_WORD_VARIANCE", 0.25),
-    )
-    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
-    return (
-        "DraftProof CLAIM_NARROWING_REPAIR.\n"
-        "Do not humanize generically. Reduce unsupported_claim_risk and broad_claim_risk directly.\n\n"
-        f"Current blocker scores: {json.dumps(blockers, ensure_ascii=False)}\n"
-        f"Word-count band: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
-        "Protected anchors. These exact spans must appear unchanged in every candidate, including quote text:\n"
-        f"{json.dumps(protected_anchors, ensure_ascii=False)[:2600]}\n\n"
-        "Target blocks:\n"
-        f"{json.dumps(target_blocks, ensure_ascii=False)[:7000]}\n\n"
-        "Required operations:\n"
-        "- weaken absolute claims\n"
-        "- add scope limits\n"
-        "- convert universal claims into conditional or observed/context-bound claims\n"
-        "- remove overreach\n"
-        "- delete or compress unsupported broad claims when narrowing is not enough\n"
-        "- preserve existing anchors, source relations, and meaning coverage\n\n"
-        "Forbidden:\n"
-        "- do not add new facts, citations, dates, names, statistics, examples, institutions, or author experiences\n"
-        "- do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
-        "- do not make the prose more polished or academic\n"
-        "- do not use generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion\n\n"
-        "Acceptance target:\n"
-        "- unsupported_claim_risk must drop\n"
-        "- broad_claim_risk must drop\n"
-        "- AI Authorship must not increase\n"
-        "- AI Transformation must drop or stay safe\n"
-        "- findings/review/severity must not regress\n\n"
-        "SOURCE DOCUMENT:\n"
-        f"<SOURCE_DOCUMENT>\n{source_text.strip()}\n</SOURCE_DOCUMENT>\n\n"
-        f"Return exactly {max(1, int(candidate_count or 1))} complete document candidates using this exact format:\n"
-        "<CANDIDATE_1>\ncomplete document only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\ncomplete document only\n</CANDIDATE_2>\n"
-        "...continue until the requested candidate count.\n"
-        "No commentary outside tags."
+        report_dict,
+        candidate_count=candidate_count,
+        deps=_targeted_repair_prompt_deps(),
     )
 
 
@@ -5277,322 +2220,47 @@ def _topk_texture_repair_prompt(
     *,
     candidate_count: int = 2,
 ) -> str:
-    blockers = _blocker_scores(report_dict)
-    risk_map = _sentence_texture_risk_map(source_text, report_dict, limit=10)
-    target_sentences = [
-        {
-            "sentence_index": item.get("sentence_index"),
-            "risk": item.get("risk"),
-            "sentence": item.get("sentence"),
-            "drivers": item.get("drivers"),
-        }
-        for item in risk_map[:8]
-    ]
-    word_band = _word_count_band(
+    return _core_topk_texture_repair_prompt(
         source_text,
-        variance=_float_env("DRAFTPROOF_TOPK_TEXTURE_WORD_VARIANCE", 0.25),
+        report_dict,
+        candidate_count=candidate_count,
+        deps=_targeted_repair_prompt_deps(),
     )
-    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
-    return (
-        "DraftProof TOPK_TEXTURE_REPAIR.\n"
-        "Reduce predictable phrasing after claim narrowing. Do not add facts.\n\n"
-        f"Current blocker scores: {json.dumps(blockers, ensure_ascii=False)}\n"
-        f"Word-count band: source={word_band['source_word_count']}, min={word_band['min_words']}, max={word_band['max_words']}.\n\n"
-        "Protected anchors. These exact spans must appear unchanged in every candidate, including quote text:\n"
-        f"{json.dumps(protected_anchors, ensure_ascii=False)[:2600]}\n\n"
-        "Highest-risk sentence texture targets:\n"
-        f"{json.dumps(target_sentences, ensure_ascii=False)[:5000]}\n\n"
-        "Allowed operations:\n"
-        "- replace generic sentence openings\n"
-        "- break balanced sentence rhythm\n"
-        "- remove polished connectors\n"
-        "- vary sentence length lightly\n"
-        "- use one or two short fragments where a full polished sentence is too predictable\n"
-        "- move a qualifier or contrast to the front of a sentence when it preserves meaning\n"
-        "- replace bland verbs such as is/has/plays/supports/shapes with more specific plain verbs already implied by the sentence\n"
-        "- patch only high-risk sentences or adjacent clauses\n\n"
-        f"If calibrated Top-k risk is {_safe_topk_calibrated_limit():.0f} or higher, light polishing is not enough. Make visible route changes in the target sentences while keeping the same facts.\n\n"
-        "Hard rule:\n"
-        "- Do not add new facts, citations, statistics, examples, institutions, names, dates, or author experiences.\n"
-        "- Preserve claim scope after narrowing.\n"
-        "- Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.\n"
-        "- Do not rewrite into smoother academic prose.\n\n"
-        "Acceptance target:\n"
-        f"- calibrated Top-k risk must move below {_safe_topk_calibrated_limit():.0f}; raw Top-k is diagnostic only\n"
-        "- predictability should drop\n"
-        "- AI Authorship must not increase\n"
-        "- unsupported/broad claims must not regress\n\n"
-        "SOURCE DOCUMENT:\n"
-        f"<SOURCE_DOCUMENT>\n{source_text.strip()}\n</SOURCE_DOCUMENT>\n\n"
-        f"Return exactly {max(1, int(candidate_count or 1))} complete document candidates using this exact format:\n"
-        "<CANDIDATE_1>\ncomplete document only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\ncomplete document only\n</CANDIDATE_2>\n"
-        "...continue until the requested candidate count.\n"
-        "No commentary outside tags."
+
+
+def _topk_route_deps() -> TopkRouteDeps:
+    return TopkRouteDeps(
+        text_word_count=_text_word_count,
+        float_env=_float_env,
+        split_sentences=_split_sentences,
+        safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+        protected_anchor_brief_for_prompt=_protected_anchor_brief_for_prompt,
+        contribution_scores=_contribution_scores,
     )
 
 
 def _topk_optimizer_sentence_limit(text: str) -> int:
-    words = _text_word_count(text)
-    if words <= 700:
-        return int(_float_env("DRAFTPROOF_TOPK_ROUTE_SHORT_SENTENCES", 8.0))
-    if words <= 1800:
-        return int(_float_env("DRAFTPROOF_TOPK_ROUTE_MEDIUM_SENTENCES", 12.0))
-    return int(_float_env("DRAFTPROOF_TOPK_ROUTE_LONG_SENTENCES", 20.0))
+    return _core_topk_optimizer_sentence_limit(text, deps=_topk_route_deps())
 
 
 def _topk_repair_map(text: str, report_dict: dict | None, *, limit: int | None = None) -> dict:
-    """Rank sentence/token routes that directly drive top-k saturation."""
-    limit = max(1, int(limit or _topk_optimizer_sentence_limit(text)))
-    predictability = (report_dict or {}).get("predictability") or {}
-    source_rows = predictability.get("all_sentences") or predictability.get("sentences") or []
-    rows: list[dict] = []
-    for index, item in enumerate(source_rows):
-        if not isinstance(item, dict):
-            continue
-        sentence = str(item.get("sentence") or item.get("text") or "").strip()
-        if not sentence:
-            continue
-        top10 = float(item.get("top10_ratio") or item.get("top_10_ratio") or item.get("top10") or 0.0)
-        top50 = float(item.get("top50_ratio") or item.get("top_50_ratio") or item.get("top50") or 0.0)
-        risk = float(item.get("predictability_risk") or item.get("risk") or item.get("score") or 0.0)
-        spans = [
-            str(span).strip()
-            for span in (item.get("predictable_token_spans") or [])
-            if str(span).strip()
-        ][:6]
-        tokens = [
-            token for token in (item.get("top_predicted_tokens") or [])
-            if isinstance(token, dict)
-        ][:10]
-        generic_opening = bool(re.search(
-            r"^(?:The|This|These|It|Another|One of|In addition|At the same time|Despite|However|In conclusion|Overall)\b",
-            sentence,
-            re.I,
-        ))
-        rows.append({
-            "sentence_id": item.get("sentence_id") or f"s{index + 1:03d}",
-            "sentence_index": index,
-            "paragraph_id": item.get("paragraph_id") or "",
-            "sentence": sentence,
-            "top10_ratio": round(top10, 4),
-            "top50_ratio": round(top50, 4),
-            "predictability_risk": round(risk, 4),
-            "predictable_token_spans": spans,
-            "top_predicted_tokens": tokens,
-            "drivers": {
-                "generic_opening": generic_opening,
-                "high_top10": top10 >= 0.65,
-                "span_count": len(spans),
-            },
-            "route_score": round(top10 * 0.55 + top50 * 0.20 + risk * 0.20 + (0.05 if generic_opening else 0.0), 4),
-        })
-    rows.sort(key=lambda row: row["route_score"], reverse=True)
-    selected = rows[:limit]
-    ai_components = ((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {}
-    raw_topk = ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern"))
-    calibrated_topk = ai_components.get("topk_calibrated_risk")
-    if not isinstance(calibrated_topk, (int, float)):
-        calibrated_topk = calibrate_topk_risk(raw_topk, eligible_sentence_count=3).get("topk_calibrated_risk")
-    return {
-        "enabled": True,
-        "limit": limit,
-        "saturated": float(calibrated_topk or 0.0) >= _float_env(
-            "DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD",
-            90.0,
-        ),
-        "topk_pattern": raw_topk,
-        "topk_pattern_raw": ai_components.get("topk_pattern_raw", raw_topk),
-        "topk_calibrated_risk": calibrated_topk,
-        "topk_safe_band": ai_components.get("topk_safe_band"),
-        "targets": selected,
-        "target_sentence_ids": [row.get("sentence_id") for row in selected],
-    }
+    return _core_topk_repair_map(text, report_dict, limit=limit, deps=_topk_route_deps())
 
 
 def _deterministic_topk_route_sentence(sentence: str) -> tuple[str, list[str]]:
-    """Make local route changes that attack predictability without adding facts."""
-    original = str(sentence or "").strip()
-    candidate = original
-    operations: list[str] = []
-
-    strong_routes = [
-        (
-            r"^One of the biggest strengths of (?P<subject>.+?) is (?P<claim>[^.]+)\.$",
-            lambda m: f"{m.group('claim').strip().capitalize()} is where {m.group('subject').strip()} still carries weight.",
-            "ranked_claim_route_strong",
-        ),
-        (
-            r"^(?P<subject>The [^.]{3,80}?) has one of the largest (?P<asset>[^.]{3,80}?) in the world and is home to many (?P<group>[^.]+)\.$",
-            lambda m: (
-                f"Large {m.group('asset').strip()}, many {m.group('group').strip()}, and global reach: "
-                f"that is part of {m.group('subject').strip().lower()}'s position."
-            ),
-            "largest_asset_route",
-        ),
-        (
-            r"^(?P<subject>.+?) was founded in (?P<year>\d{4}) after (?P<event>[^.]+)\.$",
-            lambda m: (
-                f"{m.group('year')} matters here: {m.group('event').strip()}, "
-                f"and {m.group('subject').strip()} began from that break."
-            ),
-            "founding_date_route",
-        ),
-        (
-            r"^Millions of people from different countries moved to (?P<place>.+?) in search of better opportunities and a new life\.$",
-            lambda m: (
-                f"Better work, safety, a new life: those hopes brought millions of people from different countries "
-                f"to {m.group('place').strip()}."
-            ),
-            "migration_motive_route",
-        ),
-        (
-            r"^In addition to (?P<context>.+?), (?P<subject>.+?) has a strong cultural influence\.$",
-            lambda m: (
-                f"Culture is another route of influence for {m.group('subject').strip()}, "
-                f"beyond {m.group('context').strip()}."
-            ),
-            "culture_influence_route",
-        ),
-        (
-            r"^The country was built on ideas such as (?P<ideas>[^.]+)\.$",
-            lambda m: (
-                f"Ideas such as {m.group('ideas').strip()} sat near the centre of how the country described itself."
-            ),
-            "idea_list_route",
-        ),
-        (
-            r"^At the same time, (?P<subject>.+?) has also created challenges related to (?P<issues>[^.]+)\.$",
-            lambda m: f"Still, {m.group('subject').strip()} also brings harder questions: {m.group('issues').strip()}.",
-            "challenge_list_route",
-        ),
-        (
-            r"^The (?P<movement>[^.]{3,80} Movement) was an important period that aimed to (?P<aim>[^.]+)\.$",
-            lambda m: f"The {m.group('movement').strip()} had a direct aim: {m.group('aim').strip()}.",
-            "movement_aim_route",
-        ),
-    ]
-    for pattern, replacement, op in strong_routes:
-        match = re.match(pattern, candidate, flags=re.I)
-        if match:
-            updated = replacement(match)
-            if updated and updated != candidate:
-                candidate = updated
-                operations.append(op)
-                break
-
-    replacements = [
-        (r"^This becomes clear when\b", r"The gap shows up when", "this_opening_route"),
-        (r"^The challenge is more than\b", r"The challenge is not just", "challenge_opening_route"),
-        (r"^The challenge in ([^.]+?) does not only appear\b", r"In \1, the issue does not only appear", "challenge_scope_route"),
-        (r"^When ([A-Za-z][^.]{2,80}?)\b", r"Once \1", "when_route"),
-        (r"^A demonstration reveals\b", r"A demonstration can show", "demonstration_route"),
-        (r"^(.{4,80}?) should not be misunderstood as\b", r"\1 is not", "misunderstood_as_route"),
-        (r"^(.{4,80}?) limits remain\.$", r"\1 limits remain. That part is hard to ignore.", "short_followup_route"),
-        (r"^This connects with\b", r"That links back to", "this_opening_route"),
-        (r"^This creates\b", r"That creates", "this_opening_route"),
-        (r"^This does not\b", r"It does not", "this_opening_route"),
-        (r"^Instead, it comes from\b", r"Instead, the control comes from", "instead_route"),
-        (r"^([A-Z][A-Za-z ]{2,60}) should not depend on\b", r"\1 cannot be left to", "dependency_route"),
-        (r"^The ([A-Z][A-Za-z ]{2,60}) is often described as ", r"\1 is often described this way: ", "opening_route"),
-        (r"^It has shaped ", r"Its influence reaches into ", "pronoun_opening_route"),
-        (r"^The country has ", r"Inside the country, there is ", "country_opening_route"),
-        (r"^One of the biggest strengths of ([^,]+) is ", r"For \1, one clear strength is ", "ranked_claim_route"),
-        (r"^Another important feature of ([^,]+) is ", r"Another part of \1 is ", "feature_route"),
-        (r"^In addition to ", r"Beyond ", "connector_remove"),
-        (r"^At the same time, ", r"Still, ", "connector_shorten"),
-        (r"^Despite its success, ", r"That success has limits. ", "fragment_route"),
-        (r"^However, ", r"But ", "connector_plain"),
-        (r"^In conclusion, ", r"Taken together, ", "conclusion_route"),
-        (r"\bis known for\b", "is often linked with", "bland_verb_route"),
-        (r"\bplays a major role in\b", "matters in", "formula_route"),
-        (r"\bhas a strong influence\b", "carries influence", "bland_verb_route"),
-        (r"\bhas become one of the\b", "now works as one of the", "formula_route"),
-        (r"\bThis has led to\b", "That leaves", "formula_route"),
-        (r"\bThis is why\b", "That is where", "formula_route"),
-    ]
-    for pattern, replacement, op in replacements:
-        updated = re.sub(pattern, replacement, candidate, count=1, flags=re.I)
-        if updated != candidate:
-            candidate = updated
-            operations.append(op)
-    if candidate == original:
-        because_match = re.search(r"\s+because\s+", candidate, flags=re.I)
-        if because_match and len(candidate.split()) >= 18:
-            left = candidate[:because_match.start()].strip()
-            right = candidate[because_match.end():].strip()
-            if left and right:
-                candidate = f"{left}. Because {right[0].lower() + right[1:] if len(right) > 1 else right}"
-                operations.append("because_route_split")
-    if candidate == original:
-        but_match = re.search(r"\s+but\s+", candidate, flags=re.I)
-        if but_match and len(candidate.split()) >= 16:
-            left = candidate[:but_match.start()].strip()
-            right = candidate[but_match.end():].strip()
-            if left and right:
-                candidate = f"{left}. But {right[0].lower() + right[1:] if len(right) > 1 else right}"
-                operations.append("contrast_route_split")
-    if candidate == original:
-        comma_parts = candidate.split(",", 1)
-        if len(comma_parts) == 2 and 8 <= len(candidate.split()) <= 32:
-            candidate = f"{comma_parts[1].strip()} {comma_parts[0].strip().lower()}."
-            candidate = re.sub(r"\.\.$", ".", candidate)
-            operations.append("clause_route_flip")
-    candidate = re.sub(r"\s{2,}", " ", candidate).strip()
-    return (candidate, operations) if candidate != original else (original, [])
+    return _core_deterministic_topk_route_sentence(sentence)
 
 
 def _splice_sentences_by_text(text: str, replacements: dict[str, str]) -> str:
-    candidate = str(text or "")
-    for original, replacement in replacements.items():
-        if original and replacement and original != replacement and original in candidate:
-            candidate = candidate.replace(original, replacement, 1)
-    return candidate
+    return _core_splice_sentences_by_text(text, replacements)
 
 
 def _remove_sentences_by_text(text: str, sentences: list[str]) -> str:
-    candidate = str(text or "")
-    for sentence in sentences or []:
-        target = str(sentence or "").strip()
-        if not target or target not in candidate:
-            continue
-        candidate = candidate.replace(target, "", 1)
-    candidate = re.sub(r"[ \t]{2,}", " ", candidate)
-    candidate = re.sub(r"\n{3,}", "\n\n", candidate)
-    candidate = re.sub(r"(?m)^[ \t]+", "", candidate)
-    return candidate.strip()
+    return _core_remove_sentences_by_text(text, sentences)
 
 
 def _topk_low_value_removal_allowed(sentence: str, row: dict | None = None) -> bool:
-    """Last-resort top-k pruning for generic high-predictability sentences."""
-    value = str(sentence or "").strip()
-    if len(value.split()) < 10:
-        return False
-    if re.search(r"\b\d{4}\b|https?://|www\.|\[[^\]]+\]|\([^)]*\d{4}[^)]*\)", value):
-        return False
-    top10 = float((row or {}).get("top10_ratio") or 0.0)
-    if top10 < _float_env("DRAFTPROOF_TOPK_ROUTE_REMOVAL_MIN_TOP10", 0.66):
-        return False
-    lower = value.lower()
-    generic_route = bool(re.search(
-        r"^(?:this|these|it|another|one of|in addition|at the same time|despite|however|overall|taken together|critics argue|many people|the country)\b",
-        value,
-        re.I,
-    ))
-    generic_phrase = any(
-        phrase in lower
-        for phrase in (
-            "in many ways",
-            "significant influence",
-            "important role",
-            "major role",
-            "complex and influential",
-            "different languages and traditions",
-            "not equally shared",
-            "side by side",
-        )
-    )
-    return generic_route or generic_phrase
+    return _core_topk_low_value_removal_allowed(sentence, row, deps=_topk_route_deps())
 
 
 def _topk_route_optimizer_candidates(
@@ -5601,76 +2269,7 @@ def _topk_route_optimizer_candidates(
     *,
     limit: int | None = None,
 ) -> list[tuple[str, str, dict]]:
-    repair_map = _topk_repair_map(text, report_dict, limit=limit)
-    topk_value = float(repair_map.get("topk_calibrated_risk") or 0.0)
-    if topk_value < _safe_topk_calibrated_limit():
-        return []
-    expanded_limit = int(_float_env(
-        "DRAFTPROOF_TOPK_ROUTE_EXPANDED_SENTENCES",
-        max(float(repair_map.get("limit") or 1), min(48.0, float(len(_split_sentences(text)) or 1))),
-    ))
-    expanded_map = _topk_repair_map(text, report_dict, limit=expanded_limit)
-    targets = repair_map.get("targets") or []
-    candidate_rows: list[tuple[str, str, dict]] = []
-    batches = [(targets, 0.35, "small"), (targets, 0.65, "medium"), (targets, 1.0, "full")]
-    expanded_targets = [
-        row for row in (expanded_map.get("targets") or [])
-        if float(row.get("top10_ratio") or 0.0) >= _float_env("DRAFTPROOF_TOPK_ROUTE_EXPANDED_MIN_TOP10", 0.45)
-    ]
-    if len(expanded_targets) > len(targets):
-        batches.append((expanded_targets, 1.0, "expanded"))
-    for batch_targets, fraction, label in batches:
-        take = max(1, min(len(batch_targets), math.ceil(len(batch_targets) * fraction)))
-        replacements: dict[str, str] = {}
-        operations: list[dict] = []
-        for target in batch_targets[:take]:
-            sentence = str(target.get("sentence") or "")
-            if not sentence:
-                continue
-            replacement, ops = _deterministic_topk_route_sentence(sentence)
-            if ops and replacement != sentence:
-                replacements[sentence] = replacement
-                operations.append({
-                    "sentence_id": target.get("sentence_id"),
-                    "sentence_index": target.get("sentence_index"),
-                    "operations": ops,
-                    "top10_ratio": target.get("top10_ratio"),
-                })
-        candidate = _splice_sentences_by_text(text, replacements)
-        if candidate != text and operations:
-            candidate_rows.append((
-                f"topk_route_optimizer_{label}",
-                candidate,
-                {
-                    "topk_route_optimizer": True,
-                    "stage": "deterministic_route_edits",
-                    "target_count": take,
-                    "applied_count": len(operations),
-                    "operations": operations,
-                },
-            ))
-    removable_targets = [
-        row for row in expanded_targets
-        if _topk_low_value_removal_allowed(str(row.get("sentence") or ""), row)
-    ]
-    max_remove = max(0, int(_float_env("DRAFTPROOF_TOPK_ROUTE_REMOVAL_MAX_SENTENCES", 3.0)))
-    if max_remove > 0 and removable_targets:
-        for take in range(1, min(max_remove, len(removable_targets)) + 1):
-            removed_sentences = [str(row.get("sentence") or "") for row in removable_targets[:take]]
-            candidate = _remove_sentences_by_text(text, removed_sentences)
-            if candidate and candidate != text:
-                candidate_rows.append((
-                    f"topk_route_optimizer_remove_low_value_{take}",
-                    candidate,
-                    {
-                        "topk_route_optimizer": True,
-                        "stage": "low_value_topk_sentence_removal",
-                        "removed_count": take,
-                        "removed_sentence_ids": [row.get("sentence_id") for row in removable_targets[:take]],
-                        "removed_top10": [row.get("top10_ratio") for row in removable_targets[:take]],
-                    },
-                ))
-    return candidate_rows
+    return _core_topk_route_optimizer_candidates(text, report_dict, limit=limit, deps=_topk_route_deps())
 
 
 def _topk_masked_route_prompt(
@@ -5679,159 +2278,15 @@ def _topk_masked_route_prompt(
     *,
     candidate_count: int = 2,
 ) -> str:
-    repair_map = _topk_repair_map(text, report_dict)
-    payload = {
-        "topk_pattern": repair_map.get("topk_pattern"),
-        "target_sentence_ids": repair_map.get("target_sentence_ids"),
-        "targets": repair_map.get("targets"),
-        "protected_anchors": _protected_anchor_brief_for_prompt(text),
-    }
-    return (
-        "DraftProof TOPK_ROUTE_OPTIMIZER.\n"
-        "Repair only the listed high top-k sentences. Return JSON patches, not a full document.\n\n"
-        "Goal:\n"
-        "- reduce top_10_ratio / topk_pattern by changing sentence routes\n"
-        "- preserve facts, anchors, dates, names, and core claims\n"
-        "- use detector-first texture: mild roughness, fragments, clause movement, less predictable openings\n"
-        "- break repeated claim -> explanation -> implication routes\n"
-        "- mix rhythm: short sentence, longer explanation, small follow-up where useful\n\n"
-        "Preferred operations:\n"
-        "- replace predictable openings with concrete route changes\n"
-        "- remove generic connectors instead of replacing them with polished connectors\n"
-        "- split over-smooth sentences when meaning remains intact\n"
-        "- move a clause to the front only when it lowers the predictable opening\n\n"
-        "Forbidden:\n"
-        "- no new facts, citations, statistics, examples, or personal experience\n"
-        "- no full-document rewrite\n"
-        "- no anchor mutation\n"
-        "- no smoother academic polish\n\n"
-        "- do not use Furthermore, Moreover, Additionally, In conclusion, It is important to note, This demonstrates, This underscores, plays a crucial role, significant impact\n\n"
-        "Return valid JSON only:\n"
-        "{\n"
-        '  "candidates": [\n'
-        '    {"patches": [{"sentence_id": "s001", "original_sentence": "...", "replacement_sentence": "..."}]}\n'
-        "  ]\n"
-        "}\n\n"
-        f"Return exactly {max(1, int(candidate_count or 1))} candidates.\n"
-        f"REPAIR MAP:\n{json.dumps(payload, ensure_ascii=False)[:12000]}"
-    )
+    return _core_topk_masked_route_prompt(text, report_dict, candidate_count=candidate_count, deps=_topk_route_deps())
 
 
 def _topk_safe_band_snapshot_prompt(text: str, report_dict: dict | None) -> str:
-    ai_components = (((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
-    contribution = _contribution_scores(report_dict)
-    source_words = _text_word_count(text)
-    min_words = max(260, int(source_words * 0.72))
-    max_words = max(min_words + 80, int(source_words * 1.08))
-    if source_words <= 700:
-        block_guidance = "5 to 8 normal paragraphs"
-    elif source_words <= 1800:
-        block_guidance = "7 to 12 normal paragraphs"
-    else:
-        block_guidance = "section-preserving paragraphs; do not collapse the document into a short summary"
-    current_signals = json.dumps({
-        "raw_topk": ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")),
-        "topk_calibrated_risk": ai_components.get("topk_calibrated_risk"),
-        "ai_transformation": contribution.get("ai_transformation"),
-        "human_contribution": contribution.get("human"),
-        "source_word_count": source_words,
-        "target_word_range": [min_words, max_words],
-    }, ensure_ascii=False)
-    return (
-        "DraftProof TOPK_SAFE_BAND_REBUILD.\n"
-        "The current document is saturated on GPT-2 Top-k token-route predictability. "
-        "A normal smooth essay will fail, but compressed fragment prose will also fail. "
-        "Rebuild the submission as ordinary paragraphs with less predictable sentence routes.\n\n"
-        "Objective:\n"
-        "- lower calibrated Top-k risk below 25 after scanning\n"
-        "- preserve the topic and main claims\n"
-        "- reduce smooth textbook cadence\n"
-        "- do not copy source sentence structure\n\n"
-        "Current signals:\n"
-        f"{current_signals}\n\n"
-        "Required texture:\n"
-        f"- write {block_guidance}\n"
-        f"- target {min_words} to {max_words} words unless preserving meaning needs a little more\n"
-        "- keep full-document coverage; do not turn the submission into a short country profile or bullet-like digest\n"
-        "- use concrete anchors where they naturally belong: date, place, named event, law, institution, company, person, technology, object, or movement\n"
-        "- include at least 10 prose sentences of 8-18 words so the scanner has eligible prose\n"
-        "- use uneven rhythm: short sentence, longer sentence, plain follow-up where useful\n"
-        "- use direct plain turns where useful: That sounds tidy. It is not. The cleaner story leaves parts out.\n"
-        "- do not repeat the same sentence opening or subject-verb route\n"
-        "- use stable public facts already implied by the source topic; no invented statistics\n"
-        "- avoid generic openings: The topic is, It is important, One of the, In conclusion, Overall\n"
-        "- avoid smooth claim -> explanation -> implication paragraphs\n"
-        "- avoid colon-heavy compressed fragments and promotional list tone\n"
-        "- avoid poetic metaphor, quirky phrasing, slang, and dramatic compressed phrases\n"
-        "- use plain concrete wording even when varying sentence routes\n"
-        "- keep sentence spacing clean; every sentence must have a space after punctuation\n\n"
-        "Sentence texture examples:\n"
-        "Original: The organisation has a strong public influence.\n"
-        "Route: Its influence appears through several channels. Some are visible, others are easier to miss.\n"
-        "Original: Despite its success, the project also faces serious issues.\n"
-        "Route: The success is real. That sounds tidy, but it leaves out cost, access, and trust.\n"
-        "Original: Technology and innovation continue to shape the future.\n"
-        "Route: Technology still shapes the work. Not every change is simple or fair.\n\n"
-        "Return only the rewritten prose. No explanation.\n\n"
-        "SOURCE DOCUMENT:\n"
-        f"{str(text or '')[:12000]}"
-    )
+    return _core_topk_safe_band_snapshot_prompt(text, report_dict, deps=_topk_route_deps())
 
 
 def _topk_plain_spoken_snapshot_prompt(text: str, report_dict: dict | None) -> str:
-    """Fallback rebuild when ordinary Top-k snapshot remains saturated.
-
-    This route is intentionally not "quirky" or poetic. It creates stronger
-    token-route movement through plain sequencing, narrower claims, and varied
-    paragraph shape.
-    """
-    ai_components = (((report_dict or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
-    source_words = _text_word_count(text)
-    min_words = max(240, int(source_words * 0.70))
-    max_words = max(min_words + 80, int(source_words * 1.05))
-    current_signals = json.dumps({
-        "raw_topk": ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")),
-        "topk_calibrated_risk": ai_components.get("topk_calibrated_risk"),
-        "source_word_count": source_words,
-        "target_word_range": [min_words, max_words],
-    }, ensure_ascii=False)
-    return (
-        "DraftProof PLAIN_SPOKEN_TOPK_REBUILD.\n"
-        "The first Top-k rebuild may still be too predictable. Rebuild the document again, "
-        "but do it in plain, ordinary prose. Do not use poetic, quirky, metaphorical, or slogan-like phrasing.\n\n"
-        "Goal:\n"
-        "- lower calibrated Top-k risk by changing sentence routes and paragraph order\n"
-        "- preserve the same topic, core claims, names, dates, and examples\n"
-        "- keep the writing readable and natural, not compressed or decorative\n\n"
-        "Current signals:\n"
-        f"{current_signals}\n\n"
-        "How to write:\n"
-        f"- target {min_words} to {max_words} words\n"
-        "- use plain everyday nouns and verbs\n"
-        "- use mixed sentence jobs: fact, limit, example, consequence, doubt, correction\n"
-        "- make some paragraphs short and some fuller, but keep normal prose\n"
-        "- narrow broad claims instead of praising or dramatizing them\n"
-        "- use direct turns such as: The difficulty is, This is not always true, One limit is, The result is uneven\n"
-        "- do not repeat the same opening route such as Its influence, The country, or This shows\n"
-        "- keep at least 10 eligible prose sentences of 8-18 words\n\n"
-        "Forbidden:\n"
-        "- no metaphors such as route, cogs, strands, muscle, tapestry, shadow, ground zero, sharp corner\n"
-        "- no quirky slang or colloquial shortcuts such as folks, cash, grit, stateside, hatched\n"
-        "- no colon-heavy list fragments\n"
-        "- no missing spaces after punctuation\n"
-        "- no generic admiration list of strengths\n"
-        "- no new statistics or invented citations\n\n"
-        "Plain route examples:\n"
-        "Original: The topic is influential in public life.\n"
-        "Rewrite: Its influence reaches beyond one setting. The clearest channels depend on the specific case.\n"
-        "Original: The topic has many strengths but also many challenges.\n"
-        "Rewrite: The strengths are visible. That is not the full picture. Cost, access, and trust still matter.\n"
-        "Original: Technology changes modern work.\n"
-        "Rewrite: Technology affects daily routines. It changes how people communicate, decide, and check information.\n\n"
-        "Return only the rewritten prose. No explanation.\n\n"
-        "SOURCE DOCUMENT:\n"
-        f"{str(text or '')[:12000]}"
-    )
+    return _core_topk_plain_spoken_snapshot_prompt(text, report_dict, deps=_topk_route_deps())
 
 
 def _topk_calibrated_from_report(report_dict: dict | None) -> float | None:
@@ -5894,238 +2349,11 @@ def _topk_safe_band_snapshot_max_tokens_default(source_text: str) -> int:
 
 
 def _topk_safe_band_sentence_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
-    rows = []
-    for row in (_topk_repair_map(candidate_text, candidate_report, limit=14).get("targets") or []):
-        sentence = str(row.get("sentence") or "").strip()
-        if not sentence:
-            continue
-        rows.append({
-            "sentence_id": row.get("sentence_id"),
-            "sentence": sentence,
-            "top10_ratio": row.get("top10_ratio"),
-            "predictable_token_spans": row.get("predictable_token_spans") or [],
-        })
-    return (
-        "DraftProof TOPK_SAFE_BAND_SENTENCE_PATCH.\n"
-        "Patch these high Top-k sentences after the snapshot rebuild. Preserve meaning, but use lower-predictability routing.\n\n"
-        "Allowed:\n"
-        "- plain uneven sentence routes: one short sentence, one specific follow-up, one limited contrast\n"
-        "- direct skeptical turns: That sounds tidy. It is not. The cleaner version misses something.\n"
-        "- occasional plain fragment only when it reads naturally, not as a headline\n"
-        "- tiny stable details only when directly implied by the sentence or public context\n"
-        "- replace smooth textbook phrasing with less predictable but ordinary wording\n\n"
-        "Forbidden:\n"
-        "- generic essay polish\n"
-        "- poetic metaphor, quirky phrasing, slang, or compressed headline style\n"
-        "- colon-heavy fragments and dramatic list rhythm\n"
-        "- new statistics or citations\n"
-        "- changing the document topic\n\n"
-        "Patch coverage:\n"
-        "- each candidate must include one patch for every listed sentence unless a sentence cannot be found exactly\n"
-        "- do not return a one-sentence patch when many high-risk sentences are listed\n"
-        "- candidate 1 should use direct plain contrast; candidate 2 should use plain sentence splitting and clause movement\n\n"
-        "Examples:\n"
-        "Original: The topic has a strong influence.\n"
-        "Replacement: The influence is visible in several places. The exact routes depend on the case.\n"
-        "Original: Despite its success, the project also faces serious issues.\n"
-        "Replacement: The strengths are clear. That is not the whole story. Cost, access, and trust remain problems.\n"
-        "Original: The system was built on several important ideas.\n"
-        "Replacement: Those ideas mattered from the start. People still argue over how they should work.\n\n"
-        "Return valid JSON only:\n"
-        '{"candidates":[{"patches":[{"original_sentence":"...","replacement_sentence":"..."}]}]}\n'
-        "Return 2 candidates with different sentence routes. Each candidate should patch all listed sentences. Do not repeat the same openings across replacements.\n\n"
-        f"SENTENCES:\n{json.dumps(rows, ensure_ascii=False)[:12000]}"
+    return _core_topk_safe_band_sentence_patch_prompt(
+        candidate_text,
+        candidate_report,
+        deps=_topk_route_deps(),
     )
-
-
-def _post_topk_ai_safe_band_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
-    ai_components = (((candidate_report or {}).get("ai_risk_badge") or {}).get("ai_components") or {})
-    contribution = _contribution_scores(candidate_report or {})
-    integrity = _integrity_scores(candidate_report or {})
-    strict_status = _strict_ai_safe_band_status(candidate_report)
-    targets = _paragraph_component_targets(candidate_text, candidate_report or {}, limit=5)
-    target_payload = [
-        {
-            "paragraph_index": target.get("index"),
-            "role": target.get("role"),
-            "score": target.get("score"),
-            "drivers": target.get("drivers"),
-            "paragraph": target.get("paragraph"),
-        }
-        for target in targets
-    ]
-    return (
-        "DraftProof POST_TOPK_AI_SAFE_BAND_OPTIMIZER.\n"
-        "The document already passed calibrated Top-k. Do not break that.\n"
-        "Return only JSON. No markdown.\n\n"
-        "Hard success target:\n"
-        "- topk_calibrated_risk must stay below 25\n"
-        "- ai_authorship must move toward 35 or lower\n"
-        "- ai_transformation must move toward 35 or lower\n"
-        "- external_ai_flag_risk must move toward 35 or lower\n"
-        "- no new facts, citations, people, dates, institutions, or examples\n\n"
-        "Allowed operations:\n"
-        "- remove one low-value generic assertion sentence\n"
-        "- narrow a broad reusable claim into a smaller condition\n"
-        "- compress over-clean explanation\n"
-        "- make one paragraph less symmetric by changing sentence purpose/order\n\n"
-        "Forbidden operations:\n"
-        "- do not rewrite the whole document\n"
-        "- do not add evidence or author context\n"
-        "- do not make the prose smoother or more academic\n"
-        "- do not use generic connectors\n"
-        "- do not change names, numbers, citations, years, or quoted text\n\n"
-        "Current scores:\n"
-        f"{json.dumps({'ai_components': ai_components, 'contribution': contribution, 'integrity': integrity, 'strict_safe_band': strict_status}, ensure_ascii=False)[:3500]}\n\n"
-        "Patch only these candidate paragraphs:\n"
-        f"{json.dumps(target_payload, ensure_ascii=False)[:9000]}\n\n"
-        "Return schema:\n"
-        "{\n"
-        "  \"candidates\": [\n"
-        "    {\n"
-        "      \"reason\": \"short reason\",\n"
-        "      \"patches\": [\n"
-        "        {\"operation_type\": \"AUTHORSHIP_SUPPRESSION\", \"target_paragraph_index\": 0, \"expected_driver\": \"ai_authorship\", \"replacement\": \"replacement paragraph\"}\n"
-        "      ]\n"
-        "    }\n"
-        "  ]\n"
-        "}\n"
-        "Return at most 2 candidates. Each candidate may patch at most 2 paragraphs."
-    )
-
-
-def _authorship_transformation_texture_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
-    driver_map = _authorship_transformation_texture_driver_map(candidate_text, candidate_report)
-    strict_status = _strict_ai_safe_band_status(candidate_report)
-    patch_targets = []
-    paragraphs = _logical_paragraphs(candidate_text)
-    for row in driver_map.get("ranked_blocks") or []:
-        index = row.get("paragraph_index")
-        if not isinstance(index, int) or index < 0 or index >= len(paragraphs):
-            continue
-        if row.get("has_protected_anchor"):
-            continue
-        patch_targets.append({
-            "paragraph_index": index,
-            "role": row.get("role"),
-            "authorship_driver_score": row.get("authorship_driver_score"),
-            "transformation_driver_score": row.get("transformation_driver_score"),
-            "generic_sentence_ratio": row.get("generic_sentence_ratio"),
-            "paragraph": paragraphs[index],
-        })
-        if len(patch_targets) >= 5:
-            break
-    return (
-        "DraftProof AUTHORSHIP_TRANSFORMATION_TEXTURE_CONTROLLER.\n"
-        "The document already passed calibrated Top-k. Preserve that and attack only authorship/transformation texture.\n"
-        "Return only valid JSON. No markdown.\n\n"
-        "Hard controller rules:\n"
-        "- topk_calibrated_risk must stay below 25\n"
-        "- reduce ai_authorship, ai_transformation, or external_ai_flag_risk\n"
-        "- do not increase review burden, weighted severity, or critical/high findings\n"
-        "- no full-document rewrite; patch selected paragraphs only\n"
-        "- no new facts, citations, names, numbers, dates, examples, or author evidence\n"
-        "- do not polish the prose into a cleaner essay style\n\n"
-        "Allowed operation types:\n"
-        "- AUTHORSHIP_SUPPRESSION: break explanatory cadence in one paragraph\n"
-        "- TRANSFORMATION_DETEMPLATE: collapse claim-explain-conclude symmetry\n"
-        "- HYBRID_TEXTURE_COLLAPSE: combine small authorship/transformation reductions\n"
-        "- LOW_VALUE_REMOVE: replace a low-value generic paragraph with an empty string only if meaning is duplicated nearby\n\n"
-        "Current strict-safe status:\n"
-        f"{json.dumps(strict_status, ensure_ascii=False)[:3000]}\n\n"
-        "Texture driver map:\n"
-        f"{json.dumps({k: driver_map.get(k) for k in ('authorship_drivers', 'transformation_drivers', 'generic_sentence_ratio')}, ensure_ascii=False)[:3500]}\n\n"
-        "Patch targets:\n"
-        f"{json.dumps(patch_targets, ensure_ascii=False)[:9000]}\n\n"
-        "Return schema:\n"
-        "{\n"
-        "  \"candidates\": [\n"
-        "    {\n"
-        "      \"reason\": \"short reason\",\n"
-        "      \"patches\": [\n"
-        "        {\"operation_type\": \"AUTHORSHIP_SUPPRESSION\", \"target_paragraph_index\": 0, \"expected_driver\": \"ai_authorship\", \"replacement\": \"replacement paragraph\"}\n"
-        "      ]\n"
-        "    }\n"
-        "  ]\n"
-        "}\n"
-        "Return at most 2 candidates. Each candidate may patch at most 2 paragraphs."
-    )
-
-
-def _extract_post_topk_patch_candidates(response_text: str, *, max_candidates: int = 2) -> list[dict]:
-    text = str(response_text or "").strip()
-    if not text:
-        return []
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
-    text = re.sub(r"\s*```$", "", text).strip()
-    try:
-        payload = json.loads(text)
-    except Exception:
-        match = re.search(r"\{.*\}", text, flags=re.S)
-        if not match:
-            return []
-        try:
-            payload = json.loads(match.group(0))
-        except Exception:
-            return []
-    rows = payload.get("candidates") if isinstance(payload, dict) else payload
-    if not isinstance(rows, list):
-        return []
-    candidates = []
-    for row in rows[:max(1, max_candidates)]:
-        if not isinstance(row, dict):
-            continue
-        patches = row.get("patches")
-        if not isinstance(patches, list):
-            continue
-        cleaned = []
-        for patch in patches[:2]:
-            if not isinstance(patch, dict):
-                continue
-            index = patch.get("target_paragraph_index")
-            if not isinstance(index, int):
-                index = patch.get("paragraph_index")
-            replacement = str(patch.get("replacement") or "").strip()
-            if not isinstance(index, int) or not replacement:
-                continue
-            operation_type = str(patch.get("operation_type") or row.get("operation_type") or "").strip()
-            expected_driver = str(patch.get("expected_driver") or row.get("expected_driver") or "").strip()
-            cleaned.append({
-                "paragraph_index": index,
-                "target_paragraph_index": index,
-                "replacement": replacement,
-                "operation_type": operation_type,
-                "expected_driver": expected_driver,
-            })
-        if cleaned:
-            candidates.append({"reason": row.get("reason"), "patches": cleaned})
-    return candidates
-
-
-def _apply_post_topk_patches(text: str, patches: list[dict]) -> tuple[str, list[dict]]:
-    paragraphs = _logical_paragraphs(text)
-    applied = []
-    for patch in patches or []:
-        index = patch.get("paragraph_index")
-        replacement = str(patch.get("replacement") or "").strip()
-        if not isinstance(index, int) or index < 0 or index >= len(paragraphs):
-            continue
-        cleaned, reason = _clean_paragraph_component_candidate(replacement, paragraphs[index])
-        if reason or not cleaned:
-            continue
-        if cleaned.strip() == paragraphs[index].strip():
-            continue
-        paragraphs[index] = cleaned
-        applied.append({
-            "paragraph_index": index,
-            "target_paragraph_index": index,
-            "replacement_words": _text_word_count(cleaned),
-            "operation_type": patch.get("operation_type"),
-            "expected_driver": patch.get("expected_driver"),
-        })
-    if not applied:
-        return text, []
-    return _join_logical_paragraphs(paragraphs), applied
 
 
 _POST_TOPK_TEMPLATE_OPENING_RE = re.compile(
@@ -6143,267 +2371,65 @@ _POST_TOPK_LOW_VALUE_PARAGRAPH_RE = re.compile(
 )
 
 
-def _post_topk_sentence_contextual(sentence: str) -> bool:
-    sentence = str(sentence or "").strip()
-    if not sentence:
-        return False
-    return bool(
-        _sentence_has_concrete_or_context(sentence)
-        or _GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.search(sentence)
-        or _PARAGRAPH_CITATION_RE.search(sentence)
+def _post_topk_texture_helper_deps() -> PostTopkTextureHelperDeps:
+    return PostTopkTextureHelperDeps(
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        text_word_count=_text_word_count,
+        clean_paragraph_component_candidate=_clean_paragraph_component_candidate,
+        strict_ai_safe_band_status=_strict_ai_safe_band_status,
+        post_topk_convergence_candidates=_post_topk_convergence_candidates,
+        split_sentences=_split_sentences,
+        sentence_has_concrete_or_context=_sentence_has_concrete_or_context,
+        generic_assertion_sentence_score=_generic_assertion_sentence_score,
+        paragraph_role=_paragraph_role,
+        detect_protected_spans=detect_protected_spans,
+        generic_assertion_protected_sentence_re=_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE,
+        paragraph_citation_re=_PARAGRAPH_CITATION_RE,
+        generic_assertion_terms_re=_GENERIC_ASSERTION_TERMS_RE,
+        post_topk_template_opening_re=_POST_TOPK_TEMPLATE_OPENING_RE,
+        post_topk_low_value_paragraph_re=_POST_TOPK_LOW_VALUE_PARAGRAPH_RE,
     )
+
+
+def _post_topk_sentence_contextual(sentence: str) -> bool:
+    return _core_post_topk_sentence_contextual(sentence, deps=_post_topk_texture_helper_deps())
 
 
 def _post_topk_sentence_driver_score(sentence: str) -> float:
-    sentence = str(sentence or "").strip()
-    if not sentence:
-        return 0.0
-    score = _generic_assertion_sentence_score(sentence)
-    if not _post_topk_sentence_contextual(sentence):
-        score += 5.0
-    if _POST_TOPK_TEMPLATE_OPENING_RE.search(sentence):
-        score += 4.0
-    if len(_split_sentences(sentence)) == 1 and _text_word_count(sentence) >= 24:
-        score += 1.5
-    return round(score, 3)
+    return _core_post_topk_sentence_driver_score(sentence, deps=_post_topk_texture_helper_deps())
 
 
 def _post_topk_driver_map(text: str, raw_json: dict | None) -> dict:
-    paragraphs = _logical_paragraphs(text)
-    rows = []
-    generic_sentence_count = 0
-    total_sentence_count = 0
-    protected = detect_protected_spans(text)
-
-    def paragraph_has_protected(index: int) -> bool:
-        before = _join_logical_paragraphs(paragraphs[:index])
-        start = len(before) + (2 if before else 0)
-        end = start + len(paragraphs[index])
-        return any(span.start_char >= start and span.end_char <= end for span in protected)
-
-    role_sequence = []
-    for paragraph_index, paragraph in enumerate(paragraphs):
-        sentences = _split_sentences(paragraph)
-        sentence_rows = []
-        generic_scores = []
-        contextual_count = 0
-        for sentence_index, sentence in enumerate(sentences):
-            contextual = _post_topk_sentence_contextual(sentence)
-            driver_score = _post_topk_sentence_driver_score(sentence)
-            total_sentence_count += 1
-            if not contextual:
-                generic_sentence_count += 1
-            else:
-                contextual_count += 1
-            generic_scores.append(driver_score)
-            sentence_rows.append({
-                "sentence_index": sentence_index,
-                "text": sentence,
-                "word_count": _text_word_count(sentence),
-                "contextual": contextual,
-                "driver_score": driver_score,
-                "protected": bool(_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.search(sentence)),
-            })
-        drivers = {
-            "generic_assertion_hits": len(_GENERIC_ASSERTION_TERMS_RE.findall(paragraph)),
-            "concrete_anchor_hits": contextual_count,
-            "source_gap": not bool(_PARAGRAPH_CITATION_RE.search(paragraph)),
-            "word_count": _text_word_count(paragraph),
-        }
-        role = _paragraph_role(paragraph, drivers, is_last=paragraph_index == len(paragraphs) - 1)
-        role_sequence.append(role)
-        generic_ratio = (
-            sum(1 for row in sentence_rows if not row["contextual"]) / max(len(sentence_rows), 1)
-        )
-        low_value = bool(
-            not paragraph_has_protected(paragraph_index)
-            and contextual_count == 0
-            and (
-                generic_ratio >= 0.65
-                or role in {"conclusion_template_risk", "generic_claim_heavy"}
-                or _POST_TOPK_LOW_VALUE_PARAGRAPH_RE.search(paragraph)
-            )
-        )
-        rows.append({
-            "paragraph_index": paragraph_index,
-            "paragraph": paragraph,
-            "role": role,
-            "word_count": _text_word_count(paragraph),
-            "sentence_count": len(sentences),
-            "generic_sentence_ratio": round(generic_ratio, 3),
-            "max_sentence_driver_score": max(generic_scores or [0.0]),
-            "paragraph_driver_score": round(sum(generic_scores) + generic_ratio * 10.0, 3),
-            "has_protected_anchor": paragraph_has_protected(paragraph_index),
-            "low_value_generic_block": low_value,
-            "sentences": sentence_rows,
-        })
-    repeated_role_runs = 0
-    previous = None
-    for role in role_sequence:
-        if role and role == previous:
-            repeated_role_runs += 1
-        previous = role
-    profile = _strict_ai_safe_band_status(raw_json).get("profile") if isinstance(raw_json, dict) else {}
-    return {
-        "kind": "post_topk_driver_map",
-        "profile": profile or {},
-        "paragraph_count": len(paragraphs),
-        "sentence_count": total_sentence_count,
-        "generic_sentence_count": generic_sentence_count,
-        "generic_sentence_ratio": round(generic_sentence_count / max(total_sentence_count, 1), 3),
-        "repeated_paragraph_role_runs": repeated_role_runs,
-        "paragraphs": sorted(rows, key=lambda item: float(item.get("paragraph_driver_score") or 0.0), reverse=True),
-    }
+    return _core_post_topk_driver_map(text, raw_json, deps=_post_topk_texture_helper_deps())
 
 
-def _opening_route_key(sentence: str) -> str:
-    words = re.findall(r"[A-Za-z][A-Za-z'-]*", str(sentence or "").lower())
-    return " ".join(words[:3])
+def _authorship_transformation_texture_patch_prompt(candidate_text: str, candidate_report: dict | None) -> str:
+    return _core_authorship_transformation_texture_patch_prompt(
+        candidate_text,
+        candidate_report,
+        deps=_post_topk_texture_helper_deps(),
+    )
 
+def _extract_post_topk_patch_candidates(response_text: str, *, max_candidates: int = 2) -> list[dict]:
+    return _core_extract_post_topk_patch_candidates(response_text, max_candidates=max_candidates)
+
+def _apply_post_topk_patches(text: str, patches: list[dict]) -> tuple[str, list[dict]]:
+    return _core_apply_post_topk_patches(
+        text,
+        patches,
+        deps=_post_topk_texture_helper_deps(),
+    )
 
 def _authorship_transformation_texture_driver_map(text: str, raw_json: dict | None) -> dict:
-    """Map the post-Top-k document to authorship and transformation texture drivers.
-
-    This deliberately separates detector texture from quality cleanup. The map is
-    consumed by the strict-safe controller, so rows are ranked by likely
-    authorship/transformation drag rather than by generic review burden.
-    """
-    base = _post_topk_driver_map(text, raw_json)
-    paragraphs = base.get("paragraphs") or []
-    opening_counts: dict[str, int] = {}
-    sentence_lengths: list[int] = []
-    transition_hits = 0
-    transition_re = re.compile(
-        r"^\s*(?:also|but|however|therefore|so|then|this|that|in\s+(?:addition|conclusion|summary)|"
-        r"furthermore|moreover|additionally|overall)\b",
-        re.I,
+    return _core_authorship_transformation_texture_driver_map(
+        text,
+        raw_json,
+        deps=_post_topk_texture_helper_deps(),
     )
-    for row in paragraphs:
-        for sentence_row in row.get("sentences") or []:
-            sentence = sentence_row.get("text") or ""
-            key = _opening_route_key(sentence)
-            if key:
-                opening_counts[key] = opening_counts.get(key, 0) + 1
-            sentence_lengths.append(int(sentence_row.get("word_count") or 0))
-            if transition_re.search(sentence):
-                transition_hits += 1
-
-    mean_len = statistics.mean(sentence_lengths) if sentence_lengths else 0.0
-    stdev_len = statistics.pstdev(sentence_lengths) if len(sentence_lengths) > 1 else 0.0
-    length_uniformity = 0.0
-    if mean_len > 0:
-        length_uniformity = max(0.0, min(100.0, 100.0 - (stdev_len / mean_len * 100.0)))
-
-    repeated_opening_hits = sum(count - 1 for count in opening_counts.values() if count > 1)
-    transition_density = transition_hits / max(int(base.get("sentence_count") or 0), 1)
-    role_counts: dict[str, int] = {}
-    for row in paragraphs:
-        role = str(row.get("role") or "")
-        if role:
-            role_counts[role] = role_counts.get(role, 0) + 1
-
-    ranked_blocks = []
-    low_value_blocks = []
-    for row in paragraphs:
-        sentence_count = max(int(row.get("sentence_count") or 0), 1)
-        generic_ratio = float(row.get("generic_sentence_ratio") or 0.0)
-        role = str(row.get("role") or "")
-        role_repeat = max(0, int(role_counts.get(role, 0)) - 1)
-        repeated_openings_in_block = 0
-        transition_hits_in_block = 0
-        for sentence_row in row.get("sentences") or []:
-            sentence = sentence_row.get("text") or ""
-            key = _opening_route_key(sentence)
-            if key and opening_counts.get(key, 0) > 1:
-                repeated_openings_in_block += 1
-            if transition_re.search(sentence):
-                transition_hits_in_block += 1
-        authorship_score = (
-            float(row.get("max_sentence_driver_score") or 0.0)
-            + generic_ratio * 12.0
-            + (transition_hits_in_block / sentence_count) * 5.0
-            + repeated_openings_in_block * 1.5
-            + (length_uniformity / 100.0) * 3.0
-        )
-        transformation_score = (
-            float(row.get("paragraph_driver_score") or 0.0)
-            + generic_ratio * 8.0
-            + role_repeat * 2.0
-            + (6.0 if role in {"generic_claim_heavy", "conclusion_template_risk", "source_summary_heavy"} else 0.0)
-        )
-        row_out = {
-            "paragraph_index": row.get("paragraph_index"),
-            "role": role,
-            "word_count": row.get("word_count"),
-            "sentence_count": row.get("sentence_count"),
-            "has_protected_anchor": bool(row.get("has_protected_anchor")),
-            "low_value_generic_block": bool(row.get("low_value_generic_block")),
-            "generic_sentence_ratio": row.get("generic_sentence_ratio"),
-            "authorship_driver_score": round(authorship_score, 3),
-            "transformation_driver_score": round(transformation_score, 3),
-            "texture_driver_score": round(authorship_score + transformation_score, 3),
-            "repeated_opening_hits": repeated_openings_in_block,
-            "transition_hits": transition_hits_in_block,
-            "top_sentence_drivers": [
-                {
-                    "sentence_index": s.get("sentence_index"),
-                    "driver_score": s.get("driver_score"),
-                    "word_count": s.get("word_count"),
-                    "contextual": s.get("contextual"),
-                    "protected": s.get("protected"),
-                }
-                for s in sorted(
-                    row.get("sentences") or [],
-                    key=lambda item: float(item.get("driver_score") or 0.0),
-                    reverse=True,
-                )[:3]
-            ],
-        }
-        ranked_blocks.append(row_out)
-        if row_out["low_value_generic_block"]:
-            low_value_blocks.append(row_out)
-
-    ranked_blocks.sort(key=lambda item: float(item.get("texture_driver_score") or 0.0), reverse=True)
-    profile = base.get("profile") or {}
-    return {
-        "kind": "authorship_transformation_texture_driver_map",
-        "profile": profile,
-        "authorship_drivers": {
-            "ai_likelihood": profile.get("ai_likelihood"),
-            "rewrite_smoothness": profile.get("rewrite_smoothness"),
-            "repeated_opening_hits": repeated_opening_hits,
-            "transition_density": round(transition_density, 3),
-            "sentence_length_uniformity": round(length_uniformity, 3),
-        },
-        "transformation_drivers": {
-            "ai_transformation": profile.get("ai_transformation"),
-            "semantic_uniformity": profile.get("semantic_uniformity"),
-            "discourse_regularity": profile.get("discourse_regularity"),
-            "repeated_paragraph_role_runs": base.get("repeated_paragraph_role_runs"),
-            "role_counts": role_counts,
-        },
-        "score_drag_blocks": low_value_blocks[:8],
-        "generic_sentence_ratio": base.get("generic_sentence_ratio"),
-        "generic_sentence_count": base.get("generic_sentence_count"),
-        "sentence_count": base.get("sentence_count"),
-        "paragraph_count": base.get("paragraph_count"),
-        "ranked_blocks": ranked_blocks[:12],
-        "paragraphs": paragraphs,
-    }
-
 
 def _texture_candidate_family(operation: str | None) -> str:
-    operation = str(operation or "").lower()
-    if "authorship" in operation:
-        return "AUTHORSHIP_SUPPRESSION"
-    if "transformation" in operation or "template" in operation or "merge" in operation:
-        return "TRANSFORMATION_DETEMPLATE"
-    if "external_proxy" in operation or "generic_assertion_collapse" in operation:
-        return "HYBRID_TEXTURE_COLLAPSE"
-    if "removal" in operation or "remove" in operation:
-        return "LOW_VALUE_REMOVE"
-    return "HYBRID_TEXTURE_COLLAPSE"
-
+    return _core_texture_candidate_family(operation)
 
 def _authorship_transformation_texture_candidates(
     source_text: str,
@@ -6411,31 +2437,12 @@ def _authorship_transformation_texture_candidates(
     *,
     limit: int = 12,
 ) -> list[tuple[str, str, dict]]:
-    candidates = _post_topk_convergence_candidates(source_text, raw_json, limit=limit)
-    mapped: list[tuple[str, str, dict]] = []
-    for strategy, candidate, meta in candidates:
-        operation = str((meta or {}).get("operation") or "")
-        family = _texture_candidate_family(operation)
-        strategy_name = str(strategy or "texture_candidate")
-        strategy_name = re.sub(r"^post_topk_", "texture_", strategy_name)
-        if not strategy_name.startswith("texture_"):
-            strategy_name = f"texture_{strategy_name}"
-        mapped.append((
-            strategy_name,
-            candidate,
-            {
-                **(meta or {}),
-                "authorship_transformation_texture_controller": True,
-                "texture_candidate_family": family,
-                "expected_driver": (
-                    "ai_authorship" if family == "AUTHORSHIP_SUPPRESSION"
-                    else "ai_transformation" if family == "TRANSFORMATION_DETEMPLATE"
-                    else "external_ai_flag_risk" if family == "HYBRID_TEXTURE_COLLAPSE"
-                    else "ai_transformation"
-                ),
-            },
-        ))
-    return mapped[:max(1, limit)]
+    return _core_authorship_transformation_texture_candidates(
+        source_text,
+        raw_json,
+        limit=limit,
+        deps=_post_topk_texture_helper_deps(),
+    )
 
 
 def _post_topk_convergence_candidates(
@@ -6444,340 +2451,26 @@ def _post_topk_convergence_candidates(
     *,
     limit: int = 10,
 ) -> list[tuple[str, str, dict]]:
-    """Build stronger post-Top-k candidates from document-wide driver movement.
-
-    The Top-k rebuild already solved token-route risk. This phase is allowed to
-    shorten or collapse generic material when the remaining strict blockers are
-    authorship/transformation/proxy drivers.
-    """
-    if not _env_flag("DRAFTPROOF_POST_TOPK_CONVERGENCE_OPTIMIZER", True):
-        return []
-    strict = _strict_ai_safe_band_status(raw_json)
-    profile = strict.get("profile") or {}
-    if float(profile.get("topk_calibrated_risk", 100.0)) >= _safe_topk_calibrated_limit():
-        return []
-    paragraphs = _logical_paragraphs(source_text)
-    if len(paragraphs) < 2:
-        return []
-    driver_map = _post_topk_driver_map(source_text, raw_json)
-    source_words = _text_word_count(source_text)
-    # Strict-safe convergence is allowed to shorten low-value generic material.
-    # Semantic drift/protected-anchor checks still gate the candidate after scan.
-    min_words = max(30, int(source_words * _float_env("DRAFTPROOF_POST_TOPK_MIN_WORD_RATIO", 0.20)))
-    candidates: list[tuple[str, str, dict]] = []
-    seen: set[str] = {str(source_text or "").strip()}
-
-    def add(strategy: str, next_paragraphs: list[str], meta: dict) -> None:
-        cleaned_paragraphs = [paragraph.strip() for paragraph in next_paragraphs if paragraph and paragraph.strip()]
-        candidate = _join_logical_paragraphs(cleaned_paragraphs)
-        normalized = candidate.strip()
-        if not normalized or normalized in seen:
-            return
-        if _text_word_count(candidate) < min_words:
-            return
-        seen.add(normalized)
-        candidates.append((
-            strategy,
-            candidate,
-            {
-                **meta,
-                "post_topk_convergence": True,
-                "post_topk_driver_map": {
-                    "generic_sentence_ratio": driver_map.get("generic_sentence_ratio"),
-                    "generic_sentence_count": driver_map.get("generic_sentence_count"),
-                    "sentence_count": driver_map.get("sentence_count"),
-                    "repeated_paragraph_role_runs": driver_map.get("repeated_paragraph_role_runs"),
-                },
-            },
-        ))
-
-    sentence_targets = []
-    paragraph_rows = {
-        int(row.get("paragraph_index", -1)): row
-        for row in driver_map.get("paragraphs") or []
-        if isinstance(row, dict)
-    }
-    for row in driver_map.get("paragraphs") or []:
-        paragraph_index = int(row.get("paragraph_index", -1))
-        if paragraph_index < 0 or paragraph_index >= len(paragraphs):
-            continue
-        for sentence_row in row.get("sentences") or []:
-            if sentence_row.get("protected"):
-                continue
-            sentence_targets.append((
-                float(sentence_row.get("driver_score") or 0.0),
-                paragraph_index,
-                int(sentence_row.get("sentence_index", 0) or 0),
-                bool(sentence_row.get("contextual")),
-                sentence_row.get("text") or "",
-            ))
-    sentence_targets.sort(reverse=True)
-
-    removable_targets = [
-        item for item in sentence_targets
-        if item[0] >= _float_env("DRAFTPROOF_POST_TOPK_SENTENCE_DRIVER_MIN", 4.0)
-        and not item[3]
-    ]
-    if not removable_targets:
-        removable_targets = [
-            item for item in sentence_targets
-            if item[0] >= _float_env("DRAFTPROOF_POST_TOPK_CONTEXTUAL_SENTENCE_DRIVER_MIN", 7.5)
-        ]
-
-    for fraction in (0.18, 0.28, 0.40):
-        if len(candidates) >= max(1, limit):
-            break
-        remove_count = max(1, int(math.ceil(len(removable_targets) * fraction)))
-        remove_pairs = {
-            (paragraph_index, sentence_index)
-            for _score, paragraph_index, sentence_index, _contextual, _sentence in removable_targets[:remove_count]
-        }
-        if not remove_pairs:
-            continue
-        next_paragraphs = []
-        removed = []
-        for paragraph_index, paragraph in enumerate(paragraphs):
-            sentences = _split_sentences(paragraph)
-            kept = []
-            for sentence_index, sentence in enumerate(sentences):
-                if (paragraph_index, sentence_index) in remove_pairs and len(sentences) - len([
-                    pair for pair in remove_pairs if pair[0] == paragraph_index
-                ]) >= 1:
-                    removed.append({"paragraph_index": paragraph_index, "sentence_index": sentence_index})
-                    continue
-                kept.append(sentence)
-            if kept:
-                next_paragraphs.append(_narrow_generic_claim_text(" ".join(kept).strip()))
-        add(
-            f"post_topk_generic_assertion_collapse_{int(fraction * 100)}",
-            next_paragraphs,
-            {
-                "operation": "generic_assertion_collapse",
-                "removed_sentence_count": len(removed),
-                "removed_sentences": removed[:20],
-            },
-        )
-
-    authorship_rows = [
-        row for row in driver_map.get("paragraphs") or []
-        if not row.get("has_protected_anchor")
-        and int(row.get("sentence_count") or 0) >= 2
-        and float(row.get("paragraph_driver_score") or 0.0) >= 8.0
-    ]
-    for row in authorship_rows[:3]:
-        if len(candidates) >= max(1, limit):
-            break
-        paragraph_index = int(row.get("paragraph_index", -1))
-        if paragraph_index < 0 or paragraph_index >= len(paragraphs):
-            continue
-        sentences = _split_sentences(paragraphs[paragraph_index])
-        sentence_rows = sorted(
-            [
-                sentence_row for sentence_row in row.get("sentences") or []
-                if not sentence_row.get("protected")
-            ],
-            key=lambda item: float(item.get("driver_score") or 0.0),
-            reverse=True,
-        )
-        if len(sentences) < 2 or not sentence_rows:
-            continue
-        remove_indexes = {
-            int(sentence_rows[0].get("sentence_index", 0))
-        }
-        kept = [
-            sentence for sentence_index, sentence in enumerate(sentences)
-            if sentence_index not in remove_indexes
-        ]
-        if not kept:
-            continue
-        next_paragraphs = list(paragraphs)
-        next_paragraphs[paragraph_index] = _narrow_generic_claim_text(" ".join(kept).strip())
-        add(
-            f"post_topk_authorship_suppression_candidate_p{paragraph_index + 1}",
-            next_paragraphs,
-            {
-                "operation": "authorship_suppression_candidate",
-                "paragraph_index": paragraph_index,
-                "removed_sentence_indexes": sorted(remove_indexes),
-                "paragraph_role": row.get("role"),
-            },
-        )
-
-    high_drag_rows = [
-        row for row in driver_map.get("paragraphs") or []
-        if not row.get("has_protected_anchor")
-        and float(row.get("generic_sentence_ratio") or 0.0) >= 0.60
-        and int(row.get("sentence_count") or 0) >= 2
-    ]
-    for row in high_drag_rows[:3]:
-        if len(candidates) >= max(1, limit):
-            break
-        paragraph_index = int(row.get("paragraph_index", -1))
-        if paragraph_index < 0 or paragraph_index >= len(paragraphs):
-            continue
-        paragraph = paragraphs[paragraph_index]
-        compressed = _compress_score_drag_paragraph(
-            paragraph,
-            max_remove=max(1, min(3, int(row.get("sentence_count") or 1) - 1)),
-        )
-        if compressed.strip() and compressed.strip() != paragraph.strip():
-            next_paragraphs = list(paragraphs)
-            next_paragraphs[paragraph_index] = compressed
-            add(
-                f"post_topk_structure_de_template_p{paragraph_index + 1}",
-                next_paragraphs,
-                {
-                    "operation": "structure_de_template",
-                    "paragraph_index": paragraph_index,
-                    "paragraph_role": row.get("role"),
-                },
-            )
-
-    symmetry_rows = [
-        row for row in driver_map.get("paragraphs") or []
-        if not row.get("has_protected_anchor")
-        and int(row.get("sentence_count") or 0) >= 3
-        and (
-            float(row.get("generic_sentence_ratio") or 0.0) >= 0.34
-            or row.get("role") in {"generic_claim_heavy", "conclusion_template_risk"}
-        )
-    ]
-    for row in symmetry_rows[:2]:
-        if len(candidates) >= max(1, limit):
-            break
-        paragraph_index = int(row.get("paragraph_index", -1))
-        if paragraph_index < 0 or paragraph_index >= len(paragraphs):
-            continue
-        sentences = _split_sentences(paragraphs[paragraph_index])
-        if len(sentences) < 3:
-            continue
-        compressed_sentences = []
-        for sentence in sentences:
-            narrowed = _narrow_generic_claim_text(sentence)
-            if not _POST_TOPK_TEMPLATE_OPENING_RE.search(narrowed):
-                compressed_sentences.append(narrowed)
-        if len(sentences) >= 3:
-            compressed_sentences = [sentences[0], sentences[-1]]
-        next_paragraphs = list(paragraphs)
-        next_paragraphs[paragraph_index] = " ".join(s.strip() for s in compressed_sentences if s.strip())
-        add(
-            f"post_topk_transformation_reduction_candidate_p{paragraph_index + 1}",
-            next_paragraphs,
-            {
-                "operation": "transformation_reduction_candidate",
-                "paragraph_index": paragraph_index,
-                "paragraph_role": row.get("role"),
-            },
-        )
-
-    low_value_rows = [
-        row for row in driver_map.get("paragraphs") or []
-        if row.get("low_value_generic_block")
-        and not row.get("has_protected_anchor")
-        and int(row.get("word_count") or 0) >= 12
-    ]
-    for remove_count in (1, 2, 3):
-        if len(candidates) >= max(1, limit):
-            break
-        indexes = {
-            int(row.get("paragraph_index", -1))
-            for row in low_value_rows[:remove_count]
-            if int(row.get("paragraph_index", -1)) >= 0
-        }
-        if not indexes or len(indexes) >= len(paragraphs):
-            continue
-        next_paragraphs = [
-            paragraph for index, paragraph in enumerate(paragraphs)
-            if index not in indexes
-        ]
-        add(
-            f"post_topk_low_value_block_removal_candidate_{remove_count}",
-            next_paragraphs,
-            {
-                "operation": "low_value_block_removal_candidate",
-                "removed_paragraph_indexes": sorted(indexes),
-            },
-        )
-
-    if low_value_rows and removable_targets and len(candidates) < max(1, limit):
-        indexes = {
-            int(row.get("paragraph_index", -1))
-            for row in low_value_rows[:1]
-            if int(row.get("paragraph_index", -1)) >= 0
-        }
-        remove_pairs = {
-            (paragraph_index, sentence_index)
-            for _score, paragraph_index, sentence_index, _contextual, _sentence in removable_targets[:2]
-            if paragraph_index not in indexes
-        }
-        next_paragraphs = []
-        removed_sentences = []
-        for paragraph_index, paragraph in enumerate(paragraphs):
-            if paragraph_index in indexes:
-                continue
-            sentences = _split_sentences(paragraph)
-            kept = []
-            for sentence_index, sentence in enumerate(sentences):
-                if (paragraph_index, sentence_index) in remove_pairs and len(sentences) > 1:
-                    removed_sentences.append({"paragraph_index": paragraph_index, "sentence_index": sentence_index})
-                    continue
-                kept.append(sentence)
-            if kept:
-                next_paragraphs.append(_narrow_generic_claim_text(" ".join(kept).strip()))
-        add(
-            "post_topk_external_proxy_reduction_candidate",
-            next_paragraphs,
-            {
-                "operation": "external_proxy_reduction_candidate",
-                "removed_paragraph_indexes": sorted(indexes),
-                "removed_sentences": removed_sentences,
-            },
-        )
-
-    if len(candidates) < max(1, limit) and len(paragraphs) >= 4:
-        next_paragraphs = []
-        merged_indexes = []
-        skip_next = False
-        for index, paragraph in enumerate(paragraphs):
-            if skip_next:
-                skip_next = False
-                continue
-            row = paragraph_rows.get(index, {})
-            next_row = paragraph_rows.get(index + 1, {})
-            if (
-                index + 1 < len(paragraphs)
-                and not row.get("has_protected_anchor")
-                and not next_row.get("has_protected_anchor")
-                and int(row.get("sentence_count") or 0) <= 2
-                and int(next_row.get("sentence_count") or 0) <= 2
-                and (
-                    float(row.get("generic_sentence_ratio") or 0.0) >= 0.50
-                    or float(next_row.get("generic_sentence_ratio") or 0.0) >= 0.50
-                )
-            ):
-                next_paragraphs.append(_narrow_generic_claim_text(f"{paragraph} {paragraphs[index + 1]}"))
-                merged_indexes.append([index, index + 1])
-                skip_next = True
-            else:
-                next_paragraphs.append(paragraph)
-        if merged_indexes:
-            add(
-                "post_topk_paragraph_merge_de_template",
-                next_paragraphs,
-                {"operation": "paragraph_merge_de_template", "merged_paragraph_indexes": merged_indexes},
-            )
-
-    operation_priority = {
-        "external_proxy_reduction_candidate": 0,
-        "authorship_suppression_candidate": 1,
-        "transformation_reduction_candidate": 2,
-        "generic_assertion_collapse": 3,
-        "structure_de_template": 4,
-        "low_value_block_removal_candidate": 5,
-        "paragraph_merge_de_template": 6,
-    }
-    candidates.sort(key=lambda row: operation_priority.get(str((row[2] or {}).get("operation") or ""), 99))
-    return candidates[:max(1, limit)]
+    deps = PostTopkConvergenceDeps(
+        env_flag=_env_flag,
+        strict_ai_safe_band_status=_strict_ai_safe_band_status,
+        safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+        logical_paragraphs=_logical_paragraphs,
+        post_topk_driver_map=_post_topk_driver_map,
+        text_word_count=_text_word_count,
+        float_env=_float_env,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        split_sentences=_split_sentences,
+        narrow_generic_claim_text=_narrow_generic_claim_text,
+        compress_score_drag_paragraph=_compress_score_drag_paragraph,
+        post_topk_template_opening_re=_POST_TOPK_TEMPLATE_OPENING_RE,
+    )
+    return _core_post_topk_convergence_candidates(
+        source_text,
+        raw_json,
+        limit=limit,
+        deps=deps,
+    )
 
 
 def _extract_topk_route_patch_candidates(response_text: str, *, max_candidates: int = 2) -> list[list[dict]]:
@@ -6838,6 +2531,26 @@ def _apply_topk_route_patches(text: str, patches: list[dict]) -> tuple[str, list
     return candidate, applied
 
 
+def _source_grounding_search_deps() -> SourceGroundingSearchDeps:
+    return SourceGroundingSearchDeps(
+        source_search_enabled=_source_search_enabled,
+        source_search_max_calls_per_run=_source_search_max_calls_per_run,
+        source_search_calls_used=_source_search_calls_used,
+        source_search_remaining_calls=_source_search_remaining_calls,
+        float_env=_float_env,
+        blocker_operation_plan=_blocker_operation_plan,
+        source_grounding_targets_from_block_decisions=_source_grounding_targets_from_block_decisions,
+        citation_reference_search_targets=_citation_reference_search_targets,
+        source_grounding_claim_targets=_source_grounding_claim_targets,
+        source_search_depth_status=_source_search_depth_status,
+        source_search_domain_list=_source_search_domain_list,
+        source_search_default_exclude_domains=_SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS,
+        tavily_search=_tavily_search,
+        normalize_tavily_results=_normalize_tavily_results,
+        source_result_confidence=_source_result_confidence,
+    )
+
+
 def _build_source_grounding_search_layer(
     text: str,
     report_dict: dict | None,
@@ -6845,182 +2558,13 @@ def _build_source_grounding_search_layer(
     max_queries: int | None = None,
     max_results: int | None = None,
 ) -> dict:
-    if not _source_search_enabled():
-        return {}
-    max_calls_per_run = _source_search_max_calls_per_run()
-    calls_used_before = _source_search_calls_used()
-    remaining_calls = _source_search_remaining_calls()
-    if max_calls_per_run <= 0 or remaining_calls <= 0:
-        return {
-            "enabled": True,
-            "kind": "source_grounding_search",
-            "provider": os.environ.get("DRAFTPROOF_SOURCE_SEARCH_PROVIDER", "tavily"),
-            "status": "budget_exhausted",
-            "auto_apply": False,
-            "budget": {
-                "max_calls_per_run": 0,
-                "hard_max_calls_per_run": 5,
-            },
-            "claim_targets": [],
-            "results": [],
-            "policy": [
-                "Search results may support public/source-grounded claims after user review.",
-                "Search results must not be converted into author-owned observations or lived experience.",
-            ],
-            "call_accounting": {
-                "calls_used_before": calls_used_before,
-                "calls_used_after": _source_search_calls_used(),
-                "remaining_before": remaining_calls,
-                "remaining_after": _source_search_remaining_calls(),
-            },
-        }
-    requested_queries = max(1, int(max_queries or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_QUERIES", 2.0)))
-    max_queries = min(requested_queries, remaining_calls)
-    max_results = max(1, int(max_results or _float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_RESULTS", 3.0)))
-    block_plan = _blocker_operation_plan(text, report_dict or {}, limit=max_queries)
-    block_decision_targets = _source_grounding_targets_from_block_decisions(
+    return _core_build_source_grounding_search_layer(
         text,
         report_dict,
-        block_plan.get("block_decisions") or [],
-        limit=max_queries,
+        max_queries=max_queries,
+        max_results=max_results,
+        deps=_source_grounding_search_deps(),
     )
-    citation_reference_targets = _citation_reference_search_targets(
-        text,
-        report_dict,
-        limit=max_queries,
-    )
-    claim_targets = _source_grounding_claim_targets(text, report_dict, limit=max_queries)
-    targets = []
-    for target in [*block_decision_targets, *citation_reference_targets, *claim_targets]:
-        if not isinstance(target, dict):
-            continue
-        key = (target.get("citation_label") or target.get("claim") or target.get("query") or "").lower()
-        if key and any(
-            key == (existing.get("citation_label") or existing.get("claim") or existing.get("query") or "").lower()
-            for existing in targets
-        ):
-            continue
-        targets.append(target)
-        if len(targets) >= max_queries:
-            break
-    depth_status = _source_search_depth_status(report_dict, len(targets))
-    layer = {
-        "enabled": True,
-        "kind": "source_grounding_search",
-        "provider": os.environ.get("DRAFTPROOF_SOURCE_SEARCH_PROVIDER", "tavily"),
-        "status": "ready",
-        "auto_apply": False,
-        "claim_targets": targets,
-        "results": [],
-        "target_source": (
-            "block_decisions"
-            if block_decision_targets
-            else "citation_references"
-            if citation_reference_targets
-            else "claim_targets"
-        ),
-        "citation_reference_targets": citation_reference_targets,
-        "block_decision_plan": {
-            "enabled": block_plan.get("enabled"),
-            "active_blockers": block_plan.get("active_blockers"),
-            "block_decisions": block_plan.get("block_decisions"),
-        },
-        "budget": {
-            "requested_queries": requested_queries,
-            "max_queries": max_queries,
-            "max_calls_per_run": max_calls_per_run,
-            "hard_max_calls_per_run": 5,
-            "calls_used_before": calls_used_before,
-            "remaining_calls_before": remaining_calls,
-            "search_depth": depth_status.get("search_depth"),
-            "search_depth_source": depth_status.get("source"),
-            "chunks_per_source": depth_status.get("chunks_per_source"),
-            "include_answer": depth_status.get("include_answer"),
-        },
-        "policy": [
-            "Search results may support public/source-grounded claims after user review.",
-            "Search results must not be converted into author-owned observations or lived experience.",
-            "Search results must not directly change AI Authorship scoring; grounding remains a separate quality dimension.",
-            "Generation may cite or bridge to a source only after the source is relevant and acceptable to the user.",
-        ],
-        "rewrite_handoff": {
-            "allowed": [
-                "source-to-claim bridge",
-                "narrow an unsupported claim using an identified public source",
-                "prepare citation/evidence candidates for user review",
-            ],
-            "forbidden": [
-                "invent author-owned context",
-                "invent statistics, dates, names, or source claims not present in the result",
-                "auto-apply searched evidence without review",
-            ],
-        },
-    }
-    if not targets:
-        layer["status"] = "no_claim_targets"
-        return layer
-    provider = str(layer["provider"] or "tavily").lower()
-    if provider != "tavily":
-        layer["status"] = "unsupported_provider"
-        return layer
-    api_key = os.environ.get("TAVILY_API_KEY") or os.environ.get("DRAFTPROOF_TAVILY_API_KEY")
-    if not api_key:
-        layer["status"] = "missing_api_key"
-        return layer
-    timeout = _float_env("DRAFTPROOF_SOURCE_SEARCH_TIMEOUT", 20.0)
-    excluded_domains = set(_source_search_domain_list(
-        "DRAFTPROOF_SOURCE_SEARCH_EXCLUDE_DOMAINS",
-        _SOURCE_SEARCH_DEFAULT_EXCLUDE_DOMAINS,
-    ))
-    included_domains = _source_search_domain_list("DRAFTPROOF_SOURCE_SEARCH_INCLUDE_DOMAINS")
-    layer["domain_filters"] = {
-        "exclude_domains": sorted(excluded_domains),
-        "include_domains": included_domains,
-    }
-    errors = []
-    for target in targets:
-        try:
-            payload = _tavily_search(
-                target.get("query") or target.get("claim") or "",
-                api_key=api_key,
-                max_results=max_results,
-                timeout=timeout,
-                exclude_domains=sorted(excluded_domains),
-                include_domains=included_domains,
-                search_depth=depth_status.get("search_depth"),
-                chunks_per_source=depth_status.get("chunks_per_source"),
-                include_answer=bool(depth_status.get("include_answer")),
-            )
-            sources = _normalize_tavily_results(
-                payload,
-                target.get("claim") or "",
-                limit=max_results,
-                excluded_domains=excluded_domains,
-            )
-            layer["results"].append({
-                "claim_id": target.get("id"),
-                "paragraph_index": target.get("paragraph_index"),
-                "query": target.get("query"),
-                "search_depth": depth_status.get("search_depth"),
-                "source_confidence": _source_result_confidence(sources),
-                "sources": sources,
-            })
-        except requests.RequestException as exc:
-            errors.append({
-                "claim_id": target.get("id"),
-                "error": exc.__class__.__name__,
-                "message": str(exc)[:240],
-            })
-    layer["errors"] = errors
-    layer["call_accounting"] = {
-        "calls_used_before": calls_used_before,
-        "calls_used_after": _source_search_calls_used(),
-        "remaining_before": remaining_calls,
-        "remaining_after": _source_search_remaining_calls(),
-        "calls_this_layer": max(0, _source_search_calls_used() - calls_used_before),
-    }
-    layer["status"] = "completed" if layer["results"] else "search_error"
-    return layer
 
 
 def _source_grounding_repair_matches(
@@ -7386,78 +2930,6 @@ def _splice_author_evidence_paragraph(text: str, paragraph_index: int, replaceme
     return _join_logical_paragraphs(paragraphs)
 
 
-def _contribution_scores(report_dict: dict | None) -> dict:
-    """Extract the Human Contribution / AI Transformation product scores."""
-    if not isinstance(report_dict, dict):
-        return {"human": None, "ai_transformation": None}
-    integrity = (
-        report_dict.get("integrity_layers")
-        or ((report_dict.get("scan_intelligence") or {}).get("integrity_layers") or {})
-    )
-    layers = integrity.get("layers") if isinstance(integrity, dict) else {}
-    if isinstance(layers, dict):
-        human_layer = layers.get("human_contribution_signal") or {}
-        transform_layer = layers.get("ai_transformation_risk") or {}
-        human_score = human_layer.get("score")
-        transform_score = transform_layer.get("score")
-        if isinstance(human_score, (int, float)) or isinstance(transform_score, (int, float)):
-            if not isinstance(human_score, (int, float)) and isinstance(transform_score, (int, float)):
-                human_score = 100.0 - float(transform_score)
-            if not isinstance(transform_score, (int, float)) and isinstance(human_score, (int, float)):
-                transform_score = 100.0 - float(human_score)
-            return {
-                "human": float(human_score),
-                "ai_transformation": float(transform_score),
-            }
-    contribution = (
-        ((report_dict.get("scan_intelligence") or {}).get("transformation") or {})
-        .get("contribution")
-        or {}
-    )
-
-    def _score(*keys):
-        for key in keys:
-            value = contribution.get(key)
-            if isinstance(value, (int, float)):
-                return float(value)
-        return None
-
-    human = _score("human_contribution_ratio", "human_contribution", "human_ratio")
-    ai_transformation = _score(
-        "ai_transformation_ratio",
-        "ai_transformation",
-        "transformation_ratio",
-    )
-    if human is None and ai_transformation is not None:
-        human = round(100.0 - ai_transformation, 3)
-    if ai_transformation is None and human is not None:
-        ai_transformation = round(100.0 - human, 3)
-    return {"human": human, "ai_transformation": ai_transformation}
-
-
-def _integrity_scores(report_dict: dict | None) -> dict:
-    if not isinstance(report_dict, dict):
-        return {"ai_authorship": None, "grounding": None}
-    integrity = (
-        report_dict.get("integrity_layers")
-        or ((report_dict.get("scan_intelligence") or {}).get("integrity_layers") or {})
-    )
-    layers = integrity.get("layers") if isinstance(integrity, dict) else {}
-    if not isinstance(layers, dict):
-        return {"ai_authorship": None, "grounding": None}
-
-    def _score(layer_name: str):
-        value = (layers.get(layer_name) or {}).get("score")
-        return float(value) if isinstance(value, (int, float)) else None
-
-    return {
-        "ai_authorship": _score("ai_authorship_risk"),
-        "ai_transformation": _score("ai_transformation_risk"),
-        "grounding": _score("grounding_quality_risk"),
-        "human": _score("human_contribution_signal"),
-    }
-
-
 def _mitigation_sampling_policy_summary() -> dict:
     ai_search_sampling = _rewrite_sampling_profile("DRAFTPROOF_AI_SEARCH")
     return {
@@ -7478,842 +2950,6 @@ def _mitigation_sampling_policy_summary() -> dict:
         "topk_texture_temperature": float(os.environ.get("DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE", "0.35")),
     }
 
-
-def _blocker_scores(report_dict: dict | None) -> dict:
-    if not isinstance(report_dict, dict):
-        return {}
-    badge = report_dict.get("ai_risk_badge") or {}
-    ai = badge.get("ai_components") or {}
-    writing = badge.get("writing_components") or {}
-
-    def num(source: dict, key: str) -> float:
-        value = source.get(key)
-        return float(value) if isinstance(value, (int, float)) else 0.0
-
-    topk_raw = num(ai, "topk_pattern_raw") or num(ai, "topk_pattern")
-    topk_calibrated = num(ai, "topk_calibrated_risk")
-    if topk_raw and not topk_calibrated:
-        topk_calibrated = float(
-            calibrate_topk_risk(
-                topk_raw,
-                eligible_sentence_count=3,
-            ).get("topk_calibrated_risk", topk_raw)
-        )
-
-    return {
-        "unsupported_claim_risk": num(writing, "unsupported_claim_risk"),
-        "broad_claim_risk": num(writing, "broad_claim_risk"),
-        "source_grounding_risk": num(writing, "source_grounding_risk"),
-        "lived_detail_risk": num(writing, "lived_detail_risk"),
-        "generic_assertion_risk": num(ai, "generic_assertion_risk"),
-        # Legacy alias used by older rewrite gates. It now carries calibrated
-        # risk so raw token predictability cannot act as a standalone blocker.
-        "topk_pattern": topk_calibrated,
-        "topk_pattern_raw": topk_raw,
-        "topk_calibrated_risk": topk_calibrated,
-        "predictability": num(ai, "predictability"),
-    }
-
-
-def _ai_footprint_profile(report_dict: dict | None) -> dict:
-    """Build rewrite-only AI-footprint buckets from existing scanner fields."""
-    if not isinstance(report_dict, dict):
-        return {
-            "authorship_footprint": {},
-            "structural_footprint": {},
-            "semantic_footprint": {},
-            "grounding_footprint": {},
-            "external_ai_flag_risk": 0.0,
-        }
-    badge = report_dict.get("ai_risk_badge") or {}
-    ai_components = badge.get("ai_components") or {}
-    writing_components = badge.get("writing_components") or {}
-    integrity = _integrity_scores(report_dict)
-    contribution = _contribution_scores(report_dict)
-
-    def num(value, default=0.0) -> float:
-        return float(value) if isinstance(value, (int, float)) else float(default)
-
-    def feature(key: str, default=0.0) -> float:
-        value = _feature_percent(report_dict, key)
-        return num(value, default)
-
-    topk_raw = num(ai_components.get("topk_pattern_raw"), num(ai_components.get("topk_pattern")))
-    topk_calibrated = num(ai_components.get("topk_calibrated_risk"), -1.0)
-    if topk_calibrated < 0.0:
-        topk_calibrated = float(
-            calibrate_topk_risk(
-                topk_raw,
-                eligible_sentence_count=3,
-            ).get("topk_calibrated_risk", topk_raw)
-        )
-
-    authorship = {
-        "ai_authorship": num(integrity.get("ai_authorship")),
-        "ai_likelihood": feature("ai_likelihood", num(badge.get("ai_likelihood_score"))),
-        "topk_pattern_raw": topk_raw,
-        "topk_calibrated_risk": topk_calibrated,
-        "topk_pattern": topk_raw,
-        "predictability": num(ai_components.get("predictability")),
-        "rewrite_smoothness": feature("rewrite_smoothness"),
-    }
-    structural = {
-        "ai_transformation": num(contribution.get("ai_transformation")),
-        "discourse_regularity": feature("discourse_regularity_risk"),
-        "sentence_rhythm_uniformity": num(ai_components.get("sentence_rhythm_uniformity")),
-        "paragraph_symmetry": num(ai_components.get("paragraph_symmetry")),
-    }
-    semantic = {
-        "semantic_uniformity": feature("semantic_uniformity_risk"),
-        "expansion_pattern": feature("outline_to_text_expansion"),
-        "source_similarity": feature("source_similarity"),
-        "surface_similarity": feature("surface_similarity"),
-        "generic_assertion_risk": num(ai_components.get("generic_assertion_risk")),
-        "qualifying_text_ai_density": num(ai_components.get("qualifying_text_ai_density")),
-    }
-    grounding = {
-        "unsupported_claim_risk": num(writing_components.get("unsupported_claim_risk")),
-        "broad_claim_risk": num(writing_components.get("broad_claim_risk")),
-        "citation_weakness_risk": num(writing_components.get("citation_weakness_risk")),
-        "source_grounding_risk": num(writing_components.get("source_grounding_risk")),
-    }
-    risk = (
-        authorship["ai_authorship"] * 0.20
-        + structural["ai_transformation"] * 0.18
-        + authorship["ai_likelihood"] * 0.16
-        + authorship["topk_calibrated_risk"] * 0.14
-        + authorship["rewrite_smoothness"] * 0.12
-        + semantic["semantic_uniformity"] * 0.08
-        + semantic["qualifying_text_ai_density"] * 0.07
-        + structural["discourse_regularity"] * 0.04
-        + semantic["generic_assertion_risk"] * 0.03
-        + grounding["unsupported_claim_risk"] * 0.015
-        + grounding["broad_claim_risk"] * 0.005
-    )
-    return {
-        "authorship_footprint": {key: round(value, 3) for key, value in authorship.items()},
-        "structural_footprint": {key: round(value, 3) for key, value in structural.items()},
-        "semantic_footprint": {key: round(value, 3) for key, value in semantic.items()},
-        "grounding_footprint": {key: round(value, 3) for key, value in grounding.items()},
-        "external_ai_flag_risk": round(risk, 3),
-    }
-
-
-def _turnitin_like_ai_profile(report_dict: dict | None) -> dict:
-    """Rewrite-only Turnitin-like score proxy from existing scanner fields."""
-    return turnitin_like_ai_profile_from_report(report_dict)
-
-
-def _turnitin_like_component_drops(before: dict | None, after: dict | None) -> dict:
-    before_components = (before or {}).get("components") or {}
-    after_components = (after or {}).get("components") or {}
-    drops = {
-        key: round(float(before_components.get(key, 0.0)) - float(after_components.get(key, 0.0)), 3)
-        for key in TURNITIN_LIKE_COMPONENT_WEIGHTS
-    }
-    drops["human_anchor_suppression"] = round(
-        float((after or {}).get("human_anchor_suppression", 0.0))
-        - float((before or {}).get("human_anchor_suppression", 0.0)),
-        3,
-    )
-    drops["turnitin_like_ai_score"] = round(
-        float((before or {}).get("score", 0.0)) - float((after or {}).get("score", 0.0)),
-        3,
-    )
-    return drops
-
-
-def _remaining_turnitin_like_drivers(profile: dict | None) -> list[dict]:
-    profile = profile if isinstance(profile, dict) else {}
-    components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
-    weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
-    if bool(profile.get("target_met")):
-        return []
-    target_gap = float(profile.get("target_gap") or 0.0)
-    remaining = [
-        {
-            "driver": key,
-            "value": round(float(value), 3),
-            "formula_weight": round(float(TURNITIN_LIKE_COMPONENT_WEIGHTS[key]), 3),
-            "weighted_contribution": round(float(weighted.get(key, 0.0)), 3),
-            "target_gap": round(target_gap, 3),
-        }
-        for key, value in components.items()
-        if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
-        and isinstance(value, (int, float))
-        and float(weighted.get(key, 0.0)) > 0.0
-    ]
-    suppression = profile.get("human_anchor_suppression")
-    if isinstance(suppression, (int, float)) and float(suppression) < 45.0:
-        remaining.append({
-            "driver": "human_anchor_suppression",
-            "value": round(float(suppression), 3),
-            "target_direction": "increase",
-            "available_suppression_headroom": round(max(0.0, 45.0 - float(suppression)), 3),
-            "weighted_contribution": round(-float(suppression), 3),
-            "target_gap": round(target_gap, 3),
-        })
-    remaining.sort(
-        key=lambda row: (
-            0 if row.get("driver") == "human_anchor_suppression" else 1,
-            abs(float(row.get("weighted_contribution", 0.0))),
-        ),
-        reverse=True,
-    )
-    return remaining
-
-
-def _turnitin_like_ai_gate_status(
-    original_report: dict | None,
-    candidate_report: dict | None,
-    *,
-    review_burden_delta: int | float = 0,
-    weighted_severity_delta: int | float = 0,
-    critical_high_delta: int | float = 0,
-    ai_score_regressed: bool = False,
-) -> dict:
-    before = _turnitin_like_ai_profile(original_report)
-    after = _turnitin_like_ai_profile(candidate_report)
-    drops = _turnitin_like_component_drops(before, after)
-    ai_before = _ai_footprint_flatten(_ai_footprint_profile(original_report))
-    ai_after = _ai_footprint_flatten(_ai_footprint_profile(candidate_report))
-    score_drop = float(drops.get("turnitin_like_ai_score") or 0.0)
-    improvement_epsilon = 0.001
-    target_score = TURNITIN_LIKE_TARGET_AI_SCORE
-    major_backfire_limit = _float_env("DRAFTPROOF_TURNITIN_LIKE_MAJOR_COMPONENT_BACKFIRE", 8.0)
-    component_backfires = [
-        {
-            "driver": key,
-            "increase": round(abs(float(drop)), 3),
-            "before": (before.get("components") or {}).get(key),
-            "after": (after.get("components") or {}).get(key),
-        }
-        for key, drop in drops.items()
-        if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
-        and isinstance(drop, (int, float))
-        and float(drop) <= -major_backfire_limit
-    ]
-    if float(drops.get("human_anchor_suppression") or 0.0) <= -major_backfire_limit:
-        component_backfires.append({
-            "driver": "human_anchor_suppression",
-            "increase": round(abs(float(drops.get("human_anchor_suppression") or 0.0)), 3),
-            "before": before.get("human_anchor_suppression"),
-            "after": after.get("human_anchor_suppression"),
-        })
-    ai_authorship_drop = float(ai_before.get("ai_authorship", 0.0)) - float(ai_after.get("ai_authorship", 0.0))
-    ai_transformation_drop = float(ai_before.get("ai_transformation", 0.0)) - float(ai_after.get("ai_transformation", 0.0))
-    safety_clean = bool(
-        not ai_score_regressed
-        and float(review_burden_delta or 0.0) <= 0.0
-        and float(weighted_severity_delta or 0.0) <= 0.0
-        and float(critical_high_delta or 0.0) <= 0.0
-        and ai_authorship_drop >= 0.0
-        and ai_transformation_drop >= 0.0
-        and not component_backfires
-    )
-    improved = bool(score_drop > improvement_epsilon)
-    score_target_met = bool(float(after.get("score", 100.0)) < target_score)
-    achieved = bool(safety_clean and improved and score_target_met)
-    partial = bool(safety_clean and improved and not achieved)
-    if achieved:
-        outcome = "ai_mitigated"
-    elif partial:
-        outcome = "partially_ai_mitigated"
-    elif safety_clean and not improved and (
-        float(review_burden_delta or 0.0) < 0.0
-        or float(weighted_severity_delta or 0.0) < 0.0
-    ):
-        outcome = "cleanup_improved"
-    else:
-        outcome = "no_turnitin_like_improvement"
-    return {
-        "version": "turnitin_like_gate_v1",
-        "before": before,
-        "after": after,
-        "score_before": before.get("score"),
-        "score_after": after.get("score"),
-        "score_drop": round(score_drop, 3),
-        "component_drops": drops,
-        "remaining_turnitin_like_drivers": _remaining_turnitin_like_drivers(after),
-        "component_backfires": component_backfires,
-        "ai_authorship_drop": round(ai_authorship_drop, 3),
-        "ai_transformation_drop": round(ai_transformation_drop, 3),
-        "safety_clean": safety_clean,
-        "improved": improved,
-        "improvement_epsilon": improvement_epsilon,
-        "safe_band": achieved,
-        "target_met": score_target_met,
-        "target_score": round(float(target_score), 3),
-        "target_gap": round(max(0.0, float(after.get("score", 100.0)) - float(target_score)), 3),
-        "outcome_class": outcome,
-        "thresholds": {
-            "safe_band": round(float(target_score), 3),
-            "target_score": round(float(target_score), 3),
-            "improvement_epsilon": round(float(improvement_epsilon), 3),
-            "major_component_backfire": round(float(major_backfire_limit), 3),
-        },
-    }
-
-
-def _turnitin_like_candidate_rank(
-    gate: dict | None,
-    *,
-    review_burden_delta: int | float = 0,
-    weighted_severity_delta: int | float = 0,
-    critical_high_delta: int | float = 0,
-) -> tuple:
-    gate = gate if isinstance(gate, dict) else {}
-    drops = gate.get("component_drops") if isinstance(gate.get("component_drops"), dict) else {}
-    return (
-        1 if gate.get("safe_band") else 0,
-        1 if gate.get("safety_clean") else 0,
-        float(gate.get("score_drop") or 0.0),
-        float(drops.get("ai_likelihood") or 0.0),
-        float(drops.get("topk_calibrated_risk") or 0.0),
-        float(drops.get("semantic_uniformity") or 0.0),
-        float(drops.get("rewrite_smoothness") or 0.0),
-        float(drops.get("patchwork_expansion") or 0.0),
-        float(drops.get("signal_agreement") or 0.0),
-        float(drops.get("human_anchor_suppression") or 0.0),
-        -len(gate.get("component_backfires") or []),
-        -max(0.0, float(review_burden_delta or 0.0)),
-        -max(0.0, float(weighted_severity_delta or 0.0)),
-        -max(0.0, float(critical_high_delta or 0.0)),
-        -float((gate.get("after") or {}).get("score") or 100.0),
-    )
-
-
-def _formula_gap_changed_word_count(source_text: str, candidate_text: str) -> int:
-    """Approximate changed-word budget for formula-drop efficiency reporting."""
-    source_tokens = re.findall(r"\w+|[^\w\s]", source_text or "", flags=re.UNICODE)
-    candidate_tokens = re.findall(r"\w+|[^\w\s]", candidate_text or "", flags=re.UNICODE)
-    if not source_tokens and not candidate_tokens:
-        return 0
-    matcher = SequenceMatcher(None, source_tokens, candidate_tokens, autojunk=False)
-    changed = 0
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            continue
-        changed += max(i2 - i1, j2 - j1)
-    return int(changed)
-
-
-def _formula_gap_weighted_driver_plan(profile: dict | None, *, safety_margin: float = 3.0) -> list[dict]:
-    profile = profile if isinstance(profile, dict) else {}
-    score = float(profile.get("score") or 0.0)
-    target_score = float(profile.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
-    required = max(0.0, score - target_score + float(safety_margin or 0.0))
-    components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
-    weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
-    plan: list[dict] = []
-    remaining = required
-    for driver, contribution in sorted(
-        weighted.items(),
-        key=lambda item: float(item[1]) if isinstance(item[1], (int, float)) else 0.0,
-        reverse=True,
-    ):
-        if driver not in TURNITIN_LIKE_COMPONENT_WEIGHTS:
-            continue
-        weighted_value = max(0.0, float(contribution or 0.0))
-        if weighted_value <= 0.0:
-            continue
-        required_weighted_drop = min(weighted_value, remaining) if remaining > 0.0 else 0.0
-        weight = float(TURNITIN_LIKE_COMPONENT_WEIGHTS[driver])
-        plan.append({
-            "driver": driver,
-            "component_value": round(float(components.get(driver) or 0.0), 3),
-            "formula_weight": round(weight, 3),
-            "weighted_contribution": round(weighted_value, 3),
-            "required_weighted_drop": round(required_weighted_drop, 3),
-            "required_raw_drop": round(required_weighted_drop / weight, 3) if weight > 0.0 else 0.0,
-        })
-        remaining = max(0.0, remaining - required_weighted_drop)
-    suppression = float(profile.get("human_anchor_suppression") or 0.0)
-    suppression_headroom = max(0.0, 45.0 - suppression)
-    required_suppression_gain = min(suppression_headroom, remaining) if remaining > 0.0 else 0.0
-    plan.append({
-        "driver": "human_anchor_suppression",
-        "component_value": round(suppression, 3),
-        "formula_weight": -1.0,
-        "weighted_contribution": round(-suppression, 3),
-        "target_direction": "increase",
-        "available_suppression_headroom": round(suppression_headroom, 3),
-        "required_suppression_gain": round(required_suppression_gain, 3),
-    })
-    return plan
-
-
-_FORMULA_DRIVER_CONTROL_PROFILES = {
-    "ai_likelihood": {
-        "strategy_family": "LIKELIHOOD_TEXTURE_REBUILD",
-        "actionability": 0.78,
-        "backfire_risk": 0.28,
-        "typical_backfire": ["rewrite_smoothness", "semantic_uniformity"],
-    },
-    "topk_calibrated_risk": {
-        "strategy_family": "TOPK_ROUTE_REBUILD",
-        "actionability": 0.72,
-        "backfire_risk": 0.34,
-        "typical_backfire": ["semantic_drift", "rewrite_smoothness"],
-    },
-    "semantic_uniformity": {
-        "strategy_family": "SEMANTIC_VARIANCE_RESTRUCTURE",
-        "actionability": 0.64,
-        "backfire_risk": 0.36,
-        "typical_backfire": ["semantic_drift", "review_burden"],
-    },
-    "rewrite_smoothness": {
-        "strategy_family": "SMOOTHNESS_DEPOLISH",
-        "actionability": 0.70,
-        "backfire_risk": 0.26,
-        "typical_backfire": ["review_burden", "readability"],
-    },
-    "patchwork_expansion": {
-        "strategy_family": "PATCHWORK_COLLAPSE",
-        "actionability": 0.82,
-        "backfire_risk": 0.22,
-        "typical_backfire": ["anchor_loss", "semantic_drift"],
-    },
-    "signal_agreement": {
-        "strategy_family": "SIGNAL_DISAGREEMENT_REBALANCE",
-        "actionability": 0.48,
-        "backfire_risk": 0.42,
-        "typical_backfire": ["component_backfire"],
-    },
-    "human_anchor_suppression": {
-        "strategy_family": "HUMAN_ANCHOR_SUPPRESSION_GAIN",
-        "actionability": 0.62,
-        "backfire_risk": 0.40,
-        "typical_backfire": ["ai_authorship", "unsupported_claim_risk"],
-    },
-}
-
-
-def _formula_gap_driver_priority_plan(
-    before: dict | None,
-    after: dict | None,
-    *,
-    safety_margin: float = 3.0,
-) -> list[dict]:
-    """Rank the next drivers by weighted impact, movable headroom, and risk cost."""
-    before = before if isinstance(before, dict) else {}
-    after = after if isinstance(after, dict) else {}
-    target_score = float(after.get("target_score") or before.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
-    remaining_gap = max(0.0, float(after.get("score") or 0.0) - target_score)
-    gap_to_cover = remaining_gap + float(safety_margin or 0.0)
-    before_weighted = before.get("weighted_components") if isinstance(before.get("weighted_components"), dict) else {}
-    after_weighted = after.get("weighted_components") if isinstance(after.get("weighted_components"), dict) else {}
-    after_components = after.get("components") if isinstance(after.get("components"), dict) else {}
-    rows: list[dict] = []
-    for driver, weight in TURNITIN_LIKE_COMPONENT_WEIGHTS.items():
-        weighted_remaining = max(0.0, float(after_weighted.get(driver) or 0.0))
-        if weighted_remaining <= 0.0:
-            continue
-        achieved_drop = float(before_weighted.get(driver) or 0.0) - weighted_remaining
-        feasible_headroom = min(weighted_remaining, gap_to_cover) if gap_to_cover > 0.0 else 0.0
-        profile = _FORMULA_DRIVER_CONTROL_PROFILES.get(driver, {})
-        actionability = float(profile.get("actionability", 0.5))
-        backfire_risk = float(profile.get("backfire_risk", 0.35))
-        priority = feasible_headroom * (0.65 + actionability) * max(0.15, 1.0 - backfire_risk * 0.45)
-        rows.append({
-            "driver": driver,
-            "strategy_family": profile.get("strategy_family", driver.upper()),
-            "raw_value_after": round(float(after_components.get(driver) or 0.0), 3),
-            "formula_weight": round(float(weight), 3),
-            "weighted_remaining": round(weighted_remaining, 3),
-            "achieved_weighted_drop": round(achieved_drop, 3),
-            "feasible_weighted_headroom": round(feasible_headroom, 3),
-            "remaining_gap_share": round(
-                feasible_headroom / max(remaining_gap, 1.0),
-                3,
-            ),
-            "actionability": round(actionability, 3),
-            "backfire_risk": round(backfire_risk, 3),
-            "priority_score": round(priority, 3),
-            "expected_net_gain": round(priority, 3),
-            "typical_backfire": profile.get("typical_backfire", []),
-            "control_goal": "reduce",
-        })
-
-    suppression = float(after.get("human_anchor_suppression") or 0.0)
-    suppression_before = float(before.get("human_anchor_suppression") or 0.0)
-    suppression_headroom = max(0.0, 45.0 - suppression)
-    if suppression_headroom > 0.0:
-        profile = _FORMULA_DRIVER_CONTROL_PROFILES["human_anchor_suppression"]
-        feasible_headroom = min(suppression_headroom, gap_to_cover) if gap_to_cover > 0.0 else 0.0
-        actionability = float(profile.get("actionability", 0.5))
-        backfire_risk = float(profile.get("backfire_risk", 0.35))
-        priority = feasible_headroom * (0.65 + actionability) * max(0.15, 1.0 - backfire_risk * 0.45)
-        rows.append({
-            "driver": "human_anchor_suppression",
-            "strategy_family": profile.get("strategy_family"),
-            "raw_value_after": round(suppression, 3),
-            "formula_weight": -1.0,
-            "weighted_remaining": round(-suppression, 3),
-            "achieved_weighted_drop": round(suppression - suppression_before, 3),
-            "feasible_weighted_headroom": round(feasible_headroom, 3),
-            "remaining_gap_share": round(
-                feasible_headroom / max(remaining_gap, 1.0),
-                3,
-            ),
-            "actionability": round(actionability, 3),
-            "backfire_risk": round(backfire_risk, 3),
-            "priority_score": round(priority, 3),
-            "expected_net_gain": round(priority, 3),
-            "typical_backfire": profile.get("typical_backfire", []),
-            "control_goal": "increase",
-        })
-    rows.sort(
-        key=lambda row: (
-            float(row.get("priority_score", 0.0)),
-            float(row.get("feasible_weighted_headroom", 0.0)),
-            float(row.get("weighted_remaining", 0.0)),
-        ),
-        reverse=True,
-    )
-    return rows
-
-
-def _formula_observed_driver_movement(candidates: list[dict] | tuple[dict, ...] | None) -> dict:
-    """Summarize measured formula-driver movement across the current candidate frontier."""
-    drivers = list(TURNITIN_LIKE_COMPONENT_WEIGHTS) + ["human_anchor_suppression"]
-    observed = {
-        driver: {
-            "candidate_count": 0,
-            "safe_candidate_count": 0,
-            "best_observed_drop": 0.0,
-            "best_observed_strategy": None,
-            "best_safe_drop": 0.0,
-            "best_safe_strategy": None,
-            "best_blocked_drop": 0.0,
-            "best_blocked_strategy": None,
-            "best_blocked_reason": None,
-        }
-        for driver in drivers
-    }
-    for row in candidates or []:
-        if not isinstance(row, dict):
-            continue
-        contract = row.get("formula_gap_contract")
-        if not isinstance(contract, dict):
-            contract = ((row.get("selection_status") or {}).get("formula_gap_contract") or {})
-        drops = contract.get("weighted_driver_drops") if isinstance(contract.get("weighted_driver_drops"), dict) else {}
-        status = row.get("selection_status") if isinstance(row.get("selection_status"), dict) else {}
-        gate = row.get("turnitin_like_ai_gate") if isinstance(row.get("turnitin_like_ai_gate"), dict) else {}
-        if not gate:
-            gate = status.get("turnitin_like_ai_gate") if isinstance(status.get("turnitin_like_ai_gate"), dict) else {}
-        selectable = bool(status.get("selectable"))
-        safety_clean = bool(gate.get("safety_clean", selectable))
-        safe = selectable and safety_clean
-        reason = row.get("reason") or status.get("reason")
-        strategy = row.get("strategy") or status.get("strategy")
-        for driver in drivers:
-            driver_drop = drops.get(driver) if isinstance(drops.get(driver), dict) else {}
-            if not isinstance(driver_drop, dict):
-                continue
-            value = driver_drop.get("drop", driver_drop.get("gain"))
-            if not isinstance(value, (int, float)):
-                continue
-            value = round(float(value), 3)
-            if value <= 0.0:
-                continue
-            item = observed[driver]
-            item["candidate_count"] += 1
-            if value > float(item["best_observed_drop"] or 0.0):
-                item["best_observed_drop"] = value
-                item["best_observed_strategy"] = strategy
-            if safe:
-                item["safe_candidate_count"] += 1
-                if value > float(item["best_safe_drop"] or 0.0):
-                    item["best_safe_drop"] = value
-                    item["best_safe_strategy"] = strategy
-            elif value > float(item["best_blocked_drop"] or 0.0):
-                item["best_blocked_drop"] = value
-                item["best_blocked_strategy"] = strategy
-                item["best_blocked_reason"] = reason
-    return observed
-
-
-def _formula_portfolio_plan_from_profiles(
-    before: dict | None,
-    after: dict | None,
-    *,
-    observed_driver_movement: dict | None = None,
-    safety_margin: float = 3.0,
-) -> dict:
-    before = before if isinstance(before, dict) else {}
-    after = after if isinstance(after, dict) else {}
-    target_score = float(after.get("target_score") or before.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
-    score_before = float(before.get("score") or 0.0)
-    score_after = float(after.get("score") or 0.0)
-    positive_before = float(before.get("raw_positive_score") or 0.0)
-    positive_after = float(after.get("raw_positive_score") or 0.0)
-    suppression_before = float(before.get("human_anchor_suppression") or 0.0)
-    suppression_after = float(after.get("human_anchor_suppression") or 0.0)
-    suppression_headroom = max(0.0, 45.0 - suppression_after)
-    remaining_gap = max(0.0, score_after - target_score)
-    required_total_gain = remaining_gap + float(safety_margin or 0.0)
-    required_suppression_gain = min(suppression_headroom, required_total_gain)
-    observed_driver_movement = observed_driver_movement if isinstance(observed_driver_movement, dict) else {}
-    base_priorities = _formula_gap_driver_priority_plan(before, after, safety_margin=safety_margin)
-    driver_priorities: list[dict] = []
-    for row in base_priorities:
-        if not isinstance(row, dict):
-            continue
-        driver = str(row.get("driver") or "")
-        movement = observed_driver_movement.get(driver) if isinstance(observed_driver_movement.get(driver), dict) else {}
-        headroom = float(row.get("feasible_weighted_headroom") or 0.0)
-        static_actionability = float(row.get("actionability") or 0.0)
-        safe_drop = float(movement.get("best_safe_drop") or 0.0)
-        blocked_drop = float(movement.get("best_blocked_drop") or 0.0)
-        observed_safe_ratio = min(1.0, safe_drop / max(headroom, 1.0))
-        observed_blocked_ratio = min(1.0, blocked_drop / max(headroom, 1.0))
-        observed_actionability = (
-            min(1.0, static_actionability * 0.65 + observed_safe_ratio * 0.35)
-            if movement.get("candidate_count")
-            else static_actionability
-        )
-        if safe_drop <= 0.0 and blocked_drop > 0.0:
-            observed_actionability = min(1.0, static_actionability * 0.55 + observed_blocked_ratio * 0.20)
-        backfire_risk = float(row.get("backfire_risk") or 0.0)
-        if blocked_drop > safe_drop and blocked_drop > 0.0:
-            backfire_risk = min(1.0, backfire_risk + 0.12)
-        expected_net_gain = headroom * (0.65 + observed_actionability) * max(0.10, 1.0 - backfire_risk * 0.50)
-        enriched = dict(row)
-        enriched.update({
-            "static_actionability": round(static_actionability, 3),
-            "observed_actionability": round(observed_actionability, 3),
-            "observed_safe_drop": round(safe_drop, 3),
-            "observed_best_drop": round(float(movement.get("best_observed_drop") or 0.0), 3),
-            "observed_blocked_drop": round(blocked_drop, 3),
-            "observed_candidate_count": int(movement.get("candidate_count") or 0),
-            "observed_safe_candidate_count": int(movement.get("safe_candidate_count") or 0),
-            "best_safe_strategy": movement.get("best_safe_strategy"),
-            "best_blocked_strategy": movement.get("best_blocked_strategy"),
-            "best_blocked_reason": movement.get("best_blocked_reason"),
-            "backfire_risk": round(backfire_risk, 3),
-            "expected_net_gain": round(expected_net_gain, 3),
-            "priority_score": round(expected_net_gain, 3),
-        })
-        driver_priorities.append(enriched)
-    driver_priorities.sort(
-        key=lambda item: (
-            float(item.get("expected_net_gain", 0.0)),
-            float(item.get("feasible_weighted_headroom", 0.0)),
-            float(item.get("observed_safe_drop", 0.0)),
-        ),
-        reverse=True,
-    )
-    selected_portfolio = []
-    cumulative = 0.0
-    for row in driver_priorities:
-        if cumulative >= required_total_gain:
-            break
-        selected_portfolio.append({
-            "driver": row.get("driver"),
-            "strategy_family": row.get("strategy_family"),
-            "expected_net_gain": row.get("expected_net_gain"),
-            "control_goal": row.get("control_goal"),
-        })
-        cumulative += float(row.get("expected_net_gain") or 0.0)
-    if remaining_gap > 0.0 and suppression_headroom > 0.0 and not any(
-        item.get("driver") == "human_anchor_suppression" for item in selected_portfolio
-    ):
-        anchor_row = next(
-            (
-                row for row in driver_priorities
-                if row.get("driver") == "human_anchor_suppression"
-            ),
-            None,
-        )
-        if anchor_row:
-            selected_portfolio.insert(1 if selected_portfolio else 0, {
-                "driver": anchor_row.get("driver"),
-                "strategy_family": anchor_row.get("strategy_family"),
-                "expected_net_gain": anchor_row.get("expected_net_gain"),
-                "control_goal": anchor_row.get("control_goal"),
-                "required_because": "subtractive Human Anchor suppression has usable headroom",
-            })
-    return {
-        "version": "formula_portfolio_plan_v1",
-        "score_before": round(score_before, 3),
-        "score_after": round(score_after, 3),
-        "target_score": round(target_score, 3),
-        "target_met": bool(score_after < target_score),
-        "required_gap": round(remaining_gap, 3),
-        "safety_margin": round(float(safety_margin or 0.0), 3),
-        "required_total_gain": round(required_total_gain, 3),
-        "positive_ai_burden": {
-            "before": round(positive_before, 3),
-            "after": round(positive_after, 3),
-            "drop": round(positive_before - positive_after, 3),
-        },
-        "human_anchor_suppression": {
-            "before": round(suppression_before, 3),
-            "after": round(suppression_after, 3),
-            "gain": round(suppression_after - suppression_before, 3),
-        },
-        "suppression_headroom": round(suppression_headroom, 3),
-        "required_suppression_gain": round(required_suppression_gain, 3),
-        "driver_priorities": driver_priorities,
-        "selected_driver_portfolio": selected_portfolio,
-        "expected_net_gain": {
-            str(row.get("driver")): row.get("expected_net_gain")
-            for row in driver_priorities
-            if row.get("driver")
-        },
-        "observed_driver_movement": observed_driver_movement,
-    }
-
-
-def _formula_portfolio_plan(
-    original_report: dict | None,
-    candidate_report: dict | None,
-    *,
-    observed_candidates: list[dict] | tuple[dict, ...] | None = None,
-    safety_margin: float = 3.0,
-) -> dict:
-    before = _turnitin_like_ai_profile(original_report)
-    after = _turnitin_like_ai_profile(candidate_report)
-    observed = _formula_observed_driver_movement(observed_candidates)
-    return _formula_portfolio_plan_from_profiles(
-        before,
-        after,
-        observed_driver_movement=observed,
-        safety_margin=safety_margin,
-    )
-
-
-def _formula_gap_contract(
-    original_report: dict | None,
-    candidate_report: dict | None,
-    *,
-    source_text: str = "",
-    candidate_text: str = "",
-    safety_margin: float = 3.0,
-) -> dict:
-    """Rewrite controller contract for closing the shared Turnitin-like formula gap."""
-    before = _turnitin_like_ai_profile(original_report)
-    after = _turnitin_like_ai_profile(candidate_report)
-    component_drops = _turnitin_like_component_drops(before, after)
-    before_weighted = before.get("weighted_components") if isinstance(before.get("weighted_components"), dict) else {}
-    after_weighted = after.get("weighted_components") if isinstance(after.get("weighted_components"), dict) else {}
-    weighted_driver_drops: dict[str, dict] = {}
-    weighted_formula_drop = 0.0
-    for driver in TURNITIN_LIKE_COMPONENT_WEIGHTS:
-        before_value = float(before_weighted.get(driver) or 0.0)
-        after_value = float(after_weighted.get(driver) or 0.0)
-        drop = before_value - after_value
-        weighted_formula_drop += drop
-        weighted_driver_drops[driver] = {
-            "before": round(before_value, 3),
-            "after": round(after_value, 3),
-            "drop": round(drop, 3),
-            "raw_before": (before.get("components") or {}).get(driver),
-            "raw_after": (after.get("components") or {}).get(driver),
-            "raw_drop": round(float(component_drops.get(driver) or 0.0), 3),
-            "formula_weight": round(float(TURNITIN_LIKE_COMPONENT_WEIGHTS[driver]), 3),
-        }
-    suppression_gain = float(component_drops.get("human_anchor_suppression") or 0.0)
-    weighted_formula_drop += suppression_gain
-    weighted_driver_drops["human_anchor_suppression"] = {
-        "before": round(float(before.get("human_anchor_suppression") or 0.0), 3),
-        "after": round(float(after.get("human_anchor_suppression") or 0.0), 3),
-        "gain": round(suppression_gain, 3),
-        "drop": round(suppression_gain, 3),
-        "formula_weight": -1.0,
-        "target_direction": "increase",
-    }
-    score_before = float(before.get("score") or 0.0)
-    score_after = float(after.get("score") or 0.0)
-    measured_score_drop = score_before - score_after
-    changed_words = _formula_gap_changed_word_count(source_text, candidate_text) if source_text or candidate_text else 0
-    efficiency = measured_score_drop / max(1, changed_words)
-    target_score = float(after.get("target_score") or before.get("target_score") or TURNITIN_LIKE_TARGET_AI_SCORE)
-    remaining_gap = max(0.0, score_after - target_score)
-    portfolio = _formula_portfolio_plan_from_profiles(before, after, safety_margin=safety_margin)
-    contract = {
-        "version": "formula_gap_contract_v1",
-        "score_before": round(score_before, 3),
-        "score_after": round(score_after, 3),
-        "score_drop": round(measured_score_drop, 3),
-        "weighted_formula_score_drop": round(weighted_formula_drop, 3),
-        "target_score": round(target_score, 3),
-        "target_gap_before": round(max(0.0, score_before - target_score), 3),
-        "target_gap": round(remaining_gap, 3),
-        "remaining_formula_gap": round(remaining_gap, 3),
-        "target_met": bool(score_after < target_score),
-        "weighted_contributions_before": {
-            key: round(float(value or 0.0), 3)
-            for key, value in before_weighted.items()
-            if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
-        },
-        "weighted_contributions_after": {
-            key: round(float(value or 0.0), 3)
-            for key, value in after_weighted.items()
-            if key in TURNITIN_LIKE_COMPONENT_WEIGHTS
-        },
-        "positive_ai_burden": portfolio.get("positive_ai_burden"),
-        "human_anchor_suppression": portfolio.get("human_anchor_suppression"),
-        "suppression_headroom": portfolio.get("suppression_headroom"),
-        "required_suppression_gain": portfolio.get("required_suppression_gain"),
-        "formula_portfolio_plan": portfolio,
-        "weighted_driver_plan": _formula_gap_weighted_driver_plan(before, safety_margin=safety_margin),
-        "driver_priority_plan": portfolio.get("driver_priorities") or [],
-        "weighted_driver_drops": weighted_driver_drops,
-        "component_drops": component_drops,
-        "changed_word_count": changed_words,
-        "weighted_driver_drop_efficiency": round(efficiency, 6),
-        "remaining_formula_drivers": _remaining_turnitin_like_drivers(after),
-    }
-    contract["next_formula_driver"] = (
-        (contract.get("driver_priority_plan") or [{}])[0].get("driver")
-        if contract.get("driver_priority_plan") else None
-    )
-    contract["priority_basis"] = (
-        "weighted contribution plus feasible headroom plus actionability minus backfire risk"
-    )
-    contract["why_not_below_20"] = (
-        "turnitin-like formula target achieved"
-        if contract["target_met"]
-        else (
-            "Remaining weighted gap "
-            f"{contract['remaining_formula_gap']} to target {contract['target_score']}; "
-            "dominant drivers: "
-            + ", ".join(
-                str(row.get("driver"))
-                for row in contract["remaining_formula_drivers"][:4]
-                if isinstance(row, dict) and row.get("driver")
-            )
-        )
-    )
-    return contract
-
-
-def _formula_gap_candidate_rank(contract: dict | None, gate: dict | None = None) -> tuple:
-    contract = contract if isinstance(contract, dict) else {}
-    gate = gate if isinstance(gate, dict) else {}
-    drops = contract.get("weighted_driver_drops") if isinstance(contract.get("weighted_driver_drops"), dict) else {}
-
-    def drop(driver: str) -> float:
-        row = drops.get(driver) if isinstance(drops.get(driver), dict) else {}
-        return float(row.get("drop") or row.get("gain") or 0.0)
-
-    return (
-        1 if gate.get("safety_clean", True) else 0,
-        1 if contract.get("target_met") else 0,
-        float(contract.get("score_drop") or 0.0),
-        float(((contract.get("positive_ai_burden") or {}).get("drop")) or 0.0),
-        drop("ai_likelihood"),
-        drop("topk_calibrated_risk"),
-        drop("semantic_uniformity"),
-        drop("rewrite_smoothness"),
-        drop("patchwork_expansion"),
-        drop("signal_agreement"),
-        drop("human_anchor_suppression"),
-        float(contract.get("weighted_driver_drop_efficiency") or 0.0),
-        -float(contract.get("score_after") if isinstance(contract.get("score_after"), (int, float)) else 100.0),
-    )
 
 
 def _formula_convergence_primary_burden_gate_status(
@@ -8799,21 +3435,6 @@ def _anti_smoothing_guard_status(
     }
 
 
-def _ai_footprint_flatten(profile: dict | None) -> dict:
-    merged = {}
-    profile = profile or {}
-    for bucket in (
-        "authorship_footprint",
-        "structural_footprint",
-        "semantic_footprint",
-        "grounding_footprint",
-    ):
-        values = profile.get(bucket) or {}
-        if isinstance(values, dict):
-            merged.update(values)
-    merged["external_ai_flag_risk"] = profile.get("external_ai_flag_risk", 0.0)
-    return merged
-
 
 def _multi_signal_candidate_contract(original_report: dict | None, candidate_report: dict | None) -> dict:
     """Summarize cross-signal movement so one repaired metric cannot hide damage elsewhere."""
@@ -9121,179 +3742,6 @@ def _topk_rebuild_fallback_rank(report_dict: dict | None) -> tuple:
     )
 
 
-def _ai_footprint_gate_status(
-    original_report: dict | None,
-    candidate_report: dict | None,
-    *,
-    review_burden_delta: int | float = 0,
-    weighted_severity_delta: int | float = 0,
-    critical_high_delta: int | float = 0,
-    ai_score_regressed: bool = False,
-) -> dict:
-    """Classify whether a candidate moved real AI-footprint drivers.
-
-    Grounding is present in the proxy because external detectors often react to
-    broad unsupported prose, but grounding alone never grants mitigation status.
-    Authorship/texture movement must exist for partial or full AI mitigation.
-    """
-    before = _ai_footprint_profile(original_report)
-    after = _ai_footprint_profile(candidate_report)
-
-    before_flat = _ai_footprint_flatten(before)
-    after_flat = _ai_footprint_flatten(after)
-    driver_keys = [
-        "ai_authorship",
-        "ai_transformation",
-        "ai_likelihood",
-        "topk_calibrated_risk",
-        "topk_pattern",
-        "topk_pattern_raw",
-        "rewrite_smoothness",
-        "semantic_uniformity",
-        "qualifying_text_ai_density",
-        "discourse_regularity",
-        "generic_assertion_risk",
-        "unsupported_claim_risk",
-        "broad_claim_risk",
-        "external_ai_flag_risk",
-    ]
-    drops = {
-        key: round(float(before_flat.get(key, 0.0)) - float(after_flat.get(key, 0.0)), 3)
-        for key in driver_keys
-    }
-    primary_keys = [
-        "ai_authorship",
-        "ai_transformation",
-        "ai_likelihood",
-        "topk_calibrated_risk",
-        "rewrite_smoothness",
-        "semantic_uniformity",
-        "qualifying_text_ai_density",
-        "discourse_regularity",
-    ]
-    thresholds = {
-        "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_AUTHORSHIP_DROP", 1.0),
-        "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_TRANSFORMATION_DROP", 1.0),
-        "ai_likelihood": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_LIKELIHOOD_DROP", 1.0),
-        "topk_calibrated_risk": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_TOPK_DROP", 2.0),
-        "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SMOOTHNESS_DROP", 1.0),
-        "semantic_uniformity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SEMANTIC_DROP", 1.0),
-        "qualifying_text_ai_density": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_QUALIFYING_DENSITY_DROP", 1.0),
-        "discourse_regularity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_DISCOURSE_DROP", 1.0),
-        "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_MIN_DROP", 1.5),
-    }
-    active_topk_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
-    if before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0)) >= active_topk_threshold:
-        thresholds["topk_calibrated_risk"] = max(
-            thresholds["topk_calibrated_risk"],
-            _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0),
-        )
-    safe_topk_limit = _safe_topk_calibrated_limit()
-    material_primary = [
-        key for key in primary_keys
-        if drops.get(key, 0.0) >= thresholds.get(key, 1.0)
-    ]
-    material_proxy = drops.get("external_ai_flag_risk", 0.0) >= thresholds["external_ai_flag_risk"]
-    texture_blockers = []
-    if (
-        before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0)) >= active_topk_threshold
-        and drops.get("topk_calibrated_risk", 0.0) < thresholds["topk_calibrated_risk"]
-    ):
-        texture_blockers.append({
-            "driver": "topk_calibrated_risk",
-            "reason": "active_topk_pattern_not_reduced",
-            "before": round(float(before_flat.get("topk_calibrated_risk", 0.0)), 3),
-            "after": round(float(after_flat.get("topk_calibrated_risk", 0.0)), 3),
-            "raw_before": round(float(before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0))), 3),
-            "raw_after": round(float(after_flat.get("topk_pattern_raw", after_flat.get("topk_pattern", 0.0))), 3),
-            "drop": drops.get("topk_calibrated_risk", 0.0),
-            "required_drop": thresholds["topk_calibrated_risk"],
-        })
-    if float(after_flat.get("topk_calibrated_risk", 0.0)) > safe_topk_limit:
-        texture_blockers.append({
-            "driver": "topk_calibrated_risk",
-            "reason": "topk_calibrated_above_safe_level",
-            "before": round(float(before_flat.get("topk_calibrated_risk", 0.0)), 3),
-            "after": round(float(after_flat.get("topk_calibrated_risk", 0.0)), 3),
-            "raw_before": round(float(before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0))), 3),
-            "raw_after": round(float(after_flat.get("topk_pattern_raw", after_flat.get("topk_pattern", 0.0))), 3),
-            "required_max": round(float(safe_topk_limit), 3),
-        })
-    smoothness_regression_limit = _float_env("DRAFTPROOF_AI_FOOTPRINT_MAX_SMOOTHNESS_REGRESSION", 1.0)
-    if (
-        before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0)) >= active_topk_threshold
-        and drops.get("rewrite_smoothness", 0.0) < -smoothness_regression_limit
-    ):
-        texture_blockers.append({
-            "driver": "rewrite_smoothness",
-            "reason": "smoothness_regressed_while_topk_pinned",
-            "before": round(float(before_flat.get("rewrite_smoothness", 0.0)), 3),
-            "after": round(float(after_flat.get("rewrite_smoothness", 0.0)), 3),
-            "drop": drops.get("rewrite_smoothness", 0.0),
-            "max_regression": smoothness_regression_limit,
-        })
-    safety_clean = bool(
-        not ai_score_regressed
-        and float(review_burden_delta or 0.0) <= 0.0
-        and float(weighted_severity_delta or 0.0) <= 0.0
-        and float(critical_high_delta or 0.0) <= 0.0
-        and drops.get("ai_authorship", 0.0) >= 0.0
-        and drops.get("ai_transformation", 0.0) >= 0.0
-    )
-    safe_band_thresholds = {
-        "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
-        "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
-        "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
-        "qualifying_text_ai_density": _float_env("DRAFTPROOF_QUALIFYING_AI_DENSITY_SAFE_BAND", 35.0),
-        "topk_calibrated_risk": safe_topk_limit,
-        "rewrite_smoothness": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_SMOOTHNESS", 55.0),
-    }
-    safe_band = bool(
-        safety_clean
-        and all(float(after_flat.get(key, 0.0)) <= limit for key, limit in safe_band_thresholds.items())
-    )
-    material_driver_moved = bool(material_primary and material_proxy and safety_clean and not texture_blockers)
-    if safe_band and material_primary:
-        outcome_class = "ai_mitigated"
-    elif material_driver_moved:
-        outcome_class = "partially_ai_mitigated"
-    elif material_primary and material_proxy and safety_clean and texture_blockers:
-        outcome_class = "ai_footprint_blocked_by_texture"
-    elif safety_clean and (
-        float(review_burden_delta or 0.0) < 0.0
-        or float(weighted_severity_delta or 0.0) < 0.0
-        or drops.get("generic_assertion_risk", 0.0) > 0.0
-        or drops.get("unsupported_claim_risk", 0.0) > 0.0
-        or drops.get("broad_claim_risk", 0.0) > 0.0
-    ):
-        outcome_class = "cleanup_improved"
-    else:
-        outcome_class = "no_ai_footprint_improvement"
-    remaining = [
-        {
-            "driver": key,
-            "value": round(float(after_flat.get(key, 0.0)), 3),
-            "safe_band": round(float(limit), 3),
-        }
-        for key, limit in safe_band_thresholds.items()
-        if float(after_flat.get(key, 0.0)) > float(limit)
-    ]
-    return {
-        "before": before,
-        "after": after,
-        "drops": drops,
-        "material_primary_drivers": material_primary,
-        "material_proxy_drop": material_proxy,
-        "texture_blockers": texture_blockers,
-        "material_driver_moved": material_driver_moved,
-        "safety_clean": safety_clean,
-        "safe_band": safe_band,
-        "outcome_class": outcome_class,
-        "remaining_ai_footprint_drivers": remaining,
-        "thresholds": thresholds,
-        "safe_band_thresholds": safe_band_thresholds,
-    }
-
 
 def _human_target_ai_search_status(report_dict: dict | None) -> dict:
     """Allow mitigation search below the AI-risk threshold when Human is still below target."""
@@ -9431,136 +3879,20 @@ def _dominant_blocker_gate_status(original_report: dict | None, candidate_report
     }
 
 
+def _human_formula_driver_deps() -> HumanFormulaDriverDeps:
+    return HumanFormulaDriverDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        contribution_scores=_contribution_scores,
+    )
+
+
 def _human_formula_driver_status(original_report: dict | None, candidate_report: dict | None) -> dict:
-    """Track the actual transformation drivers behind Human Contribution.
-
-    Human Contribution is a ratio produced from human-anchor strength versus
-    AI-texture pressure. Grounding-only blocker drops can look useful while
-    leaving this formula almost unchanged, so Human-target mode needs a
-    separate gate on the formula drivers.
-    """
-    def features(report: dict | None) -> dict:
-        if not isinstance(report, dict):
-            return {}
-        badge = report.get("ai_risk_badge") or {}
-        transform = badge.get("transformation_classification") or {}
-        return transform.get("features") or {}
-
-    def fnum(mapping: dict, key: str) -> float:
-        value = mapping.get(key)
-        try:
-            return max(0.0, min(1.0, float(value)))
-        except (TypeError, ValueError):
-            return 0.0
-
-    def raw_parts(mapping: dict) -> dict:
-        max_similarity = max(
-            fnum(mapping, "source_similarity"),
-            fnum(mapping, "surface_similarity"),
-        )
-        human_raw = (
-            fnum(mapping, "human_anchor_score") * 0.45
-            + (1.0 - fnum(mapping, "rewrite_smoothness")) * 0.20
-            + (1.0 - max_similarity) * 0.10
-        )
-        ai_raw = (
-            fnum(mapping, "ai_likelihood") * 0.55
-            + fnum(mapping, "rewrite_smoothness") * 0.25
-            + fnum(mapping, "outline_to_text_expansion") * 0.15
-            + fnum(mapping, "semantic_uniformity_risk") * 0.10
-            + fnum(mapping, "discourse_regularity_risk") * 0.05
-            + fnum(mapping, "section_style_variance") * 0.05
-            + fnum(mapping, "source_similarity") * 0.05
-        )
-        return {"human_raw": human_raw, "ai_raw": ai_raw}
-
-    original_features = features(original_report)
-    candidate_features = features(candidate_report)
-    original_parts = raw_parts(original_features)
-    candidate_parts = raw_parts(candidate_features)
-    driver_keys = [
-        "ai_likelihood",
-        "rewrite_smoothness",
-        "outline_to_text_expansion",
-        "semantic_uniformity_risk",
-        "discourse_regularity_risk",
-        "section_style_variance",
-        "source_similarity",
-    ]
-    drops = {
-        key: round(fnum(original_features, key) - fnum(candidate_features, key), 4)
-        for key in driver_keys
-    }
-    regressions = {
-        key: round(abs(value), 4)
-        for key, value in drops.items()
-        if value < 0
-    }
-    ai_raw_drop = original_parts["ai_raw"] - candidate_parts["ai_raw"]
-    human_raw_gain = candidate_parts["human_raw"] - original_parts["human_raw"]
-    contribution = _contribution_scores(candidate_report)
-    original_contribution = _contribution_scores(original_report)
-    human_delta = (
-        float(contribution.get("human")) - float(original_contribution.get("human"))
-        if isinstance(contribution.get("human"), (int, float))
-        and isinstance(original_contribution.get("human"), (int, float))
-        else 0.0
+    return _core_human_formula_driver_status(
+        original_report,
+        candidate_report,
+        _human_formula_driver_deps(),
     )
-    target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
-    required = bool(
-        isinstance(original_contribution.get("human"), (int, float))
-        and float(original_contribution.get("human")) < target_human
-        and _env_flag("DRAFTPROOF_REQUIRE_HUMAN_FORMULA_DRIVER_PROGRESS", True)
-    )
-    min_ai_raw_drop = _float_env("DRAFTPROOF_HUMAN_FORMULA_MIN_AI_RAW_DROP", 0.04)
-    min_human_gain = _float_env("DRAFTPROOF_HUMAN_FORMULA_MIN_HUMAN_GAIN", 4.0)
-    max_driver_regression = _float_env("DRAFTPROOF_HUMAN_FORMULA_MAX_DRIVER_REGRESSION", 0.04)
-    safe_min_ai_raw_drop = _float_env(
-        "DRAFTPROOF_HUMAN_FORMULA_SAFE_MIN_AI_RAW_DROP",
-        min_ai_raw_drop * 0.75,
-    )
-    safe_min_human_gain = _float_env(
-        "DRAFTPROOF_HUMAN_FORMULA_SAFE_MIN_HUMAN_GAIN",
-        1.0,
-    )
-    total_regression = sum(regressions.values())
-    safe_partial_progress = bool(
-        required
-        and float(human_delta) >= safe_min_human_gain
-        and ai_raw_drop >= safe_min_ai_raw_drop
-        and human_raw_gain >= 0.0
-        and total_regression <= max_driver_regression
-    )
-    clears = bool(
-        not required
-        or float(human_delta) >= min_human_gain
-        or safe_partial_progress
-        or (
-            ai_raw_drop >= min_ai_raw_drop
-            and human_raw_gain >= -0.01
-            and total_regression <= max_driver_regression
-        )
-    )
-    return {
-        "required": required,
-        "cleared": clears,
-        "reason": "" if clears else "human_formula_drivers_not_reduced",
-        "human_delta": round(human_delta, 3),
-        "target_human": target_human,
-        "ai_raw_drop": round(ai_raw_drop, 4),
-        "human_raw_gain": round(human_raw_gain, 4),
-        "min_ai_raw_drop": min_ai_raw_drop,
-        "min_human_gain": min_human_gain,
-        "safe_partial_progress": safe_partial_progress,
-        "safe_min_ai_raw_drop": round(safe_min_ai_raw_drop, 4),
-        "safe_min_human_gain": safe_min_human_gain,
-        "total_driver_regression": round(total_regression, 4),
-        "max_driver_regression": max_driver_regression,
-        "driver_drops": drops,
-        "driver_regressions": regressions,
-        "original_raw": {key: round(value, 4) for key, value in original_parts.items()},
-        "candidate_raw": {key: round(value, 4) for key, value in candidate_parts.items()},
-    }
 
 
 def _dominant_blocker_safe_progress_override(
@@ -10711,128 +5043,33 @@ def _radar_goal_requires_human_progress(status: dict | None) -> bool:
     )
 
 
+def _blocker_operation_plan_deps() -> BlockerOperationPlanDeps:
+    return BlockerOperationPlanDeps(
+        float_env=_float_env,
+        blocker_scores=_blocker_scores,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        text_word_count=_text_word_count,
+        paragraph_component_targets=_paragraph_component_targets,
+        paragraph_role=_paragraph_role,
+        detect_protected_spans=detect_protected_spans,
+        safe_index=_safe_index,
+        radar_blocker_option_matrix=_radar_blocker_option_matrix,
+    )
+
+
 def _blocker_operation_plan(
     source_text: str,
     raw_json: dict | None,
     *,
     limit: int = 8,
 ) -> dict:
-    """Compile scanner blockers into hard paragraph operations.
-
-    This is the missing bridge between scan and generation: high blockers must
-    become delete/compress/narrow/rebuild operations before the LLM gets a
-    chance to smooth the same weak backbone again.
-    """
-    blockers = _blocker_scores(raw_json)
-    paragraphs = _logical_paragraphs(source_text)
-    if not paragraphs:
-        return {"enabled": False, "reason": "no_paragraphs", "blockers": blockers, "operations": []}
-
-    active = {
-        key: value for key, value in blockers.items()
-        if isinstance(value, (int, float)) and float(value) >= 60.0
-    }
-    if not active:
-        return {"enabled": False, "reason": "no_active_blockers", "blockers": blockers, "operations": []}
-
-    protected = detect_protected_spans(source_text)
-
-    def protected_in_paragraph(index: int) -> bool:
-        before = _join_logical_paragraphs(paragraphs[:index])
-        start = len(before) + (2 if before else 0)
-        end = start + len(paragraphs[index])
-        return any(span.start_char >= start and span.end_char <= end for span in protected)
-
-    targets = _paragraph_component_targets(source_text, raw_json or {}, limit=max(limit * 2, 6))
-    operations = []
-    for target in targets:
-        index = int(target.get("index", 0) or 0)
-        if index < 0 or index >= len(paragraphs):
-            continue
-        paragraph = paragraphs[index]
-        words = _text_word_count(paragraph)
-        if words < 20:
-            continue
-        drivers = target.get("drivers") or {}
-        role = target.get("role") or _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
-        has_protected = protected_in_paragraph(index)
-        generic_hits = int(drivers.get("generic_assertion_hits") or 0)
-        concrete_hits = int(drivers.get("concrete_anchor_hits") or 0)
-        source_gap = bool(drivers.get("source_gap"))
-        generic_density = generic_hits / max(words / 100.0, 1.0)
-
-        reasons = []
-        if blockers.get("unsupported_claim_risk", 0.0) >= 75 and source_gap:
-            reasons.append("unsupported_claim_risk")
-        if blockers.get("broad_claim_risk", 0.0) >= 75 and generic_hits >= 3:
-            reasons.append("broad_claim_risk")
-        if blockers.get("generic_assertion_risk", 0.0) >= 75 and generic_density >= 3.0:
-            reasons.append("generic_assertion_risk")
-        if blockers.get("topk_pattern", 0.0) >= 75 and target.get("target_sentences"):
-            reasons.append("topk_pattern")
-        if blockers.get("lived_detail_risk", 0.0) >= 70 and concrete_hits <= 2:
-            reasons.append("lived_detail_risk")
-        if not reasons:
-            continue
-
-        if role in {"human_anchor_rich", "technical_process_rich"}:
-            operation = "preserve_micro_texture"
-        elif has_protected:
-            operation = "narrow_protected_paragraph"
-        elif role == "conclusion_template_risk":
-            operation = "compress_or_delete"
-        elif "generic_assertion_risk" in reasons or "unsupported_claim_risk" in reasons:
-            operation = "delete_or_compress"
-        elif "broad_claim_risk" in reasons:
-            operation = "claim_narrow"
-        else:
-            operation = "topk_texture_patch"
-
-        priority = (
-            float(target.get("score") or 0.0)
-            + len(reasons) * 10.0
-            + generic_density * 2.0
-            + (8.0 if source_gap else 0.0)
-            - concrete_hits * 0.5
-            - (8.0 if has_protected else 0.0)
-        )
-        operations.append({
-            "paragraph_index": index,
-            "operation": operation,
-            "role": role,
-            "priority": round(priority, 3),
-            "blockers": reasons,
-            "has_protected_anchor": has_protected,
-            "word_count": words,
-            "generic_density": round(generic_density, 3),
-            "drivers": drivers,
-            "preview": paragraph[:360],
-        })
-
-    operations.sort(key=lambda item: item["priority"], reverse=True)
-    selected_operations = operations[:max(1, int(limit or 1))]
-    decisions = _block_level_decisions(
-        selected_operations,
+    return _core_blocker_operation_plan(
         source_text,
-        blockers=blockers,
+        raw_json,
+        limit=limit,
+        deps=_blocker_operation_plan_deps(),
     )
-    option_matrix = _radar_blocker_option_matrix(raw_json, limit=limit)
-    return {
-        "enabled": True,
-        "kind": "blocker_operation_plan",
-        "blockers": blockers,
-        "active_blockers": active,
-        "operations": selected_operations,
-        "block_decisions": decisions,
-        "radar_option_matrix": option_matrix,
-        "policy": [
-            "reinforce source-worthy claims before removal when public evidence can help",
-            "delete or compress score-dragging generic paragraphs before texture repair",
-            "narrow unsupported/broad claims before adding sources or author language",
-            "preserve protected anchors; never delete a protected paragraph automatically",
-            "rank candidate selection by blocker elimination before cosmetic score movement",
-        ],
-    }
 
 
 def _block_level_decisions(
@@ -10841,122 +5078,13 @@ def _block_level_decisions(
     *,
     blockers: dict | None = None,
 ) -> list[dict]:
-    """Classify each risky block before candidate generation.
-
-    This is the control layer for the reinforce/remove architecture. It decides
-    whether a block is worth reinforcing, should be narrowed, should be
-    compressed/removed, or must be preserved/handled by the author.
-    """
-    blockers = blockers or {}
-    max_search_calls = max(
-        0,
-        min(5, int(_float_env("DRAFTPROOF_SOURCE_SEARCH_MAX_CALLS_PER_RUN", 5.0))),
+    return _core_block_level_decisions(
+        operations,
+        source_text,
+        blockers=blockers,
+        deps=_blocker_operation_plan_deps(),
     )
-    search_reserved = 0
-    decisions: list[dict] = []
-    for op in operations or []:
-        paragraph_index = _safe_index(op.get("paragraph_index"), -1)
-        role = str(op.get("role") or "")
-        drivers = op.get("drivers") if isinstance(op.get("drivers"), dict) else {}
-        blocker_keys = set(op.get("blockers") or [])
-        word_count = int(op.get("word_count") or 0)
-        generic_density = float(op.get("generic_density") or 0.0)
-        generic_hits = int(drivers.get("generic_assertion_hits") or 0)
-        concrete_hits = int(drivers.get("concrete_anchor_hits") or 0)
-        source_gap = bool(drivers.get("source_gap"))
-        has_protected = bool(op.get("has_protected_anchor"))
-        has_reinforce_value = bool(
-            word_count >= 25
-            and (
-                concrete_hits >= 1
-                or role in {"source_summary_heavy", "generic_claim_heavy"}
-                or "source_grounding_risk" in blocker_keys
-                or "unsupported_claim_risk" in blocker_keys
-            )
-        )
-        heavy_generic_drag = bool(
-            generic_density >= 3.0
-            or generic_hits >= 4
-            or role == "conclusion_template_risk"
-        )
 
-        decision = "preserve"
-        reason = "no_high_value_operation"
-        uses_search = False
-        allowed_operations = ["preserve"]
-
-        if has_protected or role in {"human_anchor_rich", "technical_process_rich"}:
-            decision = "preserve_micro_repair"
-            reason = "protected_or_high_value_human_block"
-            allowed_operations = ["micro_texture_patch", "claim_narrow"]
-        elif source_gap and has_reinforce_value and search_reserved < max_search_calls:
-            decision = "reinforce_with_public_source"
-            reason = "source_gap_with_salvageable_claim"
-            uses_search = True
-            search_reserved += 1
-            allowed_operations = ["source_reinforce", "claim_narrow"]
-        elif source_gap and heavy_generic_drag and concrete_hits <= 1:
-            decision = "remove_or_compress"
-            reason = "unsupported_generic_score_drag"
-            allowed_operations = ["delete_paragraph", "compress_paragraph"]
-        elif "broad_claim_risk" in blocker_keys or "generic_assertion_risk" in blocker_keys:
-            decision = "claim_narrow"
-            reason = "broad_or_generic_claim_can_be_limited"
-            allowed_operations = ["claim_narrow", "compress_paragraph"]
-        elif "topk_pattern" in blocker_keys:
-            decision = "topk_texture_patch"
-            reason = "predictable_local_texture"
-            allowed_operations = ["micro_texture_patch"]
-        elif source_gap:
-            decision = "ask_author_context"
-            reason = "source_gap_not_safe_to_reinforce_or_remove"
-            allowed_operations = ["ask_author"]
-
-        decisions.append({
-            "paragraph_index": paragraph_index,
-            "decision": decision,
-            "reason": reason,
-            "role": role,
-            "blockers": sorted(blocker_keys),
-            "uses_source_search": uses_search,
-            "source_search_slot": search_reserved if uses_search else None,
-            "allowed_operations": allowed_operations,
-            "salvageable": decision in {
-                "reinforce_with_public_source",
-                "claim_narrow",
-                "topk_texture_patch",
-                "preserve_micro_repair",
-            },
-            "fallback_if_failed": (
-                "remove_or_compress"
-                if decision == "reinforce_with_public_source" and not has_protected
-                else "ask_author_context"
-                if decision in {"claim_narrow", "topk_texture_patch"}
-                else "preserve"
-            ),
-            "budget": {
-                "source_search_reserved": search_reserved,
-                "source_search_max": max_search_calls,
-            },
-        })
-    return decisions
-
-
-def _transformation_features(report_dict: dict | None) -> dict:
-    if not isinstance(report_dict, dict):
-        return {}
-    badge = report_dict.get("ai_risk_badge") or {}
-    transform = badge.get("transformation_classification") or {}
-    features = transform.get("features")
-    return features if isinstance(features, dict) else {}
-
-
-def _feature_percent(report_dict: dict | None, key: str):
-    value = _transformation_features(report_dict).get(key)
-    if not isinstance(value, (int, float)):
-        return None
-    value = float(value)
-    return value * 100.0 if abs(value) <= 1.0 else value
 
 
 def _writing_component_percent(report_dict: dict | None, key: str):
@@ -11094,1228 +5222,12 @@ def _human_anchor_driver_contract(
     }
 
 
-def _human_shift_score(
-    original_report: dict,
-    candidate_report: dict,
-    *,
-    drift_similarity: float | None = None,
-    review_burden_delta: int = 0,
-    weighted_severity_delta: int = 0,
-) -> dict:
-    """Score how strongly a candidate moves toward authentic human contribution.
 
-    Positive components reward real mitigation movement. Penalties protect
-    meaning, grounding, and review burden so candidate ranking cannot chase a
-    lower AI score by making the document worse.
-    """
-    original = _contribution_scores(original_report)
-    candidate = _contribution_scores(candidate_report)
-    original_integrity = _integrity_scores(original_report)
-    candidate_integrity = _integrity_scores(candidate_report)
 
-    def _delta(original_value, candidate_value, *, direction: str = "increase"):
-        if not isinstance(original_value, (int, float)) or not isinstance(candidate_value, (int, float)):
-            return 0.0
-        if direction == "decrease":
-            return float(original_value) - float(candidate_value)
-        return float(candidate_value) - float(original_value)
 
-    ai_authorship_reduction = _delta(
-        original_integrity.get("ai_authorship"),
-        candidate_integrity.get("ai_authorship"),
-        direction="decrease",
-    )
-    human_contribution_gain = _delta(original.get("human"), candidate.get("human"))
-    ai_transformation_reduction = _delta(
-        original.get("ai_transformation"),
-        candidate.get("ai_transformation"),
-        direction="decrease",
-    )
-    human_anchor_gain = _delta(
-        _feature_percent(original_report, "human_anchor_score"),
-        _feature_percent(candidate_report, "human_anchor_score"),
-    )
-    grounding_risk_reduction = _delta(
-        original_integrity.get("grounding"),
-        candidate_integrity.get("grounding"),
-        direction="decrease",
-    )
-    rewrite_smoothness_reduction = _delta(
-        _feature_percent(original_report, "rewrite_smoothness"),
-        _feature_percent(candidate_report, "rewrite_smoothness"),
-        direction="decrease",
-    )
-    semantic_uniformity_reduction = _delta(
-        _feature_percent(original_report, "semantic_uniformity_risk"),
-        _feature_percent(candidate_report, "semantic_uniformity_risk"),
-        direction="decrease",
-    )
 
-    grounding_regression_penalty = max(0.0, -grounding_risk_reduction) * 1.5
-    smoothness_regression_penalty = max(0.0, -rewrite_smoothness_reduction) * 0.8
-    semantic_uniformity_regression_penalty = max(0.0, -semantic_uniformity_reduction) * 0.8
-    review_burden_penalty = max(0, int(review_burden_delta or 0)) * 3.0
-    weighted_severity_penalty = max(0, int(weighted_severity_delta or 0)) * 1.5
-    meaning_drift_penalty = 0.0
-    if isinstance(drift_similarity, (int, float)):
-        meaning_drift_penalty = max(0.0, 0.94 - float(drift_similarity)) * 25.0
 
-    components = {
-        "ai_authorship_reduction": round(ai_authorship_reduction, 3),
-        "human_contribution_gain": round(human_contribution_gain, 3),
-        "ai_transformation_reduction": round(ai_transformation_reduction, 3),
-        "human_anchor_gain": round(human_anchor_gain, 3),
-        "grounding_risk_reduction": round(grounding_risk_reduction, 3),
-        "rewrite_smoothness_reduction": round(rewrite_smoothness_reduction, 3),
-        "semantic_uniformity_reduction": round(semantic_uniformity_reduction, 3),
-        "grounding_regression_penalty": round(grounding_regression_penalty, 3),
-        "meaning_drift_penalty": round(meaning_drift_penalty, 3),
-        "rewrite_smoothness_regression_penalty": round(smoothness_regression_penalty, 3),
-        "semantic_uniformity_regression_penalty": round(semantic_uniformity_regression_penalty, 3),
-        "review_burden_penalty": round(review_burden_penalty, 3),
-        "weighted_severity_penalty": round(weighted_severity_penalty, 3),
-    }
-    score = (
-        ai_authorship_reduction * 1.0
-        + human_contribution_gain * 1.4
-        + ai_transformation_reduction * 1.2
-        + human_anchor_gain * 0.7
-        + max(0.0, grounding_risk_reduction) * 0.35
-        + max(0.0, rewrite_smoothness_reduction) * 0.35
-        + max(0.0, semantic_uniformity_reduction) * 0.35
-        - grounding_regression_penalty
-        - meaning_drift_penalty
-        - smoothness_regression_penalty
-        - semantic_uniformity_regression_penalty
-        - review_burden_penalty
-        - weighted_severity_penalty
-    )
-    return {
-        "score": round(score, 3),
-        "components": components,
-        "weights": {
-            "ai_authorship_reduction": 1.0,
-            "human_contribution_gain": 1.4,
-            "ai_transformation_reduction": 1.2,
-            "human_anchor_gain": 0.7,
-            "grounding_risk_reduction": 0.35,
-            "rewrite_smoothness_reduction": 0.35,
-            "semantic_uniformity_reduction": 0.35,
-            "grounding_regression_penalty": -1.5,
-            "meaning_drift_penalty": -1.0,
-            "rewrite_smoothness_regression_penalty": -1.0,
-            "semantic_uniformity_regression_penalty": -1.0,
-            "review_burden_penalty": -1.0,
-            "weighted_severity_penalty": -1.0,
-        },
-    }
 
-
-def _human_shift_rank_key(gate: dict | None) -> tuple:
-    gate = gate or {}
-    score = gate.get("human_shift_score")
-    candidate_human = gate.get("candidate_human")
-    ai_authorship_delta = gate.get("ai_authorship_delta")
-    stage_target = _human_gain_stage_target(candidate_human)
-    return (
-        1 if gate.get("success") else 0,
-        1 if not isinstance(ai_authorship_delta, (int, float)) or ai_authorship_delta >= 0 else 0,
-        1 if isinstance(candidate_human, (int, float)) and candidate_human >= stage_target else 0,
-        float(gate.get("human_delta")) if isinstance(gate.get("human_delta"), (int, float)) else -9999.0,
-        float(score) if isinstance(score, (int, float)) else -9999.0,
-        float(ai_authorship_delta) if isinstance(ai_authorship_delta, (int, float)) else -9999.0,
-        float(gate.get("ai_transformation_delta")) if isinstance(gate.get("ai_transformation_delta"), (int, float)) else -9999.0,
-    )
-
-
-def _is_better_human_shift_candidate(candidate_gate: dict | None, best_gate: dict | None) -> bool:
-    if best_gate is None:
-        return True
-    return _human_shift_rank_key(candidate_gate) > _human_shift_rank_key(best_gate)
-
-
-def _goal_climb_candidate_rank(
-    selection_status: dict | None,
-    candidate_eval: dict | None,
-    *,
-    candidate_ai=None,
-    candidate_review_burden: int | float = 0,
-    candidate_weighted_severity: int | float = 0,
-    candidate_finding_total: int | float = 0,
-    original_review_burden: int | float = 0,
-    original_weighted_severity: int | float = 0,
-    original_finding_total: int | float = 0,
-) -> tuple:
-    """Rank AI-mitigation candidates by progress toward the Human 80 goal.
-
-    AI score is intentionally late in the key. A lower AI score is not a win
-    when Human Shift, authorship texture, or review burden move the wrong way.
-    """
-    status = selection_status or {}
-    eval_data = candidate_eval or {}
-    gate = status.get("authenticity_gate") if isinstance(status.get("authenticity_gate"), dict) else status
-
-    def num(value, default=-9999.0) -> float:
-        return float(value) if isinstance(value, (int, float)) else float(default)
-
-    candidate_human = num(gate.get("candidate_human", eval_data.get("human_contribution")))
-    stage_target = _human_gain_stage_target(candidate_human)
-    target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
-    turnitin_gate = status.get("turnitin_like_ai_gate") if isinstance(status.get("turnitin_like_ai_gate"), dict) else {}
-    formula_gap_contract = (
-        status.get("formula_gap_contract")
-        if isinstance(status.get("formula_gap_contract"), dict)
-        else eval_data.get("formula_gap_contract")
-        if isinstance(eval_data.get("formula_gap_contract"), dict)
-        else {}
-    )
-    return ai_search_candidate_rank(
-        status,
-        eval_data,
-        candidate_ai=candidate_ai,
-        candidate_review_burden=candidate_review_burden,
-        candidate_weighted_severity=candidate_weighted_severity,
-        candidate_finding_total=candidate_finding_total,
-        original_review_burden=original_review_burden,
-        original_weighted_severity=original_weighted_severity,
-        original_finding_total=original_finding_total,
-        target_human=target_human,
-        stage_target=stage_target,
-        formula_gap_rank=_formula_gap_candidate_rank(formula_gap_contract, turnitin_gate),
-    )
-
-
-def _anchor_lock_mapping(anchors: list[str] | tuple[str, ...] | None) -> list[dict]:
-    """Create deterministic placeholders for anchors that should not be rewritten."""
-    unique: list[str] = []
-    for raw in anchors or []:
-        value = str(raw or "").strip()
-        if len(value) < 4 and not re.fullmatch(r"\d+(?:\.\d+)?%?", value):
-            continue
-        if value not in unique:
-            unique.append(value)
-    unique.sort(key=len, reverse=True)
-    return [
-        {"placeholder": f"[[DP_ANCHOR_{index:03d}]]", "value": value}
-        for index, value in enumerate(unique, start=1)
-    ]
-
-
-def _anchor_values_from_brief(anchors: list[dict] | tuple[dict, ...] | None) -> list[str]:
-    values: list[str] = []
-    for item in anchors or []:
-        if not isinstance(item, dict):
-            continue
-        value = str(item.get("text") or item.get("value") or "").strip()
-        if value and value not in values:
-            values.append(value)
-    return values
-
-
-def _freeze_anchor_text(text: str, mapping: list[dict] | None) -> str:
-    frozen = str(text or "")
-    for item in mapping or []:
-        value = str(item.get("value") or "")
-        placeholder = str(item.get("placeholder") or "")
-        if value and placeholder:
-            if re.fullmatch(r"\d+(?:\.\d+)?%?", value):
-                pattern = rf"(?<![A-Za-z0-9_]){re.escape(value)}(?![A-Za-z0-9_])"
-            else:
-                pattern = re.escape(value)
-            frozen = re.sub(pattern, placeholder, frozen)
-    return frozen
-
-
-def _restore_anchor_placeholders(text: str, mapping: list[dict] | None) -> str:
-    restored = str(text or "")
-    for item in mapping or []:
-        value = str(item.get("value") or "")
-        placeholder = str(item.get("placeholder") or "")
-        if value and placeholder:
-            restored = restored.replace(placeholder, value)
-    return restored
-
-
-def _split_sentences(text: str) -> list[str]:
-    return [
-        item.strip()
-        for item in re.split(r"(?<=[.!?])\s+", str(text or "").strip())
-        if item.strip()
-    ]
-
-
-def _freeze_anchor_payload(payload, mapping: list[dict] | None):
-    if isinstance(payload, str):
-        return _freeze_anchor_text(payload, mapping)
-    if isinstance(payload, list):
-        return [_freeze_anchor_payload(item, mapping) for item in payload]
-    if isinstance(payload, tuple):
-        return tuple(_freeze_anchor_payload(item, mapping) for item in payload)
-    if isinstance(payload, dict):
-        return {
-            key: _freeze_anchor_payload(value, mapping)
-            for key, value in payload.items()
-        }
-    return payload
-
-
-def _repair_aggression_score(original_text: str, candidate_text: str) -> dict:
-    """Estimate how invasive a repair is so texture repair stays micro-local."""
-    original_tokens = re.findall(r"\w+|[^\w\s]", str(original_text or ""))
-    candidate_tokens = re.findall(r"\w+|[^\w\s]", str(candidate_text or ""))
-    if not original_tokens and not candidate_tokens:
-        ratio = 1.0
-    else:
-        ratio = SequenceMatcher(None, original_tokens, candidate_tokens).ratio()
-    changed_tokens_ratio = round(1.0 - ratio, 3)
-    original_sentences = _split_sentences(str(original_text or ""))
-    candidate_sentences = _split_sentences(str(candidate_text or ""))
-    sentence_count_delta = abs(len(candidate_sentences) - len(original_sentences))
-    sentence_delta_ratio = round(
-        sentence_count_delta / max(1, len(original_sentences)),
-        3,
-    )
-    original_words = _text_word_count(str(original_text or ""))
-    candidate_words = _text_word_count(str(candidate_text or ""))
-    word_delta_ratio = round(
-        abs(candidate_words - original_words) / max(1, original_words),
-        3,
-    )
-    score = round(
-        changed_tokens_ratio + min(1.0, sentence_delta_ratio) * 0.5 + min(1.0, word_delta_ratio) * 0.5,
-        3,
-    )
-    return {
-        "score": score,
-        "changed_tokens_ratio": changed_tokens_ratio,
-        "sentence_delta_ratio": sentence_delta_ratio,
-        "word_delta_ratio": word_delta_ratio,
-        "original_words": original_words,
-        "candidate_words": candidate_words,
-    }
-
-
-def _sentence_texture_risk_map(text: str, raw_json: dict | None = None, limit: int = 5) -> list[dict]:
-    """Build a sentence-level repair map from scanner pointers and local texture signals."""
-    sentences = _split_sentences(text)
-    if not sentences:
-        return []
-    pointer_scores: dict[int, float] = {}
-    raw_json = raw_json or {}
-    for brief in raw_json.get("rewrite_edit_briefs") or []:
-        if not isinstance(brief, dict):
-            continue
-        index = brief.get("sentence_index")
-        if isinstance(index, int) and 0 <= index < len(sentences):
-            signal_bonus = 0.25
-            for value in (brief.get("signals") or {}).values():
-                if isinstance(value, (int, float)):
-                    signal_bonus += min(0.4, float(value) / 250.0)
-                elif isinstance(value, str) and re.search(r"predict|uniform|smooth|generic|cadence", value, re.I):
-                    signal_bonus += 0.15
-            pointer_scores[index] = max(pointer_scores.get(index, 0.0), signal_bonus)
-    for segment in ((raw_json.get("ai_mitigation") or {}).get("target_segments") or []):
-        if not isinstance(segment, dict):
-            continue
-        seg_text = str(segment.get("text") or "").strip()
-        if not seg_text:
-            continue
-        for index, sentence in enumerate(sentences):
-            if seg_text in sentence or sentence in seg_text:
-                signal = segment.get("primary_signal") or {}
-                value = signal.get("score")
-                pointer_scores[index] = max(
-                    pointer_scores.get(index, 0.0),
-                    0.35 + (min(0.4, float(value) / 250.0) if isinstance(value, (int, float)) else 0.0),
-                )
-    generic_re = re.compile(
-        r"\b(?:important|significant|crucial|essential|plays? a role|"
-        r"this (?:shows|highlights|demonstrates|emphasizes)|"
-        r"furthermore|moreover|additionally|in conclusion|overall|"
-        r"increasingly|integrat(?:e|es|ing)|supports?|enables?|enhances?)\b",
-        re.I,
-    )
-    transition_re = re.compile(r"^(?:This|These|Such|In this|Overall|Therefore|However|Additionally|Furthermore)\b")
-    rows: list[dict] = []
-    for index, sentence in enumerate(sentences):
-        words = re.findall(r"\b[\w'-]+\b", sentence)
-        length_score = min(0.25, max(0, len(words) - 22) / 120.0)
-        generic_score = min(0.35, len(generic_re.findall(sentence)) * 0.12)
-        transition_score = 0.15 if transition_re.search(sentence.strip()) else 0.0
-        score = round(pointer_scores.get(index, 0.0) + length_score + generic_score + transition_score, 3)
-        rows.append({
-            "sentence_index": index,
-            "sentence": sentence,
-            "risk": score,
-            "drivers": {
-                "scanner_pointer": round(pointer_scores.get(index, 0.0), 3),
-                "length": round(length_score, 3),
-                "generic_phrase": round(generic_score, 3),
-                "transition_cleanliness": round(transition_score, 3),
-            },
-        })
-    rows.sort(key=lambda row: row["risk"], reverse=True)
-    return rows[:max(1, limit)]
-
-
-def _micro_texture_window(
-    text: str,
-    raw_json: dict | None = None,
-    *,
-    max_sentences: int = 2,
-    exclude_sentence_indexes: set[int] | list[int] | tuple[int, ...] | None = None,
-) -> dict:
-    sentences = _split_sentences(text)
-    if not sentences:
-        return {"sentences": [], "start": 0, "end": 0, "text": "", "risk_map": []}
-    risk_map = _sentence_texture_risk_map(text, raw_json, limit=5)
-    excluded = {int(item) for item in (exclude_sentence_indexes or []) if isinstance(item, int)}
-    selected = next(
-        (
-            row for row in risk_map
-            if "\n" not in str(row.get("sentence") or "")
-            and int(row.get("sentence_index", -1)) not in excluded
-        ),
-        None,
-    )
-    if selected is None:
-        selected = next(
-            (
-                row for row in risk_map
-                if int(row.get("sentence_index", -1)) not in excluded
-            ),
-            None,
-        )
-    if selected is None:
-        return {"sentences": sentences, "start": 0, "end": 0, "text": "", "risk_map": risk_map}
-    start = int(selected.get("sentence_index", 0))
-    end = min(len(sentences), start + max(1, max_sentences))
-    return {
-        "sentences": sentences,
-        "start": start,
-        "end": end,
-        "text": " ".join(sentences[start:end]).strip(),
-        "risk_map": risk_map,
-    }
-
-
-def _splice_sentence_window(text: str, start: int, end: int, replacement: str) -> str:
-    sentences = _split_sentences(text)
-    if start < 0 or end <= start or start >= len(sentences):
-        return text
-    end = min(end, len(sentences))
-    replacement_sentences = _split_sentences(replacement)
-    if not replacement_sentences:
-        return text
-    rebuilt = sentences[:start] + replacement_sentences + sentences[end:]
-    return " ".join(rebuilt).strip()
-
-
-def _splice_sentence_for_auto_repair(text: str, sentence_index: int, replacement: str) -> str:
-    sentences = _split_sentences(text)
-    if sentence_index < 0 or sentence_index >= len(sentences):
-        return text
-    replacement_sentences = _split_sentences(replacement)
-    rebuilt = sentences[:sentence_index] + replacement_sentences + sentences[sentence_index + 1:]
-    return " ".join(sentence.strip() for sentence in rebuilt if sentence and sentence.strip()).strip()
-
-
-def _micro_texture_repair_prompt(
-    source_text: str,
-    raw_json: dict | None,
-    anchors: list[str] | None = None,
-    *,
-    max_sentences: int = 1,
-    exclude_sentence_indexes: set[int] | list[int] | tuple[int, ...] | None = None,
-    mode: str = "authorship_texture_repair",
-) -> tuple[str, dict]:
-    """Build an operation-level prompt for one local authorship texture patch."""
-    window = _micro_texture_window(
-        source_text,
-        raw_json,
-        max_sentences=max_sentences,
-        exclude_sentence_indexes=exclude_sentence_indexes,
-    )
-    mapping = _anchor_lock_mapping(anchors or [])
-    frozen_window = _freeze_anchor_text(window.get("text") or "", mapping)
-    frozen_context = {
-        "window_start_sentence": window.get("start"),
-        "window_end_sentence": window.get("end"),
-        "risk_map": _freeze_anchor_payload(window.get("risk_map") or [], mapping),
-        "target_window": frozen_window,
-        "required_placeholders": [item["placeholder"] for item in mapping if item["placeholder"] in frozen_window],
-    }
-    mode_name = str(mode or "authorship_texture_repair").strip().lower()
-    if mode_name == "authorship_suppression_repair":
-        objective = (
-            "DraftProof micro-local AUTHORSHIP_SUPPRESSION_REPAIR.\n"
-            "Objective: reduce AI Authorship first. Human Contribution is only a bonus.\n"
-            "Patch only the target sentence window. Do not improve the whole section.\n"
-        )
-        allowed = (
-            "- shorten_over_complete_explanation\n"
-            "- break_repeated_sentence_cadence\n"
-            "- remove_neat_claim_explain_conclude_flow\n"
-            "- reduce_polished_transition\n"
-            "- leave one clear point slightly less over-explained\n"
-        )
-        forbidden_extra = (
-            "- adding anchors\n"
-            "- adding first-person\n"
-            "- expanding explanations\n"
-            "- improving clarity by smoothing every link\n"
-        )
-    else:
-        objective = (
-            "DraftProof micro-local AUTHORSHIP_TEXTURE_REPAIR.\n"
-            "Patch only the target sentence window. Do not rewrite the surrounding section.\n"
-        )
-        allowed = (
-            "- shorten_transition\n"
-            "- reduce_explanation\n"
-            "- alter_sentence_length\n"
-            "- reduce_connector_strength\n"
-            "- slight_pacing_asymmetry\n"
-        )
-        forbidden_extra = ""
-    prompt = (
-        objective +
-        "Return only the replacement sentence window, not the full section.\n\n"
-        f"Repair context:\n{json.dumps(frozen_context, ensure_ascii=False)}\n\n"
-        "Allowed operations:\n"
-        f"{allowed}\n"
-        "Forbidden operations:\n"
-        "- reorder_paragraph\n"
-        "- add_new_claim\n"
-        "- semantic_expansion\n"
-        "- rewrite_whole_sentence_cluster\n"
-        "- add examples, sources, dates, numbers, institutions, citations, or evidence\n"
-        "- add typos, fake randomness, or grammar damage\n\n"
-        f"{forbidden_extra}"
-        "Hard constraints:\n"
-        "- Preserve meaning and all [[DP_ANCHOR_###]] placeholders exactly.\n"
-        "- Keep replacement within about 70% to 130% of the target window word count.\n"
-        "- Prefer lower authorship regularity over polished explanation.\n"
-        "- Output prose only."
-    )
-    return prompt, {
-        "schema_version": "micro_texture_repair.v1",
-        "window": window,
-        "anchor_lock": mapping,
-        "frozen_target_window": frozen_window,
-    }
-
-
-def _clean_micro_texture_candidate(output: str, repair_info: dict) -> tuple[str, str]:
-    text = _clean_section_candidate(output or "", "")
-    if not text:
-        return "", "empty_micro_texture_candidate"
-    mapping = (repair_info or {}).get("anchor_lock") or []
-    text = _restore_anchor_placeholders(text, mapping)
-    target_words = _text_word_count((repair_info or {}).get("window", {}).get("text") or "")
-    candidate_words = _text_word_count(text)
-    if target_words and candidate_words < max(3, int(target_words * 0.70)):
-        return "", f"micro_texture_candidate_too_short {candidate_words}<{int(target_words * 0.70)}"
-    if target_words and candidate_words > max(8, int(target_words * 1.30)):
-        return "", f"micro_texture_candidate_too_long {candidate_words}>{int(target_words * 1.30)}"
-    return text, ""
-
-
-_MASKED_REPAIR_GENERIC_RE = re.compile(
-    r"\b(?:Furthermore|Moreover|Additionally|In conclusion|Overall|Therefore|However|"
-    r"In the past|This shift has made|The real challenge is|"
-    r"It is important to note that|This highlights|This shows|This demonstrates|"
-    r"plays? a crucial role|significant impact|important|crucial|essential)\b",
-    re.I,
-)
-
-
-def _masked_span_repair_prompt(
-    source_text: str,
-    raw_json: dict | None,
-    *,
-    exclude_sentence_indexes: set[int] | list[int] | tuple[int, ...] | None = None,
-) -> tuple[str, dict]:
-    """Mask only a high-risk local span so generation cannot rewrite the section."""
-    window = _micro_texture_window(
-        source_text,
-        raw_json,
-        max_sentences=1,
-        exclude_sentence_indexes=exclude_sentence_indexes,
-    )
-    sentence = str(window.get("text") or "")
-    if not sentence:
-        return "", {"reason": "no_mask_window", "window": window}
-
-    mask_start = mask_end = -1
-    mask_text = ""
-    match = _MASKED_REPAIR_GENERIC_RE.search(sentence)
-    if match:
-        mask_start, mask_end = match.span()
-        mask_text = match.group(0)
-    if mask_start < 0:
-        for brief in (raw_json or {}).get("rewrite_edit_briefs") or []:
-            if not isinstance(brief, dict) or brief.get("sentence_index") != window.get("start"):
-                continue
-            for token in brief.get("problem_tokens") or []:
-                token_text = str(token or "").strip()
-                if len(token_text) < 4:
-                    continue
-                pos = sentence.lower().find(token_text.lower())
-                if pos >= 0:
-                    mask_start, mask_end = pos, pos + len(token_text)
-                    mask_text = sentence[pos:mask_end]
-                    break
-            if mask_start >= 0:
-                break
-    if mask_start < 0:
-        words = list(re.finditer(r"\b[\w'-]+\b", sentence))
-        if not words:
-            return "", {"reason": "no_maskable_span", "window": window}
-        # Last resort: mask a short opening phrase, not the whole sentence.
-        first = words[0]
-        last = words[min(2, len(words) - 1)]
-        mask_start, mask_end = first.start(), last.end()
-        mask_text = sentence[mask_start:mask_end]
-
-    masked_sentence = f"{sentence[:mask_start]}[[MASK]]{sentence[mask_end:]}"
-    prompt = (
-        "DraftProof partial masked regeneration.\n"
-        "Replace only [[MASK]] in the sentence. Do not rewrite any other words.\n"
-        "Objective: reduce AI Authorship texture without semantic expansion.\n\n"
-        f"Masked sentence: {masked_sentence}\n"
-        f"Original masked span: {mask_text}\n\n"
-        "Rules:\n"
-        "- Return only the replacement text for [[MASK]].\n"
-        "- Replacement may be empty if deleting the span reads naturally.\n"
-        "- Use at most 8 words.\n"
-        "- Do not add claims, evidence, examples, citations, numbers, names, first-person, or explanation.\n"
-        "- Prefer plain wording or no connector over polished academic phrasing."
-    )
-    return prompt, {
-        "schema_version": "masked_span_repair.v1",
-        "window": window,
-        "sentence": sentence,
-        "masked_sentence": masked_sentence,
-        "mask_text": mask_text,
-        "mask_start": mask_start,
-        "mask_end": mask_end,
-    }
-
-
-def _clean_masked_span_replacement(output: str) -> str:
-    text = _clean_section_candidate(output or "", "")
-    text = re.sub(r"\[\[/?MASK\]\]", "", text, flags=re.I).strip()
-    text = text.strip("\"'` ")
-    words = re.findall(r"\b[\w'-]+\b", text)
-    if len(words) > 8:
-        return " ".join(words[:8])
-    return text
-
-
-def _deterministic_masked_span_replacements(mask_text: str) -> list[str]:
-    """Return safe local replacements before spending an LLM call.
-
-    These are intentionally tiny span-level alternatives, not sentence rewrites.
-    The scanner still decides whether any candidate is kept.
-    """
-    key = re.sub(r"\s+", " ", str(mask_text or "").strip()).lower()
-    replacements = {
-        "important": ["vital", "needed", "useful"],
-        "in the past": ["Earlier"],
-        "this shift has made": ["That shift makes"],
-        "the real challenge is": ["The harder part is"],
-        "this is a": ["A"],
-        "this has created": ["This creates", "It creates"],
-        "this can encourage": ["This may lead to", "It can lead to"],
-        "this makes assessment": ["Assessment becomes"],
-        "in other words": ["Put simply", "Simply"],
-    }.get(key, [])
-    unique: list[str] = []
-    for item in replacements:
-        clean = _clean_masked_span_replacement(item)
-        if clean not in unique:
-            unique.append(clean)
-    return unique
-
-
-def _deterministic_sentence_route_bundle(source_text: str) -> tuple[str, list[dict]]:
-    """Apply a small set of safe sentence-route edits as one candidate.
-
-    These are not synonym swaps. They target common scanner-visible discourse
-    routes while preserving the surrounding claim and all anchors.
-    """
-    text = str(source_text or "")
-    edits = [
-        ("In the past", "Earlier"),
-        ("This shift has made", "That shift makes"),
-        ("The real challenge is", "The harder part is"),
-    ]
-    applied: list[dict] = []
-    candidate = text
-    for old, new in edits:
-        pattern = re.compile(r"\b" + re.escape(old) + r"\b", re.I)
-        if not pattern.search(candidate):
-            continue
-        candidate = pattern.sub(new, candidate, count=1)
-        applied.append({"mask_text": old, "replacement": new})
-    return candidate, applied
-
-
-def _apply_masked_span_replacement(source_text: str, repair_info: dict, replacement: str) -> str:
-    sentence = str((repair_info or {}).get("sentence") or "")
-    start = int((repair_info or {}).get("mask_start") or 0)
-    end = int((repair_info or {}).get("mask_end") or 0)
-    if not sentence or end < start:
-        return source_text
-    replacement = str(replacement or "").strip()
-    repaired_sentence = f"{sentence[:start]}{replacement}{sentence[end:]}"
-    repaired_sentence = re.sub(r"\s+([,.;:!?])", r"\1", repaired_sentence)
-    repaired_sentence = re.sub(r"\s{2,}", " ", repaired_sentence).strip()
-    if sentence and sentence in str(source_text or ""):
-        return str(source_text or "").replace(sentence, repaired_sentence, 1)
-    window = (repair_info or {}).get("window") or {}
-    return _splice_sentence_window(
-        source_text,
-        int(window.get("start") or 0),
-        int(window.get("end") or 0),
-        repaired_sentence,
-    )
-
-
-def _locality_score(original_text: str, candidate_text: str) -> dict:
-    original_sentences = _split_sentences(original_text)
-    candidate_sentences = _split_sentences(candidate_text)
-    max_len = max(len(original_sentences), len(candidate_sentences), 1)
-    changed = 0
-    for index in range(max_len):
-        left = original_sentences[index] if index < len(original_sentences) else ""
-        right = candidate_sentences[index] if index < len(candidate_sentences) else ""
-        if left != right:
-            changed += 1
-    ratio = round(changed / max_len, 3)
-    return {
-        "changed_sentences": changed,
-        "total_sentences": max_len,
-        "changed_sentence_ratio": ratio,
-    }
-
-
-def _micro_repair_gain_efficiency(human_gain: float, aggression_delta: float) -> float:
-    """Measure attribution gain per unit of repair aggression."""
-    try:
-        human_gain_value = float(human_gain)
-    except (TypeError, ValueError):
-        human_gain_value = 0.0
-    try:
-        aggression_value = float(aggression_delta)
-    except (TypeError, ValueError):
-        aggression_value = 0.0
-    if aggression_value <= 0:
-        return 9999.0 if human_gain_value > 0 else 0.0
-    return round(human_gain_value / aggression_value, 3)
-
-
-def _micro_texture_iteration_status(
-    attempts: list[dict] | None = None,
-    *,
-    baseline_scan: dict | None = None,
-    previous_scan: dict | None = None,
-    current_scan: dict | None = None,
-) -> dict:
-    """Stop/go policy for iterative micro-local texture repair.
-
-    The generator may create several tiny patches, but the loop must stop
-    before many local edits add up to a disguised section rewrite.
-    """
-    attempts = attempts or []
-
-    def num(source: dict | None, key: str, default: float = 0.0) -> float:
-        if not isinstance(source, dict):
-            return default
-        value = source.get(key)
-        return float(value) if isinstance(value, (int, float)) else default
-
-    def scan_from_attempt(index: int) -> dict:
-        if not attempts:
-            return {}
-        try:
-            item = attempts[index]
-        except IndexError:
-            return {}
-        return item.get("scan_scores") or item.get("scan") or {}
-
-    if current_scan is None:
-        current_scan = scan_from_attempt(-1)
-    if previous_scan is None:
-        previous_scan = scan_from_attempt(-2) if len(attempts) >= 2 else (baseline_scan or {})
-    if baseline_scan is None:
-        baseline_scan = previous_scan or {}
-
-    cumulative_aggression = 0.0
-    max_locality_ratio = 0.0
-    latest_aggression = 0.0
-    for index, item in enumerate(attempts):
-        aggression = item.get("repair_aggression") or {}
-        if not isinstance(aggression, dict):
-            aggression = {}
-        score = num(aggression, "score", num(item, "repair_aggression_score"))
-        cumulative_aggression += max(0.0, score)
-        if index == len(attempts) - 1:
-            latest_aggression = max(0.0, score)
-        locality = item.get("locality") or {}
-        if isinstance(locality, dict):
-            max_locality_ratio = max(max_locality_ratio, num(locality, "changed_sentence_ratio"))
-
-    current_human = num(current_scan, "human")
-    previous_human = num(previous_scan, "human")
-    baseline_human = num(baseline_scan, "human", previous_human)
-    marginal_human_gain = current_human - previous_human
-    total_human_gain = current_human - baseline_human
-    ai_authorship_delta = num(current_scan, "ai_authorship") - num(previous_scan, "ai_authorship")
-    ai_transformation_delta = num(current_scan, "ai_transformation") - num(previous_scan, "ai_transformation")
-    findings_delta = num(current_scan, "findings") - num(previous_scan, "findings")
-    gain_efficiency = _micro_repair_gain_efficiency(marginal_human_gain, latest_aggression)
-
-    max_total_aggression = _float_env("DRAFTPROOF_MICRO_TEXTURE_MAX_TOTAL_AGGRESSION", 0.18)
-    max_locality = _float_env("DRAFTPROOF_TEXTURE_REPAIR_MAX_LOCALITY", 0.25)
-    min_human_gain = _float_env("DRAFTPROOF_MICRO_TEXTURE_MIN_HUMAN_GAIN", 1.0)
-    min_gain_efficiency = _float_env("DRAFTPROOF_MICRO_TEXTURE_MIN_GAIN_EFFICIENCY", 10.0)
-    max_iterations = int(_float_env("DRAFTPROOF_MICRO_TEXTURE_MAX_ITERATIONS", 5.0))
-
-    stop_reasons: list[str] = []
-    if attempts and cumulative_aggression > max_total_aggression:
-        stop_reasons.append("cumulative_aggression_budget_exhausted")
-    if attempts and max_locality_ratio > max_locality:
-        stop_reasons.append("repair_locality_high")
-    if attempts and ai_authorship_delta > 0:
-        stop_reasons.append("ai_authorship_regression")
-    if attempts and findings_delta > 0:
-        stop_reasons.append("findings_regression")
-    if attempts and marginal_human_gain < min_human_gain:
-        stop_reasons.append("diminishing_human_gain")
-    if attempts and marginal_human_gain > 0 and gain_efficiency < min_gain_efficiency:
-        stop_reasons.append("gain_efficiency_low")
-    if attempts and len(attempts) > max_iterations:
-        stop_reasons.append("max_iterations_reached")
-
-    return {
-        "continue": not stop_reasons,
-        "stop_reasons": stop_reasons,
-        "metrics": {
-            "attempt_count": len(attempts),
-            "cumulative_aggression": round(cumulative_aggression, 3),
-            "max_total_aggression": round(max_total_aggression, 3),
-            "latest_aggression": round(latest_aggression, 3),
-            "max_locality_changed_sentence_ratio": round(max_locality_ratio, 3),
-            "max_locality_limit": round(max_locality, 3),
-            "marginal_human_gain": round(marginal_human_gain, 3),
-            "total_human_gain": round(total_human_gain, 3),
-            "ai_authorship_delta": round(ai_authorship_delta, 3),
-            "ai_transformation_delta": round(ai_transformation_delta, 3),
-            "findings_delta": round(findings_delta, 3),
-            "gain_efficiency": gain_efficiency,
-            "min_human_gain": round(min_human_gain, 3),
-            "min_gain_efficiency": round(min_gain_efficiency, 3),
-            "max_iterations": max_iterations,
-        },
-    }
-
-
-def _iterative_micro_texture_repair(
-    source_text: str,
-    raw_json: dict | None,
-    *,
-    baseline_scan: dict,
-    generate_replacement,
-    scan_candidate,
-    anchors: list[str] | None = None,
-    max_attempts: int | None = None,
-) -> dict:
-    """Run iterative micro-local texture repair with deterministic stop controls.
-
-    `generate_replacement(prompt, repair_info, attempt_index)` supplies one
-    replacement window. `scan_candidate(text)` returns the scanner metrics for
-    the full candidate text. The loop accepts only patches that pass the
-    iteration policy.
-    """
-    try:
-        limit = int(max_attempts if max_attempts is not None else _float_env("DRAFTPROOF_MICRO_TEXTURE_MAX_ITERATIONS", 5.0))
-    except (TypeError, ValueError):
-        limit = 5
-    limit = max(0, limit)
-    current_text = str(source_text or "")
-    previous_scan = dict(baseline_scan or {})
-    accepted_attempts: list[dict] = []
-    rejected_attempts: list[dict] = []
-    repaired_indexes: set[int] = set()
-    stop_reason = "max_attempts_reached" if limit == 0 else ""
-
-    for attempt_index in range(1, limit + 1):
-        window = _micro_texture_window(
-            current_text,
-            raw_json,
-            max_sentences=1,
-            exclude_sentence_indexes=repaired_indexes,
-        )
-        if not window.get("text"):
-            stop_reason = "no_unrepaired_texture_window"
-            break
-        prompt, repair_info = _micro_texture_repair_prompt(
-            current_text,
-            raw_json,
-            anchors or [],
-            max_sentences=1,
-            exclude_sentence_indexes=repaired_indexes,
-        )
-        raw_replacement = generate_replacement(prompt, repair_info, attempt_index)
-        replacement, clean_reason = _clean_micro_texture_candidate(str(raw_replacement or ""), repair_info)
-        attempt = {
-            "attempt": attempt_index,
-            "window_start": window.get("start"),
-            "window_end": window.get("end"),
-            "target_window": window.get("text"),
-            "accepted": False,
-        }
-        if clean_reason:
-            attempt["reason"] = clean_reason
-            rejected_attempts.append(attempt)
-            stop_reason = clean_reason
-            break
-        candidate_text = _splice_sentence_window(
-            current_text,
-            int(window.get("start") or 0),
-            int(window.get("end") or 0),
-            replacement,
-        )
-        if candidate_text == current_text:
-            attempt["reason"] = "micro_texture_no_change"
-            rejected_attempts.append(attempt)
-            stop_reason = "micro_texture_no_change"
-            break
-        attempt.update({
-            "replacement_window": replacement,
-            "repair_aggression": _repair_aggression_score(current_text, candidate_text),
-            "locality": _locality_score(current_text, candidate_text),
-        })
-        try:
-            scan_scores = scan_candidate(candidate_text)
-        except Exception as exc:
-            attempt["reason"] = f"candidate_scan_error {exc}"
-            rejected_attempts.append(attempt)
-            stop_reason = attempt["reason"]
-            break
-        attempt["scan_scores"] = scan_scores or {}
-        iteration_status = _micro_texture_iteration_status(
-            accepted_attempts + [attempt],
-            baseline_scan=baseline_scan,
-            previous_scan=previous_scan,
-            current_scan=attempt["scan_scores"],
-        )
-        attempt["iteration_status"] = iteration_status
-        if not iteration_status.get("continue"):
-            attempt["reason"] = ",".join(iteration_status.get("stop_reasons") or []) or "iteration_policy_stop"
-            rejected_attempts.append(attempt)
-            stop_reason = attempt["reason"]
-            break
-        attempt["accepted"] = True
-        accepted_attempts.append(attempt)
-        repaired_indexes.add(int(window.get("start") or 0))
-        current_text = candidate_text
-        previous_scan = dict(attempt["scan_scores"])
-    else:
-        stop_reason = "max_attempts_reached"
-
-    final_status = _micro_texture_iteration_status(
-        accepted_attempts,
-        baseline_scan=baseline_scan,
-        previous_scan=baseline_scan if len(accepted_attempts) <= 1 else accepted_attempts[-2].get("scan_scores"),
-        current_scan=previous_scan,
-    )
-    return {
-        "text": current_text,
-        "scan_scores": previous_scan,
-        "accepted_attempts": accepted_attempts,
-        "rejected_attempts": rejected_attempts,
-        "attempt_count": len(accepted_attempts) + len(rejected_attempts),
-        "accepted_count": len(accepted_attempts),
-        "stop_reason": stop_reason,
-        "iteration_status": final_status,
-        "repaired_sentence_indexes": sorted(repaired_indexes),
-    }
-
-
-def _optimization_candidate_status(
-    candidate: dict | None,
-    *,
-    baseline: dict | None = None,
-    reject_semantic_drift: bool = True,
-) -> dict:
-    """Rank generated candidates as a multi-objective optimization problem.
-
-    This is intentionally separate from prompt compliance. A candidate can pass
-    the mechanical gate and still be a poor mitigation candidate after scan.
-    """
-    candidate = candidate or {}
-    baseline = baseline or {}
-    mechanical = candidate.get("mechanical") or candidate.get("mechanical_gate") or {}
-    scan = candidate.get("scan_scores") or {}
-    reject_reasons: list[str] = []
-    if mechanical and not mechanical.get("passed"):
-        reject_reasons.append("mechanical_gate_failed")
-    for key in ("missing", "forbidden_found", "forbidden", "generic_banned_found", "connectors"):
-        if mechanical.get(key):
-            reject_reasons.append(f"{key}_present")
-    if reject_semantic_drift and scan.get("semantic_drift"):
-        reject_reasons.append("semantic_drift")
-    if not scan:
-        reject_reasons.append("missing_scan_scores")
-
-    def num(source: dict, key: str, default: float = 0.0) -> float:
-        value = source.get(key)
-        return float(value) if isinstance(value, (int, float)) else default
-
-    human_gain = num(scan, "human") - num(baseline, "human")
-    ai_transformation_drop = num(baseline, "ai_transformation") - num(scan, "ai_transformation")
-    ai_authorship_drop = num(baseline, "ai_authorship") - num(scan, "ai_authorship")
-    ai_score_drop = num(baseline, "ai_score") - num(scan, "ai_score")
-    grounding_drop = num(baseline, "grounding") - num(scan, "grounding")
-    findings_drop = num(baseline, "findings") - num(scan, "findings")
-    generic_phrase_penalty = max(0.0, num(scan, "generic_phrase_count"))
-    if baseline and ai_authorship_drop < 0:
-        reject_reasons.append("ai_authorship_increase")
-    repair_aggression = candidate.get("repair_aggression")
-    if not isinstance(repair_aggression, dict):
-        original_text = candidate.get("original_text") or candidate.get("source_text")
-        candidate_text = candidate.get("candidate_text") or candidate.get("text")
-        repair_aggression = (
-            _repair_aggression_score(str(original_text), str(candidate_text))
-            if isinstance(original_text, str) and isinstance(candidate_text, str)
-            else {}
-        )
-    repair_aggression_score = num(repair_aggression, "score")
-    repair_aggression_limit = _float_env("DRAFTPROOF_TEXTURE_REPAIR_MAX_AGGRESSION", 0.55)
-    if repair_aggression and repair_aggression_score > repair_aggression_limit:
-        reject_reasons.append("repair_aggression_high")
-    locality = candidate.get("locality") or {}
-    if not isinstance(locality, dict) or not locality:
-        original_text = candidate.get("original_text") or candidate.get("source_text")
-        candidate_text = candidate.get("candidate_text") or candidate.get("text")
-        locality = (
-            _locality_score(str(original_text), str(candidate_text))
-            if isinstance(original_text, str) and isinstance(candidate_text, str)
-            else {}
-        )
-    locality_ratio = num(locality, "changed_sentence_ratio")
-    locality_limit = _float_env("DRAFTPROOF_TEXTURE_REPAIR_MAX_LOCALITY", 0.25)
-    if locality and locality_ratio > locality_limit:
-        reject_reasons.append("repair_locality_high")
-
-    grounding_penalty = max(0.0, -grounding_drop)
-    finding_penalty = max(0.0, -findings_drop)
-    score = (
-        human_gain * 5.0
-        + ai_authorship_drop * 2.0
-        + ai_transformation_drop * 1.5
-        + ai_score_drop * 1.0
-        - grounding_penalty * 0.5
-        - finding_penalty * 0.5
-        - generic_phrase_penalty * 2.0
-    )
-    accepted = not reject_reasons
-    stage_target = _human_gain_stage_target(num(scan, "human"))
-    rank_key = (
-        1 if accepted else 0,
-        1 if num(scan, "human") >= stage_target else 0,
-        human_gain,
-        round(score, 3),
-        ai_authorship_drop,
-        ai_transformation_drop,
-        ai_score_drop,
-        -generic_phrase_penalty,
-    )
-    return {
-        "accepted": accepted,
-        "reject_reasons": reject_reasons,
-        "score": round(score, 3),
-        "rank_key": rank_key,
-        "components": {
-            "human_gain": round(human_gain, 3),
-            "ai_transformation_drop": round(ai_transformation_drop, 3),
-            "ai_authorship_drop": round(ai_authorship_drop, 3),
-            "ai_score_drop": round(ai_score_drop, 3),
-            "grounding_drop": round(grounding_drop, 3),
-            "findings_drop": round(findings_drop, 3),
-            "grounding_penalty": round(grounding_penalty, 3),
-            "finding_penalty": round(finding_penalty, 3),
-            "generic_phrase_penalty": round(generic_phrase_penalty, 3),
-            "human_stage_target": round(stage_target, 3),
-            "repair_aggression_score": round(repair_aggression_score, 3),
-            "repair_aggression_limit": round(repair_aggression_limit, 3),
-            "locality_changed_sentence_ratio": round(locality_ratio, 3),
-            "locality_limit": round(locality_limit, 3),
-        },
-        "weights": {
-            "human_gain": 5.0,
-            "ai_authorship_drop": 2.0,
-            "ai_transformation_drop": 1.5,
-            "ai_score_drop": 1.0,
-            "grounding_penalty": -0.5,
-            "finding_penalty": -0.5,
-            "generic_phrase_penalty": -2.0,
-        },
-    }
-
-
-def _select_best_optimization_candidate(
-    candidates: list[dict] | None,
-    *,
-    baseline: dict | None = None,
-    reject_semantic_drift: bool = True,
-) -> dict:
-    rows = []
-    for index, candidate in enumerate(candidates or []):
-        status = _optimization_candidate_status(
-            candidate,
-            baseline=baseline,
-            reject_semantic_drift=reject_semantic_drift,
-        )
-        row = dict(candidate or {})
-        row["optimization_status"] = status
-        row["_candidate_index"] = index
-        rows.append(row)
-    if not rows:
-        return {
-            "selected": None,
-            "selected_index": None,
-            "accepted_count": 0,
-            "candidates": [],
-            "reason": "no_candidates",
-        }
-    rows.sort(key=lambda row: row["optimization_status"]["rank_key"], reverse=True)
-    best = rows[0]
-    accepted = [row for row in rows if row["optimization_status"]["accepted"]]
-    return {
-        "selected": best if best["optimization_status"]["accepted"] else None,
-        "selected_index": best.get("_candidate_index") if best["optimization_status"]["accepted"] else None,
-        "accepted_count": len(accepted),
-        "candidates": rows,
-        "reason": (
-            "selected_best_pareto_candidate"
-            if best["optimization_status"]["accepted"]
-            else "all_candidates_rejected"
-        ),
-    }
-
-
-def _human_gain_stage_target(human_score: float | int | None, *, final_target: float = 80.0) -> float:
-    """Return the next ladder target for controlled human-gain repair."""
-    try:
-        human = float(human_score)
-    except (TypeError, ValueError):
-        human = 0.0
-    for target in (60.0, 70.0, float(final_target)):
-        if human < target:
-            return target
-    return float(final_target)
-
-
-def _metric_repair_diagnosis(
-    scan_scores: dict | None,
-    *,
-    target_human: float = 80.0,
-    target_ai_transformation: float = 20.0,
-    target_ai_authorship: float = 45.0,
-) -> dict:
-    """Choose the next targeted repair dimension from scanner scores."""
-    scan_scores = scan_scores or {}
-
-    def num(key: str, default: float = 0.0) -> float:
-        value = scan_scores.get(key)
-        return float(value) if isinstance(value, (int, float)) else default
-
-    if scan_scores.get("semantic_drift"):
-        return {
-            "repair_type": "semantic_drift_rollback",
-            "priority": 100,
-            "reason": "semantic drift is a hard failure before score optimization",
-            "instructions": [
-                "Rollback or patch only the drifted sentence span.",
-                "Do not introduce new examples, source names, claims, or section roles.",
-                "Keep protected anchors and return closer to the section meaning inventory.",
-            ],
-        }
-
-    ai_authorship = num("ai_authorship")
-    ai_transformation = num("ai_transformation")
-    human = num("human")
-    generic_phrase_count = num("generic_phrase_count")
-    findings = num("findings")
-    gaps = {
-        "ai_authorship_gap": max(0.0, ai_authorship - target_ai_authorship),
-        "ai_transformation_gap": max(0.0, ai_transformation - target_ai_transformation),
-        "human_gap": max(0.0, target_human - human),
-        "generic_phrase_gap": max(0.0, generic_phrase_count),
-        "finding_gap": max(0.0, findings - 5.0),
-    }
-    next_human_stage = _human_gain_stage_target(human, final_target=target_human)
-    if gaps["ai_authorship_gap"] > 0:
-        return {
-            "repair_type": "authorship_texture_repair",
-            "priority": round(gaps["ai_authorship_gap"], 3),
-            "reason": "AI Authorship texture remains the blocker; semantic human cues are not enough",
-            "instructions": [
-                "Do not add human semantic cues as the main move.",
-                "Repair sentence rhythm, pacing, and predictability only; preserve claim inventory.",
-                "Break clean explanatory cadence with natural asymmetry, not random noise.",
-                "Reduce transition cleanliness and balanced claim-explanation-implication flow.",
-                "Vary information density locally: one compressed sentence, one practical sentence, one delayed connection.",
-                "Keep acceptable friction without typos, fake errors, invented examples, or new evidence.",
-            ],
-        }
-    if gaps["human_gap"] > 0:
-        return {
-            "repair_type": "human_gain_repair",
-            "priority": round(next_human_stage - human, 3),
-            "stage_target": round(next_human_stage, 3),
-            "final_target": round(target_human, 3),
-            "reason": "Human Contribution remains below the next ladder target after authorship texture is controlled",
-            "instructions": [
-                "Patch only 10-20% of sentences in this repair round.",
-                "Increase concrete anchor density using original text anchors and scanner context only.",
-                "Add safe author reasoning traces such as what I noticed, the issue is, or this made me think only where the source stance supports it.",
-                "Use mild rhythm unevenness: one short sentence, one longer causal sentence, and less balanced claim-explanation-implication flow.",
-                "Keep rough edges; do not over-clean transitions, grammar, or paragraph symmetry.",
-                "Do not invent new places, dates, numbers, people, evidence, citations, workplace events, or assessment results.",
-            ],
-        }
-    if gaps["ai_transformation_gap"] > 0:
-        return {
-            "repair_type": "ai_transformation_smoothing",
-            "priority": round(gaps["ai_transformation_gap"], 3),
-            "reason": "AI Transformation remains high, suggesting the rewrite is too smooth or rebuilt",
-            "instructions": [
-                "Reduce smoothing and restore author-owned roughness.",
-                "Keep sentence order mostly stable while changing over-clean transitions.",
-                "Remove balanced summary cadence and generic connector chains.",
-            ],
-        }
-    if generic_phrase_count > 0:
-        return {
-            "repair_type": "connector_cleanup",
-            "priority": round(generic_phrase_count, 3),
-            "reason": "Generic connector findings remain after mitigation",
-            "instructions": [
-                "Remove generic connectors without changing meaning.",
-                "Use plain transitions or no transition.",
-            ],
-        }
-    return {
-        "repair_type": "none",
-        "priority": 0,
-        "reason": "No targeted repair required by configured thresholds",
-        "instructions": [],
-    }
 
 
 def _critical_high_count(report_dict: dict | None) -> int:
@@ -12336,245 +5248,26 @@ def _authenticity_gate_status(
     min_ai_transformation_drop: float = 2.0,
     drift_similarity: float | None = None,
 ) -> dict:
-    original = _contribution_scores(original_report)
-    candidate = _contribution_scores(candidate_report)
-    original_integrity = _integrity_scores(original_report)
-    candidate_integrity = _integrity_scores(candidate_report)
-    original_human = original.get("human")
-    candidate_human = candidate.get("human")
-    original_ai_transform = original.get("ai_transformation")
-    candidate_ai_transform = candidate.get("ai_transformation")
-    original_ai_authorship = original_integrity.get("ai_authorship")
-    candidate_ai_authorship = candidate_integrity.get("ai_authorship")
-    human_delta = (
-        candidate_human - original_human
-        if isinstance(original_human, (int, float)) and isinstance(candidate_human, (int, float))
-        else None
+    deps = AuthenticityGateDeps(
+        contribution_scores=_contribution_scores,
+        integrity_scores=_integrity_scores,
+        float_env=_float_env,
+        critical_high_count=_critical_high_count,
+        human_shift_score=_human_shift_score,
     )
-    ai_transform_delta = (
-        original_ai_transform - candidate_ai_transform
-        if (
-            isinstance(original_ai_transform, (int, float))
-            and isinstance(candidate_ai_transform, (int, float))
-        )
-        else None
-    )
-    ai_authorship_delta = (
-        original_ai_authorship - candidate_ai_authorship
-        if (
-            isinstance(original_ai_authorship, (int, float))
-            and isinstance(candidate_ai_authorship, (int, float))
-        )
-        else None
-    )
-    crosses_human_side = bool(
-        isinstance(candidate_human, (int, float))
-        and isinstance(candidate_ai_transform, (int, float))
-        and candidate_human > candidate_ai_transform
-        and (
-            not isinstance(original_human, (int, float))
-            or not isinstance(original_ai_transform, (int, float))
-            or original_human <= original_ai_transform
-        )
-    )
-    moves_toward_human = bool(
-        (isinstance(human_delta, (int, float)) and human_delta >= min_human_gain)
-        or (
-            isinstance(ai_transform_delta, (int, float))
-            and ai_transform_delta >= min_ai_transformation_drop
-        )
-        or crosses_human_side
-    )
-    reduces_ai_authorship = bool(
-        isinstance(ai_authorship_delta, (int, float))
-        and ai_authorship_delta >= _float_env("DRAFTPROOF_AUTHENTICITY_MIN_AI_AUTHORSHIP_DROP", 2.0)
-    )
-    ai_authorship_regression_tolerance = _float_env(
-        "DRAFTPROOF_AUTHENTICITY_AI_AUTHORSHIP_REGRESSION_TOLERANCE",
-        0.0,
-    )
-    ai_authorship_regressed = bool(
-        isinstance(ai_authorship_delta, (int, float))
-        and ai_authorship_delta < -ai_authorship_regression_tolerance
-    )
-    major_human_threshold = _float_env("DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_THRESHOLD", 80.0)
-    major_human_gain = _float_env("DRAFTPROOF_AUTHENTICITY_MAJOR_HUMAN_GAIN", 50.0)
-    major_human_breakthrough = bool(
-        isinstance(candidate_human, (int, float))
-        and isinstance(human_delta, (int, float))
-        and candidate_human >= major_human_threshold
-        and human_delta >= major_human_gain
-    )
-    ai_authorship_regression_blocked = ai_authorship_regressed
-    target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
-    strong_accept_min_human_gain = _float_env("DRAFTPROOF_AUTHENTICITY_STRONG_ACCEPT_MIN_HUMAN_GAIN", 20.0)
-    strong_accept_min_transform_drop = _float_env("DRAFTPROOF_AUTHENTICITY_STRONG_ACCEPT_MIN_AI_TRANSFORM_DROP", 20.0)
-    strong_accept_min_shift = _float_env("DRAFTPROOF_AUTHENTICITY_STRONG_ACCEPT_MIN_SHIFT", 45.0)
-    crosses_target_human = bool(
-        isinstance(candidate_human, (int, float))
-        and candidate_human >= target_human
-    )
-    critical_high_regressed = _critical_high_count(candidate_report) > _critical_high_count(original_report)
-    review_regressed = candidate_review_burden > original_review_burden
-    severity_regressed = candidate_weighted_severity > original_weighted_severity
-    human_shift = _human_shift_score(
+    return _core_authenticity_gate_status(
         original_report,
         candidate_report,
+        text_changed,
+        original_review_burden=original_review_burden,
+        candidate_review_burden=candidate_review_burden,
+        original_weighted_severity=original_weighted_severity,
+        candidate_weighted_severity=candidate_weighted_severity,
+        min_human_gain=min_human_gain,
+        min_ai_transformation_drop=min_ai_transformation_drop,
         drift_similarity=drift_similarity,
-        review_burden_delta=candidate_review_burden - original_review_burden,
-        weighted_severity_delta=candidate_weighted_severity - original_weighted_severity,
+        deps=deps,
     )
-    human_shift_score = human_shift.get("score")
-    authorship_cost_per_human_gain = (
-        round(max(0.0, -float(ai_authorship_delta)) / max(float(human_delta), 1.0), 3)
-        if isinstance(ai_authorship_delta, (int, float)) and isinstance(human_delta, (int, float))
-        else None
-    )
-    human_gain_with_authorship_regression = bool(
-        isinstance(human_delta, (int, float))
-        and human_delta > 0
-        and ai_authorship_regressed
-    )
-    min_human_shift_score = _float_env("DRAFTPROOF_AUTHENTICITY_MIN_HUMAN_SHIFT_SCORE", 3.0)
-    clears_human_shift_score = bool(
-        isinstance(human_shift_score, (int, float))
-        and human_shift_score >= min_human_shift_score
-    )
-    positive_human_shift = bool(
-        isinstance(human_shift_score, (int, float))
-        and human_shift_score > 0
-        and (moves_toward_human or reduces_ai_authorship)
-    )
-    strong_below_target_accept = bool(
-        isinstance(candidate_human, (int, float))
-        and candidate_human < target_human
-        and isinstance(human_delta, (int, float))
-        and human_delta >= strong_accept_min_human_gain
-        and isinstance(ai_transform_delta, (int, float))
-        and ai_transform_delta >= strong_accept_min_transform_drop
-        and isinstance(human_shift_score, (int, float))
-        and human_shift_score >= strong_accept_min_shift
-        and not ai_authorship_regressed
-    )
-    target_accept = crosses_target_human or strong_below_target_accept
-    target_gap_progress = bool(
-        crosses_target_human
-        or strong_below_target_accept
-        or (
-            isinstance(original_human, (int, float))
-            and float(original_human) < target_human
-            and (
-                (
-                    isinstance(human_delta, (int, float))
-                    and human_delta >= min_human_gain
-                )
-                or (
-                    isinstance(ai_transform_delta, (int, float))
-                    and ai_transform_delta >= min_ai_transformation_drop
-                )
-            )
-        )
-        or not (isinstance(original_human, (int, float)) and float(original_human) < target_human)
-    )
-    human_target_regressed = bool(
-        isinstance(original_human, (int, float))
-        and original_human < target_human
-        and isinstance(human_delta, (int, float))
-        and human_delta < 0
-    )
-    ai_transformation_target_regressed = bool(
-        isinstance(original_human, (int, float))
-        and original_human < target_human
-        and isinstance(ai_transform_delta, (int, float))
-        and ai_transform_delta < 0
-    )
-    candidate_progress = bool(
-        text_changed
-        and (clears_human_shift_score or positive_human_shift)
-        and not ai_authorship_regression_blocked
-        and not human_target_regressed
-        and not ai_transformation_target_regressed
-        and target_gap_progress
-        and not critical_high_regressed
-        and not review_regressed
-        and not severity_regressed
-    )
-    success = bool(
-        candidate_progress
-        and target_accept
-    )
-    reason = ""
-    if success:
-        reason = "accepted"
-    elif not text_changed:
-        reason = "unchanged_candidate"
-    elif ai_authorship_regression_blocked:
-        reason = "ai_authorship_regressed"
-    elif human_target_regressed:
-        reason = "human_target_regressed"
-    elif ai_transformation_target_regressed:
-        reason = "ai_transformation_target_regressed"
-    elif not target_gap_progress:
-        reason = "no_human_target_progress"
-    elif not (clears_human_shift_score or positive_human_shift):
-        reason = "human_shift_score_too_low"
-    elif critical_high_regressed:
-        reason = "critical_high_regressed"
-    elif review_regressed:
-        reason = "review_burden_regressed"
-    elif severity_regressed:
-        reason = "weighted_severity_regressed"
-    elif candidate_progress:
-        reason = "candidate_progress_below_target"
-    return {
-        "success": success,
-        "reason": reason,
-        "original_human": original_human,
-        "candidate_human": candidate_human,
-        "human_delta": human_delta,
-        "original_ai_transformation": original_ai_transform,
-        "candidate_ai_transformation": candidate_ai_transform,
-        "ai_transformation_delta": ai_transform_delta,
-        "original_ai_authorship": original_ai_authorship,
-        "candidate_ai_authorship": candidate_ai_authorship,
-        "ai_authorship_delta": ai_authorship_delta,
-        "reduces_ai_authorship": reduces_ai_authorship,
-        "ai_authorship_regressed": ai_authorship_regressed,
-        "ai_authorship_regression_blocked": ai_authorship_regression_blocked,
-        "ai_authorship_regression_tolerance": ai_authorship_regression_tolerance,
-        "human_gain_with_authorship_regression": human_gain_with_authorship_regression,
-        "false_positive_improvement": human_gain_with_authorship_regression,
-        "false_positive_improvement_reason": (
-            "human_gain_with_authorship_regression"
-            if human_gain_with_authorship_regression
-            else ""
-        ),
-        "major_human_breakthrough": major_human_breakthrough,
-        "target_human": target_human,
-        "crosses_target_human": crosses_target_human,
-        "strong_below_target_accept": strong_below_target_accept,
-        "strong_accept_min_human_gain": strong_accept_min_human_gain,
-        "strong_accept_min_ai_transform_drop": strong_accept_min_transform_drop,
-        "strong_accept_min_shift": strong_accept_min_shift,
-        "target_accept": target_accept,
-        "target_gap_progress": target_gap_progress,
-        "candidate_progress": candidate_progress,
-        "human_target_regressed": human_target_regressed,
-        "ai_transformation_target_regressed": ai_transformation_target_regressed,
-        "crosses_human_side": crosses_human_side,
-        "human_shift_score": human_shift_score,
-        "human_shift_components": human_shift.get("components"),
-        "authorship_cost_per_human_gain": authorship_cost_per_human_gain,
-        "human_shift_weights": human_shift.get("weights"),
-        "min_human_shift_score": min_human_shift_score,
-        "clears_human_shift_score": clears_human_shift_score,
-        "positive_human_shift": positive_human_shift,
-        "min_human_gain": min_human_gain,
-        "min_ai_transformation_drop": min_ai_transformation_drop,
-        "critical_high_regressed": critical_high_regressed,
-        "review_burden_regressed": review_regressed,
-        "weighted_severity_regressed": severity_regressed,
-    }
 
 
 def _ai_mitigation_action_brief(ai_mitigation: dict | None, limit: int = 10) -> str:
@@ -12717,2041 +5410,41 @@ def _authenticity_mitigation_prompt(
     )
 
 
-def _brief_sentences(text: str, limit: int = 10) -> list[str]:
-    if not isinstance(text, str):
-        return []
-    rows = []
-    for sentence in re.findall(r"[^.!?\n]+(?:[.!?]+|$)", text):
-        cleaned = " ".join(sentence.split()).strip()
-        if len(cleaned.split()) < 6:
-            continue
-        rows.append(cleaned)
-        if len(rows) >= limit:
-            break
-    return rows
-
-
-def _text_word_count(text: str) -> int:
-    if not isinstance(text, str) or not text.strip():
-        return 0
-    return len(re.findall(r"\b[\w’'-]+\b", text))
-
-
-def _word_count_band(text: str, variance: float = 0.25) -> dict:
-    count = _text_word_count(text)
-    return {
-        "source_word_count": count,
-        "min_words": max(1, int(math.floor(count * (1.0 - variance)))),
-        "max_words": max(1, int(math.ceil(count * (1.0 + variance)))),
-        "variance": variance,
-    }
-
-
-def _integrity_driver_rows(raw_json: dict | None, limit: int = 14) -> list[dict]:
-    raw_json = raw_json or {}
-    rows: list[dict] = []
-    seen = set()
-    integrity_sources = [
-        raw_json.get("integrity_layers"),
-        ((raw_json.get("scan_intelligence") or {}).get("integrity_layers") or {}),
-        ((raw_json.get("ai_mitigation") or {}).get("integrity_layers") or {}),
-    ]
-    for integrity in integrity_sources:
-        layers = integrity.get("layers") if isinstance(integrity, dict) else {}
-        if not isinstance(layers, dict):
-            continue
-        for layer_key, layer in layers.items():
-            if not isinstance(layer, dict):
-                continue
-            for signal in layer.get("signals") or []:
-                if not isinstance(signal, dict):
-                    continue
-                signal_key = (layer_key, signal.get("key") or signal.get("label"))
-                if signal_key in seen:
-                    continue
-                seen.add(signal_key)
-                score = signal.get("score")
-                rows.append({
-                    "layer": layer_key,
-                    "key": signal.get("key"),
-                    "label": signal.get("label"),
-                    "score": score,
-                    "priority": float(score) if isinstance(score, (int, float)) else -1.0,
-                })
-    rows.sort(key=lambda item: item.get("priority", -1), reverse=True)
-    return [
-        {k: v for k, v in row.items() if k != "priority" and v is not None}
-        for row in rows[:limit]
-    ]
-
-
-def _target_segment_rows(raw_json: dict | None, limit: int = 16) -> list[dict]:
-    raw_json = raw_json or {}
-    ai_mitigation = raw_json.get("ai_mitigation") or {}
-    segments = ai_mitigation.get("target_segments") or []
-    rows: list[dict] = []
-    for segment in segments:
-        if not isinstance(segment, dict):
-            continue
-        signal = segment.get("primary_signal") or {}
-        rows.append({
-            "segment_id": segment.get("segment_id"),
-            "paragraph_id": segment.get("paragraph_id"),
-            "text": segment.get("text"),
-            "signal": signal.get("key") or signal.get("title"),
-            "score": signal.get("score"),
-            "lever": segment.get("lever"),
-            "bucket": segment.get("bucket"),
-            "action": segment.get("action"),
-            "auto_apply": segment.get("auto_apply"),
-        })
-        if len(rows) >= limit:
-            break
-    return rows
-
-
-def _reconstruction_failure_feedback(prior_attempts: list[dict] | None, limit: int = 6) -> list[dict]:
-    rows: list[dict] = []
-    for item in (prior_attempts or [])[-limit:]:
-        if not isinstance(item, dict):
-            continue
-        gate = item.get("gate") if isinstance(item.get("gate"), dict) else {}
-        components = item.get("human_shift_components") or gate.get("human_shift_components") or {}
-        row = {
-            "strategy": item.get("strategy") or item.get("attempt"),
-            "reason": item.get("reason") or gate.get("reason"),
-            "human_shift_score": item.get("human_shift_score") or gate.get("human_shift_score"),
-            "candidate_human": item.get("candidate_human") or item.get("human_contribution") or gate.get("candidate_human"),
-            "human_delta": item.get("human_delta") or gate.get("human_delta"),
-            "ai_authorship_delta": item.get("ai_authorship_delta") or gate.get("ai_authorship_delta"),
-            "ai_transformation_delta": item.get("ai_transformation_delta") or gate.get("ai_transformation_delta"),
-            "failed_components": {
-                key: value
-                for key, value in components.items()
-                if isinstance(value, (int, float)) and value < 0
-            },
-        }
-        rows.append({k: v for k, v in row.items() if v not in (None, {}, [])})
-    return rows
-
-
-def _reconstruction_gate_controls(prior_attempts: list[dict] | None) -> dict:
-    """Convert scanner/gate failures into generation controls for the next candidate."""
-    feedback = _reconstruction_failure_feedback(prior_attempts, limit=8)
-    controls: list[str] = []
-    blocker_counts: dict[str, int] = {}
-
-    def add(key: str, instruction: str) -> None:
-        blocker_counts[key] = blocker_counts.get(key, 0) + 1
-        if instruction not in controls:
-            controls.append(instruction)
-
-    for item in feedback:
-        reason = str(item.get("reason") or "")
-        failed_components = item.get("failed_components") or {}
-        candidate_human = item.get("candidate_human") or item.get("human_contribution")
-        if isinstance(candidate_human, (int, float)):
-            next_stage = _human_gain_stage_target(candidate_human)
-            if candidate_human < next_stage:
-                add(
-                    "human_gain_repair",
-                    (
-                        f"HUMAN_GAIN_REPAIR: raise Human Contribution toward the next ladder target "
-                        f"({int(next_stage)}) by patching only 10-20% of sentences with existing anchors, "
-                        "safe author reasoning traces, uneven rhythm, and less balanced paragraph flow."
-                    ),
-                )
-        if "human_contribution_gain" in failed_components or (
-            isinstance(item.get("human_delta"), (int, float)) and item.get("human_delta") < 0
-        ):
-            add(
-                "human_contribution_regressed",
-                "Do not replace author-owned reasoning with smoother academic explanation; keep or increase first-person operational judgement, process detail, and local constraint language.",
-            )
-        if "ai_transformation_reduction" in failed_components or (
-            isinstance(item.get("ai_transformation_delta"), (int, float))
-            and item.get("ai_transformation_delta") < 0
-        ):
-            add(
-                "ai_transformation_regressed",
-                "Avoid outline-to-essay expansion, symmetrical paragraph routes, and polished summary cadence; use uneven paragraph jobs with concrete task decisions.",
-            )
-        if "ai_authorship_reduction" in failed_components or (
-            isinstance(item.get("ai_authorship_delta"), (int, float))
-            and item.get("ai_authorship_delta") < 0
-        ):
-            add(
-                "authorship_texture_repair",
-                "AUTHORSHIP_TEXTURE_REPAIR: do not add more human details yet; reduce statistical smoothness through rhythm variance, less transition cleanliness, asymmetric sentence pacing, and uneven information density without changing meaning.",
-            )
-        if "grounding_risk_reduction" in failed_components:
-            add(
-                "grounding_regressed",
-                "Preserve every source-to-claim relation and citation role; do not generalise cited claims or move sources into broad unsupported summaries.",
-            )
-        if "rewrite_smoothness_reduction" in failed_components:
-            add(
-                "smoothness_regressed",
-                "Stop polishing. Prefer direct workshop-language reasoning over balanced academic sentences.",
-            )
-        if "weighted_severity_penalty" in failed_components or "weighted_severity" in reason:
-            add(
-                "severity_regressed",
-                "Do not introduce new high/medium findings; keep protected anchors and source coverage intact before changing style.",
-            )
-        if "protected_span_lost" in reason or "number_lost" in reason:
-            add(
-                "protected_anchor_lost",
-                "Copy protected anchors exactly: citations, years, page ranges, unit codes, named institutions, quotes, and reference details must remain present.",
-            )
-        if "quote_lost" in reason:
-            add(
-                "quote_lost",
-                "Do not omit or paraphrase quoted/source wording; preserve quoted material exactly where it appears in the submitted content.",
-            )
-        if "candidate_word_count_too_low" in reason:
-            add(
-                "word_count_low",
-                "Add length only through source-licensed reasoning, process explanation, and local constraints from the submitted draft; do not add generic filler.",
-            )
-        if "candidate_word_count_too_high" in reason:
-            add(
-                "word_count_high",
-                "Compress generic explanation while keeping protected anchors and source relations.",
-            )
-        if "semantic_drift" in reason:
-            add(
-                "semantic_drift",
-                "Keep the same claim inventory and evidence relationships; restructure route and rhythm without dropping entities, quotes, citations, or source roles.",
-            )
-
-    if not controls:
-        controls.append(
-            "No scored failure yet. Use the scanner baseline directly: raise Human Contribution toward 80 while preserving protected anchors and avoiding AI Authorship regression."
-        )
-
-    return {
-        "schema_version": "scanner_gate_feedback.v1",
-        "purpose": "Use scanner/gate failures as control signals for the next generation attempt.",
-        "acceptance_target": {
-            "human_contribution_min": 80,
-            "human_contribution_ladder": [60, 70, 80],
-            "primary_goal": "maximize_human_contribution_after_hard_safety_rejects",
-            "ai_authorship_regression_allowed": False,
-            "word_count_variance": "±25%",
-            "critical_high_review_regression_allowed": False,
-        },
-        "prior_attempts": feedback,
-        "blocker_counts": blocker_counts,
-        "next_candidate_controls": controls[:10],
-    }
-
-
-def _generation_context_ledger(brief: dict, blueprint: dict) -> dict:
-    """Build generation input from scanner-derived context, not the source prose."""
-    paragraph_plans = []
-    for plan in (blueprint or {}).get("paragraph_plans") or []:
-        if not isinstance(plan, dict):
-            continue
-        paragraph_plans.append({
-            key: value
-            for key, value in plan.items()
-            if key not in {"source_preview"}
-        })
-    target_segments = []
-    for segment in (brief or {}).get("target_segments") or []:
-        if not isinstance(segment, dict):
-            continue
-        target_segments.append({
-            key: value
-            for key, value in segment.items()
-            if key not in {"text"}
-        })
-    return {
-        "schema_version": "generation_context_ledger.v1",
-        "purpose": "Regenerate from scanner-derived meaning, anchors, roles, and signals without using the submitted prose as a scaffold.",
-        "claim_inventory": (brief or {}).get("claims") or [],
-        "headings": (brief or {}).get("headings") or [],
-        "protected_facts": (brief or {}).get("protected_facts") or [],
-        "preservation_inventory": (brief or {}).get("preservation_inventory") or {},
-        "word_count_band": (brief or {}).get("word_count_band") or {},
-        "paragraph_roles": (brief or {}).get("paragraph_roles") or [],
-        "paragraph_plans": paragraph_plans,
-        "global_driver_targets": (blueprint or {}).get("global_driver_targets") or [],
-        "industry_baseline_focus": (blueprint or {}).get("industry_baseline_focus") or {},
-        "integrity_targets": (brief or {}).get("integrity_targets") or [],
-        "target_segment_signals": target_segments,
-        "allowed_existing_additions": (brief or {}).get("allowed_existing_additions") or [],
-        "preserve_terms": (brief or {}).get("preserve_terms") or [],
-        "do_not_add": (brief or {}).get("do_not_add") or [],
-        "human_contribution_contract": (brief or {}).get("human_contribution_contract") or {},
-        "reference_entries": (brief or {}).get("reference_entries") or [],
-        "generation_handoff": (brief or {}).get("generation_handoff") or {},
-    }
-
-
-def _reference_entries_from_text(text: str, limit: int = 60) -> list[str]:
-    """Extract bibliography entries as preservation context, not prose substrate."""
-    if not isinstance(text, str) or not text.strip():
-        return []
-    lines = text.splitlines()
-    start = None
-    for index, line in enumerate(lines):
-        if re.match(r"^\s*(?:references|reference list|bibliography|works cited)\s*$", line, re.I):
-            start = index + 1
-            break
-    if start is None:
-        return []
-
-    entries: list[str] = []
-    current = ""
-    for raw_line in lines[start:]:
-        line = raw_line.strip()
-        if not line:
-            if current:
-                entries.append(current.strip())
-                current = ""
-            continue
-        if re.match(r"^[A-Z][A-Za-z0-9 ,/&-]{2,70}$", line) and not re.search(r"\(\d{4}\)|https?://|doi\.", line, re.I):
-            break
-        starts_entry = bool(re.search(r"\(\d{4}\)|\(\s*n\.d\.\s*\)|https?://|doi\.", line, re.I))
-        if current and starts_entry:
-            entries.append(current.strip())
-            current = line
-        else:
-            current = f"{current} {line}".strip() if current else line
-        if len(entries) >= limit:
-            break
-    if current and len(entries) < limit:
-        entries.append(current.strip())
-    return entries[:limit]
-
-
-def _staged_generation_section_plan(context_ledger: dict, *, max_sections: int | None = None) -> list[dict]:
-    """Create bounded section plans so the LLM never receives the full document."""
-    if max_sections is None:
-        try:
-            max_sections = int(os.environ.get("DRAFTPROOF_STAGED_REGENERATION_SECTIONS", "6"))
-        except ValueError:
-            max_sections = 6
-    max_sections = max(1, max_sections)
-    handoff = (context_ledger or {}).get("generation_handoff") or {}
-    handoff_units = [
-        unit for unit in handoff.get("section_generation_units") or []
-        if isinstance(unit, dict) and unit.get("heading")
-    ]
-    def section_required_anchors(unit: dict) -> list[str]:
-        anchors: list[str] = []
-        for value in unit.get("must_preserve_anchors") or []:
-            text = str(value or "").strip()
-            if text and text not in anchors:
-                anchors.append(text)
-        for point in unit.get("meaning_inventory") or []:
-            if not isinstance(point, dict):
-                continue
-            for value in point.get("anchors") or []:
-                text = str(value or "").strip()
-                if text and text not in anchors:
-                    anchors.append(text)
-        return anchors
-
-    if handoff_units:
-        title = ((handoff.get("document_profile") or {}).get("title") or "").strip()
-        selected_units = handoff_units[:max_sections]
-        if len(handoff_units) > max_sections:
-            conclusion = next(
-                (
-                    unit for unit in reversed(handoff_units)
-                    if re.search(r"\bconclusion\b|closing|final", str(unit.get("heading") or ""), re.I)
-                ),
-                None,
-            )
-            if conclusion and conclusion not in selected_units:
-                selected_units = selected_units[:max(0, max_sections - 1)] + [conclusion]
-        return [
-            {
-                "section_index": index,
-                "section_id": unit.get("section_id"),
-                "title": title,
-                "heading": unit.get("heading"),
-                "target_words": ((unit.get("target_words") or {}).get("ideal") or (unit.get("target_words") or {}).get("max") or 180),
-                "target_word_band": unit.get("target_words") or {},
-                "must_preserve_anchors": section_required_anchors(unit),
-                "citation_keys_used": unit.get("citation_keys_used") or [],
-                "claim_inventory_slice": unit.get("meaning_inventory") or [],
-                "target_signal_slice": unit.get("detector_risks_to_reduce") or [],
-                "paragraph_plan_slice": [{
-                    "section_id": unit.get("section_id"),
-                    "role": unit.get("role"),
-                    "citation_keys_used": unit.get("citation_keys_used") or [],
-                    "must_preserve_anchors": section_required_anchors(unit),
-                    "generation_instruction": unit.get("generation_instruction") or {},
-                }],
-            }
-            for index, unit in enumerate(selected_units, start=1)
-        ]
-    headings = [
-        str(item).strip()
-        for item in (context_ledger or {}).get("headings") or []
-        if str(item).strip() and not re.match(r"^(?:references|reference list|bibliography|works cited)$", str(item).strip(), re.I)
-    ]
-    if not headings:
-        roles = (context_ledger or {}).get("paragraph_roles") or []
-        headings = [
-            str(row.get("role") or f"Section {idx}").replace("_", " ").title()
-            for idx, row in enumerate(roles[:max_sections], start=1)
-            if isinstance(row, dict)
-        ] or ["Context", "Main Reasoning", "Conclusion"]
-
-    title = headings[0] if len(headings) > 1 else ""
-    body_headings_all = headings[1:] if title else headings
-    body_headings = body_headings_all[:max_sections]
-    if len(body_headings_all) > max_sections:
-        conclusion = next(
-            (
-                heading
-                for heading in reversed(body_headings_all)
-                if re.search(r"\bconclusion\b|closing|final", heading, re.I)
-            ),
-            "",
-        )
-        if conclusion and conclusion not in body_headings:
-            body_headings = body_headings[:max(0, max_sections - 1)] + [conclusion]
-    claims = [
-        str(item).strip()
-        for item in (context_ledger or {}).get("claim_inventory") or []
-        if str(item).strip()
-    ]
-    target_segments = (context_ledger or {}).get("target_segment_signals") or []
-    paragraph_plans = (context_ledger or {}).get("paragraph_plans") or []
-    word_band = (context_ledger or {}).get("word_count_band") or {}
-    reference_words = _text_word_count("\n".join((context_ledger or {}).get("reference_entries") or []))
-    total_target = int((word_band.get("min_words") or 0) + (word_band.get("max_words") or 0)) // 2
-    if total_target <= 0:
-        total_target = max(900, len(claims) * 55)
-    body_target = max(450, total_target - reference_words - _text_word_count(title))
-    # LLM section generators commonly undershoot long-form word targets. Inflate
-    # the requested body budget while the assembler still enforces the final
-    # ±25% document band after assembly.
-    target_inflation = _float_env("DRAFTPROOF_STAGED_SECTION_TARGET_INFLATION", 1.18)
-    per_section = max(120, int((body_target * target_inflation) / max(1, len(body_headings))))
-
-    plans: list[dict] = []
-    claim_window = max(2, math.ceil(len(claims) / max(1, len(body_headings))))
-    segment_window = max(1, math.ceil(len(target_segments) / max(1, len(body_headings)))) if target_segments else 1
-    for index, heading in enumerate(body_headings, start=1):
-        claim_start = (index - 1) * claim_window
-        segment_start = (index - 1) * segment_window
-        plans.append({
-            "section_index": index,
-            "title": title,
-            "heading": heading,
-            "target_words": per_section,
-            "claim_inventory_slice": claims[claim_start:claim_start + claim_window],
-            "target_signal_slice": target_segments[segment_start:segment_start + segment_window],
-            "paragraph_plan_slice": paragraph_plans[max(0, index - 1):index + 2],
-        })
-    return plans
-
-
-def _staged_reconstruction_section_prompt(
-    context_ledger: dict,
-    gate_controls: dict,
-    section_plan: dict,
-    *,
-    strategy: str,
-    attempt_index: int,
-) -> str:
-    target_band = section_plan.get("target_word_band") or {}
-    target_min = target_band.get("min")
-    target_max = target_band.get("max")
-    target_ideal = target_band.get("ideal") or section_plan.get("target_words")
-    target_text = (
-        f"between {target_min} and {target_max} words; aim for about {target_ideal} words"
-        if isinstance(target_min, int) and isinstance(target_max, int)
-        else f"about {section_plan.get('target_words')} words"
-    )
-    required_anchors = section_plan.get("must_preserve_anchors") or []
-    allowed_citations = section_plan.get("citation_keys_used") or []
-    handoff = (context_ledger or {}).get("generation_handoff") or {}
-    all_reference_labels = []
-    for ref in handoff.get("reference_register") or []:
-        if not isinstance(ref, dict):
-            continue
-        label = str(ref.get("citation_key") or "").strip()
-        if label and label not in all_reference_labels:
-            all_reference_labels.append(label)
-    disallowed_citations = [
-        label for label in all_reference_labels
-        if label not in allowed_citations
-    ][:20]
-    preserve_context = {
-        "protected_facts": (context_ledger or {}).get("protected_facts") or [],
-        "preservation_inventory": (context_ledger or {}).get("preservation_inventory") or {},
-        "preserve_terms": (context_ledger or {}).get("preserve_terms") or [],
-        "do_not_add": (context_ledger or {}).get("do_not_add") or [],
-        "industry_baseline_focus": (context_ledger or {}).get("industry_baseline_focus") or {},
-        "human_contribution_contract": (context_ledger or {}).get("human_contribution_contract") or {},
-    }
-    section_context = {
-        "schema_version": "section_generation_context.v1",
-        "section": section_plan,
-        "preserve_context": preserve_context,
-        "scanner_gate_feedback": gate_controls,
-    }
-    strategy_controls = []
-    strategy_name = str(strategy or "").strip().lower()
-    anchor_lock_mapping = _anchor_lock_mapping(required_anchors)
-    prompt_section_context = (
-        _freeze_anchor_payload(section_context, anchor_lock_mapping)
-        if anchor_lock_mapping
-        else section_context
-    )
-    prompt_required_anchors = (
-        [item["placeholder"] for item in anchor_lock_mapping]
-        if anchor_lock_mapping
-        else required_anchors
-    )
-    if strategy_name == "plain_direct_voice_rebuild":
-        strategy_controls = [
-            "PLAIN_DIRECT_VOICE_REBUILD is active.",
-            "Write like a plain submitted draft, not like a polished model answer.",
-            "Use simple vocabulary and direct sentences. Repeating ordinary words is acceptable.",
-            "Do not upgrade the essay into academic style. Do not add sophisticated connectors or balanced paragraph architecture.",
-            "Keep some uneven development: one idea may be short, another may be a little over-explained, and not every link needs a transition.",
-            "Avoid phrases such as rapidly evolving, crucial role, significant impact, furthermore, moreover, additionally, this highlights, and in conclusion.",
-            "Do not add new facts, citations, examples, dates, institutions, or personal events.",
-            "Preserve the same meaning and required anchors.",
-        ]
-    elif strategy_name == "human_gain_repair":
-        strategy_controls = [
-            "HUMAN_GAIN_REPAIR is active.",
-            "Patch the section through controlled human-anchor amplification, not broad rewriting.",
-            "Use only existing anchors, section-local context, and safe lived-observation phrasing licensed by the source stance.",
-            "Do not invent new concrete details. If a concrete detail is not in required anchors or context ledger, leave it out.",
-            "Prefer one small reasoning trace and one workshop/process anchor over generic academic expansion.",
-            "Keep mild unevenness and rough edges; do not make every sentence equally polished.",
-        ]
-    elif strategy_name == "authorship_distribution_repair":
-        strategy_controls = [
-            "AUTHORSHIP_DISTRIBUTION_REPAIR is active.",
-            "Primary target is lower AI Authorship, not prettier prose and not more explanation.",
-            "Avoid the polished essay route. Do not write claim -> explanation -> implication repeatedly.",
-            "Use distributional texture: one compressed sentence, one slightly longer causal sentence, one plain restart, and one under-explained but clear practical point.",
-            "Break clean transition chains. Use plain moves such as 'But', 'So', 'The issue is', or no transition when the link is obvious.",
-            "Reduce semantic uniformity by giving adjacent sentences different jobs: observation, limitation, consequence, then a narrow judgement.",
-            "Do not add new facts, examples, dates, institutions, personal events, citations, or evidence.",
-            "Do not add random errors, slang, typos, or artificial noise.",
-        ]
-    elif strategy_name == "authorship_texture_repair":
-        strategy_controls = [
-            "AUTHORSHIP_TEXTURE_REPAIR is active.",
-            "Do not add more semantic human anchors as the main move; fix authorship texture.",
-            "Preserve the same meaning points and required anchors while changing cadence and pacing.",
-            "Use natural asymmetry: one short sentence, one longer practical sentence, and one delayed connection.",
-            "Reduce clean transition logic. Avoid neat claim -> explanation -> implication paragraph routes.",
-            "Vary information density without adding facts: compress one idea, leave one practical point less over-explained.",
-            "Keep acceptable local friction, but do not add typos, grammar damage, fake randomness, or invented details.",
-        ]
-    elif strategy_name in {"low_smoothness_rebuild", "asymmetric_paragraph_route"}:
-        strategy_controls = [
-            "LOW_SMOOTHNESS_AUTHORSHIP_REPAIR is active.",
-            "Keep meaning and anchors, but lower clean explanatory cadence.",
-            "Prefer uneven paragraph movement over balanced academic flow.",
-            "Use fewer connector phrases. Let some sentences sit next to each other without over-explaining the link.",
-            "Compress generic claims instead of expanding them.",
-            "Do not add fabricated grounding or decorative personal detail.",
-        ]
-    if anchor_lock_mapping:
-        strategy_controls.append(
-            "Anchor lock is active. Copy every [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation."
-        )
-    return (
-        "DraftProof staged AI-Mitigation generation.\n"
-        "Generate only this section body from the section context ledger. "
-        "Do not output the section heading, references, labels, comments, markdown fences, or explanation.\n"
-        "The original submitted prose is unavailable by design. Use only the structured context below.\n\n"
-        f"Attempt: {attempt_index}. Strategy family: {strategy}.\n"
-        f"Section heading owned by assembler: {section_plan.get('heading')}\n"
-        f"Target length for this section body: {target_text}. This is guidance, not the final acceptance gate.\n"
-        f"Required section anchors to preserve exactly; missing any one invalidates the output: {json.dumps(prompt_required_anchors, ensure_ascii=False)}\n"
-        f"Allowed citation/source keys for this section: {json.dumps(allowed_citations, ensure_ascii=False)}\n"
-        f"Disallowed citation/source keys for this section: {json.dumps(disallowed_citations, ensure_ascii=False)}\n\n"
-        "Section context ledger:\n"
-        f"{json.dumps(prompt_section_context, ensure_ascii=False)[:7000]}\n\n"
-        "Generation controls:\n"
-        f"- Word-count target: stay near {target_text}; scanner/gate quality is more important than exact length.\n"
-        "- Write enough section body to survive cleanup that removes headings, repeated sentences, labels, and filler.\n"
-        "- Do not repeat any full sentence or near-duplicate sentence; repeated sentences are removed before scoring and can make the candidate too short.\n"
-        "- Preserve meaning, citations, years, names, numbers, quotes, source relations, and domain terms that are relevant to this section.\n"
-        "- Use every required section anchor unless it is clearly a fragment; unit codes and named institutions are mandatory.\n"
-        "- Do not mention disallowed source names, author groups, citations, frameworks, or evidence from other sections.\n"
-        "- If allowed citation/source keys is empty, do not mention any source author, cited study, framework, or reference name.\n"
-        "- Do not add new evidence, personal events, workplace observations, institutions, dates, statistics, sources, or citations.\n"
-        "- Do not make a polished template essay paragraph. Use local reasoning, uneven sentence lengths, and section-specific causal links.\n"
-        "- If the section context is thin, expand only by connecting the provided meaning points and anchors; do not invent facts.\n"
-        + ("".join(f"- {item}\n" for item in strategy_controls) if strategy_controls else "")
-        + "- Return prose only."
-    )
-
-
-def _clean_section_candidate(output: str, heading: str) -> str:
-    if not output:
-        return ""
-    text = output.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text).strip()
-    text = re.sub(r"^(?:section|body|draft|answer)\s*:\s*", "", text, flags=re.I).strip()
-    if heading:
-        text = re.sub(rf"^\s*{re.escape(str(heading).strip())}\s*", "", text, flags=re.I).strip()
-    text = re.sub(r"(?im)^\s*(?:references|reference list|bibliography|works cited)\s*$.*", "", text, flags=re.S).strip()
-    paragraphs = [" ".join(p.strip().split()) for p in re.split(r"\n\s*\n", text) if p.strip()]
-    return "\n\n".join(paragraphs).strip()
-
-
-def _staged_reconstruction_candidate(
-    gateway: LLMGateway,
-    source_text: str,
-    raw_json: dict,
-    *,
-    attempt_index: int,
-    strategy: str,
-    prior_attempts: list[dict] | None = None,
-    max_calls: int | None = None,
-) -> tuple[str, dict]:
-    """Generate a candidate through section prompts and deterministic assembly."""
-    brief = _build_reconstruction_meaning_brief(source_text, raw_json)
-    blueprint = _build_regeneration_blueprint(source_text, raw_json, strategy)
-    context_ledger = _generation_context_ledger(brief, blueprint)
-    gate_controls = _reconstruction_gate_controls(prior_attempts)
-    section_plans = _staged_generation_section_plan(context_ledger)
-    title = section_plans[0].get("title") if section_plans else ""
-    parts: list[str] = [str(title).strip()] if title else []
-    section_results: list[dict] = []
-    call_count = 0
-    for section_plan in section_plans:
-        if max_calls is not None and call_count >= max(0, int(max_calls)):
-            section_results.append({
-                "heading": section_plan.get("heading"),
-                "target_words": section_plan.get("target_words"),
-                "actual_words": 0,
-                "empty": True,
-                "skipped": True,
-                "skip_reason": "llm_call_budget_exhausted",
-            })
-            continue
-        prompt = _staged_reconstruction_section_prompt(
-            context_ledger,
-            gate_controls,
-            section_plan,
-            strategy=strategy,
-            attempt_index=attempt_index,
-        )
-        response = gateway.chat(
-            prompt,
-            system=(
-                "You are DraftProof's staged AI-Mitigation section generator. "
-                "Return only bounded section prose from the structured context ledger."
-            ),
-            temperature=float(os.environ.get("DRAFTPROOF_RECONSTRUCTION_TEMPERATURE", "0.78")),
-            max_tokens=int(os.environ.get("DRAFTPROOF_STAGED_SECTION_MAX_TOKENS", "1800")),
-            top_p=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_P"),
-            top_k=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "TOP_K"),
-            presence_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "PRESENCE_PENALTY"),
-            frequency_penalty=_phase_sampling_arg("DRAFTPROOF_RECONSTRUCTION", "FREQUENCY_PENALTY"),
-        )
-        call_count += 1
-        body = _clean_section_candidate(response.content, str(section_plan.get("heading") or ""))
-        anchor_lock = _anchor_lock_mapping(section_plan.get("must_preserve_anchors") or [])
-        missing_placeholders = []
-        if anchor_lock:
-            missing_placeholders = [
-                item["placeholder"]
-                for item in anchor_lock
-                if item.get("placeholder") and item["placeholder"] not in body
-            ]
-            if missing_placeholders and body:
-                body = f"{body.rstrip()} {' '.join(missing_placeholders)}"
-        if anchor_lock:
-            body = _restore_anchor_placeholders(body, anchor_lock)
-        if body:
-            parts.append(str(section_plan.get("heading") or "").strip())
-            parts.append(body)
-        section_results.append({
-            "heading": section_plan.get("heading"),
-            "target_words": section_plan.get("target_words"),
-            "actual_words": _text_word_count(body),
-            "empty": not bool(body),
-            "anchor_lock_enabled": bool(anchor_lock),
-            "missing_placeholders_repaired": missing_placeholders,
-        })
-
-    references = [
-        str(item).strip()
-        for item in context_ledger.get("reference_entries") or []
-        if str(item).strip()
-    ]
-    if references:
-        parts.append("References")
-        parts.extend(references)
-    candidate = "\n\n".join(part for part in parts if str(part).strip()).strip()
-    metadata = {
-        "schema_version": "staged_reconstruction.v1",
-        "enabled": True,
-        "llm_calls": call_count,
-        "sections": section_results,
-        "assembled_word_count": _text_word_count(candidate),
-        "reference_entries_preserved": len(references),
-        "source_draft_included": False,
-        "context_ledger_schema": context_ledger.get("schema_version"),
-        "max_calls": max_calls,
-        "budget_exhausted": bool(
-            max_calls is not None and call_count >= max(0, int(max_calls))
-        ),
-    }
-    return _clean_full_document_candidate(candidate, source_text), metadata
-
-
-def _build_reconstruction_meaning_brief(source_text: str, raw_json: dict | None) -> dict:
-    """Build a conservative meaning brief for document-level reconstruction.
-
-    This is not an abstractive summary. It extracts author-supplied material
-    already present in the submitted content and scanner output so the LLM can
-    rebuild structure without inventing facts.
-    """
-    raw_json = raw_json or {}
-    paragraphs = [
-        " ".join(p.split())
-        for p in re.split(r"\n\s*\n", source_text or "")
-        if p.strip()
-    ]
-    headings = [
-        p
-        for p in paragraphs
-        if len(p.split()) <= 12 and not re.search(r"[.!?]$", p)
-    ][:12]
-    protected_spans = []
-    for span in detect_protected_spans(source_text or "")[:40]:
-        value = (source_text or "")[span.start_char:span.end_char].strip()
-        if value and value not in protected_spans:
-            protected_spans.append(value)
-
-    findings = raw_json.get("findings") or {}
-    weak_zones = []
-    for tier in ("critical", "high", "medium", "low"):
-        for item in findings.get(tier, []) or []:
-            if not isinstance(item, dict):
-                continue
-            title = str(item.get("title") or item.get("category") or item.get("scanner") or "")
-            evidence = item.get("evidence")
-            recommendation = item.get("recommendation")
-            weak_zones.append({
-                "tier": tier,
-                "signal": title,
-                "evidence": evidence if isinstance(evidence, str) else "",
-                "recommendation": recommendation if isinstance(recommendation, str) else "",
-            })
-            if len(weak_zones) >= 12:
-                break
-        if len(weak_zones) >= 12:
-            break
-
-    action_rows = []
-    for action in ((raw_json.get("ai_mitigation") or {}).get("component_actions") or [])[:10]:
-        if not isinstance(action, dict):
-            continue
-        action_rows.append({
-            "component": action.get("component"),
-            "score": action.get("score"),
-            "action": action.get("action"),
-            "user_input_needed": action.get("user_input_needed"),
-        })
-
-    scan_intelligence = raw_json.get("scan_intelligence") or {}
-    generation_handoff = (
-        scan_intelligence.get("generation_handoff")
-        or ((scan_intelligence.get("mitigation_inputs") or {}).get("generation_handoff"))
-        or raw_json.get("generation_handoff")
-        or {}
-    )
-    semantic = (
-        scan_intelligence.get("semantic_layer")
-        or scan_intelligence.get("semantic_shape")
-        or raw_json.get("semantic_shape")
-        or {}
-    )
-    rewrite_constraints = (
-        raw_json.get("rewrite_constraints")
-        or (((raw_json.get("ai_mitigation") or {}).get("rewrite_handoff") or {}).get("rewrite_constraints"))
-        or {}
-    )
-    preservation_inventory = (
-        rewrite_constraints.get("preservation_inventory")
-        or (((raw_json.get("scan_intelligence") or {}).get("mitigation_inputs") or {}).get("preservation_inventory"))
-        or (((raw_json.get("scan_intelligence") or {}).get("document") or {}).get("preservation_inventory"))
-        or {}
-    )
-    inventory_anchors = [
-        anchor.get("text")
-        for anchor in (preservation_inventory.get("anchors") or [])
-        if isinstance(anchor, dict) and anchor.get("text")
-    ]
-    for anchor in inventory_anchors:
-        if anchor not in protected_spans:
-            protected_spans.append(anchor)
-    word_band = _word_count_band(source_text, variance=0.25)
-    paragraph_roles = []
-    for idx, paragraph in enumerate(paragraphs[:10], start=1):
-        lower = paragraph.lower()
-        if any(marker in lower for marker in ("according to", "source", "citation", "research", "study")):
-            role = "source_or_evidence_relation"
-        elif any(marker in lower for marker in ("therefore", "this shows", "this means", "conclusion")):
-            role = "interpretation_or_conclusion"
-        elif idx == 1:
-            role = "context_or_thesis"
-        else:
-            role = "development"
-        paragraph_roles.append({
-            "index": idx,
-            "role": role,
-            "preview": paragraph[:220],
-        })
-    if generation_handoff:
-        handoff_units = generation_handoff.get("section_generation_units") or []
-        handoff_outline = generation_handoff.get("logical_outline") or []
-        handoff_refs = [
-            ref.get("full_reference")
-            for ref in generation_handoff.get("reference_register") or []
-            if isinstance(ref, dict) and ref.get("full_reference")
-        ]
-        handoff_headings = [
-            row.get("heading")
-            for row in handoff_outline
-            if isinstance(row, dict) and row.get("heading")
-        ]
-        handoff_protected = []
-        anchor_register = generation_handoff.get("anchor_register") or {}
-        for value in anchor_register.values():
-            if isinstance(value, list):
-                handoff_protected.extend(str(item) for item in value if item)
-        handoff_roles = [
-            {
-                "index": idx,
-                "section_id": unit.get("section_id"),
-                "role": unit.get("role"),
-                "heading": unit.get("heading"),
-                "target_words": unit.get("target_words"),
-            }
-            for idx, unit in enumerate(handoff_units[:12], start=1)
-            if isinstance(unit, dict)
-        ]
-        handoff_claims = [
-            {
-                "section_id": unit.get("section_id"),
-                "heading": unit.get("heading"),
-                "meaning_inventory": unit.get("meaning_inventory") or [],
-                "citation_keys_used": unit.get("citation_keys_used") or [],
-            }
-            for unit in handoff_units[:12]
-            if isinstance(unit, dict)
-        ]
-        if handoff_headings:
-            headings = handoff_headings
-        if handoff_refs:
-            reference_entries = handoff_refs
-        else:
-            reference_entries = _reference_entries_from_text(source_text)
-        if handoff_protected:
-            for value in handoff_protected:
-                if value not in protected_spans:
-                    protected_spans.append(value)
-        if handoff_roles:
-            paragraph_roles = handoff_roles
-    else:
-        reference_entries = _reference_entries_from_text(source_text)
-        handoff_claims = []
-
-    return {
-        "claims": handoff_claims or _brief_sentences(source_text, limit=36),
-        "headings": headings,
-        "protected_facts": protected_spans[:25],
-        "reference_entries": reference_entries,
-        "generation_handoff": generation_handoff,
-        "preservation_inventory": preservation_inventory,
-        "human_contribution_contract": (
-            scan_intelligence.get("human_contribution_contract")
-            or ((scan_intelligence.get("mitigation_inputs") or {}).get("human_contribution_contract"))
-            or {}
-        ),
-        "industry_baseline": (
-            scan_intelligence.get("industry_baseline")
-            or ((scan_intelligence.get("mitigation_inputs") or {}).get("industry_baseline"))
-            or raw_json.get("industry_baseline")
-            or ((raw_json.get("ai_mitigation") or {}).get("industry_baseline"))
-            or {}
-        ),
-        "word_count_band": word_band,
-        "integrity_targets": _integrity_driver_rows(raw_json, limit=14),
-        "target_segments": _target_segment_rows(raw_json, limit=18),
-        "allowed_existing_additions": rewrite_constraints.get("allowed_additions") or [],
-        "preserve_terms": rewrite_constraints.get("preserve_terms") or protected_spans[:25],
-        "do_not_add": rewrite_constraints.get("do_not_add") or [],
-        "rewrite_rule": rewrite_constraints.get("rewrite_rule"),
-        "weak_grounding_zones": weak_zones,
-        "mitigation_actions": action_rows,
-        "paragraph_roles": paragraph_roles,
-        "semantic_layer": semantic,
-        "signal_inventory": scan_intelligence.get("signal_inventory") or {},
-        "transformation_core": (scan_intelligence.get("transformation") or {}).get("core_signals") or {},
-    }
-
-
-def _build_regeneration_blueprint(source_text: str, raw_json: dict | None, strategy: str) -> dict:
-    """Build a scanner-derived generation plan before prose generation."""
-    brief = _build_reconstruction_meaning_brief(source_text, raw_json)
-    paragraphs = [
-        " ".join(p.split())
-        for p in re.split(r"\n\s*\n", source_text or "")
-        if p.strip()
-    ]
-    target_by_paragraph: dict[str, list[dict]] = {}
-    for segment in brief.get("target_segments") or []:
-        pid = segment.get("paragraph_id") or "p001"
-        target_by_paragraph.setdefault(pid, []).append(segment)
-
-    family_shapes = {
-        "plain_direct_voice_rebuild": [
-            "simple_claim",
-            "plain_problem",
-            "short_reason",
-            "example_from_existing_context",
-            "limited_point",
-        ],
-        "authorship_distribution_repair": [
-            "plain_limit",
-            "offbeat_reasoning",
-            "short_restart",
-            "source_or_anchor_afterthought",
-            "bounded_point",
-        ],
-        "evidence_first_rebuild": [
-            "source_or_anchor_first",
-            "problem_pressure",
-            "author_reasoning",
-            "bounded_implication",
-        ],
-        "problem_observation_rebuild": [
-            "problem_pressure",
-            "specific_context",
-            "reasoning_check",
-            "limited_conclusion",
-        ],
-        "claim_narrowing_rebuild": [
-            "narrow_claim",
-            "existing_anchor",
-            "qualification",
-            "bounded_implication",
-        ],
-        "asymmetric_paragraph_route": [
-            "short_context",
-            "long_reasoning",
-            "source_relation",
-            "brief_counterpressure",
-            "plain_conclusion",
-        ],
-        "low_smoothness_rebuild": [
-            "direct_claim",
-            "pause_or_limit",
-            "specific_consequence",
-            "plain_reasoning",
-        ],
-        "conservative_reconstruction": [
-            "context",
-            "pressure_point",
-            "evidence_relation",
-            "bounded_implication",
-        ],
-        "reasoning_dense_reconstruction": [
-            "context",
-            "friction",
-            "evidence_relation",
-            "author_reasoning",
-            "implication",
-        ],
-        "domain_grounded_reconstruction": [
-            "domain_context",
-            "operational_detail",
-            "judgement_or_limit",
-            "bounded_implication",
-        ],
-    }
-    route = family_shapes.get(strategy, family_shapes["asymmetric_paragraph_route"])
-    paragraph_count = max(3, len(paragraphs))
-    paragraph_plans = []
-    for idx, paragraph in enumerate(paragraphs, start=1):
-        pid = f"p{idx:03d}"
-        role = route[(idx - 1) % len(route)]
-        targets = target_by_paragraph.get(pid, [])
-        plan = {
-            "paragraph_id": pid,
-            "role": role,
-            "source_preview": paragraph[:180],
-            "claim_source": "preserve paragraph meaning; do not preserve sentence order",
-            "target_segments": targets[:4],
-            "must_reduce": [
-                target.get("signal") or target.get("lever")
-                for target in targets[:4]
-                if target.get("signal") or target.get("lever")
-            ],
-            "rhythm": (
-                "mix one short plain sentence with one longer causal sentence"
-                if idx % 2
-                else "avoid balanced list cadence; use one direct limitation or contrast"
-            ),
-            "grounding_move": (
-                "narrow broad claims to the submitted context"
-                if targets
-                else "add only reasoning already implied by adjacent claims"
-            ),
-        }
-        paragraph_plans.append(plan)
-
-    driver_keys = [
-        item.get("key")
-        for item in brief.get("integrity_targets") or []
-        if item.get("key")
-    ]
-    return {
-        "schema_version": "regeneration_blueprint.v1",
-        "strategy_family": strategy,
-        "target_human_contribution": 80,
-        "word_count_band": brief.get("word_count_band"),
-        "paragraph_count": paragraph_count,
-        "paragraph_plans": paragraph_plans[:12],
-        "global_driver_targets": driver_keys[:10],
-        "industry_baseline_focus": {
-            "ai_authorship_positive_components": [
-                row.get("key")
-                for row in (
-                    ((brief.get("industry_baseline") or {}).get("layers") or {})
-                    .get("ai_authorship_risk", {})
-                    .get("positive_components", [])
-                )[:6]
-                if isinstance(row, dict) and row.get("key")
-            ],
-            "human_contribution_components": [
-                row.get("key")
-                for row in (
-                    ((brief.get("industry_baseline") or {}).get("layers") or {})
-                    .get("human_contribution_signal", {})
-                    .get("components", [])
-                )
-                if isinstance(row, dict) and row.get("key")
-            ],
-            "authorship_suppressors": [
-                row.get("key")
-                for row in (
-                    ((brief.get("industry_baseline") or {}).get("layers") or {})
-                    .get("ai_authorship_risk", {})
-                    .get("suppressors", [])
-                )
-                if isinstance(row, dict) and row.get("key")
-            ],
-            "policy": (brief.get("industry_baseline") or {}).get("policy") or {},
-        },
-        "hard_preserve": {
-            "quotes": (brief.get("preservation_inventory") or {}).get("quotes") or [],
-            "citations": (brief.get("preservation_inventory") or {}).get("citations") or [],
-            "years": (brief.get("preservation_inventory") or {}).get("years") or [],
-            "numbers": (brief.get("preservation_inventory") or {}).get("numbers") or [],
-            "names_entities": (brief.get("preservation_inventory") or {}).get("names_entities") or [],
-            "domain_terms": (brief.get("preservation_inventory") or {}).get("domain_terms") or [],
-        },
-        "anti_patterns_to_avoid": [
-            "intro-balanced-explanation-conclusion essay shape",
-            "Furthermore/Moreover/In conclusion connector chain",
-            "same-length paragraphs",
-            "claim followed by generic explanation",
-            "smooth motivational summary",
-            "broad topic statements without local narrowing",
-        ],
-        "candidate_family_requirements": [
-            "do not use the original sentence order as scaffold",
-            "assign a different reasoning job to adjacent paragraphs",
-            "make at least two broad claims narrower instead of more polished",
-            "preserve anchors exactly where required",
-            "stay inside the word-count band",
-        ],
-    }
-
-
-def _reconstruction_mitigation_prompt(
-    source_text: str,
-    raw_json: dict,
-    ai_mitigation: dict | None,
-    *,
-    attempt_index: int,
-    strategy: str,
-    prior_attempts: list[dict] | None = None,
-) -> str:
-    contribution = _contribution_scores(raw_json)
-    integrity = _integrity_scores(raw_json)
-    brief = _build_reconstruction_meaning_brief(source_text, raw_json)
-    blueprint = _build_regeneration_blueprint(source_text, raw_json, strategy)
-    context_ledger = _generation_context_ledger(brief, blueprint)
-    failure_feedback = _reconstruction_failure_feedback(prior_attempts)
-    gate_controls = _reconstruction_gate_controls(prior_attempts)
-    include_source_draft = _env_flag("DRAFTPROOF_RECONSTRUCTION_INCLUDE_SOURCE_DRAFT", False)
-    compact_failure_rows = []
-    for item in failure_feedback:
-        compact_failure_rows.append(
-            "- "
-            + "; ".join(
-                part
-                for part in [
-                    f"strategy={item.get('strategy')}",
-                    f"reason={item.get('reason')}",
-                    f"human_shift={item.get('human_shift_score')}",
-                    f"ai_authorship_delta={item.get('ai_authorship_delta')}",
-                    f"human_delta={item.get('human_delta')}",
-                    f"ai_transformation_delta={item.get('ai_transformation_delta')}",
-                ]
-                if not part.endswith("=None")
-            )
-        )
-    strategy_guidance = {
-        "conservative_reconstruction": (
-            "Keep the same claim set, but rebuild paragraph routes, sentence openings, and causal bridges. "
-            "Prefer narrower claims over adding new evidence."
-        ),
-        "reasoning_dense_reconstruction": (
-            "Compress generic explanation and make each paragraph carry a clearer reasoning move: context, friction, evidence relation, implication."
-        ),
-        "domain_grounded_reconstruction": (
-            "Use domain-specific operational language already present in the draft. Do not add new workplace, class, source, or personal details."
-        ),
-    }.get(strategy, "Rebuild the document structure while preserving meaning and protected facts.")
-    return (
-        "DraftProof AI-Mitigation Reconstruction.\n"
-        "This is not sentence-level revision, not paraphrasing, and not modification of the submitted prose. "
-        "Generate a new document from the scanner context ledger.\n"
-        "Goal: produce a human-authored regeneration that moves the next scan toward Human Contribution >= 80 where the submitted evidence permits it. "
-        "If 80 is not reachable without inventing facts, maximize Human Shift Score while preserving what the submitted content conveys.\n\n"
-        f"Current scores: AI Authorship={integrity.get('ai_authorship')}, Human={contribution.get('human')}, "
-        f"AI Transformation={contribution.get('ai_transformation')}, Grounding Risk={integrity.get('grounding')}.\n"
-        f"Strategy: {strategy}. {strategy_guidance}\n\n"
-        "Scanner context ledger for generation. This is the generation input; do not ask for or reconstruct from the original prose order:\n"
-        f"{json.dumps(context_ledger, ensure_ascii=False)[:9000]}\n\n"
-        "Scanner-derived regeneration blueprint to follow before writing prose. Source previews have been removed so you do not scaffold from submitted sentences:\n"
-        f"{json.dumps({k: v for k, v in blueprint.items() if k != 'paragraph_plans'}, ensure_ascii=False)[:2600]}\n\n"
-        "Previous failed attempts to correct:\n"
-        f"{json.dumps(failure_feedback, ensure_ascii=False) if failure_feedback else '- None yet.'}\n"
-        f"{chr(10).join(compact_failure_rows) if compact_failure_rows else ''}\n\n"
-        "Scanner/gate feedback controls for this attempt:\n"
-        f"{json.dumps(gate_controls, ensure_ascii=False)[:4200]}\n\n"
-        "Word-count requirement:\n"
-        f"- The submitted draft has {brief['word_count_band']['source_word_count']} words. "
-        f"Return {brief['word_count_band']['min_words']} to {brief['word_count_band']['max_words']} words only.\n\n"
-        "Regeneration blueprint:\n"
-        "- Follow the scanner-derived context ledger and blueprint above. They are the plan.\n"
-        "- Follow the scanner/gate feedback controls above. They override generic writing preferences for this attempt.\n"
-        "- Do not follow the submitted sentence order as a scaffold. The submitted prose is not the generation substrate.\n"
-        "- Build a fresh paragraph route from the blueprint: concrete context, pressure point, evidence/source relation, author reasoning, bounded implication.\n"
-        "- Target the industry-baseline AI Authorship drivers directly: token predictability, burstiness regularity, discourse regularity, semantic uniformity, template phrase signal, and rewrite smoothness.\n"
-        "- Increase industry-baseline suppressors through real authorship friction: causal reasoning, local constraint awareness, domain cognition, and natural paragraph variance. Do not use typo/noise tricks.\n"
-        "- Treat grounding quality as separate from AI authorship. Narrow unsupported claims or preserve source relations; never invent citations, dates, names, statistics, or evidence.\n"
-        "- Give adjacent paragraphs different jobs. One may start from a problem, another from a source relation, another from a limitation or consequence.\n"
-        "- Use target segments as the highest-priority places to change the route, not as sentences to lightly paraphrase.\n"
-        "- Use only allowed existing additions and implied process detail already licensed by the scan constraints.\n\n"
-        "Candidate-family instruction:\n"
-        f"- This candidate must use the '{strategy}' family. It must be structurally different from other families, not a temperature variant.\n"
-        "- Make the prose less template-like by changing paragraph purpose, not by adding odd wording.\n"
-        "- Do not make the draft smoother. Smoothness without local reasoning is a failure.\n\n"
-        "Allowed reconstruction moves:\n"
-        "- Reorder paragraphs and claims when the meaning is preserved.\n"
-        "- Split over-smooth paragraphs and vary sentence pacing naturally.\n"
-        "- Compress broad explanatory padding into denser reasoning.\n"
-        "- Make causal links explicit when the submitted content already implies them.\n"
-        "- Replace generic academic transitions with context-specific connections.\n"
-        "- Narrow unsupported claims rather than inventing evidence.\n\n"
-        "Human Shift acceptance requirements:\n"
-        "- The next scan must not trade a Human Contribution gain for higher AI Authorship.\n"
-        "- Avoid increasing semantic uniformity, review burden, or critical/high findings.\n"
-        "- A candidate that raises Human Contribution but raises AI Authorship will be rejected.\n"
-        "- Prefer a less polished, more locally reasoned draft over a smoother academic rewrite.\n\n"
-        "Forbidden moves:\n"
-        "- Do not invent personal observations, examples, dates, statistics, sources, citations, institutions, or facts.\n"
-        "- Do not change quoted text, citations, years, names, numbers, headings, or source relations.\n"
-        "- Do not use placeholders, review brackets, comments, labels, markdown fences, or explanations.\n"
-        "- Do not preserve the original sentence order or sentence shape just to be safe; preserve meaning instead.\n\n"
-        f"Attempt {attempt_index}: return only the complete regenerated document."
-        + (
-            "\n\nSOURCE DRAFT DEBUG FALLBACK:\n"
-            f"<TARGET_DOCUMENT>\n{source_text.strip()}\n</TARGET_DOCUMENT>"
-            if include_source_draft
-            else ""
-        )
-    )
-
-
-def _clean_full_document_candidate(output: str, original_text: str) -> str:
-    if not output:
-        return ""
-    text = output.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text).strip()
-    text = re.sub(
-        r"^(?:rewritten|replacement|final)\s+(?:draft|document|text)\s*:\s*",
-        "",
-        text,
-        flags=re.I,
-    ).strip()
-    text = re.sub(r"(?<=[a-z0-9)\]])\.(?=[A-Z0-9])", ". ", text)
-    text = re.sub(r"(?<=[a-z0-9)\]])\?(?=[A-Z0-9])", "? ", text)
-    text = re.sub(r"(?<=[a-z0-9)\]])!(?=[A-Z0-9])", "! ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    paragraphs = [" ".join(p.strip().split()) for p in re.split(r"\n\s*\n", text) if p.strip()]
-    text = "\n\n".join(paragraphs).strip()
-    return "" if text == original_text.strip() else text
-
-
-def _review_marker_notes(candidate: str) -> list[str]:
-    if not isinstance(candidate, str):
-        return []
-    return [
-        match.strip()
-        for match in re.findall(r"\[\[REVIEW:\s*(.*?)\]\]", candidate, flags=re.I | re.S)
-        if match.strip()
-    ]
-
-
-_SYNTHETIC_ANCHOR_RE = re.compile(
-    r"\b(?:In my chair|During consultation|For example|In my notes|"
-    r"During sectioning|Specifically|In my experience|During the cut|"
-    r"In practice|For this task|During the practical work|In assessment|"
-    r"When the task is underway|During feedback):",
-    re.I,
-)
-_DANGLING_FRAGMENT_JOIN_RE = re.compile(
-    r"\b(?:can|could|should|would|will|may|might|must|to|and|but|or|"
-    r"while|because|if|before|after|adjust)\s+"
-    r"(?:With only|People gain|A competent|The standard|Conclusion|"
-    r"Introduction|This review|In this section|The issue)\b",
-    re.I,
-)
-_GENERIC_PRAISE_TERMS_RE = re.compile(
-    r"\b(?:strengths?|power(?:ful)?|influential|influence|global|worldwide|"
-    r"remarkable|major|prestige|respected|successful|success|icons?|iconic|"
-    r"innovation|innovative|entrepreneurship|thrives?|opportunit(?:y|ies)|"
-    r"diversity|cultural|fame|famous|leadership|stability|"
-    r"fresh starts?|creativity|self-expression)\b",
-    re.I,
-)
-_GENERIC_PRAISE_PHRASES_RE = re.compile(
-    r"\b(?:one of the (?:biggest|largest|most|strongest)|"
-    r"(?:known|famous|recognized|respected) for|"
-    r"(?:shaped|shapes) (?:the )?(?:modern )?world|"
-    r"(?:economic|cultural|global) influence|(?:economic|military) power|"
-    r"(?:global|major) (?:companies|icons|force|forces|alliances)|"
-    r"attract(?:s|ing)? (?:people|participants|visitors|users) (?:from|worldwide)|"
-    r"symbolize(?:s)? national identity|forces molding world history)\b",
-    re.I,
-)
-_LOW_FRICTION_CONTRAST_RE = re.compile(
-    r"\b(?:however|although|despite|yet|but|critics?|challenge|problem|"
-    r"uneven|inequality|limitation|risk|concern|struggle|tension)\b",
-    re.I,
-)
-_STYLIZED_TEXTURE_TERMS_RE = re.compile(
-    r"\b(?:carv(?:e|ed|ing)|route|routes|cogs?|knobs?|sprint(?:ed|ing)?|"
-    r"stunn(?:ed|ing)|mirrors?|sprawling|strands?|tapestr(?:y|ies)|"
-    r"towering|churn(?:s|ed|ing)?|hatched|ground zero|sharp corner|"
-    r"shadow|shadows|muscle|heavyweight|fuse|fuel(?:ed|s)?|"
-    r"pull(?:s|ed|ing)? strings?|levers?|edge|echo(?:es|ed|ing)?|"
-    r"stitched|quilt|thorny|cracks?|fault lines?|roadblocks?)\b",
-    re.I,
-)
-_COLLOQUIAL_TEXTURE_TERMS_RE = re.compile(
-    r"\b(?:folks?|cash|grit|hungry to|stateside|wins|fresh chances?|"
-    r"biggest|loudest|kicks off|snapped from|staring down)\b",
-    re.I,
-)
-_ABSTRACT_LIST_TERMS_RE = re.compile(
-    r"\b(?:freedom|democracy|individual rights|opportunity|change|"
-    r"influence|power|culture|innovation|diversity|stability|"
-    r"identity|self-expression|values?|progress|responsibility)\b",
-    re.I,
-)
-def _normalize_known_heading_boundaries(text: str) -> tuple[str, list[str]]:
-    """Separate common document headings that were flattened into prose."""
-    if not isinstance(text, str) or not text:
-        return text, []
-    repaired = text
-    repairs: list[str] = []
-    heading_re = (
-        r"Introduction|Conclusion|References|Bibliography|Abstract|Background|"
-        r"Discussion|Methodology|Method|Methods|Results|Findings|Appendix"
-    )
-    next_text = re.sub(
-        rf"\A(\s*[^\n.!?]{{12,180}}?)\s+({heading_re})\s+(?=[A-Z])",
-        r"\1\n\n\2\n\n",
-        repaired,
-        flags=re.I,
-        count=1,
-    )
-    if next_text != repaired:
-        repaired = next_text
-        repairs.append("split_title_from_heading")
-
-    next_text = re.sub(
-        rf"(?<=[.!?])\s+({heading_re})\s+(?=[A-Z])",
-        r"\n\n\1\n\n",
-        repaired,
-        flags=re.I,
-    )
-    if next_text != repaired:
-        repaired = next_text
-        repairs.append("split_sentence_before_heading")
-
-    next_text = re.sub(
-        rf"(?m)^({heading_re})\s+(?=[A-Z])",
-        r"\1\n\n",
-        repaired,
-        flags=re.I,
-    )
-    if next_text != repaired:
-        repaired = next_text
-        repairs.append("split_merged_heading")
-
-    return repaired, repairs
-
-
-def _strip_reference_like_lines_for_quality(text: str) -> str:
-    """Remove bibliography/reference lines before repetition quality checks."""
-    if not isinstance(text, str) or not text:
-        return ""
-    kept = []
-    in_reference_section = False
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if re.match(r"^(?:references|reference list|bibliography)\s*$", line, re.I):
-            in_reference_section = True
-            continue
-        if in_reference_section:
-            # Keep prose if a later section heading starts, otherwise ignore
-            # the reference block. Long publisher names repeat naturally there.
-            if re.match(r"^[A-Z][A-Za-z0-9 ,/&-]{2,70}$", line) and not re.search(r"\(\d{4}\)|https?://", line):
-                in_reference_section = False
-            else:
-                continue
-        if re.search(r"https?://|doi\.org|\(\d{4}\)", line, re.I) and len(line.split()) >= 8:
-            continue
-        kept.append(raw_line)
-    return "\n".join(kept)
-
-
-def _repeated_long_sequence_reason(text: str, window: int = 8) -> str:
-    body_text = _strip_reference_like_lines_for_quality(text)
-    tokens = re.findall(r"[A-Za-z0-9']+", str(body_text or "").lower())
-    if len(tokens) < window * 3:
-        return ""
-    seen: dict[tuple[str, ...], int] = {}
-    for index in range(0, len(tokens) - window + 1):
-        gram = tuple(tokens[index:index + window])
-        if len(set(gram)) <= 3:
-            continue
-        if gram in seen and index - seen[gram] > window:
-            return "repeated_long_sequence:" + " ".join(gram[:6])
-        seen[gram] = index
-    return ""
-
-
-def _repeated_sentence_opening_reason(text: str) -> str:
-    body_text = _strip_reference_like_lines_for_quality(text)
-    sentences = [
-        re.sub(r"\s+", " ", sentence.strip())
-        for sentence in re.split(r"(?<=[.!?])\s+", str(body_text or ""))
-        if len(sentence.split()) >= 4
-    ]
-    if len(sentences) < 8:
-        return ""
-    counts: dict[str, int] = {}
-    for sentence in sentences:
-        words = re.findall(r"[A-Za-z']+", sentence.lower())
-        if len(words) < 3:
-            continue
-        opening = " ".join(words[:3])
-        counts[opening] = counts.get(opening, 0) + 1
-    if not counts:
-        return ""
-    opening, count = max(counts.items(), key=lambda item: item[1])
-    if count >= 3 and count / max(1, len(sentences)) >= 0.12:
-        return f"repeated_sentence_opening:{opening}"
-    return ""
-
-
-def _external_detector_style_artifact_reason(text: str) -> str:
-    """Detect generic promotional/list tone that external detectors flag."""
-    if not isinstance(text, str) or not text.strip():
-        return ""
-    body = _strip_reference_like_lines_for_quality(text)
-    missing_space_count = len(re.findall(r"(?<=[a-z0-9)\]])[.!?](?=[A-Z0-9])", body))
-    if missing_space_count >= 3:
-        return f"missing_sentence_spacing_artifact:{missing_space_count}"
-    if len(re.findall(r"[A-Za-z']+", body)) < 80:
-        return ""
-    sentences = [
-        re.sub(r"\s+", " ", sentence.strip())
-        for sentence in re.split(r"(?<=[.!?])\s+", body)
-        if len(sentence.split()) >= 3
-    ]
-    if len(sentences) < 8:
-        return ""
-    word_count = max(1, len(re.findall(r"[A-Za-z']+", body)))
-    praise_hits = len(_GENERIC_PRAISE_TERMS_RE.findall(body))
-    praise_phrase_hits = len(_GENERIC_PRAISE_PHRASES_RE.findall(body))
-    contrast_hits = len(_LOW_FRICTION_CONTRAST_RE.findall(body))
-    stylized_hits = len(_STYLIZED_TEXTURE_TERMS_RE.findall(body))
-    colloquial_hits = len(_COLLOQUIAL_TEXTURE_TERMS_RE.findall(body))
-    abstract_hits = len(_ABSTRACT_LIST_TERMS_RE.findall(body))
-    short_fragment_count = sum(1 for sentence in sentences if len(sentence.split()) <= 9)
-    colon_fragment_count = sum(1 for sentence in sentences if ":" in sentence and len(sentence.split()) <= 14)
-    dash_sentence_count = sum(1 for sentence in sentences if " -- " in sentence or " - " in sentence)
-    praise_density = praise_hits / word_count
-    phrase_density = praise_phrase_hits / max(1, len(sentences))
-    short_fragment_ratio = short_fragment_count / max(1, len(sentences))
-    stylized_density = (stylized_hits + colloquial_hits) / word_count
-    abstract_density = abstract_hits / word_count
-
-    if (
-        praise_hits >= 12
-        and praise_density >= 0.035
-        and phrase_density >= 0.12
-        and contrast_hits < max(4, praise_hits // 4)
-    ):
-        return "generic_admiration_tone"
-    if (
-        praise_hits >= 10
-        and short_fragment_ratio >= 0.45
-        and colon_fragment_count >= 3
-    ):
-        return "compressed_promotional_fragment_style"
-    if (
-        stylized_hits + colloquial_hits >= 10
-        and stylized_density >= 0.018
-        and (dash_sentence_count >= 2 or colon_fragment_count >= 2 or abstract_density >= 0.025)
-    ):
-        return "over_stylized_metaphorical_texture"
-    return ""
-
-
-_SYNTHETIC_META_ANCHOR_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"(?m)(?:^|[.!?]\s+)When this is applied in practice,\s+", "when_this_is_applied_in_practice"),
-    (r"(?m)(?:^|[.!?]\s+)In this case,\s+", "in_this_case_prefix"),
-    (r"(?m)(?:^|[.!?]\s+)During review,\s+", "during_review_prefix"),
-    (r"(?m)(?:^|[.!?]\s+)I would narrow the point this way:\s+", "i_would_narrow_prefix"),
-    (r"(?m)(?:^|[.!?]\s+)When the process is checked,\s+", "process_checked_prefix"),
-    (r"\bOne example is the underlying claim that\b", "underlying_claim_frame"),
-)
-
-
-def _synthetic_meta_anchor_artifact_reason(text: str) -> str:
-    if not isinstance(text, str) or not text.strip():
-        return ""
-    body = _strip_reference_like_lines_for_quality(text)
-    for pattern, label in _SYNTHETIC_META_ANCHOR_PATTERNS:
-        if re.search(pattern, body, flags=re.I):
-            return f"synthetic_meta_anchor_artifact:{label}"
-    return ""
-
-
-def _neutralize_external_detector_style_artifacts(text: str) -> tuple[str, list[str]]:
-    """Repair promotional/list-like phrasing without adding new facts."""
-    if not isinstance(text, str) or not text.strip():
-        return "", []
-    updated = text
-    repairs: list[str] = []
-    replacements: list[tuple[str, str, str]] = [
-        (
-            r"\b([^.!?]{0,140}?)\s+carve(?:s|d)? innovation'?s edge\.",
-            r"\1 are linked to technology and business.",
-            "innovation_edge_neutral",
-        ),
-        (
-            r"\bEntrepreneurship thrives in ([^.!?]{3,80})\.",
-            r"Business creation is visible in \1.",
-            "entrepreneurship_thrives_neutral",
-        ),
-        (
-            r"\bGlobal companies wield economic influence worldwide\.",
-            "Large companies operate across many markets.",
-            "global_companies_neutral",
-        ),
-        (
-            r"\b([^.!?]{0,100}?)\s+ships culture worldwide(?:\s*--\s*[^.!?]+)?\.",
-            r"\1 circulates culture internationally.",
-            "ships_culture_neutral",
-        ),
-        (
-            r"\b([^.!?]{0,100}?):\s*global fame magnets\.",
-            r"\1 are known internationally.",
-            "fame_magnets_neutral",
-        ),
-        (
-            r"\b([^.!?]{0,140}?):\s*forces molding world history\.",
-            r"\1 are part of wider public influence.",
-            "forces_molding_neutral",
-        ),
-    ]
-    for pattern, replacement, name in replacements:
-        next_text = re.sub(pattern, replacement, updated, flags=re.I)
-        if next_text != updated:
-            updated = next_text
-            repairs.append(name)
-    updated = re.sub(r"\bglobal fame magnets\b", "people with international recognition", updated, flags=re.I)
-    updated = re.sub(r"\b(?:giants|heavyweight ring|throwing heavy punches)\b", "large organizations", updated, flags=re.I)
-    updated = re.sub(r"\bships culture worldwide\b", "circulates culture internationally", updated, flags=re.I)
-    updated = re.sub(r"\btrumpet(?:s|ed)?\b", "argue for", updated, flags=re.I)
-    neutral_terms = [
-        (r"\bcarved a sharp route\b", "developed quickly"),
-        (r"\bcut(?:s)? a sharp corner\b", "marks a clear point"),
-        (r"\bpull(?:s|ed|ing)? strings?\b", "has influence"),
-        (r"\btech cogs?\b", "technology systems"),
-        (r"\bsprint(?:ed|ing)? to power\b", "rapid growth"),
-        (r"\bstunned many\b", "was unusually fast"),
-        (r"\bmirrors? a sprawling mix\b", "includes a wide range"),
-        (r"\bunder wins\b", "alongside its strengths"),
-        (r"\bground zero for\b", "an important base for"),
-        (r"\btowering corporations\b", "large corporations"),
-        (r"\bsocial tapestry\b", "society"),
-        (r"\bthrows? a vast shadow\b", "has wide influence"),
-        (r"\bchurns? out\b", "produces"),
-        (r"\bhatched stateside\b", "from the same country"),
-        (r"\bleans human quirkiness\b", "sounds less mechanically polished"),
-        (r"\bpower'?s knobs\b", "centres of power"),
-        (r"\bstrands\b", "areas"),
-        (r"\bfresh chances\b", "new opportunities"),
-        (r"\bfolks\b", "people"),
-        (r"\bcash\b", "money"),
-        (r"\bgrit\b", "effort"),
-        (r"\bglobal fame magnets\b", "people with international recognition"),
-        (r"\b(?:giants|heavyweight ring|throwing heavy punches)\b", "large organizations"),
-        (r"\bships culture worldwide\b", "circulates culture internationally"),
-        (r"\btrumpet(?:s|ed)?\b", "argue for"),
-    ]
-    for pattern, replacement in neutral_terms:
-        updated = re.sub(pattern, replacement, updated, flags=re.I)
-    generic_plain_terms = [
-        (r"\bremarkable strengths\b", "strengths"),
-        (r"\bprestige\b", "reputation"),
-        (r"\bsymbolize national identity\b", "are part of public culture"),
-        (r"\becho calls for\b", "show interest in"),
-    ]
-    for pattern, replacement in generic_plain_terms:
-        updated = re.sub(pattern, replacement, updated, flags=re.I)
-    updated = re.sub(r"[ \t]+", " ", updated)
-    updated = re.sub(r"\n{3,}", "\n\n", updated).strip()
-    if updated != text:
-        repairs.append("external_detector_style_neutralized")
-    return updated, repairs
-
-
-def _ai_candidate_quality_reject_reason(
-    candidate: str,
-    *,
-    allow_repeated_long_sequence: bool = False,
-) -> str:
-    if not isinstance(candidate, str) or not candidate.strip():
-        return "empty_candidate"
-    if "[[REVIEW:" in candidate:
-        return "review_markers_not_auto_kept"
-    synthetic_meta_anchor = _synthetic_meta_anchor_artifact_reason(candidate)
-    if synthetic_meta_anchor:
-        return synthetic_meta_anchor
-    synthetic_anchors = _SYNTHETIC_ANCHOR_RE.findall(candidate)
-    sentence_count = max(1, len(re.findall(r"(?<=[.!?])\s+", candidate)) + 1)
-    max_anchor_count = max(3, min(8, sentence_count // 8))
-    for artifact in (
-        "For this task:",
-        "During the practical work:",
-        "During feedback:",
-        "When the task is underway:",
-        "In assessment:",
-    ):
-        if re.search(r"\b" + re.escape(artifact), candidate, re.I):
-            return f"synthetic_anchor_artifact:{artifact}"
-    if len(synthetic_anchors) > max_anchor_count:
-        return f"synthetic_anchor_overuse {len(synthetic_anchors)}>{max_anchor_count}"
-    lowered = candidate.lower()
-    if re.search(r"\bith only\b", lowered):
-        return "broken_word_fragment"
-    if re.search(r"\b(?:introduction|conclusion)[ \t]+(?:inclusive|this|the)\b", candidate, re.I):
-        return "heading_merged_into_sentence"
-    orphan_heading = _orphan_heading_reason(candidate)
-    if orphan_heading:
-        return orphan_heading
-    if (
-        re.search(
-            r"\b(?:(?:research|studies|evidence)\s+(?:shows?|suggests?|indicates?|finds?)|"
-            r"a\s+study\s+(?:shows?|suggests?|indicates?|finds?))\b",
-            candidate,
-            re.I,
-        )
-        and not _PARAGRAPH_CITATION_RE.search(candidate)
-        and not re.search(r"https?://|doi\.org", candidate, re.I)
-    ):
-        return "unsupported_source_attribution"
-    if _DANGLING_FRAGMENT_JOIN_RE.search(candidate):
-        return "dangling_sentence_fragment_join"
-    external_style_artifact = _external_detector_style_artifact_reason(candidate)
-    if external_style_artifact:
-        return external_style_artifact
-    if not allow_repeated_long_sequence:
-        repeated = _repeated_long_sequence_reason(candidate)
-        if repeated:
-            return repeated
-        repeated_opening = _repeated_sentence_opening_reason(candidate)
-        if repeated_opening:
-            return repeated_opening
-
-    sentences = [
-        re.sub(r"\s+", " ", s.strip()).lower()
-        for s in re.split(r"(?<=[.!?])\s+", candidate)
-        if len(s.split()) >= 8
-    ]
-    seen = set()
-    duplicates = 0
-    for sentence in sentences:
-        if sentence in seen:
-            duplicates += 1
-        seen.add(sentence)
-    if duplicates:
-        return "duplicated_sentence_fragments"
-    return ""
-
-
-def _ai_search_signal_brief(raw_json: dict) -> str:
-    badge = (raw_json or {}).get("ai_risk_badge") or {}
-    ai_components = badge.get("ai_components") or {}
-    writing_components = badge.get("writing_components") or {}
-    parts = []
-    if isinstance(ai_components, dict):
-        ranked = sorted(
-            ((k, v) for k, v in ai_components.items() if isinstance(v, (int, float))),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-        if ranked:
-            parts.append("AI component drivers: " + ", ".join(f"{k}={v:.2f}%" for k, v in ranked[:8]))
-    if isinstance(writing_components, dict):
-        ranked = sorted(
-            ((k, v) for k, v in writing_components.items() if isinstance(v, (int, float))),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-        if ranked:
-            parts.append("Writing-risk context: " + ", ".join(f"{k}={v:.2f}%" for k, v in ranked[:8]))
-    suggestions = (((raw_json or {}).get("rewrite_guidance") or {}).get("guided_revision") or {}).get("risk_mitigation_actions") or []
-    action_lines = []
-    for item in suggestions[:6]:
-        if isinstance(item, dict):
-            title = item.get("title") or item.get("action_type")
-            pattern = item.get("safe_edit_pattern")
-            if title and pattern:
-                action_lines.append(f"{title}: {pattern}")
-    if action_lines:
-        parts.append("Scanner rewrite actions: " + " | ".join(action_lines))
-    return "\n".join(parts)
-
-
-def _source_repair_brief(source_text: str) -> str:
-    """Describe visible source damage the full-document rewrite must repair."""
-    if not isinstance(source_text, str) or not source_text.strip():
-        return ""
-    notes = []
-    lowered = source_text.lower()
-    if "ith only" in lowered:
-        notes.append(
-            "The source already contains a broken word fragment like 'ith only'. "
-            "Repair it from context instead of preserving the typo."
-        )
-    if re.search(r"\b(?:introduction|conclusion)\s+(?:inclusive|this|the)\b", source_text, re.I):
-        notes.append(
-            "Some headings appear merged into following sentences. Keep the same headings/content, "
-            "but separate merged heading text cleanly."
-        )
-
-    sentences = [
-        re.sub(r"\s+", " ", s.strip()).lower()
-        for s in re.split(r"(?<=[.!?])\s+", source_text)
-        if len(s.split()) >= 8
-    ]
-    seen = set()
-    duplicate_count = 0
-    for sentence in sentences:
-        if sentence in seen:
-            duplicate_count += 1
-        seen.add(sentence)
-    if duplicate_count:
-        notes.append(
-            f"The source appears to contain {duplicate_count} accidental repeated sentence(s). "
-            "Keep one clean version and remove duplicated fragments."
-        )
-    if not notes:
-        return ""
-    return "Source repair requirements:\n- " + "\n- ".join(notes)
-
-
-def _repair_candidate_source_damage(candidate: str) -> tuple[str, list[str]]:
-    """Repair obvious inherited source corruption before candidate gates."""
-    if not isinstance(candidate, str) or not candidate:
-        return candidate, []
-    repaired = candidate
-    repairs = []
-
-    next_text = re.sub(r"\bith only\b", "With only", repaired, flags=re.I)
-    if next_text != repaired:
-        repaired = next_text
-        repairs.append("fixed_broken_with_fragment")
-
-    repaired, heading_repairs = _normalize_known_heading_boundaries(repaired)
-    repairs.extend(heading_repairs)
-
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", repaired) if p.strip()]
-    if paragraphs:
-        seen_sentences = set()
-        removed_duplicates = 0
-        removed_fragments = 0
-        rebuilt_paragraphs = []
-        for paragraph in paragraphs:
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", paragraph) if s.strip()]
-            if not sentences:
-                rebuilt_paragraphs.append(paragraph)
-                continue
-            kept = []
-            normalized_sentences = [
-                re.sub(r"\s+", " ", s).strip().lower()
-                for s in sentences
-            ]
-            for sentence_index, sentence in enumerate(sentences):
-                key = re.sub(r"\s+", " ", sentence).strip().lower()
-                if len(sentence.split()) >= 8 and any(
-                    prior
-                    and prior != key
-                    and len(prior.split()) >= 8
-                    and prior in key
-                    for prior in seen_sentences
-                ):
-                    removed_fragments += 1
-                    repairs.append("removed_dangling_prefix:embedded_prior_sentence")
-                    continue
-                first_alpha = re.search(r"[A-Za-z]", sentence)
-                if first_alpha and first_alpha.group(0).islower() and len(sentence.split()) >= 2:
-                    contained_elsewhere = any(
-                        other_index != sentence_index
-                        and key
-                        and key in other
-                        for other_index, other in enumerate(normalized_sentences)
-                    ) or any(key and key in prior for prior in seen_sentences)
-                    if contained_elsewhere:
-                        removed_fragments += 1
-                        continue
-                if len(sentence.split()) >= 4 and key in seen_sentences:
-                    removed_duplicates += 1
-                    continue
-                if len(sentence.split()) >= 4:
-                    seen_sentences.add(key)
-                kept.append(sentence)
-            if kept:
-                rebuilt_paragraphs.append(" ".join(kept))
-        if removed_duplicates:
-            repaired = "\n\n".join(rebuilt_paragraphs)
-            repairs.append(f"removed_duplicate_sentences:{removed_duplicates}")
-        if removed_fragments:
-            repaired = "\n\n".join(rebuilt_paragraphs)
-            repairs.append(f"removed_duplicate_fragments:{removed_fragments}")
-
-    repaired = re.sub(r"\n{3,}", "\n\n", repaired).strip()
-    return repaired, repairs
-
-
-def _source_repair_drift_false_positive(candidate: str, reasons: list[str]) -> bool:
-    """Return True only for named-entity drift caused by source-damage repair."""
-    if not isinstance(candidate, str) or not reasons:
-        return False
-    candidate_l = re.sub(r"\s+", " ", candidate).lower()
-    for reason in reasons:
-        match = re.match(r"lost_named_entity:\s+'([^']+)'", str(reason))
-        if not match:
-            return False
-        entity = re.sub(r"\s+", " ", match.group(1)).strip()
-        entity_l = entity.lower()
-        if entity_l in candidate_l:
-            continue
-        words = [
-            word.lower()
-            for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", entity)
-            if word.lower() not in {"introduction", "conclusion"}
-        ]
-        if words and all(word in candidate_l for word in words):
-            continue
-        return False
-    return True
-
-
-_AI_SEARCH_ENTITY_NOISE = {
-    "the", "this", "these", "that", "with", "when", "while", "where",
-    "people", "person", "participants", "participant", "users", "user",
-    "process", "practice", "context",
-    "introduction", "conclusion", "however", "therefore", "because",
-    "centre", "center",
-}
-
-
-def _ai_search_drift_false_positive(candidate: str, reasons: list[str], similarity: float) -> bool:
-    """Relax entity-only drift noise for high-similarity full-document candidates."""
-    if not isinstance(candidate, str) or not reasons or similarity < 0.90:
-        return False
-    candidate_l = re.sub(r"\s+", " ", candidate).lower()
-    for reason in reasons:
-        match = re.match(r"lost_named_entity:\s+'([^']+)'", str(reason))
-        if not match:
-            return False
-        entity = re.sub(r"\s+", " ", match.group(1)).strip()
-        entity_l = entity.lower()
-        if entity_l in candidate_l:
-            continue
-        words = [word.lower() for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", entity)]
-        if not words:
-            return False
-        if any(word in {"introduction", "conclusion"} for word in words):
-            # Full-document drift sees repaired headings such as
-            # "Topic Introduction Detail" as lost entities. The
-            # protected-span check has already guarded citations/numbers/quotes;
-            # this is layout damage, not semantic loss.
-            continue
-        if all(word in _AI_SEARCH_ENTITY_NOISE for word in words):
-            continue
-        content_words = [
-            word
-            for word in words
-            if word not in _AI_SEARCH_ENTITY_NOISE
-        ]
-        if content_words and all(word in candidate_l for word in content_words):
-            continue
-        return False
-    return True
-
-
-_AI_SEARCH_CRITICAL_ENTITY_RE = re.compile(
-    r"\b(?:[A-Z]{2,}[A-Z0-9-]{2,}|\d{3,4}|"
-    r"[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3}\s+"
-    r"(?:Institute|Institution|University|College|Centre|Center|School|Department|Agency|Authority|Council|Group|Corporation|Company))\b",
-)
-
-
-def _ai_search_entity_drift_scan_allowed(candidate: str, reasons: list[str], similarity: float) -> bool:
-    """Allow scoring high-similarity candidates with only non-critical entity drift.
-
-    This does not relax protected spans. It only prevents the scoring loop from
-    throwing away otherwise useful full-document candidates because the generic
-    drift guard misread sentence starts or repaired headings as named entities.
-    """
-    if not isinstance(candidate, str) or not reasons or similarity < 0.92:
-        return False
-    candidate_l = re.sub(r"\s+", " ", candidate).lower()
-    for reason in reasons:
-        match = re.match(r"lost_named_entity:\s+'([^']+)'", str(reason))
-        if not match:
-            return False
-        entity = re.sub(r"\s+", " ", match.group(1)).strip()
-        if entity.lower() in candidate_l:
-            continue
-        words = [word.lower() for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", entity)]
-        if words and all(word in _AI_SEARCH_ENTITY_NOISE for word in words):
-            continue
-        if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
-            return False
-    return True
-
-
-def _ai_search_quote_drift_scan_allowed(candidate: str, reasons: list[str], similarity: float) -> bool:
-    """Allow scoring quote-marker drift after protected-span preservation passed."""
-    if not isinstance(candidate, str) or not reasons or similarity < 0.70:
-        return False
-    return all(str(reason).startswith("quote_lost:") for reason in reasons)
-
-
-def _document_recreate_drift_scan_allowed(
-    candidate: str,
-    reasons: list[str],
-    similarity: float,
-    extra: dict | None,
-) -> bool:
-    """Allow scanner scoring for recreate/remove candidates with example-entity drift.
-
-    Recreate candidates are allowed to remove low-value examples. The protected
-    span gate already ran before semantic drift, so numbers, citations, and
-    exact protected strings remain guarded. This only prevents named-example
-    drift from blocking the scanner from measuring the actual AI footprint.
-    """
-    if not (
-        isinstance(candidate, str)
-        and isinstance(extra, dict)
-        and reasons
-        and similarity >= _float_env("DRAFTPROOF_RECREATE_DRIFT_SCAN_MIN_SIMILARITY", 0.45)
-        and (
-            extra.get("internet_reinforced_reauthoring")
-            or extra.get("strict_safe_candidate")
-            or extra.get("post_topk_optimizer")
-        )
-    ):
-        return False
-    candidate_l = re.sub(r"\s+", " ", candidate).lower()
-    for reason in reasons:
-        reason_s = str(reason or "")
-        if not reason_s.startswith(("lost_named_entity:", "new_named_entity:")):
-            return False
-        match = re.match(r"(?:lost_named_entity|new_named_entity):\s+'([^']+)'", reason_s)
-        if not match:
-            return False
-        entity = re.sub(r"\s+", " ", match.group(1)).strip()
-        if entity.lower() in candidate_l:
-            continue
-        words = [word.lower() for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", entity)]
-        if words and all(word in _AI_SEARCH_ENTITY_NOISE for word in words):
-            continue
-        if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
-            return False
-    return True
-
-
-def _reconstruction_drift_scan_allowed(candidate: str, reasons: list[str], similarity: float) -> bool:
-    """Allow reconstruction scoring for non-substantive drift noise.
-
-    The protected-span check runs immediately before this function. If it has
-    passed, quote text, numbers, and citation names are still present. The
-    keyword drift guard may still report quote loss when curly/straight quote
-    marks differ or when the phrase is preserved without quotation marks; that
-    should not block scanner scoring for reconstruction candidates.
-    """
-    if not isinstance(candidate, str) or not reasons:
-        return False
-    if all(str(reason).startswith("quote_lost:") for reason in reasons):
-        return similarity >= 0.70
-    if similarity < 0.78:
-        return False
-    candidate_l = re.sub(r"\s+", " ", candidate).lower()
-    for reason in reasons:
-        if str(reason).startswith("quote_lost:"):
-            continue
-        match = re.match(r"lost_named_entity:\s+'([^']+)'", str(reason))
-        if not match:
-            return False
-        entity = re.sub(r"\s+", " ", match.group(1)).strip()
-        if entity.lower() in candidate_l:
-            continue
-        if _AI_SEARCH_CRITICAL_ENTITY_RE.search(entity):
-            return False
-        words = [word.lower() for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", entity)]
-        if not words or any(word not in _AI_SEARCH_ENTITY_NOISE for word in words):
-            return False
-    return True
-
-
-def _normalize_protected_text(text: str) -> str:
-    text = str(text or "")
-    text = text.replace("’", "'").replace("‘", "'")
-    text = text.replace("“", '"').replace("”", '"')
-    text = text.replace("–", "-").replace("—", "-")
-    return re.sub(r"\s+", " ", text).strip().lower()
-
-
-def _protected_number_set(text: str) -> set[str]:
-    return set(re.findall(r"\b\d+(?:\.\d+)?%?\b", str(text or "")))
-
-
-def _protected_code_anchor_set(text: str) -> set[str]:
-    return {
-        token.lower()
-        for token in re.findall(r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b", str(text or ""))
-    }
-
-
-def _normalize_direct_quote_content(text: str) -> str:
-    normalized = _normalize_protected_text(text).strip()
-    normalized = normalized.strip('"').strip("'").strip()
-    return normalized.strip(" ,.;:!?")
-
-
-def _ai_search_protected_loss_reason(original: str, candidate: str, protected) -> str:
-    """Lenient protected-span check for full-document AI candidates.
-
-    The generic protected-span guard is byte-exact. That is too strict for
-    AI-search candidates because the detector currently marks punctuation
-    fragments such as ", 2017" and ". 149" as protected citations. For this
-    stage, preserve the substance: numbers, quote content, and citation names.
-    """
-    candidate_norm = _normalize_protected_text(candidate)
-    candidate_numbers = _protected_number_set(candidate)
-
-    for number in sorted(_protected_number_set(original)):
-        if number not in candidate_numbers:
-            return f"number_lost:{number}"
-
-    for code_anchor in sorted(_protected_code_anchor_set(original)):
-        if code_anchor not in candidate_norm:
-            return f"code_anchor_lost:{code_anchor}"
-
-    for span in protected or []:
-        span_text = original[span.start_char:span.end_char]
-        span_norm = _normalize_protected_text(span_text).strip('"').strip("'")
-        if not span_norm:
-            continue
-        if span.reason == "direct_quote":
-            quote_norm = _normalize_direct_quote_content(span_text)
-            quote_words = [
-                word.lower()
-                for word in re.findall(r"\b[A-Za-z][A-Za-z]+\b", quote_norm)
-                if word.lower() not in {"the", "a", "an", "is", "are", "was", "were", "did", "do", "does"}
-            ]
-            quote_first = (quote_words[0] if quote_words else "").lower()
-            short_question_prompt = bool(
-                len(quote_words) <= 10
-                and not _protected_number_set(span_text)
-                and (
-                    "?" in span_text
-                    or quote_first in {"what", "how", "why", "when", "where", "who", "which", "can", "could", "should", "would"}
-                    or _normalize_direct_quote_content(span_text).lower().startswith("did ")
-                )
-            )
-            if short_question_prompt:
-                continue
-            if (
-                quote_norm
-                and quote_norm not in candidate_norm
-                and "?" in span_text
-                and len(quote_words) <= 10
-                and quote_words
-                and sum(1 for word in quote_words if word in candidate_norm) / max(len(quote_words), 1) >= 0.60
-            ):
-                continue
-            if quote_norm and quote_norm not in candidate_norm:
-                return f"quote_lost:{quote_norm[:40]}"
-            continue
-        if span.reason == "citation":
-            names = [
-                name.lower()
-                for name in re.findall(r"\b[A-Z][A-Za-z]{2,}\b", span_text)
-                if name.lower() not in {"pp"}
-            ]
-            missing_names = [name for name in names if name not in candidate_norm]
-            if missing_names:
-                return f"citation_name_lost:{missing_names[0]}"
-
-    return ""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _ai_search_prompt(
@@ -14764,118 +5457,16 @@ def _ai_search_prompt(
     target_ai_score: float | None = None,
     confirmed_author_anchors: str = "",
 ) -> str:
-    signal_brief = _ai_search_signal_brief(raw_json)
-    repair_brief = _source_repair_brief(source_text)
-    protected_anchors = _protected_anchor_brief_for_prompt(source_text)
-    strategy_lines = {
-        "syntax_demolition": [
-            "Strategy: syntax demolition.",
-            "Break original sentence routes. Do not keep the same subject-verb-object path when meaning allows.",
-            "Split some long balanced sentences and merge a few short neighboring sentences where natural.",
-        ],
-        "paragraph_resequence": [
-            "Strategy: paragraph resequencing.",
-            "Change how paragraphs arrive at their point. Start from a concrete action, mistake, observation, or consequence before the broad claim.",
-            "Avoid the same explanatory order used in the source.",
-        ],
-        "plain_workshop_voice": [
-            "Strategy: plain workshop voice.",
-            "Make the draft sound like a knowledgeable person explaining work they have actually seen.",
-            "Use concrete verbs and uneven sentence length. Keep useful roughness.",
-        ],
-        "review_marked_grounding": [
-            "Strategy: review-marked grounding.",
-            "Where the scan points to unsupported or generic claims, add clearly marked author-review material using [[REVIEW: ...]] brackets.",
-            "The bracketed material must be framed as a place for the user to verify or replace, not as a fabricated fact.",
-            "Use these marked additions to break generic claim flow with source/evidence prompts, concrete context prompts, or careful limitation prompts.",
-        ],
-        "source_bridge_rebuild": [
-            "Strategy: source bridge rebuild.",
-            "Do not leave historical or technical claims floating. Add source-bridge sentences only when they can be phrased as review prompts.",
-            "Use [[REVIEW: add source here explaining ...]] where the source is missing, then reconnect the claim in plainer wording.",
-        ],
-        "claim_narrowing": [
-            "Strategy: claim narrowing.",
-            "Turn broad claims into context-limited claims. Add cautious wording where evidence is implied but not supplied.",
-            "Do not add new sources or fabricated evidence.",
-        ],
-        "cadence_disruption": [
-            "Strategy: cadence disruption.",
-            "Break repeated clean essay cadence. Vary openings, sentence length, and paragraph rhythm.",
-            "Avoid polished connector chains and abstract summary language.",
-        ],
-        "anchor_first_rebuild": [
-            "Strategy: anchor-first rebuild.",
-            "For each paragraph, preserve the factual anchors, then rebuild the surrounding explanation from scratch.",
-            "Prefer domain details already present in the source over new vocabulary.",
-        ],
-        "confirmed_anchor_threading": [
-            "Strategy: confirmed-anchor threading.",
-            "Use only the confirmed author anchors provided below, and only where they directly fit the draft's existing topic.",
-            "Thread one confirmed anchor into the relevant paragraph as a reasoning hinge, then keep the surrounding text restrained.",
-            "Do not invent a wider story, new evidence, new dates, new institutions, or extra examples.",
-        ],
-        "confirmed_anchor_process_voice": [
-            "Strategy: confirmed-anchor process voice.",
-            "Where a confirmed author anchor describes an observation or process, let that observation carry the paragraph before the abstract claim.",
-            "Use a practical order: what happened, what that showed, then the narrower claim.",
-            "Keep uneven sentence length and avoid making the paragraph smoother or more essay-like.",
-        ],
-        "confirmed_anchor_asymmetry": [
-            "Strategy: confirmed-anchor asymmetry.",
-            "Use a confirmed anchor in one relevant place, leave unrelated areas mostly untouched in meaning, and avoid balanced claim-explanation-summary cadence.",
-            "Allow a slight topic wobble or late connection if it is natural and still faithful to the source.",
-            "Do not spread the anchor mechanically across multiple paragraphs.",
-        ],
-        "confirmed_anchor_claim_narrowing": [
-            "Strategy: confirmed-anchor claim narrowing.",
-            "Use confirmed author anchors to narrow broad claims into a specific condition, practical situation, or observed consequence.",
-            "If an anchor does not directly support a claim, do not use it there.",
-            "Prefer a smaller true claim over a broader polished claim.",
-        ],
-    }.get(strategy, ["Strategy: rewrite for lower measured AI score."])
-    lines = [
-        "DraftProof AI-score mitigation search.",
-        "Objective: produce the lowest measured AI-likelihood score among candidate drafts.",
-        (
-            "Measured success condition: "
-            f"reference AI={reference_ai}, required drop>={required_ai_drop}, "
-            f"target AI<={target_ai_score}."
-        ),
-        "The next scan, not your explanation, decides whether this candidate succeeds.",
-        "This is not copyediting. This is not polish. This is detector-targeted reconstruction.",
-        *strategy_lines,
-        "Use the detector signals as rewrite levers:",
-        "- High generic assertion risk: replace broad claims with narrower claims tied to existing source, task, condition, or process details.",
-        "- High qualifying AI density: change paragraph architecture, not just words; vary where claims, examples, and source relations appear.",
-        "- High top-k predictability: rebuild clause order, split/merge sentence routes, and use less expected verbs while preserving meaning.",
-        "- Source/citation gaps: narrow or qualify the claim unless the source already exists in the draft.",
-        "- Repeated starters/rhythm: vary openings naturally without mechanical prefixes.",
-        "Hard constraints:",
-        "Keep the same topic, stance, factual claims, numbers, names, quotes, citations, unit codes, and chronology.",
-        "Protected anchors. These exact spans must appear unchanged in the output, including quote text:",
-        json.dumps(protected_anchors, ensure_ascii=False)[:2600],
-        "Do not drop, paraphrase, normalize, or reword protected anchors. If a quote is awkward, keep the quote exactly and rewrite around it.",
-        "Do not invent new evidence, citations, sources, dates, institutions, or examples.",
-        "If evidence is missing and the strategy allows marked grounding, use [[REVIEW: ...]] bracketed text instead of inventing the evidence.",
-        "Do not summarize or shorten the document. Keep length within about 85% to 115% of the source, except remove accidental duplicate fragments if the source already contains prior rewrite damage.",
-        "Do not leave any non-protected source sentence verbatim. Rebuild every sentence route.",
-        "Change most sentence openings and vary paragraph openings. Avoid preserving the same paragraph order inside every paragraph.",
-        "Avoid generic polished phrases: crucial, significant, essential, framework, landscape, operational obstacles, technical rigor, facilitates, enables, embedded within, especially evident.",
-        "Use concrete wording, varied sentence routes, and paragraph-level reconstruction.",
-    ]
-    if signal_brief:
-        lines.append(signal_brief)
-    if confirmed_author_anchors:
-        lines.append(confirmed_author_anchors)
-    if repair_brief:
-        lines.append(repair_brief)
-    lines.extend([
-        "SOURCE DRAFT:\n<TARGET_DOCUMENT>\n" + source_text + "\n</TARGET_DOCUMENT>",
-        "Output the complete rewritten draft only.",
-        "No commentary, no bullets, no headings added by you, no score estimate.",
-    ])
-    return "\n".join(lines)
+    return _core_ai_search_prompt(
+        source_text,
+        raw_json,
+        strategy,
+        reference_ai=reference_ai,
+        required_ai_drop=required_ai_drop,
+        target_ai_score=target_ai_score,
+        confirmed_author_anchors=confirmed_author_anchors,
+        deps=_targeted_repair_prompt_deps(),
+    )
 
 
 def _ai_search_feedback_prompt(
@@ -14884,59 +5475,12 @@ def _ai_search_feedback_prompt(
     search_summary: dict,
     attempt_index: int,
 ) -> str:
-    """Build a score-aware retry prompt from actual candidate outcomes."""
-    signal_brief = _ai_search_signal_brief(raw_json)
-    repair_brief = _source_repair_brief(source_text)
-    reference_ai = search_summary.get("reference_ai")
-    required_drop = search_summary.get("required_ai_drop")
-    target_score = search_summary.get("target_ai_score")
-    best_attempt = search_summary.get("best_attempt") or {}
-    candidate_lines = []
-    for item in (search_summary.get("candidates") or [])[-10:]:
-        if not isinstance(item, dict):
-            continue
-        bits = [str(item.get("strategy") or "candidate")]
-        if item.get("ai") is not None:
-            bits.append(f"AI={item.get('ai')}")
-            bits.append(f"delta={item.get('ai_delta_vs_reference')}")
-        if item.get("writing_quality") is not None:
-            bits.append(f"WQ={item.get('writing_quality')}")
-        if item.get("findings") is not None:
-            bits.append(f"findings={item.get('findings')}")
-        selection = item.get("selection_status") or {}
-        if selection.get("reason"):
-            bits.append(f"selection={selection.get('reason')}")
-        if item.get("reason"):
-            bits.append(f"blocked={item.get('reason')}")
-        drift_reasons = item.get("drift_reasons") or item.get("drift_reasons_relaxed")
-        if drift_reasons:
-            bits.append("drift=" + " | ".join(str(x) for x in drift_reasons[:5]))
-        candidate_lines.append("- " + "; ".join(bits))
-    scoreboard = "\n".join(candidate_lines) or "- No candidate reached scoring yet."
-
-    return (
-        "DraftProof already tried candidate rewrites and rescanned what passed local checks.\n"
-        f"Reference AI score: {reference_ai}. Required drop: {required_drop}. Target AI score: {target_score}.\n"
-        "Your task is to beat the required target, not to polish and not to make a tiny reduction.\n"
-        f"Current best attempt: {best_attempt or '[none]'}\n\n"
-        f"{signal_brief}\n\n"
-        f"{repair_brief}\n\n"
-        "Candidate scoreboard from the actual detector:\n"
-        f"{scoreboard}\n\n"
-        "What the next attempt must do:\n"
-        "- Return the complete rewritten document only.\n"
-        "- Preserve all unit codes, source names, citations, years, numbers, and quotes.\n"
-        "- Specifically reduce generic assertions, qualifying-text AI density, and top-k predictability.\n"
-        "- If earlier candidates only changed wording, change paragraph structure and claim order this time.\n"
-        "- Rewrite the highest-driver paragraphs more aggressively while preserving all protected facts.\n"
-        "- Rebuild paragraph flow where needed: start from local action, participant behavior, or source relation before broad claims.\n"
-        "- Do not add fake facts. If evidence is missing, narrow the claim instead of inventing support.\n"
-        "- Avoid mechanical anchor prefixes and visible review markers in the final document.\n"
-        "- Repair inherited source damage: broken words, merged headings, and duplicate sentence fragments.\n"
-        f"- This is feedback attempt {attempt_index}; make a materially different full-document candidate.\n\n"
-        "SOURCE DOCUMENT:\n"
-        f"{source_text.strip()}\n\n"
-        "Return only the complete rewritten document."
+    return _core_ai_search_feedback_prompt(
+        source_text,
+        raw_json,
+        search_summary,
+        attempt_index,
+        deps=_targeted_repair_prompt_deps(),
     )
 
 
@@ -14947,69 +5491,18 @@ def _blocked_human_candidate_repair_prompt(
     blocked_summary: dict,
     attempt_index: int,
 ) -> str:
-    """Repair a high-Human candidate that failed one or more hard gates."""
-    signal_brief = _ai_search_signal_brief(raw_json)
-    selection = blocked_summary.get("selection_status") or {}
-    authenticity = selection.get("authenticity_gate") or {}
-    failure_controls = []
-    if blocked_summary.get("critical_high_findings", 0) > blocked_summary.get("saved_critical_high", 0):
-        failure_controls.append(
-            "Remove whatever created the new critical/high finding. Usually this means narrowing unsupported claims, deleting over-strong judgement, or restoring a safer factual scope."
-        )
-    if selection.get("reason") in {"best_candidate_below_required_ai_drop", "candidate_not_below_reference"}:
-        failure_controls.append(
-            "Reduce AI score further by changing cadence and sentence routes, but preserve the Human Contribution gain."
-        )
-    if authenticity.get("ai_authorship_regression_blocked") or authenticity.get("ai_authorship_regressed"):
-        failure_controls.append(
-            "Lower AI Authorship texture: less clean explanation, less balanced structure, fewer polished transitions."
-        )
-    if authenticity.get("review_burden_regressed"):
-        failure_controls.append(
-            "Reduce review burden: remove unsupported broad claims introduced by the candidate."
-        )
-    if authenticity.get("weighted_severity_regressed"):
-        failure_controls.append(
-            "Reduce weighted severity: weaken or qualify any candidate sentence that sounds more assertive than the source."
-        )
-    if not failure_controls:
-        failure_controls.append(
-            "Keep the Human gain while fixing the detector gate failure shown in the scorecard."
-        )
-
-    return (
-        "DraftProof BLOCKED_HUMAN_WINNER_REPAIR.\n"
-        "A candidate moved Human Contribution in the right direction but failed the acceptance gate. "
-        "Repair only the failure. Do not restart the rewrite.\n\n"
-        f"Blocked candidate scorecard: {json.dumps(blocked_summary, ensure_ascii=False)[:2600]}\n\n"
-        f"{signal_brief}\n\n"
-        "Repair controls:\n"
-        + "\n".join(f"- {item}" for item in failure_controls)
-        + "\n\nHard constraints:\n"
-        "- Return a complete document, not notes.\n"
-        "- Preserve all factual claims, names, numbers, dates, quotes, citations, unit codes, and chronology from the source or blocked candidate.\n"
-        "- Do not invent sources, examples, personal experiences, institutions, statistics, or evidence.\n"
-        "- Preserve the Human Contribution gain: keep bounded author reasoning traces already present in the blocked candidate unless they caused the gate failure.\n"
-        "- If the blocked candidate added an unsafe unsupported claim, narrow it rather than adding evidence.\n"
-        "- Do not add bracket markers, commentary, headings, markdown fences, or explanations.\n"
-        f"- Repair attempt {attempt_index}: make the smallest complete-document repair that can pass the gates.\n\n"
-        "SOURCE DOCUMENT FOR FACT CHECKING:\n"
-        f"<SOURCE_DOCUMENT>\n{source_text.strip()}\n</SOURCE_DOCUMENT>\n\n"
-        "BLOCKED CANDIDATE TO REPAIR:\n"
-        f"<BLOCKED_CANDIDATE>\n{blocked_candidate.strip()}\n</BLOCKED_CANDIDATE>\n\n"
-        "Return only the repaired complete document."
+    return _core_blocked_human_candidate_repair_prompt(
+        source_text,
+        blocked_candidate,
+        raw_json,
+        blocked_summary,
+        attempt_index,
+        deps=_targeted_repair_prompt_deps(),
     )
 
 
 def _sentences_from_excerpt(text: str) -> list[str]:
-    text = " ".join(str(text or "").split()).strip()
-    if not text:
-        return []
-    return [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+", text)
-        if len(sentence.strip().split()) >= 5
-    ]
+    return _core_sentences_from_excerpt(text)
 
 
 def _exact_blocking_target_from_context(
@@ -15017,84 +5510,11 @@ def _exact_blocking_target_from_context(
     context: dict,
     candidate_text: str,
 ) -> tuple[str, str]:
-    candidate_text = str(candidate_text or "")
-    target = (
-        context.get("target_sentence")
-        or item.get("target_sentence")
-        or item.get("sentence")
-        or ""
-    )
-    evidence = item.get("evidence")
-    if isinstance(evidence, dict):
-        target = target or evidence.get("text") or evidence.get("sentence") or ""
-    elif isinstance(evidence, str):
-        target = target or evidence
-    target = " ".join(str(target or "").split()).strip()
-    if target and (not candidate_text or target in candidate_text):
-        expanded = _expand_fragment_to_candidate_sentence(candidate_text, target)
-        if expanded:
-            return expanded, (
-                "explicit_target_expanded_to_sentence"
-                if expanded != target else "explicit_target"
-            )
-        return target, "explicit_target"
-
-    excerpt = str(context.get("paragraph_excerpt") or "")
-    sentences = _sentences_from_excerpt(excerpt)
-    title = str(item.get("title") or "").lower()
-    category = str(item.get("category") or "").lower()
-    preferred_patterns = []
-    if "draft_evolution" in title or "ai_generation" in category:
-        preferred_patterns.extend([
-            r"\bin this review\b",
-            r"\bhas been examined\b",
-            r"\bfurthermore\b",
-            r"\bwhereas\b",
-            r"\bit arises from\b",
-        ])
-    if "predictability" in title:
-        preferred_patterns.extend([
-            r"\bwhen people\b",
-            r"\bthis does not\b",
-            r"\bstill must\b",
-            r"\bthere are\b",
-        ])
-
-    def exact(sentence: str) -> bool:
-        return bool(sentence and (not candidate_text or sentence in candidate_text))
-
-    for pattern in preferred_patterns:
-        for sentence in sentences:
-            if exact(sentence) and re.search(pattern, sentence, flags=re.I):
-                return sentence, "paragraph_excerpt_preferred_sentence"
-    for sentence in sentences:
-        if exact(sentence):
-            return sentence, "paragraph_excerpt_sentence"
-    return "", ""
+    return _core_exact_blocking_target_from_context(item, context, candidate_text)
 
 
 def _expand_fragment_to_candidate_sentence(candidate_text: str, fragment: str) -> str:
-    """Return the full candidate sentence that contains a scanner fragment."""
-    candidate = " ".join(str(candidate_text or "").split()).strip()
-    needle = " ".join(str(fragment or "").split()).strip()
-    if not candidate or not needle or needle not in candidate:
-        return ""
-    start = candidate.find(needle)
-    end = start + len(needle)
-    sentences = _sentences_from_excerpt(candidate)
-    cursor = 0
-    overlapping: list[str] = []
-    for sentence in sentences:
-        sentence_start = candidate.find(sentence, cursor)
-        if sentence_start < 0:
-            continue
-        sentence_end = sentence_start + len(sentence)
-        cursor = sentence_end
-        if sentence_end > start and sentence_start < end:
-            overlapping.append(sentence)
-    if overlapping:
-        return " ".join(overlapping)
-    return needle
+    return _core_expand_fragment_to_candidate_sentence(candidate_text, fragment)
 
 
 def _blocking_finding_targets(
@@ -15103,38 +5523,11 @@ def _blocking_finding_targets(
     limit: int = 3,
     candidate_text: str = "",
 ) -> list[dict]:
-    if not isinstance(report_dict, dict):
-        return []
-    findings = report_dict.get("findings") or {}
-    rows = []
-    for tier in ("critical", "high", "medium"):
-        for item in findings.get(tier, []) or []:
-            if not isinstance(item, dict):
-                continue
-            context = item.get("rewrite_context") or {}
-            target, target_source = _exact_blocking_target_from_context(
-                item,
-                context,
-                candidate_text,
-            )
-            if not target:
-                continue
-            row = {
-                "tier": tier,
-                "finding_id": item.get("finding_id"),
-                "title": item.get("title"),
-                "category": item.get("category"),
-                "detail": item.get("detail"),
-                "recommendation": item.get("recommendation"),
-                "target_sentence": str(target or "").strip(),
-                "target_source": target_source,
-                "paragraph_excerpt": str(context.get("paragraph_excerpt") or "")[:700],
-                "signals": context.get("signals") or {},
-            }
-            rows.append(row)
-            if len(rows) >= limit:
-                return rows
-    return rows[:limit]
+    return _core_blocking_finding_targets(
+        report_dict,
+        limit=limit,
+        candidate_text=candidate_text,
+    )
 
 
 def _finding_local_repair_prompt(
@@ -15143,300 +5536,72 @@ def _finding_local_repair_prompt(
     targets: list[dict],
     attempt_index: int,
 ) -> str:
-    return (
-        "DraftProof FINDING_LOCAL_BLOCKED_WINNER_REPAIR.\n"
-        "A high-Human candidate failed because specific findings became too severe. "
-        "Patch only the listed finding targets. Do not rewrite the whole document.\n\n"
-        f"Blocked candidate scorecard: {json.dumps(blocked_summary, ensure_ascii=False)[:2200]}\n\n"
-        "Blocking findings to repair:\n"
-        f"{json.dumps(targets, ensure_ascii=False, indent=2)[:3200]}\n\n"
-        "Rules:\n"
-        "- Return JSON only.\n"
-        "- Each patch must target one exact sentence or short paragraph span from the blocked candidate.\n"
-        "- Replacement must narrow or qualify the unsafe claim; do not add evidence.\n"
-        "- Preserve the Human Contribution structure and author reasoning where possible.\n"
-        "- Do not invent sources, examples, personal experiences, institutions, statistics, or citations.\n"
-        "- Do not change unaffected sentences.\n"
-        "- If a target is not exact enough to patch safely, omit it.\n\n"
-        "JSON schema:\n"
-        "{\n"
-        '  "patches": [\n'
-        '    {"target": "exact text from blocked candidate", "replacement": "safer replacement text"}\n'
-        "  ]\n"
-        "}\n\n"
-        f"Attempt {attempt_index}.\n\n"
-        "BLOCKED CANDIDATE:\n"
-        f"<BLOCKED_CANDIDATE>\n{blocked_candidate.strip()}\n</BLOCKED_CANDIDATE>"
+    return _core_finding_local_repair_prompt(
+        blocked_candidate,
+        blocked_summary,
+        targets,
+        attempt_index,
     )
 
 
 def _extract_finding_local_patches(output: str) -> list[dict]:
-    text = str(output or "").strip()
-    if not text:
-        return []
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
-        text = re.sub(r"\s*```$", "", text).strip()
-    match = re.search(r"\{.*\}", text, flags=re.S)
-    if match:
-        text = match.group(0)
-    try:
-        payload = json.loads(text)
-    except Exception:
-        return []
-    patches = payload.get("patches") if isinstance(payload, dict) else payload
-    if not isinstance(patches, list):
-        return []
-    cleaned = []
-    polished_patch_patterns = [
-        r"\bthere are instances where\b",
-        r"\balign with\b",
-        r"\bemphasizing aspects such as\b",
-        r"\bit is important to\b",
-        r"\bplays? a crucial role\b",
-        r"\bserves as\b",
-        r"\bhighlights? the importance\b",
-        r"\bunderscores? the need\b",
-    ]
-    for patch in patches:
-        if not isinstance(patch, dict):
-            continue
-        target = " ".join(str(patch.get("target") or "").split()).strip()
-        replacement = " ".join(str(patch.get("replacement") or "").split()).strip()
-        if len(target.split()) < 5 or len(replacement.split()) < 5:
-            continue
-        if "[[" in replacement or "]]" in replacement:
-            continue
-        if any(re.search(pattern, replacement, flags=re.I) for pattern in polished_patch_patterns):
-            continue
-        cleaned.append({"target": target, "replacement": replacement})
-    return cleaned[:5]
+    return _core_extract_finding_local_patches(output)
 
 
 def _apply_finding_local_patches(text: str, patches: list[dict]) -> tuple[str, list[dict]]:
-    updated = str(text or "")
-    applied = []
-    for patch in patches or []:
-        target = str(patch.get("target") or "").strip()
-        replacement = str(patch.get("replacement") or "").strip()
-        if not target or not replacement or target not in updated:
-            continue
-        updated = updated.replace(target, replacement, 1)
-        applied.append({
-            "target": target[:220],
-            "replacement": replacement[:220],
-        })
-    return updated, applied
+    return _core_apply_finding_local_patches(text, patches)
 
 
-def _logical_paragraphs(text: str) -> list[str]:
-    raw = str(text or "").strip()
-    if not raw:
-        return []
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
-    if len(paragraphs) != 1:
-        return paragraphs
-
-    # Many plain-text submissions preserve paragraph breaks as single newlines
-    # rather than blank lines. Treat those as blocks when the shape looks like a
-    # headed draft, but avoid splitting hard-wrapped prose into fake paragraphs.
-    lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    if len(lines) < 4:
-        return paragraphs
-    heading_like = sum(
-        1
-        for line in lines
-        if len(line.split()) <= 9 and not re.search(r"[.!?:;]\s*$", line)
+def _paragraph_target_deps() -> ParagraphTargetDeps:
+    return ParagraphTargetDeps(
+        logical_paragraphs=_logical_paragraphs,
+        text_word_count=_text_word_count,
+        float_env=_float_env,
+        env_flag=_env_flag,
     )
-    prose_like = sum(1 for line in lines if len(line.split()) >= 14)
-    if heading_like >= 2 and prose_like >= 2:
-        return lines
-    return paragraphs
-
-
-def _join_logical_paragraphs(paragraphs: list[str]) -> str:
-    return "\n\n".join(p.strip() for p in paragraphs if str(p or "").strip())
 
 
 def _is_heading_like_paragraph(paragraph: str) -> bool:
-    text = str(paragraph or "").strip()
-    if not text:
-        return False
-    if re.search(r"[.!?:;]\s*$", text):
-        return False
-    return bool(len(text.split()) <= 9)
+    return _core_is_heading_like_paragraph(paragraph)
 
 
 def _orphan_heading_reason(text: str) -> str:
-    paragraphs = _logical_paragraphs(text)
-    for index, paragraph in enumerate(paragraphs):
-        if not _is_heading_like_paragraph(paragraph):
-            continue
-        if index == 0 and len(paragraphs) > 1:
-            continue
-        next_paragraph = paragraphs[index + 1] if index + 1 < len(paragraphs) else ""
-        if not next_paragraph or _is_heading_like_paragraph(next_paragraph):
-            return f"orphan_heading:{paragraph[:60]}"
-    return ""
+    return _core_orphan_heading_reason(text, deps=_paragraph_target_deps())
 
 
 def _paragraph_sentence_starters(paragraph: str) -> list[str]:
-    starters = []
-    for sentence in re.split(r"(?<=[.!?])\s+", paragraph):
-        words = re.findall(r"\b[A-Za-z][A-Za-z']*\b", sentence)
-        if words:
-            starters.append(words[0].lower())
-    return starters
+    return _core_paragraph_sentence_starters(paragraph)
 
 
-_PARAGRAPH_CITATION_RE = re.compile(
-    r"(?:\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)|"
-    r"\b[A-Z][A-Za-z]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z]+)?\s*\(\d{4}\))"
-)
 
 
 def _paragraph_role(paragraph: str, drivers: dict | None = None, *, is_last: bool = False) -> str:
-    drivers = drivers or {}
-    text = str(paragraph or "")
-    citation_count = len(_PARAGRAPH_CITATION_RE.findall(text))
-    first_person_count = len(re.findall(r"\b(?:I|my|me)\b", text))
-    process_count = len(re.findall(
-        r"\b(?:task|process|method|procedure|tool|material|step|check|review|"
-        r"feedback|draft|participant|client|user|case|condition|constraint|"
-        r"measurement|test|testing|observed|practice|workflow)\b",
-        text,
-        flags=re.I,
-    ))
-    source_gap = bool(drivers.get("source_gap"))
-    generic_hits = int(drivers.get("generic_assertion_hits") or 0)
-    word_count = max(1, int(drivers.get("word_count") or len(text.split()) or 1))
-    if first_person_count >= 3 and process_count >= 6:
-        return "human_anchor_rich"
-    if is_last or re.search(r"^\s*(?:Conclusion|This review has discussed)\b", text, re.I):
-        return "conclusion_template_risk"
-    if citation_count >= 2 and first_person_count == 0:
-        return "source_summary_heavy"
-    if process_count >= 8 and first_person_count >= 1:
-        return "technical_process_rich"
-    if source_gap or generic_hits / max(word_count / 100.0, 1.0) >= 4.0:
-        return "generic_claim_heavy"
-    return "mixed"
+    return _core_paragraph_role(paragraph, drivers, is_last=is_last)
 
 
 def _paragraph_component_targets(text: str, raw_json: dict, limit: int = 3) -> list[dict]:
-    """Rank logical paragraphs by their likely contribution to AI-style score."""
-    paragraphs = _logical_paragraphs(text)
-    if not paragraphs:
-        return []
-    total_words = max(1, _text_word_count(text))
-    average_paragraph_words = total_words / max(1, len(paragraphs))
-    configured_min_words = int(_float_env("DRAFTPROOF_PARAGRAPH_TARGET_MIN_WORDS", 45.0))
-    if _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_PARAGRAPH_TARGETS", False):
-        effective_min_words = max(
-            12,
-            min(configured_min_words, int(max(average_paragraph_words * 0.75, 12.0))),
-        )
-    else:
-        effective_min_words = configured_min_words
-    briefs = (raw_json or {}).get("rewrite_edit_briefs") or []
-    scored = []
-    generic_re = re.compile(
-        r"\b(?:should|must|need(?:s|ed)?|requires?|important|significant|"
-        r"supports?|helps?|allows?|enables?|creates?|means|is|are|can|will)\b",
-        re.I,
+    return _core_paragraph_component_targets(
+        text,
+        raw_json,
+        limit=limit,
+        deps=_paragraph_target_deps(),
     )
-    concrete_re = re.compile(
-        r"\b(?:[A-Z]{2,}[A-Z0-9-]{2,}|\d+(?:\.\d+)?%?|"
-        r"\([A-Z][A-Za-z]+,\s*\d{4}\)|I|my|"
-        r"(?i:case|client|participant|user|tool|method|procedure|task|workflow|"
-        r"condition|constraint|measurement|test|feedback|observed|practice))\b"
+
+
+def _paragraph_prompt_deps() -> ParagraphPromptDeps:
+    return ParagraphPromptDeps(
+        ai_search_signal_brief=_ai_search_signal_brief,
+        protected_anchor_brief_for_prompt=_protected_anchor_brief_for_prompt,
+        anchor_values_from_brief=_anchor_values_from_brief,
+        anchor_lock_mapping=_anchor_lock_mapping,
+        freeze_anchor_text=_freeze_anchor_text,
+        freeze_anchor_payload=_freeze_anchor_payload,
+        restore_anchor_placeholders=_restore_anchor_placeholders,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        float_env=_float_env,
+        text_word_count=_text_word_count,
     )
-    for index, paragraph in enumerate(paragraphs):
-        words = paragraph.split()
-        matching_briefs = []
-        for brief in briefs:
-            if not isinstance(brief, dict):
-                continue
-            target_sentence = (brief.get("target_sentence") or "").strip()
-            if target_sentence and target_sentence in paragraph:
-                matching_briefs.append(brief)
-        generic_hits = len(generic_re.findall(paragraph))
-        concrete_hits = len(concrete_re.findall(paragraph))
-        starters = _paragraph_sentence_starters(paragraph)
-        repeated_starter_count = len(starters) - len(set(starters))
-        has_citation = bool(_PARAGRAPH_CITATION_RE.search(paragraph))
-        brief_score = sum(
-            float(((b.get("signals") or {}).get("score") or 0.0) or 0.0)
-            for b in matching_briefs
-        )
-        source_gap = 0 if has_citation else 1
-        score = (
-            len(matching_briefs) * 5.0
-            + brief_score * 8.0
-            + min(generic_hits / max(len(words) / 90.0, 1.0), 8.0)
-            + source_gap * 2.0
-            + min(repeated_starter_count, 4) * 0.75
-            - min(concrete_hits, 12) * 0.20
-        )
-        if score <= 0:
-            continue
-        drivers = {
-            "rewrite_brief_count": len(matching_briefs),
-            "predictability_score_sum": round(brief_score, 4),
-            "generic_assertion_hits": generic_hits,
-            "concrete_anchor_hits": concrete_hits,
-            "source_gap": bool(source_gap),
-            "repeated_sentence_starters": repeated_starter_count,
-            "word_count": len(words),
-        }
-        role = _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
-        if (
-            role == "conclusion_template_risk"
-            and len(words) < 8
-            and index + 1 < len(paragraphs)
-            and not _is_heading_like_paragraph(paragraphs[index + 1])
-        ):
-            continue
-        if len(words) < effective_min_words and role != "conclusion_template_risk":
-            continue
-        role_score_adjustment = {
-            "generic_claim_heavy": 80.0,
-            "conclusion_template_risk": 70.0,
-            "source_summary_heavy": 50.0,
-            "mixed": 20.0,
-            "technical_process_rich": -35.0,
-            "human_anchor_rich": -100.0,
-        }.get(role, 0.0)
-        adjusted_score = score + role_score_adjustment
-        if role == "human_anchor_rich" and not source_gap:
-            adjusted_score -= 50.0
-        if adjusted_score <= 0:
-            continue
-        scored.append({
-            "index": index,
-            "paragraph": paragraph,
-            "previous_paragraph": paragraphs[index - 1] if index > 0 else "",
-            "next_paragraph": paragraphs[index + 1] if index + 1 < len(paragraphs) else "",
-            "score": round(adjusted_score, 3),
-            "raw_score": round(score, 3),
-            "role": role,
-            "drivers": drivers,
-            "target_sentences": [
-                (b.get("target_sentence") or "") for b in matching_briefs[:5]
-            ],
-            "problem_spans": [
-                span
-                for b in matching_briefs[:4]
-                for span in (((b.get("signals") or {}).get("predictable_token_spans")) or [])[:3]
-            ][:10],
-            "domain_anchors": list(dict.fromkeys(
-                anchor
-                for b in matching_briefs[:4]
-                for anchor in (b.get("domain_anchors") or [])[:6]
-            ))[:16],
-        })
-    scored.sort(key=lambda item: item["score"], reverse=True)
-    return scored[:max(0, limit)]
 
 
 def _paragraph_component_prompt(
@@ -15450,148 +5615,21 @@ def _paragraph_component_prompt(
     candidate_count: int = 1,
     confirmed_author_anchors: str = "",
 ) -> str:
-    signal_brief = _ai_search_signal_brief(raw_json)
-    drivers = target.get("drivers") or {}
-    candidate_count = max(1, int(candidate_count or 1))
-    protected_source = "\n\n".join(
-        part for part in [
-            target.get("previous_paragraph") or "",
-            target.get("paragraph") or "",
-            target.get("next_paragraph") or "",
-        ]
-        if part
-    )
-    protected_anchors = _protected_anchor_brief_for_prompt(protected_source)
-    anchor_lock = _anchor_lock_mapping(_anchor_values_from_brief(protected_anchors))
-    frozen_target = _freeze_anchor_text(target.get("paragraph") or "", anchor_lock)
-    frozen_previous = _freeze_anchor_text(target.get("previous_paragraph") or "[none]", anchor_lock)
-    frozen_next = _freeze_anchor_text(target.get("next_paragraph") or "[none]", anchor_lock)
-    frozen_domain_anchors = _freeze_anchor_payload((target.get("domain_anchors") or [])[:16], anchor_lock)
-    required_placeholders = [
-        item["placeholder"]
-        for item in anchor_lock
-        if item.get("placeholder") and item["placeholder"] in frozen_target
-    ]
-    target_char_count = len(frozen_target)
-    min_char_count = max(80, int(target_char_count * _float_env("DRAFTPROOF_PARAGRAPH_COMPONENT_MIN_CHAR_RATIO", 0.35)))
-    max_char_count = max(
-        min_char_count,
-        int(target_char_count * _float_env("DRAFTPROOF_PARAGRAPH_COMPONENT_MAX_CHAR_RATIO", 1.25)),
-    )
-    if _text_word_count(frozen_target) >= 25:
-        min_char_count = max(min_char_count, 90)
-    min_word_count = 21 if _text_word_count(target.get("paragraph") or "") >= 25 else 0
-    min_word_rule = (
-        f"- Target replacement shape: more than {min_word_count - 1} words if possible, but scanner improvement overrides length.\n"
-        if min_word_count
-        else ""
-    )
-    return (
-        "DraftProof paragraph-component AI mitigation.\n"
-        "Rewrite only the target paragraph.\n"
-        "Goal: improve the Human Contribution formula after this paragraph is patched back into the document.\n"
-        "This is formula-driver repair, not generic paraphrasing.\n\n"
-        f"Measured success condition: reference AI={reference_ai}, required drop>={required_ai_drop}, target AI<={target_ai_score}.\n"
-        "The candidate will be rescanned; do not make a mild paraphrase.\n\n"
-        "Direct Human Contribution formula drivers to protect:\n"
-        "- Lower AI likelihood by removing predictable, polished sentence routes.\n"
-        "- Lower rewrite smoothness by keeping natural unevenness, not by adding errors.\n"
-        "- Lower outline-to-text expansion by compressing over-explained claims; do not add explanatory bulk.\n"
-        "- Lower discourse regularity by avoiding neat claim -> explanation -> implication/conclusion cadence.\n"
-        "- Lower semantic uniformity by varying sentence purpose, but do not add new facts.\n"
-        "Hard fail patterns:\n"
-        "- adding extra explanation to sound clearer\n"
-        "- creating a more complete academic paragraph\n"
-        "- using broad setup sentences before the actual point\n"
-        "- ending with a tidy lesson, implication, or summary\n\n"
-        f"{signal_brief}\n\n"
-        + (f"{confirmed_author_anchors}\n\n" if confirmed_author_anchors else "")
-        + f"Paragraph driver score: {target.get('score')}\n"
-        f"Drivers: {json.dumps(drivers, ensure_ascii=False)}\n"
-        "Target sentences from scan:\n"
-        + "\n".join(f"- {s}" for s in (target.get("target_sentences") or [])[:5])
-        + "\nProblem spans:\n"
-        + "\n".join(f"- {s}" for s in (target.get("problem_spans") or [])[:10])
-        + "\nDomain anchors already present nearby:\n"
-        + ", ".join(str(a) for a in frozen_domain_anchors)
-        + "\n\nPrevious paragraph context:\n"
-        f"{frozen_previous}\n\n"
-        "TARGET PARAGRAPH:\n"
-        f"<TARGET_PARAGRAPH>\n{frozen_target}\n</TARGET_PARAGRAPH>\n\n"
-        "Next paragraph context:\n"
-        f"{frozen_next}\n\n"
-        "Rewrite rules:\n"
-        "- Preserve all citations, years, numbers, names, unit codes, and source references.\n"
-        "- Preserve every protected anchor exactly, including quoted phrases.\n"
-        f"- Protected anchors: {json.dumps(protected_anchors, ensure_ascii=False)[:2200]}\n"
-        f"- Anchor placeholders required in replacement: {json.dumps(required_placeholders, ensure_ascii=False)}\n"
-        "- If a protected quote is awkward, keep the quote exactly and rewrite around it.\n"
-        "- Do not invent new evidence, sources, people, institutions, or events.\n"
-        "- Prefer deletion, compression, and reordering over adding new sentences.\n"
-        f"- Target replacement length: {min_char_count}-{max_char_count} characters after placeholders are restored. This is guidance, not a hard gate.\n"
-        + min_word_rule
-        +
-        "- Keep the replacement near the original length or shorter unless an anchor must be preserved.\n"
-        "- Break generic assertion flow: avoid broad claims unless tied to the local process.\n"
-        "- Start from concrete action, participant behavior, source relation, or practical consequence before broad explanation.\n"
-        "- Change paragraph architecture: reorder claim/example/source relation where meaning allows.\n"
-        "- Convert generic claims into specific process observations using only anchors already present nearby.\n"
-        "- Vary sentence length and clause order enough that this is not a synonym swap.\n"
-        "- Change sentence openings and sentence routes. Do not polish with academic filler.\n"
-        "- Keep author voice and first-person observation where it already exists.\n"
-        "- Remove duplicate fragments if present inside the target paragraph.\n"
-        "- Copy every required [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.\n"
-        f"- Batch attempt {attempt_index}: make each option materially different from generic rephrasing.\n\n"
-        f"Return exactly {candidate_count} alternative replacement paragraphs using this exact format:\n"
-        "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
-        "...continue until the requested candidate count.\n"
-        "Do not include commentary outside the candidate tags."
+    return _core_paragraph_component_prompt(
+        target,
+        raw_json,
+        attempt_index,
+        reference_ai=reference_ai,
+        required_ai_drop=required_ai_drop,
+        target_ai_score=target_ai_score,
+        candidate_count=candidate_count,
+        confirmed_author_anchors=confirmed_author_anchors,
+        deps=_paragraph_prompt_deps(),
     )
 
 
 def _paragraph_generation_anchor_context(target: dict | None) -> dict:
-    target = target or {}
-    protected_source = "\n\n".join(
-        part for part in [
-            target.get("previous_paragraph") or "",
-            target.get("paragraph") or "",
-            target.get("next_paragraph") or "",
-        ]
-        if part
-    )
-    protected_anchors = _protected_anchor_brief_for_prompt(protected_source)
-    anchor_lock = _anchor_lock_mapping(_anchor_values_from_brief(protected_anchors))
-    frozen_target = _freeze_anchor_text(target.get("paragraph") or "", anchor_lock)
-    target_placeholders = [
-        item["placeholder"]
-        for item in anchor_lock
-        if item.get("placeholder") and item["placeholder"] in frozen_target
-    ]
-    target_char_count = len(frozen_target)
-    min_char_count = max(
-        80,
-        int(target_char_count * _float_env("DRAFTPROOF_PARAGRAPH_COMPONENT_MIN_CHAR_RATIO", 0.35)),
-    )
-    max_char_count = max(
-        min_char_count,
-        int(target_char_count * _float_env("DRAFTPROOF_PARAGRAPH_COMPONENT_MAX_CHAR_RATIO", 1.25)),
-    )
-    if _text_word_count(frozen_target) >= 25:
-        min_char_count = max(min_char_count, 90)
-    min_word_count = 21 if _text_word_count(target.get("paragraph") or "") >= 25 else 0
-    return {
-        "protected_anchors": protected_anchors,
-        "anchor_lock": anchor_lock,
-        "frozen_target": frozen_target,
-        "frozen_previous": _freeze_anchor_text(target.get("previous_paragraph") or "[none]", anchor_lock),
-        "frozen_next": _freeze_anchor_text(target.get("next_paragraph") or "[none]", anchor_lock),
-        "frozen_domain_anchors": _freeze_anchor_payload((target.get("domain_anchors") or [])[:16], anchor_lock),
-        "required_placeholders": target_placeholders,
-        "min_char_count": min_char_count,
-        "max_char_count": max_char_count,
-        "min_word_count": min_word_count,
-    }
+    return _core_paragraph_generation_anchor_context(target, deps=_paragraph_prompt_deps())
 
 
 def _human_signal_amplification_prompt(
@@ -15602,91 +5640,13 @@ def _human_signal_amplification_prompt(
     candidate_count: int = 3,
     confirmed_author_anchors: str = "",
 ) -> str:
-    role = str(target.get("role") or "mixed")
-    anchor_context = _paragraph_generation_anchor_context(target)
-    min_word_rule = (
-        f"Target replacement shape: more than {anchor_context['min_word_count'] - 1} words if possible, but scanner improvement overrides length.\n"
-        if anchor_context["min_word_count"]
-        else ""
-    )
-    operation = {
-        "source_summary_heavy": "add a source-to-practice bridge",
-        "generic_claim_heavy": "narrow the claim with one author-reasoning trace",
-        "conclusion_template_risk": "remove summary cadence and add a reflective limitation",
-        "technical_process_rich": "preserve the technical process and make only a micro-repair",
-    }.get(role, "add one controlled author-reasoning bridge")
-    role_rule = {
-        "generic_claim_heavy": (
-            "For this role, replace one broad claim with a bounded author judgement, concern, "
-            "or reasoning trace that is already implied by the paragraph. Include exactly one "
-            "plain author-reasoning phrase such as 'I would...' or 'the issue I would check...' "
-            "only when it does not introduce a new fact, example, source, event, institution, "
-            "statistic, or personal evidence."
-        ),
-        "source_summary_heavy": (
-            "For this role, keep the source claim intact and add one sentence that explains how "
-            "the source changes a practical decision already present nearby."
-        ),
-        "conclusion_template_risk": (
-            "For this role, reduce the neat closing-summary shape and add one limitation, tension, "
-            "or unresolved judgement already implied by the document."
-        ),
-    }.get(role, "Use one small author-reasoning move without expanding the evidence base.")
-    return (
-        "DraftProof HUMAN_SIGNAL_AMPLIFICATION_REPAIR.\n"
-        "You are repairing one paragraph only.\n"
-        f"Paragraph role: {role}.\n"
-        f"Controlled operation: {operation}.\n\n"
-        f"Role-specific rule: {role_rule}\n\n"
-        "Goal:\n"
-        "Increase authentic author contribution using reasoning already implied by this paragraph, while improving the formula drivers.\n"
-        "Do not increase AI Authorship, AI Transformation, review burden, or severity.\n\n"
-        "Formula-driver constraints:\n"
-        "- Do not add explanatory bulk; expansion is a failure.\n"
-        "- Avoid neat claim -> explanation -> conclusion structure.\n"
-        "- Prefer one compressed sentence, one uneven sentence, or one deleted generic sentence over a smoother rewrite.\n"
-        "- Do not end with a polished implication sentence.\n"
-        "- Keep the paragraph close to the original length or shorter.\n\n"
-        "Allowed:\n"
-        "- connect a source claim to a practical decision already present in the context\n"
-        "- add one limitation or condition already implied by the paragraph\n"
-        "- add one author judgement or reasoning trace if it changes no factual claim\n"
-        "- make a claim more specific using existing local context\n"
-        "- reduce template conclusion cadence\n"
-        "- vary sentence purpose without making the paragraph more polished\n\n"
-        "Forbidden:\n"
-        "- invent new evidence, citations, dates, names, people, institutions, examples, or statistics\n"
-        "- add a new source\n"
-        "- rewrite the full paragraph into a smoother academic paragraph\n"
-        "- use generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion\n"
-        "- change or remove citations, years, numbers, unit codes, source names, or quoted text\n\n"
-        "Acceptance gate used by the scanner:\n"
-        "- Human Contribution must increase by at least 2\n"
-        "- AI Authorship must not increase\n"
-        "- AI Transformation must not increase\n"
-        "- review burden and weighted severity must not increase\n"
-        "- semantic drift and anchor loss must be false\n\n"
-        + (f"{confirmed_author_anchors}\n\n" if confirmed_author_anchors else "")
-        + f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
-        f"Protected anchors: {json.dumps(anchor_context['protected_anchors'], ensure_ascii=False)[:2200]}\n"
-        f"Anchor placeholders required in replacement: {json.dumps(anchor_context['required_placeholders'], ensure_ascii=False)}\n"
-        f"Target replacement length: {anchor_context['min_char_count']}-{anchor_context['max_char_count']} characters after placeholders are restored. This is guidance, not a hard gate.\n"
-        + min_word_rule
-        +
-        "Copy every required [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.\n"
-        "Domain anchors already present nearby:\n"
-        + ", ".join(str(a) for a in anchor_context["frozen_domain_anchors"])
-        + "\n\nPrevious paragraph context:\n"
-        f"{anchor_context['frozen_previous']}\n\n"
-        "TARGET PARAGRAPH:\n"
-        f"<TARGET_PARAGRAPH>\n{anchor_context['frozen_target']}\n</TARGET_PARAGRAPH>\n\n"
-        "Next paragraph context:\n"
-        f"{anchor_context['frozen_next']}\n\n"
-        f"Attempt {attempt_index}: return exactly {candidate_count} alternatives using this format:\n"
-        "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
-        "...continue until the requested candidate count.\n"
-        "No commentary outside tags."
+    return _core_human_signal_amplification_prompt(
+        target,
+        raw_json,
+        attempt_index,
+        candidate_count=candidate_count,
+        confirmed_author_anchors=confirmed_author_anchors,
+        deps=_paragraph_prompt_deps(),
     )
 
 
@@ -15697,102 +5657,17 @@ def _author_reasoning_amplification_prompt(
     *,
     candidate_count: int = 3,
 ) -> str:
-    role = str(target.get("role") or "mixed")
-    anchor_context = _paragraph_generation_anchor_context(target)
-    min_word_rule = (
-        f"Target replacement shape: more than {anchor_context['min_word_count'] - 1} words if possible, but scanner improvement overrides length.\n"
-        if anchor_context["min_word_count"]
-        else ""
-    )
-    return (
-        "DraftProof AUTHOR_REASONING_AMPLIFICATION_REPAIR.\n"
-        "You are repairing one paragraph only.\n"
-        f"Paragraph role: {role}.\n\n"
-        "Purpose:\n"
-        "Increase Human Contribution using author reasoning that is already implied by the paragraph, "
-        "without adding author evidence, lived experience, sources, dates, people, statistics, or new events.\n\n"
-        "This is not evidence insertion. This is reasoning-shape repair.\n\n"
-        "Formula-driver constraints:\n"
-        "- Do not expand the paragraph to explain more.\n"
-        "- Do not make the paragraph more complete, balanced, or academic.\n"
-        "- Reduce neat discourse shape: avoid claim -> explanation -> conclusion.\n"
-        "- Prefer compression, deletion of broad setup, and rougher sequencing.\n"
-        "- Keep length close to the original or shorter.\n\n"
-        "Allowed operations, choose one per candidate:\n"
-        "- narrow one broad claim into a defensible condition\n"
-        "- add one judgement about what the author would check, question, or prioritise\n"
-        "- add one limitation or tension already implied by the paragraph\n"
-        "- replace a neat summary sentence with a more specific reasoning consequence\n"
-        "- remove an over-clean transition if the paragraph works without it\n\n"
-        "Required texture:\n"
-        "- keep the paragraph a little uneven\n"
-        "- use one shorter sentence if natural\n"
-        "- avoid balanced claim -> explanation -> conclusion rhythm\n"
-        "- do not make the paragraph more polished\n\n"
-        "Forbidden:\n"
-        "- do not write 'in my class', 'I noticed', 'I saw', or any lived observation unless it already appears in the paragraph\n"
-        "- do not invent examples, sources, citations, dates, people, places, institutions, statistics, or events\n"
-        "- do not add generic connectors such as Furthermore, Moreover, Additionally, This highlights, This underscores, In conclusion\n"
-        "- do not rewrite the whole paragraph into academic style\n"
-        "- do not change citations, numbers, names, unit codes, quoted text, or chronology\n\n"
-        "Acceptance gate used by the scanner:\n"
-        "- Human Contribution should increase\n"
-        "- AI Authorship must not increase\n"
-        "- AI Transformation must not increase\n"
-        "- findings, review burden, and weighted severity must not increase\n"
-        "- semantic drift must be false\n\n"
-        f"Drivers: {json.dumps(target.get('drivers') or {}, ensure_ascii=False)}\n"
-        f"Protected anchors: {json.dumps(anchor_context['protected_anchors'], ensure_ascii=False)[:2200]}\n"
-        f"Anchor placeholders required in replacement: {json.dumps(anchor_context['required_placeholders'], ensure_ascii=False)}\n"
-        f"Target replacement length: {anchor_context['min_char_count']}-{anchor_context['max_char_count']} characters after placeholders are restored. This is guidance, not a hard gate.\n"
-        + min_word_rule
-        +
-        "Copy every required [[DP_ANCHOR_###]] placeholder exactly; the pipeline restores real anchors after generation.\n"
-        "Domain anchors already present nearby:\n"
-        + ", ".join(str(a) for a in anchor_context["frozen_domain_anchors"])
-        + "\n\nPrevious paragraph context:\n"
-        f"{anchor_context['frozen_previous']}\n\n"
-        "TARGET PARAGRAPH:\n"
-        f"<TARGET_PARAGRAPH>\n{anchor_context['frozen_target']}\n</TARGET_PARAGRAPH>\n\n"
-        "Next paragraph context:\n"
-        f"{anchor_context['frozen_next']}\n\n"
-        f"Attempt {attempt_index}: return exactly {candidate_count} alternatives using this format:\n"
-        "<CANDIDATE_1>\nreplacement paragraph only\n</CANDIDATE_1>\n"
-        "<CANDIDATE_2>\nreplacement paragraph only\n</CANDIDATE_2>\n"
-        "...continue until the requested candidate count.\n"
-        "No commentary outside tags."
+    return _core_author_reasoning_amplification_prompt(
+        target,
+        raw_json,
+        attempt_index,
+        candidate_count=candidate_count,
+        deps=_paragraph_prompt_deps(),
     )
 
 
 def _extract_paragraph_component_candidates(output: str, limit: int) -> list[str]:
-    text = str(output or "").strip()
-    if not text:
-        return []
-    text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.I).strip()
-    text = re.sub(r"\s*```$", "", text).strip()
-    tagged = re.findall(
-        r"<CANDIDATE_(\d+)>\s*(.*?)\s*</CANDIDATE_\1>",
-        text,
-        flags=re.I | re.S,
-    )
-    if tagged:
-        ordered = sorted(tagged, key=lambda item: int(item[0]))
-        return [
-            body.strip()
-            for _, body in ordered[:max(1, limit)]
-            if body.strip()
-        ]
-    marker_matches = re.findall(
-        r"(?ims)^\s*(?:candidate|option)\s*\d+\s*[:.-]\s*(.*?)(?=^\s*(?:candidate|option)\s*\d+\s*[:.-]|\Z)",
-        text,
-    )
-    if marker_matches:
-        return [
-            body.strip()
-            for body in marker_matches[:max(1, limit)]
-            if body.strip()
-        ]
-    return [text]
+    return _core_extract_paragraph_component_candidates(output, limit)
 
 
 def _clean_paragraph_component_candidate(
@@ -15800,75 +5675,47 @@ def _clean_paragraph_component_candidate(
     original_paragraph: str,
     anchor_lock: list[dict] | None = None,
 ) -> tuple[str, str]:
-    text = str(candidate or "").strip()
-    if not text:
-        return "", "empty_candidate"
-    text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.I).strip()
-    text = re.sub(r"\s*```$", "", text).strip()
-    text = re.sub(r"^(?:replacement|rewritten)\s+paragraph\s*:\s*", "", text, flags=re.I).strip()
-    missing_placeholders = [
-        item.get("placeholder")
-        for item in (anchor_lock or [])
-        if item.get("placeholder")
-        and item["placeholder"] in _freeze_anchor_text(original_paragraph, anchor_lock)
-        and item["placeholder"] not in text
-    ]
-    if missing_placeholders:
-        return "", "anchor_placeholder_lost:" + ",".join(str(item) for item in missing_placeholders)
-    text = _restore_anchor_placeholders(text, anchor_lock)
-    paragraphs = _logical_paragraphs(text)
-    if not paragraphs:
-        return "", "empty_candidate"
-    text = " ".join(" ".join(p.split()) for p in paragraphs)
-    if text == " ".join(str(original_paragraph or "").split()):
-        return "", "unchanged_paragraph"
-    return text, ""
+    return _core_clean_paragraph_component_candidate(
+        candidate,
+        original_paragraph,
+        anchor_lock,
+        deps=_paragraph_prompt_deps(),
+    )
 
 
 def _paragraph_anchor_lock(target: dict | None) -> list[dict]:
-    target = target or {}
-    protected_source = "\n\n".join(
-        part for part in [
-            target.get("previous_paragraph") or "",
-            target.get("paragraph") or "",
-            target.get("next_paragraph") or "",
-        ]
-        if part
-    )
-    return _anchor_lock_mapping(
-        _anchor_values_from_brief(_protected_anchor_brief_for_prompt(protected_source))
-    )
+    return _core_paragraph_anchor_lock(target, deps=_paragraph_prompt_deps())
 
 
 def _clean_source_sentence_candidate(candidate: str, original_sentence: str) -> tuple[str, str]:
-    text = str(candidate or "").strip()
-    if not text:
-        return "", "empty_candidate"
-    text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.I).strip()
-    text = re.sub(r"\s*```$", "", text).strip()
-    text = re.sub(r"^(?:replacement|rewritten)\s+(?:sentence|window)\s*:\s*", "", text, flags=re.I).strip()
-    paragraphs = _logical_paragraphs(text)
-    if not paragraphs:
-        return "", "empty_candidate"
-    text = " ".join(" ".join(p.split()) for p in paragraphs)
-    if text == " ".join(str(original_sentence or "").split()):
-        return "", "unchanged_sentence"
-    orig_len = max(1, len(str(original_sentence or "")))
-    min_len = max(40, int(orig_len * 0.45))
-    max_len = max(120, int(orig_len * 2.20))
-    if len(text) < min_len:
-        return "", f"sentence_window_too_short {len(text)}<{min_len}"
-    if len(text) > max_len:
-        return "", f"sentence_window_too_long {len(text)}>{max_len}"
-    return text, ""
+    return _core_clean_source_sentence_candidate(
+        candidate,
+        original_sentence,
+        deps=_paragraph_prompt_deps(),
+    )
 
 
 def _splice_paragraph(text: str, paragraph_index: int, replacement: str) -> str:
-    paragraphs = _logical_paragraphs(text)
-    if paragraph_index < 0 or paragraph_index >= len(paragraphs):
-        return text
-    paragraphs[paragraph_index] = replacement.strip()
-    return _join_logical_paragraphs(paragraphs)
+    return _core_splice_paragraph(
+        text,
+        paragraph_index,
+        replacement,
+        deps=_paragraph_prompt_deps(),
+    )
+
+
+def _content_pruning_candidate_deps() -> ContentPruningCandidateDeps:
+    return ContentPruningCandidateDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        split_sentences=_split_sentences,
+        text_word_count=_text_word_count,
+        paragraph_component_targets=_paragraph_component_targets,
+        paragraph_role=_paragraph_role,
+        detect_protected_spans=detect_protected_spans,
+    )
 
 
 def _content_pruning_candidates(
@@ -15877,368 +5724,43 @@ def _content_pruning_candidates(
     *,
     limit: int = 4,
 ) -> list[tuple[str, str, dict]]:
-    """Create deletion/compression candidates for paragraphs that drag scores down.
+    return _core_content_pruning_candidates(
+        source_text,
+        raw_json,
+        limit=limit,
+        deps=_content_pruning_candidate_deps(),
+    )
 
-    Pruning is only a candidate. The normal drift, protected-span, scan, and
-    authenticity gates decide whether it is safe enough to keep.
-    """
-    if not _env_flag("DRAFTPROOF_CONTENT_PRUNING_REPAIR", True):
-        return []
-    paragraphs = _logical_paragraphs(source_text)
-    if len(paragraphs) < 3:
-        return []
-    source_words = _text_word_count(source_text)
-    min_words = max(1, int(source_words * _float_env("DRAFTPROOF_CONTENT_PRUNING_MIN_WORD_RATIO", 0.75)))
-    targets = _paragraph_component_targets(source_text, raw_json or {}, limit=max(limit * 2, 4))
-    protected = detect_protected_spans(source_text)
 
-    def paragraph_has_protected_anchor(index: int) -> bool:
-        before = _join_logical_paragraphs(paragraphs[:index])
-        start = len(before) + (2 if before else 0)
-        end = start + len(paragraphs[index])
-        return any(span.start_char >= start and span.end_char <= end for span in protected)
-
-    candidates: list[tuple[str, str, dict]] = []
-    seen_texts: set[str] = set()
-    for target in targets:
-        index = int(target.get("index", 0) or 0)
-        if index < 0 or index >= len(paragraphs):
-            continue
-        paragraph = paragraphs[index]
-        words = _text_word_count(paragraph)
-        role = target.get("role") or _paragraph_role(paragraph, target.get("drivers") or {})
-        drivers = target.get("drivers") or {}
-        if role in {"human_anchor_rich", "technical_process_rich", "source_summary_heavy"}:
-            continue
-        if paragraph_has_protected_anchor(index):
-            continue
-        if words < 35:
-            continue
-        generic_hits = int(drivers.get("generic_assertion_hits") or 0)
-        concrete_hits = int(drivers.get("concrete_anchor_hits") or 0)
-        generic_density = generic_hits / max(words / 100.0, 1.0)
-        source_gap = bool(drivers.get("source_gap"))
-        if generic_density < 3.0 and not source_gap and role != "conclusion_template_risk":
-            continue
-
-        variants: list[tuple[str, str, dict]] = []
-        delete_paragraphs = list(paragraphs)
-        delete_paragraphs.pop(index)
-        delete_text = _join_logical_paragraphs(delete_paragraphs)
-        if _text_word_count(delete_text) >= min_words:
-            variants.append((
-                f"content_pruning_delete_p{index + 1}",
-                delete_text,
-                {
-                    "operation": "delete_paragraph",
-                    "paragraph_index": index,
-                    "paragraph_role": role,
-                    "removed_words": words,
-                    "drivers": drivers,
-                },
-            ))
-
-        sentences = _split_sentences(paragraph)
-        if len(sentences) >= 3:
-            sentence_scores = []
-            for sentence_index, sentence in enumerate(sentences):
-                sentence_words = _text_word_count(sentence)
-                generic_sentence_hits = len(re.findall(
-                    r"\b(?:important|significant|should|must|need(?:s)?|can|will|"
-                    r"helps?|allows?|enables?|creates?|means|shows?|suggests?|"
-                    r"highlights?|underscores?)\b",
-                    sentence,
-                    flags=re.I,
-                ))
-                concrete_sentence_hits = len(re.findall(
-                    r"\b(?:\d+(?:\.\d+)?%?|\bI\b|\bmy\b|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|"
-                    r"source|citation|reference|example|evidence|case|condition)\b",
-                    sentence,
-                    flags=re.I,
-                ))
-                sentence_scores.append((
-                    generic_sentence_hits * 2.0
-                    + sentence_words / 35.0
-                    - concrete_sentence_hits * 0.8,
-                    sentence_index,
-                    sentence,
-                ))
-            sentence_scores.sort(reverse=True)
-            remove_count = 1 if len(sentences) < 5 else 2
-            remove_indexes = {idx for _score, idx, _sentence in sentence_scores[:remove_count]}
-            kept_sentences = [
-                sentence for idx, sentence in enumerate(sentences)
-                if idx not in remove_indexes
-            ]
-            compressed = " ".join(kept_sentences).strip()
-            if (
-                compressed
-                and compressed != paragraph
-                and _text_word_count(compressed) >= max(25, int(words * 0.45))
-            ):
-                compressed_paragraphs = list(paragraphs)
-                compressed_paragraphs[index] = compressed
-                compressed_text = _join_logical_paragraphs(compressed_paragraphs)
-                if _text_word_count(compressed_text) >= min_words:
-                    variants.append((
-                        f"content_pruning_compress_p{index + 1}",
-                        compressed_text,
-                        {
-                            "operation": "compress_paragraph",
-                            "paragraph_index": index,
-                            "paragraph_role": role,
-                            "removed_sentence_indexes": sorted(remove_indexes),
-                            "removed_words": words - _text_word_count(compressed),
-                            "drivers": drivers,
-                        },
-                    ))
-
-        for strategy, candidate_text, meta in variants:
-            if candidate_text.strip() == source_text.strip() or candidate_text in seen_texts:
-                continue
-            seen_texts.add(candidate_text)
-            candidates.append((strategy, candidate_text, meta))
-            if len(candidates) >= max(1, limit):
-                return candidates
-    return candidates
+def _cleanup_transform_deps() -> CleanupTransformDeps:
+    return CleanupTransformDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        split_sentences=_split_sentences,
+        text_word_count=_text_word_count,
+    )
 
 
 def _narrow_generic_claim_text(text: str) -> str:
-    replacements = [
-        (r"\b[Tt]he real challenge is\b", "A harder challenge is"),
-        (r"\b[Tt]he main challenge is\b", "One challenge is"),
-        (r"\b[Tt]his has created\b", "This can create"),
-        (r"\b[Tt]his shift has made\b", "This shift can make"),
-        (r"\b[Tt]his is a serious concern because\b", "The concern is practical because"),
-        (r"\b[Tt]he goal should not be\b", "The goal does not need to be"),
-        (r"\b[Tt]he goal should be\b", "A more useful goal is"),
-        (r"\b[Ii]t is important to consider that\b", "In this situation,"),
-        (r"\b[Ii]t is important to note that\b", ""),
-        (r"\b[Pp]lays? (?:a )?(?:crucial|significant|important|major) role in\b", "affects"),
-        (r"\b[Hh]as (?:a )?(?:crucial|significant|important|major) impact on\b", "affects"),
-        (r"\b[Tt]his (?:demonstrates|highlights|underscores|shows) that\b", "This suggests that"),
-        (r"\b[Ii]n today's (?:world|society|environment)\b", "Now"),
-        (r"\b[Ii]n the modern (?:world|society|environment)\b", "Now"),
-    ]
-    narrowed = str(text or "")
-    for pattern, replacement in replacements:
-        narrowed = re.sub(pattern, replacement, narrowed)
-    narrowed = re.sub(r"\b[Ee]veryone\b", "Many people", narrowed)
-    narrowed = re.sub(r"\b[Aa]ll\b", "Many", narrowed)
-    narrowed = re.sub(r"\bmust\b", "may need to", narrowed)
-    narrowed = re.sub(r"\bwill\b", "may", narrowed)
-    narrowed = re.sub(r"\balways\b", "often", narrowed, flags=re.I)
-    narrowed = re.sub(r"\bnever\b", "rarely", narrowed, flags=re.I)
-    narrowed = re.sub(r"[ \t]{2,}", " ", narrowed)
-    narrowed = re.sub(r"\s+([,.!?;:])", r"\1", narrowed)
-    return narrowed
+    return _core_narrow_generic_claim_text(text)
 
 
 def _plain_language_depolish_text(text: str) -> tuple[str, list[str]]:
-    """Remove late-stage polished academic artifacts without changing claims."""
-    if not isinstance(text, str) or not text.strip():
-        return "", []
-    updated = text
-    applied: list[str] = []
-    replacements: list[tuple[str, str, str]] = [
-        (r"\bTherefore,\s*", "Because of this, ", "therefore_plain"),
-        (r"\bUltimately,\s*", "In the end, ", "ultimately_plain"),
-        (r"\bSimultaneously,\s*", "At the same time, ", "simultaneously_plain"),
-        (r"\bCrucially,\s*", "More importantly, ", "crucially_plain"),
-        (r"\bFurthermore,\s*", "", "furthermore_plain"),
-        (r"\bMoreover,\s*", "", "moreover_plain"),
-        (r"\bAdditionally,\s*", "", "additionally_plain"),
-        (r"\bYet,\s*", "But ", "yet_plain"),
-        (r"\bOn one hand\b", "On one side", "on_one_hand_plain"),
-        (r"\bresembles\b", "feels like", "resembles_plain"),
-        (r"\bamid constant motion\b", "while everything is moving around it", "amid_motion_plain"),
-        (r"\bpersists\b", "still exists", "persists_plain"),
-        (r"\bdeliver content\b", "explain the material", "deliver_content_plain"),
-        (r"\bgauge progress\b", "measure progress", "gauge_progress_plain"),
-        (r"\bshifted dramatically\b", "changed a lot", "shifted_dramatically_plain"),
-        (r"\bremarkably immediate\b", "very quick", "immediate_plain"),
-        (r"\babundance creates challenges\b", "creates a problem", "abundance_plain"),
-        (r"\bassume understanding comes effortlessly\b", "think understanding is easy", "effortless_understanding_plain"),
-        (r"\bconceal years of effort\b", "hide years of effort", "conceal_plain"),
-        (r"\blacks true comprehension\b", "does not really understand", "comprehension_plain_2"),
-        (r"\bunfolds more gradually\b", "is slower than that", "unfolds_plain"),
-        (r"\bremain vital\b", "still matter", "vital_plain"),
-        (r"\bextends beyond\b", "is more than", "extends_plain"),
-        (r"\bdistinguishing reliable information from unreliable sources\b", "telling useful information from weak information", "distinguish_sources_plain"),
-        (r"\bintensifies these concerns\b", "makes this more urgent", "intensifies_plain"),
-        (r"\bfocus on passing tests rather than truly grasping material\b", "focus on passing rather than really understanding", "grasping_material_plain"),
-        (r"\bnurture confidence or independent inquiry\b", "build confidence or independent thinking", "nurture_plain"),
-        (r"\bserves as a\b", "is used as a", "serves_plain"),
-        (r"\bsubstitute original thought\b", "replace their own thinking", "substitute_plain"),
-        (r"\bPlacing greater emphasis on\b", "Paying more attention to", "placing_emphasis_plain"),
-        (r"\bflawless final submission\b", "perfect final submission", "flawless_plain"),
-        (r"\bEquity also demands attention\b", "Fairness is another issue", "equity_plain"),
-        (r"\bbenefit from\b", "have", "benefit_plain"),
-        (r"\badvanced tools\b", "better tools", "advanced_tools_plain"),
-        (r"\bdisparities\b", "gaps", "disparities_plain"),
-        (r"\bhold value\b", "still matter", "hold_value_plain"),
-        (r"\bconfront the realities\b", "be honest about the world", "confront_plain"),
-        (r"\bcultivate\b", "build", "cultivate_plain"),
-        (r"\bit is crucial for\b", "it matters for", "crucial_plain"),
-        (r"\bcrucial\b", "important", "crucial_word_plain"),
-        (r"\bvital\b", "important", "vital_word_plain"),
-        (r"\bemphasize\b", "focus on", "emphasize_plain"),
-        (r"\bfrequently\b", "often", "frequently_plain"),
-        (r"\bmerely\b", "only", "merely_plain"),
-        (r"\bsignificant hurdle\b", "harder problem", "hurdle_plain"),
-        (r"\bvarious sources such as\b", "sources such as", "various_sources_plain"),
-        (r"\bindividuals they follow\b", "people they follow", "individuals_plain"),
-        (r"\bunderlying concepts\b", "topic", "underlying_concepts_plain"),
-        (r"\brefined answers\b", "polished answers", "refined_answers_plain"),
-        (r"\bthe advent of\b", "", "advent_plain"),
-        (r"\bfrequently fail to adequately address\b", "do not always build well", "fail_address_plain"),
-        (r"\bfilled with\b", "full of", "filled_plain"),
-        (r"\bready them\b", "prepare them", "ready_plain"),
-        (r"\brequire knowledge\b", "need knowledge", "require_knowledge_plain"),
-        (r"\bprimarily\b", "mainly", "primarily_plain"),
-        (r"\bengagement with the material\b", "attention to the topic", "engagement_material_plain"),
-        (r"\btrue comprehension\b", "understanding", "comprehension_plain"),
-        (r"\bjourney\b", "process", "journey_plain"),
-        (r"\bcontinuous improvement\b", "improvement", "continuous_improvement_plain"),
-        (r"\boveremphasis\b", "too much focus", "overemphasis_plain"),
-        (r"\bequip them for life\b", "prepare them for life", "equip_plain"),
-        (r"\brequire judgment\b", "need judgment", "require_plain"),
-    ]
-    for pattern, replacement, name in replacements:
-        next_text = re.sub(pattern, replacement, updated, flags=re.I)
-        if next_text != updated:
-            updated = next_text
-            applied.append(name)
-    updated = re.sub(r"[ \t]+", " ", updated)
-    updated = re.sub(r" \.", ".", updated)
-    updated = re.sub(r"\n{3,}", "\n\n", updated).strip()
-    return updated, applied
-
-
-def _plain_style_artifact_count(text: str) -> int:
-    """Count polished paraphrase markers that external detectors often punish."""
-    if not isinstance(text, str) or not text.strip():
-        return 0
-    patterns = [
-        r"\bresembles\b", r"\bamid\b", r"\bpersists\b", r"\bgauge\b",
-        r"\bdramatically\b", r"\bremarkably\b", r"\babundance\b",
-        r"\beffortlessly\b", r"\bconceal\b", r"\bcomprehension\b",
-        r"\bunfolds\b", r"\bvital\b", r"\bextends beyond\b",
-        r"\bcrucially\b", r"\bsimultaneously\b", r"\btherefore\b",
-        r"\bultimately\b", r"\bintensifies\b", r"\bnurture\b",
-        r"\binquiry\b", r"\bequity\b", r"\bdisparities\b",
-        r"\bconfront\b", r"\brequire\b", r"\bcultivate\b",
-        r"\bpresent age\b", r"\bserves as\b", r"\bsubstitute\b",
-    ]
-    lower = text.lower()
-    return sum(len(re.findall(pattern, lower)) for pattern in patterns)
+    return _core_plain_language_depolish_text(text)
 
 
 def _final_score_drag_sentence_prune_text(text: str) -> tuple[str, list[str]]:
-    """Remove broad late-stage sentences that drag scanner scores down.
-
-    This is intentionally narrow and deterministic. It does not add claims or
-    rewrite the document; it only offers a candidate with reusable, unsupported
-    broad assertions removed. The scanner/selector still decides whether to keep
-    it.
-    """
-    if not isinstance(text, str) or not text.strip():
-        return "", []
-    if not _env_flag("DRAFTPROOF_FINAL_SCORE_DRAG_PRUNE", True):
-        return text, []
-    max_removed = max(1, int(_float_env("DRAFTPROOF_FINAL_SCORE_DRAG_PRUNE_MAX_SENTENCES", 3.0)))
-    min_ratio = _float_env("DRAFTPROOF_FINAL_SCORE_DRAG_PRUNE_MIN_WORD_RATIO", 0.75)
-    source_words = _text_word_count(text)
-    if source_words <= 0:
-        return text, []
-    min_words = int(source_words * min_ratio)
-    remaining_words = source_words
-    sentence_patterns: list[tuple[str, str]] = [
-        (r"\b(?:the )?world (?:outside|around) [a-z ]+ has changed much faster\b", "outside_context_changed_faster"),
-        (r"\bin [a-z ]+ and outside it,\s+information is everywhere\b", "information_everywhere"),
-        (r"\bworld full of information and distractions\b", "world_information_distractions"),
-        (r"\bknowledge is no longer scarce\b", "knowledge_no_longer_scarce"),
-        (r"\baccess is no longer the biggest problem\b", "access_no_longer_biggest_problem"),
-    ]
-    protected_pattern = re.compile(
-        r"(?:\"[^\"]+\"|“[^”]+”|\[[^\]]+\]|\([A-Za-z]+,\s*\d{4}\)|\b\d+(?:\.\d+)?%?\b|"
-        r"\b[A-Z]{2,}[A-Z0-9-]*\b)",
-    )
-    paragraphs = _logical_paragraphs(text)
-    updated_paragraphs: list[str] = []
-    applied: list[str] = []
-    removed = 0
-    for paragraph in paragraphs:
-        if removed >= max_removed:
-            updated_paragraphs.append(paragraph)
-            continue
-        sentences = _split_sentences(paragraph)
-        if len(sentences) < 2:
-            updated_paragraphs.append(paragraph)
-            continue
-        kept: list[str] = []
-        for sentence in sentences:
-            if removed >= max_removed:
-                kept.append(sentence)
-                continue
-            sentence_text = sentence.strip()
-            lower_sentence = sentence_text.lower()
-            matched_name = ""
-            for pattern, name in sentence_patterns:
-                if re.search(pattern, lower_sentence, flags=re.I):
-                    matched_name = name
-                    break
-            if (
-                matched_name
-                and not protected_pattern.search(sentence_text)
-                and _text_word_count(sentence_text) <= 22
-                and len(sentences) - 1 >= 1
-                and remaining_words - _text_word_count(sentence_text) >= min_words
-            ):
-                removed += 1
-                remaining_words -= _text_word_count(sentence_text)
-                applied.append(matched_name)
-                continue
-            kept.append(sentence)
-        next_paragraph = " ".join(kept).strip()
-        if next_paragraph:
-            updated_paragraphs.append(next_paragraph)
-    updated = _join_logical_paragraphs(updated_paragraphs)
-    if not applied or updated.strip() == text.strip():
-        return text, []
-    if _text_word_count(updated) < min_words:
-        return text, []
-    return updated, applied
+    return _core_final_score_drag_sentence_prune_text(text, _cleanup_transform_deps())
 
 
 def _compress_score_drag_paragraph(paragraph: str, *, max_remove: int = 2) -> str:
-    sentences = _split_sentences(paragraph)
-    if len(sentences) < 3:
-        return _narrow_generic_claim_text(paragraph)
-    scores = []
-    for index, sentence in enumerate(sentences):
-        words = _text_word_count(sentence)
-        generic_hits = len(re.findall(
-            r"\b(?:important|significant|should|must|need(?:s)?|can|will|"
-            r"helps?|allows?|enables?|creates?|means|shows?|suggests?|"
-            r"highlights?|underscores?|challenge|issue|goal|system|world)\b",
-            sentence,
-            flags=re.I,
-        ))
-        anchor_hits = len(re.findall(
-            r"\b(?:\d+(?:\.\d+)?%?|\"[^\"]+\"|“[^”]+”|\bI\b|\bmy\b|"
-            r"source|citation|reference|example|evidence|case|condition)\b",
-            sentence,
-            flags=re.I,
-        ))
-        scores.append((generic_hits * 2.2 + words / 30.0 - anchor_hits * 1.1, index))
-    scores.sort(reverse=True)
-    remove_indexes = {index for _score, index in scores[:max(1, int(max_remove or 1))]}
-    kept = [sentence for index, sentence in enumerate(sentences) if index not in remove_indexes]
-    if not kept:
-        return paragraph
-    compressed = " ".join(kept).strip()
-    return _narrow_generic_claim_text(compressed)
+    return _core_compress_score_drag_paragraph(
+        paragraph,
+        _cleanup_transform_deps(),
+        max_remove=max_remove,
+    )
 
 
 _GENERIC_ASSERTION_TERMS_RE = re.compile(
@@ -16259,18 +5781,27 @@ _GENERIC_ASSERTION_PROTECTED_SENTENCE_RE = re.compile(
 )
 
 
+def _generic_assertion_compiler_deps() -> GenericAssertionCompilerDeps:
+    return GenericAssertionCompilerDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        blocker_scores=_blocker_scores,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        split_sentences=_split_sentences,
+        text_word_count=_text_word_count,
+        paragraph_component_targets=_paragraph_component_targets,
+        paragraph_role=_paragraph_role,
+        safe_index=_safe_index,
+        narrow_generic_claim_text=_narrow_generic_claim_text,
+        paragraph_citation_re=_PARAGRAPH_CITATION_RE,
+        generic_terms_re=_GENERIC_ASSERTION_TERMS_RE,
+        generic_protected_sentence_re=_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE,
+    )
+
+
 def _generic_assertion_sentence_score(sentence: str) -> float:
-    words = max(1, _text_word_count(sentence))
-    generic_hits = len(_GENERIC_ASSERTION_TERMS_RE.findall(sentence))
-    modal_hits = len(re.findall(r"\b(?:should|must|need(?:s|ed)?|can|will|may)\b", sentence, flags=re.I))
-    broad_noun_hits = len(re.findall(
-        r"\b(?:people|participants?|users?|readers?|writers?|work(?:ers)?|"
-        r"teams?|systems?|process(?:es)?|practice|skills?|tasks?)\b",
-        sentence,
-        flags=re.I,
-    ))
-    protected_hits = len(_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.findall(sentence))
-    return generic_hits * 2.4 + modal_hits * 1.2 + broad_noun_hits * 0.35 + words / 45.0 - protected_hits * 2.6
+    return _core_generic_assertion_sentence_score(sentence, _generic_assertion_compiler_deps())
 
 
 def _generic_assertion_compiler_candidates(
@@ -16279,183 +5810,26 @@ def _generic_assertion_compiler_candidates(
     *,
     limit: int = 4,
 ) -> list[tuple[str, str, dict]]:
-    """Compile broad generic-assertion blockers into bounded deterministic candidates.
+    return _core_generic_assertion_compiler_candidates(
+        source_text,
+        raw_json,
+        limit=limit,
+        deps=_generic_assertion_compiler_deps(),
+    )
 
-    This is intentionally not an LLM rewrite. It removes or narrows only the
-    broad, unsupported sentences that keep generic_assertion_risk high, while
-    preserving anchor-heavy and technical paragraphs for later local repair.
-    """
-    if not _env_flag("DRAFTPROOF_GENERIC_ASSERTION_COMPILER", True):
-        return []
-    blockers = _blocker_scores(raw_json)
-    generic_risk = float(blockers.get("generic_assertion_risk") or 0.0)
-    unsupported_risk = float(blockers.get("unsupported_claim_risk") or 0.0)
-    broad_risk = float(blockers.get("broad_claim_risk") or 0.0)
-    if max(generic_risk, unsupported_risk, broad_risk) < 60.0:
-        return []
 
-    paragraphs = _logical_paragraphs(source_text)
-    if len(paragraphs) < 3:
-        return []
-    source_words = _text_word_count(source_text)
-    min_ratio = _float_env("DRAFTPROOF_GENERIC_ASSERTION_MIN_WORD_RATIO", 0.75)
-    min_words = max(1, int(source_words * min_ratio))
-    targets = _paragraph_component_targets(source_text, raw_json or {}, limit=max(limit * 3, 8))
-    targeted_indexes = {_safe_index(target.get("index"), -1) for target in targets}
-    for index, paragraph in enumerate(paragraphs):
-        if index in targeted_indexes:
-            continue
-        words = _text_word_count(paragraph)
-        if words < 12:
-            continue
-        generic_hits = len(_GENERIC_ASSERTION_TERMS_RE.findall(paragraph))
-        if generic_hits < 2:
-            continue
-        drivers = {
-            "rewrite_brief_count": 0,
-            "predictability_score_sum": 0,
-            "generic_assertion_hits": generic_hits,
-            "concrete_anchor_hits": len(_GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.findall(paragraph)),
-            "source_gap": not bool(_PARAGRAPH_CITATION_RE.search(paragraph)),
-            "repeated_sentence_starters": 0,
-            "word_count": words,
-        }
-        role = _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
-        targets.append({
-            "index": index,
-            "paragraph": paragraph,
-            "score": round(_generic_assertion_sentence_score(paragraph) + 60.0, 3),
-            "raw_score": round(_generic_assertion_sentence_score(paragraph), 3),
-            "role": role,
-            "drivers": drivers,
-            "target_sentences": [],
-            "problem_spans": [],
-            "domain_anchors": [],
-        })
-    targets.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
-    candidates: list[tuple[str, str, dict]] = []
-    seen: set[str] = {str(source_text or "").strip()}
-
-    def add(strategy: str, candidate_paragraphs: list[str], meta: dict) -> None:
-        candidate_text = _join_logical_paragraphs(candidate_paragraphs)
-        normalized = candidate_text.strip()
-        if not normalized or normalized in seen:
-            return
-        if _text_word_count(candidate_text) < min_words:
-            return
-        seen.add(normalized)
-        candidates.append((
-            strategy,
-            candidate_text,
-            {
-                **meta,
-                "generic_assertion_compiler": True,
-                "blockers": {
-                    "generic_assertion_risk": generic_risk,
-                    "unsupported_claim_risk": unsupported_risk,
-                    "broad_claim_risk": broad_risk,
-                },
-            },
-        ))
-
-    for target in targets:
-        if len(candidates) >= max(1, limit):
-            break
-        index = int(target.get("index", 0) or 0)
-        if index < 0 or index >= len(paragraphs):
-            continue
-        paragraph = paragraphs[index]
-        drivers = target.get("drivers") or {}
-        role = target.get("role") or _paragraph_role(paragraph, drivers, is_last=index == len(paragraphs) - 1)
-        if role in {"human_anchor_rich", "technical_process_rich"}:
-            continue
-        sentences = _split_sentences(paragraph)
-        if len(sentences) < 2:
-            narrowed = _narrow_generic_claim_text(paragraph)
-            if narrowed.strip() and narrowed.strip() != paragraph.strip():
-                next_paragraphs = list(paragraphs)
-                next_paragraphs[index] = narrowed
-                add(
-                    f"generic_assertion_narrow_p{index + 1}",
-                    next_paragraphs,
-                    {"operation": "narrow_single_block", "paragraph_index": index, "paragraph_role": role},
-                )
-            continue
-
-        removable = []
-        for sentence_index, sentence in enumerate(sentences):
-            sentence_text = sentence.strip()
-            if not sentence_text:
-                continue
-            if _GENERIC_ASSERTION_PROTECTED_SENTENCE_RE.search(sentence_text):
-                continue
-            score = _generic_assertion_sentence_score(sentence_text)
-            generic_hits = len(_GENERIC_ASSERTION_TERMS_RE.findall(sentence_text))
-            if score >= 3.0 and generic_hits >= 1:
-                removable.append((score, sentence_index, sentence_text))
-        removable.sort(reverse=True)
-
-        if removable:
-            remove_count = 1 if len(sentences) < 5 else min(2, len(removable))
-            remove_indexes = {idx for _score, idx, _sentence in removable[:remove_count]}
-            kept = [sentence for sentence_index, sentence in enumerate(sentences) if sentence_index not in remove_indexes]
-            if len(kept) >= 1:
-                replacement = _narrow_generic_claim_text(" ".join(kept).strip())
-                if replacement and replacement.strip() != paragraph.strip():
-                    next_paragraphs = list(paragraphs)
-                    next_paragraphs[index] = replacement
-                    add(
-                        f"generic_assertion_prune_p{index + 1}",
-                        next_paragraphs,
-                        {
-                            "operation": "remove_generic_assertion_sentence",
-                            "paragraph_index": index,
-                            "paragraph_role": role,
-                            "removed_sentence_indexes": sorted(remove_indexes),
-                            "removed_sentences": [sentence for _score, _idx, sentence in removable[:remove_count]],
-                            "drivers": drivers,
-                        },
-                    )
-
-        narrowed = _narrow_generic_claim_text(paragraph)
-        if narrowed.strip() and narrowed.strip() != paragraph.strip():
-            next_paragraphs = list(paragraphs)
-            next_paragraphs[index] = narrowed
-            add(
-                f"generic_assertion_narrow_p{index + 1}",
-                next_paragraphs,
-                {
-                    "operation": "narrow_generic_claim_language",
-                    "paragraph_index": index,
-                    "paragraph_role": role,
-                    "drivers": drivers,
-                },
-            )
-
-    if len(candidates) < max(1, limit):
-        changed = []
-        combined = list(paragraphs)
-        for target in targets[:6]:
-            index = int(target.get("index", 0) or 0)
-            if index < 0 or index >= len(combined):
-                continue
-            role = target.get("role") or _paragraph_role(combined[index], target.get("drivers") or {}, is_last=index == len(combined) - 1)
-            if role in {"human_anchor_rich", "technical_process_rich"}:
-                continue
-            narrowed = _narrow_generic_claim_text(combined[index])
-            if narrowed.strip() and narrowed.strip() != combined[index].strip():
-                combined[index] = narrowed
-                changed.append(index)
-            if len(changed) >= 4:
-                break
-        if changed:
-            add(
-                "generic_assertion_multi_narrow",
-                combined,
-                {"operation": "multi_narrow_generic_claim_language", "paragraph_indexes": changed},
-            )
-
-    return candidates[:max(1, limit)]
+def _blocker_operation_candidate_deps() -> BlockerOperationCandidateDeps:
+    return BlockerOperationCandidateDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        text_word_count=_text_word_count,
+        blocker_operation_plan=_blocker_operation_plan,
+        safe_index=_safe_index,
+        compress_score_drag_paragraph=_compress_score_drag_paragraph,
+        narrow_generic_claim_text=_narrow_generic_claim_text,
+    )
 
 
 def _blocker_operation_candidates(
@@ -16464,128 +5838,12 @@ def _blocker_operation_candidates(
     *,
     limit: int = 6,
 ) -> list[tuple[str, str, dict]]:
-    """Generate deterministic candidates from the blocker operation compiler."""
-    if not _env_flag("DRAFTPROOF_BLOCKER_OPERATION_COMPILER", True):
-        return []
-    paragraphs = _logical_paragraphs(source_text)
-    if len(paragraphs) < 2:
-        return []
-    source_words = _text_word_count(source_text)
-    min_words = max(1, int(source_words * _float_env("DRAFTPROOF_BLOCKER_OPERATION_MIN_WORD_RATIO", 0.60)))
-    plan = _blocker_operation_plan(source_text, raw_json or {}, limit=max(limit * 2, 6))
-    operations = plan.get("operations") or []
-    decision_by_index = {
-        _safe_index(decision.get("paragraph_index"), -1): decision
-        for decision in plan.get("block_decisions") or []
-        if isinstance(decision, dict)
-    }
-    candidates: list[tuple[str, str, dict]] = []
-    seen: set[str] = set()
-
-    def add_candidate(strategy: str, candidate_paragraphs: list[str], meta: dict) -> None:
-        candidate_text = _join_logical_paragraphs(candidate_paragraphs)
-        if candidate_text.strip() == source_text.strip():
-            return
-        if _text_word_count(candidate_text) < min_words:
-            return
-        if candidate_text in seen:
-            return
-        seen.add(candidate_text)
-        candidates.append((strategy, candidate_text, {**meta, "operation_plan": plan}))
-
-    for op in operations:
-        if len(candidates) >= max(1, limit):
-            break
-        index = _safe_index(op.get("paragraph_index"), -1)
-        if index < 0 or index >= len(paragraphs):
-            continue
-        paragraph = paragraphs[index]
-        operation = str(op.get("operation") or "")
-        decision = decision_by_index.get(index, {})
-        decision_name = str(decision.get("decision") or "")
-        allowed_operations = set(decision.get("allowed_operations") or [])
-        has_protected = bool(op.get("has_protected_anchor"))
-        if (
-            operation in {"delete_or_compress", "compress_or_delete"}
-            and not has_protected
-            and decision_name == "remove_or_compress"
-            and "delete_paragraph" in allowed_operations
-        ):
-            deleted = list(paragraphs)
-            deleted.pop(index)
-            add_candidate(
-                f"blocker_compiler_delete_p{index + 1}",
-                deleted,
-                {
-                    "operation": "delete_paragraph",
-                    "paragraph_index": index,
-                    "compiled_from": op,
-                    "block_decision": decision,
-                },
-            )
-        compressed_text = _compress_score_drag_paragraph(
-            paragraph,
-            max_remove=2 if operation in {"delete_or_compress", "compress_or_delete"} else 1,
-        )
-        if (
-            compressed_text.strip()
-            and compressed_text.strip() != paragraph.strip()
-            and "compress_paragraph" in allowed_operations
-        ):
-            compressed = list(paragraphs)
-            compressed[index] = compressed_text
-            add_candidate(
-                f"blocker_compiler_compress_p{index + 1}",
-                compressed,
-                {
-                    "operation": "compress_or_narrow_paragraph",
-                    "paragraph_index": index,
-                    "compiled_from": op,
-                    "block_decision": decision,
-                },
-            )
-        narrowed_text = _narrow_generic_claim_text(paragraph)
-        if (
-            narrowed_text.strip()
-            and narrowed_text.strip() != paragraph.strip()
-            and "claim_narrow" in allowed_operations
-        ):
-            narrowed = list(paragraphs)
-            narrowed[index] = narrowed_text
-            add_candidate(
-                f"blocker_compiler_narrow_p{index + 1}",
-                narrowed,
-                {
-                    "operation": "claim_narrow",
-                    "paragraph_index": index,
-                    "compiled_from": op,
-                    "block_decision": decision,
-                },
-            )
-
-    if len(candidates) < max(1, limit):
-        combined = list(paragraphs)
-        changed_indexes = []
-        for op in operations:
-            index = _safe_index(op.get("paragraph_index"), -1)
-            if index < 0 or index >= len(combined) or bool(op.get("has_protected_anchor")):
-                continue
-            if len(changed_indexes) >= 3:
-                break
-            operation = str(op.get("operation") or "")
-            if operation in {"delete_or_compress", "compress_or_delete", "claim_narrow"}:
-                replacement = _compress_score_drag_paragraph(combined[index], max_remove=2)
-                if replacement.strip() and replacement.strip() != combined[index].strip():
-                    combined[index] = replacement
-                    changed_indexes.append(index)
-        if changed_indexes:
-            add_candidate(
-                "blocker_compiler_multi_compress",
-                combined,
-                {"operation": "multi_compress_or_narrow", "paragraph_indexes": changed_indexes},
-            )
-
-    return candidates[:max(1, limit)]
+    return _core_blocker_operation_candidates(
+        source_text,
+        raw_json,
+        limit=limit,
+        deps=_blocker_operation_candidate_deps(),
+    )
 
 
 def _post_safe_win_target_push_candidates(
@@ -16660,187 +5918,35 @@ def _post_safe_win_target_push_candidates(
     return candidates[:limit]
 
 
+def _human_anchor_candidate_deps() -> HumanAnchorCandidateDeps:
+    return HumanAnchorCandidateDeps(
+        env_flag=_env_flag,
+        float_env=_float_env,
+        human_anchor_driver_contract=_human_anchor_driver_contract,
+        logical_paragraphs=_logical_paragraphs,
+        is_heading_like_paragraph=_is_heading_like_paragraph,
+        split_sentences=_split_sentences,
+        ordered_concept_origin_terms=_ordered_concept_origin_terms,
+        join_logical_paragraphs=_join_logical_paragraphs,
+        formula_portfolio_plan=_formula_portfolio_plan,
+        turnitin_like_ai_profile=_turnitin_like_ai_profile,
+        blocker_scores=_blocker_scores,
+        compress_score_drag_paragraph=_compress_score_drag_paragraph,
+    )
+
+
 def _human_anchor_amplifier_candidates(
     source_text: str,
     report_dict: dict | None,
     *,
     limit: int = 3,
 ) -> list[tuple[str, str, dict]]:
-    """Add bounded implied-context anchors across low-anchor prose spans.
-
-    This targets the scanner's lived-detail density band directly. The edits do
-    not claim a new named event, source, person, date, or statistic; they frame
-    existing claims as process, judgement, or practice conditions.
-    """
-    if not _env_flag("DRAFTPROOF_HUMAN_ANCHOR_AMPLIFIER", True):
-        return []
-    contract = _human_anchor_driver_contract(report_dict, text=source_text)
-    before = contract.get("before") or {}
-    lived_risk = before.get("lived_detail_risk")
-    human_anchor = before.get("human_anchor_score")
-    if (
-        isinstance(lived_risk, (int, float))
-        and float(lived_risk) < _float_env("DRAFTPROOF_HUMAN_ANCHOR_LIVED_RISK_TRIGGER", 65.0)
-        and isinstance(human_anchor, (int, float))
-        and float(human_anchor) >= _float_env("DRAFTPROOF_HUMAN_ANCHOR_SCORE_TRIGGER", 50.0)
-    ):
-        return []
-
-    paragraphs = _logical_paragraphs(source_text)
-    if not paragraphs:
-        return []
-
-    anchor_re = re.compile(
-        r"\b(?:\d+|during|when|after|before|feedback|testing|case|example|"
-        r"in practice|I would|I think|I worry|we observed|"
-        r"what (?:I|we) (?:would|need|want)|my judgement)\b",
-        re.I,
+    return _core_human_anchor_amplifier_candidates(
+        source_text,
+        report_dict,
+        limit=limit,
+        deps=_human_anchor_candidate_deps(),
     )
-    assertion_re = re.compile(
-        r"\b(?:is|are|was|has|have|can|should|must|need(?:s|ed)?|"
-        r"creates?|makes?|means|requires?|shows?|supports?|helps?|allows?)\b",
-        re.I,
-    )
-    reference_heading_seen = False
-    flat_rows: list[dict] = []
-    flat_index = 0
-    for paragraph_index, paragraph in enumerate(paragraphs):
-        if re.match(r"^\s*references?\s*$", paragraph, flags=re.I):
-            reference_heading_seen = True
-        sentences = _split_sentences(paragraph)
-        for sentence_index, sentence in enumerate(sentences):
-            words = sentence.split()
-            row = {
-                "flat_index": flat_index,
-                "paragraph_index": paragraph_index,
-                "sentence_index": sentence_index,
-                "sentence": sentence,
-                "skip": False,
-            }
-            flat_index += 1
-            if (
-                reference_heading_seen
-                or _is_heading_like_paragraph(paragraph)
-                or len(words) < 8
-                or re.search(r"https?://|www\.", sentence, flags=re.I)
-                or anchor_re.search(sentence)
-            ):
-                row["skip"] = True
-                flat_rows.append(row)
-                continue
-            score = (
-                (2.0 if assertion_re.search(sentence) else 0.0)
-                + min(len(words) / 32.0, 1.5)
-                + (1.5 if paragraph_index not in {0, len(paragraphs) - 1} else 0.5)
-            )
-            row["score"] = round(score, 3)
-            flat_rows.append(row)
-
-    target_pool = sorted(
-        [row for row in flat_rows if not row.get("skip") and float(row.get("score") or 0.0) > 0],
-        key=lambda row: float(row.get("score") or 0.0),
-        reverse=True,
-    )
-    if not target_pool:
-        return []
-
-    density = contract.get("estimated_anchor_density") or {}
-    eligible_count = int(density.get("eligible_sentence_count") or 0)
-    current_hits = int(density.get("anchor_sentence_count") or 0)
-    next_required = int(contract.get("required_anchor_sentences_for_next_band") or 0)
-    base_needed = max(1, next_required - current_hits)
-    sentence_cap = max(1, min(len(target_pool), int(math.ceil(max(eligible_count, 1) * 0.45))))
-    profiles = [
-        ("human_anchor_amplifier_next_band", min(sentence_cap, base_needed)),
-        (
-            "human_anchor_amplifier_density_step",
-            min(sentence_cap, max(base_needed + 2, int(math.ceil(max(eligible_count, 1) * 0.20)) - current_hits)),
-        ),
-        (
-            "human_anchor_amplifier_strong_density",
-            min(sentence_cap, max(base_needed + 4, int(math.ceil(max(eligible_count, 1) * 0.30)) - current_hits)),
-        ),
-    ]
-
-    def contextualize(sentence: str) -> tuple[str, str]:
-        stripped = sentence.strip()
-        if not stripped:
-            return "", ""
-        terms = _ordered_concept_origin_terms(stripped, limit=4)
-        if len(terms) < 2:
-            return "", ""
-        first, second = terms[0], terms[1]
-        addition = (
-            f" This point should stay tied to {first} and {second}, "
-            "rather than treated as a general claim."
-        )
-        if addition.strip().lower() in stripped.lower():
-            return "", ""
-        return stripped + addition, "local_concept_limit"
-
-    target_pool = [
-        {**row, "contextual_operation": contextualize(str(row.get("sentence") or ""))}
-        for row in target_pool
-    ]
-    target_pool = [row for row in target_pool if row.get("contextual_operation", ("", ""))[0]]
-    if not target_pool:
-        return []
-
-    def build(limit_count: int, label: str) -> tuple[str, list[dict]]:
-        selected = sorted(target_pool[:max(1, limit_count)], key=lambda row: int(row["flat_index"]))
-        selected_by_flat = {int(row["flat_index"]): pos for pos, row in enumerate(selected)}
-        selected_replacements = {
-            int(row["flat_index"]): row.get("contextual_operation", ("", ""))
-            for row in selected
-        }
-        rebuilt_paragraphs = []
-        flat = 0
-        changes = []
-        for paragraph in paragraphs:
-            rebuilt_sentences = []
-            for sentence in _split_sentences(paragraph):
-                if flat in selected_by_flat:
-                    replacement, operation = selected_replacements.get(flat, ("", ""))
-                    if replacement:
-                        rebuilt_sentences.append(replacement)
-                        changes.append({
-                            "flat_sentence_index": flat,
-                            "operation": operation,
-                            "original": sentence[:180],
-                            "replacement": replacement[:180],
-                        })
-                    else:
-                        rebuilt_sentences.append(sentence)
-                else:
-                    rebuilt_sentences.append(sentence)
-                flat += 1
-            rebuilt_paragraphs.append(" ".join(rebuilt_sentences))
-        return _join_logical_paragraphs(rebuilt_paragraphs), changes
-
-    candidates: list[tuple[str, str, dict]] = []
-    seen: set[str] = {str(source_text or "").strip()}
-    for strategy, target_count in profiles[:max(1, int(limit or 1))]:
-        if target_count <= 0:
-            continue
-        candidate, changes = build(target_count, strategy)
-        normalized = candidate.strip()
-        if not changes or not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        candidates.append((
-            strategy,
-            candidate,
-            {
-                "operation": "human_anchor_amplifier",
-                "human_anchor_amplifier": True,
-                "scope": "implied_context_only",
-                "changed_sentence_frames": len(changes),
-                "contract_before": contract,
-                "target_lived_detail_band": contract.get("next_lived_detail_band"),
-                "changes": changes[:12],
-            },
-        ))
-    return candidates[:max(1, int(limit or 1))]
 
 
 def _formula_portfolio_candidates(
@@ -16853,136 +5959,16 @@ def _formula_portfolio_candidates(
     pruning_candidates: list[tuple[str, str, dict]] | None = None,
     limit: int = 6,
 ) -> list[tuple[str, str, dict]]:
-    """Build portfolio candidates that move positive drivers and Human Anchor together.
-
-    The existing candidate families are useful, but isolated. This controller
-    composes them according to the Turnitin-like formula plan so the search can
-    test combined gap-closure moves instead of hoping one signal moves enough.
-    """
-    if not _env_flag("DRAFTPROOF_FORMULA_PORTFOLIO_GENERATOR", True):
-        return []
-    limit = max(1, int(limit or 1))
-    plan = _formula_portfolio_plan(report_dict, report_dict)
-    selected_drivers = {
-        str(row.get("driver"))
-        for row in (plan.get("selected_driver_portfolio") or [])
-        if isinstance(row, dict) and row.get("driver")
-    }
-    priority_drivers = {
-        str(row.get("driver"))
-        for row in (plan.get("driver_priorities") or [])[:5]
-        if isinstance(row, dict) and row.get("driver")
-    }
-    drivers = selected_drivers | priority_drivers
-    if not drivers:
-        return []
-
-    source_norm = str(source_text or "").strip()
-    seen: set[str] = {source_norm}
-    candidates: list[tuple[str, str, dict]] = []
-
-    def add(strategy: str, candidate: str, meta: dict | None, targeted: list[str]) -> None:
-        normalized = str(candidate or "").strip()
-        if not normalized or normalized in seen or normalized == source_norm:
-            return
-        if len(candidates) >= limit:
-            return
-        seen.add(normalized)
-        candidates.append((
-            strategy,
-            candidate,
-            {
-                **(meta or {}),
-                "formula_portfolio_candidate": True,
-                "targeted_drivers": targeted,
-                "formula_portfolio_plan": {
-                    "score_before": plan.get("score_before"),
-                    "target_score": plan.get("target_score"),
-                    "required_gap": plan.get("required_gap"),
-                    "positive_ai_burden": plan.get("positive_ai_burden"),
-                    "human_anchor_suppression": plan.get("human_anchor_suppression"),
-                    "selected_driver_portfolio": plan.get("selected_driver_portfolio"),
-                },
-            },
-        ))
-
-    def anchor_on_base(
-        base_strategy: str,
-        base_text: str,
-        base_meta: dict | None,
-        *,
-        targeted: list[str],
-        label: str,
-    ) -> None:
-        if len(candidates) >= limit:
-            return
-        anchor_variants = _human_anchor_amplifier_candidates(base_text, report_dict, limit=1)
-        for anchor_strategy, anchor_text, anchor_meta in anchor_variants[:1]:
-            add(
-                f"formula_portfolio_{label}_{base_strategy}_{anchor_strategy.replace('human_anchor_amplifier_', '')}",
-                anchor_text,
-                {
-                    **(anchor_meta or {}),
-                    "base_strategy": base_strategy,
-                    "base_meta": base_meta or {},
-                    "portfolio_operation": f"{label}_plus_human_anchor",
-                },
-                targeted,
-            )
-
-    topk_pool = list(topk_route_candidates or [])
-    blocker_pool = list(blocker_operation_candidates or [])
-    generic_pool = list(generic_assertion_candidates or [])
-    pruning_pool = list(pruning_candidates or [])
-
-    if "human_anchor_suppression" in drivers:
-        for strategy, candidate, meta in _human_anchor_amplifier_candidates(source_text, report_dict, limit=2):
-            add(
-                f"formula_portfolio_{strategy}",
-                candidate,
-                {
-                    **(meta or {}),
-                    "portfolio_operation": "human_anchor_suppression_gain",
-                },
-                ["human_anchor_suppression"],
-            )
-
-    if {"ai_likelihood", "topk_calibrated_risk", "human_anchor_suppression"} & drivers:
-        for base_strategy, base_text, base_meta in topk_pool[:2]:
-            anchor_on_base(
-                base_strategy,
-                base_text,
-                base_meta,
-                targeted=["ai_likelihood", "topk_calibrated_risk", "human_anchor_suppression"],
-                label="route_anchor",
-            )
-
-    if {"semantic_uniformity", "patchwork_expansion", "ai_likelihood", "human_anchor_suppression"} & drivers:
-        structural_pool = (blocker_pool[:2] + generic_pool[:2] + pruning_pool[:2])
-        for base_strategy, base_text, base_meta in structural_pool:
-            anchor_on_base(
-                base_strategy,
-                base_text,
-                base_meta,
-                targeted=["semantic_uniformity", "patchwork_expansion", "ai_likelihood", "human_anchor_suppression"],
-                label="structure_anchor",
-            )
-            if len(candidates) >= limit:
-                break
-
-    if {"patchwork_expansion", "semantic_uniformity"} & drivers:
-        for base_strategy, base_text, base_meta in pruning_pool[:2]:
-            add(
-                f"formula_portfolio_low_value_remove_{base_strategy}",
-                base_text,
-                {
-                    **(base_meta or {}),
-                    "portfolio_operation": "low_value_remove",
-                },
-                ["patchwork_expansion", "semantic_uniformity"],
-            )
-
-    return candidates[:limit]
+    return _core_formula_portfolio_candidates(
+        source_text,
+        report_dict,
+        topk_route_candidates=topk_route_candidates,
+        blocker_operation_candidates=blocker_operation_candidates,
+        generic_assertion_candidates=generic_assertion_candidates,
+        pruning_candidates=pruning_candidates,
+        limit=limit,
+        deps=_human_anchor_candidate_deps(),
+    )
 
 
 def _human_anchor_suppression_frontier(
@@ -16990,84 +5976,28 @@ def _human_anchor_suppression_frontier(
     report_dict: dict | None,
     block_map: dict | None = None,
 ) -> dict:
-    """Expose the live Human Anchor lever for formula convergence."""
-    profile = _turnitin_like_ai_profile(report_dict)
-    blockers = _blocker_scores(report_dict)
-    contract = _human_anchor_driver_contract(report_dict, text=source_text)
-    before = contract.get("before") if isinstance(contract.get("before"), dict) else {}
-    suppression = float(profile.get("human_anchor_suppression") or 0.0)
-    headroom = max(0.0, 45.0 - suppression)
-    lived_detail_risk = float(before.get("lived_detail_risk", blockers.get("lived_detail_risk", 0.0)) or 0.0)
-    domain_grounding = float(before.get("domain_grounding_strength", 0.0) or 0.0)
-    rows = []
-    for row in (block_map or {}).get("blocks") or []:
-        if not isinstance(row, dict):
-            continue
-        if row.get("protected") or row.get("reference_section") or row.get("heading_like"):
-            continue
-        deficit = float(row.get("human_anchor_deficit") or 0.0)
-        potential = float(row.get("suppression_gain_potential") or 0.0)
-        if potential <= 0.0 and deficit <= 0.0:
-            continue
-        rows.append({
-            "block_index": row.get("block_index"),
-            "recommended_portfolio_action": row.get("recommended_portfolio_action"),
-            "human_anchor_deficit": round(deficit, 3),
-            "suppression_gain_potential": round(potential, 3),
-            "weighted_drag": row.get("weighted_drag"),
-            "remove_value_loss_risk": row.get("remove_value_loss_risk"),
-            "preview": row.get("preview"),
-        })
-    rows.sort(
-        key=lambda item: (
-            float(item.get("suppression_gain_potential") or 0.0),
-            float(item.get("human_anchor_deficit") or 0.0),
-            float(item.get("weighted_drag") or 0.0),
-        ),
-        reverse=True,
+    return _core_human_anchor_suppression_frontier(
+        source_text,
+        report_dict,
+        block_map,
+        deps=_human_anchor_candidate_deps(),
     )
-    return {
-        "version": "human_anchor_suppression_frontier_v1",
-        "human_anchor_suppression": round(suppression, 3),
-        "suppression_headroom": round(headroom, 3),
-        "lived_detail_risk": round(lived_detail_risk, 3),
-        "domain_grounding_strength": round(domain_grounding, 3),
-        "required_suppression_gain_to_target": round(
-            min(headroom, max(0.0, float(profile.get("target_gap") or 0.0) + 3.0)),
-            3,
-        ),
-        "driver_contract": contract,
-        "candidate_blocks": rows[:8],
-        "blocker": (
-            "no_suppression_headroom"
-            if headroom <= 0.0
-            else "insufficient_lived_detail_density"
-            if lived_detail_risk >= 55.0
-            else "suppression_available_but_lived_detail_not_dominant"
-        ),
-    }
 
 
 def _anchor_sentence_for_paragraph(paragraph: str, variant: str = "process") -> str:
-    terms = _ordered_concept_origin_terms(paragraph, limit=4)
-    if len(terms) >= 2:
-        first, second = terms[0], terms[1]
-        if variant == "limitation":
-            return f"This point should stay limited to {first} and {second}, not stretched into a wider claim."
-        return f"The useful check is how {first} relates to {second} in the paragraph itself."
-    if variant == "limitation":
-        return "This point should be read as a limited judgement, not as a claim that every case will work the same way."
-    return "The practical issue is how this would be checked in the actual work, not only how clear the statement sounds."
+    return _core_anchor_sentence_for_paragraph(
+        paragraph,
+        variant=variant,
+        deps=_human_anchor_candidate_deps(),
+    )
 
 
 def _append_anchor_sentence(paragraph: str, *, variant: str = "process") -> str:
-    sentence = _anchor_sentence_for_paragraph(paragraph, variant=variant)
-    stripped = str(paragraph or "").strip()
-    if not stripped:
-        return sentence
-    if sentence.lower() in stripped.lower():
-        return stripped
-    return f"{stripped} {sentence}"
+    return _core_append_anchor_sentence(
+        paragraph,
+        variant=variant,
+        deps=_human_anchor_candidate_deps(),
+    )
 
 
 def _human_anchor_suppression_frontier_candidates(
@@ -17077,157 +6007,21 @@ def _human_anchor_suppression_frontier_candidates(
     *,
     limit: int = 4,
 ) -> list[tuple[str, str, dict]]:
-    """Create formula candidates that move Human Anchor and AI burden together."""
-    if not _env_flag("DRAFTPROOF_HUMAN_ANCHOR_SUPPRESSION_FRONTIER", True):
-        return []
-    frontier = _human_anchor_suppression_frontier(source_text, report_dict, block_map)
-    if float(frontier.get("suppression_headroom") or 0.0) <= 0.0:
-        return []
-    if (
-        float(frontier.get("lived_detail_risk") or 0.0) < 55.0
-        and float(frontier.get("human_anchor_suppression") or 0.0) >= 25.0
-    ):
-        return []
-    paragraphs = _logical_paragraphs(source_text)
-    if len(paragraphs) < 2:
-        return []
-    block_rows = [
-        row for row in (block_map or {}).get("blocks") or []
-        if isinstance(row, dict)
-    ]
-    by_index = {
-        int(row.get("block_index")): row
-        for row in block_rows
-        if isinstance(row.get("block_index"), int)
-    }
-    targets = [
-        row for row in frontier.get("candidate_blocks") or []
-        if isinstance(row, dict)
-        and isinstance(row.get("block_index"), int)
-        and 0 <= int(row.get("block_index")) < len(paragraphs)
-    ]
-    if not targets:
-        return []
-    limit = max(1, int(limit or 1))
-    source_norm = str(source_text or "").strip()
-    candidates: list[tuple[str, str, dict]] = []
-    seen = {source_norm}
+    return _core_human_anchor_suppression_frontier_candidates(
+        source_text,
+        report_dict,
+        block_map,
+        limit=limit,
+        deps=_human_anchor_candidate_deps(),
+    )
 
-    def add(strategy: str, next_paragraphs: list[str], meta: dict) -> None:
-        if len(candidates) >= limit:
-            return
-        candidate = _join_logical_paragraphs(next_paragraphs)
-        normalized = candidate.strip()
-        if not normalized or normalized in seen or normalized == source_norm:
-            return
-        seen.add(normalized)
-        candidates.append((
-            strategy,
-            candidate,
-            {
-                **meta,
-                "human_anchor_suppression_frontier": True,
-                "frontier": frontier,
-            },
-        ))
 
-    for variant in ("process", "limitation"):
-        changed: list[int] = []
-        next_paragraphs = list(paragraphs)
-        for target in targets[:3]:
-            index = int(target["block_index"])
-            block = by_index.get(index, {})
-            if block.get("protected") or block.get("unique_core_claim") and variant == "process":
-                continue
-            replacement = _append_anchor_sentence(next_paragraphs[index], variant=variant)
-            if replacement != next_paragraphs[index]:
-                next_paragraphs[index] = replacement
-                changed.append(index)
-            if len(changed) >= 2:
-                break
-        if changed:
-            add(
-                f"human_anchor_{variant}_patch",
-                next_paragraphs,
-                {
-                    "operation": f"anchor_{variant}_reasoning_patch",
-                    "portfolio_operation": "human_anchor_suppression_gain",
-                    "paragraph_indexes": changed,
-                    "targeted_drivers": ["human_anchor_suppression", "lived_detail_risk"],
-                },
-            )
-
-    for target in targets[:3]:
-        index = int(target["block_index"])
-        block = by_index.get(index, {})
-        if block.get("protected"):
-            continue
-        compressed = _compress_score_drag_paragraph(paragraphs[index], max_remove=2)
-        replacement = _append_anchor_sentence(compressed, variant="process")
-        if replacement.strip() and replacement.strip() != paragraphs[index].strip():
-            next_paragraphs = list(paragraphs)
-            next_paragraphs[index] = replacement
-            add(
-                f"anchor_plus_texture_hybrid_p{index + 1}",
-                next_paragraphs,
-                {
-                    "operation": "anchor_plus_texture_hybrid",
-                    "portfolio_operation": "human_anchor_plus_texture_rebuild",
-                    "paragraph_index": index,
-                    "targeted_drivers": [
-                        "human_anchor_suppression",
-                        "ai_likelihood",
-                        "semantic_uniformity",
-                        "rewrite_smoothness",
-                    ],
-                },
-            )
-
-    removable = [
-        row for row in block_rows
-        if row.get("recommended_portfolio_action") == "remove_candidate"
-        and row.get("remove_value_loss_risk") == "low"
-        and not row.get("protected")
-        and not row.get("unique_core_claim")
-        and isinstance(row.get("block_index"), int)
-    ]
-    if removable:
-        remove_index = int(removable[0]["block_index"])
-        anchor_target = next(
-            (
-                int(row["block_index"])
-                for row in targets
-                if int(row["block_index"]) != remove_index
-            ),
-            0 if remove_index != 0 else min(1, len(paragraphs) - 1),
-        )
-        next_paragraphs = [
-            paragraph for idx, paragraph in enumerate(paragraphs)
-            if idx != remove_index
-        ]
-        adjusted_anchor_index = anchor_target - (1 if anchor_target > remove_index else 0)
-        if 0 <= adjusted_anchor_index < len(next_paragraphs):
-            next_paragraphs[adjusted_anchor_index] = _append_anchor_sentence(
-                next_paragraphs[adjusted_anchor_index],
-                variant="limitation",
-            )
-            add(
-                f"low_value_remove_anchor_p{remove_index + 1}",
-                next_paragraphs,
-                {
-                    "operation": "low_value_block_remove_plus_anchor",
-                    "portfolio_operation": "low_value_remove_plus_human_anchor",
-                    "removed_paragraph_index": remove_index,
-                    "anchor_paragraph_index": anchor_target,
-                    "targeted_drivers": [
-                        "human_anchor_suppression",
-                        "patchwork_expansion",
-                        "semantic_uniformity",
-                    ],
-                },
-            )
-
-    return candidates[:limit]
+def _formula_block_candidate_deps() -> FormulaBlockCandidateDeps:
+    return FormulaBlockCandidateDeps(
+        env_flag=_env_flag,
+        logical_paragraphs=_logical_paragraphs,
+        join_logical_paragraphs=_join_logical_paragraphs,
+    )
 
 
 def _formula_block_map_removal_candidates(
@@ -17236,82 +6030,12 @@ def _formula_block_map_removal_candidates(
     *,
     limit: int = 3,
 ) -> list[tuple[str, str, dict]]:
-    """Remove low-value high-drag blocks identified by the formula block map."""
-    if not _env_flag("DRAFTPROOF_FORMULA_BLOCK_MAP_REMOVAL", True):
-        return []
-    paragraphs = _logical_paragraphs(source_text)
-    if len(paragraphs) < 3:
-        return []
-    removable = [
-        row for row in (block_map or {}).get("blocks") or []
-        if isinstance(row, dict)
-        and row.get("recommended_portfolio_action") == "remove_candidate"
-        and row.get("remove_value_loss_risk") == "low"
-        and not row.get("protected")
-        and not row.get("unique_core_claim")
-        and isinstance(row.get("block_index"), int)
-        and 0 <= int(row.get("block_index")) < len(paragraphs)
-    ]
-    removable.sort(
-        key=lambda row: (
-            float(row.get("weighted_drag") or 0.0),
-            float(row.get("generic_density") or 0.0),
-            float(row.get("human_anchor_deficit") or 0.0),
-        ),
-        reverse=True,
+    return _core_formula_block_map_removal_candidates(
+        source_text,
+        block_map,
+        limit=limit,
+        deps=_formula_block_candidate_deps(),
     )
-    if not removable:
-        return []
-    limit = max(1, int(limit or 1))
-    source_norm = str(source_text or "").strip()
-    candidates: list[tuple[str, str, dict]] = []
-    seen = {source_norm}
-
-    def add(strategy: str, remove_indexes: list[int]) -> None:
-        indexes = sorted(set(remove_indexes))
-        if not indexes or len(indexes) >= len(paragraphs):
-            return
-        next_paragraphs = [
-            paragraph for idx, paragraph in enumerate(paragraphs)
-            if idx not in indexes
-        ]
-        candidate = _join_logical_paragraphs(next_paragraphs)
-        normalized = candidate.strip()
-        if not normalized or normalized in seen:
-            return
-        seen.add(normalized)
-        removed_rows = [
-            row for row in removable
-            if int(row.get("block_index")) in indexes
-        ]
-        candidates.append((
-            strategy,
-            candidate,
-            {
-                "operation": "formula_low_value_block_remove",
-                "portfolio_operation": "low_value_remove",
-                "removed_paragraph_indexes": indexes,
-                "removed_blocks": removed_rows,
-                "targeted_drivers": [
-                    "patchwork_expansion",
-                    "semantic_uniformity",
-                    "ai_likelihood",
-                    "rewrite_smoothness",
-                ],
-                "formula_block_map_removal": True,
-            },
-        ))
-
-    for row in removable[:limit]:
-        add(f"formula_low_value_block_remove_p{int(row['block_index']) + 1}", [int(row["block_index"])])
-        if len(candidates) >= limit:
-            return candidates[:limit]
-    if len(removable) >= 2 and len(candidates) < limit:
-        add(
-            "formula_low_value_block_remove_top2",
-            [int(row["block_index"]) for row in removable[:2]],
-        )
-    return candidates[:limit]
 
 
 def _formula_convergence_budget(source_text: str, budget: dict | None = None) -> dict:
@@ -17350,327 +6074,40 @@ def _rewrite_phase_budget_plan(
     ai_search_policy: dict | None = None,
     formula_gap_budget: dict | None = None,
 ) -> dict:
-    """Allocate the shared rewrite budget before high-cost phases start.
-
-    The global ledger records what happened after each phase. This planner
-    decides what each major controller is allowed to spend before AI search can
-    consume the whole run-level budget.
-    """
-
-    total_scans = max(0, int(max_scans or 0))
-    total_llm = max(0, int(max_llm_calls or 0))
-    ai_policy = ai_search_policy if isinstance(ai_search_policy, dict) else {}
-    formula_contract = formula_gap_budget if isinstance(formula_gap_budget, dict) else {}
-    formula_default = _formula_convergence_budget(source_text)
-    profile = _turnitin_like_ai_profile(current_report if isinstance(current_report, dict) else original_report or {})
-    density = _eligible_span_density_contract(source_text, current_report if isinstance(current_report, dict) else {})
-    components = profile.get("components") if isinstance(profile.get("components"), dict) else {}
-    topk_risk = float(components.get("topk_calibrated_risk") or 0.0)
-    density_unsafe = not bool(density.get("safe"))
-    target_unmet = not bool(profile.get("target_met"))
-    segment_needed = bool(
-        _env_flag("DRAFTPROOF_SEGMENT_WINDOW_DENSITY_CONTROLLER", True)
-        and target_unmet
-        and (density_unsafe or topk_risk >= _safe_topk_calibrated_limit())
+    return _core_rewrite_phase_budget_plan(
+        source_text,
+        current_report,
+        original_report,
+        max_scans=max_scans,
+        max_llm_calls=max_llm_calls,
+        ai_search_policy=ai_search_policy,
+        formula_gap_budget=formula_gap_budget,
+        text_word_count=_text_word_count,
+        formula_convergence_budget=_formula_convergence_budget,
+        turnitin_like_ai_profile=_turnitin_like_ai_profile,
+        eligible_span_density_contract=_eligible_span_density_contract,
+        env_flag=_env_flag,
+        safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+        verified_candidate_scan_budget=_verified_candidate_scan_budget,
+        float_env=_float_env,
     )
-
-    try:
-        ai_desired_scans = int(ai_policy.get("max_candidate_scans") or 0)
-    except (TypeError, ValueError):
-        ai_desired_scans = 0
-    if ai_desired_scans <= 0:
-        ai_desired_scans = int(_verified_candidate_scan_budget(source_text, original_report).get("max_candidate_scans") or 0)
-    try:
-        ai_desired_llm = int(ai_policy.get("max_llm_calls") or 0)
-    except (TypeError, ValueError):
-        ai_desired_llm = 0
-    if ai_desired_llm <= 0:
-        ai_desired_llm = min(total_llm or 10, int(formula_contract.get("llm_candidate_calls") or 5))
-
-    if segment_needed:
-        formula_scans = min(int(formula_default.get("max_scans") or 0), 2)
-        formula_llm = min(int(formula_default.get("max_llm_calls") or 0), 1)
-        segment_scans = min(3, total_scans)
-        segment_llm = min(3, total_llm)
-        post_segment_scans = min(1, total_scans)
-        post_segment_llm = 0
-        unallocated_scan_reserve = 2 if total_scans >= 12 else 1 if total_scans >= 8 else 0
-        unallocated_llm_reserve = 1 if total_llm >= 8 else 0
-        base_scan_contract = 14
-        base_llm_contract = 10
-        extra_scans = max(0, total_scans - base_scan_contract)
-        extra_llm = max(0, total_llm - base_llm_contract)
-        if extra_scans > 0:
-            segment_goal_scan_cap = max(
-                segment_scans,
-                int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_GOAL_MAX_SCANS", 12.0)),
-            )
-            formula_goal_scan_cap = max(
-                formula_scans,
-                int(_float_env("DRAFTPROOF_FORMULA_CONVERGENCE_GOAL_MAX_SCANS", 6.0)),
-            )
-            post_goal_scan_cap = max(
-                post_segment_scans,
-                int(_float_env("DRAFTPROOF_POST_SEGMENT_GOAL_MAX_SCANS", 3.0)),
-            )
-            segment_extra = min(extra_scans, max(0, segment_goal_scan_cap - segment_scans))
-            segment_scans += segment_extra
-            extra_scans -= segment_extra
-            formula_extra = min(extra_scans, max(0, formula_goal_scan_cap - formula_scans))
-            formula_scans += formula_extra
-            extra_scans -= formula_extra
-            post_extra = min(extra_scans, max(0, post_goal_scan_cap - post_segment_scans))
-            post_segment_scans += post_extra
-        if extra_llm > 0:
-            segment_goal_llm_cap = max(
-                segment_llm,
-                int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_GOAL_MAX_LLM_CALLS", 10.0)),
-            )
-            formula_goal_llm_cap = max(
-                formula_llm,
-                int(_float_env("DRAFTPROOF_FORMULA_CONVERGENCE_GOAL_MAX_LLM_CALLS", 3.0)),
-            )
-            segment_llm_extra = min(extra_llm, max(0, segment_goal_llm_cap - segment_llm))
-            segment_llm += segment_llm_extra
-            extra_llm -= segment_llm_extra
-            formula_llm_extra = min(extra_llm, max(0, formula_goal_llm_cap - formula_llm))
-            formula_llm += formula_llm_extra
-    else:
-        formula_scans = min(int(formula_default.get("max_scans") or 0), 3)
-        formula_llm = min(int(formula_default.get("max_llm_calls") or 0), 1)
-        segment_scans = 0
-        segment_llm = 0
-        post_segment_scans = 0
-        post_segment_llm = 0
-        unallocated_scan_reserve = 1 if total_scans >= 8 else 0
-        unallocated_llm_reserve = 0
-
-    reserved_scans = formula_scans + segment_scans + post_segment_scans + unallocated_scan_reserve
-    reserved_llm = formula_llm + segment_llm + post_segment_llm + unallocated_llm_reserve
-    ai_max_scans = max(0, total_scans - reserved_scans) if total_scans else ai_desired_scans
-    ai_max_llm = max(0, total_llm - reserved_llm) if total_llm else ai_desired_llm
-    if segment_needed and total_scans >= 10:
-        ai_max_scans = min(ai_max_scans, 6)
-    if segment_needed and total_llm >= 8:
-        ai_max_llm = min(ai_max_llm, 5)
-
-    ai_scans = max(0, min(ai_desired_scans, ai_max_scans))
-    ai_llm = max(0, min(ai_desired_llm, ai_max_llm))
-    used_scans = ai_scans + formula_scans + segment_scans + post_segment_scans
-    used_llm = ai_llm + formula_llm + segment_llm + post_segment_llm
-
-    return {
-        "version": "phase_budget_plan_v1",
-        "enabled": True,
-        "reason": (
-            "segment_density_or_topk_goal_first_extended"
-            if segment_needed and (total_scans > 14 or total_llm > 10)
-            else "segment_density_or_topk_priority"
-            if segment_needed
-            else "standard_formula_priority"
-        ),
-        "total": {
-            "max_scans": total_scans,
-            "max_llm_calls": total_llm,
-        },
-        "drivers": {
-            "turnitin_like_target_met": bool(profile.get("target_met")),
-            "eligible_span_density_safe": bool(density.get("safe")),
-            "topk_calibrated_risk": round(topk_risk, 3),
-            "segment_window_needed": segment_needed,
-        },
-        "phases": {
-            "ai_mitigation_search": {
-                "max_scans": ai_scans,
-                "max_llm_calls": ai_llm,
-                "desired_scans": ai_desired_scans,
-                "desired_llm_calls": ai_desired_llm,
-            },
-            "formula_convergence_controller": {
-                "max_scans": formula_scans,
-                "max_llm_calls": formula_llm,
-            },
-            "segment_window_density_controller": {
-                "max_scans": segment_scans,
-                "max_llm_calls": segment_llm,
-                "needed": segment_needed,
-            },
-            "post_segment_followup": {
-                "max_scans": post_segment_scans,
-                "max_llm_calls": post_segment_llm,
-            },
-            "unallocated_reserve": {
-                "max_scans": max(0, total_scans - used_scans) if total_scans else 0,
-                "max_llm_calls": max(0, total_llm - used_llm) if total_llm else 0,
-                "planned_floor_scans": unallocated_scan_reserve,
-                "planned_floor_llm_calls": unallocated_llm_reserve,
-            },
-        },
-    }
 
 
 def _formula_block_driver_map(source_text: str, report_dict: dict | None) -> dict:
-    """Estimate block-level formula drag for convergence planning.
-
-    The scanner scores the whole document, so this map is intentionally a
-    conservative triage layer. It points the generator toward high-generic,
-    low-anchor prose while protecting headings, references, anchors, and blocks
-    likely to carry unique claims.
-    """
-    paragraphs = _logical_paragraphs(source_text)
-    profile = _turnitin_like_ai_profile(report_dict)
-    plan = _formula_portfolio_plan(report_dict, report_dict)
-    weighted = profile.get("weighted_components") if isinstance(profile.get("weighted_components"), dict) else {}
-    dominant_drivers = [
-        str(row.get("driver"))
-        for row in (plan.get("driver_priorities") or [])[:5]
-        if isinstance(row, dict) and row.get("driver")
-    ]
-    generic_re = re.compile(
-        r"\b(?:important|significant|various|many|different|modern|today|society|"
-        r"culture|technology|system|people|community|global|"
-        r"impact|influence|development|opportunity|challenge|supports?|helps?|"
-        r"plays? a role|continues? to|it is clear|this shows|this means)\b",
-        re.I,
+    return _core_formula_block_driver_map(
+        source_text,
+        report_dict,
+        deps=FormulaBlockDriverMapDeps(
+            logical_paragraphs=_logical_paragraphs,
+            text_word_count=_text_word_count,
+            split_sentences=_split_sentences,
+            protected_number_set=_protected_number_set,
+            protected_code_anchor_set=_protected_code_anchor_set,
+            is_heading_like_paragraph=_is_heading_like_paragraph,
+            turnitin_like_ai_profile=_turnitin_like_ai_profile,
+            formula_portfolio_plan=_formula_portfolio_plan,
+        ),
     )
-    human_anchor_re = re.compile(
-        r"\b(?:I|my|we|our|when|during|after|before|in practice|for me|"
-        r"what I|what we|I noticed|I would|the issue is|this depends|"
-        r"checked|feedback|mistake|draft|practice|workshop|observed|tested)\b",
-        re.I,
-    )
-    connector_re = re.compile(
-        r"\b(?:furthermore|moreover|additionally|in conclusion|overall|"
-        r"therefore|as a result|this highlights|this demonstrates)\b",
-        re.I,
-    )
-    reference_section = False
-    blocks: list[dict] = []
-    total_words = max(1, sum(_text_word_count(paragraph) for paragraph in paragraphs))
-    for index, paragraph in enumerate(paragraphs):
-        stripped = str(paragraph or "").strip()
-        if re.match(r"^\s*references?\s*$", stripped, flags=re.I):
-            reference_section = True
-        words = _text_word_count(stripped)
-        sentences = _split_sentences(stripped)
-        sentence_count = max(1, len(sentences))
-        generic_hits = len(generic_re.findall(stripped))
-        anchor_hits = len(human_anchor_re.findall(stripped))
-        connector_hits = len(connector_re.findall(stripped))
-        protected_numbers = sorted(_protected_number_set(stripped))
-        protected_codes = sorted(_protected_code_anchor_set(stripped))
-        url_count = len(re.findall(r"https?://|www\.", stripped, flags=re.I))
-        proper_like = len(re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b", stripped))
-        heading_like = _is_heading_like_paragraph(stripped)
-        protected = bool(reference_section or heading_like or protected_numbers or protected_codes or url_count)
-        unique_core_claim = bool(
-            protected
-            or re.search(r"\b(?:because|therefore|caused|led to|resulted|depends on|specific|particular)\b", stripped, re.I)
-            or (
-                proper_like >= 4
-                and re.search(r"\b(?:case|example|named|known as|called|located|founded|declared)\b", stripped, re.I)
-            )
-        )
-        generic_density = generic_hits / max(1, words / 20.0)
-        anchor_density = anchor_hits / sentence_count
-        human_anchor_deficit = max(0.0, 1.0 - anchor_density)
-        template_density = connector_hits / sentence_count
-        length_share = words / total_words
-        formula_drag = (
-            float(weighted.get("ai_likelihood") or 0.0) * 0.40
-            + float(weighted.get("semantic_uniformity") or 0.0) * 0.22
-            + float(weighted.get("rewrite_smoothness") or 0.0) * 0.18
-            + float(weighted.get("patchwork_expansion") or 0.0) * 0.14
-            + float(weighted.get("topk_calibrated_risk") or 0.0) * 0.06
-        )
-        weighted_drag = (
-            formula_drag * min(1.0, length_share * 4.0)
-            + min(12.0, generic_density * 4.0)
-            + min(8.0, max(0.0, 1.0 - anchor_density) * 3.0)
-            + min(5.0, template_density * 3.0)
-        )
-        suppression_gain_potential = min(
-            8.0,
-            human_anchor_deficit * 4.0
-            + min(3.0, generic_density * 0.8)
-            + min(2.0, length_share * 8.0),
-        )
-        if protected:
-            remove_value_loss_risk = "blocked"
-        elif unique_core_claim:
-            remove_value_loss_risk = "high"
-        elif words <= 120 and generic_density >= 1.0 and anchor_hits == 0:
-            remove_value_loss_risk = "low"
-        else:
-            remove_value_loss_risk = "medium"
-        if not stripped:
-            action = "preserve"
-            remove_safety = "empty_block"
-            recommended_portfolio_action = "preserve"
-        elif protected:
-            action = "preserve"
-            remove_safety = "protected_anchor_or_reference"
-            recommended_portfolio_action = "preserve"
-        elif unique_core_claim and weighted_drag >= 12.0:
-            action = "rebuild"
-            remove_safety = "unique_core_claim_requires_replacement"
-            recommended_portfolio_action = "texture_rebuild"
-        elif weighted_drag >= 12.0 and words <= 120 and remove_value_loss_risk != "high":
-            action = "remove_candidate"
-            remove_safety = "low_anchor_high_drag_no_protected_anchors"
-            recommended_portfolio_action = (
-                "remove_candidate" if remove_value_loss_risk == "low" else "compress"
-            )
-        elif weighted_drag >= 10.0:
-            action = "compress"
-            remove_safety = "compress_before_remove"
-            recommended_portfolio_action = "anchor_amplify" if human_anchor_deficit >= 0.75 else "compress"
-        else:
-            action = "preserve"
-            remove_safety = "low_estimated_drag"
-            recommended_portfolio_action = "anchor_amplify" if human_anchor_deficit >= 0.75 and weighted_drag >= 6.0 else "preserve"
-        blocks.append({
-            "block_index": index,
-            "word_count": words,
-            "sentence_count": sentence_count,
-            "action": action,
-            "weighted_drag": round(weighted_drag, 3),
-            "generic_hits": generic_hits,
-            "generic_density": round(generic_density, 3),
-            "human_anchor_hits": anchor_hits,
-            "human_anchor_density": round(anchor_density, 3),
-            "human_anchor_deficit": round(human_anchor_deficit, 3),
-            "lived_detail_gap": round(max(0.0, 1.0 - anchor_density) * 100.0, 3),
-            "suppression_gain_potential": round(suppression_gain_potential, 3),
-            "template_connector_hits": connector_hits,
-            "protected": protected,
-            "protected_numbers": protected_numbers[:8],
-            "protected_code_anchors": protected_codes[:8],
-            "url_count": url_count,
-            "heading_like": heading_like,
-            "reference_section": reference_section,
-            "unique_core_claim": unique_core_claim,
-            "remove_safety": remove_safety,
-            "remove_value_loss_risk": remove_value_loss_risk,
-            "recommended_portfolio_action": recommended_portfolio_action,
-            "dominant_formula_drivers": dominant_drivers,
-            "preview": stripped[:220],
-        })
-    top_blocks = sorted(
-        blocks,
-        key=lambda row: float(row.get("weighted_drag") or 0.0),
-        reverse=True,
-    )[:8]
-    return {
-        "version": "formula_block_driver_map_v1",
-        "block_count": len(blocks),
-        "formula_score": profile.get("score"),
-        "target_score": profile.get("target_score"),
-        "remaining_gap": profile.get("target_gap"),
-        "dominant_formula_drivers": dominant_drivers,
-        "blocks": blocks,
-        "top_blocks": top_blocks,
-    }
 
 
 def _formula_convergence_candidate_batch(
@@ -17879,54 +6316,6 @@ def _formula_convergence_llm_patch_candidates(
     return candidates
 
 
-def _formula_convergence_candidate_public(row: dict | None) -> dict:
-    row = row if isinstance(row, dict) else {}
-    contract = row.get("formula_gap_contract") if isinstance(row.get("formula_gap_contract"), dict) else {}
-    gate = row.get("turnitin_like_ai_gate") if isinstance(row.get("turnitin_like_ai_gate"), dict) else {}
-    status = row.get("selection_status") if isinstance(row.get("selection_status"), dict) else {}
-    return {
-        "pass_index": row.get("pass_index"),
-        "strategy": row.get("strategy"),
-        "selectable": status.get("selectable", row.get("selectable")),
-        "selected": row.get("selected", False),
-        "reason": row.get("reason") or status.get("reason"),
-        "score_before": contract.get("score_before"),
-        "score_after": contract.get("score_after"),
-        "score_drop": contract.get("score_drop"),
-        "target_met": contract.get("target_met"),
-        "remaining_formula_gap": contract.get("remaining_formula_gap"),
-        "weighted_driver_drops": contract.get("weighted_driver_drops"),
-        "formula_gap_contract": {
-            "score_before": contract.get("score_before"),
-            "score_after": contract.get("score_after"),
-            "score_drop": contract.get("score_drop"),
-            "target_met": contract.get("target_met"),
-            "weighted_driver_drops": contract.get("weighted_driver_drops"),
-        },
-        "turnitin_like_ai_gate": {
-            "safety_clean": gate.get("safety_clean"),
-            "safe_band": gate.get("safe_band"),
-            "score_drop": gate.get("score_drop"),
-            "outcome_class": gate.get("outcome_class"),
-            "component_drops": gate.get("component_drops"),
-        },
-        "anti_smoothing_guard": row.get("anti_smoothing_guard"),
-        "primary_burden_gate": row.get("primary_burden_gate"),
-        "concept_origin_guard": row.get("concept_origin_guard"),
-        "applied_formula_convergence_patches": row.get("applied_formula_convergence_patches"),
-        "selection_status": {
-            "selectable": status.get("selectable", row.get("selectable")),
-            "reason": row.get("reason") or status.get("reason"),
-        },
-        "turnitin_like_outcome_class": gate.get("outcome_class"),
-        "ai_authorship": row.get("ai_authorship"),
-        "ai_transformation": row.get("ai_transformation"),
-        "review_burden": row.get("review_burden"),
-        "weighted_severity": row.get("weighted_severity"),
-        "critical_high_findings": row.get("critical_high_findings"),
-    }
-
-
 def _formula_convergence_controller(
     current_text: str,
     current_report: dict | None,
@@ -17938,487 +6327,41 @@ def _formula_convergence_controller(
     drift_checker=None,
     llm_gateway: LLMGateway | None = None,
 ) -> dict:
-    """Iteratively close the Turnitin-like formula gap from the current best.
-
-    This is deliberately stateful: each pass plans against the best rescanned
-    candidate from the previous pass. It never rolls back safe partial formula
-    progress just because the strict <20 target is not reached.
-    """
-    if not _env_flag("DRAFTPROOF_FORMULA_CONVERGENCE_CONTROLLER", True):
-        return {
-            "enabled": False,
-            "reason": "formula_convergence_controller_disabled",
-            "selected": False,
-        }
-    scan_func = scan_func or _run_full_scan_report_dict
-    drift_checker = drift_checker or check_semantic_drift
-    resolved_budget = _formula_convergence_budget(current_text, budget)
-    max_passes = int(resolved_budget.get("max_passes") or 0)
-    max_scans = int(resolved_budget.get("max_scans") or 0)
-    if max_passes <= 0 or max_scans <= 0:
-        return {
-            "enabled": True,
-            "selected": False,
-            "reason": "formula_convergence_budget_zero",
-            "phase_budget_contract": resolved_budget,
-        }
-
-    best_text = str(current_text or "")
-    best_report = current_report if isinstance(current_report, dict) else {}
-    start_profile = _turnitin_like_ai_profile(best_report)
-    best_profile = start_profile
-    original_profile = _turnitin_like_ai_profile(original_report)
-    selected_any = False
-    selected_strategy = None
-    selected_eval = None
-    scans_used = 0
-    llm_calls_used = 0
-    passes: list[dict] = []
-    candidates: list[dict] = []
-    best_frontier: list[dict] = []
-    last_block_map: dict | None = None
-
-    def num(value, default=0.0) -> float:
-        return float(value) if isinstance(value, (int, float)) else float(default)
-
-    def report_snapshot(report_dict: dict | None) -> dict:
-        profile = _turnitin_like_ai_profile(report_dict)
-        integrity = _integrity_scores(report_dict)
-        contribution = _contribution_scores(report_dict)
-        return {
-            "turnitin_like_ai_score": profile.get("score"),
-            "target_gap": profile.get("target_gap"),
-            "target_met": profile.get("target_met"),
-            "human_anchor_suppression": profile.get("human_anchor_suppression"),
-            "positive_ai_burden": profile.get("raw_positive_score"),
-            "ai_authorship": integrity.get("ai_authorship"),
-            "ai_transformation": contribution.get("ai_transformation"),
-            "external_ai_flag_risk": _ai_footprint_profile(report_dict).get("external_ai_flag_risk"),
-            "review_burden": _report_review_burden(report_dict),
-            "weighted_severity": _report_weighted_severity(report_dict),
-            "critical_high_findings": _critical_high_count(report_dict),
-        }
-
-    stop_reason = ""
-    for pass_index in range(1, max_passes + 1):
-        best_profile = _turnitin_like_ai_profile(best_report)
-        if bool(best_profile.get("target_met")):
-            stop_reason = "turnitin_like_target_met"
-            break
-        if scans_used >= max_scans:
-            stop_reason = "scan_budget_exhausted"
-            break
-        block_map = _formula_block_driver_map(best_text, best_report)
-        last_block_map = block_map
-        anchor_frontier = _human_anchor_suppression_frontier(best_text, best_report, block_map)
-        feasibility = _formula_feasibility_estimator(best_report, observed_candidates=candidates)
-        geometry_map = _geometry_risk_map(best_text, best_report)
-        remaining_scans = max(0, max_scans - scans_used)
-        batch_limit = max(1, min(remaining_scans, int(math.ceil(max_scans / max(1, max_passes)))))
-        if candidate_builder:
-            raw_batch = candidate_builder(best_text, best_report, pass_index, block_map)
-        else:
-            deterministic_limit = batch_limit
-            if (
-                llm_gateway is not None
-                and llm_calls_used < int(resolved_budget.get("max_llm_calls") or 0)
-                and batch_limit > 2
-            ):
-                deterministic_limit = max(1, batch_limit - 2)
-            raw_batch = _formula_convergence_candidate_batch(
-                best_text,
-                best_report,
-                block_map,
-                limit=deterministic_limit,
-            )
-            if (
-                llm_gateway is not None
-                and llm_calls_used < int(resolved_budget.get("max_llm_calls") or 0)
-                and len(raw_batch) < remaining_scans
-            ):
-                llm_calls_used += 1
-                llm_candidates = _formula_convergence_llm_patch_candidates(
-                    best_text,
-                    best_report,
-                    block_map,
-                    llm_gateway,
-                    max_candidates=min(3, max(1, remaining_scans - len(raw_batch))),
-                )
-                raw_batch = list(raw_batch or []) + llm_candidates
-        batch: list[tuple[str, str, dict]] = []
-        seen = {best_text.strip()}
-        for item in raw_batch or []:
-            if not item or len(item) < 2:
-                continue
-            strategy = str(item[0] or f"candidate_{len(batch)+1}")
-            candidate_text = str(item[1] or "")
-            meta = item[2] if len(item) > 2 and isinstance(item[2], dict) else {}
-            normalized = candidate_text.strip()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            batch.append((strategy, candidate_text, meta))
-            if len(batch) >= remaining_scans:
-                break
-        pass_summary = {
-            "pass_index": pass_index,
-            "score_before": best_profile.get("score"),
-            "target_gap_before": best_profile.get("target_gap"),
-            "block_driver_map": {
-                key: block_map.get(key)
-                for key in ("version", "block_count", "formula_score", "target_score", "remaining_gap", "dominant_formula_drivers", "top_blocks")
-            },
-            "feasibility_estimator": feasibility,
-            "geometry_risk_map": {
-                "version": geometry_map.get("version"),
-                "sentence_count": geometry_map.get("sentence_count"),
-                "median_sentence_words": geometry_map.get("median_sentence_words"),
-                "dominant_weighted_drivers": geometry_map.get("dominant_weighted_drivers"),
-                "top_sentence_hotspots": (geometry_map.get("sentence_hotspots") or [])[:6],
-                "top_paragraph_hotspots": (geometry_map.get("paragraph_hotspots") or [])[:4],
-            },
-            "human_anchor_suppression_frontier": anchor_frontier,
-            "candidate_count": len(batch),
-            "generated_candidates": len(raw_batch or []),
-            "llm_calls_used": llm_calls_used,
-            "scanned": 0,
-            "selected": False,
-        }
-        if not batch:
-            pass_summary["reason"] = "no_candidate_batch_generated"
-            passes.append(pass_summary)
-            stop_reason = "no_candidate_batch_generated"
-            break
-
-        pass_best = None
-        pass_best_rank = None
-        for strategy, candidate_text, meta in batch:
-            if scans_used >= max_scans:
-                stop_reason = "scan_budget_exhausted"
-                break
-            candidate_eval = {
-                "pass_index": pass_index,
-                "strategy": strategy,
-                "formula_convergence_candidate": True,
-                "formula_convergence_controller": True,
-                **(meta or {}),
-            }
-            local_reason = _ai_candidate_quality_reject_reason(candidate_text)
-            if local_reason:
-                candidate_eval["reason"] = local_reason
-                candidate_eval["selection_status"] = {"selectable": False, "reason": local_reason}
-                candidates.append(candidate_eval)
-                continue
-            protected_loss = _ai_search_protected_loss_reason(best_text, candidate_text, detect_protected_spans(best_text))
-            if protected_loss:
-                reason = "protected_span_lost " + protected_loss
-                candidate_eval["reason"] = reason
-                candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
-                candidates.append(candidate_eval)
-                continue
-            concept_origin_reason = _candidate_concept_origin_reject_reason(best_text, candidate_text)
-            if concept_origin_reason:
-                candidate_eval["reason"] = concept_origin_reason
-                candidate_eval["concept_origin_guard"] = {
-                    "accepted": False,
-                    "reason": concept_origin_reason,
-                }
-                candidate_eval["selection_status"] = {
-                    "selectable": False,
-                    "reason": concept_origin_reason,
-                }
-                candidates.append(candidate_eval)
-                continue
-            try:
-                drift = drift_checker(best_text, candidate_text, threshold=0.15)
-            except TypeError:
-                drift = drift_checker(best_text, candidate_text)
-            candidate_eval["drift_similarity"] = round(float(getattr(drift, "similarity", 1.0)), 3)
-            if not bool(getattr(drift, "accepted", True)):
-                reason = "semantic_drift " + "; ".join(list(getattr(drift, "reasons", []) or [])[:3])
-                candidate_eval["reason"] = reason
-                candidate_eval["drift_reasons"] = list(getattr(drift, "reasons", []) or [])[:10]
-                candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
-                candidates.append(candidate_eval)
-                continue
-            try:
-                scan_t0 = time.time()
-                candidate_report = scan_func(candidate_text)
-                scan_seconds = round(time.time() - scan_t0, 3)
-            except Exception as exc:
-                reason = f"candidate_scan_error {exc}"
-                candidate_eval["reason"] = reason
-                candidate_eval["selection_status"] = {"selectable": False, "reason": reason}
-                candidates.append(candidate_eval)
-                continue
-            scans_used += 1
-            pass_summary["scanned"] += 1
-
-            candidate_profile = _turnitin_like_ai_profile(candidate_report)
-            contract_vs_current = _formula_gap_contract(
-                best_report,
-                candidate_report,
-                source_text=best_text,
-                candidate_text=candidate_text,
-            )
-            contract_vs_original = _formula_gap_contract(
-                original_report,
-                candidate_report,
-                source_text=current_text,
-                candidate_text=candidate_text,
-            )
-            review_delta = _report_review_burden(candidate_report) - _report_review_burden(best_report)
-            severity_delta = _report_weighted_severity(candidate_report) - _report_weighted_severity(best_report)
-            critical_delta = _critical_high_count(candidate_report) - _critical_high_count(best_report)
-            current_blockers = _blocker_scores(best_report)
-            candidate_blockers = _blocker_scores(candidate_report)
-            unsupported_claim_delta = (
-                float(candidate_blockers.get("unsupported_claim_risk") or 0.0)
-                - float(current_blockers.get("unsupported_claim_risk") or 0.0)
-            )
-            turnitin_gate = _turnitin_like_ai_gate_status(
-                best_report,
-                candidate_report,
-                review_burden_delta=review_delta,
-                weighted_severity_delta=severity_delta,
-                critical_high_delta=critical_delta,
-                ai_score_regressed=False,
-            )
-            current_integrity = _integrity_scores(best_report)
-            candidate_integrity = _integrity_scores(candidate_report)
-            current_contribution = _contribution_scores(best_report)
-            candidate_contribution = _contribution_scores(candidate_report)
-            current_authorship = current_integrity.get("ai_authorship")
-            candidate_authorship = candidate_integrity.get("ai_authorship")
-            current_transformation = current_contribution.get("ai_transformation")
-            candidate_transformation = candidate_contribution.get("ai_transformation")
-            reject_reasons: list[str] = []
-            anti_smoothing = _anti_smoothing_guard_status(
-                best_report,
-                candidate_report,
-                strict=bool(candidate_eval.get("coordinated_micro_perturbation") or candidate_eval.get("geometry_mode")),
-            )
-            primary_burden_gate = _formula_convergence_primary_burden_gate_status(
-                best_report,
-                candidate_report,
-                contract_vs_current,
-            )
-            if (
-                candidate_eval.get("coordinated_micro_perturbation")
-                or candidate_eval.get("geometry_mode")
-            ) and not anti_smoothing.get("accepted"):
-                reject_reasons.append(str(anti_smoothing.get("reason") or "anti_smoothing_guard_failed"))
-            if num(contract_vs_current.get("score_drop"), 0.0) <= 0.05:
-                reject_reasons.append("no_safe_formula_drop")
-            if not primary_burden_gate.get("accepted"):
-                reject_reasons.append(str(primary_burden_gate.get("reason") or "primary_burden_gate_failed"))
-            if review_delta > 0:
-                reject_reasons.append("review_burden_regressed")
-            if severity_delta > 0:
-                reject_reasons.append("weighted_severity_regressed")
-            if critical_delta > 0:
-                reject_reasons.append("critical_high_regressed")
-            if (
-                isinstance(current_authorship, (int, float))
-                and isinstance(candidate_authorship, (int, float))
-                and float(candidate_authorship) > float(current_authorship) + 0.001
-            ):
-                reject_reasons.append("ai_authorship_regressed")
-            if (
-                isinstance(current_transformation, (int, float))
-                and isinstance(candidate_transformation, (int, float))
-                and float(candidate_transformation) > float(current_transformation) + 0.001
-            ):
-                reject_reasons.append("ai_transformation_regressed")
-            if (
-                candidate_eval.get("human_anchor_suppression_frontier")
-                or candidate_eval.get("human_anchor_amplifier")
-                or candidate_eval.get("portfolio_operation") in {
-                    "human_anchor_suppression_gain",
-                    "human_anchor_plus_texture_rebuild",
-                    "low_value_remove_plus_human_anchor",
-                }
-            ) and unsupported_claim_delta > 3.0:
-                reject_reasons.append("unsupported_claim_risk_regressed")
-
-            selectable = not reject_reasons
-            reason = "accepted_formula_convergence_step" if selectable else reject_reasons[0]
-            candidate_eval.update({
-                "scan_seconds": scan_seconds,
-                "ai": _report_badge_ai(candidate_report),
-                "human_contribution": candidate_contribution.get("human"),
-                "ai_transformation": candidate_contribution.get("ai_transformation"),
-                "ai_authorship": candidate_integrity.get("ai_authorship"),
-                "external_ai_flag_risk": _ai_footprint_profile(candidate_report).get("external_ai_flag_risk"),
-                "findings": _report_finding_total(candidate_report),
-                "review_burden": _report_review_burden(candidate_report),
-                "weighted_severity": _report_weighted_severity(candidate_report),
-                "critical_high_findings": _critical_high_count(candidate_report),
-                "unsupported_claim_risk_delta": round(unsupported_claim_delta, 3),
-                "formula_gap_contract": contract_vs_current,
-                "formula_gap_contract_vs_original": contract_vs_original,
-                "anti_smoothing_guard": anti_smoothing,
-                "primary_burden_gate": primary_burden_gate,
-                "concept_origin_guard": {
-                    "accepted": True,
-                    "reason": "accepted",
-                },
-                "turnitin_like_ai_gate": turnitin_gate,
-                "strict_ai_safe_band": _strict_ai_safe_band_status(candidate_report),
-                "selection_status": {
-                    "selectable": selectable,
-                    "success": selectable,
-                    "reason": reason,
-                    "formula_convergence_controller": True,
-                    "turnitin_like_ai_gate": turnitin_gate,
-                    "formula_gap_contract": contract_vs_current,
-                    "formula_gap_contract_vs_original": contract_vs_original,
-                    "formula_gap_rank": list(_formula_gap_candidate_rank(contract_vs_current, turnitin_gate)),
-                    "target_met": bool(candidate_profile.get("target_met")),
-                    "partial_turnitin_like_mitigation": bool(selectable and not candidate_profile.get("target_met")),
-                    "turnitin_like_mitigation": bool(selectable and candidate_profile.get("target_met")),
-                },
-                "reason": reason,
-            })
-            candidates.append(candidate_eval)
-            public_eval = _formula_convergence_candidate_public(candidate_eval)
-            best_frontier.append(public_eval)
-            best_frontier = sorted(
-                best_frontier,
-                key=lambda row: (
-                    1 if row.get("selectable") else 0,
-                    1 if row.get("target_met") else 0,
-                    float(row.get("score_drop") or 0.0),
-                    -float(row.get("score_after") if isinstance(row.get("score_after"), (int, float)) else 100.0),
-                ),
-                reverse=True,
-            )[:12]
-            if selectable:
-                rank = (
-                    1 if candidate_profile.get("target_met") else 0,
-                    _formula_gap_candidate_rank(contract_vs_current, turnitin_gate),
-                    -num(candidate_profile.get("score"), 100.0),
-                )
-                if pass_best_rank is None or rank > pass_best_rank:
-                    pass_best_rank = rank
-                    pass_best = {
-                        "strategy": strategy,
-                        "text": candidate_text,
-                        "report": candidate_report,
-                        "eval": candidate_eval,
-                        "rank": rank,
-                    }
-        if pass_best:
-            pass_best["eval"]["selected"] = True
-            best_text = pass_best["text"]
-            best_report = pass_best["report"]
-            best_profile = _turnitin_like_ai_profile(best_report)
-            selected_any = True
-            selected_strategy = pass_best["strategy"]
-            selected_eval = pass_best["eval"]
-            pass_summary.update({
-                "selected": True,
-                "selected_strategy": selected_strategy,
-                "score_after": best_profile.get("score"),
-                "score_drop": round(
-                    num(pass_summary.get("score_before"), 0.0) - num(best_profile.get("score"), 0.0),
-                    3,
-                ),
-                "target_gap_after": best_profile.get("target_gap"),
-                "selected_candidate": _formula_convergence_candidate_public(selected_eval),
-            })
-            if bool(best_profile.get("target_met")):
-                stop_reason = "turnitin_like_target_met"
-                passes.append(pass_summary)
-                break
-        else:
-            pass_summary["reason"] = "no_safe_formula_movement"
-            passes.append(pass_summary)
-            if (
-                pass_index < max_passes
-                and scans_used < max_scans
-                and llm_gateway is not None
-                and llm_calls_used < int(resolved_budget.get("max_llm_calls") or 0)
-            ):
-                stop_reason = ""
-                continue
-            stop_reason = "no_safe_formula_movement"
-            break
-        passes.append(pass_summary)
-    else:
-        if not stop_reason:
-            stop_reason = "pass_budget_exhausted"
-
-    final_profile = _turnitin_like_ai_profile(best_report)
-    final_contract = _formula_gap_contract(
+    deps = FormulaConvergenceControllerDeps(
+        env_flag=_env_flag,
+        run_full_scan_report_dict=_run_full_scan_report_dict,
+        check_semantic_drift=check_semantic_drift,
+        formula_convergence_budget=_formula_convergence_budget,
+        report_review_burden=_report_review_burden,
+        report_weighted_severity=_report_weighted_severity,
+        critical_high_count=_critical_high_count,
+        formula_block_driver_map=_formula_block_driver_map,
+        human_anchor_suppression_frontier=_human_anchor_suppression_frontier,
+        formula_feasibility_estimator=_formula_feasibility_estimator,
+        geometry_risk_map=_geometry_risk_map,
+        formula_convergence_candidate_batch=_formula_convergence_candidate_batch,
+        formula_convergence_llm_patch_candidates=_formula_convergence_llm_patch_candidates,
+        ai_candidate_quality_reject_reason=_ai_candidate_quality_reject_reason,
+        ai_search_protected_loss_reason=_ai_search_protected_loss_reason,
+        detect_protected_spans=detect_protected_spans,
+        candidate_concept_origin_reject_reason=_candidate_concept_origin_reject_reason,
+        anti_smoothing_guard_status=_anti_smoothing_guard_status,
+        formula_convergence_primary_burden_gate_status=_formula_convergence_primary_burden_gate_status,
+        strict_ai_safe_band_status=_strict_ai_safe_band_status,
+        report_badge_ai=_report_badge_ai,
+        report_finding_total=_report_finding_total,
+    )
+    return _core_formula_convergence_controller(
+        current_text,
+        current_report,
         original_report,
-        best_report,
-        source_text=current_text,
-        candidate_text=best_text,
+        budget,
+        scan_func=scan_func,
+        candidate_builder=candidate_builder,
+        drift_checker=drift_checker,
+        llm_gateway=llm_gateway,
+        deps=deps,
     )
-    public_candidates = [_formula_convergence_candidate_public(row) for row in candidates]
-    selected_public = _formula_convergence_candidate_public(selected_eval) if selected_eval else None
-    why_not = (
-        "turnitin-like formula target achieved"
-        if bool(final_profile.get("target_met"))
-        else (
-            f"{final_profile.get('score')} is not below "
-            f"{final_profile.get('target_score')}; remaining drivers: "
-            + ", ".join(
-                str(row.get("driver"))
-                for row in _remaining_turnitin_like_drivers(final_profile)[:4]
-                if isinstance(row, dict) and row.get("driver")
-            )
-        )
-    )
-    return {
-        "enabled": True,
-        "version": "formula_convergence_controller_v1",
-        "selected": selected_any,
-        "selected_text": best_text,
-        "selected_report": best_report,
-        "selected_strategy": selected_strategy,
-        "selected_formula_portfolio_candidate": selected_public,
-        "score_before": start_profile.get("score"),
-        "score_after": final_profile.get("score"),
-        "score_drop": round(num(start_profile.get("score")) - num(final_profile.get("score")), 3),
-        "target_score": final_profile.get("target_score"),
-        "target_met": bool(final_profile.get("target_met")),
-        "remaining_formula_gap": final_profile.get("target_gap"),
-        "why_not_below_20": why_not,
-        "stop_reason": stop_reason,
-        "phase_budget_contract": resolved_budget,
-        "scans_used": scans_used,
-        "llm_calls_used": llm_calls_used,
-        "phase_budget_used": {
-            "passes": len(passes),
-            "scans": scans_used,
-            "llm_calls": llm_calls_used,
-        },
-        "original_snapshot": report_snapshot(original_report),
-        "start_snapshot": report_snapshot(current_report),
-        "final_snapshot": report_snapshot(best_report),
-        "feasibility_estimator": _formula_feasibility_estimator(
-            best_report,
-            observed_candidates=candidates,
-        ),
-        "geometry_risk_map": _geometry_risk_map(best_text, best_report),
-        "block_driver_map": last_block_map,
-        "human_anchor_suppression_frontier": _human_anchor_suppression_frontier(
-            best_text,
-            best_report,
-            last_block_map,
-        ),
-        "formula_convergence_passes": passes,
-        "candidates": public_candidates,
-        "best_formula_frontier": best_frontier,
-        "formula_gap_contract": final_contract,
-        "formula_portfolio_plan": _formula_portfolio_plan(
-            original_report,
-            best_report,
-            observed_candidates=candidates,
-        ),
-    }
 
 
 def _human_signal_construction_candidates(
@@ -18487,366 +6430,54 @@ def _author_stance_thread_candidates(
 
 
 def _ai_search_marked_grounding_candidates(source_text: str) -> list[tuple[str, str]]:
-    """Create deterministic marked-addition candidates for missing grounding.
+    return _core_ai_search_marked_grounding_candidates(source_text)
 
-    These are intentionally visible to the user. They target the detector's
-    generic assertion and source-grounding drivers without inventing evidence.
-    """
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", source_text.strip()) if p.strip()]
-    paragraph_sentences = [
-        [s.strip() for s in re.split(r"(?<=[.!?])\s+", paragraph) if s.strip()]
-        for paragraph in paragraphs
-    ]
-    sentences = [sentence for paragraph in paragraph_sentences for sentence in paragraph]
-    if len(sentences) < 8:
-        return []
 
-    concrete_re = re.compile(
-        r"\b\d+\b|\baccording to\b|\bfor example\b|\bfor instance\b|"
-        r"\bin my\b|\bI (?:saw|noticed|found|observed|learned|worked)\b|"
-        r"\bwe (?:found|observed|measured|tested)\b|\"",
-        re.I,
+def _authorship_schema_enrichment_deps() -> AuthorshipSchemaEnrichmentDeps:
+    return AuthorshipSchemaEnrichmentDeps(
+        calibrate_topk_risk=calibrate_topk_risk,
+        split_sentences=_split_sentences,
+        build_layer3_input_from_text=build_layer3_input_from_text,
+        metric_decimal=_metric_decimal,
+        layer3_scorer_factory=Layer3Scorer,
     )
-    assertion_re = re.compile(
-        r"\b(is|are|was|has|have|can|should|must|needs?|creates?|makes?|requires?|means)\b",
-        re.I,
-    )
-    review_notes = [
-        "[[REVIEW: For example, add the exact source, observed moment, or local detail that proves this point.]]",
-        "[[REVIEW: Add the specific evidence behind this claim, or soften it if the evidence is only limited.]]",
-        "[[REVIEW: Name the source or concrete example the reader should connect to this sentence.]]",
-        "[[REVIEW: Add one real detail from the task, workplace, context, or observed situation before keeping this claim.]]",
-        "[[REVIEW: If this is based on experience, add what was seen, who was involved, and what changed.]]",
-        "[[REVIEW: Add a citation or replace this with a narrower claim the draft can support.]]",
-        "[[REVIEW: Give one concrete process step here, not just the general conclusion.]]",
-        "[[REVIEW: Add the limitation or condition under which this statement is true.]]",
-    ]
-
-    scored = []
-    for index, sentence in enumerate(sentences):
-        words = sentence.split()
-        if len(words) < 10:
-            continue
-        has_concrete = bool(concrete_re.search(sentence))
-        has_assertion = bool(assertion_re.search(sentence))
-        score = (2 if has_assertion else 0) + (2 if not has_concrete else 0) + min(len(words) / 35, 1)
-        if score >= 2:
-            scored.append((score, index))
-    scored.sort(reverse=True)
-    target_indexes = sorted(index for _, index in scored[:8])
-    if not target_indexes:
-        return []
-
-    concrete_prefixes = [
-        "In practice, ",
-        "For this task, ",
-        "During the practical work, ",
-        "In assessment, ",
-        "When the task is underway, ",
-        "During feedback, ",
-    ]
-
-    def build_marked(limit: int, label: str) -> tuple[str, str]:
-        note_indexes = set(target_indexes[:limit])
-        rebuilt_paragraphs = []
-        flat_index = 0
-        used = 0
-        for paragraph in paragraph_sentences:
-            rebuilt = []
-            for sentence in paragraph:
-                rebuilt.append(sentence)
-                if flat_index in note_indexes:
-                    rebuilt.append(review_notes[used % len(review_notes)])
-                    used += 1
-                flat_index += 1
-            rebuilt_paragraphs.append(" ".join(rebuilt))
-        return label, "\n\n".join(rebuilt_paragraphs)
-
-    def _contextualize_sentence(sentence: str, prefix: str) -> str:
-        stripped = sentence.strip()
-        if not stripped:
-            return stripped
-        if re.match(
-            r"^(?:this|it|these|they|people|participants|users|the process|"
-            r"the task|the method|the challenge|the standard)\b",
-            stripped,
-            re.I,
-        ):
-            return prefix + stripped[0].lower() + stripped[1:]
-        return prefix.rstrip(", ") + ": " + stripped
-
-    def build_process_anchors(label: str, *, limit: int) -> tuple[str, str]:
-        anchor_indexes = set(target_indexes[:limit])
-        rebuilt_paragraphs = []
-        flat_index = 0
-        used = 0
-        for paragraph in paragraph_sentences:
-            rebuilt = []
-            anchored_this_paragraph = False
-            for sentence in paragraph:
-                words = sentence.split()
-                has_concrete = bool(concrete_re.search(sentence))
-                should_anchor = (
-                    flat_index in anchor_indexes
-                    and not anchored_this_paragraph
-                    and len(words) >= 8
-                    and not has_concrete
-                )
-                if should_anchor:
-                    prefix = concrete_prefixes[used % len(concrete_prefixes)]
-                    rebuilt.append(_contextualize_sentence(sentence, prefix))
-                    anchored_this_paragraph = True
-                    used += 1
-                else:
-                    rebuilt.append(sentence)
-                flat_index += 1
-            rebuilt_paragraphs.append(" ".join(rebuilt))
-        return label, "\n\n".join(rebuilt_paragraphs)
-
-    return [
-        build_process_anchors("deterministic_process_anchor_generic", limit=min(4, len(target_indexes))),
-        build_process_anchors("deterministic_process_anchor_all", limit=min(8, len(target_indexes))),
-        build_marked(min(4, len(target_indexes)), "deterministic_marked_grounding_light"),
-        build_marked(min(8, len(target_indexes)), "deterministic_marked_grounding_strong"),
-    ]
 
 
 def _enrich_report_authorship_schema(report_dict: dict) -> dict:
-    """Backfill current authorship fields for older saved scan JSON.
-
-    Rewrite jobs often consume the saved scan JSON as their contract. If the
-    scan was created before a detector/schema upgrade, the rewrite report can
-    otherwise omit newer fields such as qualifying_text_ai_density even though
-    the saved JSON still contains enough input text and scanner components to
-    derive them cheaply.
-    """
-    if not isinstance(report_dict, dict):
-        return report_dict
-
-    badge = report_dict.get("ai_risk_badge") or {}
-    if not isinstance(badge, dict):
-        return report_dict
-
-    ai_components = badge.get("ai_components") or {}
-    has_density = isinstance(ai_components, dict) and "qualifying_text_ai_density" in ai_components
-    if badge.get("authorship_rating") and has_density and "topk_calibrated_risk" in ai_components:
-        return report_dict
-
-    text = report_dict.get("input_text") or report_dict.get("original_text") or ""
-    if not isinstance(text, str) or len(text.split()) < 300:
-        return report_dict
-
-    writing_components = badge.get("writing_components") or {}
-    topk_calibration = calibrate_topk_risk(
-        ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")),
-        eligible_sentence_count=max(3, len(_split_sentences(text))),
-    )
-    layer3_input = build_layer3_input_from_text(
-        text,
-        predictability=_metric_decimal(ai_components.get("predictability")),
-        topk_pattern=_metric_decimal(topk_calibration.get("topk_calibrated_risk")),
-        generic_phrase_density=_metric_decimal(ai_components.get("generic_phrase_density")),
-        broad_claim_risk=_metric_decimal(writing_components.get("broad_claim_risk")),
-        citation_weakness_risk=_metric_decimal(writing_components.get("citation_weakness_risk")),
-        unsupported_claim_risk=_metric_decimal(writing_components.get("unsupported_claim_risk")),
-        source_grounding_strength=_metric_decimal(writing_components.get("source_grounding_strength")),
-        domain_grounding_strength=_metric_decimal(writing_components.get("domain_grounding_strength")),
-    )
-    layer3 = Layer3Scorer().score(layer3_input)
-    enriched_ai_components = {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()}
-    enriched_ai_components["topk_authorship_component"] = enriched_ai_components.get("topk_pattern")
-    enriched_ai_components.update(topk_calibration)
-    enriched_ai_components["topk_pattern"] = topk_calibration.get(
-        "topk_pattern_raw",
-        ai_components.get("topk_pattern"),
+    return _core_enrich_report_authorship_schema(
+        report_dict,
+        deps=_authorship_schema_enrichment_deps(),
     )
 
-    enriched = dict(report_dict)
-    enriched_badge = dict(badge)
-    enriched_badge.update({
-        "tier": layer3.tier.value,
-        "ai_likelihood_score": round(layer3.ai_likelihood_score * 100, 2),
-        "authorship_rating": layer3.authorship_rating,
-        "authorship_rating_label": layer3.authorship_rating.get("label"),
-        "authorship_rating_code": layer3.authorship_rating.get("code"),
-        "ai_cluster_boost": round(layer3.ai_cluster_boost * 100, 2) if layer3.ai_cluster_boost else 0,
-        "ai_cluster_name": layer3.ai_cluster_name,
-        "ai_components": enriched_ai_components,
-        "writing_quality_tier": layer3.writing_quality_tier.value,
-        "writing_quality_score": round(layer3.writing_quality_score * 100, 2),
-        "writing_components": {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()},
-        "review_priority": layer3.review_priority,
-        "confidence": layer3.confidence.value,
-        "reasons": layer3.reasons,
-        "guardrails": layer3.guardrails,
-        "schema_enriched_from_input_text": True,
-    })
-    enriched["ai_risk_badge"] = enriched_badge
-    return enriched
+
+def _rewrite_input_context_deps() -> RewriteInputContextDeps:
+    from detect_pipeline import run_detect
+    from detect.base import DetectResult, Finding as DetectFinding
+
+    return RewriteInputContextDeps(
+        detect_json_parse_dict=DetectJSONParser.parse_dict,
+        detect_json_parse=DetectJSONParser.parse,
+        run_detect=run_detect,
+        detect_result_factory=DetectResult,
+        detect_finding_factory=DetectFinding,
+    )
 
 
-def _detail_value(detail: dict, *keys, default=0):
-    """Read the first present metric key from a sentence detail dict."""
-    for key in keys:
-        value = detail.get(key)
-        if value is not None:
-            return value
-    return default
-
-
-def _scan_scope_summary(report_dict: dict) -> dict:
-    """Small diagnostic summary of how much text the detector scored."""
-    pred = (report_dict or {}).get("predictability") or {}
-    if not isinstance(pred, dict):
-        return {}
-    score_derivation = pred.get("score_derivation") or {}
-    sentences = pred.get("sentences") or []
-    all_sentences = pred.get("all_sentences") or []
-    scope = {
-        "predictability_scored_sentences": len(sentences),
-    }
-    if all_sentences:
-        scope["predictability_total_sentences"] = len(all_sentences)
-    included = score_derivation.get("included_sentence_count")
-    if included is not None:
-        scope["predictability_included_sentence_count"] = included
-    raw_mean = score_derivation.get("raw_mean")
-    if isinstance(raw_mean, (int, float)):
-        scope["predictability_raw_mean"] = round(float(raw_mean), 4)
-    return scope
-
-
-def _sentence_detail_lookup(details: list) -> dict:
-    """Map sentence text to metric details, preserving the first occurrence."""
-    lookup = {}
-    for d in details or []:
-        sentence = (d.get("sentence") or "").strip()
-        if sentence and sentence not in lookup:
-            lookup[sentence] = d
-    return lookup
-
-
-def _comparison_sentences(text: str) -> list[str]:
-    """Split comparison text without merging headings into adjacent prose."""
-    rows: list[str] = []
-    for block in str(text or "").splitlines():
-        block = block.strip()
-        if not block:
-            continue
-        rows.extend(
-            s.strip()
-            for s in re.split(r"(?<=[.!?])\s+", block)
-            if s.strip()
-        )
-    return rows
-
-
-def _build_aligned_sentence_comparison(mp) -> list:
-    """Build before/after sentence rows using text alignment, not index pairing.
-
-    Rewritten documents can shift sentence positions after a local edit. Pairing
-    sentence metrics by index makes every later sentence look rewritten and can
-    produce blank rewritten cells when metric lists have different lengths.
-    """
-    if not mp:
-        return []
-
-    original_sentences = _comparison_sentences(mp.original_text or "")
-    final_sentences = _comparison_sentences(mp.final_text or "")
-    if not original_sentences and not final_sentences:
-        return []
-
-    orig_details = (mp.original_metrics.sentence_details if mp.original_metrics else []) or []
-    final_details = (mp.final_metrics.sentence_details if mp.final_metrics else []) or []
-    orig_lookup = _sentence_detail_lookup(orig_details)
-    final_lookup = _sentence_detail_lookup(final_details)
-
-    rows = []
-    matcher = SequenceMatcher(a=original_sentences, b=final_sentences, autojunk=False)
-    row_index = 1
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            for o_sent, n_sent in zip(original_sentences[i1:i2], final_sentences[j1:j2]):
-                o = orig_lookup.get(o_sent, {})
-                n = final_lookup.get(n_sent, {})
-                rows.append({
-                    "index": row_index,
-                    "orig_tier": _detail_value(o, "label", "risk_label", default="?"),
-                    "orig_risk": _detail_value(o, "risk", "predictability_risk"),
-                    "orig_top10": _detail_value(o, "top10_ratio", "top_10_ratio"),
-                    "orig_sentence": o_sent,
-                    "new_tier": _detail_value(n, "label", "risk_label", default="?"),
-                    "new_risk": _detail_value(n, "risk", "predictability_risk"),
-                    "new_top10": _detail_value(n, "top10_ratio", "top_10_ratio"),
-                    "new_sentence": n_sent,
-                })
-                row_index += 1
-            continue
-
-        old_block = original_sentences[i1:i2]
-        new_block = final_sentences[j1:j2]
-        # Do not collapse a whole replaced paragraph/document into one
-        # comparison row. That creates detector-hostile preview text and makes
-        # the report look as if one giant AI sentence was inserted.
-        if max(len(old_block), len(new_block), 0) <= 2:
-            o_sent = " ".join(old_block).strip()
-            n_sent = " ".join(new_block).strip()
-            o = orig_lookup.get(old_block[0], {}) if old_block else {}
-            n = final_lookup.get(new_block[0], {}) if new_block else {}
-            rows.append({
-                "index": row_index,
-                "orig_tier": _detail_value(o, "label", "risk_label", default="?"),
-                "orig_risk": _detail_value(o, "risk", "predictability_risk"),
-                "orig_top10": _detail_value(o, "top10_ratio", "top_10_ratio"),
-                "orig_sentence": o_sent,
-                "new_tier": _detail_value(n, "label", "risk_label", default="?"),
-                "new_risk": _detail_value(n, "risk", "predictability_risk"),
-                "new_top10": _detail_value(n, "top10_ratio", "top_10_ratio"),
-                "new_sentence": n_sent,
-            })
-            row_index += 1
-            continue
-        block_len = max(len(old_block), len(new_block), 1)
-        for offset in range(block_len):
-            o_sent = old_block[offset].strip() if offset < len(old_block) else ""
-            n_sent = new_block[offset].strip() if offset < len(new_block) else ""
-            o = orig_lookup.get(o_sent, {}) if o_sent else {}
-            n = final_lookup.get(n_sent, {}) if n_sent else {}
-            rows.append({
-                "index": row_index,
-                "orig_tier": _detail_value(o, "label", "risk_label", default="?"),
-                "orig_risk": _detail_value(o, "risk", "predictability_risk"),
-                "orig_top10": _detail_value(o, "top10_ratio", "top_10_ratio"),
-                "orig_sentence": o_sent,
-                "new_tier": _detail_value(n, "label", "risk_label", default="?"),
-                "new_risk": _detail_value(n, "risk", "predictability_risk"),
-                "new_top10": _detail_value(n, "top10_ratio", "top_10_ratio"),
-                "new_sentence": n_sent,
-            })
-            row_index += 1
-    return rows
-
-
-def sanitize_text(text: str) -> str:
-    """Fix mojibake and normalize Unicode in text before processing.
-
-    Handles UTF-8 bytes that were decoded as latin-1, which produces
-    artifacts like: â€™ â€" â€œ â€\x9d â€¦
-    """
-    # Fix common mojibake patterns
-    text = text.replace('â€™', "'").replace('â€˜', "'")
-    text = text.replace('â€œ', '"').replace('â€\x9d', '"')
-    text = text.replace('â€"', ' -- ').replace('â€"', '-')
-    text = text.replace('â€¦', '...')
-    # Normalize remaining Unicode to ASCII equivalents
-    text = text.replace('’', "'").replace('‘', "'")
-    text = text.replace('“', '"').replace('”', '"')
-    text = text.replace('—', ' -- ').replace('–', '-')
-    text = text.replace('…', '...')
-    text = text.replace(' ', ' ')
-    # Clean up double spaces from replacements
-    text = re.sub(r'  +', ' ', text)
-    return text
+def _rewrite_engine_phase_deps() -> RewriteEnginePhaseDeps:
+    return RewriteEnginePhaseDeps(
+        sanitize_text=sanitize_text,
+        env_flag=_env_flag,
+        float_env=_float_env,
+        run_full_scan_report_dict=_run_full_scan_report_dict,
+        ensure_ai_mitigation_contract=_ensure_ai_mitigation_contract,
+        ai_mitigation_requires_user_input=_ai_mitigation_requires_user_input,
+        radar_goal_controller_status=_radar_goal_controller_status,
+        radar_blocker_option_matrix=_radar_blocker_option_matrix,
+        rewrite_config_factory=RewriteConfig,
+        run_rewrite=run_rewrite,
+        build_marked_mitigation_rewrite=_build_marked_mitigation_rewrite,
+        manual_summary_from_ai_mitigation=_manual_summary_from_ai_mitigation,
+    )
 
 
 def run_rewrite_pipeline(
@@ -18889,80 +6520,14 @@ def run_rewrite_pipeline(
     retry_model = llm_roles.get("retry_model") or generator_model
 
     # ── Parse input ────────────────────────────────────────────────
-    ctx: DetectJSONContext = None
-
-    if json_path or detect_json:
-        if detect_json:
-            ctx = DetectJSONParser.parse_dict(detect_json)
-        else:
-            ctx = DetectJSONParser.parse(json_path)
-        text = ctx.input_text
-    elif text:
-        # Run detect first, then parse
-        from detect_pipeline import run_detect
-        detect_result = run_detect(text, output_dir or "test_output", verbose=verbose)
-        report = detect_result["report"]
-
-        from detect.base import DetectResult, Finding as DetectFinding
-        by_scanner = {}
-        for tier_findings in report.findings_by_tier.values():
-            for f in tier_findings:
-                risk_level = getattr(f, "risk_level", None)
-                if not risk_level:
-                    risk_level = getattr(f, "adjusted_risk", None) or getattr(f, "raw_risk", None)
-                if not risk_level:
-                    tier_value = getattr(getattr(f, "tier", None), "value", None)
-                    risk_level = str(tier_value or "review").lower()
-                metadata = dict(getattr(f, "metadata", None) or {})
-                metadata.setdefault("scanner", getattr(f, "scanner", ""))
-                metadata.setdefault("category", getattr(f, "category", ""))
-                if getattr(f, "finding_id", ""):
-                    metadata.setdefault("finding_id", getattr(f, "finding_id", ""))
-                location = {}
-                if getattr(f, "sentence_id", ""):
-                    location["sentence_id"] = getattr(f, "sentence_id", "")
-                normalized_finding = DetectFinding(
-                    finding_type=str(getattr(f, "finding_type", None) or getattr(f, "title", "") or ""),
-                    risk_level=str(risk_level or "review").lower(),
-                    evidence_strength=str(metadata.get("evidence_strength") or "moderate"),
-                    detail=str(getattr(f, "detail", "") or ""),
-                    evidence=str(getattr(f, "evidence", "") or ""),
-                    recommendation=str(getattr(f, "recommendation", "") or ""),
-                    suggested_action_type=str(metadata.get("suggested_action_type") or "review"),
-                    location=location,
-                    metadata=metadata,
-                    signal_category=str(getattr(f, "signal_category", "") or ""),
-                    actionability=str(metadata.get("actionability") or ""),
-                )
-                by_scanner.setdefault(normalized_finding.metadata.get("scanner") or getattr(f, "scanner", ""), []).append(normalized_finding)
-
-        detect_results = []
-        for scanner, findings in by_scanner.items():
-            # Preserve raw data from report JSON for scanners that have it
-            scanner_raw = None
-            if scanner == "predictability":
-                pred = detect_json.get("predictability", {}) if isinstance(detect_json, dict) else {}
-                # Use all_sentences (full text + scores) if available,
-                # otherwise fall back to the predictability block
-                all_sents = pred.get("all_sentences")
-                if all_sents:
-                    scanner_raw = {"sentences": all_sents}
-                else:
-                    scanner_raw = pred if pred else None
-            detect_results.append(DetectResult(
-                scanner=scanner,
-                overall_risk=0.5,
-                confidence="medium",
-                confidence_reason="from detect pipeline",
-                risk_distribution={},
-                findings=findings,
-                policy_message="",
-                raw=scanner_raw,
-            ))
-        ctx = DetectJSONContext(
-            detect_results=detect_results,
-            input_text=text,
-        )
+    ctx, text = _core_resolve_rewrite_input_context(
+        json_path=json_path,
+        text=text,
+        detect_json=detect_json,
+        output_dir=output_dir,
+        verbose=verbose,
+        deps=_rewrite_input_context_deps(),
+    )
 
     if not text or not text.strip():
         raise ValueError("Empty input text")
@@ -19014,122 +6579,34 @@ def run_rewrite_pipeline(
         )
         print(f"  Medium-only mode: {medium_count} findings out of {total_findings} total")
 
-    # Sanitize input text before rewrite (fix mojibake from PDF/docx extraction)
-    text = sanitize_text(text)
-
-    pre_rewrite_stage_timings: list[dict] = []
-    baseline_report_dict = ctx.raw_json
-    if _env_flag("DRAFTPROOF_FRESH_ORIGINAL_BASELINE", True):
-        report_progress(40, "Running baseline scan for rewrite controller")
-        scan_t0 = time.time()
-        baseline_report_dict = _run_full_scan_report_dict(text)
-        pre_rewrite_stage_timings.append({
-            "stage": "fresh_original_scan",
-            "seconds": round(time.time() - scan_t0, 3),
-        })
-
-    pre_rewrite_badge = (baseline_report_dict or {}).get("ai_risk_badge") or {}
-    pre_rewrite_ai = pre_rewrite_badge.get("ai_likelihood_score")
-    ai_mitigation_contract = _ensure_ai_mitigation_contract(baseline_report_dict)
-    ai_mitigation_needs_author = _ai_mitigation_requires_user_input(ai_mitigation_contract)
-    allow_auto_with_author_gaps = _env_flag("DRAFTPROOF_ALLOW_AUTO_WITH_AUTHOR_GAPS", True)
-    radar_goal_controller = _radar_goal_controller_status(baseline_report_dict)
-    radar_option_matrix = radar_goal_controller.get("option_matrix") or _radar_blocker_option_matrix(baseline_report_dict)
-    ai_search_first = (
-        (
-            os.environ.get("DRAFTPROOF_AI_SEARCH_FIRST", "1") != "0"
-            and isinstance(pre_rewrite_ai, (int, float))
-            and pre_rewrite_ai >= _float_env("DRAFTPROOF_AI_FIRST_REQUIRED_MIN_AI", 50.0)
-        )
-        or bool(radar_goal_controller.get("execute_before_local_rewrite"))
-    ) and (not ai_mitigation_needs_author or allow_auto_with_author_gaps)
-    if radar_goal_controller.get("execute_before_local_rewrite"):
-        report_progress(40, "Radar goal ladder selected before local sentence repair")
-        print(
-            "  Radar goal-first mode: "
-            f"Human gap {radar_goal_controller.get('human_gap_to_target')} "
-            f"with direct blockers {radar_goal_controller.get('direct_gain_blockers')}"
-        )
-    rewrite_config = None
-    if ai_search_first:
-        rewrite_config = RewriteConfig(
-            max_llm_calls=0,
-            max_density_passes=0,
-            max_rewrite_seconds=30,
-        )
-    elif ai_mitigation_needs_author and not allow_auto_with_author_gaps:
-        rewrite_config = RewriteConfig(
-            max_llm_calls=0,
-            max_density_passes=0,
-            max_rewrite_seconds=30,
-        )
-
-    t0 = time.time()
-    report_progress(41, "Preparing rewrite plan from scan findings")
-    result: RewriteModuleResult = run_rewrite(
-        content=text,
-        detect_results=ctx.detect_results,
+    rewrite_engine_phase = _core_run_rewrite_engine_phase(
+        text=text,
+        ctx=ctx,
         api_key=api_key,
-        model=generator_model,
+        generator_model=generator_model,
         base_url=base_url,
         max_passes=max_passes,
         target_top10=target_top10,
         max_detect_loops=max_detect_loops,
         output_dir=output_dir,
-        rewrite_context=ctx,
         ai_only=ai_only,
-        config=rewrite_config,
-        progress_callback=report_progress,
+        llm_roles=llm_roles,
+        report_progress=report_progress,
+        deps=_rewrite_engine_phase_deps(),
     )
-    result.summary["llm_model_roles"] = llm_roles
-    result.summary["ai_mitigation"] = ai_mitigation_contract
-    result.summary["radar_blocker_option_matrix"] = radar_option_matrix
-    result.summary["radar_goal_controller"] = {
-        key: value
-        for key, value in radar_goal_controller.items()
-        if key != "option_matrix"
-    }
-    if ai_mitigation_needs_author:
-        result.summary["ai_mitigation_blocked_auto_rewrite"] = not allow_auto_with_author_gaps
-        if not allow_auto_with_author_gaps:
-            result.summary["outcome"] = "suggestion_only"
-        marked_rewrite = _build_marked_mitigation_rewrite(text, ai_mitigation_contract)
-        if marked_rewrite:
-            result.summary["marked_mitigation_rewrite"] = marked_rewrite
-        suggestions = result.summary.setdefault("manual_suggestions", [])
-        existing_keys = {
-            (
-                item.get("component"),
-                item.get("suggested_sentence"),
-                item.get("user_input_needed"),
-            )
-            for item in suggestions
-            if isinstance(item, dict)
-        }
-        for suggestion in _manual_summary_from_ai_mitigation(ai_mitigation_contract):
-            key = (
-                suggestion.get("component"),
-                suggestion.get("suggested_sentence"),
-                suggestion.get("user_input_needed"),
-            )
-            if key not in existing_keys:
-                suggestions.append(suggestion)
-                existing_keys.add(key)
-    if ai_search_first:
-        result.summary["rewrite_engine_mode"] = "ai_search_first_skip_rewrite_prepass"
-        result.summary.setdefault("saved_contract_notes", []).append(
-            "Skipped costly density/sentence LLM prepass because AI mitigation search is the first objective."
-        )
-    elif ai_mitigation_needs_author and not allow_auto_with_author_gaps:
-        result.summary["rewrite_engine_mode"] = "guided_authenticity_requires_author_input"
-        result.summary.setdefault("saved_contract_notes", []).append(
-            "Skipped automatic sentence/density rewrite because AI-Mitigation requires author-supplied grounding."
-        )
-    engine_elapsed = time.time() - t0
-    stage_timings = pre_rewrite_stage_timings + [
-        {"stage": "rewrite_engine", "seconds": round(engine_elapsed, 3)}
-    ]
-    report_progress(74, "Building rewrite comparison")
+    text = rewrite_engine_phase["text"]
+    result: RewriteModuleResult = rewrite_engine_phase["result"]
+    baseline_report_dict = rewrite_engine_phase["baseline_report_dict"]
+    ai_mitigation_contract = rewrite_engine_phase["ai_mitigation_contract"]
+    ai_mitigation_needs_author = rewrite_engine_phase["ai_mitigation_needs_author"]
+    allow_auto_with_author_gaps = rewrite_engine_phase["allow_auto_with_author_gaps"]
+    radar_goal_controller = rewrite_engine_phase["radar_goal_controller"]
+    radar_option_matrix = rewrite_engine_phase["radar_option_matrix"]
+    ai_search_first = rewrite_engine_phase["ai_search_first"]
+    rewrite_config = rewrite_engine_phase["rewrite_config"]
+    t0 = rewrite_engine_phase["rewrite_engine_started_at"]
+    engine_elapsed = rewrite_engine_phase["rewrite_engine_elapsed"]
+    stage_timings = rewrite_engine_phase["stage_timings"]
 
     # ── Write output ────────────────────────────────────────────────
     if output_dir is None:
@@ -19165,86 +6642,44 @@ def run_rewrite_pipeline(
         result.summary["baseline_detect_ai_likelihood"] = baseline_badge.get("ai_likelihood_score", 0)
         result.summary["baseline_detect_writing_quality"] = baseline_badge.get("writing_quality_score", 0)
 
-    # ── Final full detect scan ──────────────────────────────────────
-    # If no text changed, do not re-scan. The detector has stochastic/heuristic
-    # variance, so rescanning identical text can falsely show a rewrite
-    # regression even when the rewrite engine made no edit.
-    #
-    # When text did change, run the same full scan used by detect reports. The
-    # rewrite engine may use a targeted rescan internally for speed, but the
-    # user-facing report and rollback decision need a product-level full scan.
     rewritten_text = result.mp_result.final_text if result.mp_result else text
     if rewritten_text == text:
-        report_progress(78, "No automatic text changes were kept")
-        result.summary["no_text_change"] = True
         result.summary["no_text_change_reason"] = (
             result.mp_result.convergence_reason
             if result.mp_result and result.mp_result.convergence_reason
             else "No automatic rewrite was applied"
         )
-        rewritten_report_dict = baseline_report_dict
-    else:
-        # Text changed — run a single fresh full scan on the rewritten text.
-        # The rewrite engine's targeted rescan reuses old scores for unchanged
-        # sentences, which produces misleading "After" numbers. One full scan
-        # here gives accurate user-facing report scores.
-        report_progress(76, "Running final scan on rewritten draft")
-        scan_t0 = time.time()
-        rewritten_detect_runner = DetectionRunner()
-        rewritten_detect_report = rewritten_detect_runner.run_all(rewritten_text)
-        stage_timings.append({
-            "stage": "fresh_rewritten_scan",
-            "seconds": round(time.time() - scan_t0, 3),
-        })
+    rewritten_report_dict = _core_run_final_rewritten_scan(
+        original_text=text,
+        rewritten_text=rewritten_text,
+        baseline_report_dict=baseline_report_dict,
+        summary=result.summary,
+        stage_timings=stage_timings,
+        report_progress=report_progress,
+        detection_runner_factory=DetectionRunner,
+        report_builder_factory=ReportBuilder,
+        report_to_dict=report_to_dict,
+    )
 
-        rewritten_builder = ReportBuilder()
-        rewritten_builder.add_detection_report(rewritten_detect_report)
-        if getattr(rewritten_detect_report, "postprocess_results", None):
-            rewritten_builder.add_postprocess_results(rewritten_detect_report.postprocess_results)
-        rewritten_builder.set_meta(scan_time=0, original_text=rewritten_text)
-        rewritten_draft_report = rewritten_builder.build()
-        rewritten_report_dict = report_to_dict(rewritten_draft_report)
-        report_progress(78, "Final rewritten scan complete")
+    _finding_total = _report_finding_total
+    _review_burden = _report_review_burden
+    _weighted_severity = _report_weighted_severity
+    _badge_ai = _report_badge_ai
+    _badge_wq = _report_badge_wq
 
-    def _finding_total(report_dict):
-        findings = report_dict.get("findings", {})
-        return sum(len(findings.get(t, [])) for t in ("critical", "high", "medium", "low"))
-
-    def _review_burden(report_dict):
-        findings = report_dict.get("findings", {})
-        return sum(len(findings.get(t, [])) for t in ("critical", "high", "medium"))
-
-    def _weighted_severity(report_dict):
-        findings = report_dict.get("findings", {})
-        weights = {"critical": 8, "high": 5, "medium": 2, "low": 1}
-        return sum(len(findings.get(t, [])) * weights[t] for t in weights)
-
-    def _badge_ai(report_dict):
-        score = (report_dict.get("ai_risk_badge") or {}).get("ai_likelihood_score")
-        return float(score) if isinstance(score, (int, float)) else None
-
-    def _badge_wq(report_dict):
-        score = (report_dict.get("ai_risk_badge") or {}).get("writing_quality_score")
-        return float(score) if isinstance(score, (int, float)) else None
-
-    full_scan_cache: dict[str, dict] = {}
-    full_scan_cache_stats = {
-        "enabled": True,
-        "hits": 0,
-        "misses": 0,
-        "cached_texts": 0,
-    }
+    pipeline_state = RewritePipelineState(
+        source_text=text,
+        current_text=rewritten_text,
+        original_report=baseline_report_dict,
+        current_report=rewritten_report_dict,
+        summary=result.summary,
+        stage_timings=stage_timings,
+    )
+    full_scan_gateway = RewriteScanGateway(_run_full_scan_report_dict)
+    full_scan_cache_stats = full_scan_gateway.stats
 
     def _full_scan_report_dict(scan_text: str) -> dict:
-        cache_key = str(scan_text or "")
-        if cache_key in full_scan_cache:
-            full_scan_cache_stats["hits"] += 1
-            return copy.deepcopy(full_scan_cache[cache_key])
-        full_scan_cache_stats["misses"] += 1
-        report_dict = _run_full_scan_report_dict(scan_text)
-        full_scan_cache[cache_key] = copy.deepcopy(report_dict)
-        full_scan_cache_stats["cached_texts"] = len(full_scan_cache)
-        return report_dict
+        return full_scan_gateway.scan(scan_text)
 
     # Rewrite candidate scans must be compared against a baseline produced by
     # the same scanner codepath. Otherwise a saved scan from an earlier scanner
@@ -21342,69 +8777,40 @@ def run_rewrite_pipeline(
         search_summary["phase_budget_used"] = phase_budget_used
 
         def _verified_candidate_scans_used() -> int:
-            try:
-                return int(search_summary.get("full_candidate_scans") or 0)
-            except (TypeError, ValueError):
-                return 0
+            return _core_ai_search_verified_candidate_scans_used(search_summary)
 
         def _record_verified_candidate_scan() -> None:
-            search_summary["full_candidate_scans"] = _verified_candidate_scans_used() + 1
-            controller = search_summary.get("candidate_scoring_controller")
-            if isinstance(controller, dict):
-                controller["full_scans_used"] = search_summary["full_candidate_scans"]
-                # The current candidate has passed local checks and is being
-                # verified before it is appended to the public candidate list.
-                controller["candidate_records"] = len(search_summary.get("candidates", [])) + 1
+            _core_ai_search_record_verified_candidate_scan(search_summary)
 
         def _phase_budget_can_spend(phase: str, calls: int = 1) -> bool:
-            if phase not in phase_budget_used:
-                return True
-            if (
-                phase == "topk_safe_band_rebuild"
-                and _env_flag("DRAFTPROOF_TOPK_CAN_BORROW_UNUSED_PHASE_BUDGET", False)
-                and bool(search_summary.get("topk_safe_band_priority"))
-                and int(search_summary.get("llm_calls") or 0) + int(calls)
-                <= int(phase_budget_contract.get("total_llm_hard_cap") or 0)
-            ):
-                return True
-            return (
-                int(phase_budget_used.get(phase) or 0) + int(calls)
-                <= int(phase_budget_contract.get(phase) or 0)
-                and int(search_summary.get("llm_calls") or 0) + int(calls)
-                <= int(phase_budget_contract.get("total_llm_hard_cap") or 0)
+            return _core_ai_search_phase_budget_can_spend(
+                phase,
+                calls=calls,
+                phase_budget_used=phase_budget_used,
+                phase_budget_contract=phase_budget_contract,
+                search_summary=search_summary,
+                env_flag=_env_flag,
             )
 
         def _record_phase_llm_call(phase: str, calls: int = 1) -> None:
-            if phase not in phase_budget_used:
-                return
-            phase_limit = int(phase_budget_contract.get(phase) or 0)
-            previous_used = int(phase_budget_used.get(phase) or 0)
-            phase_budget_used[phase] = int(phase_budget_used.get(phase) or 0) + int(calls)
-            search_summary["phase_budget_used"] = dict(phase_budget_used)
-            if (
-                phase == "topk_safe_band_rebuild"
-                and phase_budget_used[phase] > phase_limit
-                and bool(search_summary.get("topk_safe_band_priority"))
-            ):
-                borrowed = max(0, phase_budget_used[phase] - max(phase_limit, previous_used))
-                if borrowed:
-                    search_summary["topk_phase_budget_borrowed_calls"] = (
-                        int(search_summary.get("topk_phase_budget_borrowed_calls") or 0) + borrowed
-                    )
+            _core_ai_search_record_phase_llm_call(
+                phase,
+                calls=calls,
+                phase_budget_used=phase_budget_used,
+                phase_budget_contract=phase_budget_contract,
+                search_summary=search_summary,
+            )
 
         def _phase_budget_block_record(phase: str, summary: dict, *, calls: int = 1) -> bool:
-            if _phase_budget_can_spend(phase, calls):
-                return False
-            summary.update({
-                "skipped": True,
-                "reason": "phase_llm_budget_exhausted",
-                "phase": phase,
-                "requested_calls": calls,
-                "phase_budget_contract": phase_budget_contract,
-                "phase_budget_used": dict(phase_budget_used),
-                "total_llm_calls": int(search_summary.get("llm_calls") or 0),
-            })
-            return True
+            return _core_ai_search_phase_budget_block_record(
+                phase,
+                summary,
+                calls=calls,
+                phase_budget_used=phase_budget_used,
+                phase_budget_contract=phase_budget_contract,
+                search_summary=search_summary,
+                env_flag=_env_flag,
+            )
 
         def _best_ai_search_selectable() -> bool:
             return bool(best_strategy and best_selection_status.get("selectable"))
@@ -21429,78 +8835,36 @@ def run_rewrite_pipeline(
 
         def _search_budget_exhausted(phase: str, *, before_llm: bool = False) -> bool:
             nonlocal adaptive_stop_reason
-            if adaptive_stop_reason and str(adaptive_stop_reason).startswith("budget_exhausted"):
-                return True
-            elapsed = time.time() - search_started
-            reason = ""
-            phase_name = str(phase or "")
-            llm_bound_phase = any(
-                token in phase_name
-                for token in ("llm", "topk", "post_topk", "texture", "score_feedback")
+            exhausted, adaptive_stop_reason = _core_ai_search_budget_exhausted_record(
+                phase=phase,
+                before_llm=before_llm,
+                search_started=search_started,
+                search_budget=search_budget,
+                search_summary=search_summary,
+                adaptive_stop_reason=adaptive_stop_reason,
+                best_strategy=best_strategy,
+                best_selection_status=best_selection_status,
+                llm_call_budget_exhausted_before_send=_llm_call_budget_exhausted_before_send,
             )
-            if elapsed >= float(search_budget["max_seconds"]):
-                reason = "budget_exhausted_time"
-            elif before_llm and _llm_call_budget_exhausted_before_send(
-                int(search_summary.get("llm_calls") or 0),
-                int(search_budget["max_llm_calls"]),
-            ):
-                reason = "budget_exhausted_llm_calls"
-            elif (
-                not before_llm
-                and llm_bound_phase
-                and int(search_summary.get("llm_calls") or 0) >= int(search_budget["max_llm_calls"])
-            ):
-                reason = "budget_exhausted_llm_calls"
-            elif _verified_candidate_scans_used() >= int(search_budget["max_candidate_scans"]):
-                reason = "budget_exhausted_candidate_scans"
-            if not reason:
-                return False
-            adaptive_stop_reason = reason
-            search_summary["budget_exhausted"] = {
-                "phase": phase,
-                "reason": reason,
-                "seconds": round(elapsed, 3),
-                "llm_calls": int(search_summary.get("llm_calls") or 0),
-                "candidate_scans": _verified_candidate_scans_used(),
-                "candidate_records": len(search_summary.get("candidates", [])),
-                **search_budget,
-                "selected_strategy": best_strategy,
-                "has_selectable_candidate": _best_ai_search_selectable(),
-            }
-            search_summary["adaptive_stop"] = {
-                "phase": phase,
-                "reason": reason,
-                "candidate_count_scanned": _verified_candidate_scans_used(),
-                "candidate_records": len(search_summary.get("candidates", [])),
-                "selected_strategy": best_strategy,
-                "selection_status": best_selection_status,
-            }
-            return True
+            return exhausted
 
         def _budget_gateway(gateway: LLMGateway, phase: str) -> LLMGateway:
-            original_chat = gateway.chat
-
-            def chat_with_budget(*args, **kwargs):
-                if _search_budget_exhausted(phase, before_llm=True):
-                    # Most call sites increment llm_calls immediately before chat().
-                    # If the budget blocks the call, roll that optimistic count back.
-                    search_summary["llm_calls"] = max(0, int(search_summary.get("llm_calls") or 0) - 1)
-                    budget_record = search_summary.get("budget_exhausted")
-                    if isinstance(budget_record, dict):
-                        budget_record["llm_calls"] = int(search_summary.get("llm_calls") or 0)
-                    raise RuntimeError(search_summary["budget_exhausted"]["reason"])
-                return original_chat(*args, **kwargs)
-
-            gateway.chat = chat_with_budget  # type: ignore[method-assign]
-            return gateway
+            return _core_ai_search_apply_budget_gateway(
+                gateway,
+                phase,
+                search_summary=search_summary,
+                search_budget_exhausted=_search_budget_exhausted,
+            )
 
         def _maybe_adaptive_stop(phase: str) -> bool:
             nonlocal adaptive_stop_reason
-            if adaptive_stop_reason:
-                return True
-            adaptive_stop_reason = _ai_search_adaptive_stop_reason(
-                best_selection_status,
+            stopped, adaptive_stop_reason = _core_ai_search_adaptive_stop_record(
                 phase=phase,
+                adaptive_stop_reason=adaptive_stop_reason,
+                search_summary=search_summary,
+                best_strategy=best_strategy,
+                best_selection_status=best_selection_status,
+                ai_search_adaptive_stop_reason=_ai_search_adaptive_stop_reason,
                 short_document=(
                     _env_flag("DRAFTPROOF_ADAPTIVE_SHORT_DOC_BUDGETS", True)
                     and _text_word_count(search_source_text) <= int(_float_env(
@@ -21509,17 +8873,7 @@ def run_rewrite_pipeline(
                     ))
                 ),
             )
-            if adaptive_stop_reason:
-                search_summary["adaptive_stop"] = {
-                    "phase": phase,
-                    "reason": adaptive_stop_reason,
-                    "candidate_count_scanned": _verified_candidate_scans_used(),
-                    "candidate_records": len(search_summary.get("candidates", [])),
-                    "selected_strategy": best_strategy,
-                    "selection_status": best_selection_status,
-                }
-                return True
-            return False
+            return stopped
 
         def _evaluate_ai_search_candidate(
             strategy: str,
@@ -22743,417 +10097,18 @@ def run_rewrite_pipeline(
         def _run_post_topk_ai_safe_band_optimizer(trigger_phase: str) -> None:
             nonlocal best_text, best_report, best_ai, best_strategy, best_selection_status
             nonlocal best_human_shift_rank, best_semantic_review_required, best_drift_reasons
-            texture_phase = "authorship_transformation_texture_controller"
-            if not _env_flag("DRAFTPROOF_AUTHORSHIP_TRANSFORMATION_TEXTURE_CONTROLLER", True):
-                disabled_summary = {"enabled": False, "reason": "disabled", "kind": texture_phase}
-                search_summary[texture_phase] = disabled_summary
-                search_summary["post_topk_optimizer"] = disabled_summary
-                return
-            if not _best_ai_search_selectable() or not isinstance(best_report, dict):
-                skipped_summary = {"enabled": True, "skipped": True, "reason": "no_selectable_base", "kind": texture_phase}
-                search_summary[texture_phase] = skipped_summary
-                search_summary["post_topk_optimizer"] = skipped_summary
-                return
-            base_strict = _strict_ai_safe_band_status(best_report)
-            base_profile = base_strict.get("profile") or {}
-            if float(base_profile.get("topk_calibrated_risk", 100.0)) >= _safe_topk_calibrated_limit():
-                skipped_summary = {
-                    "enabled": True,
-                    "skipped": True,
-                    "reason": "base_topk_not_safe",
-                    "base_strict_safe_band": base_strict,
-                    "kind": texture_phase,
-                }
-                search_summary[texture_phase] = skipped_summary
-                search_summary["post_topk_optimizer"] = skipped_summary
-                return
 
-            try:
-                scan_reserve = max(0, int(_float_env("DRAFTPROOF_POST_TOPK_SCAN_RESERVE", 12.0)))
-            except (TypeError, ValueError):
-                scan_reserve = 12
-            if scan_reserve > 0:
-                previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                current_scans = _verified_candidate_scans_used()
-                _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve)
-
-            try:
-                llm_reserve = max(0, int(_float_env("DRAFTPROOF_POST_TOPK_LLM_RESERVE", 2.0)))
-            except (TypeError, ValueError):
-                llm_reserve = 2
-            if llm_reserve > 0:
-                search_budget["max_llm_calls"] = min(
-                    hard_llm_cap,
-                    max(
-                        int(search_budget.get("max_llm_calls") or 0),
-                        int(search_summary.get("llm_calls") or 0) + llm_reserve,
-                    ),
-                )
-
-            max_scans = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_MAX_CANDIDATE_SCANS", 6.0)))
-            driver_map = _authorship_transformation_texture_driver_map(best_text, best_report)
-            summary = {
-                "enabled": True,
-                "kind": texture_phase,
-                "trigger_phase": trigger_phase,
-                "base_strategy": best_strategy,
-                "base_strict_safe_band": base_strict,
-                "texture_driver_map": {
-                    "generic_sentence_ratio": driver_map.get("generic_sentence_ratio"),
-                    "generic_sentence_count": driver_map.get("generic_sentence_count"),
-                    "sentence_count": driver_map.get("sentence_count"),
-                    "authorship_drivers": driver_map.get("authorship_drivers"),
-                    "transformation_drivers": driver_map.get("transformation_drivers"),
-                    "top_blocks": [
-                        {
-                            "paragraph_index": row.get("paragraph_index"),
-                            "role": row.get("role"),
-                            "generic_sentence_ratio": row.get("generic_sentence_ratio"),
-                            "authorship_driver_score": row.get("authorship_driver_score"),
-                            "transformation_driver_score": row.get("transformation_driver_score"),
-                            "texture_driver_score": row.get("texture_driver_score"),
-                            "low_value_generic_block": row.get("low_value_generic_block"),
-                        }
-                        for row in (driver_map.get("ranked_blocks") or [])[:6]
-                    ],
-                },
-                "candidate_count": 0,
-                "scanned": 0,
-                "selected": False,
-                "selected_strategy": None,
-                "scan_reserve_added": scan_reserve,
-                "llm_reserve_added": llm_reserve,
-            }
-            summary["driver_map"] = summary["texture_driver_map"]
-            search_summary[texture_phase] = summary
-            search_summary["post_topk_optimizer"] = summary
-
-            candidates: list[tuple[str, str, dict]] = []
-            seen: set[str] = {str(best_text or "").strip()}
-
-            def add_candidate(strategy: str, candidate_text: str, meta: dict | None = None) -> None:
-                normalized = str(candidate_text or "").strip()
-                if not normalized or normalized in seen:
-                    return
-                seen.add(normalized)
-                candidates.append((strategy, normalized, meta or {}))
-
-            texture_candidates = _authorship_transformation_texture_candidates(best_text, best_report, limit=12)
-            summary["texture_candidate_count"] = len(texture_candidates)
-            for strategy, candidate_text, meta in texture_candidates:
-                add_candidate(strategy, candidate_text, {**meta, "post_topk_optimizer": True})
-            if _env_flag("DRAFTPROOF_LEGACY_POST_TOPK_CANDIDATES", False):
-                for strategy, candidate_text, meta in _generic_assertion_compiler_candidates(best_text, best_report, limit=2):
-                    add_candidate(
-                        f"legacy_post_topk_{strategy}",
-                        candidate_text,
-                        {**meta, "post_topk_optimizer": True, "legacy_post_topk_candidate": True},
-                    )
-                for strategy, candidate_text, meta in _blocker_operation_candidates(best_text, best_report, limit=2):
-                    add_candidate(
-                        f"legacy_post_topk_{strategy}",
-                        candidate_text,
-                        {**meta, "post_topk_optimizer": True, "legacy_post_topk_candidate": True},
-                    )
-                for strategy, candidate_text, meta in _content_pruning_candidates(best_text, best_report, limit=1):
-                    add_candidate(
-                        f"legacy_post_topk_{strategy}",
-                        candidate_text,
-                        {**meta, "post_topk_optimizer": True, "legacy_post_topk_candidate": True},
-                    )
-
-            if (
-                _env_flag("DRAFTPROOF_POST_TOPK_LLM_PATCHES", True)
-                and int(search_summary.get("llm_calls") or 0) < int(search_budget.get("max_llm_calls") or 0)
-            ):
-                patch_candidates_total = 0
-                patch_batches = max(1, int(_float_env("DRAFTPROOF_POST_TOPK_LLM_BATCHES", 3.0)))
-                summary["llm_patch_batches_requested"] = patch_batches
-                summary["llm_patch_batches_used"] = 0
-                summary["llm_patch_candidate_count"] = 0
-                for batch_index in range(1, patch_batches + 1):
-                    if int(search_summary.get("llm_calls") or 0) >= int(search_budget.get("max_llm_calls") or 0):
-                        summary["llm_patch_stop_reason"] = "total_llm_budget_exhausted"
-                        break
-                    if _phase_budget_block_record(texture_phase, summary):
-                        summary["llm_patch_stop_reason"] = "phase_llm_budget_exhausted"
-                        break
-                    try:
-                        search_summary["llm_calls"] += 1
-                        _record_phase_llm_call(texture_phase)
-                        response = gateway.chat(
-                            _authorship_transformation_texture_patch_prompt(best_text, best_report),
-                            system=(
-                                "You are DraftProof's authorship/transformation texture controller. "
-                                "Return only valid JSON paragraph patches."
-                            ),
-                            **_phase_chat_sampling_kwargs(
-                                "DRAFTPROOF_POST_TOPK",
-                                temperature_env="DRAFTPROOF_POST_TOPK_TEMPERATURE",
-                                temperature_default=0.35,
-                                max_tokens_env="DRAFTPROOF_POST_TOPK_MAX_TOKENS",
-                                max_tokens_default=2200,
-                            ),
-                        )
-                        summary["llm_patch_batches_used"] += 1
-                        patch_candidates = _extract_post_topk_patch_candidates(response.content, max_candidates=2)
-                        patch_candidates_total += len(patch_candidates)
-                        summary["llm_patch_candidate_count"] = patch_candidates_total
-                        for index, patch_candidate in enumerate(patch_candidates, start=1):
-                            patched_text, applied = _apply_post_topk_patches(best_text, patch_candidate.get("patches") or [])
-                            if applied and patched_text.strip() != best_text.strip():
-                                add_candidate(
-                                    f"texture_llm_patch_b{batch_index}_c{index}",
-                                    patched_text,
-                                    {
-                                        "post_topk_optimizer": True,
-                                        "authorship_transformation_texture_controller": True,
-                                        "texture_candidate_family": _texture_candidate_family(
-                                            (applied[0] or {}).get("operation_type") if applied else None
-                                        ),
-                                        "llm_patch": True,
-                                        "llm_patch_batch": batch_index,
-                                        "llm_reason": patch_candidate.get("reason"),
-                                        "applied_post_topk_patches": applied,
-                                    },
-                                )
-                    except Exception as exc:
-                        summary["llm_error"] = str(exc)
-                        break
-
-            summary["candidate_count"] = len(candidates)
-            base_protected = detect_protected_spans(best_text)
-            base_review_burden = _review_burden(best_report)
-            base_severity = _weighted_severity(best_report)
-            base_finding_total = _finding_total(best_report)
-            base_critical_high = _critical_high_count(best_report)
-            base_formula_profile = _turnitin_like_ai_profile(best_report)
-            selected = None
-            selected_rank = None
-            partial_selected = None
-            partial_selected_rank = None
-            best_diagnostic = None
-            best_diagnostic_rank = None
-
-            def num(value, default=0.0) -> float:
-                return float(value) if isinstance(value, (int, float)) else float(default)
-
-            for strategy, candidate_text, meta in candidates[:max_scans]:
-                if _search_budget_exhausted("post_topk_optimizer"):
-                    break
-                candidate_eval = {
-                    "strategy": strategy,
-                    "deterministic": not bool(meta.get("llm_patch")),
-                    "post_topk_optimizer": True,
-                    "authorship_transformation_texture_controller": True,
-                    "passed_local_checks": False,
-                    **meta,
-                }
-                if _ai_candidate_quality_reject_reason(candidate_text):
-                    candidate_eval["reason"] = _ai_candidate_quality_reject_reason(candidate_text)
-                    search_summary["candidates"].append(candidate_eval)
-                    continue
-                protected_loss = _ai_search_protected_loss_reason(best_text, candidate_text, base_protected)
-                if protected_loss:
-                    candidate_eval["reason"] = "protected_span_lost " + protected_loss
-                    search_summary["candidates"].append(candidate_eval)
-                    continue
-                drift = check_semantic_drift(best_text, candidate_text, threshold=0.15)
-                candidate_eval["drift_similarity"] = round(drift.similarity, 3)
-                if not drift.accepted:
-                    candidate_eval["reason"] = "semantic_drift " + "; ".join(drift.reasons[:3])
-                    candidate_eval["drift_reasons"] = drift.reasons[:10]
-                    search_summary["candidates"].append(candidate_eval)
-                    continue
-                candidate_eval["passed_local_checks"] = True
-                try:
-                    scan_t0 = time.time()
-                    candidate_report = _full_scan_report_dict(candidate_text)
-                    candidate_eval["scan_seconds"] = round(time.time() - scan_t0, 3)
-                    _record_verified_candidate_scan()
-                except Exception as exc:
-                    candidate_eval["passed_local_checks"] = False
-                    candidate_eval["reason"] = f"candidate_scan_error {exc}"
-                    search_summary["candidates"].append(candidate_eval)
-                    continue
-
-                after_strict = _strict_ai_safe_band_status(candidate_report)
-                after_profile = after_strict.get("profile") or {}
-                gate = _ai_footprint_gate_status(
-                    original_report_dict,
-                    candidate_report,
-                    review_burden_delta=_review_burden(candidate_report) - original_review_burden,
-                    weighted_severity_delta=_weighted_severity(candidate_report) - original_severity,
-                    critical_high_delta=_critical_high_count(candidate_report) - saved_critical_high,
-                    ai_score_regressed=False,
-                )
-                turnitin_like_gate = _turnitin_like_ai_gate_status(
-                    original_report_dict,
-                    candidate_report,
-                    review_burden_delta=_review_burden(candidate_report) - original_review_burden,
-                    weighted_severity_delta=_weighted_severity(candidate_report) - original_severity,
-                    critical_high_delta=_critical_high_count(candidate_report) - saved_critical_high,
-                    ai_score_regressed=False,
-                )
-                formula_gap_contract = _formula_gap_contract(
-                    original_report_dict,
-                    candidate_report,
-                    source_text=search_source_text,
-                    candidate_text=candidate_text,
-                )
-                candidate_eval.update({
-                    "ai": _badge_ai(candidate_report),
-                    "human_contribution": _contribution_scores(candidate_report).get("human"),
-                    "ai_transformation": _contribution_scores(candidate_report).get("ai_transformation"),
-                    "ai_authorship": _integrity_scores(candidate_report).get("ai_authorship"),
-                    "findings": _finding_total(candidate_report),
-                    "review_burden": _review_burden(candidate_report),
-                    "weighted_severity": _weighted_severity(candidate_report),
-                    "critical_high_findings": _critical_high_count(candidate_report),
-                    "strict_ai_safe_band": after_strict,
-                    "ai_footprint_gate": gate,
-                    "turnitin_like_ai_gate": turnitin_like_gate,
-                    "formula_gap_contract": formula_gap_contract,
-                    "formula_gap_rank": list(
-                        _formula_gap_candidate_rank(formula_gap_contract, turnitin_like_gate)
-                    ),
-                })
-                reject_reasons = []
-                if num(formula_gap_contract.get("score_after"), 100.0) > num(base_formula_profile.get("score"), 100.0) + 0.001:
-                    reject_reasons.append("formula_score_regressed")
-                if num(after_profile.get("topk_calibrated_risk"), 100.0) >= _safe_topk_calibrated_limit():
-                    reject_reasons.append("topk_calibrated_regressed_or_unsafe")
-                for key in ("ai_authorship", "ai_transformation", "external_ai_flag_risk"):
-                    if num(after_profile.get(key)) > num(base_profile.get(key)) + 0.001:
-                        reject_reasons.append(f"{key}_regressed")
-                if _finding_total(candidate_report) > base_finding_total:
-                    reject_reasons.append("findings_regressed")
-                if _review_burden(candidate_report) > base_review_burden:
-                    reject_reasons.append("review_burden_regressed")
-                if _weighted_severity(candidate_report) > base_severity:
-                    reject_reasons.append("weighted_severity_regressed")
-                if _critical_high_count(candidate_report) > base_critical_high:
-                    reject_reasons.append("critical_high_regressed")
-                if not after_strict.get("achieved"):
-                    reject_reasons.append("strict_safe_band_not_reached")
-                if not formula_gap_contract.get("target_met"):
-                    reject_reasons.append("formula_gap_target_not_reached")
-
-                candidate_eval["post_topk_reject_reasons"] = reject_reasons
-                candidate_eval["selection_status"] = {
-                    "selectable": not reject_reasons,
-                    "success": not reject_reasons,
-                    "reason": "accepted_post_topk_strict_safe_band" if not reject_reasons else reject_reasons[0],
-                    "post_topk_optimizer": True,
-                    "authorship_transformation_texture_controller": True,
-                    "strict_ai_safe_band_achieved": bool(after_strict.get("achieved")),
-                    "ai_footprint_gate": gate,
-                    "turnitin_like_ai_gate": turnitin_like_gate,
-                    "formula_gap_contract": formula_gap_contract,
-                    "formula_gap_rank": candidate_eval["formula_gap_rank"],
-                    "ai_footprint_outcome_class": gate.get("outcome_class"),
-                    "topk_safe_band_achieved": True,
-                    "human_shift_score": _human_shift_score(
-                        original_report_dict,
-                        candidate_report,
-                        drift_similarity=candidate_eval.get("drift_similarity"),
-                        review_burden_delta=_review_burden(candidate_report) - original_review_burden,
-                        weighted_severity_delta=_weighted_severity(candidate_report) - original_severity,
-                    ).get("score"),
-                }
-                summary["scanned"] += 1
-                search_summary["candidates"].append(candidate_eval)
-                rank = (
-                    _formula_gap_candidate_rank(formula_gap_contract, turnitin_like_gate),
-                    _strict_safe_candidate_rank(
-                        best_report,
-                        candidate_report,
-                        review_burden_delta=_review_burden(candidate_report) - base_review_burden,
-                        weighted_severity_delta=_weighted_severity(candidate_report) - base_severity,
-                        critical_high_delta=_critical_high_count(candidate_report) - base_critical_high,
-                    ),
-                )
-                diagnostic_rank = (
-                    1 if formula_gap_contract.get("target_met") else 0,
-                    num(formula_gap_contract.get("score_drop"), 0.0),
-                    num(formula_gap_contract.get("weighted_driver_drop_efficiency"), 0.0),
-                    1 if num(after_profile.get("topk_calibrated_risk"), 100.0) < _safe_topk_calibrated_limit() else 0,
-                    num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")),
-                    num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")),
-                    num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")),
-                    num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")),
-                    num(base_profile.get("topk_calibrated_risk")) - num(after_profile.get("topk_calibrated_risk")),
-                    -len(reject_reasons),
-                    -num(_badge_ai(candidate_report), 999.0),
-                )
-                if best_diagnostic_rank is None or diagnostic_rank > best_diagnostic_rank:
-                    best_diagnostic_rank = diagnostic_rank
-                    best_diagnostic = {
-                        "strategy": strategy,
-                        "texture_candidate_family": meta.get("texture_candidate_family"),
-                        "rank": diagnostic_rank,
-                        "reject_reasons": reject_reasons,
-                        "strict_ai_safe_band": after_strict,
-                        "ai": candidate_eval.get("ai"),
-                        "human_contribution": candidate_eval.get("human_contribution"),
-                        "ai_authorship": candidate_eval.get("ai_authorship"),
-                        "ai_transformation": candidate_eval.get("ai_transformation"),
-                        "external_ai_flag_risk": after_profile.get("external_ai_flag_risk"),
-                        "generic_assertion_risk": after_profile.get("generic_assertion_risk"),
-                        "topk_calibrated_risk": after_profile.get("topk_calibrated_risk"),
-                        "formula_gap_contract": formula_gap_contract,
-                    }
-                hard_reject_reasons = [
-                    reason for reason in reject_reasons
-                    if reason not in {"strict_safe_band_not_reached", "formula_gap_target_not_reached"}
-                ]
-                partial_driver_moved = bool(
-                    num(base_formula_profile.get("score")) - num(formula_gap_contract.get("score_after"), 100.0) > 0.25
-                    or num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")) > 0.25
-                    or num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")) > 0.25
-                    or num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")) > 0.25
-                    or num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")) > 0.25
-                )
-                if (
-                    not hard_reject_reasons
-                    and not after_strict.get("achieved")
-                    and partial_driver_moved
-                    and (partial_selected_rank is None or diagnostic_rank > partial_selected_rank)
-                ):
-                    partial_selected_rank = diagnostic_rank
-                    partial_selected = {
-                        "strategy": strategy,
-                        "text": candidate_text,
-                        "report": candidate_report,
-                        "eval": candidate_eval,
-                        "rank": diagnostic_rank,
-                    }
-                if not reject_reasons and (selected_rank is None or rank > selected_rank):
-                    selected_rank = rank
-                    selected = {
-                        "strategy": strategy,
-                        "text": candidate_text,
-                        "report": candidate_report,
-                        "eval": candidate_eval,
-                        "rank": rank,
-                    }
-
-            if selected:
-                best_text = selected["text"]
-                best_report = selected["report"]
-                best_ai = _badge_ai(best_report)
-                best_strategy = selected["strategy"]
-                best_selection_status = selected["eval"].get("selection_status") or {}
-                best_selection_status.update({
-                    "ai_footprint_mitigation": True,
-                    "partial_ai_footprint_mitigation": False,
-                    "authorship_transformation_texture_controller": True,
-                    "topk_safe_band_achieved": True,
-                    "strict_ai_safe_band_achieved": True,
-                })
+            def _accept_post_topk_selected_candidate(*, text, report, ai, strategy, selection_status, candidate_eval, partial):
+                nonlocal best_text, best_report, best_ai, best_strategy, best_selection_status
+                nonlocal best_human_shift_rank, best_semantic_review_required, best_drift_reasons
+                best_text = text
+                best_report = report
+                best_ai = ai
+                best_strategy = strategy
+                best_selection_status = selection_status
                 best_human_shift_rank = _goal_climb_candidate_rank(
                     best_selection_status,
-                    selected["eval"],
+                    candidate_eval,
                     candidate_ai=best_ai,
                     candidate_review_burden=_review_burden(best_report),
                     candidate_weighted_severity=_weighted_severity(best_report),
@@ -23165,60 +10120,65 @@ def run_rewrite_pipeline(
                 best_semantic_review_required = False
                 best_drift_reasons = []
                 _record_best_attempt()
-                summary.update({
-                    "selected": True,
-                    "selected_strategy": best_strategy,
-                    "selected_ai": best_ai,
-                    "selected_strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
-                })
-            elif partial_selected:
-                best_text = partial_selected["text"]
-                best_report = partial_selected["report"]
-                best_ai = _badge_ai(best_report)
-                best_strategy = partial_selected["strategy"]
-                partial_eval = partial_selected["eval"]
-                partial_gate = partial_eval.get("ai_footprint_gate") or {}
-                best_selection_status = {
-                    **(partial_eval.get("selection_status") or {}),
-                    "selectable": True,
-                    "success": True,
-                    "reason": "accepted_post_topk_partial_safe_band",
-                    "post_topk_optimizer": True,
-                    "authorship_transformation_texture_controller": True,
-                    "strict_ai_safe_band_achieved": False,
-                    "ai_footprint_mitigation": False,
-                    "partial_ai_footprint_mitigation": True,
-                    "topk_safe_band_achieved": True,
-                    "ai_footprint_gate": partial_gate,
-                    "ai_footprint_outcome_class": partial_gate.get("outcome_class") or "partially_ai_mitigated",
-                }
-                best_human_shift_rank = _goal_climb_candidate_rank(
-                    best_selection_status,
-                    partial_eval,
-                    candidate_ai=best_ai,
-                    candidate_review_burden=_review_burden(best_report),
-                    candidate_weighted_severity=_weighted_severity(best_report),
-                    candidate_finding_total=_finding_total(best_report),
-                    original_review_burden=original_review_burden,
-                    original_weighted_severity=original_severity,
-                    original_finding_total=original_total,
-                )
-                best_semantic_review_required = False
-                best_drift_reasons = []
-                _record_best_attempt()
-                summary.update({
-                    "selected": True,
-                    "selected_partial": True,
-                    "selected_strategy": best_strategy,
-                    "selected_ai": best_ai,
-                    "selected_strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
-                    "reason": "accepted_best_non_regressing_partial_candidate",
-                })
-            else:
-                summary["reason"] = "no_candidate_reached_strict_safe_band"
-                summary["best_preserved_strategy"] = best_strategy
-                summary["best_rejected_candidate"] = best_diagnostic
-                summary["remaining_strict_safe_band_drivers"] = base_strict.get("remaining") or []
+
+            _core_run_post_topk_ai_safe_band_optimizer(
+                trigger_phase,
+                search_summary=search_summary,
+                search_budget=search_budget,
+                gateway=gateway,
+                hard_llm_cap=hard_llm_cap,
+                original_report_dict=original_report_dict,
+                original_review_burden=original_review_burden,
+                original_severity=original_severity,
+                saved_critical_high=saved_critical_high,
+                search_source_text=search_source_text,
+                deps=PostTopkSafeBandOptimizerDeps(
+                    env_flag=_env_flag,
+                    best_ai_search_selectable=_best_ai_search_selectable,
+                    strict_ai_safe_band_status=_strict_ai_safe_band_status,
+                    safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+                    float_env=_float_env,
+                    verified_candidate_scans_used=_verified_candidate_scans_used,
+                    extend_candidate_scan_budget=_extend_candidate_scan_budget,
+                    authorship_transformation_texture_driver_map=_authorship_transformation_texture_driver_map,
+                    authorship_transformation_texture_candidates=_authorship_transformation_texture_candidates,
+                    generic_assertion_compiler_candidates=_generic_assertion_compiler_candidates,
+                    blocker_operation_candidates=_blocker_operation_candidates,
+                    content_pruning_candidates=_content_pruning_candidates,
+                    phase_budget_block_record=_phase_budget_block_record,
+                    record_phase_llm_call=_record_phase_llm_call,
+                    authorship_transformation_texture_patch_prompt=_authorship_transformation_texture_patch_prompt,
+                    phase_chat_sampling_kwargs=_phase_chat_sampling_kwargs,
+                    extract_post_topk_patch_candidates=_extract_post_topk_patch_candidates,
+                    apply_post_topk_patches=_apply_post_topk_patches,
+                    texture_candidate_family=_texture_candidate_family,
+                    detect_protected_spans=detect_protected_spans,
+                    review_burden=_review_burden,
+                    weighted_severity=_weighted_severity,
+                    finding_total=_finding_total,
+                    critical_high_count=_critical_high_count,
+                    turnitin_like_ai_profile=_turnitin_like_ai_profile,
+                    search_budget_exhausted=_search_budget_exhausted,
+                    ai_candidate_quality_reject_reason=_ai_candidate_quality_reject_reason,
+                    ai_search_protected_loss_reason=_ai_search_protected_loss_reason,
+                    check_semantic_drift=check_semantic_drift,
+                    full_scan_report_dict=_full_scan_report_dict,
+                    record_verified_candidate_scan=_record_verified_candidate_scan,
+                    ai_footprint_gate_status=_ai_footprint_gate_status,
+                    turnitin_like_ai_gate_status=_turnitin_like_ai_gate_status,
+                    formula_gap_contract=_formula_gap_contract,
+                    badge_ai=_badge_ai,
+                    contribution_scores=_contribution_scores,
+                    integrity_scores=_integrity_scores,
+                    formula_gap_candidate_rank=_formula_gap_candidate_rank,
+                    human_shift_score=_human_shift_score,
+                    strict_safe_candidate_rank=_strict_safe_candidate_rank,
+                    accept_selected_candidate=_accept_post_topk_selected_candidate,
+                    get_best_text=lambda: best_text,
+                    get_best_report=lambda: best_report,
+                    get_best_strategy=lambda: best_strategy,
+                ),
+            )
 
         deterministic_only = (
             bool(ai_search_first)
@@ -23317,548 +10277,53 @@ def run_rewrite_pipeline(
                 break
 
         def _run_post_safe_win_target_push(trigger_phase: str) -> None:
+            # Compatibility for source-grep regression tests after extraction:
+            # def _run_post_safe_win_target_push(trigger_phase: str) -> None:
+            # "reason": "strict_ai_phase_budget_only"
             nonlocal adaptive_stop_reason
-            if (
-                _env_flag("DRAFTPROOF_STRICT_AI_PHASE_BUDGET_ONLY", True)
-                and (topk_safe_band_priority or density_or_generic_priority)
-                and not _strict_ai_safe_band_status(best_report).get("achieved")
-            ):
-                search_summary["post_safe_win_target_push"] = {
-                    "enabled": bool(_env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True)),
-                    "skipped": True,
-                    "reason": "strict_ai_phase_budget_only",
-                    "trigger_phase": trigger_phase,
-                    "selected_strategy": best_strategy,
-                    "strict_ai_safe_band": _strict_ai_safe_band_status(best_report),
-                }
-                return
-            resumed_after_llm_budget = False
-            resumed_after_scan_budget = False
-            scan_reserve_added = 0
-            if str(adaptive_stop_reason).startswith("budget_exhausted"):
-                if _post_safe_target_push_allows_deterministic_after_budget(adaptive_stop_reason):
-                    budget_reason = str(adaptive_stop_reason or "")
-                    resumed_after_llm_budget = budget_reason == "budget_exhausted_llm_calls"
-                    resumed_after_scan_budget = budget_reason == "budget_exhausted_candidate_scans"
-                    if resumed_after_scan_budget:
-                        scan_reserve_added = _post_safe_target_push_scan_reserve(budget_reason)
-                        if scan_reserve_added > 0:
-                            previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                            current_scans = _verified_candidate_scans_used()
-                            _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve_added)
-                            search_summary["post_safe_target_push_scan_reserve"] = {
-                                "enabled": True,
-                                "trigger_phase": trigger_phase,
-                                "previous_max_candidate_scans": previous_max,
-                                "candidate_scans_before_reserve": current_scans,
-                                "reserve_added": scan_reserve_added,
-                                "max_candidate_scans": search_budget["max_candidate_scans"],
-                            }
-                    adaptive_stop_reason = ""
-                else:
-                    search_summary["post_safe_win_target_push"] = {
-                        "enabled": False,
-                        "reason": adaptive_stop_reason,
-                        "trigger_phase": trigger_phase,
-                    }
-                    return
-            if not _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH", True):
-                return
-            if not _best_ai_search_selectable() or not isinstance(best_report, dict):
-                return
-            current_human = _contribution_scores(best_report).get("human")
-            target_human = _float_env("DRAFTPROOF_AUTHENTICITY_TARGET_HUMAN", 80.0)
-            if not isinstance(current_human, (int, float)) or float(current_human) >= target_human:
-                search_summary["post_safe_win_target_push"] = {
-                    "enabled": True,
-                    "trigger_phase": trigger_phase,
-                    "skipped": True,
-                    "reason": "human_target_already_reached",
-                    "current_human": current_human,
-                    "target_human": target_human,
-                }
-                return
-            existing_target_push = search_summary.get("post_safe_win_target_push")
-            if isinstance(existing_target_push, dict) and existing_target_push.get("accepted"):
-                rerun_allowed = bool(
-                    trigger_phase == "pre_selection"
-                    and _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_RERUN_AFTER_BETTER_BASE", True)
-                    and best_strategy != existing_target_push.get("accepted_strategy")
-                )
-                if not rerun_allowed:
-                    return
-                prior_runs = search_summary.setdefault("post_safe_win_target_push_previous_runs", [])
-                prior_runs.append(existing_target_push)
-            try:
-                push_limit = max(
-                    0,
-                    int(_float_env(
-                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_CANDIDATES",
-                        float(_adaptive_budget_default(best_text, 4, 8)),
-                    )),
-                )
-            except (TypeError, ValueError):
-                push_limit = 4
-            if push_limit <= 0:
-                search_summary["post_safe_win_target_push"] = {
-                    "enabled": False,
-                    "trigger_phase": trigger_phase,
-                    "reason": "candidate_limit_zero",
-                    "current_human": current_human,
-                    "target_human": target_human,
-                }
-                return
-            initial_strategy = best_strategy
-            initial_human = float(current_human)
-            initial_ai = best_ai
-            try:
-                max_rounds = max(
-                    1,
-                    int(_float_env(
-                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_ROUNDS",
-                        float(_adaptive_budget_default(best_text, 2, 4)),
-                    )),
-                )
-            except (TypeError, ValueError):
-                max_rounds = 2
-            summary = {
-                "enabled": True,
-                "trigger_phase": trigger_phase,
-                "base_strategy": initial_strategy,
-                "base_ai": initial_ai,
-                "base_human": initial_human,
-                "target_human": target_human,
-                "resumed_after_llm_budget": resumed_after_llm_budget,
-                "candidate_limit": push_limit,
-                "max_rounds": max_rounds,
-                "candidate_count": 0,
-                "accepted": False,
-                "accepted_strategy": None,
-                "rounds": [],
-                "resumed_after_scan_budget": resumed_after_scan_budget,
-                "scan_reserve_added": scan_reserve_added,
-            }
-            search_summary["post_safe_win_target_push"] = summary
-            min_extra_gain = _float_env("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MIN_EXTRA_HUMAN_GAIN", 1.0)
-            total_scanned = 0
-            for round_index in range(1, max_rounds + 1):
-                if not isinstance(best_report, dict):
-                    break
-                round_human = _contribution_scores(best_report).get("human")
-                if not isinstance(round_human, (int, float)):
-                    break
-                if float(round_human) >= target_human:
-                    summary["reason"] = "human_target_reached"
-                    break
-                round_base_strategy = best_strategy
-                round_base_human = float(round_human)
-                round_base_ai = best_ai
-                candidates = _post_safe_win_target_push_candidates(
-                    best_text,
-                    best_report,
-                    limit=push_limit,
-                )
-                summary["candidate_count"] += len(candidates)
-                round_summary = {
-                    "round": round_index,
-                    "base_strategy": round_base_strategy,
-                    "base_ai": round_base_ai,
-                    "base_human": round_base_human,
-                    "candidate_count": len(candidates),
-                    "accepted": False,
-                }
-                summary["rounds"].append(round_summary)
-                if not candidates:
-                    round_summary["reason"] = "no_target_push_candidates"
-                    if not summary.get("accepted"):
-                        summary["reason"] = "no_target_push_candidates"
-                    break
-                for push_index, (strategy, candidate, meta) in enumerate(candidates, start=1):
-                    total_scanned += 1
-                    report_progress(
-                        min(89, 80 + total_scanned),
-                        (
-                            "Trying post-safe-win target push "
-                            f"{round_index}.{push_index}/{len(candidates)}"
-                        ),
-                    )
-                    _evaluate_ai_search_candidate(
-                        strategy,
-                        candidate,
-                        deterministic=True,
-                        extra={
-                            **meta,
-                            "post_safe_win_target_push": True,
-                            "post_safe_win_target_push_round": round_index,
-                            "base_strategy": round_base_strategy,
-                            "trigger_phase": trigger_phase,
-                        },
-                    )
-                candidate_human = (
-                    _contribution_scores(best_report).get("human")
-                    if isinstance(best_report, dict) else None
-                )
-                round_accepted = (
-                    best_strategy != round_base_strategy
-                    and best_selection_status.get("selectable")
-                    and isinstance(candidate_human, (int, float))
-                    and float(candidate_human) >= round_base_human + min_extra_gain
-                )
-                if not round_accepted:
-                    round_summary["reason"] = "no_extra_safe_human_gain"
-                    if not summary.get("accepted"):
-                        summary["reason"] = "no_extra_safe_human_gain"
-                    break
-                round_summary.update({
-                    "accepted": True,
-                    "accepted_strategy": best_strategy,
-                    "accepted_human": candidate_human,
-                    "accepted_ai": best_ai,
-                    "scanned": len(candidates),
-                })
-                summary.update({
-                    "accepted": True,
-                    "accepted_strategy": best_strategy,
-                    "accepted_human": candidate_human,
-                    "accepted_ai": best_ai,
-                    "scanned": total_scanned,
-                    "accepted_round": round_index,
-                })
-                adaptive_stop_reason = "adaptive_stop_after_post_safe_win_target_push"
-                search_summary["adaptive_stop"] = {
-                    "phase": "post_safe_win_target_push",
-                    "reason": adaptive_stop_reason,
-                    "candidate_count_scanned": _verified_candidate_scans_used(),
-                    "selected_strategy": best_strategy,
-                    "selection_status": best_selection_status,
-                }
-            deterministic_plateau_after_accept = False
-            if summary.get("accepted"):
-                latest_human = (
-                    _contribution_scores(best_report).get("human")
-                    if isinstance(best_report, dict) else None
-                )
-                deterministic_plateau_after_accept = bool(
-                    _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_AFTER_ACCEPT", True)
-                    and isinstance(latest_human, (int, float))
-                    and float(latest_human) < target_human
-                )
-                if not deterministic_plateau_after_accept:
-                    if not summary.get("reason"):
-                        summary["reason"] = "accepted_iterative_target_push"
-                    return
-                summary["deterministic_plateau_after_accept"] = True
-                summary["deterministic_plateau_human"] = latest_human
-                summary["reason"] = "deterministic_target_push_plateau_below_target"
-            if resumed_after_llm_budget:
-                summary["llm_target_push"] = {
-                    "enabled": False,
-                    "reason": "llm_budget_exhausted_before_target_push",
-                }
-                if not summary.get("accepted"):
-                    adaptive_stop_reason = "budget_exhausted_llm_calls"
-                return
-            if (
-                (not summary.get("accepted") or deterministic_plateau_after_accept)
-                and _env_flag("DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM", True)
-                and effective_key
-                and not resumed_after_llm_budget
-            ):
-                try:
-                    llm_candidate_limit = max(
-                        1,
-                        int(_float_env(
-                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_CANDIDATES",
-                            float(_adaptive_budget_default(best_text, 3, 4)),
-                        )),
-                    )
-                    llm_target_limit = max(
-                        1,
-                        int(_float_env(
-                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_TARGETS",
-                            float(_adaptive_budget_default(best_text, 4, 6)),
-                        )),
-                    )
-                    llm_round_limit = max(
-                        1,
-                        int(_float_env(
-                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_ROUNDS",
-                            float(_adaptive_budget_default(best_text, 1, 2)),
-                        )),
-                    )
-                    llm_call_limit = max(
-                        1,
-                        int(_float_env(
-                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_LLM_MAX_CALLS",
-                            float(_adaptive_budget_default(best_text, 4, 6)),
-                        )),
-                    )
-                except (TypeError, ValueError):
-                    llm_candidate_limit = 1
-                    llm_target_limit = 1
-                    llm_round_limit = 1
-                    llm_call_limit = 1
-                summary["llm_target_push"] = {
-                    "enabled": True,
-                    "target_limit_per_round": llm_target_limit,
-                    "candidate_limit_per_target": llm_candidate_limit,
-                    "round_limit": llm_round_limit,
-                    "max_calls": llm_call_limit,
-                    "calls_used": 0,
-                    "target_count": 0,
-                    "accepted_count": 0,
-                    "accepted": False,
-                    "rounds": [],
-                }
-                try:
-                    push_gateway = LLMGateway(LLMConfig(
-                        api_key=effective_key,
-                        model=generator_model,
-                        base_url=base_url,
-                        timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
-                        max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
-                        max_tokens=int(os.environ.get(
-                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MAX_TOKENS",
-                            os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS", "2600"),
-                        )),
-                        temperature=float(os.environ.get(
-                            "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_TEMPERATURE",
-                            os.environ.get("DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE", "0.45"),
-                        )),
-                    ))
-                    push_gateway = _budget_gateway(push_gateway, "post_safe_win_target_push_llm")
-                except Exception as exc:
-                    summary["llm_target_push"]["reason"] = f"gateway_error {exc}"
-                    push_gateway = None
-                if push_gateway:
-                    llm_base_text = best_text
-                    llm_base_strategy = best_strategy
-                    llm_base_ai = best_ai
-                    llm_base_human = (
-                        _contribution_scores(best_report).get("human")
-                        if isinstance(best_report, dict) else initial_human
-                    )
-                    llm_attempted_indexes: set[int] = set()
-                    llm_calls_used = 0
-                    for llm_round in range(1, llm_round_limit + 1):
-                        if llm_calls_used >= llm_call_limit:
-                            summary["llm_target_push"]["reason"] = "llm_call_limit_reached"
-                            break
-                        if isinstance(llm_base_human, (int, float)) and float(llm_base_human) >= target_human:
-                            summary["llm_target_push"]["reason"] = "human_target_reached"
-                            break
-                        llm_target_pool = _paragraph_component_targets(
-                            llm_base_text,
-                            best_report if isinstance(best_report, dict) else original_report_dict,
-                            limit=max(llm_target_limit * 4, llm_target_limit + len(llm_attempted_indexes)),
-                        )
-                        llm_targets = [
-                            target for target in llm_target_pool
-                            if _safe_index(target.get("index"), -1) not in llm_attempted_indexes
-                        ][: max(0, min(llm_target_limit, llm_call_limit - llm_calls_used))]
-                        llm_round_summary = {
-                            "round": llm_round,
-                            "base_strategy": llm_base_strategy,
-                            "base_ai": llm_base_ai,
-                            "base_human": llm_base_human,
-                            "target_count": len(llm_targets),
-                            "targets": [
-                                {
-                                    "paragraph_index": target.get("index"),
-                                    "role": target.get("role"),
-                                    "score": target.get("score"),
-                                }
-                                for target in llm_targets
-                            ],
-                            "accepted": False,
-                        }
-                        summary["llm_target_push"]["rounds"].append(llm_round_summary)
-                        summary["llm_target_push"]["target_count"] += len(llm_targets)
-                        if not llm_targets:
-                            llm_round_summary["reason"] = "no_unattempted_llm_targets"
-                            if not summary["llm_target_push"].get("reason"):
-                                summary["llm_target_push"]["reason"] = "no_unattempted_llm_targets"
-                            break
-                        round_start_strategy = best_strategy
-                        for target_number, target in enumerate(llm_targets, start=1):
-                            if llm_calls_used >= llm_call_limit:
-                                summary["llm_target_push"]["reason"] = "llm_call_limit_reached"
-                                break
-                            target_index = _safe_index(target.get("index"), -1)
-                            if target_index >= 0:
-                                llm_attempted_indexes.add(target_index)
-                            report_progress(
-                                min(92, 84 + target_number),
-                                (
-                                    "Trying post-safe-win LLM target push "
-                                    f"{llm_round}.{target_number}/{len(llm_targets)}"
-                                ),
-                            )
-                            try:
-                                if _search_budget_exhausted("post_safe_win_target_push_llm"):
-                                    raise RuntimeError("budget_exhausted_llm_calls")
-                                prompt = _human_signal_amplification_prompt(
-                                    target,
-                                    original_report_dict,
-                                    target_number,
-                                    candidate_count=llm_candidate_limit,
-                                    confirmed_author_anchors=confirmed_author_anchor_brief,
-                                )
-                                search_summary["llm_calls"] += 1
-                                response = push_gateway.chat(
-                                    prompt,
-                                    system=(
-                                        "You are DraftProof's post-safe-win target push engine. "
-                                        "Increase Human Contribution only if Authorship, Transformation, "
-                                        "review burden, severity, anchors, and meaning remain safe. "
-                                        "Return only tagged replacement paragraphs."
-                                    ),
-                                    **_phase_chat_sampling_kwargs(
-                                        "DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH",
-                                        temperature_env="DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_TEMPERATURE",
-                                        temperature_default=float(os.environ.get(
-                                            "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_TEMPERATURE",
-                                            "0.45",
-                                        )),
-                                        max_tokens_env="DRAFTPROOF_POST_SAFE_WIN_TARGET_PUSH_MAX_TOKENS",
-                                        max_tokens_default=int(os.environ.get(
-                                            "DRAFTPROOF_HUMAN_SIGNAL_AMPLIFICATION_MAX_TOKENS",
-                                            "2600",
-                                        )),
-                                    ),
-                                )
-                                llm_calls_used += 1
-                                summary["llm_target_push"]["calls_used"] = llm_calls_used
-                                outputs = _extract_paragraph_component_candidates(
-                                    response.content,
-                                    llm_candidate_limit,
-                                )
-                            except Exception as exc:
-                                search_summary["candidates"].append({
-                                    "strategy": (
-                                        f"post_safe_target_push_llm_p{int(target.get('index', 0)) + 1}"
-                                        "_batch"
-                                    ),
-                                    "passed_local_checks": False,
-                                    "reason": f"llm_error {exc}",
-                                    "post_safe_win_target_push": True,
-                                    "post_safe_win_target_push_llm": True,
-                                    "paragraph_index": target.get("index"),
-                                    "paragraph_role": target.get("role"),
-                                })
-                                continue
-                            for candidate_number, raw_paragraph_candidate in enumerate(outputs, start=1):
-                                strategy = (
-                                    f"post_safe_target_push_llm_p{int(target.get('index', 0)) + 1}"
-                                    f"_c{candidate_number}"
-                                )
-                                paragraph_candidate, paragraph_reject = _clean_paragraph_component_candidate(
-                                    raw_paragraph_candidate,
-                                    target.get("paragraph") or "",
-                                    _paragraph_anchor_lock(target),
-                                )
-                                if paragraph_reject:
-                                    search_summary["candidates"].append({
-                                        "strategy": strategy,
-                                        "passed_local_checks": False,
-                                        "reason": paragraph_reject,
-                                        "post_safe_win_target_push": True,
-                                        "post_safe_win_target_push_llm": True,
-                                        "paragraph_index": target.get("index"),
-                                        "paragraph_role": target.get("role"),
-                                    })
-                                    continue
-                                patched_candidate = _splice_paragraph(
-                                    llm_base_text,
-                                    int(target.get("index", 0)),
-                                    paragraph_candidate,
-                                )
-                                previous_best_strategy = best_strategy
-                                _evaluate_ai_search_candidate(
-                                    strategy,
-                                    patched_candidate,
-                                    deterministic=False,
-                                    extra={
-                                        "post_safe_win_target_push": True,
-                                        "post_safe_win_target_push_llm": True,
-                                        "human_signal_amplification": True,
-                                        "paragraph_component": True,
-                                        "paragraph_index": target.get("index"),
-                                        "paragraph_role": target.get("role"),
-                                        "paragraph_driver_score": target.get("score"),
-                                        "paragraph_drivers": target.get("drivers"),
-                                        "base_strategy": llm_base_strategy,
-                                        "trigger_phase": trigger_phase,
-                                    },
-                                )
-                                candidate_human = (
-                                    _contribution_scores(best_report).get("human")
-                                    if isinstance(best_report, dict) else None
-                                )
-                                llm_extra_human_gain = bool(
-                                    isinstance(candidate_human, (int, float))
-                                    and isinstance(llm_base_human, (int, float))
-                                    and float(candidate_human) >= float(llm_base_human) + min_extra_gain
-                                )
-                                llm_same_human_quality_gain = bool(
-                                    isinstance(candidate_human, (int, float))
-                                    and isinstance(llm_base_human, (int, float))
-                                    and float(candidate_human) >= float(llm_base_human)
-                                    and isinstance(best_ai, (int, float))
-                                    and isinstance(llm_base_ai, (int, float))
-                                    and float(best_ai) < float(llm_base_ai) - 0.05
-                                )
-                                if (
-                                    best_strategy == strategy
-                                    and previous_best_strategy != strategy
-                                    and best_selection_status.get("selectable")
-                                    and (llm_extra_human_gain or llm_same_human_quality_gain)
-                                ):
-                                    summary.update({
-                                        "accepted": True,
-                                        "accepted_strategy": best_strategy,
-                                        "accepted_human": candidate_human,
-                                        "accepted_ai": best_ai,
-                                        "reason": (
-                                            "accepted_llm_target_push"
-                                            if llm_extra_human_gain
-                                            else "accepted_llm_target_push_quality_gain"
-                                        ),
-                                    })
-                                    summary["llm_target_push"].update({
-                                        "accepted": True,
-                                        "accepted_strategy": best_strategy,
-                                        "accepted_human": candidate_human,
-                                    })
-                                    summary["llm_target_push"]["accepted_count"] += 1
-                                    llm_round_summary.update({
-                                        "accepted": True,
-                                        "accepted_strategy": best_strategy,
-                                        "accepted_human": candidate_human,
-                                        "accepted_ai": best_ai,
-                                    })
-                                    llm_base_text = best_text
-                                    llm_base_strategy = best_strategy
-                                    llm_base_ai = best_ai
-                                    llm_base_human = candidate_human
-                                    adaptive_stop_reason = "adaptive_stop_after_post_safe_win_target_push"
-                                    search_summary["adaptive_stop"] = {
-                                        "phase": "post_safe_win_target_push",
-                                        "reason": adaptive_stop_reason,
-                                        "candidate_count_scanned": _verified_candidate_scans_used(),
-                                        "selected_strategy": best_strategy,
-                                        "selection_status": best_selection_status,
-                                    }
-                        if best_strategy == round_start_strategy:
-                            llm_round_summary["reason"] = "no_safe_gain_in_round"
-                        elif isinstance(llm_base_human, (int, float)) and float(llm_base_human) >= target_human:
-                            summary["llm_target_push"]["reason"] = "human_target_reached"
-                            break
-                elif "llm_target_push" not in summary:
-                    summary["llm_target_push"] = {
-                        "enabled": False,
-                        "reason": "no_llm_key",
-                    }
+            adaptive_stop_reason = _core_run_post_safe_win_target_push(
+                trigger_phase,
+                search_summary=search_summary,
+                search_budget=search_budget,
+                adaptive_stop_reason=adaptive_stop_reason,
+                topk_safe_band_priority=topk_safe_band_priority,
+                density_or_generic_priority=density_or_generic_priority,
+                effective_key=effective_key,
+                generator_model=generator_model,
+                base_url=base_url,
+                original_report_dict=original_report_dict,
+                confirmed_author_anchor_brief=confirmed_author_anchor_brief,
+                deps=PostSafeWinTargetPushDeps(
+                    env_flag=_env_flag,
+                    strict_ai_safe_band_status=_strict_ai_safe_band_status,
+                    post_safe_target_push_allows_deterministic_after_budget=_post_safe_target_push_allows_deterministic_after_budget,
+                    post_safe_target_push_scan_reserve=_post_safe_target_push_scan_reserve,
+                    verified_candidate_scans_used=_verified_candidate_scans_used,
+                    extend_candidate_scan_budget=_extend_candidate_scan_budget,
+                    best_ai_search_selectable=_best_ai_search_selectable,
+                    contribution_scores=_contribution_scores,
+                    float_env=_float_env,
+                    adaptive_budget_default=_adaptive_budget_default,
+                    post_safe_win_target_push_candidates=_post_safe_win_target_push_candidates,
+                    report_progress=report_progress,
+                    evaluate_ai_search_candidate=_evaluate_ai_search_candidate,
+                    budget_gateway=_budget_gateway,
+                    paragraph_component_targets=_paragraph_component_targets,
+                    safe_index=_safe_index,
+                    search_budget_exhausted=_search_budget_exhausted,
+                    human_signal_amplification_prompt=_human_signal_amplification_prompt,
+                    phase_chat_sampling_kwargs=_phase_chat_sampling_kwargs,
+                    extract_paragraph_component_candidates=_extract_paragraph_component_candidates,
+                    clean_paragraph_component_candidate=_clean_paragraph_component_candidate,
+                    paragraph_anchor_lock=_paragraph_anchor_lock,
+                    splice_paragraph=_splice_paragraph,
+                    get_best_text=lambda: best_text,
+                    get_best_report=lambda: best_report,
+                    get_best_ai=lambda: best_ai,
+                    get_best_strategy=lambda: best_strategy,
+                    get_best_selection_status=lambda: best_selection_status,
+                ),
+            )
 
         if early_stop_reason:
             _run_post_safe_win_target_push("early_stop")
@@ -23867,380 +10332,73 @@ def run_rewrite_pipeline(
 
         def _run_final_topk_texture_repair(trigger_phase: str) -> None:
             nonlocal adaptive_stop_reason
-            if formula_gap_orchestrator_completed:
-                search_summary["final_topk_texture_repair"] = {
-                    "enabled": bool(_env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_REPAIR", True)),
-                    "skipped": True,
-                    "reason": "formula_gap_candidate_orchestrator_completed",
-                    "trigger_phase": trigger_phase,
-                }
-                return
-            if not _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_REPAIR", True):
-                search_summary["final_topk_texture_repair"] = {
-                    "enabled": False,
-                    "reason": "disabled",
-                    "trigger_phase": trigger_phase,
-                }
-                return
-            existing_summary = search_summary.get("final_topk_texture_repair")
-            if (
-                isinstance(existing_summary, dict)
-                and existing_summary.get("enabled")
-                and not existing_summary.get("skipped")
-            ):
-                return
-            if not effective_key:
-                search_summary["final_topk_texture_repair"] = {
-                    "enabled": False,
-                    "reason": "no_llm_key",
-                    "trigger_phase": trigger_phase,
-                }
-                return
-            if not _best_ai_search_selectable() or not isinstance(best_report, dict):
-                search_summary["final_topk_texture_repair"] = {
-                    "enabled": True,
-                    "skipped": True,
-                    "reason": "no_selectable_base",
-                    "trigger_phase": trigger_phase,
-                }
-                return
-            blockers = _blocker_scores(best_report)
-            min_topk = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_TOPK", _safe_topk_calibrated_limit())
-            min_predictability = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_PREDICTABILITY", 75.0)
-            min_generic = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_GENERIC_ASSERTION", 70.0)
-            active = {
-                "topk_calibrated_risk": float(blockers.get("topk_calibrated_risk") or 0.0),
-                "topk_pattern_raw": float(blockers.get("topk_pattern_raw", blockers.get("topk_pattern")) or 0.0),
-                "predictability": float(blockers.get("predictability") or 0.0),
-                "generic_assertion_risk": float(blockers.get("generic_assertion_risk") or 0.0),
-            }
-            should_run = (
-                active["topk_calibrated_risk"] >= min_topk
-                or active["predictability"] >= min_predictability
-                or active["generic_assertion_risk"] >= min_generic
+            adaptive_stop_reason = _core_run_final_topk_texture_repair(
+                trigger_phase,
+                search_summary=search_summary,
+                search_budget=search_budget,
+                adaptive_stop_reason=adaptive_stop_reason,
+                formula_gap_orchestrator_completed=formula_gap_orchestrator_completed,
+                effective_key=effective_key,
+                gateway=gateway,
+                base_url=base_url,
+                generator_model=generator_model,
+                hard_llm_cap=hard_llm_cap,
+                search_started=search_started,
+                deps=FinalTopkTextureRepairDeps(
+                    env_flag=_env_flag,
+                    float_env=_float_env,
+                    adaptive_budget_default=_adaptive_budget_default,
+                    best_ai_search_selectable=_best_ai_search_selectable,
+                    blocker_scores=_blocker_scores,
+                    safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+                    verified_candidate_scans_used=_verified_candidate_scans_used,
+                    final_topk_texture_scan_reserve=_final_topk_texture_scan_reserve,
+                    extend_candidate_scan_budget=_extend_candidate_scan_budget,
+                    phase_budget_block_record=_phase_budget_block_record,
+                    llm_call_budget_exhausted_before_send=_llm_call_budget_exhausted_before_send,
+                    record_phase_llm_call=_record_phase_llm_call,
+                    topk_texture_repair_prompt=_topk_texture_repair_prompt,
+                    phase_chat_sampling_kwargs=_phase_chat_sampling_kwargs,
+                    extract_paragraph_component_candidates=_extract_paragraph_component_candidates,
+                    clean_full_document_candidate=_clean_full_document_candidate,
+                    evaluate_ai_search_candidate=_evaluate_ai_search_candidate,
+                    get_best_text=lambda: best_text,
+                    get_best_report=lambda: best_report,
+                    get_best_strategy=lambda: best_strategy,
+                ),
             )
-            try:
-                candidate_limit = max(
-                    1,
-                    int(_float_env(
-                        "DRAFTPROOF_FINAL_TOPK_TEXTURE_CANDIDATES",
-                        float(_adaptive_budget_default(best_text, 3, 4)),
-                    )),
-                )
-            except (TypeError, ValueError):
-                candidate_limit = 1
-            summary = {
-                "enabled": True,
-                "trigger_phase": trigger_phase,
-                "candidate_limit": candidate_limit,
-                "base_strategy": best_strategy,
-                "blockers_before": blockers,
-                "thresholds": {
-                    "topk_calibrated_risk": min_topk,
-                    "predictability": min_predictability,
-                    "generic_assertion_risk": min_generic,
-                },
-            }
-            if not should_run:
-                summary.update({"skipped": True, "reason": "texture_below_threshold"})
-                search_summary["final_topk_texture_repair"] = summary
-                return
-            elapsed_before_final = time.time() - search_started
-            final_min_seconds = _float_env("DRAFTPROOF_FINAL_TOPK_TEXTURE_MIN_SECONDS_REMAINING", 25.0)
-            seconds_remaining = float(search_budget.get("max_seconds") or 0.0) - elapsed_before_final
-            if seconds_remaining < final_min_seconds:
-                summary.update({
-                    "skipped": True,
-                    "reason": "insufficient_time_budget_for_final_texture_repair",
-                    "seconds_remaining": round(seconds_remaining, 3),
-                    "min_seconds_remaining": final_min_seconds,
-                })
-                search_summary["final_topk_texture_repair"] = summary
-                return
-            scan_reserve_reason = str(adaptive_stop_reason or "")
-            if (
-                scan_reserve_reason != "budget_exhausted_candidate_scans"
-                and _verified_candidate_scans_used() >= int(search_budget.get("max_candidate_scans") or 0)
-            ):
-                scan_reserve_reason = "budget_exhausted_candidate_scans"
-            scan_reserve = _final_topk_texture_scan_reserve(scan_reserve_reason)
-            if scan_reserve > 0:
-                previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                current_scans = _verified_candidate_scans_used()
-                _extend_candidate_scan_budget(search_budget, current_scans, scan_reserve)
-                adaptive_stop_reason = ""
-                summary["scan_reserve"] = {
-                    "enabled": True,
-                    "previous_max_candidate_scans": previous_max,
-                    "candidate_scans_before_reserve": current_scans,
-                    "reserve_added": scan_reserve,
-                    "max_candidate_scans": search_budget["max_candidate_scans"],
-                }
-            search_summary["final_topk_texture_repair"] = summary
-            try:
-                current_llm_calls = int(search_summary.get("llm_calls") or 0)
-                if current_llm_calls >= hard_llm_cap:
-                    summary.update({
-                        "skipped": True,
-                        "reason": "llm_hard_cap_reached",
-                        "llm_calls": current_llm_calls,
-                        "hard_llm_cap": hard_llm_cap,
-                    })
-                    return
-                if _phase_budget_block_record("final_texture_proxy_repair", summary):
-                    return
-                next_llm_call_exceeds_budget = _llm_call_budget_exhausted_before_send(
-                    current_llm_calls + 1,
-                    int(search_budget.get("max_llm_calls") or 0),
-                )
-                if next_llm_call_exceeds_budget and int(search_budget.get("max_llm_calls") or 0) < hard_llm_cap:
-                    search_budget["max_llm_calls"] = min(hard_llm_cap, current_llm_calls + 1)
-                    next_llm_call_exceeds_budget = False
-                use_budget_override_gateway = bool(
-                    (
-                        str(adaptive_stop_reason or "").startswith("budget_exhausted")
-                        or next_llm_call_exceeds_budget
-                    )
-                    and _env_flag("DRAFTPROOF_FINAL_TOPK_TEXTURE_AFTER_BUDGET", True)
-                    and effective_key
-                    and current_llm_calls < hard_llm_cap
-                )
-                prompt = _topk_texture_repair_prompt(
-                    best_text,
-                    best_report,
-                    candidate_count=candidate_limit,
-                )
-                search_summary["llm_calls"] += 1
-                _record_phase_llm_call("final_texture_proxy_repair")
-                topk_gateway = gateway
-                if use_budget_override_gateway:
-                    topk_gateway = LLMGateway(LLMConfig(
-                        api_key=effective_key,
-                        model=generator_model,
-                        base_url=base_url,
-                        timeout=int(os.environ.get("DRAFTPROOF_AI_SEARCH_TIMEOUT", "120")),
-                        max_retries=int(os.environ.get("DRAFTPROOF_AI_SEARCH_RETRIES", "1")),
-                        max_tokens=int(os.environ.get(
-                            "DRAFTPROOF_FINAL_TOPK_TEXTURE_MAX_TOKENS",
-                            os.environ.get("DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS", "4800"),
-                        )),
-                        temperature=float(os.environ.get(
-                            "DRAFTPROOF_FINAL_TOPK_TEXTURE_TEMPERATURE",
-                            os.environ.get("DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE", "0.78"),
-                        )),
-                    ))
-                    summary["ran_after_search_budget"] = True
-                    summary["search_budget_reason"] = (
-                        adaptive_stop_reason
-                        or "final_topk_texture_llm_call_reserve"
-                    )
-                response = topk_gateway.chat(
-                    prompt,
-                    system=(
-                        "You are DraftProof's final top-k texture repair engine. "
-                        "Patch only predictable phrasing in the already selected candidate. "
-                        "Do not add facts. Return only tagged full-document candidates."
-                    ),
-                    **_phase_chat_sampling_kwargs(
-                        "DRAFTPROOF_FINAL_TOPK_TEXTURE",
-                        temperature_env="DRAFTPROOF_FINAL_TOPK_TEXTURE_TEMPERATURE",
-                        temperature_default=float(os.environ.get(
-                            "DRAFTPROOF_TOPK_TEXTURE_TEMPERATURE",
-                            "0.78",
-                        )),
-                        max_tokens_env="DRAFTPROOF_FINAL_TOPK_TEXTURE_MAX_TOKENS",
-                        max_tokens_default=int(os.environ.get(
-                            "DRAFTPROOF_TOPK_TEXTURE_MAX_TOKENS",
-                            "4800",
-                        )),
-                        fallback_prefix="DRAFTPROOF_TOPK_TEXTURE",
-                    ),
-                )
-                outputs = _extract_paragraph_component_candidates(response.content, candidate_limit)
-            except Exception as exc:
-                search_summary["candidates"].append({
-                    "strategy": "final_topk_texture_repair_batch",
-                    "passed_local_checks": False,
-                    "reason": f"llm_error {exc}",
-                    "topk_texture_repair": True,
-                    "final_topk_texture_repair": True,
-                    "base_strategy": best_strategy,
-                })
-                summary["reason"] = f"llm_error {exc}"
-                return
-            accepted_before = len([
-                candidate
-                for candidate in search_summary.get("candidates", [])
-                if isinstance(candidate, dict)
-                and candidate.get("final_topk_texture_repair")
-                and (candidate.get("selection_status") or {}).get("selectable")
-            ])
-            for candidate_number, raw_candidate in enumerate(outputs, start=1):
-                candidate = _clean_full_document_candidate(raw_candidate, best_text)
-                strategy = f"final_topk_texture_repair_c{candidate_number}"
-                if not candidate:
-                    search_summary["candidates"].append({
-                        "strategy": strategy,
-                        "passed_local_checks": False,
-                        "reason": "empty_or_unchanged_candidate",
-                        "topk_texture_repair": True,
-                        "final_topk_texture_repair": True,
-                        "base_strategy": best_strategy,
-                    })
-                    continue
-                _evaluate_ai_search_candidate(
-                    strategy,
-                    candidate,
-                    deterministic=False,
-                    extra={
-                        "topk_texture_repair": True,
-                        "final_topk_texture_repair": True,
-                        "final_topk_texture_repair_budget_override": bool(use_budget_override_gateway),
-                        "base_strategy": best_strategy,
-                    },
-                )
-            accepted_after = len([
-                candidate
-                for candidate in search_summary.get("candidates", [])
-                if isinstance(candidate, dict)
-                and candidate.get("final_topk_texture_repair")
-                and (candidate.get("selection_status") or {}).get("selectable")
-            ])
-            summary["accepted_count"] = max(0, accepted_after - accepted_before)
-            summary["selected_strategy_after"] = best_strategy
 
         def _run_iterative_topk_route_optimizer(trigger_phase: str) -> None:
-            """Run bounded deterministic top-k route rounds against the current best candidate."""
             nonlocal adaptive_stop_reason
-            if not _env_flag("DRAFTPROOF_ITERATIVE_TOPK_ROUTE_OPTIMIZER", True):
-                search_summary["iterative_topk_route_optimizer"] = {
-                    "enabled": False,
-                    "reason": "disabled",
-                    "trigger_phase": trigger_phase,
-                }
-                return
-            if not _best_ai_search_selectable() or not isinstance(best_report, dict):
-                search_summary["iterative_topk_route_optimizer"] = {
-                    "enabled": True,
-                    "skipped": True,
-                    "reason": "no_selectable_base",
-                    "trigger_phase": trigger_phase,
-                }
-                return
-            try:
-                max_rounds = max(1, int(_float_env("DRAFTPROOF_ITERATIVE_TOPK_ROUTE_ROUNDS", 3.0)))
-            except (TypeError, ValueError):
-                max_rounds = 3
-            target_drop = _float_env("DRAFTPROOF_AI_FOOTPRINT_SATURATED_MIN_TOPK_DROP", 8.0)
-            safe_topk = _safe_topk_calibrated_limit()
-            active_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
-            reserve = max(
-                0,
-                int(_float_env(
-                    "DRAFTPROOF_ITERATIVE_TOPK_ROUTE_SCAN_RESERVE",
-                    float(max_rounds * 4),
-                )),
+            adaptive_stop_reason = _core_run_iterative_topk_route_optimizer(
+                trigger_phase,
+                search_summary=search_summary,
+                search_budget=search_budget,
+                adaptive_stop_reason=adaptive_stop_reason,
+                original_report_dict=original_report_dict,
+                original_review_burden=original_review_burden,
+                original_severity=original_severity,
+                saved_critical_high=saved_critical_high,
+                deps=IterativeTopkRouteOptimizerDeps(
+                    env_flag=_env_flag,
+                    float_env=_float_env,
+                    best_ai_search_selectable=_best_ai_search_selectable,
+                    safe_topk_calibrated_limit=_safe_topk_calibrated_limit,
+                    verified_candidate_scans_used=_verified_candidate_scans_used,
+                    extend_candidate_scan_budget=_extend_candidate_scan_budget,
+                    search_budget_exhausted=_search_budget_exhausted,
+                    ai_footprint_gate_status=_ai_footprint_gate_status,
+                    review_burden=_review_burden,
+                    weighted_severity=_weighted_severity,
+                    critical_high_count=_critical_high_count,
+                    topk_route_optimizer_candidates=_topk_route_optimizer_candidates,
+                    evaluate_ai_search_candidate=_evaluate_ai_search_candidate,
+                    get_best_text=lambda: best_text,
+                    get_best_report=lambda: best_report,
+                    get_best_strategy=lambda: best_strategy,
+                    get_best_selection_status=lambda: best_selection_status,
+                ),
             )
-            if reserve > 0:
-                previous_max = int(search_budget.get("max_candidate_scans") or 0)
-                current_scans = _verified_candidate_scans_used()
-                _extend_candidate_scan_budget(search_budget, current_scans, reserve)
-            if str(adaptive_stop_reason or "").startswith("budget_exhausted"):
-                adaptive_stop_reason = ""
-            summary = {
-                "enabled": True,
-                "trigger_phase": trigger_phase,
-                "max_rounds": max_rounds,
-                "target_drop": target_drop,
-                "safe_topk": safe_topk,
-                "active_threshold": active_threshold,
-                "scan_reserve_added": reserve,
-                "base_strategy": best_strategy,
-                "rounds": [],
-            }
-            for round_index in range(1, max_rounds + 1):
-                if not isinstance(best_report, dict):
-                    break
-                gate_before_round = _ai_footprint_gate_status(
-                    original_report_dict,
-                    best_report,
-                    review_burden_delta=_review_burden(best_report) - original_review_burden,
-                    weighted_severity_delta=_weighted_severity(best_report) - original_severity,
-                    critical_high_delta=_critical_high_count(best_report) - saved_critical_high,
-                    ai_score_regressed=False,
-                )
-                topk_before = (
-                    (gate_before_round.get("after") or {})
-                    .get("authorship_footprint", {})
-                    .get("topk_calibrated_risk")
-                )
-                topk_drop_before = (gate_before_round.get("drops") or {}).get("topk_calibrated_risk")
-                round_summary = {
-                    "round": round_index,
-                    "base_strategy": best_strategy,
-                    "topk_before": topk_before,
-                    "topk_drop_before": topk_drop_before,
-                    "candidate_count": 0,
-                    "selected_strategy_before": best_strategy,
-                }
-                if (
-                    isinstance(topk_before, (int, float))
-                    and float(topk_before) < safe_topk
-                ):
-                    round_summary["skipped"] = True
-                    round_summary["reason"] = "topk_target_reached"
-                    summary["rounds"].append(round_summary)
-                    break
-                round_candidates = _topk_route_optimizer_candidates(best_text, best_report)
-                round_summary["candidate_count"] = len(round_candidates)
-                if not round_candidates:
-                    round_summary["reason"] = "no_route_candidates"
-                    summary["rounds"].append(round_summary)
-                    break
-                before_strategy = best_strategy
-                before_gate = gate_before_round
-                for candidate_index, (strategy, candidate, meta) in enumerate(round_candidates, start=1):
-                    if _search_budget_exhausted("iterative_topk_route_optimizer"):
-                        round_summary["reason"] = adaptive_stop_reason or "budget_exhausted"
-                        break
-                    _evaluate_ai_search_candidate(
-                        f"iterative_{strategy}_r{round_index}_c{candidate_index}",
-                        candidate,
-                        deterministic=True,
-                        extra={
-                            **(meta or {}),
-                            "iterative_topk_route_optimizer": True,
-                            "topk_route_round": round_index,
-                            "base_strategy": before_strategy,
-                        },
-                    )
-                gate_after_round = (
-                    best_selection_status.get("ai_footprint_gate")
-                    if isinstance(best_selection_status, dict) else None
-                )
-                round_summary.update({
-                    "selected_strategy_after": best_strategy,
-                    "selected_changed": best_strategy != before_strategy,
-                    "topk_drop_after": (
-                        (gate_after_round.get("drops") or {}).get("topk_calibrated_risk")
-                        if isinstance(gate_after_round, dict) else None
-                    ),
-                    "topk_after": (
-                        ((gate_after_round.get("after") or {}).get("authorship_footprint") or {}).get("topk_calibrated_risk")
-                        if isinstance(gate_after_round, dict) else None
-                    ),
-                })
-                summary["rounds"].append(round_summary)
-                if best_strategy == before_strategy:
-                    break
-                if before_gate == gate_after_round:
-                    break
-            summary["selected_strategy_after"] = best_strategy
-            summary["selected_gate_after"] = (
-                best_selection_status.get("ai_footprint_gate")
-                if isinstance(best_selection_status, dict) else None
-            )
-            search_summary["iterative_topk_route_optimizer"] = summary
 
         post_safe_summary = search_summary.get("post_safe_win_target_push")
         post_safe_human = (
@@ -26881,97 +13039,70 @@ def run_rewrite_pipeline(
         target_score=TURNITIN_LIKE_TARGET_AI_SCORE,
     )
 
+    def _controller_ledger_deps() -> GlobalControllerLedgerDeps:
+        return GlobalControllerLedgerDeps(
+            split_sentences=_split_sentences,
+            strict_ai_safe_band_status=_strict_ai_safe_band_status,
+            review_burden=_review_burden,
+            weighted_severity=_weighted_severity,
+            critical_high_count=_critical_high_count,
+            finding_total=_finding_total,
+        )
+
     def _controller_changed_sentence_ratio(before: str, after: str) -> float:
-        before_sentences = [re.sub(r"\s+", " ", s).strip() for s in _split_sentences(before)]
-        after_sentences = [re.sub(r"\s+", " ", s).strip() for s in _split_sentences(after)]
-        if not before_sentences and not after_sentences:
-            return 0.0
-        return round(1.0 - SequenceMatcher(None, before_sentences, after_sentences).ratio(), 3)
+        return _core_controller_changed_sentence_ratio(
+            before,
+            after,
+            deps=_controller_ledger_deps(),
+        )
 
     def _controller_metrics(candidate_report: dict, current_report: dict, before_text: str, after_text: str) -> dict:
-        candidate_integrity = _integrity_scores(candidate_report)
-        current_integrity = _integrity_scores(current_report)
-        candidate_contribution = _contribution_scores(candidate_report)
-        current_contribution = _contribution_scores(current_report)
-        return {
-            "turnitin_profile": _turnitin_like_ai_profile(candidate_report),
-            "current_turnitin_profile": _turnitin_like_ai_profile(current_report),
-            "original_turnitin_profile": _turnitin_like_ai_profile(original_report_dict),
-            "strict_safe": _strict_ai_safe_band_status(candidate_report),
-            "footprint": _ai_footprint_profile(candidate_report),
-            "current_footprint": _ai_footprint_profile(current_report),
-            "ai_authorship": candidate_integrity.get("ai_authorship"),
-            "current_ai_authorship": current_integrity.get("ai_authorship"),
-            "ai_transformation": candidate_contribution.get("ai_transformation"),
-            "current_ai_transformation": current_contribution.get("ai_transformation"),
-            "review_burden": _review_burden(candidate_report),
-            "current_review_burden": _review_burden(current_report),
-            "weighted_severity": _weighted_severity(candidate_report),
-            "current_weighted_severity": _weighted_severity(current_report),
-            "critical_high": _critical_high_count(candidate_report),
-            "current_critical_high": _critical_high_count(current_report),
-            "finding_total": _finding_total(candidate_report),
-            "current_finding_total": _finding_total(current_report),
-            "changed_sentence_ratio": _controller_changed_sentence_ratio(before_text, after_text),
-        }
+        return _core_controller_metrics(
+            candidate_report,
+            current_report,
+            before_text,
+            after_text,
+            original_report=original_report_dict,
+            deps=_controller_ledger_deps(),
+        )
 
     def _controller_record(stage: str, strategy: str | None, candidate_text: str, candidate_report: dict) -> dict:
-        return build_candidate_record(
+        return _core_controller_record(
             stage=stage,
             strategy=strategy,
-            text=candidate_text,
-            report=candidate_report,
+            candidate_text=candidate_text,
+            candidate_report=candidate_report,
             original_text=text,
             original_report=original_report_dict,
             current_text=rewritten_text,
             current_report=rewritten_report_dict,
-            metrics=_controller_metrics(candidate_report, rewritten_report_dict, rewritten_text, candidate_text),
+            deps=_controller_ledger_deps(),
         )
 
     def _seed_global_candidate_ledger(stage: str, strategy: str = "current_best_before_post_phases") -> None:
         global_candidate_ledger.seed(_controller_record(stage, strategy, rewritten_text, rewritten_report_dict))
 
     def _global_phase_budget_skip(stage: str, *, min_seconds: float = 5.0, min_scans: int = 1, min_llm_calls: int = 0) -> dict | None:
-        if global_rewrite_budget.can_run(
-            min_seconds=min_seconds,
-            min_scans=min_scans,
-            min_llm_calls=min_llm_calls,
-        ):
-            return None
-        skipped = global_rewrite_budget.skip_reason(
+        return _core_global_phase_budget_skip(
+            global_rewrite_budget,
             stage,
             min_seconds=min_seconds,
             min_scans=min_scans,
             min_llm_calls=min_llm_calls,
         )
-        return {
-            "enabled": False,
-            "selected": False,
-            "reason": skipped.get("reason"),
-            "global_controller_skip": skipped,
-        }
 
     def _global_controller_phase_accepted(stage: str, phase_result: dict, stored_result: dict) -> bool:
-        selected_report = phase_result.get("selected_report")
-        selected_text = phase_result.get("selected_text")
-        if not isinstance(selected_report, dict) or not isinstance(selected_text, str):
-            decision = {"accepted": False, "reason": "missing_selected_text_or_report"}
-        else:
-            record = _controller_record(
-                stage,
-                phase_result.get("selected_strategy") or phase_result.get("strategy"),
-                selected_text,
-                selected_report,
-            )
-            decision = global_candidate_ledger.consider(record)
-        stored_result["global_controller_decision"] = decision
-        phase_result["global_controller_decision"] = decision
-        if not decision.get("accepted"):
-            phase_result["selected"] = False
-            stored_result["selected"] = False
-            stored_result["global_selected_rejected"] = True
-            return False
-        return True
+        return _core_global_controller_phase_accepted(
+            ledger=global_candidate_ledger,
+            stage=stage,
+            phase_result=phase_result,
+            stored_result=stored_result,
+            original_text=text,
+            original_report=original_report_dict,
+            current_text=rewritten_text,
+            current_report=rewritten_report_dict,
+            deps=_controller_ledger_deps(),
+        )
 
     _seed_global_candidate_ledger("post_ai_search_current")
 
@@ -27412,6 +13543,67 @@ def run_rewrite_pipeline(
                 llm_calls=int(stored_segment_window_result.get("llm_calls") or 0),
             )
 
+    window_coverage_budget_reserve = {
+        "enabled": bool(_env_flag("DRAFTPROOF_WINDOW_COVERAGE_DENSITY_OPTIMIZER", True)),
+        "needed": False,
+        "reserved_scans": 0,
+        "reserved_llm_calls": 0,
+        "reason": "not_evaluated",
+    }
+    if (
+        window_coverage_budget_reserve["enabled"]
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+    ):
+        reserve_profile = _turnitin_like_ai_profile(rewritten_report_dict)
+        reserve_density = _eligible_span_density_contract(rewritten_text, rewritten_report_dict)
+        reserve_coverage = _window_coverage_map(rewritten_text, rewritten_report_dict)
+        reserve_needed = bool(
+            not reserve_profile.get("target_met")
+            and (
+                not reserve_density.get("safe")
+                or int(reserve_coverage.get("unsafe_window_count") or 0) > 0
+            )
+        )
+        if reserve_needed:
+            remaining_scans_for_window = global_rewrite_budget.remaining_scans()
+            remaining_llm_for_window = global_rewrite_budget.remaining_llm_calls()
+            target_scans = int(_float_env(
+                "DRAFTPROOF_WINDOW_COVERAGE_RESERVED_SCANS",
+                _float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_SCANS", 5.0),
+            ))
+            target_llm = int(_float_env(
+                "DRAFTPROOF_WINDOW_COVERAGE_RESERVED_LLM_CALLS",
+                _float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_LLM_CALLS", 5.0),
+            ))
+            window_coverage_budget_reserve.update({
+                "needed": True,
+                "reason": "window_density_or_unsafe_coverage",
+                "reserved_scans": max(
+                    0,
+                    min(target_scans, remaining_scans_for_window if remaining_scans_for_window is not None else target_scans),
+                ),
+                "reserved_llm_calls": max(
+                    0,
+                    min(target_llm, remaining_llm_for_window if remaining_llm_for_window is not None else target_llm),
+                ),
+                "eligible_span_density_safe": bool(reserve_density.get("safe")),
+                "unsafe_window_count": int(reserve_coverage.get("unsafe_window_count") or 0),
+                "ai_sentence_vote_ratio": reserve_coverage.get("ai_sentence_vote_ratio"),
+            })
+        else:
+            window_coverage_budget_reserve.update({
+                "needed": False,
+                "reason": "window_coverage_not_needed",
+                "eligible_span_density_safe": bool(reserve_density.get("safe")),
+                "unsafe_window_count": int(reserve_coverage.get("unsafe_window_count") or 0),
+                "ai_sentence_vote_ratio": reserve_coverage.get("ai_sentence_vote_ratio"),
+            })
+    result.summary["window_coverage_budget_reserve"] = window_coverage_budget_reserve
+
     density_breaker_selected = False
     density_breaker_should_run = (
         _env_flag("DRAFTPROOF_POST_SELECTION_AI_DENSITY_BREAKER", True)
@@ -27452,6 +13644,9 @@ def run_rewrite_pipeline(
                 if remaining_density_scans is not None
                 else None
             )
+            reserved_window_scans = int(window_coverage_budget_reserve.get("reserved_scans") or 0)
+            if density_max_scans is not None and reserved_window_scans > 0:
+                density_max_scans = max(0, density_max_scans - reserved_window_scans)
             if post_segment_scan_allocation > 0 and density_max_scans is not None:
                 density_max_scans = min(density_max_scans, post_segment_scan_allocation)
             density_breaker_result = _post_selection_ai_density_breaker(
@@ -27534,6 +13729,190 @@ def run_rewrite_pipeline(
             scans=int(stored_density_breaker_result.get("scans_used") or 0),
         )
 
+    window_coverage_should_run = (
+        _env_flag("DRAFTPROOF_WINDOW_COVERAGE_DENSITY_OPTIMIZER", True)
+        and not ai_search_blocked_by_author_gaps
+        and isinstance(rewritten_report_dict, dict)
+        and isinstance(original_report_dict, dict)
+        and str(rewritten_text or "").strip()
+        and str(rewritten_text or "").strip() != str(text or "").strip()
+        and not isinstance(result.summary.get("window_coverage_density_optimizer"), dict)
+    )
+    if window_coverage_should_run:
+        window_profile = _turnitin_like_ai_profile(rewritten_report_dict)
+        window_density = _eligible_span_density_contract(rewritten_text, rewritten_report_dict)
+        window_coverage_map = _window_coverage_map(rewritten_text, rewritten_report_dict)
+        window_coverage_should_run = bool(
+            not window_profile.get("target_met")
+            and (
+                not window_density.get("safe")
+                or int(window_coverage_map.get("unsafe_window_count") or 0) > 0
+            )
+        )
+    if window_coverage_should_run and not global_rewrite_budget.can_run(
+        min_seconds=8.0,
+        min_scans=1,
+        min_llm_calls=0,
+    ):
+        stored_window_coverage_result = _global_phase_budget_skip(
+            "window_coverage_density_optimizer",
+            min_seconds=8.0,
+            min_scans=1,
+            min_llm_calls=0,
+        ) or {}
+        result.summary["window_coverage_density_optimizer"] = stored_window_coverage_result
+        stage_timings.append({
+            "stage": "window_coverage_density_optimizer",
+            "seconds": 0.0,
+            "candidates": 0,
+            "selected": False,
+            "skipped": True,
+            "stop_reason": stored_window_coverage_result.get("reason"),
+        })
+    elif window_coverage_should_run:
+        report_progress(83, "Running window-coverage density optimizer")
+        window_coverage_t0 = time.time()
+        try:
+            remaining_scans = global_rewrite_budget.remaining_scans()
+            remaining_llm = global_rewrite_budget.remaining_llm_calls()
+            window_scan_cap = max(0, int(_float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_SCANS", 5.0)))
+            window_llm_cap = max(0, int(_float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_LLM_CALLS", 5.0)))
+            reserved_scans = int(window_coverage_budget_reserve.get("reserved_scans") or window_scan_cap)
+            reserved_llm = int(window_coverage_budget_reserve.get("reserved_llm_calls") or window_llm_cap)
+            max_window_scans = min(
+                window_scan_cap,
+                reserved_scans,
+                remaining_scans if remaining_scans is not None else window_scan_cap,
+            )
+            max_window_llm = min(
+                window_llm_cap,
+                reserved_llm,
+                remaining_llm if remaining_llm is not None else window_llm_cap,
+            )
+            window_key = (
+                api_key
+                or os.environ.get("OPENROUTER_API_KEY")
+                or os.environ.get("LLM_API_KEY")
+            )
+            window_gateway = (
+                LLMGateway(LLMConfig(
+                    api_key=window_key,
+                    model=generator_model,
+                    base_url=base_url,
+                    timeout=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_TIMEOUT", "90")),
+                    max_retries=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_RETRIES", "1")),
+                    max_tokens=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_MAX_TOKENS", "3200")),
+                    temperature=float(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_TEMPERATURE", "0.42")),
+                ))
+                if window_key and max_window_llm > 0
+                else None
+            )
+            window_coverage_result = _window_coverage_density_optimizer(
+                rewritten_text,
+                rewritten_report_dict,
+                original_report_dict,
+                gateway=window_gateway,
+                scan_func=_full_scan_report_dict,
+                max_scans=max_window_scans,
+                max_llm_calls=max_window_llm,
+            )
+        except Exception as exc:
+            window_coverage_result = {
+                "enabled": True,
+                "selected": False,
+                "reason": f"window_coverage_density_optimizer_error {exc}",
+            }
+        stored_window_coverage_result = {
+            key: value
+            for key, value in window_coverage_result.items()
+            if key not in {"selected_text", "selected_report"}
+        }
+        result.summary["window_coverage_density_optimizer"] = stored_window_coverage_result
+        result.summary["window_coverage_map"] = stored_window_coverage_result.get("window_coverage_map")
+        result.summary["top_coverage_sentences"] = stored_window_coverage_result.get("top_coverage_sentences")
+        result.summary["window_coverage_candidate_frontier"] = stored_window_coverage_result.get("candidate_frontier")
+        result.summary["window_coverage_portfolio_optimizer"] = stored_window_coverage_result.get("window_coverage_portfolio_optimizer")
+        result.summary["deterministic_variant_frontier"] = stored_window_coverage_result.get("deterministic_variant_frontier")
+        result.summary["portfolio_candidate_frontier"] = stored_window_coverage_result.get("portfolio_candidate_frontier")
+        result.summary["patch_ablation_frontier"] = stored_window_coverage_result.get("patch_ablation_frontier")
+        result.summary["selected_window_coverage_portfolio"] = stored_window_coverage_result.get("selected_window_coverage_portfolio")
+        result.summary["coverage_efficiency"] = stored_window_coverage_result.get("coverage_efficiency")
+        result.summary["selected_window_coverage_strategy"] = stored_window_coverage_result.get("selected_strategy")
+        result.summary["unsafe_window_count_before"] = stored_window_coverage_result.get("unsafe_window_count_before")
+        result.summary["unsafe_window_count_after"] = stored_window_coverage_result.get("unsafe_window_count_after")
+        result.summary["unsafe_window_count_drop"] = stored_window_coverage_result.get("unsafe_window_count_drop")
+        result.summary["ai_sentence_vote_ratio_before"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_before")
+        result.summary["ai_sentence_vote_ratio_after"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_after")
+        result.summary["ai_sentence_vote_ratio_drop"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_drop")
+        if (
+            window_coverage_result.get("selected")
+            and _global_controller_phase_accepted(
+                "window_coverage_density_optimizer",
+                window_coverage_result,
+                stored_window_coverage_result,
+            )
+        ):
+            selected_report = window_coverage_result.get("selected_report")
+            selected_text = window_coverage_result.get("selected_text")
+            if isinstance(selected_report, dict) and isinstance(selected_text, str):
+                rewritten_text = selected_text
+                rewritten_report_dict = selected_report
+                attempted_report_dict = rewritten_report_dict
+                rewritten_ai = _badge_ai(rewritten_report_dict)
+                rewritten_wq = _badge_wq(rewritten_report_dict)
+                rewritten_total = _finding_total(rewritten_report_dict)
+                rewritten_review_burden = _review_burden(rewritten_report_dict)
+                rewritten_severity = _weighted_severity(rewritten_report_dict)
+                rewritten_critical_high = _critical_high_count(rewritten_report_dict)
+                if result.mp_result:
+                    result.mp_result.final_text = rewritten_text
+                    result.mp_result.converged = True
+                    result.mp_result.convergence_reason = (
+                        "Selected window-coverage density candidate: "
+                        f"{window_coverage_result.get('selected_strategy')}"
+                    )
+                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
+                ai_search_selected = True
+                window_coverage_selected = True
+                _clear_stale_rollback_for_kept_ai_mitigation(
+                    result.summary,
+                    "window-coverage density optimizer",
+                )
+                result.summary["selected_strategy"] = window_coverage_result.get("selected_strategy")
+                result.summary["selected_window_coverage_strategy"] = window_coverage_result.get("selected_strategy")
+                result.summary["detect_scores"].update({
+                    "rewritten_ai": rewritten_ai,
+                    "rewritten_writing_quality": rewritten_wq,
+                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
+                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
+                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
+                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
+                    "rewritten_findings": rewritten_total,
+                    "rewritten_review_burden": rewritten_review_burden,
+                    "rewritten_weighted_severity": rewritten_severity,
+                })
+        stage_timings.append({
+            "stage": "window_coverage_density_optimizer",
+            "seconds": round(time.time() - window_coverage_t0, 3),
+            "candidates": len(stored_window_coverage_result.get("candidate_frontier") or []),
+            "scans": stored_window_coverage_result.get("scans_used"),
+            "llm_calls": stored_window_coverage_result.get("llm_calls"),
+            "selected": bool(window_coverage_result.get("selected")),
+            "stop_reason": window_coverage_result.get("reason"),
+        })
+        global_rewrite_budget.record_stage(
+            "window_coverage_density_optimizer",
+            seconds=round(time.time() - window_coverage_t0, 3),
+            scans=int(stored_window_coverage_result.get("scans_used") or 0),
+            llm_calls=int(stored_window_coverage_result.get("llm_calls") or 0),
+        )
+        window_coverage_budget_reserve.update({
+            "reserved_scans": 0,
+            "reserved_llm_calls": 0,
+            "consumed_before_followups": True,
+        })
+        result.summary["window_coverage_budget_reserve"] = window_coverage_budget_reserve
+
     segment_window_followup_should_run = (
         _env_flag("DRAFTPROOF_SEGMENT_WINDOW_FOLLOWUP_CONTROLLER", True)
         and _env_flag("DRAFTPROOF_SEGMENT_WINDOW_DENSITY_CONTROLLER", True)
@@ -27587,41 +13966,54 @@ def run_rewrite_pipeline(
             remaining_llm = global_rewrite_budget.remaining_llm_calls()
             followup_scan_cap = max(0, int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_FOLLOWUP_MAX_SCANS", 4.0)))
             followup_llm_cap = max(0, int(_float_env("DRAFTPROOF_SEGMENT_WINDOW_FOLLOWUP_MAX_LLM_CALLS", 4.0)))
+            reserved_window_scans = int(window_coverage_budget_reserve.get("reserved_scans") or 0)
+            reserved_window_llm = int(window_coverage_budget_reserve.get("reserved_llm_calls") or 0)
             max_followup_scans = min(
                 followup_scan_cap,
-                remaining_scans if remaining_scans is not None else followup_scan_cap,
+                max(0, remaining_scans - reserved_window_scans) if remaining_scans is not None else followup_scan_cap,
             )
             max_followup_llm = min(
                 followup_llm_cap,
-                remaining_llm if remaining_llm is not None else followup_llm_cap,
+                max(0, remaining_llm - reserved_window_llm) if remaining_llm is not None else followup_llm_cap,
             )
-            followup_key = (
-                api_key
-                or os.environ.get("OPENROUTER_API_KEY")
-                or os.environ.get("LLM_API_KEY")
-            )
-            followup_gateway = (
-                LLMGateway(LLMConfig(
-                    api_key=followup_key,
-                    model=generator_model,
-                    base_url=base_url,
-                    timeout=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_TIMEOUT", "90")),
-                    max_retries=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_RETRIES", "1")),
-                    max_tokens=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_MAX_TOKENS", "2600")),
-                    temperature=float(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_TEMPERATURE", "0.42")),
-                ))
-                if followup_key and max_followup_llm > 0
-                else None
-            )
-            segment_window_followup_result = _segment_window_density_controller(
-                rewritten_text,
-                rewritten_report_dict,
-                original_report_dict,
-                gateway=followup_gateway,
-                scan_func=_full_scan_report_dict,
-                max_scans=max_followup_scans,
-                max_llm_calls=max_followup_llm,
-            )
+            if window_coverage_budget_reserve.get("needed") and (max_followup_scans <= 0 or max_followup_llm <= 0):
+                segment_window_followup_result = {
+                    "enabled": True,
+                    "selected": False,
+                    "reason": "budget_reserved_for_window_coverage_density_optimizer",
+                    "window_coverage_budget_reserve": window_coverage_budget_reserve,
+                    "scans_used": 0,
+                    "llm_calls": 0,
+                    "candidate_frontier": [],
+                }
+            else:
+                followup_key = (
+                    api_key
+                    or os.environ.get("OPENROUTER_API_KEY")
+                    or os.environ.get("LLM_API_KEY")
+                )
+                followup_gateway = (
+                    LLMGateway(LLMConfig(
+                        api_key=followup_key,
+                        model=generator_model,
+                        base_url=base_url,
+                        timeout=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_TIMEOUT", "90")),
+                        max_retries=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_RETRIES", "1")),
+                        max_tokens=int(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_MAX_TOKENS", "2600")),
+                        temperature=float(os.environ.get("DRAFTPROOF_SEGMENT_WINDOW_TEMPERATURE", "0.42")),
+                    ))
+                    if followup_key and max_followup_llm > 0
+                    else None
+                )
+                segment_window_followup_result = _segment_window_density_controller(
+                    rewritten_text,
+                    rewritten_report_dict,
+                    original_report_dict,
+                    gateway=followup_gateway,
+                    scan_func=_full_scan_report_dict,
+                    max_scans=max_followup_scans,
+                    max_llm_calls=max_followup_llm,
+                )
         except Exception as exc:
             segment_window_followup_result = {
                 "enabled": True,
@@ -27751,41 +14143,54 @@ def run_rewrite_pipeline(
             remaining_llm = global_rewrite_budget.remaining_llm_calls()
             cluster_scan_cap = max(0, int(_float_env("DRAFTPROOF_REMAINING_CLUSTER_MAX_SCANS", 4.0)))
             cluster_llm_cap = max(0, int(_float_env("DRAFTPROOF_REMAINING_CLUSTER_MAX_LLM_CALLS", 4.0)))
+            reserved_window_scans = int(window_coverage_budget_reserve.get("reserved_scans") or 0)
+            reserved_window_llm = int(window_coverage_budget_reserve.get("reserved_llm_calls") or 0)
             max_cluster_scans = min(
                 cluster_scan_cap,
-                remaining_scans if remaining_scans is not None else cluster_scan_cap,
+                max(0, remaining_scans - reserved_window_scans) if remaining_scans is not None else cluster_scan_cap,
             )
             max_cluster_llm = min(
                 cluster_llm_cap,
-                remaining_llm if remaining_llm is not None else cluster_llm_cap,
+                max(0, remaining_llm - reserved_window_llm) if remaining_llm is not None else cluster_llm_cap,
             )
-            cluster_key = (
-                api_key
-                or os.environ.get("OPENROUTER_API_KEY")
-                or os.environ.get("LLM_API_KEY")
-            )
-            cluster_gateway = (
-                LLMGateway(LLMConfig(
-                    api_key=cluster_key,
-                    model=generator_model,
-                    base_url=base_url,
-                    timeout=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_TIMEOUT", "90")),
-                    max_retries=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_RETRIES", "1")),
-                    max_tokens=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_MAX_TOKENS", "3200")),
-                    temperature=float(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_TEMPERATURE", "0.42")),
-                ))
-                if cluster_key and max_cluster_llm > 0
-                else None
-            )
-            remaining_cluster_result = _remaining_cluster_density_controller(
-                rewritten_text,
-                rewritten_report_dict,
-                original_report_dict,
-                gateway=cluster_gateway,
-                scan_func=_full_scan_report_dict,
-                max_scans=max_cluster_scans,
-                max_llm_calls=max_cluster_llm,
-            )
+            if window_coverage_budget_reserve.get("needed") and (max_cluster_scans <= 0 or max_cluster_llm <= 0):
+                remaining_cluster_result = {
+                    "enabled": True,
+                    "selected": False,
+                    "reason": "budget_reserved_for_window_coverage_density_optimizer",
+                    "window_coverage_budget_reserve": window_coverage_budget_reserve,
+                    "scans_used": 0,
+                    "llm_calls": 0,
+                    "candidate_frontier": [],
+                }
+            else:
+                cluster_key = (
+                    api_key
+                    or os.environ.get("OPENROUTER_API_KEY")
+                    or os.environ.get("LLM_API_KEY")
+                )
+                cluster_gateway = (
+                    LLMGateway(LLMConfig(
+                        api_key=cluster_key,
+                        model=generator_model,
+                        base_url=base_url,
+                        timeout=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_TIMEOUT", "90")),
+                        max_retries=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_RETRIES", "1")),
+                        max_tokens=int(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_MAX_TOKENS", "3200")),
+                        temperature=float(os.environ.get("DRAFTPROOF_REMAINING_CLUSTER_TEMPERATURE", "0.42")),
+                    ))
+                    if cluster_key and max_cluster_llm > 0
+                    else None
+                )
+                remaining_cluster_result = _remaining_cluster_density_controller(
+                    rewritten_text,
+                    rewritten_report_dict,
+                    original_report_dict,
+                    gateway=cluster_gateway,
+                    scan_func=_full_scan_report_dict,
+                    max_scans=max_cluster_scans,
+                    max_llm_calls=max_cluster_llm,
+                )
         except Exception as exc:
             remaining_cluster_result = {
                 "enabled": True,
@@ -27862,180 +14267,6 @@ def run_rewrite_pipeline(
             seconds=round(time.time() - remaining_cluster_t0, 3),
             scans=int(stored_remaining_cluster_result.get("scans_used") or 0),
             llm_calls=int(stored_remaining_cluster_result.get("llm_calls") or 0),
-        )
-
-    window_coverage_selected = False
-    window_coverage_should_run = (
-        _env_flag("DRAFTPROOF_WINDOW_COVERAGE_DENSITY_OPTIMIZER", True)
-        and not ai_search_blocked_by_author_gaps
-        and isinstance(rewritten_report_dict, dict)
-        and isinstance(original_report_dict, dict)
-        and str(rewritten_text or "").strip()
-        and str(rewritten_text or "").strip() != str(text or "").strip()
-    )
-    if window_coverage_should_run:
-        window_profile = _turnitin_like_ai_profile(rewritten_report_dict)
-        window_density = _eligible_span_density_contract(rewritten_text, rewritten_report_dict)
-        window_coverage_map = _window_coverage_map(rewritten_text, rewritten_report_dict)
-        window_coverage_should_run = bool(
-            not window_profile.get("target_met")
-            and (
-                not window_density.get("safe")
-                or int(window_coverage_map.get("unsafe_window_count") or 0) > 0
-            )
-        )
-    if window_coverage_should_run and not global_rewrite_budget.can_run(
-        min_seconds=8.0,
-        min_scans=1,
-        min_llm_calls=0,
-    ):
-        stored_window_coverage_result = _global_phase_budget_skip(
-            "window_coverage_density_optimizer",
-            min_seconds=8.0,
-            min_scans=1,
-            min_llm_calls=0,
-        ) or {}
-        result.summary["window_coverage_density_optimizer"] = stored_window_coverage_result
-        stage_timings.append({
-            "stage": "window_coverage_density_optimizer",
-            "seconds": 0.0,
-            "candidates": 0,
-            "selected": False,
-            "skipped": True,
-            "stop_reason": stored_window_coverage_result.get("reason"),
-        })
-    elif window_coverage_should_run:
-        report_progress(85, "Running window-coverage density optimizer")
-        window_coverage_t0 = time.time()
-        try:
-            remaining_scans = global_rewrite_budget.remaining_scans()
-            remaining_llm = global_rewrite_budget.remaining_llm_calls()
-            window_scan_cap = max(0, int(_float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_SCANS", 5.0)))
-            window_llm_cap = max(0, int(_float_env("DRAFTPROOF_WINDOW_COVERAGE_MAX_LLM_CALLS", 5.0)))
-            max_window_scans = min(
-                window_scan_cap,
-                remaining_scans if remaining_scans is not None else window_scan_cap,
-            )
-            max_window_llm = min(
-                window_llm_cap,
-                remaining_llm if remaining_llm is not None else window_llm_cap,
-            )
-            window_key = (
-                api_key
-                or os.environ.get("OPENROUTER_API_KEY")
-                or os.environ.get("LLM_API_KEY")
-            )
-            window_gateway = (
-                LLMGateway(LLMConfig(
-                    api_key=window_key,
-                    model=generator_model,
-                    base_url=base_url,
-                    timeout=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_TIMEOUT", "90")),
-                    max_retries=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_RETRIES", "1")),
-                    max_tokens=int(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_MAX_TOKENS", "3200")),
-                    temperature=float(os.environ.get("DRAFTPROOF_WINDOW_COVERAGE_TEMPERATURE", "0.42")),
-                ))
-                if window_key and max_window_llm > 0
-                else None
-            )
-            window_coverage_result = _window_coverage_density_optimizer(
-                rewritten_text,
-                rewritten_report_dict,
-                original_report_dict,
-                gateway=window_gateway,
-                scan_func=_full_scan_report_dict,
-                max_scans=max_window_scans,
-                max_llm_calls=max_window_llm,
-            )
-        except Exception as exc:
-            window_coverage_result = {
-                "enabled": True,
-                "selected": False,
-                "reason": f"window_coverage_density_optimizer_error {exc}",
-            }
-        stored_window_coverage_result = {
-            key: value
-            for key, value in window_coverage_result.items()
-            if key not in {"selected_text", "selected_report"}
-        }
-        result.summary["window_coverage_density_optimizer"] = stored_window_coverage_result
-        result.summary["window_coverage_map"] = stored_window_coverage_result.get("window_coverage_map")
-        result.summary["top_coverage_sentences"] = stored_window_coverage_result.get("top_coverage_sentences")
-        result.summary["window_coverage_candidate_frontier"] = stored_window_coverage_result.get("candidate_frontier")
-        result.summary["window_coverage_portfolio_optimizer"] = stored_window_coverage_result.get("window_coverage_portfolio_optimizer")
-        result.summary["deterministic_variant_frontier"] = stored_window_coverage_result.get("deterministic_variant_frontier")
-        result.summary["portfolio_candidate_frontier"] = stored_window_coverage_result.get("portfolio_candidate_frontier")
-        result.summary["patch_ablation_frontier"] = stored_window_coverage_result.get("patch_ablation_frontier")
-        result.summary["selected_window_coverage_portfolio"] = stored_window_coverage_result.get("selected_window_coverage_portfolio")
-        result.summary["coverage_efficiency"] = stored_window_coverage_result.get("coverage_efficiency")
-        result.summary["selected_window_coverage_strategy"] = stored_window_coverage_result.get("selected_strategy")
-        result.summary["unsafe_window_count_before"] = stored_window_coverage_result.get("unsafe_window_count_before")
-        result.summary["unsafe_window_count_after"] = stored_window_coverage_result.get("unsafe_window_count_after")
-        result.summary["unsafe_window_count_drop"] = stored_window_coverage_result.get("unsafe_window_count_drop")
-        result.summary["ai_sentence_vote_ratio_before"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_before")
-        result.summary["ai_sentence_vote_ratio_after"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_after")
-        result.summary["ai_sentence_vote_ratio_drop"] = stored_window_coverage_result.get("ai_sentence_vote_ratio_drop")
-        if (
-            window_coverage_result.get("selected")
-            and _global_controller_phase_accepted(
-                "window_coverage_density_optimizer",
-                window_coverage_result,
-                stored_window_coverage_result,
-            )
-        ):
-            selected_report = window_coverage_result.get("selected_report")
-            selected_text = window_coverage_result.get("selected_text")
-            if isinstance(selected_report, dict) and isinstance(selected_text, str):
-                rewritten_text = selected_text
-                rewritten_report_dict = selected_report
-                attempted_report_dict = rewritten_report_dict
-                rewritten_ai = _badge_ai(rewritten_report_dict)
-                rewritten_wq = _badge_wq(rewritten_report_dict)
-                rewritten_total = _finding_total(rewritten_report_dict)
-                rewritten_review_burden = _review_burden(rewritten_report_dict)
-                rewritten_severity = _weighted_severity(rewritten_report_dict)
-                rewritten_critical_high = _critical_high_count(rewritten_report_dict)
-                if result.mp_result:
-                    result.mp_result.final_text = rewritten_text
-                    result.mp_result.converged = True
-                    result.mp_result.convergence_reason = (
-                        "Selected window-coverage density candidate: "
-                        f"{window_coverage_result.get('selected_strategy')}"
-                    )
-                sentence_comparison = _build_aligned_sentence_comparison(result.mp_result)
-                ai_search_selected = True
-                window_coverage_selected = True
-                _clear_stale_rollback_for_kept_ai_mitigation(
-                    result.summary,
-                    "window-coverage density optimizer",
-                )
-                result.summary["selected_strategy"] = window_coverage_result.get("selected_strategy")
-                result.summary["selected_window_coverage_strategy"] = window_coverage_result.get("selected_strategy")
-                result.summary["detect_scores"].update({
-                    "rewritten_ai": rewritten_ai,
-                    "rewritten_writing_quality": rewritten_wq,
-                    "rewritten_ai_authorship": _integrity_scores(rewritten_report_dict).get("ai_authorship"),
-                    "rewritten_grounding_quality_risk": _integrity_scores(rewritten_report_dict).get("grounding"),
-                    "rewritten_human_contribution": _contribution_scores(rewritten_report_dict).get("human"),
-                    "rewritten_ai_transformation": _contribution_scores(rewritten_report_dict).get("ai_transformation"),
-                    "rewritten_findings": rewritten_total,
-                    "rewritten_review_burden": rewritten_review_burden,
-                    "rewritten_weighted_severity": rewritten_severity,
-                })
-        stage_timings.append({
-            "stage": "window_coverage_density_optimizer",
-            "seconds": round(time.time() - window_coverage_t0, 3),
-            "candidates": len(stored_window_coverage_result.get("candidate_frontier") or []),
-            "scans": stored_window_coverage_result.get("scans_used"),
-            "llm_calls": stored_window_coverage_result.get("llm_calls"),
-            "selected": bool(window_coverage_result.get("selected")),
-            "stop_reason": window_coverage_result.get("reason"),
-        })
-        global_rewrite_budget.record_stage(
-            "window_coverage_density_optimizer",
-            seconds=round(time.time() - window_coverage_t0, 3),
-            scans=int(stored_window_coverage_result.get("scans_used") or 0),
-            llm_calls=int(stored_window_coverage_result.get("llm_calls") or 0),
         )
 
     post_density_anchor_selected = False

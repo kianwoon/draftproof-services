@@ -3297,6 +3297,12 @@ assert_test(
     and 'reason": "strict_ai_phase_budget_only"' in rewrite_pipeline_source,
     "Post-safe Human target push cannot bypass strict AI phase-budget-only mode",
 )
+assert_test(
+    "window_coverage_budget_reserve" in rewrite_pipeline_source
+    and "budget_reserved_for_window_coverage_density_optimizer" in rewrite_pipeline_source
+    and "max_llm_calls = min(max_llm_calls, 2)" not in rewrite_pipeline_source,
+    "Window-coverage optimizer keeps reserved budget and no longer has a hidden two-call clamp",
+)
 for key, value in previous_sampling_env.items():
     if value is None:
         os.environ.pop(key, None)
@@ -9516,9 +9522,23 @@ window_portfolio_candidates = window_coverage_portfolio_candidates(
     variants=window_deterministic_variants,
     portfolio_limit=6,
 )
+single_variant_portfolio_candidates = window_coverage_portfolio_candidates(
+    segment_window_text,
+    segment_window_report,
+    variants=window_deterministic_variants[:1],
+    portfolio_limit=2,
+)
+ablation_source_candidate = next(
+    (
+        candidate
+        for candidate in window_portfolio_candidates
+        if len(candidate.get("applied_sentence_patches") or []) >= 3
+    ),
+    window_portfolio_candidates[0] if window_portfolio_candidates else {},
+)
 window_ablation_candidates = window_coverage_ablation_candidates(
     segment_window_text,
-    (window_portfolio_candidates[0]["applied_sentence_patches"] if window_portfolio_candidates else []),
+    (ablation_source_candidate.get("applied_sentence_patches") if ablation_source_candidate else []),
     limit=2,
 )
 window_coverage_prompt = window_coverage_candidate_prompt(
@@ -9588,20 +9608,37 @@ assert_test(
 )
 assert_test(
     bool(window_deterministic_variants)
-    and all(not variant.get("protected_anchor_terms") for variant in window_deterministic_variants)
+    and all(
+        all(anchor in str(variant.get("replacement_text") or "") for anchor in (variant.get("protected_anchor_terms") or []))
+        for variant in window_deterministic_variants
+    )
     and all("1776" not in str(variant.get("original_text") or "") for variant in window_deterministic_variants),
-    "window-coverage deterministic variants target anchor-light sentences and preserve canonical facts",
+    "window-coverage deterministic variants preserve anchors and canonical facts",
+)
+window_variant_artifacts = [
+    str(variant.get("replacement_text") or "")
+    for variant in window_deterministic_variants
+    if re.search(r"\ba\s+(?:important|powerful|largest|strongest)\s+\w+s\b", str(variant.get("replacement_text") or ""), re.I)
+]
+assert_test(
+    not window_variant_artifacts,
+    "window-coverage deterministic compression avoids article/plural grammar artifacts",
 )
 assert_test(
     bool(window_portfolio_candidates)
-    and all(2 <= len(candidate.get("applied_sentence_patches") or []) <= 4 for candidate in window_portfolio_candidates)
+    and all(1 <= len(candidate.get("applied_sentence_patches") or []) <= 4 for candidate in window_portfolio_candidates)
     and window_portfolio_candidates[0]["predicted_rank"] >= window_portfolio_candidates[-1]["predicted_rank"],
-    "window-coverage portfolio assembler builds ranked 2-4 sentence candidates",
+    "window-coverage portfolio assembler builds ranked 1-4 sentence candidates",
+)
+assert_test(
+    bool(single_variant_portfolio_candidates)
+    and len(single_variant_portfolio_candidates[0].get("applied_sentence_patches") or []) == 1,
+    "window-coverage portfolio assembler keeps a single high-leverage variant instead of dropping the phase",
 )
 assert_test(
     bool(window_ablation_candidates)
     and len(window_ablation_candidates[0].get("applied_sentence_patches") or [])
-    < len(window_portfolio_candidates[0].get("applied_sentence_patches") or []),
+    < len(ablation_source_candidate.get("applied_sentence_patches") or []),
     "window-coverage ablation helper builds reduced patch bundles from failed portfolios",
 )
 assert_test(

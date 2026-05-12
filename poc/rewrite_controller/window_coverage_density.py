@@ -56,8 +56,9 @@ _CONNECTOR_PREFIX_RE = re.compile(
 )
 _GENERIC_COMPRESSIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bis frequently recognized as\b", re.I), "is"),
-    (re.compile(r"\bone of the most\b", re.I), "a"),
-    (re.compile(r"\bone of the biggest\b", re.I), "a major"),
+    (re.compile(r"\bhas become one of the most\b", re.I), "is among the most"),
+    (re.compile(r"\bis one of the most\b", re.I), "is among the most"),
+    (re.compile(r"\bone of the biggest\b", re.I), "among the biggest"),
     (re.compile(r"\banother important feature\b", re.I), "another feature"),
     (re.compile(r"\bplays? a (?:major|central|significant|important) role\b", re.I), "matters"),
     (re.compile(r"\bhas become\b", re.I), "is"),
@@ -452,14 +453,13 @@ def _window_variant_record(
 
 
 def _deterministic_sentence_variants(row: dict[str, Any]) -> list[dict[str, Any]]:
-    """Generate small local edits for one anchor-light high-coverage sentence."""
+    """Generate small local edits for one high-coverage non-canonical sentence."""
 
     sentence = str(row.get("sentence") or "").strip()
     if (
         not sentence
         or not row.get("editable")
         or row.get("canonical_fact_preserve")
-        or _patch_anchor_terms(sentence, limit=12)
         or is_canonical_fact_sentence(sentence)
     ):
         return []
@@ -514,7 +514,7 @@ def window_coverage_deterministic_variants(
     sentence_limit: int = 8,
     variant_limit: int = 32,
 ) -> list[dict[str, Any]]:
-    """Return deterministic micro-variants for anchor-light high-coverage sentences."""
+    """Return deterministic micro-variants for high-coverage non-canonical sentences."""
 
     coverage_map = build_window_coverage_map(text, report_dict, sentence_limit=max(20, sentence_limit * 2))
     variants: list[dict[str, Any]] = []
@@ -545,6 +545,8 @@ def window_coverage_deterministic_variants(
 def _apply_sentence_variants(
     source_text: str,
     variants: list[dict[str, Any]],
+    *,
+    min_patches: int = 2,
 ) -> tuple[str, list[dict[str, Any]], str]:
     source = str(source_text or "")
     sentences = split_sentences(source)
@@ -583,7 +585,7 @@ def _apply_sentence_variants(
             "replacement_word_count": _word_count(replacement),
             "predicted_impact": variant.get("predicted_impact"),
         })
-    if len(applied) < 2:
+    if len(applied) < max(1, int(min_patches or 1)):
         return "", applied, "insufficient_applicable_sentence_patches"
     candidate = next_text.strip()
     if candidate == source.strip():
@@ -616,12 +618,16 @@ def window_coverage_portfolio_candidates(
     )[:8]
     portfolios: list[dict[str, Any]] = []
     seen_texts: set[str] = set()
-    for size in (4, 3, 2):
+    for size in (4, 3, 2, 1):
         for indexes in combinations(sentence_indexes, size):
             selected = [by_sentence[index][0] for index in indexes if by_sentence.get(index)]
             if len(selected) != size:
                 continue
-            candidate_text, applied, reason = _apply_sentence_variants(text, selected)
+            candidate_text, applied, reason = _apply_sentence_variants(
+                text,
+                selected,
+                min_patches=1 if size == 1 else 2,
+            )
             if not candidate_text:
                 continue
             text_key = _sentence_key(candidate_text)
