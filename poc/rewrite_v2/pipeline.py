@@ -855,13 +855,36 @@ def run_rewrite_pipeline_v2(
                     "text": composed_text,
                 })
     best = select_best_candidate(candidate_rows)
-    if best and (best.get("decision") or {}).get("lane") == CandidateLane.GOAL_MET.value:
+    best_decision = best.get("decision") if isinstance(best, dict) else {}
+    best_lane = (best_decision or {}).get("lane")
+    best_applicable_near_miss = bool(
+        best
+        and best_lane == CandidateLane.SAFE_NEAR_MISS.value
+        and (best_decision or {}).get("required_drop_met")
+        and (best_decision or {}).get("quality_safe")
+        and (best_decision or {}).get("semantic_safe")
+    )
+    if best and best_lane == CandidateLane.GOAL_MET.value:
         final_text = str(best.get("text") or original_text)
         final_report = best.get("report") if isinstance(best.get("report"), dict) else original_report
         final_goal = best.get("goal")
         public_status = RewriteGoalStatus.AI_MITIGATED.value
         converged = True
         convergence_reason = "rewrite_v2_strict_goal_met"
+    elif best_applicable_near_miss:
+        final_text = str(best.get("text") or original_text)
+        final_report = best.get("report") if isinstance(best.get("report"), dict) else original_report
+        near_miss_goal = best.get("goal") if isinstance(best.get("goal"), dict) else {}
+        final_goal = {
+            **near_miss_goal,
+            "status": RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
+            "goal_met": False,
+            "applied_candidate_lane": CandidateLane.SAFE_NEAR_MISS.value,
+            "reason": "score_target_met_but_strict_detector_safe_goal_not_met",
+        }
+        public_status = RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value
+        converged = False
+        convergence_reason = "rewrite_v2_score_target_candidate_applied_strict_goal_not_met"
     else:
         final_text = original_text
         final_report = original_report
@@ -913,7 +936,11 @@ def run_rewrite_pipeline_v2(
             "stage": "rewrite_v2_scan_driven",
             "seconds": round(elapsed, 3),
             "candidates": len(candidate_rows),
-            "selected": public_status == RewriteGoalStatus.AI_MITIGATED.value,
+            "selected": bool(
+                public_status == RewriteGoalStatus.AI_MITIGATED.value
+                or best_applicable_near_miss
+            ),
+            "strict_selected": public_status == RewriteGoalStatus.AI_MITIGATED.value,
         }],
         "detect_scan_original": original_report,
         "detect_scan_rewritten": final_report,
