@@ -1,4 +1,4 @@
-"""Scan-driven rewrite pipeline V2."""
+"""Scan-driven rewrite pipeline V2 package."""
 
 from .pipeline import run_rewrite_pipeline_v2
 
