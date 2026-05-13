@@ -12,6 +12,12 @@ from rewrite_controller.eligible_span_density import build_eligible_span_density
 from rewrite_pipeline_core.gates.ai_footprint import _ai_footprint_gate_status
 from rewrite_pipeline_core.scoring.profiles import _turnitin_like_ai_gate_status
 
+from .external_calibration import (
+    calibration_policy_to_dict,
+    load_external_calibration_labels,
+    summarize_external_calibration_records,
+)
+
 
 class RewriteGoalStatus(str, Enum):
     AI_MITIGATED = "ai_mitigated"
@@ -199,6 +205,8 @@ def _external_detector_proxy_status(
             "weak_human_anchor": weak_anchor_penalty,
             "generic_source_compound": generic_source_compound_penalty,
         },
+        "calibration_policy": calibration_policy_to_dict(),
+        "calibration_summary": summarize_external_calibration_records(load_external_calibration_labels()),
     }
 
 

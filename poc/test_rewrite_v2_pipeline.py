@@ -66,6 +66,8 @@ from rewrite_v2.layers.academic import _generate_academic_section_candidates
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.layer_attempts import summarize_layer_attempts
+from rewrite_v2.external_calibration import classify_external_label, normalize_external_ai_percent
+from rewrite_v2.partial_policy import close_partial_candidate_allowed, partial_application_policy
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.runtime_budget import RewriteV2RuntimeBudget
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
@@ -195,6 +197,40 @@ assert_test(
 assert_test(
     "academic_all_section_compact_reconstruction" in academic_route.allowed_strategy_families,
     "V2 content router enables compact all-section academic reconstruction for assignment-shaped cited text",
+)
+academic_partial_policy = partial_application_policy(
+    academic_route,
+    close_partial_max_gap=2.0,
+    composition_partial_max_gap=3.0,
+)
+broad_partial_policy = partial_application_policy(
+    broad_route,
+    close_partial_max_gap=2.0,
+    composition_partial_max_gap=3.0,
+)
+partial_candidate_for_policy = {
+    "decision": {
+        "lane": CandidateLane.PARTIAL_DIAGNOSTIC.value,
+        "quality_safe": True,
+        "semantic_safe": True,
+        "ai_target_gap": 0.5,
+    },
+}
+assert_test(
+    not academic_partial_policy["apply_close_partial"]
+    and academic_partial_policy["blocked_by_mode"],
+    "V2 partial policy blocks close partial application for academic cited text",
+)
+assert_test(
+    close_partial_candidate_allowed(partial_candidate_for_policy, policy=broad_partial_policy)
+    and not close_partial_candidate_allowed(partial_candidate_for_policy, policy=academic_partial_policy),
+    "V2 partial policy allows broad close partials but not academic close partials",
+)
+assert_test(
+    normalize_external_ai_percent({"ai_generated_percent": "29%"}) == 29.0
+    and classify_external_label({"ai_percent": 86})["passed"] is False
+    and classify_external_label(0.16)["passed"] is True,
+    "V2 external calibration normalizes external detector labels to an explicit pass contract",
 )
 reflective_academic_route = classify_content_route(
     (
@@ -1149,6 +1185,40 @@ assert_test(
 assert_test(
     close_partial_summary.get("rewrite_effective_config", {}).get("apply_partial_max_gap") == 2.0,
     "V2 records effective close-partial tolerance in rewrite summary",
+)
+
+academic_partial_scan = {
+    **scan_json,
+    "input_text": "Research on feedback shows uneven effects (Smith, 2021). Other classroom studies report similar limits [2]. References suggest the issue remains contested.",
+}
+with tempfile.TemporaryDirectory() as tmpdir:
+    academic_partial_result = run_rewrite_pipeline_v2(
+        detect_json=academic_partial_scan,
+        output_dir=tmpdir,
+        replay_candidate_records=[{
+            "strategy": "academic_close_partial",
+            "text": "Feedback research shows uneven classroom effects (Smith, 2021). Other studies report similar limits [2]. The issue remains contested.",
+            "report": {
+                "ai_risk_badge": {
+                    "ai_likelihood_score": 50.0,
+                    "writing_quality_score": 58.0,
+                    "ai_components": {"topk_calibrated_risk": 60},
+                },
+                "integrity_layers": {"layers": {"ai_authorship": {"score": 50}, "ai_transformation": {"score": 44}}},
+                "findings": {"critical": [], "high": [{"id": "f001"}], "medium": [], "low": []},
+            },
+        }],
+    )
+academic_partial_summary = academic_partial_result["result"].summary
+assert_test(
+    academic_partial_summary["content_router_trace"]["content_mode"] == "academic_cited_text"
+    and academic_partial_summary["partial_application_policy"]["blocked_by_mode"],
+    "V2 records mode-aware close partial blocking for academic replay candidates",
+)
+assert_test(
+    academic_partial_summary["final_text"] == academic_partial_scan["input_text"]
+    and academic_partial_result["status"] == RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value,
+    "V2 does not apply academic close partial diagnostics as user-facing rewrites",
 )
 
 previous_partial_gap = os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP")

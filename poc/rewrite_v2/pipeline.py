@@ -27,6 +27,7 @@ from .diagnostics import annotate_candidate_diagnostics, summarize_candidate_dia
 from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from .goal_contract import RewriteGoalEvaluation
 from .layer_attempts import record_layer_attempt, summarize_layer_attempts
+from .partial_policy import close_partial_candidate_allowed, partial_application_policy
 from .robustness import layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from .runtime_budget import RewriteV2RuntimeBudget
 from .selection import (
@@ -2333,6 +2334,11 @@ def run_rewrite_pipeline_v2(
         else None
     )
     content_route = classify_content_route(original_text, original_report)
+    close_partial_policy = partial_application_policy(
+        content_route,
+        close_partial_max_gap=_close_partial_max_gap(),
+        composition_partial_max_gap=_composition_partial_max_gap(),
+    )
     strategies = route_strategies(
         original_report,
         full_rewrite_allowed=full_rewrite_allowed,
@@ -2345,6 +2351,7 @@ def run_rewrite_pipeline_v2(
         "allowed_strategy_families": content_route.allowed_strategy_families,
         "blocked_strategy_families": content_route.blocked_strategy_families,
         "portfolio_limits": portfolio_limits(content_route),
+        "partial_application_policy": close_partial_policy,
     }
     author_context_blocked = (
         needs_author_context(original_report)
@@ -2891,7 +2898,6 @@ def run_rewrite_pipeline_v2(
             )
     if replay_candidate_records is not None:
         post_layer_trace = []
-    close_partial_max_gap = _close_partial_max_gap()
     diagnostic_best = select_best_candidate(candidate_rows)
     best = _select_best_v2_frontier(candidate_rows, content_route=content_route) or diagnostic_best
     best_decision = best.get("decision") if isinstance(best, dict) else {}
@@ -2903,21 +2909,9 @@ def run_rewrite_pipeline_v2(
         and (best_decision or {}).get("quality_safe")
         and (best_decision or {}).get("semantic_safe")
     )
-    close_partial_gap = (best_decision or {}).get("ai_target_gap")
     best_applicable_close_partial = bool(
         best
-        and os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_CLOSE_PARTIAL", "1").lower() not in {"0", "false", "no"}
-        and best_lane == CandidateLane.PARTIAL_DIAGNOSTIC.value
-        and isinstance(close_partial_gap, (int, float))
-        and (
-            float(close_partial_gap) <= close_partial_max_gap
-            or (
-                _candidate_patch_coverage(best) >= 2
-                and float(close_partial_gap) <= _composition_partial_max_gap()
-            )
-        )
-        and (best_decision or {}).get("quality_safe")
-        and (best_decision or {}).get("semantic_safe")
+        and close_partial_candidate_allowed(best, policy=close_partial_policy)
     )
     if best and best_lane == CandidateLane.GOAL_MET.value:
         final_text = str(best.get("text") or original_text)
@@ -3018,6 +3012,7 @@ def run_rewrite_pipeline_v2(
         "target_ai_score": target_ai_score,
         "rewrite_effective_config": effective_config,
         "runtime_budget": runtime_budget.to_dict(),
+        "partial_application_policy": close_partial_policy,
         "candidate_generation_status": {
             "generated_count": generated_count,
             "candidate_rows": len(candidate_rows),

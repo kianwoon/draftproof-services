@@ -1,0 +1,137 @@
+"""External detector calibration helpers for rewrite V2.
+
+The production scanner cannot call every external detector, so V2 keeps a
+proxy. This module makes the proxy's calibration contract explicit: external
+labels are stored separately, normalized to a single AI-percent scale, and used
+to tune thresholds from evidence rather than individual runs.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+
+EXTERNAL_LABEL_SCHEMA_VERSION = "rewrite_v2_external_detector_calibration_v1"
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def external_label_pass_max() -> float:
+    """Maximum external AI percentage treated as a pass in calibration data."""
+    return max(0.0, min(100.0, _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_LABEL_PASS_MAX", 35.0)))
+
+
+def normalize_external_ai_percent(label: Any) -> float | None:
+    """Normalize common external-detector label shapes to 0-100 AI percent."""
+    if isinstance(label, (int, float)):
+        value = float(label)
+        return max(0.0, min(100.0, value * 100.0 if 0.0 <= value <= 1.0 else value))
+    if isinstance(label, str):
+        stripped = label.strip().lower().replace("%", "")
+        if not stripped:
+            return None
+        label_aliases = {
+            "human": 0.0,
+            "likely human": 20.0,
+            "mixed": 50.0,
+            "likely ai": 75.0,
+            "ai": 100.0,
+            "ai-generated": 100.0,
+        }
+        if stripped in label_aliases:
+            return label_aliases[stripped]
+        try:
+            value = float(stripped)
+        except ValueError:
+            return None
+        return max(0.0, min(100.0, value * 100.0 if 0.0 <= value <= 1.0 else value))
+    if isinstance(label, dict):
+        for key in (
+            "ai_percent",
+            "ai_generated_percent",
+            "ai_probability",
+            "ai_score",
+            "score",
+            "value",
+        ):
+            if key in label:
+                normalized = normalize_external_ai_percent(label.get(key))
+                if normalized is not None:
+                    return normalized
+    return None
+
+
+def classify_external_label(label: Any, *, pass_max: float | None = None) -> dict[str, Any]:
+    ai_percent = normalize_external_ai_percent(label)
+    threshold = external_label_pass_max() if pass_max is None else max(0.0, min(100.0, float(pass_max)))
+    if ai_percent is None:
+        return {
+            "schema_version": EXTERNAL_LABEL_SCHEMA_VERSION,
+            "available": False,
+            "status": "unlabeled",
+            "ai_percent": None,
+            "pass_max": threshold,
+            "passed": None,
+        }
+    passed = ai_percent <= threshold
+    return {
+        "schema_version": EXTERNAL_LABEL_SCHEMA_VERSION,
+        "available": True,
+        "status": "external_label_passed" if passed else "external_label_failed",
+        "ai_percent": round(ai_percent, 3),
+        "pass_max": threshold,
+        "passed": passed,
+    }
+
+
+def calibration_policy_to_dict() -> dict[str, Any]:
+    dataset_path = os.environ.get("DRAFTPROOF_REWRITE_V2_EXTERNAL_CALIBRATION_DATASET", "")
+    return {
+        "schema_version": EXTERNAL_LABEL_SCHEMA_VERSION,
+        "external_label_pass_max": external_label_pass_max(),
+        "dataset_path": dataset_path,
+        "has_dataset": bool(dataset_path),
+        "purpose": "Tune external proxy thresholds from labeled detector outcomes, not single-run anecdotes.",
+    }
+
+
+def load_external_calibration_labels(path: str | os.PathLike[str] | None = None) -> list[dict[str, Any]]:
+    """Load optional JSON/JSONL calibration records for offline analysis/tests."""
+    raw_path = path or os.environ.get("DRAFTPROOF_REWRITE_V2_EXTERNAL_CALIBRATION_DATASET")
+    if not raw_path:
+        return []
+    file_path = Path(raw_path)
+    if not file_path.exists() or not file_path.is_file():
+        return []
+    text = file_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    if file_path.suffix.lower() == ".jsonl":
+        rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        parsed = json.loads(text)
+        rows = parsed if isinstance(parsed, list) else parsed.get("records", []) if isinstance(parsed, dict) else []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def summarize_external_calibration_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+    labels = [classify_external_label(row.get("external_label", row)) for row in records]
+    available = [label for label in labels if label.get("available")]
+    passed = sum(1 for label in available if label.get("passed"))
+    failed = sum(1 for label in available if label.get("passed") is False)
+    return {
+        "schema_version": EXTERNAL_LABEL_SCHEMA_VERSION,
+        "records": len(records),
+        "labeled_records": len(available),
+        "passed": passed,
+        "failed": failed,
+        "pass_max": external_label_pass_max(),
+    }
