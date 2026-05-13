@@ -33,6 +33,7 @@ from rewrite_v2.pipeline import (
     _compose_academic_sections,
     _build_author_stance_texture_pass_prompt,
     _build_author_stance_thesis_reframe_prompt,
+    _candidate_portfolio_allows,
     _cluster_text_from_gate,
     _compose_full_doc_delta_winners,
     _expected_full_reconstruction_paragraph_count,
@@ -51,7 +52,7 @@ from rewrite_v2.pipeline import (
 )
 from rewrite_v2.layers.academic import _exact_citation_markers
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
-from rewrite_v2.robustness import content_mode_policy, layer_coverage, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
+from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import StrategyKind, classify_content_route, route_strategies
 
@@ -222,6 +223,20 @@ assert_test(
 assert_test(
     any(anchor.text == "Tik Tok" and anchor_present(anchor, "TikTok practice still matters.") for anchor in academic_contract.anchors),
     "V2 contract matches normalized aliases for compact term variants",
+)
+lead_in_context_contract = build_rewrite_contract(
+    "",
+    content_mode="academic_cited_text",
+    sections=[{
+        "section_id": "p001",
+        "heading": "Paragraph 1",
+        "text": "For Johnny, the task requires a visual schedule. Johnny uses the schedule before transitions.",
+    }],
+)
+assert_test(
+    not any(anchor.text == "For Johnny" for anchor in lead_in_context_contract.anchors_by_severity(AnchorSeverity.SOFT_REQUIRED))
+    and any(anchor.text == "Johnny" and anchor_present(anchor, "Johnny uses a visual schedule.") for anchor in lead_in_context_contract.anchors),
+    "V2 contract does not require incidental preposition lead-ins for soft named anchors",
 )
 personal_contract_sections = _academic_assignment_sections(
     """Building an Inclusive Learning Environment
@@ -1151,6 +1166,11 @@ assert_test(
     no_candidate_summary["candidate_generation_status"]["generated_count"] == 0,
     "V2 records zero generated candidates in summary diagnostics",
 )
+assert_test(
+    {row.get("layer") for row in no_candidate_summary["candidate_generation_status"].get("post_layer_trace", [])}
+    >= {"targeted_composition", "academic_anchor_repair_texture_pass", "unsafe_cluster_rescue"},
+    "V2 records skipped post-layer reasons when no candidates are generated",
+)
 
 paragraph_map = _paragraph_target_map(
     {"rewrite_edit_briefs": [{"paragraph_id": "p002", "paragraph_excerpt": "truncated paragraph"}]},
@@ -1515,6 +1535,37 @@ academic_layer_policy = recommend_failure_policy(
     generated_count=2,
     content_route=academic_route,
 )
+broad_targeted_only_rows = [
+    {"strategy": "scan_author_stance_thesis_reframe"},
+    {"strategy": "scan_targeted_driver_mitigation"},
+]
+broad_targeted_policy = recommend_failure_policy(
+    broad_targeted_only_rows,
+    generated_count=2,
+    content_route=broad_route,
+)
+academic_unusable_rows = [
+    {
+        "strategy": "academic_all_section_compact_reconstruction",
+        "local_filter_passed": False,
+        "decision": {"lane": "REJECT", "reason": "targeted_local_filter_rejected"},
+    },
+    {
+        "strategy": "academic_cited_section_density_resolver",
+        "local_filter_passed": False,
+        "decision": {"lane": "REJECT", "reason": "targeted_local_filter_rejected"},
+    },
+    {
+        "strategy": "scan_targeted_driver_mitigation",
+        "local_filter_passed": False,
+        "decision": {"lane": "REJECT", "reason": "targeted_local_filter_rejected"},
+    },
+]
+academic_unusable_policy = recommend_failure_policy(
+    academic_unusable_rows,
+    generated_count=3,
+    content_route=academic_route,
+)
 assert_test(
     "repair:fixable_contract_drift" in academic_failure_policy["recommended_actions"]
     and "second_layer:detector_not_safe" in academic_failure_policy["recommended_actions"]
@@ -1536,6 +1587,19 @@ assert_test(
     layer_coverage(academic_layer_rows, academic_route)["missing_required_layers"] == ["targeted_paragraph_reconstruction"]
     and "run_missing_layer:targeted_paragraph_reconstruction" in academic_layer_policy["recommended_actions"],
     "V2 robustness policy detects missing required layers before declaring candidate exhaustion",
+)
+assert_test(
+    layer_coverage(broad_targeted_only_rows, broad_route)["required_layer_coverage_met"]
+    and "unsafe_cluster_rescue" in layer_coverage(broad_targeted_only_rows, broad_route)["missing_conditional_layers"]
+    and "run_missing_layer:unsafe_cluster_rescue" not in broad_targeted_policy["recommended_actions"],
+    "V2 robustness policy does not require conditional rescue layers when no rescue frontier exists",
+)
+assert_test(
+    layer_coverage(academic_unusable_rows, academic_route)["required_layer_coverage_met"]
+    and not layer_coverage(academic_unusable_rows, academic_route)["required_layer_viability_met"]
+    and "repair_unusable_layer:targeted_paragraph_reconstruction" in academic_unusable_policy["recommended_actions"]
+    and "rescore_or_replace_layer:targeted_paragraph_reconstruction" in academic_unusable_policy["recommended_actions"],
+    "V2 robustness policy distinguishes layer presence from usable scored layer output",
 )
 
 
@@ -1612,6 +1676,34 @@ assert_test(
         {normalize_strategy_layer(row) for row in portfolio_candidates}
     ),
     "V2 portfolio mode continues from full reconstruction into targeted paragraph candidates",
+)
+full_academic_budget_rows = [
+    {"strategy": "academic_all_section_compact_reconstruction"},
+    {"strategy": "academic_all_section_compact_reconstruction"},
+    {"strategy": "academic_cited_section_density_resolver"},
+    {"strategy": "scan_targeted_driver_mitigation"},
+    {"strategy": "scan_targeted_driver_mitigation"},
+    {"strategy": "scan_targeted_driver_mitigation"},
+    {"strategy": "scan_targeted_driver_mitigation"},
+    {"strategy": "scan_targeted_driver_mitigation"},
+    {"strategy": "scan_targeted_driver_mitigation"},
+    {"strategy": "academic_anchor_repair_texture_pass"},
+    {"strategy": "unsafe_cluster_rescue"},
+    {"strategy": "unsafe_cluster_rescue"},
+]
+rescue_cap_rows = [{"strategy": "unsafe_cluster_rescue"} for _ in range(4)]
+assert_test(
+    not _candidate_portfolio_allows(full_academic_budget_rows, academic_route, "unsafe_cluster_rescue")
+    and not _candidate_portfolio_allows(rescue_cap_rows, academic_route, "unsafe_cluster_rescue")
+    and _candidate_portfolio_allows(rescue_cap_rows[:3], academic_route, "unsafe_cluster_rescue"),
+    "V2 portfolio budget applies to post-generation repair and rescue layers",
+)
+budget_policy = recommend_failure_policy(full_academic_budget_rows, generated_count=len(full_academic_budget_rows), content_route=academic_route)
+assert_test(
+    budget_status(full_academic_budget_rows, academic_route)["portfolio_budget_exhausted"]
+    and "budget:portfolio_exhausted" in budget_policy["recommended_actions"]
+    and "budget:layer_exhausted:targeted_paragraph_reconstruction" in budget_policy["recommended_actions"],
+    "V2 robustness policy reports portfolio and layer budget exhaustion explicitly",
 )
 
 print("All rewrite V2 pipeline tests passed.")

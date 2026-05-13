@@ -47,8 +47,8 @@ CONTENT_MODE_POLICY: dict[str, dict[str, Any]] = {
         "required_layers": [
             "author_stance_thesis_reframe",
             "targeted_paragraph_reconstruction",
-            "unsafe_cluster_rescue",
         ],
+        "conditional_layers": ["unsafe_cluster_rescue"],
         "repairable_failures": [LOCAL_QUALITY_REJECTED],
         "second_layer_failures": [DETECTOR_NOT_SAFE],
         "terminal_failures": [HARD_ANCHOR_LOSS, SEMANTIC_LOSS],
@@ -62,7 +62,8 @@ CONTENT_MODE_POLICY: dict[str, dict[str, Any]] = {
             "targeted_paragraph_reconstruction": 5,
             "unsafe_cluster_rescue": 3,
         },
-        "required_layers": ["targeted_paragraph_reconstruction", "unsafe_cluster_rescue"],
+        "required_layers": ["targeted_paragraph_reconstruction"],
+        "conditional_layers": ["unsafe_cluster_rescue"],
         "repairable_failures": [LOCAL_QUALITY_REJECTED],
         "second_layer_failures": [DETECTOR_NOT_SAFE],
         "terminal_failures": [HARD_ANCHOR_LOSS, SEMANTIC_LOSS],
@@ -94,7 +95,8 @@ CONTENT_MODE_POLICY: dict[str, dict[str, Any]] = {
     "quote_heavy": {
         "max_generated_candidates": 5,
         "layer_candidate_caps": {"targeted_paragraph_reconstruction": 4, "unsafe_cluster_rescue": 1},
-        "required_layers": ["targeted_paragraph_reconstruction", "unsafe_cluster_rescue"],
+        "required_layers": ["targeted_paragraph_reconstruction"],
+        "conditional_layers": ["unsafe_cluster_rescue"],
         "repairable_failures": [FIXABLE_CONTRACT_DRIFT],
         "second_layer_failures": [],
         "terminal_failures": [HARD_ANCHOR_LOSS, SEMANTIC_LOSS, DETECTOR_NOT_SAFE],
@@ -127,7 +129,8 @@ CONTENT_MODE_POLICY: dict[str, dict[str, Any]] = {
     "creative_marketing": {
         "max_generated_candidates": 6,
         "layer_candidate_caps": {"targeted_paragraph_reconstruction": 4, "unsafe_cluster_rescue": 2},
-        "required_layers": ["targeted_paragraph_reconstruction", "unsafe_cluster_rescue"],
+        "required_layers": ["targeted_paragraph_reconstruction"],
+        "conditional_layers": ["unsafe_cluster_rescue"],
         "repairable_failures": [LOCAL_QUALITY_REJECTED],
         "second_layer_failures": [DETECTOR_NOT_SAFE],
         "terminal_failures": [HARD_ANCHOR_LOSS, SEMANTIC_LOSS],
@@ -204,17 +207,71 @@ def portfolio_limits(content_route: Any | None) -> dict[str, Any]:
 def layer_coverage(rows: list[dict[str, Any]], content_route: Any | None) -> dict[str, Any]:
     policy = content_mode_policy(content_route)
     required = list(policy.get("required_layers") or [])
+    conditional = list(policy.get("conditional_layers") or [])
     counts: dict[str, int] = {}
+    execution: dict[str, dict[str, int]] = {}
     for row in rows:
         layer = normalize_strategy_layer(row)
         counts[layer] = counts.get(layer, 0) + 1
+        stats = execution.setdefault(layer, {
+            "generated": 0,
+            "local_valid": 0,
+            "scored": 0,
+            "applicable": 0,
+            "rejected": 0,
+        })
+        stats["generated"] += 1
+        decision = row.get("decision") if isinstance(row.get("decision"), dict) else {}
+        lane = str(decision.get("lane") or "")
+        if row.get("local_filter_passed") is not False:
+            stats["local_valid"] += 1
+        if isinstance(row.get("candidate_ai"), (int, float)):
+            stats["scored"] += 1
+        if lane and lane != "REJECT" and decision.get("quality_safe") is not False and decision.get("semantic_safe") is not False:
+            stats["applicable"] += 1
+        if lane == "REJECT" or row.get("local_filter_passed") is False:
+            stats["rejected"] += 1
     missing = [layer for layer in required if counts.get(layer, 0) <= 0]
+    missing_conditional = [layer for layer in conditional if counts.get(layer, 0) <= 0]
+    unscored_required = [
+        layer for layer in required
+        if counts.get(layer, 0) > 0 and execution.get(layer, {}).get("scored", 0) <= 0
+    ]
+    locally_invalid_required = [
+        layer for layer in required
+        if counts.get(layer, 0) > 0 and execution.get(layer, {}).get("local_valid", 0) <= 0
+    ]
     return {
         "required_layers": required,
+        "conditional_layers": conditional,
         "ran_layers": sorted(layer for layer, count in counts.items() if count > 0),
         "layer_candidate_counts": dict(sorted(counts.items())),
+        "layer_execution": dict(sorted(execution.items())),
         "missing_required_layers": missing,
+        "missing_conditional_layers": missing_conditional,
+        "unscored_required_layers": unscored_required,
+        "locally_invalid_required_layers": locally_invalid_required,
         "required_layer_coverage_met": not missing,
+        "required_layer_viability_met": not missing and not unscored_required and not locally_invalid_required,
+    }
+
+
+def budget_status(rows: list[dict[str, Any]], content_route: Any | None) -> dict[str, Any]:
+    limits = portfolio_limits(content_route)
+    max_candidates = int(limits.get("max_generated_candidates") or 0)
+    caps = limits.get("layer_candidate_caps") or {}
+    counts = layer_coverage(rows, content_route).get("layer_candidate_counts") or {}
+    exhausted_layers = [
+        layer
+        for layer, cap in sorted(caps.items())
+        if isinstance(cap, int) and cap >= 0 and int(counts.get(layer, 0) or 0) >= cap
+    ]
+    return {
+        "max_generated_candidates": max_candidates,
+        "used_candidates": len(rows),
+        "remaining_candidates": max(0, max_candidates - len(rows)),
+        "portfolio_budget_exhausted": bool(max_candidates and len(rows) >= max_candidates),
+        "exhausted_layers": exhausted_layers,
     }
 
 
@@ -227,10 +284,19 @@ def recommend_failure_policy(
     diagnostics = summarize_candidate_diagnostics(rows, generated_count=generated_count)
     policy = content_mode_policy(content_route)
     coverage = layer_coverage(rows, content_route)
+    budget = budget_status(rows, content_route)
     counts = diagnostics.get("failure_class_counts") or {}
     actions: list[str] = []
+    if budget.get("portfolio_budget_exhausted"):
+        actions.append("budget:portfolio_exhausted")
+    for layer in budget.get("exhausted_layers") or []:
+        actions.append(f"budget:layer_exhausted:{layer}")
     for layer in coverage.get("missing_required_layers") or []:
         actions.append(f"run_missing_layer:{layer}")
+    for layer in coverage.get("locally_invalid_required_layers") or []:
+        actions.append(f"repair_unusable_layer:{layer}")
+    for layer in coverage.get("unscored_required_layers") or []:
+        actions.append(f"rescore_or_replace_layer:{layer}")
     for failure in policy.get("repairable_failures", []):
         if counts.get(failure, 0):
             actions.append(f"repair:{failure}")
@@ -246,8 +312,10 @@ def recommend_failure_policy(
         "policy_version": "rewrite_v2_robustness_policy_v1",
         "content_mode": policy["content_mode"],
         "required_layers": list(policy.get("required_layers") or []),
+        "conditional_layers": list(policy.get("conditional_layers") or []),
         "portfolio_limits": portfolio_limits(content_route),
         "layer_coverage": coverage,
+        "budget_status": budget,
         "recommended_actions": actions,
         "diagnostics": diagnostics,
     }

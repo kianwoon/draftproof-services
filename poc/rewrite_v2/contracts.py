@@ -132,6 +132,14 @@ def _split_heading_and_body(section_text: str) -> tuple[str, str]:
 def _aliases_for_term(value: str) -> tuple[str, ...]:
     text = str(value or "").strip()
     aliases: list[str] = []
+    stripped_lead = re.sub(
+        r"^(?:according\s+to|as|at|by|for|from|in|on|to|with)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    if stripped_lead and stripped_lead != text:
+        aliases.append(stripped_lead)
     if re.search(r"\bTik\s+Tok\b", text, flags=re.IGNORECASE):
         aliases.append(re.sub(r"\bTik\s+Tok\b", "TikTok", text, flags=re.IGNORECASE))
     if re.search(r"\bTikTok\b", text, flags=re.IGNORECASE):
