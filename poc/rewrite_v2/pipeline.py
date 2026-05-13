@@ -24,6 +24,7 @@ from rewrite.guards import check_semantic_drift, detect_protected_spans, protect
 
 from .contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from .diagnostics import annotate_candidate_diagnostics, summarize_candidate_diagnostics
+from .frontier import candidate_patch_coverage, select_best_v2_frontier
 from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from .goal_contract import RewriteGoalEvaluation
 from .layer_attempts import record_layer_attempt, summarize_layer_attempts
@@ -33,9 +34,7 @@ from .runtime_budget import RewriteV2RuntimeBudget
 from .selection import (
     CandidateLane,
     decide_candidate,
-    select_best_applicable_candidate,
     select_best_candidate,
-    select_best_safe_progress_candidate,
 )
 from .layers.academic import (
     _academic_all_section_filter_failures,
@@ -395,120 +394,24 @@ def _compose_full_doc_delta_winners(
     return text, applied
 
 
-def _candidate_patch_coverage(candidate: dict[str, Any] | None) -> int:
-    if not isinstance(candidate, dict):
-        return 0
-    composed = candidate.get("composed_patches")
-    if isinstance(composed, list):
-        return len(composed)
-    count = candidate.get("applied_patch_count")
-    if isinstance(count, (int, float)):
-        return int(count)
-    patches = candidate.get("patches")
-    if isinstance(patches, list):
-        return sum(1 for patch in patches if isinstance(patch, dict) and patch.get("applied"))
-    return 0
-
-
-def _is_safe_partial_candidate(candidate: dict[str, Any] | None, *, max_gap: float) -> bool:
-    if not isinstance(candidate, dict):
-        return False
-    decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
-    if decision.get("lane") != CandidateLane.PARTIAL_DIAGNOSTIC.value:
-        return False
-    if not decision.get("quality_safe") or not decision.get("semantic_safe"):
-        return False
-    gap = decision.get("ai_target_gap")
-    return isinstance(gap, (int, float)) and float(gap) <= float(max_gap)
-
-
-def _content_mode_value(content_route: Any | None) -> str:
-    if content_route is None:
-        return ""
-    if isinstance(content_route, dict):
-        return str(content_route.get("content_mode") or "")
-    return str(getattr(content_route, "content_mode", "") or "")
-
-
-def _candidate_lane(candidate: dict[str, Any] | None) -> str:
-    if not isinstance(candidate, dict):
-        return ""
-    decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
-    return str(decision.get("lane") or "")
-
-
-def _prefer_author_stance_frontier(
-    best: dict[str, Any],
-    candidate_rows: list[dict[str, Any]],
-    *,
-    content_route: Any | None = None,
-) -> dict[str, Any]:
-    if _content_mode_value(content_route) != "broad_explanatory_essay":
-        return best
-    if _candidate_lane(best) == CandidateLane.GOAL_MET.value:
-        return best
-    if str(best.get("strategy") or "") == "scan_author_stance_thesis_reframe":
-        return best
-    author_candidates = [
-        row for row in candidate_rows
-        if str(row.get("strategy") or "") == "scan_author_stance_thesis_reframe"
-        and _candidate_lane(row) in {CandidateLane.SAFE_NEAR_MISS.value, CandidateLane.GOAL_MET.value}
-        and ((row.get("decision") or {}).get("quality_safe"))
-        and ((row.get("decision") or {}).get("semantic_safe"))
-    ]
-    if not author_candidates:
-        return best
-    preferred = max(author_candidates, key=lambda row: tuple((row.get("decision") or {}).get("rank") or ()))
-    if _candidate_lane(preferred) == CandidateLane.GOAL_MET.value:
-        return preferred
-    preferred["strategy_preferred_over"] = {
-        "strategy": best.get("strategy"),
-        "strategy_kind": best.get("strategy_kind"),
-        "candidate_ai": best.get("candidate_ai"),
-        "reason": "broad_explanatory_essay_prefers_author_stance_over_rescue_or_reconstruction",
-    }
-    return preferred
-
-
 def _select_best_v2_frontier(
     candidate_rows: list[dict[str, Any]],
     *,
     content_route: Any | None = None,
+    partial_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    close_gap = _close_partial_max_gap()
-    best = (
-        select_best_applicable_candidate(candidate_rows, close_partial_max_gap=close_gap)
-        or select_best_safe_progress_candidate(candidate_rows)
+    return select_best_v2_frontier(
+        candidate_rows,
+        content_route=content_route,
+        partial_policy=partial_policy,
+        close_partial_max_gap=_close_partial_max_gap(),
+        composition_partial_max_gap=_composition_partial_max_gap(),
+        composition_ai_penalty_max=_composition_ai_penalty_max(),
     )
-    if not best:
-        return None
-    best = _prefer_author_stance_frontier(best, candidate_rows, content_route=content_route)
-    best_ai = best.get("candidate_ai")
-    if not isinstance(best_ai, (int, float)):
-        return best
-    best_coverage = _candidate_patch_coverage(best)
-    composition_candidates = [
-        row for row in candidate_rows
-        if row.get("strategy") == "scan_targeted_composed_full_doc_delta_winners"
-        and _candidate_patch_coverage(row) >= max(2, best_coverage + 2)
-        and isinstance(row.get("candidate_ai"), (int, float))
-        and _is_safe_partial_candidate(row, max_gap=_composition_partial_max_gap())
-    ]
-    if not composition_candidates:
-        return best
-    composition = min(composition_candidates, key=lambda row: float(row.get("candidate_ai") or 999.0))
-    ai_penalty = float(composition.get("candidate_ai") or 999.0) - float(best_ai)
-    if ai_penalty <= _composition_ai_penalty_max():
-        composition["coverage_preferred_over"] = {
-            "strategy": best.get("strategy"),
-            "paragraph_id": best.get("paragraph_id"),
-            "candidate_ai": best.get("candidate_ai"),
-            "coverage": best_coverage,
-            "ai_penalty": round(ai_penalty, 3),
-            "reason": "safe_composition_covers_more_paragraphs_with_bounded_ai_penalty",
-        }
-        return composition
-    return best
+
+
+def _candidate_patch_coverage(candidate: dict[str, Any] | None) -> int:
+    return candidate_patch_coverage(candidate)
 
 
 def _paragraph_target_map(scan_report: dict | None, original_text: str = "") -> dict[str, str]:
@@ -2671,7 +2574,11 @@ def run_rewrite_pipeline_v2(
                 before_count=len(candidate_rows),
                 applicable=False,
             )
-        frontier = _select_best_v2_frontier(candidate_rows, content_route=content_route)
+        frontier = _select_best_v2_frontier(
+            candidate_rows,
+            content_route=content_route,
+            partial_policy=close_partial_policy,
+        )
         frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
         academic_repair_frontier = frontier or select_best_candidate([
             row for row in candidate_rows
@@ -2788,7 +2695,11 @@ def run_rewrite_pipeline_v2(
                 })
                 if decision.lane == CandidateLane.GOAL_MET:
                     break
-            frontier = _select_best_v2_frontier(candidate_rows, content_route=content_route)
+            frontier = _select_best_v2_frontier(
+                candidate_rows,
+                content_route=content_route,
+                partial_policy=close_partial_policy,
+            )
             frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
             generated_rows = max(0, len(candidate_rows) - before_count)
             record_post_layer(
@@ -2899,7 +2810,10 @@ def run_rewrite_pipeline_v2(
     if replay_candidate_records is not None:
         post_layer_trace = []
     diagnostic_best = select_best_candidate(candidate_rows)
-    best = _select_best_v2_frontier(candidate_rows, content_route=content_route) or diagnostic_best
+    best = (
+        _select_best_v2_frontier(candidate_rows, content_route=content_route, partial_policy=close_partial_policy)
+        or diagnostic_best
+    )
     best_decision = best.get("decision") if isinstance(best, dict) else {}
     best_lane = (best_decision or {}).get("lane")
     best_applicable_near_miss = bool(

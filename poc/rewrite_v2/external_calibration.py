@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -108,18 +109,23 @@ def load_external_calibration_labels(path: str | os.PathLike[str] | None = None)
     raw_path = path or os.environ.get("DRAFTPROOF_REWRITE_V2_EXTERNAL_CALIBRATION_DATASET")
     if not raw_path:
         return []
+    return list(_load_external_calibration_labels_cached(str(raw_path)))
+
+
+@lru_cache(maxsize=8)
+def _load_external_calibration_labels_cached(raw_path: str) -> tuple[dict[str, Any], ...]:
     file_path = Path(raw_path)
     if not file_path.exists() or not file_path.is_file():
-        return []
+        return ()
     text = file_path.read_text(encoding="utf-8").strip()
     if not text:
-        return []
+        return ()
     if file_path.suffix.lower() == ".jsonl":
         rows = [json.loads(line) for line in text.splitlines() if line.strip()]
     else:
         parsed = json.loads(text)
         rows = parsed if isinstance(parsed, list) else parsed.get("records", []) if isinstance(parsed, dict) else []
-    return [row for row in rows if isinstance(row, dict)]
+    return tuple(row for row in rows if isinstance(row, dict))
 
 
 def summarize_external_calibration_records(records: list[dict[str, Any]]) -> dict[str, Any]:

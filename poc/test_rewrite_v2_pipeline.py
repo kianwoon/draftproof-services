@@ -67,6 +67,7 @@ from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.layer_attempts import summarize_layer_attempts
 from rewrite_v2.external_calibration import classify_external_label, normalize_external_ai_percent
+from rewrite_v2.frontier import candidate_applicable_by_policy
 from rewrite_v2.partial_policy import close_partial_candidate_allowed, partial_application_policy
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.runtime_budget import RewriteV2RuntimeBudget
@@ -225,6 +226,11 @@ assert_test(
     close_partial_candidate_allowed(partial_candidate_for_policy, policy=broad_partial_policy)
     and not close_partial_candidate_allowed(partial_candidate_for_policy, policy=academic_partial_policy),
     "V2 partial policy allows broad close partials but not academic close partials",
+)
+assert_test(
+    candidate_applicable_by_policy(partial_candidate_for_policy, policy=broad_partial_policy)
+    and not candidate_applicable_by_policy(partial_candidate_for_policy, policy=academic_partial_policy),
+    "V2 frontier applicability uses the same mode-aware partial policy as final application",
 )
 assert_test(
     normalize_external_ai_percent({"ai_generated_percent": "29%"}) == 29.0
