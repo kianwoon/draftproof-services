@@ -36,6 +36,7 @@ from rewrite_v2.pipeline import (
     _replace_once_flexible,
     _strip_rewrite_meta_text,
 )
+from rewrite_v2.layers.academic import _exact_citation_markers
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import StrategyKind, classify_content_route, route_strategies
@@ -296,6 +297,14 @@ assert_test(
     and "Song et al. (2024)" in report_citations,
     "V2 academic layer protects citation anchors without leading signal phrases",
 )
+multi_author_citations = _exact_citation_markers(
+    "As Brennan, Kemmis, and Atkin (2014) argue, vocational education has a practice architecture."
+)
+assert_test(
+    "Brennan, Kemmis, and Atkin (2014)" in multi_author_citations
+    and "and Atkin (2014)" not in multi_author_citations,
+    "V2 academic layer captures full multi-author narrative citations",
+)
 section_patches = [
     {
         "section_id": academic_targets[0]["section_id"],
@@ -391,14 +400,14 @@ assert_test(
     "V2 compact academic layer protects single-digit procedural numbers",
 )
 normalized_academic_quote = _normalize_academic_all_section_candidate(
-    'Question 1\nBrennan et al. (2014) call vocational education a "practice architecture."',
+    'Question 1\nBrennan et al. (2014) call vocational education a "practice architecture,"',
     [{
         "heading": "Question 1",
         "text": 'Question 1\nBrennan et al. (2014) call vocational education a “practice architecture”.',
     }],
 )
 assert_test(
-    "“practice architecture”" in normalized_academic_quote,
+    "“practice architecture”," in normalized_academic_quote,
     "V2 compact academic layer restores exact quote spans when punctuation moves inside straight quotes",
 )
 normalized_single_digit_words = _normalize_academic_all_section_candidate(
@@ -425,6 +434,20 @@ assert_test(
         )
     ),
     "V2 compact academic layer rejects loss of named academic theories",
+)
+heading_term_assignment = """Digital Age and The Illusion of Competence
+Platforms such as Tik Tok can affect Social Learning Theory in classroom practice (Song et al., 2024). The paragraph explains why teachers need to preserve the platform and theory while changing the section rhythm.
+"""
+heading_term_sections = _academic_assignment_sections(heading_term_assignment, academic_assignment_scan)
+assert_test(
+    not any(
+        "required_term_lost:Digital Age" in reason or "required_term_lost:The Illusion" in reason
+        for reason in _academic_all_section_filter_failures(
+            heading_term_sections,
+            "Digital Age and The Illusion of Competence\nPlatforms such as TikTok can affect Social Learning Theory in classroom practice (Song et al., 2024).",
+        )
+    ),
+    "V2 compact academic layer does not hard-block on section-title terms and accepts compact aliases",
 )
 assert_test(
     any(
@@ -1275,6 +1298,15 @@ academic_quote_context_drift = check_semantic_drift(
 assert_test(
     all(not reason.startswith("quote_lost") for reason in academic_quote_context_drift.reasons),
     "V2 semantic guard accepts preserved hard quotes even when rewritten context changes attribution verb",
+)
+academic_heading_drift = check_semantic_drift(
+    "Digital Age and The Illusion of Competence\nSOLO Taxonomy in Hairdressing Pedagogy\nFrom Technique Correctness to Lifelong Resilience\nSocial Learning Theory still guides the analysis.",
+    "Social Learning Theory still guides the analysis.",
+    threshold=0.15,
+)
+assert_test(
+    academic_heading_drift.accepted,
+    "V2 semantic guard does not hard-fail academic section-title terms",
 )
 
 print("All rewrite V2 pipeline tests passed.")

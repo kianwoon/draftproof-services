@@ -230,6 +230,7 @@ def _exact_citation_markers(text: str) -> list[str]:
     source = str(text or "")
     patterns = [
         r"\([A-Z][A-Za-z' -]+(?:\s+et\s+al\.)?,\s*(?:19|20)\d{2}[a-z]?(?:,\s*p{1,2}\.?\s*\d+)?\)",
+        r"\b[A-Z][A-Za-z' -]+(?:,\s*[A-Z][A-Za-z' -]+)*(?:,?\s+and\s+[A-Z][A-Za-z' -]+)\s+\((?:19|20)\d{2}[a-z]?\)",
         r"\b[A-Z][A-Za-z' -]+(?:\s+et\s+al\.)?\s+\((?:19|20)\d{2}[a-z]?\)",
         r"\[(?:\d+(?:\s*[,\-]\s*\d+)*)\]",
         r"\b(?:doi|DOI):\s*10\.\d{4,9}/[-._;()/:A-Z0-9]+\b",
@@ -237,6 +238,8 @@ def _exact_citation_markers(text: str) -> list[str]:
     for pattern in patterns:
         for match in re.finditer(pattern, source, flags=re.IGNORECASE):
             value = _normalize_citation_marker(match.group(0).strip())
+            if re.match(r"(?i)^and\s+", value):
+                continue
             if value and value not in markers:
                 markers.append(value)
     return markers
@@ -267,8 +270,14 @@ def _protected_texts_for_scope(text: str) -> list[str]:
 
 
 def _academic_required_terms_for_scope(text: str) -> list[str]:
+    source = str(text or "")
+    lines = source.splitlines()
+    if len(lines) > 1:
+        first = lines[0].strip()
+        if first and len(first) <= 120 and not re.search(r"[.!?]\s*$", first):
+            source = "\n".join(lines[1:]).strip()
     terms: list[str] = []
-    for entity in sorted(_extract_named_entities(str(text or "")), key=lambda item: (-len(item), item)):
+    for entity in sorted(_extract_named_entities(source), key=lambda item: (-len(item), item)):
         words = re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", entity)
         if len(words) < 2:
             continue
@@ -285,7 +294,11 @@ def _required_term_present(term: str, text: str) -> bool:
     if re.search(rf"\b{re.escape(value)}\b", text, flags=re.IGNORECASE):
         return True
     alternate = re.sub(r"^The\s+", "", value, flags=re.IGNORECASE)
-    return bool(alternate != value and re.search(rf"\b{re.escape(alternate)}\b", text, flags=re.IGNORECASE))
+    if alternate != value and re.search(rf"\b{re.escape(alternate)}\b", text, flags=re.IGNORECASE):
+        return True
+    term_key = re.sub(r"[^a-z0-9]+", "", value.casefold())
+    text_key = re.sub(r"[^a-z0-9]+", "", str(text or "").casefold())
+    return bool(term_key and term_key in text_key)
 
 
 def _visual_reference_markers(text: str) -> list[str]:
@@ -633,9 +646,9 @@ def _normalize_academic_all_section_candidate(candidate_text: str, sections: lis
                 text = text.replace(straight, exact)
                 continue
             if content:
-                punctuated_quote = re.compile(rf'"{re.escape(content)}([.!?])"')
+                punctuated_quote = re.compile(rf'"{re.escape(content)}([.!?,;:])"')
                 text = punctuated_quote.sub(lambda match: f"{exact}{match.group(1)}", text)
-                quote_with_internal_punctuation = re.compile(rf'"{re.escape(content)}([.!?])"')
+                quote_with_internal_punctuation = re.compile(rf'"{re.escape(content)}([.!?,;:])"')
                 text = quote_with_internal_punctuation.sub(exact, text)
         for exact in re.findall(r"[\"“][^\"”]{3,}[\"”]", source_text):
             if exact in text:
@@ -646,9 +659,9 @@ def _normalize_academic_all_section_candidate(candidate_text: str, sections: lis
                 text = text.replace(straight, exact)
                 continue
             if content:
-                punctuated_quote = re.compile(rf'"{re.escape(content)}([.!?])"')
+                punctuated_quote = re.compile(rf'"{re.escape(content)}([.!?,;:])"')
                 text = punctuated_quote.sub(lambda match: f"{exact}{match.group(1)}", text)
-                quote_with_internal_punctuation = re.compile(rf'"{re.escape(content)}([.!?])"')
+                quote_with_internal_punctuation = re.compile(rf'"{re.escape(content)}([.!?,;:])"')
                 text = quote_with_internal_punctuation.sub(exact, text)
         for protected in _protected_texts_for_scope(source_text):
             protected_text = str(protected or "")

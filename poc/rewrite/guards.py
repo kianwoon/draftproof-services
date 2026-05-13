@@ -148,16 +148,17 @@ def _extract_named_entities(text: str) -> Set[str]:
         "according", "as", "at",
         "also", "although", "because", "but", "finally", "first",
         "furthermore", "however", "instead", "meanwhile", "moreover",
-        "hence", "lastly", "next", "overall", "second", "therefore",
+        "from", "hence", "lastly", "next", "overall", "second", "therefore",
         "thus", "when", "while",
     }
     generic_academic_terms = {
         "behaviors", "challenges", "consumers", "costs", "customers",
-        "employees", "figure", "figures", "guidelines", "ideas", "observed",
-        "outcome", "pedagogy", "practice", "programmes", "relational",
+        "age", "competence", "correctness", "digital", "employees", "figure", "figures", "guidelines",
+        "hairdressing", "ideas", "lifelong", "observed", "outcome",
+        "illusion", "pedagogy", "practice", "programmes", "relational", "resilience",
         "reviews", "servers", "services", "shoppers", "solutions",
-        "staff", "structure", "students", "taxonomy", "teachers", "tools",
-        "users",
+        "staff", "structure", "students", "taxonomy", "teachers", "technique",
+        "tools", "users",
     }
     quantifier_prefixes = {
         "another", "different", "many", "millions", "several", "some",
@@ -168,12 +169,15 @@ def _extract_named_entities(text: str) -> Set[str]:
     # headings joined to the first sentence across a newline as entities.
     for m in re.finditer(r'\b([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)\b', text):
         entity = m.group(1)
-        first = entity.split()[0].lower()
+        entity_words = entity.split()
+        first = entity_words[0].lower()
+        second = entity_words[1].lower() if len(entity_words) > 1 else ""
         if (
             first in heading_words
             or first in discourse_words
             or first in quantifier_prefixes
             or first in generic_academic_terms
+            or (first == "the" and second in generic_academic_terms)
         ):
             continue
         entities.add(entity)
