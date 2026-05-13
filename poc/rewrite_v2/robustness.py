@@ -11,6 +11,7 @@ from .diagnostics import (
     HARD_ANCHOR_LOSS,
     LOCAL_QUALITY_REJECTED,
     SEMANTIC_LOSS,
+    STRUCTURED_OUTPUT_FAILED,
     summarize_candidate_diagnostics,
 )
 
@@ -308,6 +309,8 @@ def recommend_failure_policy(
             actions.append(f"terminal:{failure}")
     if counts.get(GENERATION_FAILED, 0):
         actions.append("retry:generation_failed")
+    if counts.get(STRUCTURED_OUTPUT_FAILED, 0):
+        actions.append("retry:structured_output_failed")
     return {
         "policy_version": "rewrite_v2_robustness_policy_v1",
         "content_mode": policy["content_mode"],

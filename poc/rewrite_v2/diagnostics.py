@@ -17,6 +17,7 @@ SEMANTIC_LOSS = "semantic_loss"
 DETECTOR_NOT_SAFE = "detector_not_safe"
 GOAL_NOT_MET = "goal_not_met"
 GENERATION_FAILED = "generation_failed"
+STRUCTURED_OUTPUT_FAILED = "structured_output_failed"
 LOCAL_QUALITY_REJECTED = "local_quality_rejected"
 UNKNOWN_REJECTED = "unknown_rejected"
 NOT_FAILED = "not_failed"
@@ -90,6 +91,8 @@ def diagnose_candidate_failure(row: dict[str, Any]) -> dict[str, Any]:
     if not lane and not failures and not reason:
         return {"failure_class": GENERATION_FAILED, "failure_reasons": ["candidate_not_evaluated"]}
 
+    if any("structured_output_invalid:" in reason for reason in failures):
+        return {"failure_class": STRUCTURED_OUTPUT_FAILED, "failure_reasons": failures[:8]}
     if _has_hard_anchor_loss(failures, row):
         return {"failure_class": HARD_ANCHOR_LOSS, "failure_reasons": failures[:8]}
     if _has_fixable_contract_drift(failures):

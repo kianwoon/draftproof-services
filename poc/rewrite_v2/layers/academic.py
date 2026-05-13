@@ -17,6 +17,7 @@ from rewrite.guards import detect_protected_spans
 
 from ..contracts import AnchorSeverity, anchor_present, build_rewrite_contract, normalized_anchor_key
 from ..strategy import clean_candidate_output
+from ..structured_output import json_from_response, json_parse_diagnostics
 
 _DIGIT_WORDS = {
     "0": "zero",
@@ -38,22 +39,7 @@ def _is_synthetic_paragraph_heading(value: str) -> bool:
 
 
 def _json_from_response(raw: str) -> dict[str, Any]:
-    text = clean_candidate_output(raw)
-    if not text:
-        return {}
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
-    if match:
-        text = match.group(1)
-    else:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            text = text[start:end + 1]
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
-        return {}
+    return json_from_response(raw)
 
 
 def _supports_openai_penalties(model: str | None) -> bool:
@@ -900,7 +886,39 @@ def _generate_academic_all_section_candidates(
         seed=8817,
     )
     rows: list[dict[str, Any]] = []
-    for index, variant in enumerate(_parse_academic_all_section_variants(response.content), start=1):
+    parsed_variants = _parse_academic_all_section_variants(response.content)
+    if not parsed_variants:
+        parse_diagnostics = json_parse_diagnostics(response.content)
+        return [{
+            "strategy": "academic_all_section_compact_reconstruction",
+            "strategy_kind": "academic_all_section_compact_reconstruction",
+            "candidate_number": 1,
+            "candidate_response": {},
+            "text": original_text,
+            "local_filter_passed": False,
+            "local_filter_failures": [
+                f"structured_output_invalid:{parse_diagnostics['reason'] or 'no_all_section_candidate_parsed'}",
+                "no_all_section_candidate_parsed",
+            ],
+            "structured_output_mode": "delimiter_or_text_fallback",
+            "structured_output_parse": {
+                key: value
+                for key, value in parse_diagnostics.items()
+                if key != "payload"
+            },
+            "academic_section_targets": [
+                {
+                    "section_id": section.get("section_id"),
+                    "heading": section.get("heading"),
+                    "word_count": section.get("word_count"),
+                    "required_citations": section.get("citations") or [],
+                }
+                for section in sections
+            ],
+            "applied_section_count": 0,
+            "section_patch_count": len(sections),
+        }]
+    for index, variant in enumerate(parsed_variants, start=1):
         candidate_text = _normalize_academic_all_section_candidate(str(variant.get("text") or ""), sections)
         filter_failures = _academic_all_section_filter_failures(sections, candidate_text)
         rows.append({
@@ -959,8 +977,37 @@ def _generate_academic_section_candidates(
         repetition_penalty=1.08 if _supports_repetition_penalty(model) else None,
         seed=4103,
     )
-    payload = _json_from_response(response.content)
+    parse_diagnostics = json_parse_diagnostics(response.content)
+    payload = parse_diagnostics["payload"]
     parsed_candidates = _candidate_section_map(payload) or _parse_academic_section_delimited(response.content)
+    if not parsed_candidates:
+        return [{
+            "strategy": "academic_cited_section_density_resolver",
+            "strategy_kind": "academic_cited_section_density_resolver",
+            "candidate_number": 1,
+            "candidate_response": {},
+            "text": original_text,
+            "local_filter_passed": False,
+            "local_filter_failures": [
+                f"structured_output_invalid:{parse_diagnostics['reason'] or 'no_candidate_sections_parsed'}",
+                "no_section_candidate_parsed",
+            ],
+            "structured_output_mode": "delimiter_or_json",
+            "structured_output_parse": {
+                key: value
+                for key, value in parse_diagnostics.items()
+                if key != "payload"
+            },
+            "academic_section_targets": [
+                {
+                    "section_id": section.get("section_id"),
+                    "heading": section.get("heading"),
+                    "word_count": section.get("word_count"),
+                    "citations": section.get("citations") or [],
+                }
+                for section in sections
+            ],
+        }]
     candidates: list[dict[str, Any]] = []
     for index, candidate in enumerate(parsed_candidates, start=1):
         raw_sections = candidate.get("sections")

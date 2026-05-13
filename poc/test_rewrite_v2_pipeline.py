@@ -17,6 +17,7 @@ from rewrite_v2.diagnostics import (
     GENERATION_FAILED,
     HARD_ANCHOR_LOSS,
     SEMANTIC_LOSS,
+    STRUCTURED_OUTPUT_FAILED,
     diagnose_candidate_failure,
     summarize_candidate_diagnostics,
 )
@@ -39,6 +40,7 @@ from rewrite_v2.pipeline import (
     _compose_full_doc_delta_winners,
     _expected_full_reconstruction_paragraph_count,
     _generate_candidates,
+    _json_parse_diagnostics,
     _paragraph_inventory_for_full_reconstruction,
     _paragraph_tactics,
     _paragraph_target_map,
@@ -50,15 +52,18 @@ from rewrite_v2.pipeline import (
     _restore_required_anchor_forms,
     _replace_once_flexible,
     _strip_rewrite_meta_text,
+    _structured_json_request_options,
     _supports_openai_penalties,
     _supports_repetition_penalty,
 )
 from rewrite_v2.layers.academic import _exact_citation_markers
+from rewrite_v2.layers.academic import _generate_academic_all_section_candidates
+from rewrite_v2.layers.academic import _generate_academic_section_candidates
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
-from rewrite_v2.strategy import StrategyKind, classify_content_route, route_strategies
+from rewrite_v2.strategy import RewriteStrategy, StrategyKind, classify_content_route, route_strategies
 from llm.gateway import model_supports_presence_frequency_penalties, model_supports_repetition_penalty
 
 
@@ -157,6 +162,16 @@ assert_test(
     and _supports_openai_penalties("openai/gpt-4.1-mini") == model_supports_presence_frequency_penalties("openai/gpt-4.1-mini")
     and _supports_repetition_penalty("openai/gpt-4.1-mini") == model_supports_repetition_penalty("openai/gpt-4.1-mini"),
     "V2 model sampling support delegates to shared gateway capabilities",
+)
+structured_deepseek_options = _structured_json_request_options("deepseek/deepseek-chat", {"type": "json_schema"})
+structured_unknown_options = _structured_json_request_options("unknown/provider", {"type": "json_schema"})
+assert_test(
+    structured_deepseek_options["provider"] == {"require_parameters": True}
+    and structured_deepseek_options["response_format"] == {"type": "json_schema"}
+    and structured_unknown_options["provider"] is None
+    and structured_unknown_options["response_format"] is None
+    and structured_unknown_options["structured_output_mode"] == "prompt_json_fallback",
+    "V2 structured JSON requests require schema support only for capable models",
 )
 academic_route = classify_content_route(
     "Studies suggest feedback matters for learning (Smith, 2021). Other work reached a similar result [2]. References show the field is still divided.",
@@ -464,6 +479,50 @@ assert_test(
     not re.search(r"(?im)^\\s*(?:#+\\s*)?(?:\\*\\*)?Paragraph\\s+\\d+", synthetic_label_candidate)
     and "Reviews shown in Figure 1 to 4" in synthetic_label_candidate,
     "V2 academic paragraph resolver strips synthetic paragraph labels without dropping prose",
+)
+
+
+class _BadAcademicSectionGateway:
+    def chat(self, *_args, **_kwargs):
+        return type("Response", (), {"content": "The rewritten section is below, but not in the required format."})()
+
+
+bad_academic_rows = _generate_academic_section_candidates(
+    original_text=academic_assignment,
+    scan_report=scan_json,
+    gateway=_BadAcademicSectionGateway(),
+    model="deepseek/deepseek-chat",
+    deadline=None,
+    timeout_seconds=5,
+)
+assert_test(
+    len(bad_academic_rows) == 1
+    and bad_academic_rows[0]["local_filter_passed"] is False
+    and any("structured_output_invalid:" in reason for reason in bad_academic_rows[0]["local_filter_failures"])
+    and bad_academic_rows[0]["structured_output_parse"]["reason"] == "no_json_object_found",
+    "V2 academic section resolver records malformed LLM output as a rejected diagnostic candidate",
+)
+
+
+class _EmptyAcademicGateway:
+    def chat(self, *_args, **_kwargs):
+        return type("Response", (), {"content": ""})()
+
+
+bad_all_section_rows = _generate_academic_all_section_candidates(
+    original_text=academic_assignment,
+    scan_report=academic_assignment_scan,
+    gateway=_EmptyAcademicGateway(),
+    model="deepseek/deepseek-chat",
+    deadline=None,
+    timeout_seconds=5,
+)
+assert_test(
+    len(bad_all_section_rows) == 1
+    and bad_all_section_rows[0]["local_filter_passed"] is False
+    and any("structured_output_invalid:" in reason for reason in bad_all_section_rows[0]["local_filter_failures"])
+    and bad_all_section_rows[0]["structured_output_parse"]["reason"] == "empty_response",
+    "V2 academic all-section resolver records empty LLM output as a rejected diagnostic candidate",
 )
 all_sections = _academic_assignment_sections(academic_assignment, academic_assignment_scan)
 paragraph_assignment = """Intro paragraph cites a report (Smith, 2024) and explains why the teaching problem needs a careful academic rewrite rather than a narrow sentence patch.
@@ -1529,16 +1588,32 @@ detector_row = {
     "goal": {"external_detector_proxy": {"safe": False}},
     "decision": {"lane": "PARTIAL_DIAGNOSTIC", "reason": "external_detector_proxy_not_safe"},
 }
+structured_output_row = {
+    "local_filter_failures": ["structured_output_invalid:no_json_object_found", "empty_rewrite"],
+    "decision": {"lane": "REJECT", "reason": "targeted_local_filter_rejected"},
+}
+structured_contract_row = {
+    "local_filter_failures": [
+        "structured_output_invalid:json_decode_error",
+        "p003:citation_lost:Billett (2013)",
+    ],
+    "decision": {"lane": "REJECT", "reason": "targeted_local_filter_rejected"},
+}
 assert_test(
     diagnose_candidate_failure(fixable_contract_row)["failure_class"] == FIXABLE_CONTRACT_DRIFT
     and diagnose_candidate_failure(hard_anchor_row)["failure_class"] == HARD_ANCHOR_LOSS
     and diagnose_candidate_failure(semantic_row)["failure_class"] == SEMANTIC_LOSS
-    and diagnose_candidate_failure(detector_row)["failure_class"] == DETECTOR_NOT_SAFE,
-    "V2 diagnostics classify contract drift, hard anchors, semantic loss, and detector blockers separately",
+    and diagnose_candidate_failure(detector_row)["failure_class"] == DETECTOR_NOT_SAFE
+    and diagnose_candidate_failure(structured_output_row)["failure_class"] == STRUCTURED_OUTPUT_FAILED,
+    "V2 diagnostics classify contract drift, hard anchors, semantic loss, detector blockers, and structured output failures separately",
+)
+assert_test(
+    diagnose_candidate_failure(structured_contract_row)["failure_class"] == STRUCTURED_OUTPUT_FAILED,
+    "V2 diagnostics prioritize malformed structured output over secondary contract drift",
 )
 diagnostic_summary = summarize_candidate_diagnostics(
-    [fixable_contract_row, semantic_row, detector_row],
-    generated_count=3,
+    [fixable_contract_row, semantic_row, detector_row, structured_output_row],
+    generated_count=4,
 )
 assert_test(
     diagnostic_summary["fixable_contract_drift_count"] == 1
@@ -1547,9 +1622,23 @@ assert_test(
     and summarize_candidate_diagnostics([], generated_count=0)["primary_failure_class"] == GENERATION_FAILED,
     "V2 diagnostics summarize candidate failure classes for replay experiments",
 )
+invalid_json_parse = _json_parse_diagnostics("Not JSON at all")
+extracted_json_parse = _json_parse_diagnostics("```json\n{\"paragraph_id\":\"p1\",\"rewritten_paragraph\":\"Text.\",\"rationale\":\"ok\"}\n```")
+assert_test(
+    not invalid_json_parse["ok"]
+    and invalid_json_parse["reason"] == "no_json_object_found"
+    and extracted_json_parse["ok"]
+    and extracted_json_parse["payload"]["paragraph_id"] == "p1",
+    "V2 structured output parser records invalid JSON reasons while preserving extractable JSON",
+)
 academic_failure_policy = recommend_failure_policy(
     [fixable_contract_row, detector_row],
     generated_count=2,
+    content_route=academic_route,
+)
+structured_failure_policy = recommend_failure_policy(
+    [structured_output_row],
+    generated_count=1,
     content_route=academic_route,
 )
 technical_failure_policy = recommend_failure_policy(
@@ -1602,6 +1691,10 @@ assert_test(
     and "second_layer:detector_not_safe" in academic_failure_policy["recommended_actions"]
     and "terminal:detector_not_safe" not in academic_failure_policy["recommended_actions"],
     "V2 robustness policy routes academic detector failures to a second layer instead of terminal failure",
+)
+assert_test(
+    "retry:structured_output_failed" in structured_failure_policy["recommended_actions"],
+    "V2 robustness policy recommends retry when structured output parsing fails",
 )
 assert_test(
     "terminal:detector_not_safe" in technical_failure_policy["recommended_actions"]
@@ -1707,6 +1800,54 @@ assert_test(
         {normalize_strategy_layer(row) for row in portfolio_candidates}
     ),
     "V2 portfolio mode continues from full reconstruction into targeted paragraph candidates",
+)
+
+
+class _MetaGateway:
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    def chat(self, *_args, **_kwargs):
+        return _DummyRewriteResponse("Here is the rewritten version:\n\nA rebuilt document keeps the original point.")
+
+
+patched_names = [
+    "LLMGateway",
+    "_should_entity_locked_full_reconstruction",
+    "_required_entities_for_full_reconstruction",
+    "_expected_full_reconstruction_paragraph_count",
+]
+patched_values = {name: getattr(pipeline_module, name) for name in patched_names}
+try:
+    pipeline_module.LLMGateway = _MetaGateway
+    pipeline_module._should_entity_locked_full_reconstruction = lambda _report: False
+    pipeline_module._required_entities_for_full_reconstruction = lambda _text: []
+    pipeline_module._expected_full_reconstruction_paragraph_count = lambda _report, _text: 1
+    fallback_rows = _generate_candidates(
+        original_text="The original paragraph is very polished.",
+        scan_report=scan_json,
+        strategies=[RewriteStrategy(
+            strategy_id="scan_full_document_mitigation",
+            kind=StrategyKind.FULL_REWRITE,
+            targeted_drivers=["ai_likelihood"],
+            editable_scope="full_document_with_scan_constraints",
+            max_candidates=1,
+        )],
+        api_key="test-key",
+        model="deepseek/deepseek-chat",
+        base_url="https://example.invalid",
+        timeout_seconds=5,
+        deadline=None,
+        content_route=broad_route,
+    )
+finally:
+    for name, value in patched_values.items():
+        setattr(pipeline_module, name, value)
+assert_test(
+    len(fallback_rows) == 1
+    and fallback_rows[0]["local_filter_passed"] is False
+    and "meta_text_leak" in fallback_rows[0]["local_filter_failures"],
+    "V2 generic full-rewrite fallback records local filter failures before rescanning",
 )
 full_academic_budget_rows = [
     {"strategy": "academic_all_section_compact_reconstruction"},

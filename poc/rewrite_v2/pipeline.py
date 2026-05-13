@@ -55,6 +55,7 @@ from .strategy import (
     route_strategies,
     targeted_paragraph_briefs,
 )
+from .structured_output import json_from_response, json_parse_diagnostics, structured_json_request_options
 
 
 def _semantic_scan_allowed(strategy_kind: str | None, semantic_safe: bool) -> bool:
@@ -692,6 +693,10 @@ def _cluster_response_format() -> dict[str, Any]:
     }
 
 
+def _structured_json_request_options(model: str | None, response_format: dict[str, Any]) -> dict[str, Any]:
+    return structured_json_request_options(model, response_format)
+
+
 def _build_unsafe_cluster_rescue_prompt(
     *,
     cluster_text: str,
@@ -786,6 +791,7 @@ def _generate_unsafe_cluster_rescue_candidates(
                 goal=frontier_goal,
                 variant=variant,
             )
+            structured_options = _structured_json_request_options(model, _cluster_response_format())
             response = gateway.chat(
                 prompt,
                 system="You are DraftProof's unsafe cluster rescue engine.",
@@ -796,10 +802,11 @@ def _generate_unsafe_cluster_rescue_candidates(
                 frequency_penalty=0.35 if _supports_openai_penalties(model) else None,
                 repetition_penalty=1.05 if _supports_repetition_penalty(model) else None,
                 seed=2300 + (cluster_index * 10) + variant,
-                response_format=_cluster_response_format(),
-                provider={"require_parameters": True},
+                response_format=structured_options["response_format"],
+                provider=structured_options["provider"],
             )
-            payload = _json_from_response(response.content)
+            parse_diagnostics = _json_parse_diagnostics(response.content)
+            payload = parse_diagnostics["payload"]
             replacement = str(payload.get("replacement_text") or "").strip()
             rescue_text, applied = _replace_once_flexible(frontier_text, cluster_text, replacement)
             if not applied:
@@ -899,6 +906,12 @@ def _generate_unsafe_cluster_rescue_candidates(
                 "cluster_text": cluster_text,
                 "replacement_text": replacement,
                 "candidate_response": payload,
+                "structured_output_mode": structured_options["structured_output_mode"],
+                "structured_output_parse": {
+                    key: value
+                    for key, value in parse_diagnostics.items()
+                    if key != "payload"
+                },
                 "candidate_ai": _badge_ai(candidate_report),
                 "candidate_wq": _badge_wq(candidate_report),
                 "rewrite_smoothness": smoothness,
@@ -915,20 +928,12 @@ def _generate_unsafe_cluster_rescue_candidates(
     return rows
 
 
+def _json_parse_diagnostics(raw: str) -> dict[str, Any]:
+    return json_parse_diagnostics(raw)
+
+
 def _json_from_response(raw: str) -> dict[str, Any]:
-    text = clean_candidate_output(raw)
-    try:
-        payload = json.loads(text)
-        return payload if isinstance(payload, dict) else {}
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            return {}
-        try:
-            payload = json.loads(match.group(0))
-            return payload if isinstance(payload, dict) else {}
-        except json.JSONDecodeError:
-            return {}
+    return json_from_response(raw)
 
 
 
@@ -1976,6 +1981,7 @@ def _generate_candidates(
                     if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
                         return candidates
                     prompt = build_single_paragraph_reconstruction_prompt(brief, strategy, tactic=tactic)
+                    structured_options = _structured_json_request_options(model, _paragraph_response_format())
                     response = gateway.chat(
                         prompt,
                         system="You are DraftProof's paragraph reconstruction engine.",
@@ -1986,10 +1992,11 @@ def _generate_candidates(
                         frequency_penalty=0.45 if _supports_openai_penalties(model) else None,
                         repetition_penalty=1.08 if _supports_repetition_penalty(model) else None,
                         seed=(1701 + number),
-                        response_format=_paragraph_response_format(),
-                        provider={"require_parameters": True},
+                        response_format=structured_options["response_format"],
+                        provider=structured_options["provider"],
                     )
-                    payload = _json_from_response(response.content)
+                    parse_diagnostics = _json_parse_diagnostics(response.content)
+                    payload = parse_diagnostics["payload"]
                     patch = {
                         "paragraph_id": str(payload.get("paragraph_id") or paragraph_id),
                         "rewritten_paragraph": str(payload.get("rewritten_paragraph") or "").strip(),
@@ -2002,6 +2009,8 @@ def _generate_candidates(
                     patch_payload = {"patches": candidate_payload.get("patches") or []}
                     candidate_text, applied_patches = _apply_targeted_patches(original_text, patch_payload)
                     filter_failures = _patch_filter_failures(patch_payload["patches"])
+                    if not parse_diagnostics["ok"]:
+                        filter_failures.insert(0, f"structured_output_invalid:{parse_diagnostics['reason']}")
                     append_candidate({
                         "strategy": strategy.strategy_id,
                         "strategy_kind": strategy.kind.value,
@@ -2010,6 +2019,12 @@ def _generate_candidates(
                         "tactic": tactic,
                         "text": candidate_text,
                         "candidate_response": {key: value for key, value in payload.items() if key != "target_paragraph"} or payload,
+                        "structured_output_mode": structured_options["structured_output_mode"],
+                        "structured_output_parse": {
+                            key: value
+                            for key, value in parse_diagnostics.items()
+                            if key != "payload"
+                        },
                         "local_filter_passed": not filter_failures,
                         "local_filter_failures": filter_failures,
                         "applied_patch_count": sum(1 for row in applied_patches if row.get("applied")),
@@ -2032,12 +2047,23 @@ def _generate_candidates(
                 presence_penalty=0.15,
                 frequency_penalty=0.25,
             )
+            candidate_text = clean_candidate_output(response.content)
+            filter_failures: list[str] = []
+            if getattr(strategy, "kind", None).value == "full_rewrite":
+                filter_failures = _full_reconstruction_filter_failures(
+                    original_text=original_text,
+                    candidate_text=candidate_text,
+                    required_entities=_required_entities_for_full_reconstruction(original_text),
+                    expected_paragraph_count=_expected_full_reconstruction_paragraph_count(scan_report, original_text),
+                )
             append_candidate({
                 "strategy": strategy.strategy_id,
                 "strategy_kind": strategy.kind.value,
                 "candidate_number": number,
-                "text": clean_candidate_output(response.content),
-                "candidate_response": clean_candidate_output(response.content),
+                "text": candidate_text,
+                "candidate_response": candidate_text,
+                "local_filter_passed": not filter_failures,
+                "local_filter_failures": filter_failures,
             })
             if budget_exhausted():
                 return candidates

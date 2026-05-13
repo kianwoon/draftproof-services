@@ -94,30 +94,35 @@ _MODEL_CAPABILITIES = {
         "presence_penalty": True,
         "frequency_penalty": True,
         "repetition_penalty": False,
+        "structured_outputs": True,
     },
     "openai/gpt-4o-mini": {
         "top_k": False,
         "presence_penalty": True,
         "frequency_penalty": True,
         "repetition_penalty": False,
+        "structured_outputs": True,
     },
     "openai/gpt-5-mini": {
         "top_k": False,
         "presence_penalty": True,
         "frequency_penalty": True,
         "repetition_penalty": False,
+        "structured_outputs": True,
     },
     "openai/gpt-5.4-nano": {
         "top_k": False,
         "presence_penalty": True,
         "frequency_penalty": True,
         "repetition_penalty": False,
+        "structured_outputs": True,
     },
     "deepseek/deepseek-chat": {
         "top_k": True,
         "presence_penalty": True,
         "frequency_penalty": True,
         "repetition_penalty": True,
+        "structured_outputs": True,
     },
 }
 
@@ -132,6 +137,7 @@ def _model_capabilities(model: str) -> dict:
             "presence_penalty": True,
             "frequency_penalty": True,
             "repetition_penalty": False,
+            "structured_outputs": True,
         }
     repetition_supported = any(
         provider in normalized
@@ -142,6 +148,7 @@ def _model_capabilities(model: str) -> dict:
         "presence_penalty": True,
         "frequency_penalty": True,
         "repetition_penalty": repetition_supported,
+        "structured_outputs": normalized.startswith(("deepseek/", "qwen/", "mistral/", "meta-llama/", "anthropic/")),
     }
 
 
@@ -152,6 +159,10 @@ def model_supports_presence_frequency_penalties(model: str | None) -> bool:
 
 def model_supports_repetition_penalty(model: str | None) -> bool:
     return bool(_model_capabilities(str(model or "")).get("repetition_penalty"))
+
+
+def model_supports_structured_outputs(model: str | None) -> bool:
+    return bool(_model_capabilities(str(model or "")).get("structured_outputs"))
 
 
 def _classify_error(error: Exception, attempt: int, max_retries: int) -> _RetryAction:
