@@ -514,7 +514,17 @@ def _all_section_compact_allowed(original_text: str, scan_report: dict[str, Any]
     handoff = (scan_report or {}).get("generation_handoff") if isinstance(scan_report, dict) else {}
     profile = (handoff or {}).get("document_profile") if isinstance(handoff, dict) else {}
     document_type = str((profile or {}).get("document_type") or "").lower()
-    return "assignment" in document_type or "analytical_submission" in document_type
+    if "assignment" in document_type or "analytical_submission" in document_type:
+        return True
+    citation_count = sum(len(section.get("citations") or []) for section in sections)
+    total_words = sum(int(section.get("word_count") or 0) for section in sections)
+    academic_markers = re.search(
+        r"\b(?:literature review|learning theor(?:y|ies)|taxonomy|scaffolding|pedagog(?:y|ical)|"
+        r"cognitive load|working memory|vocational|inclusive learning|classroom|students?)\b",
+        str(original_text or ""),
+        flags=re.IGNORECASE,
+    )
+    return len(sections) >= 3 and total_words >= 120 and citation_count >= 2 and bool(academic_markers)
 
 
 def _build_academic_all_section_prompt(
@@ -683,6 +693,7 @@ def _restore_visual_references(candidate_text: str, sections: list[dict[str, Any
 def _restore_exact_citation_forms(candidate_text: str, sections: list[dict[str, Any]]) -> str:
     text = str(candidate_text or "")
     for section in sections:
+        text = _restore_narrative_citations_from_combined_parentheticals(text, section.get("citations") or [])
         for citation in section.get("citations") or []:
             exact = str(citation or "").strip()
             if not exact or exact in text:
@@ -699,15 +710,94 @@ def _restore_exact_citation_forms(candidate_text: str, sections: list[dict[str, 
                 continue
 
             narrative = re.match(
-                r"^(?P<author>[A-Z][A-Za-z' -]+(?:\s+et\s+al\.)?)\s+\((?P<year>(?:19|20)\d{2}[a-z]?)\)$",
+                r"^(?P<author>[A-Z][^()]{1,120}?)\s+\((?P<year>(?:19|20)\d{2}[a-z]?)\)$",
                 exact,
             )
             if narrative:
                 author = narrative.group("author")
                 year = narrative.group("year")
+                author_pattern = re.escape(author).replace(r"\ ", r"\s+")
+                possessive_narrative_pattern = re.compile(
+                    rf"\b{author_pattern}(?:['’]s)?\s+\({re.escape(year)}\)",
+                    flags=re.IGNORECASE,
+                )
+                text = possessive_narrative_pattern.sub(exact, text, count=1)
+                if exact in text:
+                    continue
                 parenthetical_pattern = re.compile(rf"\({re.escape(author)},\s*{re.escape(year)}\)")
                 text = parenthetical_pattern.sub(exact, text, count=1)
     return text
+
+
+def _narrative_citation_parts(citation: str) -> tuple[str, str] | None:
+    match = re.match(
+        r"^(?P<author>[A-Z][^()]{1,120}?)\s+\((?P<year>(?:19|20)\d{2}[a-z]?)\)$",
+        str(citation or "").strip(),
+    )
+    if not match:
+        return None
+    return match.group("author"), match.group("year")
+
+
+def _parenthetical_contains_author_year(parenthetical_body: str, author: str, year: str) -> bool:
+    body = str(parenthetical_body or "")
+    author_pattern = re.escape(author).replace(r"\ ", r"\s+")
+    return bool(re.search(rf"\b{author_pattern}\s*,\s*{re.escape(year)}\b", body, flags=re.IGNORECASE))
+
+
+def _join_narrative_citations(citations: list[str]) -> str:
+    if len(citations) <= 1:
+        return citations[0] if citations else ""
+    return f"{', '.join(citations[:-1])} and {citations[-1]}"
+
+
+def _narrative_citation_attribution(citations: list[str]) -> str:
+    restored = _join_narrative_citations(citations)
+    if not restored:
+        return ""
+    verb = "note" if len(citations) > 1 else "notes"
+    return f"as {restored} {verb}"
+
+
+def _restore_narrative_citations_from_combined_parentheticals(text: str, citations: list[Any]) -> str:
+    required: list[tuple[str, str, str]] = []
+    for citation in citations:
+        exact = str(citation or "").strip()
+        parts = _narrative_citation_parts(exact)
+        if exact and parts:
+            required.append((exact, parts[0], parts[1]))
+    if not required:
+        return text
+
+    def replace_parenthetical(match: re.Match[str]) -> str:
+        body = match.group(1)
+        matched = [
+            exact
+            for exact, author, year in required
+            if exact not in text and _parenthetical_contains_author_year(body, author, year)
+        ]
+        if not matched:
+            return match.group(0)
+        remaining_body = body
+        for exact in matched:
+            parts = _narrative_citation_parts(exact)
+            if not parts:
+                continue
+            author, year = parts
+            author_pattern = re.escape(author).replace(r"\ ", r"\s+")
+            remaining_body = re.sub(
+                rf"(?:^|;\s*){author_pattern}\s*,\s*{re.escape(year)}(?:[a-z])?(?=;|$)",
+                "",
+                remaining_body,
+                flags=re.IGNORECASE,
+            )
+        remaining_items = [item.strip() for item in remaining_body.split(";") if item.strip()]
+        restored = _narrative_citation_attribution(matched)
+        if remaining_items:
+            return f"{restored}; ({'; '.join(remaining_items)})"
+        return restored
+
+    return re.sub(r"\(([^)]*(?:19|20)\d{2}[a-z]?[^)]*)\)", replace_parenthetical, text)
 
 
 def _academic_all_section_filter_failures(sections: list[dict[str, Any]], candidate_text: str) -> list[str]:

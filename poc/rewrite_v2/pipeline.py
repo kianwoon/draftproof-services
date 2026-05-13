@@ -1192,7 +1192,7 @@ def _academic_contract_semantic_override_allowed(
         return False
     if not anchors_safe:
         return False
-    if not isinstance(semantic_similarity, (int, float)) or float(semantic_similarity) < 0.55:
+    if not isinstance(semantic_similarity, (int, float)) or float(semantic_similarity) < 0.45:
         return False
     reasons = [str(reason or "") for reason in (semantic_reasons or []) if str(reason or "").strip()]
     if not reasons or any(not reason.startswith("lost_named_entity:") for reason in reasons):

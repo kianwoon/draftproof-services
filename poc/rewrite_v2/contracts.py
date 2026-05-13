@@ -51,6 +51,30 @@ class RewriteContract:
         }
 
 
+_GENERIC_SINGLE_ENTITY_WORDS = {
+    "certificate",
+    "centre",
+    "combination",
+    "communicates",
+    "down",
+    "educational",
+    "environment",
+    "evaluation",
+    "every",
+    "haircut",
+    "inclusive",
+    "learning",
+    "part",
+    "points",
+    "salon",
+    "statistics",
+    "structures",
+    "team",
+    "universal",
+    "you",
+}
+
+
 def normalized_anchor_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
 
@@ -70,6 +94,7 @@ def _citation_markers(text: str) -> list[str]:
     markers: list[str] = []
     source = str(text or "")
     patterns = [
+        r"\([A-Z][^)]*(?:19|20)\d{2}[a-z]?(?:\s*;\s*[A-Z][^)]*(?:19|20)\d{2}[a-z]?)+\)",
         r"\([A-Z][A-Za-z' -]+(?:\s+et\s+al\.)?,\s*(?:19|20)\d{2}[a-z]?(?:,\s*p{1,2}\.?\s*\d+)?\)",
         r"\b[A-Z][A-Za-z' -]+(?:,\s*[A-Z][A-Za-z' -]+)*(?:,?\s+and\s+[A-Z][A-Za-z' -]+)\s+\((?:19|20)\d{2}[a-z]?\)",
         r"\b[A-Z][A-Za-z' -]+(?:\s+et\s+al\.)?\s+\((?:19|20)\d{2}[a-z]?\)",
@@ -112,6 +137,37 @@ def _aliases_for_term(value: str) -> tuple[str, ...]:
     if re.search(r"\bTikTok\b", text, flags=re.IGNORECASE):
         aliases.append(re.sub(r"\bTikTok\b", "Tik Tok", text, flags=re.IGNORECASE))
     return tuple(alias for alias in aliases if alias and alias != text)
+
+
+def _clean_entity_anchor(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(
+        r"^(?:according\s+to|as|at|by|for|from|in|on|to|with)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    return text
+
+
+def _single_entity_allowed(entity: str, body: str, multiword_entities: list[str]) -> bool:
+    value = str(entity or "").strip()
+    if not value or " " in value:
+        return False
+    lowered = value.casefold()
+    if lowered in _GENERIC_SINGLE_ENTITY_WORDS:
+        return False
+    if any(re.search(rf"\b{re.escape(value)}\b", item) for item in multiword_entities):
+        return False
+    return len(re.findall(rf"\b{re.escape(value)}\b", str(body or ""))) >= 2
+
+
+def _generic_entity_anchor(entity: str) -> bool:
+    words = [word.casefold() for word in re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", str(entity or ""))]
+    if not words:
+        return True
+    content_words = [word for word in words if word != "the"]
+    return bool(content_words) and all(word in _GENERIC_SINGLE_ENTITY_WORDS for word in content_words)
 
 
 def _heading_terms(heading: str) -> list[str]:
@@ -179,8 +235,17 @@ def build_rewrite_contract(
             value = str(span.text or "").strip()
             if span.reason in {"direct_quote", "numeric"}:
                 _add_anchor(anchors, seen, text=value, severity=AnchorSeverity.HARD_EXACT, kind=span.reason, section_id=section_id)
-        for entity in sorted(_extract_named_entities(body), key=lambda item: (-len(item), item)):
-            if len(re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", entity)) < 2:
+        raw_entities = sorted(_extract_named_entities(body), key=lambda item: (-len(item), item))
+        cleaned_entities = [_clean_entity_anchor(entity) for entity in raw_entities]
+        multiword_entities = [
+            entity for entity in cleaned_entities
+            if len(re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", entity)) >= 2
+        ]
+        for entity in cleaned_entities:
+            word_count = len(re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", entity))
+            if word_count < 2 and not _single_entity_allowed(entity, body, multiword_entities):
+                continue
+            if word_count >= 2 and _generic_entity_anchor(entity):
                 continue
             _add_anchor(
                 anchors,

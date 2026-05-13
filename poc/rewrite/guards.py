@@ -19,7 +19,7 @@ class ProtectedSpan:
 # Citation patterns (reused from citation scanner)
 _APA_RE = re.compile(r"\((?:[A-Z][a-zäëïöü]+(?:\s+(?:et\s+al\.?|and|[&])\s*[A-Z][a-zäëïöü]+)*)\s*,\s*\d{4}[a-z]?(?:\s*[,.]\s*(?:pp\.?\s*\d+|p\.?\s*\d+))?\)")
 _NUMERIC_RE = re.compile(r"\[(\d+(?:\s*[,\-]\s*\d+)*)\]")
-_VANCOUVER_RE = re.compile(r"(?:\.|,|\))\s*(?:\^)?(\d+(?:\s*[,\-]\s*\d+)*)")
+_VANCOUVER_RE = re.compile(r"(?:\.|,|\))\s*(?:\^)?(\d{1,3}(?:\s*[,\-]\s*\d{1,3})*)")
 _NARRATIVE_RE = re.compile(r"[A-Z][a-zäëïöü]+(?:\s+(?:et\s+al\.?|and)\s*[A-Z][a-zäëïöü]+)*\s*\(\d{4}[a-z]?\)")
 
 # Quote patterns

@@ -211,9 +211,48 @@ assert_test(
     any(anchor.text == "Tik Tok" and anchor_present(anchor, "TikTok practice still matters.") for anchor in academic_contract.anchors),
     "V2 contract matches normalized aliases for compact term variants",
 )
+personal_contract_sections = _academic_assignment_sections(
+    """Building an Inclusive Learning Environment
+A student I will call Johnny disclosed support needs. Johnny later led a role-playing activity with the class. Every learner still needed a different pathway.
+""",
+    academic_assignment_scan,
+)
+personal_contract = build_rewrite_contract(
+    "\n\n".join(section["text"] for section in personal_contract_sections),
+    content_mode="academic_cited_text",
+    sections=personal_contract_sections,
+)
+assert_test(
+    any(anchor.severity == AnchorSeverity.SOFT_REQUIRED and anchor.text == "Johnny" for anchor in personal_contract.anchors)
+    and not any(anchor.severity == AnchorSeverity.SOFT_REQUIRED and anchor.text == "Every" for anchor in personal_contract.anchors),
+    "V2 contract keeps repeated personal names without promoting generic capitalized words",
+)
+institution_contract_sections = _academic_assignment_sections(
+    "The Centre for Educational Statistics and Evaluation (CESE, 2017) discusses working memory. Billett (2013) and Jwad et al. (2022) discuss practice.",
+    academic_assignment_scan,
+)
+institution_contract = build_rewrite_contract(
+    "\n\n".join(section["text"] for section in institution_contract_sections),
+    content_mode="academic_cited_text",
+    sections=institution_contract_sections,
+)
+assert_test(
+    not any(anchor.text in {"The Centre", "Educational Statistics"} for anchor in institution_contract.anchors)
+    and any(anchor.text == "CESE, 2017" or anchor.text == "(CESE, 2017)" for anchor in institution_contract.anchors),
+    "V2 contract skips partial generic institution fragments while preserving citations",
+)
 assert_test(
     _all_section_compact_allowed(academic_assignment, academic_assignment_scan),
     "V2 compact academic layer is allowed for assignment-shaped cited sections",
+)
+academic_shape_without_handoff = "\n\n".join([
+    "The literature review considers vocational learning and cognitive load in classroom practice (Smith, 2024). Students often need scaffolding when technical processes become fragmented. The educator therefore needs to connect demonstration, practice, and feedback instead of assuming that digital exposure will become skill. This section explains why working memory pressure matters during practical learning.",
+    "Learning theory gives the educator a way to connect demonstration, repetition, and feedback (Jones, 2023). The paragraph explains how pedagogy changes the learner's working memory demand. It also describes why classroom tasks need staged support, because students may copy visible actions without understanding the technical reasoning behind those actions.",
+    "A final section applies the taxonomy to students and workplace practice. The discussion remains analytical rather than a simple uncited summary. It shows how students move from basic recognition to connected technical judgement, and why vocational educators need enough structure to keep learners engaged while still allowing practice-based mistakes.",
+])
+assert_test(
+    _all_section_compact_allowed(academic_shape_without_handoff, scan_json),
+    "V2 compact academic layer can route multi-section cited academic prose without handoff metadata",
 )
 non_assignment_academic = "Research shows the effect remains contested (Smith, 2021). Later work reached another result (Jones, 2022)."
 assert_test(
@@ -478,6 +517,38 @@ assert_test(
         for reason in _academic_all_section_filter_failures(all_sections, all_section_candidate.replace("(Kinch, 2025)", "Kinch 2025"))
     ),
     "V2 compact academic layer rejects citation loss",
+)
+narrative_source_sections = [{
+    "section_id": "p001",
+    "heading": "Paragraph 1",
+    "text": "Paragraph 1\nPractical learning requires more than imitation; it needs demonstration and scaffolding. Billett (2013) and Kirschner et al. (2006) explain why guided practice matters in vocational learning.",
+    "citations": ["Billett (2013)", "Kirschner et al. (2006)"],
+}]
+normalized_combined_parenthetical = _normalize_academic_all_section_candidate(
+    "Paragraph 1\nPractical learning requires more than imitation; it needs demonstration, scaffolding, and clear guidance (Billett, 2013; Kirschner et al., 2006).",
+    narrative_source_sections,
+)
+assert_test(
+    "Billett (2013)" in normalized_combined_parenthetical
+    and "Kirschner et al. (2006)" in normalized_combined_parenthetical
+    and not _academic_all_section_filter_failures(narrative_source_sections, normalized_combined_parenthetical),
+    "V2 compact academic layer restores narrative citation forms from combined parenthetical citations",
+)
+multi_author_source_sections = [{
+    "section_id": "p001",
+    "heading": "Paragraph 1",
+    "text": "Paragraph 1\nAustralian Government report (2024) identifies apprenticeship attrition. Brennan, Kemmis, and Atkin (2014) describe vocational learning as a “practice architecture”.",
+    "citations": ["Australian Government report (2024)", "Brennan, Kemmis, and Atkin (2014)"],
+}]
+normalized_multi_author_sources = _normalize_academic_all_section_candidate(
+    "Paragraph 1\nApprenticeship attrition remains high (Australian Government Report, 2024). Brennan, Kemmis, and Atkin's (2014) “practice architecture” frames vocational learning.",
+    multi_author_source_sections,
+)
+assert_test(
+    "Australian Government report (2024)" in normalized_multi_author_sources
+    and "Brennan, Kemmis, and Atkin (2014)" in normalized_multi_author_sources
+    and not _academic_all_section_filter_failures(multi_author_source_sections, normalized_multi_author_sources),
+    "V2 compact academic layer restores source-name and multi-author narrative citation forms",
 )
 quote_route = classify_content_route(
     'The interviewee said “I did not know where to begin.” A second student said “the instructions felt unclear.” A teacher added “support arrived too late.”',
@@ -1252,7 +1323,7 @@ assert_test(
             },
         },
         candidate_text="Social Learning Theory and TikTok examples remain part of the argument (Smith, 2024).",
-        semantic_similarity=0.72,
+        semantic_similarity=0.48,
         anchors_safe=True,
         semantic_reasons=[
             "lost_named_entity: 'How Inclusive Learning Design Can Address'",
@@ -1365,6 +1436,15 @@ academic_heading_drift = check_semantic_drift(
 assert_test(
     academic_heading_drift.accepted,
     "V2 semantic guard does not hard-fail academic section-title terms",
+)
+citation_year_drift = check_semantic_drift(
+    "Billett (2013) and Jwad et al. (2022) discuss practice.",
+    "Billett (2013) and Jwad et al. (2022) discuss practice.",
+    threshold=0.15,
+)
+assert_test(
+    citation_year_drift.accepted and all(", 2013" not in reason for reason in citation_year_drift.reasons),
+    "V2 semantic guard does not treat APA years as Vancouver citation numbers",
 )
 
 print("All rewrite V2 pipeline tests passed.")
