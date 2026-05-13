@@ -403,6 +403,7 @@ function getTransformationSignalImprovement(signal, baselineSignal) {
 }
 
 function buildTransformationSummary(features = {}, signals = [], contributionOverride = null, t = null) {
+  const tr = t || ((key, options = {}) => options.defaultValue || key);
   const humanAnchor = clampPercent(features.human_anchor_score) ?? 0;
   const groundingQuality = 100 - (clampPercent(features.citation_grounding_risk) ?? 0);
   const semanticOriginality = 100 - Math.max(
@@ -444,7 +445,6 @@ function buildTransformationSummary(features = {}, signals = [], contributionOve
     .slice(0, 2)
     .map((signal) => signalLabel(signal.key, signal.label, tr).toLowerCase());
 
-  const tr = t || ((key, options = {}) => options.defaultValue || key);
   let summary = tr('report.transformation.summaryMixed');
   if (aiTransformation >= 70) {
     summary = tr('report.transformation.summaryAiDominates');
