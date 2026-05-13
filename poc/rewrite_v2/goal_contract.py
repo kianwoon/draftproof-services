@@ -162,7 +162,16 @@ def _external_detector_proxy_status(
         + generic_source_compound_penalty
     )
     score = round(min(100.0, max(0.0, weighted_risk)), 3)
-    safe_threshold = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_SAFE_MAX", 38.0)
+    calibration_policy = calibration_policy_to_dict()
+    threshold_summary = calibration_policy.get("threshold_summary") if isinstance(calibration_policy.get("threshold_summary"), dict) else {}
+    calibrated_safe_threshold = threshold_summary.get("safe_threshold")
+    safe_threshold = (
+        float(calibrated_safe_threshold)
+        if isinstance(calibrated_safe_threshold, (int, float))
+        and threshold_summary.get("status") == "derived_from_labeled_proxy_records"
+        and os.environ.get("DRAFTPROOF_REWRITE_V2_USE_CALIBRATED_PROXY_THRESHOLDS", "1").lower() not in {"0", "false", "no"}
+        else _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_SAFE_MAX", 38.0)
+    )
     warning_threshold = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_WARN_MAX", 32.0)
     hard_blockers = []
     if after.get("topk_calibrated_risk", 0.0) > _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_TOPK_MAX", 25.0):
@@ -205,7 +214,7 @@ def _external_detector_proxy_status(
             "weak_human_anchor": weak_anchor_penalty,
             "generic_source_compound": generic_source_compound_penalty,
         },
-        "calibration_policy": calibration_policy_to_dict(),
+        "calibration_policy": calibration_policy,
         "calibration_summary": summarize_external_calibration_records(load_external_calibration_labels()),
     }
 

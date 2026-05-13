@@ -211,9 +211,15 @@ def classify_content_route(original_text: str, scan_report: dict | None = None) 
     lowered = stripped.lower()
     sentence_map_size = len((scan_report or {}).get("sentence_map") or {})
     has_table = bool(re.search(r"\|.+\|", stripped))
+    technical_terms = re.findall(
+        r"\b(api|sdk|json|yaml|http|endpoint|database|function|class|method|stack trace|schema|repository|deployment|kubernetes|docker)\b",
+        lowered,
+    )
+    technical_syntax = bool(re.search(r"[{}<>]|```|/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", stripped))
     technical_detected = bool(
-        re.search(r"\b(api|sdk|json|yaml|http|endpoint|database|function|class|method|stack trace|schema|repository|deployment|kubernetes|docker)\b", lowered)
-        or re.search(r"[{}<>]|```|/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", stripped)
+        technical_syntax
+        or len(set(technical_terms)) >= 2
+        or (len(set(technical_terms)) >= 1 and bullet_ratio < 0.35 and not has_table)
     )
     regulated_detected = bool(
         re.search(r"\b(shall|must not|compliance|contract|liability|statutory|regulation|clinical|diagnosis|dosage|patient|medical|legal|terms and conditions)\b", lowered)
@@ -236,9 +242,23 @@ def classify_content_route(original_text: str, scan_report: dict | None = None) 
     if long_quote_count >= 3 or (long_quote_count >= 2 and word_count < 450):
         add("quote_heavy", 0.8 + min(0.08, long_quote_count * 0.02), [f"quote_count={quote_count}", f"long_quote_count={long_quote_count}", "quoted material should remain strict anchors"], 85)
     if technical_detected:
-        add("technical_content", 0.82, ["technical markers detected", "technical content needs term and structure preservation"], 90)
+        technical_score = 0.88 if citation_count >= 1 or bullet_ratio >= 0.25 or has_table else 0.82
+        technical_priority = 98 if citation_count >= 1 or bullet_ratio >= 0.25 or has_table else 90
+        technical_reasons = ["technical markers detected", "technical content needs term and structure preservation"]
+        if citation_count:
+            technical_reasons.append(f"citations_inside_technical_content={citation_count}")
+        if bullet_ratio >= 0.25 or has_table:
+            technical_reasons.append("structured technical content beats essay reconstruction")
+        add("technical_content", technical_score, technical_reasons, technical_priority)
     if regulated_detected:
-        add("regulated_policy_content", 0.82, ["regulated wording detected", "obligations and claims need minimal targeted edits"], 92)
+        regulated_score = 0.9 if citation_count >= 1 or bullet_ratio >= 0.2 or has_table else 0.82
+        regulated_priority = 99 if citation_count >= 1 or bullet_ratio >= 0.2 or has_table else 92
+        regulated_reasons = ["regulated wording detected", "obligations and claims need minimal targeted edits"]
+        if citation_count:
+            regulated_reasons.append(f"citations_inside_regulated_content={citation_count}")
+        if bullet_ratio >= 0.2 or has_table:
+            regulated_reasons.append("structured obligations beat essay reconstruction")
+        add("regulated_policy_content", regulated_score, regulated_reasons, regulated_priority)
     if first_person_detected:
         add("personal_reflection", 0.78, ["first-person stance markers detected", "author voice already exists"], 80)
     if paragraphs >= 6 and word_count >= 100:

@@ -95,11 +95,14 @@ def classify_external_label(label: Any, *, pass_max: float | None = None) -> dic
 
 def calibration_policy_to_dict() -> dict[str, Any]:
     dataset_path = os.environ.get("DRAFTPROOF_REWRITE_V2_EXTERNAL_CALIBRATION_DATASET", "")
+    records = load_external_calibration_labels(dataset_path)
+    threshold_summary = derive_external_proxy_thresholds(records)
     return {
         "schema_version": EXTERNAL_LABEL_SCHEMA_VERSION,
         "external_label_pass_max": external_label_pass_max(),
         "dataset_path": dataset_path,
         "has_dataset": bool(dataset_path),
+        "threshold_summary": threshold_summary,
         "purpose": "Tune external proxy thresholds from labeled detector outcomes, not single-run anecdotes.",
     }
 
@@ -140,4 +143,63 @@ def summarize_external_calibration_records(records: list[dict[str, Any]]) -> dic
         "passed": passed,
         "failed": failed,
         "pass_max": external_label_pass_max(),
+    }
+
+
+def _proxy_score(row: dict[str, Any]) -> float | None:
+    for key in ("external_proxy_score", "proxy_score", "score"):
+        value = row.get(key)
+        if isinstance(value, (int, float)):
+            return max(0.0, min(100.0, float(value)))
+    proxy = row.get("external_detector_proxy") or row.get("external_proxy")
+    if isinstance(proxy, dict) and isinstance(proxy.get("score"), (int, float)):
+        return max(0.0, min(100.0, float(proxy["score"])))
+    return None
+
+
+def derive_external_proxy_thresholds(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Derive a proxy safe threshold from labeled external detector outcomes.
+
+    Records may be JSON/JSONL rows containing an external label plus either
+    `external_proxy_score`, `proxy_score`, or `external_detector_proxy.score`.
+    The chosen threshold maximizes balanced accuracy, with ties favoring the
+    stricter lower threshold.
+    """
+    labeled: list[tuple[float, bool]] = []
+    for row in records:
+        label = classify_external_label(row.get("external_label", row))
+        score = _proxy_score(row)
+        if score is None or label.get("passed") is None:
+            continue
+        labeled.append((score, bool(label["passed"])))
+    if not labeled:
+        return {
+            "status": "insufficient_labeled_proxy_records",
+            "labeled_proxy_records": 0,
+            "safe_threshold": None,
+        }
+    candidates = sorted({score for score, _passed in labeled} | {0.0, 100.0})
+    best: dict[str, Any] | None = None
+    for threshold in candidates:
+        tp = sum(1 for score, passed in labeled if passed and score <= threshold)
+        fn = sum(1 for score, passed in labeled if passed and score > threshold)
+        tn = sum(1 for score, passed in labeled if not passed and score > threshold)
+        fp = sum(1 for score, passed in labeled if not passed and score <= threshold)
+        tpr = tp / max(1, tp + fn)
+        tnr = tn / max(1, tn + fp)
+        balanced_accuracy = (tpr + tnr) / 2.0
+        row = {
+            "safe_threshold": round(threshold, 3),
+            "balanced_accuracy": round(balanced_accuracy, 4),
+            "true_positive": tp,
+            "false_negative": fn,
+            "true_negative": tn,
+            "false_positive": fp,
+        }
+        if best is None or (row["balanced_accuracy"], -row["safe_threshold"]) > (best["balanced_accuracy"], -best["safe_threshold"]):
+            best = row
+    return {
+        "status": "derived_from_labeled_proxy_records",
+        "labeled_proxy_records": len(labeled),
+        **(best or {}),
     }

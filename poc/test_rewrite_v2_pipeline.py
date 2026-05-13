@@ -66,11 +66,12 @@ from rewrite_v2.layers.academic import _generate_academic_section_candidates
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.layer_attempts import summarize_layer_attempts
-from rewrite_v2.external_calibration import classify_external_label, normalize_external_ai_percent
+from rewrite_v2.external_calibration import classify_external_label, derive_external_proxy_thresholds, normalize_external_ai_percent
 from rewrite_v2.frontier import candidate_applicable_by_policy
 from rewrite_v2.partial_policy import close_partial_candidate_allowed, partial_application_policy
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.runtime_budget import RewriteV2RuntimeBudget
+from rewrite_v2.runtime_policy import runtime_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import RewriteStrategy, StrategyKind, classify_content_route, route_strategies
 from llm.gateway import model_supports_presence_frequency_penalties, model_supports_repetition_penalty
@@ -237,6 +238,18 @@ assert_test(
     and classify_external_label({"ai_percent": 86})["passed"] is False
     and classify_external_label(0.16)["passed"] is True,
     "V2 external calibration normalizes external detector labels to an explicit pass contract",
+)
+calibrated_thresholds = derive_external_proxy_thresholds([
+    {"external_label": {"ai_percent": 18}, "external_detector_proxy": {"score": 26.0}},
+    {"external_label": {"ai_percent": 29}, "external_detector_proxy": {"score": 34.0}},
+    {"external_label": {"ai_percent": 65}, "external_detector_proxy": {"score": 49.0}},
+    {"external_label": {"ai_percent": 86}, "external_detector_proxy": {"score": 62.0}},
+])
+assert_test(
+    calibrated_thresholds["status"] == "derived_from_labeled_proxy_records"
+    and calibrated_thresholds["safe_threshold"] == 34.0
+    and calibrated_thresholds["false_positive"] == 0,
+    "V2 external calibration derives proxy thresholds from labeled detector outcomes",
 )
 reflective_academic_route = classify_content_route(
     (
@@ -748,6 +761,16 @@ assert_test(
     and any(row["content_mode"] == "structured_list_table" for row in hybrid_academic_list_route.mode_scores),
     "V2 content router scores hybrid modes so citations can override bullet-list shape",
 )
+hybrid_technical_cited_route = classify_content_route(
+    "The API endpoint returns JSON errors when the database transaction fails (Smith, 2021). The deployment guide shows the same schema in `/v1/rewrite` responses, and Lee (2022) reports similar API failure handling.",
+    scan_json,
+)
+assert_test(
+    hybrid_technical_cited_route.content_mode == "technical_content"
+    and hybrid_technical_cited_route.mode_scores[0]["content_mode"] == "technical_content"
+    and any(row["content_mode"] == "academic_cited_text" for row in hybrid_technical_cited_route.mode_scores),
+    "V2 content router lets technical structure beat citation-heavy academic routing in mixed technical text",
+)
 technical_route = classify_content_route(
     "The API endpoint returns JSON when the database repository raises an exception in the deployment.",
     scan_json,
@@ -766,11 +789,26 @@ assert_test(
     and "entity_locked_full_reconstruction" in regulated_route.blocked_strategy_families,
     "V2 content router limits regulated policy content to minimal strategies",
 )
+hybrid_regulated_cited_route = classify_content_route(
+    "The privacy policy states that users must not disclose patient records, and clinical compliance shall document exceptions (Brown, 2023).",
+    scan_json,
+)
+assert_test(
+    hybrid_regulated_cited_route.content_mode == "regulated_policy_content"
+    and hybrid_regulated_cited_route.mode_scores[0]["content_mode"] == "regulated_policy_content",
+    "V2 content router lets regulated obligations beat citation-heavy academic routing in mixed policy text",
+)
 short_route = classify_content_route("This paragraph is too short to safely rebuild without more context.", scan_json)
 assert_test(
     short_route.content_mode == "short_text"
     and short_route.allowed_strategy_families == ["targeted_paragraph_reconstruction"],
     "V2 content router limits very short text candidate budget",
+)
+assert_test(
+    runtime_policy(short_route, max_runtime_seconds=300)["generation_budget_seconds"]
+    < runtime_policy(broad_route, max_runtime_seconds=300)["generation_budget_seconds"]
+    and runtime_policy(technical_route, max_runtime_seconds=300)["generation_budget_seconds"] <= 90,
+    "V2 runtime policy applies tighter generation budgets to short and technical content modes",
 )
 reflection_route = classify_content_route(
     "I think the lesson changed how I read evidence because my first answer was too quick and my later notes were more careful.",

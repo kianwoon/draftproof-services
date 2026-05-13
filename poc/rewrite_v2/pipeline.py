@@ -30,6 +30,11 @@ from .goal_contract import RewriteGoalEvaluation
 from .layer_attempts import record_layer_attempt, summarize_layer_attempts
 from .partial_policy import close_partial_candidate_allowed, partial_application_policy
 from .robustness import layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
+from .runtime_policy import (
+    llm_call_timeout_seconds,
+    phase_start_margin_seconds,
+    runtime_policy,
+)
 from .runtime_budget import RewriteV2RuntimeBudget
 from .selection import (
     CandidateLane,
@@ -130,33 +135,15 @@ def _composition_ai_penalty_max() -> float:
 
 
 def _llm_call_timeout_seconds(default: int = 30) -> int:
-    raw = os.environ.get("DRAFTPROOF_REWRITE_V2_LLM_TIMEOUT_SECONDS", str(default))
-    try:
-        value = int(float(raw))
-    except (TypeError, ValueError):
-        value = default
-    return max(5, min(60, value))
+    return llm_call_timeout_seconds(default)
 
 
-def _generation_budget_seconds(max_runtime_seconds: int) -> int:
-    raw = os.environ.get("DRAFTPROOF_REWRITE_V2_GENERATION_BUDGET_SECONDS")
-    if raw:
-        try:
-            configured = int(float(raw))
-        except (TypeError, ValueError):
-            configured = 0
-        if configured > 0:
-            return max(30, min(configured, max(30, int(max_runtime_seconds) - 30)))
-    return max(30, min(180, int(max_runtime_seconds * 0.65), max(30, int(max_runtime_seconds) - 60)))
+def _generation_budget_seconds(max_runtime_seconds: int, content_route: Any | None = None) -> int:
+    return int(runtime_policy(content_route, max_runtime_seconds=max_runtime_seconds)["generation_budget_seconds"])
 
 
 def _phase_start_margin_seconds(default: int = 5) -> int:
-    raw = os.environ.get("DRAFTPROOF_REWRITE_V2_PHASE_START_MARGIN_SECONDS", str(default))
-    try:
-        value = int(float(raw))
-    except (TypeError, ValueError):
-        value = default
-    return max(1, min(60, value))
+    return phase_start_margin_seconds(default)
 
 
 def _portfolio_mode_enabled() -> bool:
@@ -189,10 +176,12 @@ def _effective_config(
     model: str | None,
     base_url: str | None,
     max_runtime_seconds: int,
+    content_route: Any | None = None,
 ) -> dict[str, Any]:
     effective_model = model or os.environ.get("LLM_MODEL") or "openai/gpt-4.1-mini"
     effective_base_url = base_url or os.environ.get("LLM_BASE_URL", "")
-    generation_budget = _generation_budget_seconds(max_runtime_seconds)
+    mode_runtime_policy = runtime_policy(content_route, max_runtime_seconds=max_runtime_seconds)
+    generation_budget = int(mode_runtime_policy["generation_budget_seconds"])
     return {
         "model": effective_model,
         "base_url": effective_base_url,
@@ -200,6 +189,7 @@ def _effective_config(
         "max_runtime_seconds": int(max_runtime_seconds),
         "llm_call_timeout_seconds": _llm_call_timeout_seconds(),
         "generation_budget_seconds": generation_budget,
+        "runtime_policy": mode_runtime_policy,
         "phase_start_margin_seconds": _phase_start_margin_seconds(),
         "apply_partial_max_gap": _close_partial_max_gap(),
         "apply_composition_max_gap": _composition_partial_max_gap(),
@@ -2211,11 +2201,6 @@ def run_rewrite_pipeline_v2(
     full_rewrite_allowed: bool = True,
 ) -> dict[str, Any]:
     started = time.time()
-    runtime_budget = RewriteV2RuntimeBudget(
-        started_at=started,
-        max_runtime_seconds=max_runtime_seconds,
-        generation_budget_seconds=_generation_budget_seconds(max_runtime_seconds),
-    )
 
     def progress(percent: int, message: str) -> None:
         if progress_callback:
@@ -2225,18 +2210,24 @@ def run_rewrite_pipeline_v2(
     original_text = _extract_original_text(detect_json)
     original_report = detect_json
     reference_ai = _badge_ai(original_report)
-    effective_config = _effective_config(
-        api_key=api_key,
-        model=model,
-        base_url=base_url,
-        max_runtime_seconds=max_runtime_seconds,
-    )
     target_ai_score = (
         float(reference_ai) - float(required_ai_drop)
         if isinstance(reference_ai, (int, float))
         else None
     )
     content_route = classify_content_route(original_text, original_report)
+    runtime_budget = RewriteV2RuntimeBudget(
+        started_at=started,
+        max_runtime_seconds=max_runtime_seconds,
+        generation_budget_seconds=_generation_budget_seconds(max_runtime_seconds, content_route),
+    )
+    effective_config = _effective_config(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        max_runtime_seconds=max_runtime_seconds,
+        content_route=content_route,
+    )
     close_partial_policy = partial_application_policy(
         content_route,
         close_partial_max_gap=_close_partial_max_gap(),
