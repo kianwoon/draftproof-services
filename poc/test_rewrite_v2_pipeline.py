@@ -530,7 +530,7 @@ assert_test(
 narrative_source_sections = [{
     "section_id": "p001",
     "heading": "Paragraph 1",
-    "text": "Paragraph 1\nPractical learning requires more than imitation; it needs demonstration and scaffolding. Billett (2013) and Kirschner et al. (2006) explain why guided practice matters in vocational learning.",
+    "text": "Practical learning requires more than imitation; it needs demonstration and scaffolding. Billett (2013) and Kirschner et al. (2006) explain why guided practice matters in vocational learning.",
     "citations": ["Billett (2013)", "Kirschner et al. (2006)"],
 }]
 normalized_combined_parenthetical = _normalize_academic_all_section_candidate(
@@ -540,13 +540,14 @@ normalized_combined_parenthetical = _normalize_academic_all_section_candidate(
 assert_test(
     "Billett (2013)" in normalized_combined_parenthetical
     and "Kirschner et al. (2006)" in normalized_combined_parenthetical
+    and "Paragraph 1" not in normalized_combined_parenthetical
     and not _academic_all_section_filter_failures(narrative_source_sections, normalized_combined_parenthetical),
-    "V2 compact academic layer restores narrative citation forms from combined parenthetical citations",
+    "V2 compact academic layer restores narrative citations without leaking synthetic paragraph labels",
 )
 multi_author_source_sections = [{
     "section_id": "p001",
     "heading": "Paragraph 1",
-    "text": "Paragraph 1\nAustralian Government report (2024) identifies apprenticeship attrition. Brennan, Kemmis, and Atkin (2014) describe vocational learning as a “practice architecture”.",
+    "text": "Australian Government report (2024) identifies apprenticeship attrition. Brennan, Kemmis, and Atkin (2014) describe vocational learning as a “practice architecture”.",
     "citations": ["Australian Government report (2024)", "Brennan, Kemmis, and Atkin (2014)"],
 }]
 normalized_multi_author_sources = _normalize_academic_all_section_candidate(

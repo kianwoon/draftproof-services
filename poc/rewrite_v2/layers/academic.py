@@ -29,6 +29,10 @@ _DIGIT_WORDS = {
 }
 
 
+def _is_synthetic_paragraph_heading(value: str) -> bool:
+    return bool(re.fullmatch(r"Paragraph\s+\d+", str(value or "").strip(), flags=re.IGNORECASE))
+
+
 def _json_from_response(raw: str) -> dict[str, Any]:
     text = clean_candidate_output(raw)
     if not text:
@@ -564,7 +568,8 @@ def _build_academic_all_section_prompt(
         f"Create exactly {candidate_count} variants.\n"
         "Use this only for assignment-like academic content with numbered/labelled sections.\n"
         "Rewrite every provided section, including setup/classification sections, because leaving the setup frozen can keep detector predictability high.\n"
-        "Each variant must preserve every section heading exactly and in the same order.\n"
+        "Each variant must preserve every real section heading exactly and in the same order.\n"
+        "Do not print internal labels such as 'Paragraph 1', 'Paragraph 2', or similar paragraph numbers in the final prose.\n"
         "Every required citation, direct quote, required number, and protected span must appear verbatim.\n"
         "Every required_key_term must remain verbatim in the same section; these include named theories, institutions, titled concepts, and cited theorists.\n"
         "Do not convert parenthetical citations into narrative citations, or narrative citations into parenthetical citations. "
@@ -626,6 +631,8 @@ def _normalize_academic_all_section_candidate(candidate_text: str, sections: lis
     text = re.sub(r"\*([^*\n]{4,120})\*", r"\1", text)
     for section in sections:
         heading = str(section.get("heading") or "").strip()
+        if _is_synthetic_paragraph_heading(heading):
+            continue
         if heading and not re.search(rf"(?m)^\s*{re.escape(heading)}\b", text):
             text = f"{heading}\n{text}"
             break
@@ -668,7 +675,16 @@ def _normalize_academic_all_section_candidate(candidate_text: str, sections: lis
             text = re.sub(rf"\b{word}\b", protected_text, text, count=1, flags=re.IGNORECASE)
     text = _restore_exact_citation_forms(text, sections)
     text = _restore_visual_references(text, sections)
+    text = _strip_synthetic_paragraph_labels(text, sections)
     return text.strip() + "\n"
+
+
+def _strip_synthetic_paragraph_labels(candidate_text: str, sections: list[dict[str, Any]]) -> str:
+    if not any(_is_synthetic_paragraph_heading(str(section.get("heading") or "")) for section in sections):
+        return str(candidate_text or "")
+    text = str(candidate_text or "")
+    text = re.sub(r"(?im)^\s*Paragraph\s+\d+\s*:?\s*\n+", "", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _restore_visual_references(candidate_text: str, sections: list[dict[str, Any]]) -> str:
@@ -808,7 +824,7 @@ def _academic_all_section_filter_failures(sections: list[dict[str, Any]], candid
     for section in sections:
         section_id = str(section.get("section_id") or "")
         heading = str(section.get("heading") or "").strip()
-        synthetic_paragraph_heading = bool(re.match(r"^Paragraph\s+\d+$", heading))
+        synthetic_paragraph_heading = _is_synthetic_paragraph_heading(heading)
         if heading and not synthetic_paragraph_heading:
             match = re.search(rf"(?m)^\s*{re.escape(heading)}\b", text)
             if not match:
