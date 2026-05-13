@@ -12,6 +12,7 @@ from .diagnostics import (
     LOCAL_QUALITY_REJECTED,
     SEMANTIC_LOSS,
     STRUCTURED_OUTPUT_FAILED,
+    annotate_candidate_diagnostics,
     summarize_candidate_diagnostics,
 )
 
@@ -276,13 +277,30 @@ def budget_status(rows: list[dict[str, Any]], content_route: Any | None) -> dict
     }
 
 
+def layer_failure_class_counts(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for row in rows:
+        annotated = annotate_candidate_diagnostics(row)
+        layer = normalize_strategy_layer(annotated)
+        failure_class = str(annotated.get("failure_class") or "unknown_rejected")
+        layer_counts = counts.setdefault(layer, {})
+        layer_counts[failure_class] = layer_counts.get(failure_class, 0) + 1
+    return {
+        layer: dict(sorted(layer_counts.items()))
+        for layer, layer_counts in sorted(counts.items())
+    }
+
+
 def recommend_failure_policy(
     rows: list[dict[str, Any]],
     *,
     generated_count: int,
     content_route: Any | None,
 ) -> dict[str, Any]:
-    diagnostics = summarize_candidate_diagnostics(rows, generated_count=generated_count)
+    diagnostics = {
+        **summarize_candidate_diagnostics(rows, generated_count=generated_count),
+        "failure_class_counts_by_layer": layer_failure_class_counts(rows),
+    }
     policy = content_mode_policy(content_route)
     coverage = layer_coverage(rows, content_route)
     budget = budget_status(rows, content_route)

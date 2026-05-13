@@ -26,7 +26,7 @@ from .contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from .diagnostics import annotate_candidate_diagnostics, summarize_candidate_diagnostics
 from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from .goal_contract import RewriteGoalEvaluation
-from .robustness import normalize_strategy_layer, portfolio_limits, recommend_failure_policy
+from .robustness import layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from .selection import (
     CandidateLane,
     decide_candidate,
@@ -69,6 +69,24 @@ def _semantic_scan_allowed(strategy_kind: str | None, semantic_safe: bool) -> bo
     }:
         return True
     return os.environ.get("DRAFTPROOF_REWRITE_V2_SCAN_REVIEW_CANDIDATES", "1").lower() not in {"0", "false", "no"}
+
+
+def _local_filter_rejection_reason(generated_candidate: dict[str, Any]) -> str:
+    layer = normalize_strategy_layer(generated_candidate)
+    if layer == "targeted_paragraph_reconstruction":
+        return "targeted_local_filter_rejected"
+    if layer == "academic_anchor_repair_texture_pass":
+        return "academic_repair_local_filter_rejected"
+    if str(layer).startswith("academic_"):
+        return "academic_local_filter_rejected"
+    if layer in {
+        "entity_locked_full_reconstruction",
+        "keyword_locked_short_texture",
+        "author_stance_thesis_reframe",
+        "author_stance_texture_pass",
+    }:
+        return "full_document_local_filter_rejected"
+    return "candidate_local_filter_rejected"
 
 
 def _close_partial_max_gap() -> float:
@@ -2236,7 +2254,7 @@ def run_rewrite_pipeline_v2(
                     "candidate_ai": None,
                     "decision": {
                         "lane": CandidateLane.REJECT.value,
-                        "reason": "targeted_local_filter_rejected",
+                        "reason": _local_filter_rejection_reason(generated_candidate),
                         "rank": [],
                     },
                 })
@@ -2449,7 +2467,7 @@ def run_rewrite_pipeline_v2(
                         "candidate_ai": None,
                         "decision": {
                             "lane": CandidateLane.REJECT.value,
-                            "reason": "targeted_local_filter_rejected",
+                            "reason": _local_filter_rejection_reason(generated_candidate),
                             "rank": [],
                         },
                     })
@@ -2718,6 +2736,10 @@ def run_rewrite_pipeline_v2(
         for row in candidate_rows
     ]
     candidate_diagnostics = summarize_candidate_diagnostics(candidate_rows, generated_count=generated_count)
+    candidate_diagnostics = {
+        **candidate_diagnostics,
+        "failure_class_counts_by_layer": layer_failure_class_counts(candidate_rows),
+    }
     robustness_policy = recommend_failure_policy(
         candidate_rows,
         generated_count=generated_count,

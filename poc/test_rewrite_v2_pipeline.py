@@ -41,6 +41,7 @@ from rewrite_v2.pipeline import (
     _expected_full_reconstruction_paragraph_count,
     _generate_candidates,
     _json_parse_diagnostics,
+    _local_filter_rejection_reason,
     _paragraph_inventory_for_full_reconstruction,
     _paragraph_tactics,
     _paragraph_target_map,
@@ -61,7 +62,7 @@ from rewrite_v2.layers.academic import _generate_academic_all_section_candidates
 from rewrite_v2.layers.academic import _generate_academic_section_candidates
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
-from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
+from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import RewriteStrategy, StrategyKind, classify_content_route, route_strategies
 from llm.gateway import model_supports_presence_frequency_penalties, model_supports_repetition_penalty
@@ -1611,6 +1612,17 @@ assert_test(
     diagnose_candidate_failure(structured_contract_row)["failure_class"] == STRUCTURED_OUTPUT_FAILED,
     "V2 diagnostics prioritize malformed structured output over secondary contract drift",
 )
+layer_failure_counts = layer_failure_class_counts([
+    {**fixable_contract_row, **diagnose_candidate_failure(fixable_contract_row), "strategy": "academic_cited_section_density_resolver"},
+    {**structured_output_row, **diagnose_candidate_failure(structured_output_row), "strategy": "scan_targeted_driver_mitigation"},
+    {**detector_row, **diagnose_candidate_failure(detector_row), "strategy": "scan_targeted_driver_mitigation"},
+])
+assert_test(
+    layer_failure_counts["academic_cited_section_density_resolver"][FIXABLE_CONTRACT_DRIFT] == 1
+    and layer_failure_counts["targeted_paragraph_reconstruction"][STRUCTURED_OUTPUT_FAILED] == 1
+    and layer_failure_counts["targeted_paragraph_reconstruction"][DETECTOR_NOT_SAFE] == 1,
+    "V2 diagnostics aggregate failure classes by strategy layer",
+)
 diagnostic_summary = summarize_candidate_diagnostics(
     [fixable_contract_row, semantic_row, detector_row, structured_output_row],
     generated_count=4,
@@ -1695,6 +1707,10 @@ assert_test(
 assert_test(
     "retry:structured_output_failed" in structured_failure_policy["recommended_actions"],
     "V2 robustness policy recommends retry when structured output parsing fails",
+)
+assert_test(
+    structured_failure_policy["diagnostics"]["failure_class_counts_by_layer"]["unknown"][STRUCTURED_OUTPUT_FAILED] == 1,
+    "V2 robustness policy exposes failure classes by strategy layer",
 )
 assert_test(
     "terminal:detector_not_safe" in technical_failure_policy["recommended_actions"]
@@ -1848,6 +1864,12 @@ assert_test(
     and fallback_rows[0]["local_filter_passed"] is False
     and "meta_text_leak" in fallback_rows[0]["local_filter_failures"],
     "V2 generic full-rewrite fallback records local filter failures before rescanning",
+)
+assert_test(
+    _local_filter_rejection_reason(fallback_rows[0]) == "full_document_local_filter_rejected"
+    and _local_filter_rejection_reason({"strategy": "academic_anchor_repair_texture_pass"}) == "academic_repair_local_filter_rejected"
+    and _local_filter_rejection_reason({"strategy": "scan_targeted_driver_mitigation"}) == "targeted_local_filter_rejected",
+    "V2 local filter rejection reasons identify the failed strategy layer",
 )
 full_academic_budget_rows = [
     {"strategy": "academic_all_section_compact_reconstruction"},
