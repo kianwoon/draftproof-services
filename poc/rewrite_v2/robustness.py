@@ -15,6 +15,7 @@ from .diagnostics import (
     annotate_candidate_diagnostics,
     summarize_candidate_diagnostics,
 )
+from .layer_attempts import layer_marked_inapplicable, summarize_layer_attempts
 
 
 CONTENT_MODE_POLICY: dict[str, dict[str, Any]] = {
@@ -206,9 +207,29 @@ def portfolio_limits(content_route: Any | None) -> dict[str, Any]:
     }
 
 
-def layer_coverage(rows: list[dict[str, Any]], content_route: Any | None) -> dict[str, Any]:
+def _eligible_required_layers(required: list[str], layer_attempts: list[dict[str, Any]] | None) -> tuple[list[str], dict[str, str]]:
+    if not layer_attempts:
+        return required, {}
+    eligible: list[str] = []
+    ineligible: dict[str, str] = {}
+    for layer in required:
+        marked, reason = layer_marked_inapplicable(layer_attempts, layer)
+        if marked:
+            ineligible[layer] = reason or "not_applicable"
+        else:
+            eligible.append(layer)
+    return eligible, ineligible
+
+
+def layer_coverage(
+    rows: list[dict[str, Any]],
+    content_route: Any | None,
+    *,
+    layer_attempts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     policy = content_mode_policy(content_route)
     required = list(policy.get("required_layers") or [])
+    eligible_required, ineligible_required = _eligible_required_layers(required, layer_attempts)
     conditional = list(policy.get("conditional_layers") or [])
     counts: dict[str, int] = {}
     execution: dict[str, dict[str, int]] = {}
@@ -233,18 +254,20 @@ def layer_coverage(rows: list[dict[str, Any]], content_route: Any | None) -> dic
             stats["applicable"] += 1
         if lane == "REJECT" or row.get("local_filter_passed") is False:
             stats["rejected"] += 1
-    missing = [layer for layer in required if counts.get(layer, 0) <= 0]
+    missing = [layer for layer in eligible_required if counts.get(layer, 0) <= 0]
     missing_conditional = [layer for layer in conditional if counts.get(layer, 0) <= 0]
     unscored_required = [
-        layer for layer in required
+        layer for layer in eligible_required
         if counts.get(layer, 0) > 0 and execution.get(layer, {}).get("scored", 0) <= 0
     ]
     locally_invalid_required = [
-        layer for layer in required
+        layer for layer in eligible_required
         if counts.get(layer, 0) > 0 and execution.get(layer, {}).get("local_valid", 0) <= 0
     ]
     return {
         "required_layers": required,
+        "eligible_required_layers": eligible_required,
+        "ineligible_required_layers": ineligible_required,
         "conditional_layers": conditional,
         "ran_layers": sorted(layer for layer, count in counts.items() if count > 0),
         "layer_candidate_counts": dict(sorted(counts.items())),
@@ -255,14 +278,20 @@ def layer_coverage(rows: list[dict[str, Any]], content_route: Any | None) -> dic
         "locally_invalid_required_layers": locally_invalid_required,
         "required_layer_coverage_met": not missing,
         "required_layer_viability_met": not missing and not unscored_required and not locally_invalid_required,
+        "layer_attempt_summary": summarize_layer_attempts(layer_attempts),
     }
 
 
-def budget_status(rows: list[dict[str, Any]], content_route: Any | None) -> dict[str, Any]:
+def budget_status(
+    rows: list[dict[str, Any]],
+    content_route: Any | None,
+    *,
+    layer_attempts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     limits = portfolio_limits(content_route)
     max_candidates = int(limits.get("max_generated_candidates") or 0)
     caps = limits.get("layer_candidate_caps") or {}
-    counts = layer_coverage(rows, content_route).get("layer_candidate_counts") or {}
+    counts = layer_coverage(rows, content_route, layer_attempts=layer_attempts).get("layer_candidate_counts") or {}
     exhausted_layers = [
         layer
         for layer, cap in sorted(caps.items())
@@ -296,14 +325,15 @@ def recommend_failure_policy(
     *,
     generated_count: int,
     content_route: Any | None,
+    layer_attempts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     diagnostics = {
         **summarize_candidate_diagnostics(rows, generated_count=generated_count),
         "failure_class_counts_by_layer": layer_failure_class_counts(rows),
     }
     policy = content_mode_policy(content_route)
-    coverage = layer_coverage(rows, content_route)
-    budget = budget_status(rows, content_route)
+    coverage = layer_coverage(rows, content_route, layer_attempts=layer_attempts)
+    budget = budget_status(rows, content_route, layer_attempts=layer_attempts)
     counts = diagnostics.get("failure_class_counts") or {}
     actions: list[str] = []
     if budget.get("portfolio_budget_exhausted"):
@@ -335,6 +365,7 @@ def recommend_failure_policy(
         "required_layers": list(policy.get("required_layers") or []),
         "conditional_layers": list(policy.get("conditional_layers") or []),
         "portfolio_limits": portfolio_limits(content_route),
+        "layer_attempt_summary": summarize_layer_attempts(layer_attempts),
         "layer_coverage": coverage,
         "budget_status": budget,
         "recommended_actions": actions,

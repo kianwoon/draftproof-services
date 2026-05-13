@@ -64,6 +64,7 @@ from rewrite_v2.layers.academic import _generate_academic_all_section_candidates
 from rewrite_v2.layers.academic import _generate_academic_section_candidates
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
+from rewrite_v2.layer_attempts import summarize_layer_attempts
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import RewriteStrategy, StrategyKind, classify_content_route, route_strategies
@@ -1742,6 +1743,54 @@ assert_test(
     and "repair_unusable_layer:targeted_paragraph_reconstruction" in academic_unusable_policy["recommended_actions"]
     and "rescore_or_replace_layer:targeted_paragraph_reconstruction" in academic_unusable_policy["recommended_actions"],
     "V2 robustness policy distinguishes layer presence from usable scored layer output",
+)
+academic_attempts = [
+    {
+        "layer": "academic_all_section_compact_reconstruction",
+        "status": "skipped",
+        "reason": "no_targets",
+        "allowed": True,
+        "applicable": False,
+        "generated_count": 0,
+    },
+    {
+        "layer": "academic_cited_section_density_resolver",
+        "status": "ran",
+        "reason": "generated_candidates",
+        "allowed": True,
+        "applicable": True,
+        "generated_count": 1,
+    },
+    {
+        "layer": "targeted_paragraph_reconstruction",
+        "status": "ran",
+        "reason": "generated_candidates",
+        "allowed": True,
+        "applicable": True,
+        "generated_count": 1,
+    },
+]
+academic_dynamic_rows = [
+    {"strategy": "academic_cited_section_density_resolver", "candidate_ai": 45.0, "decision": {"lane": "PARTIAL_DIAGNOSTIC"}},
+    {"strategy": "scan_targeted_driver_mitigation", "candidate_ai": 42.0, "decision": {"lane": "PARTIAL_DIAGNOSTIC"}},
+]
+academic_dynamic_policy = recommend_failure_policy(
+    academic_dynamic_rows,
+    generated_count=2,
+    content_route=academic_route,
+    layer_attempts=academic_attempts,
+)
+academic_dynamic_coverage = layer_coverage(
+    academic_dynamic_rows,
+    academic_route,
+    layer_attempts=academic_attempts,
+)
+assert_test(
+    academic_dynamic_coverage["ineligible_required_layers"] == {"academic_all_section_compact_reconstruction": "no_targets"}
+    and academic_dynamic_coverage["required_layer_coverage_met"]
+    and "run_missing_layer:academic_all_section_compact_reconstruction" not in academic_dynamic_policy["recommended_actions"]
+    and summarize_layer_attempts(academic_attempts)["layers"]["academic_cited_section_density_resolver"]["generated_count"] == 1,
+    "V2 robustness policy uses layer attempts to avoid recommending inapplicable required layers",
 )
 
 

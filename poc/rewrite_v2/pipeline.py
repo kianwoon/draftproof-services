@@ -26,6 +26,7 @@ from .contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from .diagnostics import annotate_candidate_diagnostics, summarize_candidate_diagnostics
 from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from .goal_contract import RewriteGoalEvaluation
+from .layer_attempts import record_layer_attempt, summarize_layer_attempts
 from .robustness import layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from .selection import (
     CandidateLane,
@@ -1723,8 +1724,17 @@ def _generate_candidates(
     timeout_seconds: int,
     deadline: float | None = None,
     content_route: Any | None = None,
+    layer_attempts: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if not api_key:
+        record_layer_attempt(
+            layer_attempts,
+            layer="llm_gateway",
+            status="blocked",
+            reason="missing_api_key",
+            allowed=False,
+            applicable=False,
+        )
         return []
     paragraph_targets = _paragraph_target_map(scan_report, original_text)
     gateway = LLMGateway(LLMConfig(
@@ -1745,6 +1755,19 @@ def _generate_candidates(
     layer_caps = limits.get("layer_candidate_caps") or {}
     max_generated_candidates = int(limits.get("max_generated_candidates") or 8)
 
+    def record_attempt(layer: str, status: str, reason: str, before: int, applicable: bool | None = None, allowed: bool | None = True) -> None:
+        record_layer_attempt(
+            layer_attempts,
+            layer=layer,
+            status=status,
+            reason=reason,
+            allowed=allowed,
+            applicable=applicable,
+            generated_count=max(0, len(candidates) - before),
+            candidate_count_before=before,
+            candidate_count_after=len(candidates),
+        )
+
     def budget_exhausted() -> bool:
         return len(candidates) >= max_generated_candidates
 
@@ -1764,7 +1787,9 @@ def _generate_candidates(
         for row in rows:
             append_candidate(row)
 
-    if _strategy_family_allowed(content_route, "academic_all_section_compact_reconstruction"):
+    academic_all_allowed = _strategy_family_allowed(content_route, "academic_all_section_compact_reconstruction")
+    if academic_all_allowed:
+        before = len(candidates)
         academic_all_section_candidates = _generate_academic_all_section_candidates(
             original_text=original_text,
             scan_report=scan_report,
@@ -1775,11 +1800,25 @@ def _generate_candidates(
         )
         if academic_all_section_candidates:
             extend_candidates(academic_all_section_candidates)
+            record_attempt("academic_all_section_compact_reconstruction", "ran", "generated_candidates", before, applicable=True)
             if not _portfolio_mode_enabled() and any(candidate.get("local_filter_passed") for candidate in academic_all_section_candidates):
                 return candidates
             if budget_exhausted():
                 return candidates
-    if _strategy_family_allowed(content_route, "academic_cited_section_density_resolver"):
+        else:
+            record_attempt("academic_all_section_compact_reconstruction", "skipped", "no_candidates_or_not_applicable", before, applicable=False)
+    else:
+        record_layer_attempt(
+            layer_attempts,
+            layer="academic_all_section_compact_reconstruction",
+            status="skipped",
+            reason="strategy_family_blocked",
+            allowed=False,
+            applicable=False,
+        )
+    academic_section_allowed = _strategy_family_allowed(content_route, "academic_cited_section_density_resolver")
+    if academic_section_allowed:
+        before = len(candidates)
         academic_candidates = _generate_academic_section_candidates(
             original_text=original_text,
             scan_report=scan_report,
@@ -1790,12 +1829,25 @@ def _generate_candidates(
         )
         if academic_candidates:
             extend_candidates(academic_candidates)
+            record_attempt("academic_cited_section_density_resolver", "ran", "generated_candidates", before, applicable=True)
             if not _portfolio_mode_enabled() and any(candidate.get("local_filter_passed") for candidate in academic_candidates):
                 return candidates
             if budget_exhausted():
                 return candidates
+        else:
+            record_attempt("academic_cited_section_density_resolver", "skipped", "no_candidates_or_not_applicable", before, applicable=False)
+    else:
+        record_layer_attempt(
+            layer_attempts,
+            layer="academic_cited_section_density_resolver",
+            status="skipped",
+            reason="strategy_family_blocked",
+            allowed=False,
+            applicable=False,
+        )
+    full_doc_driver_applicable = _should_entity_locked_full_reconstruction(scan_report)
     if (
-        _should_entity_locked_full_reconstruction(scan_report)
+        full_doc_driver_applicable
         and (full_reconstruction_allowed or author_stance_allowed or keyword_texture_allowed)
     ):
         required_entities = _required_entities_for_full_reconstruction(original_text)
@@ -1803,8 +1855,10 @@ def _generate_candidates(
         paragraph_inventory = _paragraph_inventory_for_full_reconstruction(scan_report, original_text)
         variants = max(1, min(2, int(os.environ.get("DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES", "2") or 2)))
         if full_reconstruction_allowed:
+            before = len(candidates)
             for number in range(1, variants + 1):
                 if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+                    record_attempt("entity_locked_full_reconstruction", "skipped", "runtime_budget_preflight", before, applicable=True)
                     return candidates
                 prompt = _build_entity_locked_full_reconstruction_prompt(
                     original_text=original_text,
@@ -1846,15 +1900,26 @@ def _generate_candidates(
                     "expected_paragraph_count": expected_paragraph_count,
                 })
                 if budget_exhausted():
+                    record_attempt("entity_locked_full_reconstruction", "ran", "generated_candidates_budget_exhausted", before, applicable=True)
                     return candidates
+            record_attempt("entity_locked_full_reconstruction", "ran", "generated_candidates", before, applicable=True)
         else:
             variants = 0
+            record_layer_attempt(
+                layer_attempts,
+                layer="entity_locked_full_reconstruction",
+                status="skipped",
+                reason="strategy_family_blocked",
+                allowed=False,
+                applicable=False,
+            )
         if (
             os.environ.get("DRAFTPROOF_REWRITE_V2_KEYWORD_LOCKED_SHORT_TEXTURE", "0").lower()
             not in {"0", "false", "no"}
             and keyword_texture_allowed
             and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
         ):
+            before = len(candidates)
             prompt = _build_keyword_locked_short_texture_prompt(
                 required_entities=required_entities,
                 paragraph_inventory=paragraph_inventory,
@@ -1894,17 +1959,45 @@ def _generate_candidates(
                 "expected_paragraph_count": expected_paragraph_count,
             })
             if budget_exhausted():
+                record_attempt("keyword_locked_short_texture", "ran", "generated_candidates_budget_exhausted", before, applicable=True)
                 return candidates
+            record_attempt("keyword_locked_short_texture", "ran", "generated_candidates", before, applicable=True)
+        elif keyword_texture_allowed:
+            keyword_reason = (
+                "disabled_by_config"
+                if os.environ.get("DRAFTPROOF_REWRITE_V2_KEYWORD_LOCKED_SHORT_TEXTURE", "0").lower() in {"0", "false", "no"}
+                else "runtime_budget_preflight"
+            )
+            record_layer_attempt(
+                layer_attempts,
+                layer="keyword_locked_short_texture",
+                status="skipped",
+                reason=keyword_reason,
+                allowed=True,
+                applicable=keyword_reason != "disabled_by_config",
+            )
+        else:
+            record_layer_attempt(
+                layer_attempts,
+                layer="keyword_locked_short_texture",
+                status="skipped",
+                reason="strategy_family_blocked",
+                allowed=False,
+                applicable=False,
+            )
         if (
             os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", "1").lower()
             not in {"0", "false", "no"}
             and author_stance_allowed
             and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
         ):
+            before = len(candidates)
+            texture_attempt_recorded = False
             target_paragraph_count = _author_stance_target_paragraph_count()
             author_variants = max(1, min(4, int(os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_CANDIDATES", "3") or 3)))
             for author_number in range(1, author_variants + 1):
                 if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+                    record_attempt("author_stance_thesis_reframe", "skipped", "runtime_budget_preflight", before, applicable=True)
                     break
                 prompt = _build_author_stance_thesis_reframe_prompt(
                     original_text=original_text,
@@ -1950,6 +2043,7 @@ def _generate_candidates(
                     "expected_paragraph_count": target_paragraph_count,
                 })
                 if budget_exhausted():
+                    record_attempt("author_stance_thesis_reframe", "ran", "generated_candidates_budget_exhausted", before, applicable=True)
                     return candidates
                 if (
                     not filter_failures
@@ -1958,6 +2052,7 @@ def _generate_candidates(
                     and author_texture_allowed
                     and (deadline is None or time.time() + timeout_seconds + 2.0 < deadline)
                 ):
+                    texture_before = len(candidates)
                     prompt = _build_author_stance_texture_pass_prompt(
                         source_text=original_text,
                         draft_text=candidate_text,
@@ -2003,20 +2098,77 @@ def _generate_candidates(
                         "expected_paragraph_count": target_paragraph_count,
                         "source_strategy": "scan_author_stance_thesis_reframe",
                     })
+                    record_attempt("author_stance_texture_pass", "ran", "generated_candidates", texture_before, applicable=True)
+                    texture_attempt_recorded = True
                     if budget_exhausted():
                         return candidates
+            if len(candidates) > before:
+                record_attempt("author_stance_thesis_reframe", "ran", "generated_candidates", before, applicable=True)
+            if author_texture_allowed and not texture_attempt_recorded:
+                texture_enabled = os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_TEXTURE_PASS", "0").lower() not in {"0", "false", "no"}
+                record_layer_attempt(
+                    layer_attempts,
+                    layer="author_stance_texture_pass",
+                    status="skipped",
+                    reason="disabled_by_config" if not texture_enabled else "no_valid_author_stance_source",
+                    allowed=True,
+                    applicable=texture_enabled,
+                )
+        elif author_stance_allowed:
+            author_reason = (
+                "disabled_by_config"
+                if os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", "1").lower() in {"0", "false", "no"}
+                else "runtime_budget_preflight"
+            )
+            record_layer_attempt(
+                layer_attempts,
+                layer="author_stance_thesis_reframe",
+                status="skipped",
+                reason=author_reason,
+                allowed=True,
+                applicable=author_reason != "disabled_by_config",
+            )
+        else:
+            record_layer_attempt(
+                layer_attempts,
+                layer="author_stance_thesis_reframe",
+                status="skipped",
+                reason="strategy_family_blocked",
+                allowed=False,
+                applicable=False,
+            )
         if candidates and not _portfolio_mode_enabled():
             return candidates
         if budget_exhausted():
             return candidates
+    else:
+        full_skip_reason = "not_applicable" if not full_doc_driver_applicable else "strategy_family_blocked"
+        for layer, allowed in (
+            ("entity_locked_full_reconstruction", full_reconstruction_allowed),
+            ("keyword_locked_short_texture", keyword_texture_allowed),
+            ("author_stance_thesis_reframe", author_stance_allowed),
+            ("author_stance_texture_pass", author_texture_allowed),
+        ):
+            record_layer_attempt(
+                layer_attempts,
+                layer=layer,
+                status="skipped",
+                reason=full_skip_reason if allowed else "strategy_family_blocked",
+                allowed=allowed,
+                applicable=False,
+            )
     for strategy in strategies:
         if getattr(strategy, "kind", None).value == "targeted":
             if budget_exhausted():
                 return candidates
+            targeted_before = len(candidates)
             paragraph_briefs = [
                 _enrich_paragraph_brief_with_target(brief, paragraph_targets)
                 for brief in targeted_paragraph_briefs(scan_report)
             ]
+            if not paragraph_briefs:
+                record_attempt("targeted_paragraph_reconstruction", "skipped", "no_targets", targeted_before, applicable=False)
+                continue
             tactics = _paragraph_tactics()
             for brief in paragraph_briefs:
                 paragraph_id = str(brief.get("paragraph_id") or "")
@@ -2076,10 +2228,14 @@ def _generate_candidates(
                         "patches": applied_patches,
                     })
                     if budget_exhausted():
+                        record_attempt("targeted_paragraph_reconstruction", "ran", "generated_candidates_budget_exhausted", targeted_before, applicable=True)
                         return candidates
+            record_attempt("targeted_paragraph_reconstruction", "ran", "generated_candidates", targeted_before, applicable=True)
             continue
+        generic_before = len(candidates)
         for number in range(1, max(1, int(strategy.max_candidates or 1)) + 1):
             if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+                record_attempt(normalize_strategy_layer(getattr(strategy, "strategy_id", "") or getattr(strategy, "kind", "")), "skipped", "runtime_budget_preflight", generic_before, applicable=True)
                 return candidates
             prompt = build_strategy_prompt(original_text, scan_report, strategy)
             response = gateway.chat(
@@ -2110,7 +2266,15 @@ def _generate_candidates(
                 "local_filter_failures": filter_failures,
             })
             if budget_exhausted():
+                record_attempt(normalize_strategy_layer({
+                    "strategy": strategy.strategy_id,
+                    "strategy_kind": strategy.kind.value,
+                }), "ran", "generated_candidates_budget_exhausted", generic_before, applicable=True)
                 return candidates
+        record_attempt(normalize_strategy_layer({
+            "strategy": strategy.strategy_id,
+            "strategy_kind": strategy.kind.value,
+        }), "ran", "generated_candidates", generic_before, applicable=True)
     return candidates
 
 
@@ -2192,6 +2356,8 @@ def run_rewrite_pipeline_v2(
                 "generated_count": 0,
                 "candidate_rows": 0,
                 "reason": "needs_author_context",
+                "layer_attempts": [],
+                "layer_attempt_summary": summarize_layer_attempts([]),
             },
             "content_router_trace": content_route.to_dict(),
             "strategy_trace": [strategy.to_dict() for strategy in strategies],
@@ -2244,6 +2410,7 @@ def run_rewrite_pipeline_v2(
     if replay_candidate_records is not None:
         generated_count = len(replay_candidate_records)
         generation_reason = "replay_candidates"
+        layer_attempts: list[dict[str, Any]] = []
         candidate_rows = _candidate_rows_from_replay(
             replay_candidate_records,
             original_text=original_text,
@@ -2252,6 +2419,7 @@ def run_rewrite_pipeline_v2(
             target_ai_score=target_ai_score,
         )
     else:
+        layer_attempts = []
         generated = _generate_candidates(
             original_text=original_text,
             scan_report=original_report,
@@ -2262,6 +2430,7 @@ def run_rewrite_pipeline_v2(
             timeout_seconds=_llm_call_timeout_seconds(),
             deadline=started + _generation_budget_seconds(max_runtime_seconds),
             content_route=content_route,
+            layer_attempts=layer_attempts,
         )
         generated_count = len(generated)
         generation_reason = "generated_candidates" if generated_count else "candidate_generation_budget_exhausted_no_candidates"
@@ -2756,6 +2925,7 @@ def run_rewrite_pipeline_v2(
         candidate_rows,
         generated_count=generated_count,
         content_route=content_route,
+        layer_attempts=layer_attempts,
     )
     summary = {
         "rewrite_pipeline_version": "rewrite_v2_scan_driven",
@@ -2778,6 +2948,8 @@ def run_rewrite_pipeline_v2(
             "reason": generation_reason,
             "diagnostics": candidate_diagnostics,
             "robustness_policy": robustness_policy,
+            "layer_attempts": layer_attempts,
+            "layer_attempt_summary": summarize_layer_attempts(layer_attempts),
             "post_layer_trace": post_layer_trace,
         },
         "content_router_trace": content_route.to_dict(),
