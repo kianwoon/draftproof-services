@@ -238,7 +238,8 @@ export const resources = {
         faqs: [
           { q: 'What counts as a scan?', a: 'Scans with 300 words or fewer are free. After that, 1 token covers each started 1,000-word block. For example, a 2,500-word document costs 3 tokens.' },
           { q: 'What does a rewrite do?', a: 'A guided revision helps clarify flagged sections, improve specificity, and preserve your original meaning without treating detector scores as the goal.' },
-          { q: 'Do I need a scan before a rewrite?', a: 'Yes. A completed scan is required before guided revision. DraftProof uses the scan report to identify which sections are safe and useful to revise, then charges rewrite tokens only when a rewrite is started.' },
+          { q: 'Do I need a scan before a rewrite?', a: 'Yes. A completed scan is required before guided revision. DraftProof uses the scan report to identify which sections are safe and useful to revise.' },
+          { q: 'When are rewrite tokens deducted?', a: 'Rewrite tokens are deducted only when DraftProof delivers rewritten content. If no safe candidate is found, the original text is preserved, the rewrite fails, or no rewritten content is produced, reserved tokens are released and not deducted.' },
           { q: 'Do tokens expire?', a: 'No. Your tokens stay in your account until you use them.' },
           { q: 'How do I submit my text?', a: 'Paste your text directly into the scan page. File upload coming soon.' },
         ],
@@ -1000,7 +1001,8 @@ export const resources = {
         faqs: [
           { q: '什么算一次扫描？', a: '300 词或更少的扫描免费。超过后，每开始的 1,000 词区间使用 1 个令牌。例如，2,500 词文档需要 3 个令牌。' },
           { q: '改写会做什么？', a: '引导式修改会帮助澄清被标记的段落、提升具体性，并保留原始含义，而不是把检测分数当作目标。' },
-          { q: '改写前需要先扫描吗？', a: '需要。引导式修改前必须先完成扫描。DraftProof 会使用扫描报告识别哪些部分适合修改，并且只在开始改写时收取改写令牌。' },
+          { q: '改写前需要先扫描吗？', a: '需要。引导式修改前必须先完成扫描。DraftProof 会使用扫描报告识别哪些部分安全且适合修改。' },
+          { q: '什么时候扣除改写令牌？', a: '只有当 DraftProof 交付改写后的内容时，才会扣除改写令牌。如果没有找到安全候选、保留原文、改写失败，或没有产生改写内容，已预留的令牌会释放，不会扣除。' },
           { q: '令牌会过期吗？', a: '不会。令牌会保留在你的账户中，直到你使用。' },
           { q: '如何提交文本？', a: '直接将文本粘贴到扫描页面。文件上传即将推出。' },
         ],
