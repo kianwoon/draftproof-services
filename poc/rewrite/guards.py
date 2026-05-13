@@ -145,6 +145,7 @@ def _extract_named_entities(text: str) -> Set[str]:
         "background", "discussion", "method", "methods", "results",
     }
     discourse_words = {
+        "according", "as", "at",
         "also", "although", "because", "but", "finally", "first",
         "furthermore", "however", "instead", "meanwhile", "moreover",
         "hence", "lastly", "next", "overall", "second", "therefore",
@@ -152,9 +153,11 @@ def _extract_named_entities(text: str) -> Set[str]:
     }
     generic_academic_terms = {
         "behaviors", "challenges", "consumers", "costs", "customers",
-        "employees", "figure", "figures", "guidelines", "ideas", "programmes",
+        "employees", "figure", "figures", "guidelines", "ideas", "observed",
+        "outcome", "pedagogy", "practice", "programmes", "relational",
         "reviews", "servers", "services", "shoppers", "solutions",
-        "staff", "students", "teachers", "tools", "users",
+        "staff", "structure", "students", "taxonomy", "teachers", "tools",
+        "users",
     }
     quantifier_prefixes = {
         "another", "different", "many", "millions", "several", "some",
@@ -220,6 +223,50 @@ def _extract_quotes(text: str) -> Set[str]:
     return quotes
 
 
+def _semantic_key(value: str) -> str:
+    """Normalize anchor text for semantic-preservation comparisons."""
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _entity_present(entity: str, text: str) -> bool:
+    if re.search(rf"\b{re.escape(entity)}\b", text, flags=re.IGNORECASE):
+        return True
+    entity_key = _semantic_key(entity)
+    text_key = _semantic_key(text)
+    if entity_key and entity_key in text_key:
+        return True
+    stripped = re.sub(
+        r"^(?:as|according to|at|in|on|from|by)\s+",
+        "",
+        str(entity or "").strip(),
+        flags=re.IGNORECASE,
+    )
+    stripped_key = _semantic_key(stripped)
+    return bool(stripped_key and stripped_key in text_key)
+
+
+def _quote_semantic_key(quote: str) -> str:
+    content = _quote_content(quote)
+    content = re.sub(r"[.!?,;:]+$", "", content).strip()
+    return _semantic_key(content)
+
+
+def _extract_quote_semantic_keys(text: str, *, hard_only: bool = True) -> Set[str]:
+    keys = set()
+    quotes = _extract_quotes(text)
+    if not hard_only:
+        quotes = set(quotes)
+        for match in _QUOTE_RE.finditer(text):
+            content_key = _quote_semantic_key(match.group())
+            if content_key:
+                quotes.add(match.group())
+    for quote in quotes:
+        key = _quote_semantic_key(quote)
+        if key:
+            keys.add(key)
+    return keys
+
+
 def _keyword_cosine(text_a: str, text_b: str) -> float:
     """Keyword-frequency cosine similarity (no external deps)."""
     def _tokenize(t):
@@ -260,11 +307,10 @@ def check_semantic_drift(
 
     # Named entity preservation
     orig_entities = _extract_named_entities(original)
-    new_entities = _extract_named_entities(rewritten)
     lost_entities = {
         entity
-        for entity in orig_entities - new_entities
-        if not re.search(rf"\b{re.escape(entity)}\b", rewritten)
+        for entity in orig_entities
+        if not _entity_present(entity, rewritten)
     }
     if lost_entities:
         for e in list(lost_entities)[:5]:
@@ -287,8 +333,8 @@ def check_semantic_drift(
             reasons.append(f"citation_lost: '{c}'")
 
     # Quote preservation
-    orig_quotes = _extract_quotes(original)
-    new_quotes = _extract_quotes(rewritten)
+    orig_quotes = _extract_quote_semantic_keys(original, hard_only=True)
+    new_quotes = _extract_quote_semantic_keys(rewritten, hard_only=False)
     lost_quotes = orig_quotes - new_quotes
     if lost_quotes:
         reasons.append(f"quote_lost: count {len(lost_quotes)}")

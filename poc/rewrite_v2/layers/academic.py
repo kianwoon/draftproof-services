@@ -9,9 +9,23 @@ import time
 from typing import Any
 
 from llm.gateway import LLMGateway
-from rewrite.guards import detect_protected_spans
+from rewrite.guards import _extract_named_entities, detect_protected_spans
 
 from ..strategy import clean_candidate_output
+
+_DIGIT_WORDS = {
+    "0": "zero",
+    "1": "one",
+    "2": "two",
+    "3": "three",
+    "4": "four",
+    "5": "five",
+    "6": "six",
+    "7": "seven",
+    "8": "eight",
+    "9": "nine",
+    "10": "ten",
+}
 
 
 def _json_from_response(raw: str) -> dict[str, Any]:
@@ -245,13 +259,33 @@ def _protected_texts_for_scope(text: str) -> list[str]:
         value = str(span.text or "").strip()
         if span.reason == "citation":
             continue
-        if span.reason == "numeric" and not re.search(r"\d{2,}", value):
-            continue
         if span.reason not in {"direct_quote", "numeric"}:
             continue
         if value and value not in protected:
             protected.append(value)
     return protected
+
+
+def _academic_required_terms_for_scope(text: str) -> list[str]:
+    terms: list[str] = []
+    for entity in sorted(_extract_named_entities(str(text or "")), key=lambda item: (-len(item), item)):
+        words = re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", entity)
+        if len(words) < 2:
+            continue
+        value = entity.strip()
+        if value and value not in terms:
+            terms.append(value)
+    return terms[:30]
+
+
+def _required_term_present(term: str, text: str) -> bool:
+    value = str(term or "").strip()
+    if not value:
+        return True
+    if re.search(rf"\b{re.escape(value)}\b", text, flags=re.IGNORECASE):
+        return True
+    alternate = re.sub(r"^The\s+", "", value, flags=re.IGNORECASE)
+    return bool(alternate != value and re.search(rf"\b{re.escape(alternate)}\b", text, flags=re.IGNORECASE))
 
 
 def _visual_reference_markers(text: str) -> list[str]:
@@ -325,6 +359,7 @@ def _build_academic_section_prompt(
                 "word_count": section.get("word_count"),
                 "required_exact_citations": section.get("citations") or [],
                 "required_exact_protected_spans": section.get("protected_spans") or [],
+                "required_key_terms": _academic_required_terms_for_scope(str(section.get("text") or "")),
                 "source_section": section.get("text"),
             }
             for section in sections
@@ -337,6 +372,7 @@ def _build_academic_section_prompt(
         "Each candidate must include exactly one rewritten section for every input section_id.\n"
         "Each rewritten_section must start with the original section heading exactly as given.\n"
         "Every required_exact_citation and required_exact_protected_span must appear verbatim in the same rewritten section.\n"
+        "Every required_key_term is a meaning anchor and must remain in that section.\n"
         "Keep the same claims, source attribution, numbers, figure references, service-model terms, and solution list.\n"
         "Do not add new sources, facts, examples, personal experience, or references.\n"
         "Reduce detector risk by changing section rhythm, sentence routes, and generic academic phrasing.\n"
@@ -487,10 +523,14 @@ def _build_academic_all_section_prompt(
     candidate_count: int,
 ) -> str:
     protected_all: list[str] = []
+    required_terms_all: list[str] = []
     for section in sections:
         for value in _protected_texts_for_scope(str(section.get("text") or "")):
             if value and value not in protected_all:
                 protected_all.append(value)
+        for value in _academic_required_terms_for_scope(str(section.get("text") or "")):
+            if value and value not in required_terms_all:
+                required_terms_all.append(value)
     payload = {
         "task": "Rewrite all academic assignment sections as compact structured academic prose.",
         "candidate_count": candidate_count,
@@ -501,11 +541,13 @@ def _build_academic_all_section_prompt(
                 "word_count": section.get("word_count"),
                 "required_exact_citations": section.get("citations") or [],
                 "required_exact_protected_spans": _protected_texts_for_scope(str(section.get("text") or "")),
+                "required_key_terms": _academic_required_terms_for_scope(str(section.get("text") or "")),
                 "source_section": section.get("text"),
             }
             for section in sections
         ],
         "global_required_protected_spans": protected_all,
+        "global_required_key_terms": required_terms_all,
     }
     return (
         "DraftProof academic all-section compact reconstruction.\n"
@@ -513,7 +555,8 @@ def _build_academic_all_section_prompt(
         "Use this only for assignment-like academic content with numbered/labelled sections.\n"
         "Rewrite every provided section, including setup/classification sections, because leaving the setup frozen can keep detector predictability high.\n"
         "Each variant must preserve every section heading exactly and in the same order.\n"
-        "Every required citation, direct quote, number with two or more digits, and protected span must appear verbatim.\n"
+        "Every required citation, direct quote, required number, and protected span must appear verbatim.\n"
+        "Every required_key_term must remain verbatim in the same section; these include named theories, institutions, titled concepts, and cited theorists.\n"
         "Do not convert parenthetical citations into narrative citations, or narrative citations into parenthetical citations. "
         "For example, keep '(Gao et al., 2025)' exactly instead of writing 'Gao et al. (2025)'.\n"
         "Keep the same claims, source attribution, required terms, and solution inventory. Do not add new sources, facts, examples, statistics, or personal experience.\n"
@@ -538,6 +581,22 @@ def _parse_academic_all_section_variants(raw: str) -> list[dict[str, Any]]:
     if not text:
         return []
     variants: list[dict[str, Any]] = []
+    marker_pattern = re.compile(r"(?im)^===\s*VARIANT\s+(\d+)\s*===\s*$")
+    markers = list(marker_pattern.finditer(text))
+    if markers:
+        for index, marker in enumerate(markers):
+            number = marker.group(1)
+            start = marker.end()
+            end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+            body = text[start:end]
+            body = re.sub(r"(?im)^===\s*END\s*===\s*$.*", "", body, count=1)
+            rewritten = body.strip()
+            if rewritten:
+                variants.append({
+                    "candidate_id": f"academic_all_section_variant_{number}",
+                    "text": rewritten,
+                })
+        return variants
     for number, body in re.findall(r"(?ms)^===\s*VARIANT\s+(\d+)\s*===\s*(.*?)\s*^===\s*END\s*===\s*", text):
         rewritten = body.strip()
         if rewritten:
@@ -576,6 +635,8 @@ def _normalize_academic_all_section_candidate(candidate_text: str, sections: lis
             if content:
                 punctuated_quote = re.compile(rf'"{re.escape(content)}([.!?])"')
                 text = punctuated_quote.sub(lambda match: f"{exact}{match.group(1)}", text)
+                quote_with_internal_punctuation = re.compile(rf'"{re.escape(content)}([.!?])"')
+                text = quote_with_internal_punctuation.sub(exact, text)
         for exact in re.findall(r"[\"“][^\"”]{3,}[\"”]", source_text):
             if exact in text:
                 continue
@@ -587,6 +648,14 @@ def _normalize_academic_all_section_candidate(candidate_text: str, sections: lis
             if content:
                 punctuated_quote = re.compile(rf'"{re.escape(content)}([.!?])"')
                 text = punctuated_quote.sub(lambda match: f"{exact}{match.group(1)}", text)
+                quote_with_internal_punctuation = re.compile(rf'"{re.escape(content)}([.!?])"')
+                text = quote_with_internal_punctuation.sub(exact, text)
+        for protected in _protected_texts_for_scope(source_text):
+            protected_text = str(protected or "")
+            word = _DIGIT_WORDS.get(protected_text)
+            if not word or re.search(rf"\b{re.escape(protected_text)}\b", text):
+                continue
+            text = re.sub(rf"\b{word}\b", protected_text, text, count=1, flags=re.IGNORECASE)
     text = _restore_exact_citation_forms(text, sections)
     text = _restore_visual_references(text, sections)
     return text.strip() + "\n"
@@ -648,7 +717,8 @@ def _academic_all_section_filter_failures(sections: list[dict[str, Any]], candid
     for section in sections:
         section_id = str(section.get("section_id") or "")
         heading = str(section.get("heading") or "").strip()
-        if heading:
+        synthetic_paragraph_heading = bool(re.match(r"^Paragraph\s+\d+$", heading))
+        if heading and not synthetic_paragraph_heading:
             match = re.search(rf"(?m)^\s*{re.escape(heading)}\b", text)
             if not match:
                 failures.append(f"{section_id}:heading_lost:{heading}")
@@ -660,8 +730,15 @@ def _academic_all_section_filter_failures(sections: list[dict[str, Any]], candid
             if citation not in text:
                 failures.append(f"{section_id}:citation_lost:{citation}")
         for protected in _protected_texts_for_scope(str(section.get("text") or "")):
-            if protected not in text:
+            if re.fullmatch(r"\d+(?:\.\d+)?%?", str(protected or "")):
+                protected_present = bool(re.search(rf"\b{re.escape(str(protected))}\b", text))
+            else:
+                protected_present = protected in text
+            if not protected_present:
                 failures.append(f"{section_id}:protected_span_lost:{protected}")
+        for term in _academic_required_terms_for_scope(str(section.get("text") or "")):
+            if not _required_term_present(term, text):
+                failures.append(f"{section_id}:required_term_lost:{term}")
     return failures[:30]
 
 
@@ -792,3 +869,114 @@ def _generate_academic_section_candidates(
             "section_patches": applied_sections,
         })
     return candidates
+
+
+def _academic_repair_anchor_terms(frontier: dict[str, Any], original_text: str) -> list[str]:
+    anchors: list[str] = []
+    for reason in frontier.get("semantic_reasons") or []:
+        match = re.search(r":\s*'([^']+)'", str(reason or ""))
+        if match:
+            value = match.group(1).strip()
+            if value and value not in anchors:
+                anchors.append(value)
+    for quote in re.findall(r"[\"“][^\"”]{3,}[\"”]", str(original_text or "")):
+        if quote not in anchors:
+            anchors.append(quote)
+    for citation in _exact_citation_markers(original_text):
+        if citation not in anchors:
+            anchors.append(citation)
+    for term in _academic_required_terms_for_scope(original_text):
+        if term not in anchors:
+            anchors.append(term)
+    for protected in _protected_texts_for_scope(original_text):
+        if protected not in anchors:
+            anchors.append(protected)
+    return anchors[:80]
+
+
+def _build_academic_anchor_repair_prompt(
+    *,
+    original_text: str,
+    candidate_text: str,
+    anchors: list[str],
+) -> str:
+    payload = {
+        "task": "Repair one near-miss academic rewrite candidate.",
+        "strict_requirements": [
+            "Preserve every required anchor exactly where it remains relevant.",
+            "Restore missing academic signal phrases and quoted concepts without adding new facts.",
+            "Keep all citations, quoted concepts, named theories, institutions, numbers, and section order.",
+            "Reduce detector Top-k texture by varying sentence openings, reducing compressed list rhythm, and avoiding polished survey phrasing.",
+            "Do not shorten away required source attribution or specialist terminology.",
+        ],
+        "required_exact_anchors": anchors,
+        "original_text": original_text,
+        "near_miss_candidate": candidate_text,
+    }
+    return (
+        "DraftProof academic anchor repair and texture pass.\n"
+        "Repair the candidate, do not restart from a generic summary.\n"
+        "Return only the repaired full text, with no explanation or markdown wrapper.\n\n"
+        f"ACADEMIC_REPAIR_JSON:\n{json.dumps(payload, indent=2, ensure_ascii=False, default=str)[:42000]}"
+    )
+
+
+def _generate_academic_anchor_repair_candidates(
+    *,
+    frontier: dict[str, Any],
+    original_text: str,
+    scan_report: dict[str, Any],
+    gateway: LLMGateway,
+    model: str | None,
+    deadline: float | None,
+    timeout_seconds: int,
+) -> list[dict[str, Any]]:
+    if os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_ANCHOR_REPAIR", "1").lower() in {"0", "false", "no"}:
+        return []
+    if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
+        return []
+    candidate_text = str(frontier.get("text") or "").strip()
+    if not candidate_text:
+        return []
+    if not str(frontier.get("strategy") or "").startswith("academic_"):
+        return []
+    anchors = _academic_repair_anchor_terms(frontier, original_text)
+    if not anchors:
+        return []
+    prompt = _build_academic_anchor_repair_prompt(
+        original_text=original_text,
+        candidate_text=candidate_text,
+        anchors=anchors,
+    )
+    response = gateway.chat(
+        prompt,
+        system=(
+            "You repair academic rewrites by preserving exact source anchors, citations, quoted concepts, "
+            "theories, institutions, and numbers while reducing predictable AI-like texture."
+        ),
+        max_tokens=7600,
+        temperature=0.72,
+        top_p=0.93,
+        presence_penalty=0.25 if _supports_openai_penalties(model) else None,
+        frequency_penalty=0.38 if _supports_openai_penalties(model) else None,
+        repetition_penalty=1.10 if _supports_repetition_penalty(model) else None,
+        seed=9321,
+    )
+    sections = _academic_assignment_sections(original_text, scan_report)
+    repaired_text = _normalize_academic_all_section_candidate(response.content, sections)
+    filter_failures = _academic_all_section_filter_failures(sections, repaired_text)
+    return [{
+        "strategy": "academic_anchor_repair_texture_pass",
+        "strategy_kind": "academic_anchor_repair_texture_pass",
+        "candidate_number": 1,
+        "candidate_response": {
+            "candidate_id": "academic_anchor_repair_variant_1",
+            "source_strategy": frontier.get("strategy"),
+            "required_anchor_count": len(anchors),
+        },
+        "text": repaired_text,
+        "local_filter_passed": not filter_failures,
+        "local_filter_failures": filter_failures,
+        "repair_source_candidate": frontier.get("candidate_number"),
+        "repair_anchor_count": len(anchors),
+    }]

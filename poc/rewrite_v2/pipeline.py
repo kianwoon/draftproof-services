@@ -33,6 +33,7 @@ from .layers.academic import (
     _academic_section_targets,
     _all_section_compact_allowed,
     _compose_academic_sections,
+    _generate_academic_anchor_repair_candidates,
     _generate_academic_all_section_candidates,
     _generate_academic_section_candidates,
     _normalize_academic_all_section_candidate,
@@ -124,6 +125,7 @@ def _effective_config(
         "author_stance_thesis_reframe": os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", "1").lower() not in {"0", "false", "no"},
         "author_stance_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_CANDIDATES", "3") or 3),
         "author_stance_texture_pass": os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_TEXTURE_PASS", "0").lower() not in {"0", "false", "no"},
+        "academic_anchor_repair_texture_pass": os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_ANCHOR_REPAIR", "1").lower() not in {"0", "false", "no"},
         "academic_all_section_compact_reconstruction": os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_ALL_SECTION_COMPACT", "1").lower() not in {"0", "false", "no"},
         "academic_all_section_compact_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_ALL_SECTION_CANDIDATES", "2") or 2),
         "academic_section_resolver": os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_SECTION_RESOLVER", "1").lower() not in {"0", "false", "no"},
@@ -2224,6 +2226,114 @@ def run_rewrite_pipeline_v2(
                 })
         frontier = _select_best_v2_frontier(candidate_rows, content_route=content_route)
         frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
+        academic_repair_frontier = frontier or select_best_candidate([
+            row for row in candidate_rows
+            if str(row.get("strategy") or "").startswith("academic_")
+            and isinstance(row.get("candidate_ai"), (int, float))
+        ])
+        if (
+            academic_repair_frontier
+            and frontier_lane != CandidateLane.GOAL_MET.value
+            and _strategy_family_allowed(content_route, "academic_anchor_repair_texture_pass")
+            and str(academic_repair_frontier.get("strategy") or "").startswith("academic_")
+            and time.time() - started < max_runtime_seconds
+        ):
+            progress(82, "Running V2 academic anchor repair")
+            repair_rows = _generate_academic_anchor_repair_candidates(
+                frontier=academic_repair_frontier,
+                original_text=original_text,
+                scan_report=original_report,
+                gateway=LLMGateway(LLMConfig(
+                    api_key=api_key,
+                    model=model or os.environ.get("LLM_MODEL") or "openai/gpt-4.1-mini",
+                    base_url=base_url or os.environ.get("LLM_BASE_URL", ""),
+                    timeout=_llm_call_timeout_seconds(),
+                    max_retries=1,
+                    max_tokens=7600,
+                    temperature=0.45,
+                )),
+                model=model,
+                deadline=started + _generation_budget_seconds(max_runtime_seconds),
+                timeout_seconds=_llm_call_timeout_seconds(),
+            )
+            repair_start = len(candidate_rows) + 1
+            for offset, generated_candidate in enumerate(repair_rows):
+                index = repair_start + offset
+                if time.time() - started >= max_runtime_seconds:
+                    break
+                candidate_text = str(generated_candidate.get("text") or "").strip()
+                if not candidate_text:
+                    continue
+                if generated_candidate.get("local_filter_passed") is False:
+                    candidate_rows.append({
+                        **generated_candidate,
+                        "candidate_ai": None,
+                        "decision": {
+                            "lane": CandidateLane.REJECT.value,
+                            "reason": "targeted_local_filter_rejected",
+                            "rank": [],
+                        },
+                    })
+                    continue
+                semantic = check_semantic_drift(original_text, candidate_text, threshold=0.15)
+                anchors_safe = protected_spans_preserved(original_text, candidate_text, protected)
+                semantic_safe = bool(semantic.accepted)
+                semantic_similarity = getattr(semantic, "similarity", None)
+                if not anchors_safe or not _semantic_scan_allowed(str(generated_candidate.get("strategy_kind") or ""), semantic_safe):
+                    candidate_rows.append({
+                        **generated_candidate,
+                        "decision": {
+                            "lane": CandidateLane.REJECT.value,
+                            "reason": "protected_anchor_or_semantic_scan_guard_rejected",
+                            "rank": [],
+                        },
+                        "semantic_safe": semantic_safe,
+                        "protected_anchors_safe": bool(anchors_safe),
+                        "semantic_review_required": not semantic_safe,
+                        "semantic_similarity": semantic_similarity,
+                        "semantic_reasons": getattr(semantic, "reasons", None),
+                        "semantic_override_applied": False,
+                    })
+                    continue
+                progress(min(84, 64 + index * 4), f"Scanning V2 academic repair candidate {offset + 1}")
+                candidate_report = _scan_report(candidate_text)
+                goal = evaluate_rewrite_goal(
+                    original_text=original_text,
+                    candidate_text=candidate_text,
+                    original_report=original_report,
+                    candidate_report=candidate_report,
+                )
+                decision = decide_candidate(
+                    goal=goal,
+                    original_report=original_report,
+                    candidate_report=candidate_report,
+                    reference_ai=reference_ai,
+                    required_ai_drop=required_ai_drop,
+                    target_ai_score=target_ai_score,
+                    semantic_safe=semantic_safe,
+                    quality_safe=anchors_safe,
+                    cost=index,
+                )
+                candidate_rows.append({
+                    **generated_candidate,
+                    "candidate_ai": _badge_ai(candidate_report),
+                    "candidate_wq": _badge_wq(candidate_report),
+                    "paragraph_local_score": None,
+                    "goal": goal.to_dict(),
+                    "decision": decision.to_dict(),
+                    "semantic_safe": semantic_safe,
+                    "protected_anchors_safe": bool(anchors_safe),
+                    "semantic_review_required": not semantic_safe,
+                    "semantic_similarity": semantic_similarity,
+                    "semantic_reasons": getattr(semantic, "reasons", None),
+                    "semantic_override_applied": False,
+                    "report": candidate_report,
+                    "text": candidate_text,
+                })
+                if decision.lane == CandidateLane.GOAL_MET:
+                    break
+            frontier = _select_best_v2_frontier(candidate_rows, content_route=content_route)
+            frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
         rescue_enabled = (
             os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"}
             and _strategy_family_allowed(content_route, "unsafe_cluster_rescue")

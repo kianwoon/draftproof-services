@@ -209,6 +209,21 @@ assert_test(
     len(all_section_variants) == 1 and all_section_variants[0]["candidate_id"] == "academic_all_section_variant_1",
     "V2 compact academic layer parses delimited variants",
 )
+all_section_variants_without_end = _parse_academic_all_section_variants(
+    """===VARIANT 1===
+Question 1
+One.
+
+===VARIANT 2===
+Question 1
+Two."""
+)
+assert_test(
+    len(all_section_variants_without_end) == 2
+    and "VARIANT 2" not in all_section_variants_without_end[0]["text"]
+    and all_section_variants_without_end[1]["text"].startswith("Question 1"),
+    "V2 compact academic layer splits variants even when END delimiters are missing",
+)
 normalized_all_section = _normalize_academic_all_section_candidate(
     '**Question 1**\nThis aligns with "renting rather than owning the service as a whole." (Blog, 2025)\n\n**Question 2**\nReviews shown in Figure 1 to 4 remain relevant. Gao et al. (2025) notes the service issue.',
     [
@@ -353,6 +368,63 @@ The outlet could use a visual call-light system (Rizzo, 2021). It could also kee
 assert_test(
     not _academic_all_section_filter_failures(all_sections, all_section_candidate),
     "V2 compact academic layer accepts all-section candidates preserving headings and citations",
+)
+assert_test(
+    not _academic_all_section_filter_failures(
+        paragraph_sections,
+        "Intro paragraph cites a report (Smith, 2024).\n\nSOLO taxonomy stands for Structure of Observed Learning Outcome and names Kelvin Collis.\n\nConclusion applies the seven procedures to practice.",
+    ),
+    "V2 compact academic layer does not require synthetic paragraph labels in candidates",
+)
+single_digit_assignment = """Question 1
+The framework has 2 points and uses 4 section parting during practice (Smith, 2024). The rest of the paragraph explains why these procedural anchors matter for teaching practice and should not disappear during academic reconstruction.
+"""
+single_digit_sections = _academic_assignment_sections(single_digit_assignment, academic_assignment_scan)
+assert_test(
+    any(
+        "protected_span_lost:4" in reason
+        for reason in _academic_all_section_filter_failures(
+            single_digit_sections,
+            "Question 1\nThe framework has 2 points during practice (Smith, 2024).",
+        )
+    ),
+    "V2 compact academic layer protects single-digit procedural numbers",
+)
+normalized_academic_quote = _normalize_academic_all_section_candidate(
+    'Question 1\nBrennan et al. (2014) call vocational education a "practice architecture."',
+    [{
+        "heading": "Question 1",
+        "text": 'Question 1\nBrennan et al. (2014) call vocational education a “practice architecture”.',
+    }],
+)
+assert_test(
+    "“practice architecture”" in normalized_academic_quote,
+    "V2 compact academic layer restores exact quote spans when punctuation moves inside straight quotes",
+)
+normalized_single_digit_words = _normalize_academic_all_section_candidate(
+    "Question 1\nThe framework has two points and four section parting during practice (Smith, 2024).",
+    [{
+        "heading": "Question 1",
+        "text": single_digit_assignment,
+    }],
+)
+assert_test(
+    "2 points" in normalized_single_digit_words and "4 section" in normalized_single_digit_words,
+    "V2 compact academic layer restores digit anchors when candidates spell them out",
+)
+required_term_assignment = """Question 1
+Social Learning Theory was developed by John Biggs and Kelvin Collis in this teaching discussion (Smith, 2024). The paragraph explains why named theories and theorists must remain attached to the reconstructed academic argument.
+"""
+required_term_sections = _academic_assignment_sections(required_term_assignment, academic_assignment_scan)
+assert_test(
+    any(
+        "required_term_lost:Social Learning Theory" in reason
+        for reason in _academic_all_section_filter_failures(
+            required_term_sections,
+            "Question 1\nThe learning framework remains relevant in this teaching discussion (Smith, 2024).",
+        )
+    ),
+    "V2 compact academic layer rejects loss of named academic theories",
 )
 assert_test(
     any(
@@ -1176,6 +1248,33 @@ assert_test(
     and not protected_spans_preserved(hard_quote_original, hard_quote_candidate, hard_quote_protected)
     and any(reason.startswith("quote_lost") for reason in hard_quote_drift.reasons),
     "V2 quote guard still hard-protects attributed direct quotes",
+)
+academic_citation_prefix_drift = check_semantic_drift(
+    "As Song et al. (2024) explain, Tik Tok can shape observed learning outcomes in this structure.",
+    "Song et al. (2024) explain that TikTok can shape observed learning outcomes in this structure.",
+    threshold=0.15,
+)
+assert_test(
+    academic_citation_prefix_drift.accepted,
+    "V2 semantic guard accepts academic citation-prefix and spacing variants",
+)
+academic_quote_punctuation_drift = check_semantic_drift(
+    'The assessment calls this a “practice architecture”.',
+    'The assessment calls this a "practice architecture."',
+    threshold=0.15,
+)
+assert_test(
+    all(not reason.startswith("quote_lost") for reason in academic_quote_punctuation_drift.reasons),
+    "V2 semantic guard accepts quote punctuation and quote-style variants",
+)
+academic_quote_context_drift = check_semantic_drift(
+    'As Brennan et al. (2014) argue, vocational education is a “practice architecture”.',
+    'Brennan et al. (2014) describe vocational education as a “practice architecture”.',
+    threshold=0.15,
+)
+assert_test(
+    all(not reason.startswith("quote_lost") for reason in academic_quote_context_drift.reasons),
+    "V2 semantic guard accepts preserved hard quotes even when rewritten context changes attribution verb",
 )
 
 print("All rewrite V2 pipeline tests passed.")

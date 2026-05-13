@@ -50,6 +50,7 @@ _FULL_DOC_FAMILIES = {
     "author_stance_texture_pass",
 }
 _ALL_STRATEGY_FAMILIES = {
+    "academic_anchor_repair_texture_pass",
     "academic_all_section_compact_reconstruction",
     "academic_cited_section_density_resolver",
     "targeted_paragraph_reconstruction",
@@ -152,6 +153,7 @@ def _route_payload(mode: str, confidence: float, reasons: list[str]) -> ContentR
             "author_stance_texture_pass",
         },
         "academic_cited_text": {
+            "academic_anchor_repair_texture_pass",
             "academic_all_section_compact_reconstruction",
             "academic_cited_section_density_resolver",
             "targeted_paragraph_reconstruction",
