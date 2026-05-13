@@ -8,11 +8,13 @@ import tempfile
 
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 from rewrite_v2 import run_rewrite_pipeline_v2
+from rewrite_v2.contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from rewrite_v2.pipeline import (
     _author_stance_thesis_filter_failures,
     _author_strategy_semantic_override_allowed,
     _academic_all_section_filter_failures,
     _academic_assignment_sections,
+    _academic_contract_semantic_override_allowed,
     _all_section_compact_allowed,
     _normalize_academic_all_section_candidate,
     _parse_academic_all_section_variants,
@@ -188,6 +190,27 @@ academic_assignment_scan = {
         "section_generation_units": [],
     },
 }
+contract_sections = _academic_assignment_sections(
+    """Digital Age and The Illusion of Competence
+As Brennan, Kemmis, and Atkin (2014) argue, Tik Tok practice connects to Social Learning Theory and the “practice architecture”.
+""",
+    academic_assignment_scan,
+)
+academic_contract = build_rewrite_contract(
+    "\n\n".join(section["text"] for section in contract_sections),
+    content_mode="academic_cited_text",
+    sections=contract_sections,
+)
+assert_test(
+    any(anchor.severity == AnchorSeverity.HARD_EXACT and anchor.text == "Brennan, Kemmis, and Atkin (2014)" for anchor in academic_contract.anchors)
+    and any(anchor.severity == AnchorSeverity.SOFT_REQUIRED and anchor.text == "Social Learning Theory" for anchor in academic_contract.anchors)
+    and any(anchor.severity == AnchorSeverity.TITLE_CONTEXT and anchor.text == "The Illusion" for anchor in academic_contract.anchors),
+    "V2 contract separates citations, academic terms, and section-title context",
+)
+assert_test(
+    any(anchor.text == "Tik Tok" and anchor_present(anchor, "TikTok practice still matters.") for anchor in academic_contract.anchors),
+    "V2 contract matches normalized aliases for compact term variants",
+)
 assert_test(
     _all_section_compact_allowed(academic_assignment, academic_assignment_scan),
     "V2 compact academic layer is allowed for assignment-shaped cited sections",
@@ -1214,6 +1237,41 @@ assert_test(
         anchors_safe=True,
     ),
     "V2 author texture semantic override rejects low anchor coverage",
+)
+assert_test(
+    _academic_contract_semantic_override_allowed(
+        strategy_kind="academic_all_section_compact_reconstruction",
+        original_text=(
+            "How Inclusive Learning Design Can Address Diverse Needs\n"
+            "Social Learning Theory and Tik Tok examples remain part of the argument (Smith, 2024)."
+        ),
+        original_report={
+            **scan_json,
+            "generation_handoff": {
+                "document_profile": {"document_type": "reflective_or_analytical_submission"},
+            },
+        },
+        candidate_text="Social Learning Theory and TikTok examples remain part of the argument (Smith, 2024).",
+        semantic_similarity=0.72,
+        anchors_safe=True,
+        semantic_reasons=[
+            "lost_named_entity: 'How Inclusive Learning Design Can Address'",
+            "lost_named_entity: 'Diverse Needs'",
+        ],
+    ),
+    "V2 academic contract semantic override allows title-context losses when required anchors remain",
+)
+assert_test(
+    not _academic_contract_semantic_override_allowed(
+        strategy_kind="academic_all_section_compact_reconstruction",
+        original_text="Social Learning Theory remains part of the argument (Smith, 2024).",
+        original_report=scan_json,
+        candidate_text="The learning framework remains part of the argument (Smith, 2024).",
+        semantic_similarity=0.72,
+        anchors_safe=True,
+        semantic_reasons=["lost_named_entity: 'Social Learning Theory'"],
+    ),
+    "V2 academic contract semantic override still rejects lost required academic terms",
 )
 
 cluster_text = _cluster_text_from_gate(

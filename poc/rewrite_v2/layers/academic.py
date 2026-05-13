@@ -9,8 +9,9 @@ import time
 from typing import Any
 
 from llm.gateway import LLMGateway
-from rewrite.guards import _extract_named_entities, detect_protected_spans
+from rewrite.guards import detect_protected_spans
 
+from ..contracts import AnchorSeverity, anchor_present, build_rewrite_contract, normalized_anchor_key
 from ..strategy import clean_candidate_output
 
 _DIGIT_WORDS = {
@@ -270,35 +271,21 @@ def _protected_texts_for_scope(text: str) -> list[str]:
 
 
 def _academic_required_terms_for_scope(text: str) -> list[str]:
-    source = str(text or "")
-    lines = source.splitlines()
-    if len(lines) > 1:
-        first = lines[0].strip()
-        if first and len(first) <= 120 and not re.search(r"[.!?]\s*$", first):
-            source = "\n".join(lines[1:]).strip()
+    contract = build_rewrite_contract(
+        str(text or ""),
+        content_mode="academic_cited_text",
+        sections=[{"section_id": "scope", "text": str(text or "")}],
+    )
     terms: list[str] = []
-    for entity in sorted(_extract_named_entities(source), key=lambda item: (-len(item), item)):
-        words = re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", entity)
-        if len(words) < 2:
-            continue
-        value = entity.strip()
-        if value and value not in terms:
-            terms.append(value)
+    for anchor in contract.anchors_by_severity(AnchorSeverity.SOFT_REQUIRED):
+        if anchor.text not in terms:
+            terms.append(anchor.text)
     return terms[:30]
 
 
 def _required_term_present(term: str, text: str) -> bool:
-    value = str(term or "").strip()
-    if not value:
-        return True
-    if re.search(rf"\b{re.escape(value)}\b", text, flags=re.IGNORECASE):
-        return True
-    alternate = re.sub(r"^The\s+", "", value, flags=re.IGNORECASE)
-    if alternate != value and re.search(rf"\b{re.escape(alternate)}\b", text, flags=re.IGNORECASE):
-        return True
-    term_key = re.sub(r"[^a-z0-9]+", "", value.casefold())
-    text_key = re.sub(r"[^a-z0-9]+", "", str(text or "").casefold())
-    return bool(term_key and term_key in text_key)
+    key = normalized_anchor_key(term)
+    return bool(key and key in normalized_anchor_key(text))
 
 
 def _visual_reference_markers(text: str) -> list[str]:
@@ -727,6 +714,7 @@ def _academic_all_section_filter_failures(sections: list[dict[str, Any]], candid
     failures: list[str] = []
     text = str(candidate_text or "")
     last_heading_index = -1
+    contract = build_rewrite_contract("", content_mode="academic_cited_text", sections=sections)
     for section in sections:
         section_id = str(section.get("section_id") or "")
         heading = str(section.get("heading") or "").strip()
@@ -749,9 +737,9 @@ def _academic_all_section_filter_failures(sections: list[dict[str, Any]], candid
                 protected_present = protected in text
             if not protected_present:
                 failures.append(f"{section_id}:protected_span_lost:{protected}")
-        for term in _academic_required_terms_for_scope(str(section.get("text") or "")):
-            if not _required_term_present(term, text):
-                failures.append(f"{section_id}:required_term_lost:{term}")
+        for anchor in contract.anchors_by_severity(AnchorSeverity.SOFT_REQUIRED):
+            if anchor.section_id == section_id and not anchor_present(anchor, text):
+                failures.append(f"{section_id}:required_term_lost:{anchor.text}")
     return failures[:30]
 
 

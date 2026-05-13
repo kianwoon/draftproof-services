@@ -17,6 +17,7 @@ from report.render_rewrite import render_rewrite_report
 from report.report import ReportBuilder, report_to_dict
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 
+from .contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from .goal_contract import RewriteGoalEvaluation
 from .selection import (
@@ -1177,6 +1178,39 @@ def _author_strategy_semantic_override_allowed(
     return _required_anchor_coverage(candidate_text, required_entities) >= 0.85
 
 
+def _academic_contract_semantic_override_allowed(
+    *,
+    strategy_kind: str,
+    original_text: str,
+    original_report: dict[str, Any],
+    candidate_text: str,
+    semantic_similarity: float | None,
+    anchors_safe: bool,
+    semantic_reasons: list[str] | None,
+) -> bool:
+    if not str(strategy_kind or "").startswith("academic_"):
+        return False
+    if not anchors_safe:
+        return False
+    if not isinstance(semantic_similarity, (int, float)) or float(semantic_similarity) < 0.55:
+        return False
+    reasons = [str(reason or "") for reason in (semantic_reasons or []) if str(reason or "").strip()]
+    if not reasons or any(not reason.startswith("lost_named_entity:") for reason in reasons):
+        return False
+    sections = _academic_assignment_sections(original_text, original_report)
+    contract = build_rewrite_contract(
+        original_text,
+        content_mode="academic_cited_text",
+        sections=sections or [{"section_id": "document", "text": original_text}],
+    )
+    required = [
+        anchor for anchor in contract.anchors
+        if anchor.severity in {AnchorSeverity.HARD_EXACT, AnchorSeverity.HARD_NORMALIZED, AnchorSeverity.SOFT_REQUIRED}
+    ]
+    missing_required = [anchor.text for anchor in required if not anchor_present(anchor, candidate_text)]
+    return not missing_required
+
+
 def _attach_hidden_paragraph_targets(candidate_payload: dict[str, Any], target_map: dict[str, str]) -> dict[str, Any]:
     patches = candidate_payload.get("patches")
     if not isinstance(patches, list):
@@ -2129,6 +2163,17 @@ def run_rewrite_pipeline_v2(
             ):
                 semantic_safe = True
                 semantic_override = True
+            if not semantic_safe and _academic_contract_semantic_override_allowed(
+                strategy_kind=strategy_kind,
+                original_text=original_text,
+                original_report=original_report,
+                candidate_text=candidate_text,
+                semantic_similarity=semantic_similarity,
+                anchors_safe=bool(anchors_safe),
+                semantic_reasons=getattr(semantic, "reasons", None),
+            ):
+                semantic_safe = True
+                semantic_override = True
             if not anchors_safe or not _semantic_scan_allowed(strategy_kind, semantic_safe):
                 candidate_rows.append({
                     **generated_candidate,
@@ -2279,6 +2324,18 @@ def run_rewrite_pipeline_v2(
                 anchors_safe = protected_spans_preserved(original_text, candidate_text, protected)
                 semantic_safe = bool(semantic.accepted)
                 semantic_similarity = getattr(semantic, "similarity", None)
+                semantic_override = False
+                if not semantic_safe and _academic_contract_semantic_override_allowed(
+                    strategy_kind=str(generated_candidate.get("strategy_kind") or ""),
+                    original_text=original_text,
+                    original_report=original_report,
+                    candidate_text=candidate_text,
+                    semantic_similarity=semantic_similarity,
+                    anchors_safe=bool(anchors_safe),
+                    semantic_reasons=getattr(semantic, "reasons", None),
+                ):
+                    semantic_safe = True
+                    semantic_override = True
                 if not anchors_safe or not _semantic_scan_allowed(str(generated_candidate.get("strategy_kind") or ""), semantic_safe):
                     candidate_rows.append({
                         **generated_candidate,
@@ -2292,7 +2349,7 @@ def run_rewrite_pipeline_v2(
                         "semantic_review_required": not semantic_safe,
                         "semantic_similarity": semantic_similarity,
                         "semantic_reasons": getattr(semantic, "reasons", None),
-                        "semantic_override_applied": False,
+                        "semantic_override_applied": semantic_override,
                     })
                     continue
                 progress(min(84, 64 + index * 4), f"Scanning V2 academic repair candidate {offset + 1}")
@@ -2326,7 +2383,7 @@ def run_rewrite_pipeline_v2(
                     "semantic_review_required": not semantic_safe,
                     "semantic_similarity": semantic_similarity,
                     "semantic_reasons": getattr(semantic, "reasons", None),
-                    "semantic_override_applied": False,
+                    "semantic_override_applied": semantic_override,
                     "report": candidate_report,
                     "text": candidate_text,
                 })
