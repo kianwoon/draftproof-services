@@ -68,7 +68,8 @@ def _paragraph_count(text: str) -> int:
 
 def _citation_count(text: str) -> int:
     patterns = [
-        r"\([A-Z][A-Za-z' -]+,\s*(?:19|20)\d{2}(?:,\s*p\.?\s*\d+)?\)",
+        r"\([A-Z][A-Za-z' -]+(?:\s+et\s+al\.)?,\s*(?:19|20)\d{2}(?:,\s*p\.?\s*\d+)?\)",
+        r"\b[A-Z][A-Za-z' -]+(?:\s+et\s+al\.|(?:,\s*[A-Z][A-Za-z' -]+)*(?:,\s*(?:and|&)\s*[A-Z][A-Za-z' -]+)?)?\s+\((?:19|20)\d{2}[a-z]?\)",
         r"\[(?:\d+|[A-Za-z]+(?:,\s*(?:19|20)\d{2})?)\]",
         r"\b(?:doi|DOI):\s*10\.\d{4,9}/[-._;()/:A-Z0-9]+\b",
         r"\b(?:et al\.|References|Bibliography|Works Cited)\b",
@@ -78,6 +79,51 @@ def _citation_count(text: str) -> int:
 
 def _quote_count(text: str) -> int:
     return len(re.findall(r"[\"“][^\"”]{8,}[\"”]", text or ""))
+
+
+def _quote_stats(text: str) -> dict[str, int]:
+    spans = re.findall(r"[\"“]([^\"”]{3,})[\"”]", text or "")
+    short_terms = 0
+    long_or_sentence = 0
+    for span in spans:
+        words = re.findall(r"\b[\w'-]+\b", span)
+        stripped = span.strip()
+        if len(words) <= 5 and not re.search(r"[.!?;:]", stripped):
+            short_terms += 1
+        else:
+            long_or_sentence += 1
+    return {
+        "total": len(spans),
+        "short_terms": short_terms,
+        "long_or_sentence": long_or_sentence,
+    }
+
+
+def _scan_document_profile(scan_report: dict | None) -> dict[str, Any]:
+    report = scan_report or {}
+    handoff = report.get("generation_handoff") if isinstance(report.get("generation_handoff"), dict) else {}
+    profile = handoff.get("document_profile") if isinstance(handoff.get("document_profile"), dict) else {}
+    if profile:
+        return profile
+    intelligence = report.get("scan_intelligence") if isinstance(report.get("scan_intelligence"), dict) else {}
+    nested_handoff = intelligence.get("generation_handoff") if isinstance(intelligence.get("generation_handoff"), dict) else {}
+    nested_profile = nested_handoff.get("document_profile") if isinstance(nested_handoff.get("document_profile"), dict) else {}
+    return nested_profile if isinstance(nested_profile, dict) else {}
+
+
+def _academic_profile_signal(text: str, scan_report: dict | None) -> list[str]:
+    reasons: list[str] = []
+    profile = _scan_document_profile(scan_report)
+    document_type = str(profile.get("document_type") or "").lower()
+    if re.search(r"\b(reflective_or_analytical_submission|academic|literature|analytical|submission|essay)\b", document_type):
+        reasons.append(f"document_type={document_type}")
+    lowered = text.lower()
+    if re.search(r"\b(literature review|taxonomy|pedagogy|educator|vocational education|vet\b|according to research|argue|suggests|report\s*\(?(?:19|20)\d{2}\)?)\b", lowered):
+        reasons.append("academic_discourse_markers")
+    reference_register = ((scan_report or {}).get("generation_handoff") or {}).get("reference_register")
+    if isinstance(reference_register, list) and reference_register:
+        reasons.append(f"reference_register={len(reference_register)}")
+    return reasons[:4]
 
 
 def _bullet_line_ratio(lines: list[str]) -> float:
@@ -153,16 +199,23 @@ def classify_content_route(original_text: str, scan_report: dict | None = None) 
     lines = [line for line in stripped.splitlines() if line.strip()]
     bullet_ratio = _bullet_line_ratio(lines)
     citation_count = _citation_count(stripped)
-    quote_count = _quote_count(stripped)
+    quote_stats = _quote_stats(stripped)
+    quote_count = quote_stats["total"]
+    long_quote_count = quote_stats["long_or_sentence"]
+    short_quote_count = quote_stats["short_terms"]
+    academic_reasons = _academic_profile_signal(stripped, scan_report)
     lowered = stripped.lower()
     sentence_map_size = len((scan_report or {}).get("sentence_map") or {})
 
     if bullet_ratio >= 0.35 or re.search(r"\|.+\|", stripped):
         return _route_payload("structured_list_table", 0.86, [f"bullet_line_ratio={bullet_ratio:.2f}", "structured lines require shape preservation"])
-    if citation_count >= 2:
-        return _route_payload("academic_cited_text", 0.84, [f"citation_count={citation_count}", "citation markers require citation-preserving rewrite"])
-    if quote_count >= 3 or (quote_count >= 2 and word_count < 450):
-        return _route_payload("quote_heavy", 0.82, [f"quote_count={quote_count}", "quoted material should remain strict anchors"])
+    if citation_count >= 2 or (academic_reasons and citation_count >= 1) or (academic_reasons and word_count >= 450):
+        reasons = [f"citation_count={citation_count}"] + academic_reasons
+        if short_quote_count:
+            reasons.append(f"short_conceptual_quotes={short_quote_count}")
+        return _route_payload("academic_cited_text", 0.86, reasons + ["academic citations require citation-preserving rewrite"])
+    if long_quote_count >= 3 or (long_quote_count >= 2 and word_count < 450):
+        return _route_payload("quote_heavy", 0.82, [f"quote_count={quote_count}", f"long_quote_count={long_quote_count}", "quoted material should remain strict anchors"])
     if re.search(r"\b(api|sdk|json|yaml|http|endpoint|database|function|class|method|stack trace|schema|repository|deployment|kubernetes|docker)\b", lowered) or re.search(r"[{}<>]|```|/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", stripped):
         return _route_payload("technical_content", 0.82, ["technical markers detected", "technical content needs term and structure preservation"])
     if re.search(r"\b(shall|must not|compliance|contract|liability|statutory|regulation|clinical|diagnosis|dosage|patient|medical|legal|terms and conditions)\b", lowered) or re.search(r"\b(?:company|privacy|security|data|workplace|use|refund|billing)\s+policy\b|\bpolicy\s+(?:states|requires|prohibits|allows|applies)\b", lowered):

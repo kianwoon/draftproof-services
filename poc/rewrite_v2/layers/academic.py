@@ -106,6 +106,33 @@ def _split_academic_sections(text: str) -> list[dict[str, Any]]:
     return sections
 
 
+def _split_all_paragraph_sections(text: str) -> list[dict[str, Any]]:
+    source = str(text or "")
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n+", source.strip())
+        if paragraph.strip()
+    ]
+    sections: list[dict[str, Any]] = []
+    cursor = 0
+    for index, paragraph in enumerate(paragraphs):
+        start = source.find(paragraph, cursor)
+        if start < 0:
+            start = cursor
+        end = start + len(paragraph)
+        cursor = end
+        sections.append({
+            "section_id": f"p{index + 1:03d}",
+            "heading": f"Paragraph {index + 1}",
+            "text": paragraph,
+            "start": start,
+            "end": end,
+            "word_count": len(re.findall(r"\b[\w'-]+\b", paragraph)),
+            "citations": _exact_citation_markers(paragraph),
+        })
+    return sections
+
+
 def _academic_sections_from_handoff(original_text: str, scan_report: dict[str, Any]) -> list[dict[str, Any]]:
     units = (((scan_report or {}).get("generation_handoff") or {}).get("section_generation_units") or [])
     if not isinstance(units, list):
@@ -195,10 +222,18 @@ def _exact_citation_markers(text: str) -> list[str]:
     ]
     for pattern in patterns:
         for match in re.finditer(pattern, source, flags=re.IGNORECASE):
-            value = match.group(0).strip()
+            value = _normalize_citation_marker(match.group(0).strip())
             if value and value not in markers:
                 markers.append(value)
     return markers
+
+
+def _normalize_citation_marker(value: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"^(?:According\s+to|As|In|Based\s+on)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(?:research|a\s+report|the\s+report|the\s+study)\s+from\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^the\s+", "", text, flags=re.IGNORECASE)
+    return text.strip(" ,.;:")
 
 
 def _protected_texts_for_scope(text: str) -> list[str]:
@@ -416,7 +451,11 @@ def _academic_section_filter_failures(sections: list[dict[str, Any]], patches: l
 
 
 def _academic_assignment_sections(original_text: str, scan_report: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_sections = _split_academic_sections(original_text)
+    source = str(original_text or "")
+    if list(_section_heading_pattern().finditer(source)):
+        raw_sections = _split_academic_sections(source)
+    else:
+        raw_sections = _split_all_paragraph_sections(source)
     if len(raw_sections) <= 1:
         handoff_sections = _academic_sections_from_handoff(original_text, scan_report)
         if handoff_sections:
@@ -533,6 +572,21 @@ def _normalize_academic_all_section_candidate(candidate_text: str, sections: lis
             straight = f'"{content}"'
             if straight in text:
                 text = text.replace(straight, exact)
+                continue
+            if content:
+                punctuated_quote = re.compile(rf'"{re.escape(content)}([.!?])"')
+                text = punctuated_quote.sub(lambda match: f"{exact}{match.group(1)}", text)
+        for exact in re.findall(r"[\"“][^\"”]{3,}[\"”]", source_text):
+            if exact in text:
+                continue
+            content = exact.strip('"“”').strip()
+            straight = f'"{content}"'
+            if straight in text:
+                text = text.replace(straight, exact)
+                continue
+            if content:
+                punctuated_quote = re.compile(rf'"{re.escape(content)}([.!?])"')
+                text = punctuated_quote.sub(lambda match: f"{exact}{match.group(1)}", text)
     text = _restore_exact_citation_forms(text, sections)
     text = _restore_visual_references(text, sections)
     return text.strip() + "\n"

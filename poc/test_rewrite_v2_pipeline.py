@@ -147,6 +147,26 @@ assert_test(
     "academic_all_section_compact_reconstruction" in academic_route.allowed_strategy_families,
     "V2 content router enables compact all-section academic reconstruction for assignment-shaped cited text",
 )
+reflective_academic_route = classify_content_route(
+    (
+        "This literature review considers VET teaching practice. According to the Australian Government Report (2024), "
+        "many apprentices do not complete training. Brennan, Kemmis, and Atkin (2014) describe vocational education as "
+        "a “practice architecture”, while Song et al. (2024) argue that platforms often show “highlight moment” clips. "
+        "The teacher can use SOLO taxonomy and pedagogy to connect online examples with repeated classroom practice."
+    ),
+    {
+        **scan_json,
+        "generation_handoff": {
+            "document_profile": {"document_type": "reflective_or_analytical_submission"},
+        },
+    },
+)
+assert_test(
+    reflective_academic_route.content_mode == "academic_cited_text"
+    and "academic_cited_section_density_resolver" in reflective_academic_route.allowed_strategy_families
+    and "quote_heavy" not in reflective_academic_route.content_mode,
+    "V2 content router lets academic profile and citations beat short conceptual quote count",
+)
 academic_strategies = route_strategies(scan_json, full_rewrite_allowed=True, content_route=academic_route)
 assert_test(
     not any(strategy.kind == StrategyKind.FULL_REWRITE for strategy in academic_strategies),
@@ -225,11 +245,41 @@ assert_test(
     "Figure 1 to 4" in normalized_visual_reference,
     "V2 compact academic layer restores protected visual evidence references",
 )
+normalized_concept_quote = _normalize_academic_all_section_candidate(
+    'Paragraph 2\nBrennan, Kemmis, and Atkin (2014) describe vocational education as a "practice architecture."',
+    [{
+        "heading": "Paragraph 2",
+        "text": "Paragraph 2\nBrennan, Kemmis, and Atkin (2014) describe vocational education as a “practice architecture”.",
+        "citations": ["Brennan, Kemmis, and Atkin (2014)"],
+    }],
+)
+assert_test(
+    "“practice architecture”." in normalized_concept_quote,
+    "V2 compact academic layer restores protected conceptual quote punctuation",
+)
 academic_targets = _academic_section_targets(academic_assignment, scan_json, limit=3)
 assert_test(
     len(academic_targets) >= 2
     and any("(Gao et al., 2025)" in target.get("citations", []) for target in academic_targets),
     "V2 academic resolver selects citation-bearing sections as rewrite targets",
+)
+report_citation_sections = _academic_assignment_sections(
+    (
+        "According to the Australian Government Report (2024), completion remains difficult because apprentices need sustained support, repeated practice, and clearer expectations across the training year.\n\n"
+        "As Song et al. (2024) argue, platforms compress the visible process and can make learners overlook the technical sequence behind the finished outcome."
+    ),
+    {
+        **scan_json,
+        "generation_handoff": {
+            "document_profile": {"document_type": "reflective_or_analytical_submission"},
+        },
+    },
+)
+report_citations = [citation for section in report_citation_sections for citation in section.get("citations", [])]
+assert_test(
+    "Australian Government Report (2024)" in report_citations
+    and "Song et al. (2024)" in report_citations,
+    "V2 academic layer protects citation anchors without leading signal phrases",
 )
 section_patches = [
     {
@@ -272,6 +322,25 @@ assert_test(
     "V2 academic section filter rejects citation form drift",
 )
 all_sections = _academic_assignment_sections(academic_assignment, academic_assignment_scan)
+paragraph_assignment = """Intro paragraph cites a report (Smith, 2024) and explains why the teaching problem needs a careful academic rewrite rather than a narrow sentence patch.
+
+SOLO taxonomy stands for Structure of Observed Learning Outcome and names Kelvin Collis while explaining how the non-cited conceptual section still carries required meaning.
+
+Conclusion applies the seven procedures to practice and explains why the whole reflective submission must keep its non-cited reasoning sections during reconstruction."""
+paragraph_sections = _academic_assignment_sections(
+    paragraph_assignment,
+    {
+        **scan_json,
+        "generation_handoff": {
+            "document_profile": {"document_type": "reflective_or_analytical_submission"},
+        },
+    },
+)
+assert_test(
+    len(paragraph_sections) == 3
+    and any("Kelvin Collis" in section.get("text", "") for section in paragraph_sections),
+    "V2 compact academic layer includes non-cited paragraphs in all-section reconstruction",
+)
 all_section_candidate = """Question 1
 Hai Di Lao is a people-processing service (Blog, 2025).
 
