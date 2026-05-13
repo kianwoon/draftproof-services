@@ -158,6 +158,7 @@ const TRANSFORMATION_SIGNAL_GROUPS = [
   {
     id: 'ai_authorship',
     label: 'AI Authorship Signals',
+    description: 'Pattern, predictability, and model-like texture signals.',
     keys: [
       'topk_calibrated_risk',
       'topk_pattern_raw',
@@ -173,6 +174,7 @@ const TRANSFORMATION_SIGNAL_GROUPS = [
   {
     id: 'human_authenticity',
     label: 'Human / Authenticity Signals',
+    description: 'Grounding and anchor signals that reduce authorship certainty.',
     keys: [
       'human_anchor_score',
       'human_anchor_discount',
@@ -181,6 +183,7 @@ const TRANSFORMATION_SIGNAL_GROUPS = [
   {
     id: 'quality_calibration',
     label: 'Quality & Calibration Signals',
+    description: 'Evidence quality, calibration confidence, and reporting caution.',
     keys: [
       'citation_grounding_risk',
       'calibration_confidence',
@@ -1743,8 +1746,14 @@ export default function Report() {
             </div>
             <div className="transformation-bars">
               {groupTransformationSignals(comparisonSignals).map((group) => (
-                <div className="transformation-signal-group" key={`${variant}-${group.id}`}>
-                  <h4>{group.label}</h4>
+                <div className={`transformation-signal-group transformation-signal-group-${group.id}`} key={`${variant}-${group.id}`}>
+                  <div className="transformation-signal-group-head">
+                    <div>
+                      <h4>{group.label}</h4>
+                      {group.description && <p>{group.description}</p>}
+                    </div>
+                    <span>{group.signals.length} signals</span>
+                  </div>
                   {group.signals.map((signal) => {
                     const baselineSignal = variant === 'rewritten'
                       ? transformationSignals.find((item) => item.key === signal.key)

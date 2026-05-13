@@ -4543,29 +4543,83 @@ th {
 
 .transformation-bars {
   display: grid;
-  gap: .95rem;
+  gap: 1.05rem;
   padding-top: .55rem;
   align-self: start;
 }
 
 .transformation-signal-group {
+  --signal-group-accent: #0f766e;
+  --signal-group-bg: rgba(15, 118, 110, .055);
   display: grid;
-  gap: .62rem;
+  gap: .68rem;
+  padding: .75rem .78rem .82rem;
+  border-left: 4px solid var(--signal-group-accent);
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--signal-group-bg), rgba(248, 250, 252, .36));
 }
 
 .transformation-signal-group + .transformation-signal-group {
-  padding-top: .25rem;
-  border-top: 1px solid #e2e8f0;
+  margin-top: .12rem;
 }
 
-.transformation-signal-group h4 {
+.transformation-signal-group-ai_authorship {
+  --signal-group-accent: #c2410c;
+  --signal-group-bg: rgba(194, 65, 12, .07);
+}
+
+.transformation-signal-group-human_authenticity {
+  --signal-group-accent: #16a34a;
+  --signal-group-bg: rgba(22, 163, 74, .075);
+}
+
+.transformation-signal-group-quality_calibration {
+  --signal-group-accent: #0f766e;
+  --signal-group-bg: rgba(15, 118, 110, .065);
+}
+
+.transformation-signal-group-other {
+  --signal-group-accent: #64748b;
+  --signal-group-bg: rgba(100, 116, 139, .07);
+}
+
+.transformation-signal-group-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: .75rem;
+  padding-bottom: .05rem;
+}
+
+.transformation-signal-group-head h4 {
   margin: 0;
   color: #334155;
   font-size: .68rem;
   font-weight: 900;
-  letter-spacing: .08em;
+  letter-spacing: 0;
   line-height: 1.2;
   text-transform: uppercase;
+}
+
+.transformation-signal-group-head p {
+  margin: .16rem 0 0;
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.transformation-signal-group-head > span {
+  justify-self: end;
+  min-width: max-content;
+  padding: .18rem .45rem;
+  color: var(--signal-group-accent);
+  background: rgba(255, 255, 255, .7);
+  border: 1px solid color-mix(in srgb, var(--signal-group-accent) 22%, transparent);
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .transformation-bar-row {
