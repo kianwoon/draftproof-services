@@ -340,7 +340,13 @@ from rewrite_pipeline import (
     _resolve_stage_llm_budget,
 )
 import llm.gateway as llm_gateway_module
-from llm.gateway import LLMConfig, LLMGateway, _model_capabilities
+from llm.gateway import (
+    LLMConfig,
+    LLMGateway,
+    _model_capabilities,
+    model_supports_presence_frequency_penalties,
+    model_supports_repetition_penalty,
+)
 from report import ReportBuilder, report_to_dict
 from report.render_rewrite import render_rewrite_report
 
@@ -3175,6 +3181,13 @@ assert_test(
     and _model_capabilities("qwen/qwen3-32b").get("top_k") is True,
     "model capability normalization disables top_k for OpenAI models only",
 )
+assert_test(
+    model_supports_presence_frequency_penalties("deepseek/deepseek-chat")
+    and model_supports_repetition_penalty("deepseek/deepseek-chat")
+    and model_supports_presence_frequency_penalties("openai/gpt-4.1-mini")
+    and not model_supports_repetition_penalty("openai/gpt-4.1-mini"),
+    "model capability helpers expose shared penalty support for V2 and gateway payloads",
+)
 sampling_env_keys = [
     "DRAFTPROOF_AI_SEARCH_TOP_P",
     "DRAFTPROOF_AI_SEARCH_PRESENCE_PENALTY",
@@ -3252,6 +3265,29 @@ assert_test(
     and captured_llm_payload.get("frequency_penalty") == 0.25
     and "top_k" not in captured_llm_payload,
     "OpenAI gateway payload sends normalized sampling controls and strips unsupported top_k",
+)
+captured_unsupported_repetition_payload = {}
+
+
+def _fake_requests_post_repetition(url, headers=None, json=None, timeout=None):
+    captured_unsupported_repetition_payload.update(json or {})
+    return _FakeLLMHTTPResponse()
+
+
+try:
+    llm_gateway_module.requests.post = _fake_requests_post_repetition
+    LLMGateway(LLMConfig(
+        api_key="test",
+        base_url="https://openrouter.ai/api/v1",
+        model="openai/gpt-4.1-mini",
+        max_retries=1,
+        repetition_penalty=1.1,
+    )).chat("test")
+finally:
+    llm_gateway_module.requests.post = original_requests_post
+assert_test(
+    "repetition_penalty" not in captured_unsupported_repetition_payload,
+    "gateway strips unsupported repetition_penalty using centralized model capabilities",
 )
 policy_summary = _mitigation_sampling_policy_summary()
 assert_test(

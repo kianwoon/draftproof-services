@@ -843,6 +843,8 @@ def _build_rewrite_debug_log(
             "reference_ai": summary.get("reference_ai"),
             "required_ai_drop": summary.get("required_ai_drop"),
             "target_ai_score": summary.get("target_ai_score"),
+            "candidate_generation_status": summary.get("candidate_generation_status"),
+            "content_router_trace": summary.get("content_router_trace"),
             "strategy_trace": summary.get("strategy_trace"),
             "candidate_trace": summary.get("candidate_trace"),
             "selected_candidate": summary.get("selected_candidate"),

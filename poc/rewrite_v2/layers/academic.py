@@ -8,7 +8,11 @@ import re
 import time
 from typing import Any
 
-from llm.gateway import LLMGateway
+from llm.gateway import (
+    LLMGateway,
+    model_supports_presence_frequency_penalties,
+    model_supports_repetition_penalty,
+)
 from rewrite.guards import detect_protected_spans
 
 from ..contracts import AnchorSeverity, anchor_present, build_rewrite_contract, normalized_anchor_key
@@ -53,17 +57,11 @@ def _json_from_response(raw: str) -> dict[str, Any]:
 
 
 def _supports_openai_penalties(model: str | None) -> bool:
-    name = (model or "").lower()
-    if not name:
-        return True
-    if "gpt-5" in name or "o1" in name or "o3" in name:
-        return False
-    return True
+    return model_supports_presence_frequency_penalties(model)
 
 
 def _supports_repetition_penalty(model: str | None) -> bool:
-    name = (model or "").lower()
-    return any(provider in name for provider in ("deepseek", "qwen", "mistral", "llama", "anthropic"))
+    return model_supports_repetition_penalty(model)
 
 
 def _section_heading_pattern() -> re.Pattern[str]:

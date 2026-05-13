@@ -11,7 +11,12 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from detect.run import DetectionRunner
-from llm.gateway import LLMConfig, LLMGateway
+from llm.gateway import (
+    LLMConfig,
+    LLMGateway,
+    model_supports_presence_frequency_penalties,
+    model_supports_repetition_penalty,
+)
 from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
 from report.report import ReportBuilder, report_to_dict
@@ -1483,20 +1488,11 @@ def _build_author_stance_texture_pass_prompt(
 
 
 def _supports_openai_penalties(model: str | None) -> bool:
-    normalized = str(model or "").strip().lower()
-    return normalized in {
-        "openai/gpt-4o-mini",
-        "openai/gpt-4o",
-        "deepseek/deepseek-chat",
-    }
+    return model_supports_presence_frequency_penalties(model)
 
 
 def _supports_repetition_penalty(model: str | None) -> bool:
-    normalized = str(model or "").strip().lower()
-    return normalized in {
-        "deepseek/deepseek-chat",
-        "meta-llama/llama-3.3-70b-instruct",
-    }
+    return model_supports_repetition_penalty(model)
 
 
 def _author_stance_target_paragraph_count() -> int:

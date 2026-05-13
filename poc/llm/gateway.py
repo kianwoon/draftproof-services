@@ -93,21 +93,31 @@ _MODEL_CAPABILITIES = {
         "top_k": False,
         "presence_penalty": True,
         "frequency_penalty": True,
+        "repetition_penalty": False,
     },
     "openai/gpt-4o-mini": {
         "top_k": False,
         "presence_penalty": True,
         "frequency_penalty": True,
+        "repetition_penalty": False,
     },
     "openai/gpt-5-mini": {
         "top_k": False,
         "presence_penalty": True,
         "frequency_penalty": True,
+        "repetition_penalty": False,
     },
     "openai/gpt-5.4-nano": {
         "top_k": False,
         "presence_penalty": True,
         "frequency_penalty": True,
+        "repetition_penalty": False,
+    },
+    "deepseek/deepseek-chat": {
+        "top_k": True,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+        "repetition_penalty": True,
     },
 }
 
@@ -121,12 +131,27 @@ def _model_capabilities(model: str) -> dict:
             "top_k": False,
             "presence_penalty": True,
             "frequency_penalty": True,
+            "repetition_penalty": False,
         }
+    repetition_supported = any(
+        provider in normalized
+        for provider in ("deepseek", "qwen", "mistral", "llama", "anthropic")
+    )
     return {
         "top_k": True,
         "presence_penalty": True,
         "frequency_penalty": True,
+        "repetition_penalty": repetition_supported,
     }
+
+
+def model_supports_presence_frequency_penalties(model: str | None) -> bool:
+    caps = _model_capabilities(str(model or ""))
+    return bool(caps.get("presence_penalty") and caps.get("frequency_penalty"))
+
+
+def model_supports_repetition_penalty(model: str | None) -> bool:
+    return bool(_model_capabilities(str(model or "")).get("repetition_penalty"))
 
 
 def _classify_error(error: Exception, attempt: int, max_retries: int) -> _RetryAction:
@@ -330,7 +355,7 @@ class LLMGateway:
             payload["presence_penalty"] = effective_presence_penalty
         if effective_frequency_penalty is not None:
             payload["frequency_penalty"] = effective_frequency_penalty
-        if effective_repetition_penalty is not None:
+        if effective_repetition_penalty is not None and caps.get("repetition_penalty", True):
             payload["repetition_penalty"] = effective_repetition_penalty
         if effective_seed is not None:
             payload["seed"] = effective_seed

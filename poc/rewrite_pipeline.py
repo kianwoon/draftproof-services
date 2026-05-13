@@ -2168,6 +2168,18 @@ def _protected_anchor_brief_for_prompt(source_text: str, *, limit: int = 24) -> 
             })
             if len(anchors) >= max(1, int(limit or 1)):
                 return anchors
+    for match in re.finditer(r"[\"“][^\"”]{3,}[\"”]", source_text or ""):
+        value = re.sub(r"\s+", " ", match.group(0).strip())
+        words = re.findall(r"\b[\w'-]+\b", value.strip('"“”'))
+        if len(words) < 2 or value in seen:
+            continue
+        seen.add(value)
+        anchors.append({
+            "text": value,
+            "reason": "quoted_anchor",
+        })
+        if len(anchors) >= max(1, int(limit or 1)):
+            return anchors
     for span in detect_protected_spans(source_text or ""):
         value = str(source_text or "")[span.start_char:span.end_char].strip()
         value = re.sub(r"\s+", " ", value)

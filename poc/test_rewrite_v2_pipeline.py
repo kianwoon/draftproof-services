@@ -50,6 +50,8 @@ from rewrite_v2.pipeline import (
     _restore_required_anchor_forms,
     _replace_once_flexible,
     _strip_rewrite_meta_text,
+    _supports_openai_penalties,
+    _supports_repetition_penalty,
 )
 from rewrite_v2.layers.academic import _exact_citation_markers
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
@@ -57,6 +59,7 @@ from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, n
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import StrategyKind, classify_content_route, route_strategies
+from llm.gateway import model_supports_presence_frequency_penalties, model_supports_repetition_penalty
 
 
 def assert_test(condition: bool, message: str) -> None:
@@ -147,6 +150,13 @@ assert_test(
     broad_route.content_mode == "broad_explanatory_essay"
     and "author_stance_thesis_reframe" in broad_route.allowed_strategy_families,
     "V2 content router allows author-thesis for broad explanatory essays",
+)
+assert_test(
+    _supports_openai_penalties("deepseek/deepseek-chat") == model_supports_presence_frequency_penalties("deepseek/deepseek-chat")
+    and _supports_repetition_penalty("deepseek/deepseek-chat") == model_supports_repetition_penalty("deepseek/deepseek-chat")
+    and _supports_openai_penalties("openai/gpt-4.1-mini") == model_supports_presence_frequency_penalties("openai/gpt-4.1-mini")
+    and _supports_repetition_penalty("openai/gpt-4.1-mini") == model_supports_repetition_penalty("openai/gpt-4.1-mini"),
+    "V2 model sampling support delegates to shared gateway capabilities",
 )
 academic_route = classify_content_route(
     "Studies suggest feedback matters for learning (Smith, 2021). Other work reached a similar result [2]. References show the field is still divided.",
