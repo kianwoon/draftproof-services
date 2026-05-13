@@ -1,68 +1,25 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-
-const SITE_URL = 'https://draftproof.app';
-const DEFAULT_IMAGE = `${SITE_URL}/og-image.png`;
-
-const PAGE_META = {
-  '/': {
-    titleKey: 'seo.defaultTitle',
-    descriptionKey: 'seo.defaultDescription',
-    canonical: '/',
-    schemaType: 'SoftwareApplication',
-  },
-  '/why': {
-    titleKey: 'seo.whyTitle',
-    descriptionKey: 'seo.whyDescription',
-    canonical: '/why',
-    schemaType: 'AboutPage',
-  },
-  '/pricing': {
-    titleKey: 'seo.pricingTitle',
-    descriptionKey: 'seo.pricingDescription',
-    canonical: '/pricing',
-    schemaType: 'WebPage',
-  },
-  '/privacy': {
-    titleKey: 'seo.privacyTitle',
-    descriptionKey: 'seo.privacyDescription',
-    canonical: '/privacy',
-    schemaType: 'PrivacyPolicy',
-  },
-  '/security': {
-    titleKey: 'seo.securityTitle',
-    descriptionKey: 'seo.securityDescription',
-    canonical: '/security',
-    schemaType: 'WebPage',
-  },
-  '/signin': {
-    titleKey: 'seo.signInTitle',
-    descriptionKey: 'seo.signInDescription',
-    canonical: '/signin',
-    robots: 'noindex, nofollow',
-    schemaType: 'WebPage',
-  },
-};
-
-const PRIVATE_PREFIXES = ['/dashboard', '/scan', '/reports', '/report/', '/rewrite/', '/buy', '/history', '/auth/callback'];
+import {
+  DEFAULT_IMAGE,
+  buildSchema,
+  getCanonicalUrl,
+  getRobots,
+  getSeoMeta,
+} from '../seoMetadata';
 
 export default function Seo() {
   const { pathname } = useLocation();
   const { t, i18n } = useTranslation();
 
   useEffect(() => {
-    const metaConfig = PAGE_META[pathname] || privateMeta(pathname);
-    const meta = {
-      ...metaConfig,
-      title: t(metaConfig.titleKey),
-      description: t(metaConfig.descriptionKey),
-    };
-    const canonicalUrl = `${SITE_URL}${meta.canonical}`;
+    const meta = getSeoMeta(pathname, t);
+    const canonicalUrl = getCanonicalUrl(meta);
 
     document.title = meta.title;
     setMeta('description', meta.description);
-    setMeta('robots', meta.robots || 'index, follow, max-image-preview:large');
+    setMeta('robots', getRobots(meta));
     setCanonical(canonicalUrl);
 
     setProperty('og:site_name', 'DraftProof');
@@ -84,21 +41,6 @@ export default function Seo() {
   }, [pathname, i18n.resolvedLanguage, t]);
 
   return null;
-}
-
-function privateMeta(pathname) {
-  const isPrivate = PRIVATE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix));
-  if (isPrivate) {
-    return {
-      title: 'DraftProof App',
-      titleKey: 'seo.privateTitle',
-      descriptionKey: 'seo.privateDescription',
-      canonical: pathname,
-      robots: 'noindex, nofollow',
-      schemaType: 'WebPage',
-    };
-  }
-  return PAGE_META['/'];
 }
 
 function setMeta(name, content) {
@@ -140,37 +82,4 @@ function setJsonLd(schema) {
     document.head.appendChild(tag);
   }
   tag.textContent = JSON.stringify(schema);
-}
-
-function buildSchema(meta, url, t) {
-  if (meta.schemaType === 'SoftwareApplication') {
-    return {
-      '@context': 'https://schema.org',
-      '@type': 'SoftwareApplication',
-      name: 'DraftProof',
-      applicationCategory: 'EducationalApplication',
-      operatingSystem: 'Web',
-      url,
-      description: meta.description,
-      offers: {
-        '@type': 'Offer',
-        price: '0.90',
-        priceCurrency: 'USD',
-        description: t('seo.offerDescription'),
-      },
-    };
-  }
-
-  return {
-    '@context': 'https://schema.org',
-    '@type': meta.schemaType,
-    name: meta.title,
-    url,
-    description: meta.description,
-    isPartOf: {
-      '@type': 'WebSite',
-      name: 'DraftProof',
-      url: SITE_URL,
-    },
-  };
 }
