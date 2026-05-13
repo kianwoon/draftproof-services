@@ -41,6 +41,8 @@ from rewrite_v2.pipeline import (
     _expected_full_reconstruction_paragraph_count,
     _generate_candidates,
     _json_parse_diagnostics,
+    _empty_generated_candidate_row,
+    _local_filter_rejected_candidate_row,
     _local_filter_rejection_reason,
     _paragraph_inventory_for_full_reconstruction,
     _paragraph_tactics,
@@ -1870,6 +1872,25 @@ assert_test(
     and _local_filter_rejection_reason({"strategy": "academic_anchor_repair_texture_pass"}) == "academic_repair_local_filter_rejected"
     and _local_filter_rejection_reason({"strategy": "scan_targeted_driver_mitigation"}) == "targeted_local_filter_rejected",
     "V2 local filter rejection reasons identify the failed strategy layer",
+)
+empty_local_reject_row = _local_filter_rejected_candidate_row({
+    "strategy": "scan_full_document_mitigation",
+    "strategy_kind": "full_rewrite",
+    "text": "",
+    "local_filter_passed": False,
+    "local_filter_failures": ["empty_rewrite"],
+})
+empty_generated_row = _empty_generated_candidate_row({
+    "strategy": "scan_full_document_mitigation",
+    "strategy_kind": "full_rewrite",
+    "text": "",
+})
+assert_test(
+    empty_local_reject_row["decision"]["reason"] == "full_document_local_filter_rejected"
+    and empty_local_reject_row["local_filter_failures"] == ["empty_rewrite"]
+    and empty_generated_row["decision"]["reason"] == "empty_generated_candidate_text"
+    and empty_generated_row["local_filter_failures"] == ["empty_candidate_text"],
+    "V2 records empty generated candidates instead of silently dropping them",
 )
 full_academic_budget_rows = [
     {"strategy": "academic_all_section_compact_reconstruction"},

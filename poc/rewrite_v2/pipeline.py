@@ -89,6 +89,32 @@ def _local_filter_rejection_reason(generated_candidate: dict[str, Any]) -> str:
     return "candidate_local_filter_rejected"
 
 
+def _local_filter_rejected_candidate_row(generated_candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **generated_candidate,
+        "candidate_ai": None,
+        "decision": {
+            "lane": CandidateLane.REJECT.value,
+            "reason": _local_filter_rejection_reason(generated_candidate),
+            "rank": [],
+        },
+    }
+
+
+def _empty_generated_candidate_row(generated_candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **generated_candidate,
+        "candidate_ai": None,
+        "local_filter_passed": False,
+        "local_filter_failures": list(generated_candidate.get("local_filter_failures") or []) or ["empty_candidate_text"],
+        "decision": {
+            "lane": CandidateLane.REJECT.value,
+            "reason": "empty_generated_candidate_text",
+            "rank": [],
+        },
+    }
+
+
 def _close_partial_max_gap() -> float:
     return float(os.environ.get("DRAFTPROOF_REWRITE_V2_APPLY_PARTIAL_MAX_GAP", "2.0") or 2.0)
 
@@ -2246,18 +2272,11 @@ def run_rewrite_pipeline_v2(
             if candidate_rows and time.time() - started >= max_runtime_seconds:
                 break
             candidate_text = str(generated_candidate.get("text") or "").strip()
-            if not candidate_text:
-                continue
             if generated_candidate.get("local_filter_passed") is False:
-                candidate_rows.append({
-                    **generated_candidate,
-                    "candidate_ai": None,
-                    "decision": {
-                        "lane": CandidateLane.REJECT.value,
-                        "reason": _local_filter_rejection_reason(generated_candidate),
-                        "rank": [],
-                    },
-                })
+                candidate_rows.append(_local_filter_rejected_candidate_row(generated_candidate))
+                continue
+            if not candidate_text:
+                candidate_rows.append(_empty_generated_candidate_row(generated_candidate))
                 continue
             local_score = None
             if (
@@ -2459,18 +2478,11 @@ def run_rewrite_pipeline_v2(
                 if time.time() - started >= max_runtime_seconds:
                     break
                 candidate_text = str(generated_candidate.get("text") or "").strip()
-                if not candidate_text:
-                    continue
                 if generated_candidate.get("local_filter_passed") is False:
-                    candidate_rows.append({
-                        **generated_candidate,
-                        "candidate_ai": None,
-                        "decision": {
-                            "lane": CandidateLane.REJECT.value,
-                            "reason": _local_filter_rejection_reason(generated_candidate),
-                            "rank": [],
-                        },
-                    })
+                    candidate_rows.append(_local_filter_rejected_candidate_row(generated_candidate))
+                    continue
+                if not candidate_text:
+                    candidate_rows.append(_empty_generated_candidate_row(generated_candidate))
                     continue
                 semantic = check_semantic_drift(original_text, candidate_text, threshold=0.15)
                 anchors_safe = protected_spans_preserved(original_text, candidate_text, protected)
