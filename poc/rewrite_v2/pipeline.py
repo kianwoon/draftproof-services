@@ -563,8 +563,17 @@ def _strip_rewrite_meta_text(text: str) -> str:
         parts = [part.strip() for part in value.split("---") if part.strip()]
         if len(parts) >= 2:
             value = max(parts, key=len)
+    value = _strip_generated_paragraph_labels(value)
     value = re.sub(r"\n+(?:changes made|kept your|notes?|explanation)\s*:\s*[\s\S]*$", "", value, flags=re.I).strip()
     return value
+
+
+def _strip_generated_paragraph_labels(text: str) -> str:
+    value = str(text or "")
+    label_prefix = r"(?:#+\s*)?(?:\*\*)?Paragraph\s+\d+(?:\*\*)?\s*(?:[:.\-–](?:\*\*)?)?"
+    value = re.sub(rf"(?im)^[^\S\n]*{label_prefix}[^\S\n]*\n+", "", value)
+    value = re.sub(rf"(?im)^[^\S\n]*{label_prefix}[^\S\n]+", "", value)
+    return re.sub(r"\n{3,}", "\n\n", value).strip()
 
 
 def _restore_required_anchor_forms(candidate_text: str, required_entities: list[str]) -> str:
@@ -1770,7 +1779,8 @@ def _generate_candidates(
                     repetition_penalty=1.02 if _supports_repetition_penalty(model) else None,
                     seed=4100 + number,
                 )
-                candidate_text = clean_candidate_output(response.content)
+                raw_text = clean_candidate_output(response.content)
+                candidate_text = _restore_required_anchor_forms(raw_text, required_entities)
                 filter_failures = _full_reconstruction_filter_failures(
                     original_text=original_text,
                     candidate_text=candidate_text,
@@ -1783,6 +1793,7 @@ def _generate_candidates(
                     "candidate_number": number,
                     "text": candidate_text,
                     "candidate_response": candidate_text,
+                    "raw_candidate_response": raw_text,
                     "local_filter_passed": not filter_failures,
                     "local_filter_failures": filter_failures,
                     "required_entities": required_entities,

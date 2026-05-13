@@ -434,6 +434,24 @@ def _candidate_section_map(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _normalize_academic_section_patches(
+    sections: list[dict[str, Any]],
+    patches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_id = {str(section.get("section_id") or ""): section for section in sections}
+    normalized: list[dict[str, Any]] = []
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        section_id = str(patch.get("section_id") or "")
+        rewritten = str(patch.get("rewritten_section") or "").strip()
+        section = by_id.get(section_id)
+        if section and rewritten:
+            rewritten = _normalize_academic_all_section_candidate(rewritten, [section]).strip()
+        normalized.append({**patch, "rewritten_section": rewritten})
+    return normalized
+
+
 def _compose_academic_sections(original_text: str, sections: list[dict[str, Any]], patches: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     by_id = {
         str(patch.get("section_id") or ""): str(patch.get("rewritten_section") or "").strip()
@@ -683,7 +701,9 @@ def _strip_synthetic_paragraph_labels(candidate_text: str, sections: list[dict[s
     if not any(_is_synthetic_paragraph_heading(str(section.get("heading") or "")) for section in sections):
         return str(candidate_text or "")
     text = str(candidate_text or "")
-    text = re.sub(r"(?im)^\s*Paragraph\s+\d+\s*:?\s*\n+", "", text)
+    label_prefix = r"(?:#+\s*)?(?:\*\*)?Paragraph\s+\d+(?:\*\*)?\s*(?:[:.\-–](?:\*\*)?)?"
+    text = re.sub(rf"(?im)^[^\S\n]*{label_prefix}[^\S\n]*\n+", "", text)
+    text = re.sub(rf"(?im)^[^\S\n]*{label_prefix}[^\S\n]+", "", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
@@ -946,7 +966,10 @@ def _generate_academic_section_candidates(
     candidates: list[dict[str, Any]] = []
     for index, candidate in enumerate(parsed_candidates, start=1):
         raw_sections = candidate.get("sections")
-        section_patches = raw_sections if isinstance(raw_sections, list) else []
+        section_patches = _normalize_academic_section_patches(
+            sections,
+            raw_sections if isinstance(raw_sections, list) else [],
+        )
         filter_failures = _academic_section_filter_failures(sections, section_patches)
         candidate_text, applied_sections = _compose_academic_sections(original_text, sections, section_patches)
         if not any(row.get("applied") for row in applied_sections):

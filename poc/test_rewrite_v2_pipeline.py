@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
@@ -51,6 +52,7 @@ from rewrite_v2.pipeline import (
     _strip_rewrite_meta_text,
 )
 from rewrite_v2.layers.academic import _exact_citation_markers
+from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
@@ -433,6 +435,25 @@ bad_section_patches = [{**section_patches[0], "rewritten_section": section_patch
 assert_test(
     any("citation_lost:(Gao et al., 2025)" in reason for reason in _academic_section_filter_failures(academic_targets[:1], bad_section_patches)),
     "V2 academic section filter rejects citation form drift",
+)
+normalized_section_drift = _normalize_academic_section_patches(academic_targets[:1], bad_section_patches)
+assert_test(
+    not _academic_section_filter_failures(academic_targets[:1], normalized_section_drift)
+    and "(Gao et al., 2025)" in normalized_section_drift[0]["rewritten_section"],
+    "V2 academic section resolver restores exact citation forms before local filtering",
+)
+synthetic_label_candidate = _normalize_academic_section_patches(academic_targets[:1], [{
+    **section_patches[0],
+    "rewritten_section": section_patches[0]["rewritten_section"].replace(
+        academic_targets[0]["heading"],
+        f"**{academic_targets[0]['heading']}:**",
+        1,
+    ),
+}])[0]["rewritten_section"]
+assert_test(
+    not re.search(r"(?im)^\\s*(?:#+\\s*)?(?:\\*\\*)?Paragraph\\s+\\d+", synthetic_label_candidate)
+    and "Reviews shown in Figure 1 to 4" in synthetic_label_candidate,
+    "V2 academic paragraph resolver strips synthetic paragraph labels without dropping prose",
 )
 all_sections = _academic_assignment_sections(academic_assignment, academic_assignment_scan)
 paragraph_assignment = """Intro paragraph cites a report (Smith, 2024) and explains why the teaching problem needs a careful academic rewrite rather than a narrow sentence patch.
@@ -1213,11 +1234,11 @@ assert_test(
     "V2 builds a dynamic paragraph inventory for full reconstruction prompts",
 )
 cleaned_meta = _strip_rewrite_meta_text(
-    "Here's a rewritten version:\n\n---\n\nParagraph one.\n\nParagraph two.\n\n---\n\nChanges made:\n- varied wording"
+    "Here's a rewritten version:\n\n---\n\nParagraph 1: Paragraph one.\n\n**Paragraph 2:** Paragraph two.\n\n---\n\nChanges made:\n- varied wording"
 )
 assert_test(
     cleaned_meta == "Paragraph one.\n\nParagraph two.",
-    "V2 strips LLM wrapper/meta text from generated candidates",
+    "V2 strips LLM wrapper/meta text and generated paragraph labels from candidates",
 )
 anchor_repaired = _restore_required_anchor_forms(
     "Hollywood and the National Basketball Association appear here. The UN and NATO are involved.",
