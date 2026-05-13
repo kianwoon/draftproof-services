@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, buildApiEventUrl } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -51,9 +52,80 @@ function signalClassName(key) {
   return String(key || 'scan_signal').replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
-function formatDate(iso) {
+function formatDate(iso, locale = 'en-SG') {
   if (!iso) return '';
-  return new Date(iso).toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function humanizeKey(key) {
+  return String(key || '').replaceAll('_', ' ');
+}
+
+function titleizeKey(key) {
+  return humanizeKey(key).replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function signalLabel(key, fallback, t) {
+  if (!key) return fallback || '';
+  return t(`report.signals.labels.${key}`, { defaultValue: fallback || titleizeKey(key) });
+}
+
+function signalDescription(key, fallback, t) {
+  if (!key) return fallback || t('report.signals.fallbackDescription');
+  return t(`report.signals.descriptions.${key}`, {
+    defaultValue: fallback || t('report.signals.fallbackDescription'),
+  });
+}
+
+function translatedSignal(signal, t) {
+  if (!signal) return signal;
+  return {
+    ...signal,
+    label: signalLabel(signal.key, signal.label, t),
+    description: signalDescription(signal.key, signal.description, t),
+    pairedLabel: signalLabel(signal.key, signal.pairedLabel || signal.label, t),
+    pairedDescription: signalDescription(signal.key, signal.pairedDescription || signal.description, t),
+  };
+}
+
+function translatedGroup(group, t) {
+  return {
+    ...group,
+    label: t(`report.signalGroups.${group.id}.label`, { defaultValue: group.label }),
+    description: t(`report.signalGroups.${group.id}.description`, { defaultValue: group.description || '' }),
+    signals: group.signals,
+  };
+}
+
+function transformationLabel(pattern, t) {
+  if (!pattern) return '';
+  return t(`report.transformation.labels.${pattern.code}`, { defaultValue: pattern.label || t('report.transformation.patternAnalysis') });
+}
+
+function confidenceLabel(confidence, t) {
+  const key = String(confidence || '').toLowerCase();
+  return t(`report.transformation.confidenceLevels.${key}`, { defaultValue: confidence });
+}
+
+function evidenceLabel(evidence, t) {
+  const normalized = String(evidence || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return t(`report.transformation.evidence.${normalized}`, { defaultValue: evidence });
+}
+
+function translateAuthorshipRating(rating = {}, t) {
+  const normalized = String(rating.code || rating.short_label || rating.label || '').toLowerCase();
+  const fallbackCode = normalized.includes('low signal')
+    ? 'low_signal'
+    : normalized === 'likely ai'
+      ? 'likely_ai_fallback'
+      : null;
+  const code = rating.code || fallbackCode;
+  if (!code) return rating;
+  return {
+    ...rating,
+    label: t(`report.authorship.${code}.label`, { defaultValue: rating.label }),
+    short_label: t(`report.authorship.${code}.short`, { defaultValue: rating.short_label || rating.label }),
+  };
 }
 
 function pct(value) {
@@ -330,7 +402,7 @@ function getTransformationSignalImprovement(signal, baselineSignal) {
   return null;
 }
 
-function buildTransformationSummary(features = {}, signals = [], contributionOverride = null) {
+function buildTransformationSummary(features = {}, signals = [], contributionOverride = null, t = null) {
   const humanAnchor = clampPercent(features.human_anchor_score) ?? 0;
   const groundingQuality = 100 - (clampPercent(features.citation_grounding_risk) ?? 0);
   const semanticOriginality = 100 - Math.max(
@@ -370,18 +442,19 @@ function buildTransformationSummary(features = {}, signals = [], contributionOve
   const topSignals = signals
     .filter((signal) => signal.key !== 'human_anchor_score')
     .slice(0, 2)
-    .map((signal) => signal.label.toLowerCase());
+    .map((signal) => signalLabel(signal.key, signal.label, tr).toLowerCase());
 
-  let summary = 'Mixed authorship pattern: human anchoring and AI transformation signals are both visible.';
+  const tr = t || ((key, options = {}) => options.defaultValue || key);
+  let summary = tr('report.transformation.summaryMixed');
   if (aiTransformation >= 70) {
-    summary = 'AI transformation dominates this scan pattern.';
+    summary = tr('report.transformation.summaryAiDominates');
   } else if (aiTransformation >= 55) {
-    summary = 'AI transformation signals are stronger than the human anchor.';
+    summary = tr('report.transformation.summaryAiStronger');
   } else if (humanContribution >= 65) {
-    summary = 'Human contribution remains the stronger signal.';
+    summary = tr('report.transformation.summaryHumanStronger');
   }
   if (topSignals.length) {
-    summary += ` Main drivers: ${topSignals.join(' and ')}.`;
+    summary += ` ${tr('report.transformation.mainDrivers', { drivers: topSignals.join(' and ') })}`;
   }
 
   return {
@@ -638,40 +711,44 @@ function formatAuthorshipSealDetail({
   topkCalibratedRisk = null,
   calibratedAuthorshipRisk = null,
   fallbackScore = null,
-}) {
+}, t) {
   if (rating.code === 'insufficient_sample') {
     const words = rating.sample_context?.wordCount;
     const sentences = rating.sample_context?.sentenceCount;
     if (words != null || sentences != null) {
-      return `${words != null ? `${Math.round(words)} words` : `${Math.round(sentences)} sentences`} · not enough text`;
+      return words != null
+        ? t('report.seal.wordsNotEnough', { count: Math.round(words) })
+        : t('report.seal.sentencesNotEnough', { count: Math.round(sentences) });
     }
-    return 'Not enough text';
+    return t('report.seal.notEnough');
   }
   if (rating.sample_limited) {
     const words = rating.sample_context?.wordCount;
     const sentences = rating.sample_context?.sentenceCount;
     if (words != null || sentences != null) {
-      return `${words != null ? `${Math.round(words)} words` : `${Math.round(sentences)} sentences`} · sample limited`;
+      return words != null
+        ? t('report.seal.wordsSampleLimited', { count: Math.round(words) })
+        : t('report.seal.sentencesSampleLimited', { count: Math.round(sentences) });
     }
-    return 'Sample limited';
+    return t('report.seal.sampleLimited');
   }
   if (rating.topk_strong_signal && (topkCalibratedRisk != null || topkPatternScore != null) && rating.supporting_signal) {
     const topkLabel = topkCalibratedRisk != null
-      ? `${formatMetricPercent(topkCalibratedRisk, 0)} calibrated top-k`
-      : `${formatMetricPercent(topkPatternScore, 0)} top-k`;
-    return `${topkLabel} · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${rating.supporting_signal.label.toLowerCase()}`;
+      ? t('report.seal.calibratedTopk', { value: formatMetricPercent(topkCalibratedRisk, 0) })
+      : t('report.seal.topk', { value: formatMetricPercent(topkPatternScore, 0) });
+    return `${topkLabel} · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${signalLabel(rating.supporting_signal.key, rating.supporting_signal.label, t).toLowerCase()}`;
   }
   if (rating.topk_escalated && (topkCalibratedRisk != null || topkPatternScore != null)) {
-    const topkLabel = `${formatMetricPercent(topkCalibratedRisk ?? topkPatternScore, 0)} calibrated top-k`;
+    const topkLabel = t('report.seal.calibratedTopk', { value: formatMetricPercent(topkCalibratedRisk ?? topkPatternScore, 0) });
     if (rating.supporting_signal) {
-      return `${topkLabel} · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${rating.supporting_signal.label.toLowerCase()}`;
+      return `${topkLabel} · ${formatMetricPercent(rating.supporting_signal.score, 0)} ${signalLabel(rating.supporting_signal.key, rating.supporting_signal.label, t).toLowerCase()}`;
     }
     return topkLabel;
   }
   if (calibratedAuthorshipRisk != null) {
-    return `${formatMetricPercent(calibratedAuthorshipRisk, 0)} calibrated risk`;
+    return t('report.seal.calibratedRisk', { value: formatMetricPercent(calibratedAuthorshipRisk, 0) });
   }
-  return `${formatMetricPercent(fallbackScore, 1)} raw signal`;
+  return t('report.seal.rawSignal', { value: formatMetricPercent(fallbackScore, 1) });
 }
 
 function getAuthorshipTone(rating = {}) {
@@ -1029,46 +1106,39 @@ function buildSubmittedContentModel(report) {
   };
 }
 
-function formatRewriteStatus(status) {
-  if (status === 'pending') return 'Queued';
-  if (status === 'processing') return 'Rewriting AI sections';
-  if (status === 'retrying') return 'Retrying rewrite';
-  if (status === 'completed') return 'Rewrite complete';
-  if (status === 'canceled') return 'Rewrite canceled';
-  if (status === 'failed') return 'Rewrite failed';
-  return 'Rewriting AI sections';
+function formatRewriteStatus(status, t) {
+  if (status === 'pending') return t('report.rewrite.queued');
+  if (status === 'processing') return t('report.rewrite.processing');
+  if (status === 'retrying') return t('report.rewrite.retrying');
+  if (status === 'completed') return t('report.rewrite.complete');
+  if (status === 'canceled') return t('report.rewrite.canceled');
+  if (status === 'failed') return t('report.rewrite.failed');
+  return t('report.rewrite.processing');
 }
 
 function isRewriteActive(status) {
   return ['pending', 'processing', 'retrying'].includes(status);
 }
 
-function normalizeRewriteProgressMessage(message, status) {
-  if (!message) return formatRewriteStatus(status);
+function normalizeRewriteProgressMessage(message, status, t) {
+  if (!message) return formatRewriteStatus(status, t);
   const normalized = String(message).trim().toLowerCase();
   if (
     normalized.includes('rewriting your document') ||
     normalized.includes('this may take 1-3 minutes')
   ) {
-    return 'Rewriting AI sections';
+    return t('report.rewrite.processing');
   }
   return message;
 }
 
-function normalizeRewriteJob(job) {
+function normalizeRewriteJob(job, t) {
   if (!job) return job;
   return {
     ...job,
-    progress_message: normalizeRewriteProgressMessage(job.progress_message, job.status),
+    progress_message: normalizeRewriteProgressMessage(job.progress_message, job.status, t),
   };
 }
-
-const REWRITE_PROGRESS_MESSAGES = [
-  'Rewriting flagged passages while preserving the original meaning.',
-  'Checking revised text against the source draft.',
-  'Improving clarity, specificity, and academic tone.',
-  'Preparing highlighted rewrite results for this report.',
-];
 
 function formatElapsed(seconds) {
   const total = Math.max(0, Number(seconds) || 0);
@@ -1078,19 +1148,17 @@ function formatElapsed(seconds) {
   return `${minutes} min ${String(remainingSeconds).padStart(2, '0')} sec`;
 }
 
-function getRewriteProgressDetail({ status, progress, elapsedSeconds, sseUnavailable }) {
-  if (status === 'pending') return 'Waiting for the rewrite worker to start.';
-  if (status === 'retrying') return 'The rewrite worker is retrying this step automatically.';
-  if (sseUnavailable) return 'Still checking the rewrite status every few seconds.';
+function getRewriteProgressDetail({ status, progress, elapsedSeconds, sseUnavailable, t }) {
+  if (status === 'pending') return t('report.rewrite.waiting');
+  if (status === 'retrying') return t('report.rewrite.retryingDetail');
+  if (sseUnavailable) return t('report.rewrite.checking');
   if (progress >= 35 && progress <= 45 && elapsedSeconds >= 30) {
-    return 'This is usually the longest step. Longer reports can stay here while DraftProof rewrites and verifies flagged sections.';
+    return t('report.rewrite.longestStep');
   }
-  const index = Math.floor(Math.max(0, elapsedSeconds) / 8) % REWRITE_PROGRESS_MESSAGES.length;
-  return REWRITE_PROGRESS_MESSAGES[index];
+  const messages = t('report.rewrite.progressMessages', { returnObjects: true });
+  const index = Math.floor(Math.max(0, elapsedSeconds) / 8) % messages.length;
+  return messages[index];
 }
-
-const REVIEW_ONLY_REWRITE_TITLE = 'No rewriteable AI sections';
-const REVIEW_ONLY_REWRITE_MESSAGE = 'This report only has review-only signals. There is nothing DraftProof can rewrite automatically, so no tokens were deducted.';
 const REVIEW_ONLY_REWRITE_PATTERNS = [
   'no rewriteable ai sections',
   'no auto-fixable findings',
@@ -1108,6 +1176,8 @@ function isReviewOnlyRewriteMessage(message) {
 export default function Report() {
   const { id } = useParams();
   const { refreshBalance } = useAuth();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-SG';
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1133,15 +1203,15 @@ export default function Report() {
     setRewriteLoading(false);
     setRewriteStartedHere(false);
     setRewriteNotice({
-      title: REVIEW_ONLY_REWRITE_TITLE,
+      title: t('report.rewrite.noRewriteableTitle'),
       message: isReviewOnlyRewriteMessage(message) && String(message).includes('token')
         ? message
-        : REVIEW_ONLY_REWRITE_MESSAGE,
+        : t('report.rewrite.noRewriteableMessage'),
     });
-  }, []);
+  }, [t]);
 
   const syncRewriteJob = useCallback((job) => {
-    const normalizedJob = normalizeRewriteJob(job);
+    const normalizedJob = normalizeRewriteJob(job, t);
     setRewriteJob(normalizedJob);
     if (normalizedJob?.status && !['failed', 'canceled'].includes(normalizedJob.status)) {
       setRewriteError(null);
@@ -1150,14 +1220,14 @@ export default function Report() {
       setReport((prev) => prev ? { ...prev, rewrite: normalizedJob } : prev);
       setRewriteStartedHere(false);
     }
-  }, []);
+  }, [t]);
 
   const pollRewriteStatus = useCallback(async (rewriteId) => {
     try {
       const { data } = await getRewriteStatus(rewriteId);
       syncRewriteJob(data);
       if (data.status === 'failed') {
-        const failedMessage = data.error || 'Rewrite failed';
+        const failedMessage = data.error || t('report.rewrite.failed');
         if (isReviewOnlyRewriteMessage(failedMessage)) {
           showReviewOnlyRewriteNotice(failedMessage);
         } else {
@@ -1169,10 +1239,10 @@ export default function Report() {
       }
       return data;
     } catch (err) {
-      setRewriteError(err.response?.data?.detail || 'Failed to check rewrite status');
+      setRewriteError(err.response?.data?.detail || t('report.rewrite.checkingFailed'));
       return null;
     }
-  }, [showReviewOnlyRewriteNotice, syncRewriteJob]);
+  }, [showReviewOnlyRewriteNotice, syncRewriteJob, t]);
 
   const closeRewriteEventSource = useCallback(() => {
     if (rewriteEventSourceRef.current) {
@@ -1201,7 +1271,7 @@ export default function Report() {
 
       syncRewriteJob(data);
       if (data.status === 'failed') {
-        const failedMessage = data.error || 'Rewrite failed';
+        const failedMessage = data.error || t('report.rewrite.failed');
         if (isReviewOnlyRewriteMessage(failedMessage)) {
           showReviewOnlyRewriteNotice(failedMessage);
         } else {
@@ -1215,7 +1285,7 @@ export default function Report() {
     });
 
     source.addEventListener('rewrite-error', () => {
-      setRewriteError('Rewrite failed');
+      setRewriteError(t('report.rewrite.failed'));
       closeRewriteEventSource();
     });
 
@@ -1226,7 +1296,7 @@ export default function Report() {
     });
 
     return true;
-  }, [closeRewriteEventSource, pollRewriteStatus, showReviewOnlyRewriteNotice, syncRewriteJob]);
+  }, [closeRewriteEventSource, pollRewriteStatus, showReviewOnlyRewriteNotice, syncRewriteJob, t]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -1235,7 +1305,7 @@ export default function Report() {
         setReport(data);
         if (data.rewrite) {
           setRewriteSseUnavailable(false);
-          setRewriteJob(normalizeRewriteJob(data.rewrite));
+          setRewriteJob(normalizeRewriteJob(data.rewrite, t));
           if (data.rewrite.id && isRewriteActive(data.rewrite.status)) {
             connectRewriteEvents(data.rewrite.id);
           }
@@ -1243,14 +1313,14 @@ export default function Report() {
       })
       .catch((err) => {
         if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
-        setError(err.response?.data?.detail || 'Failed to load report');
+        setError(err.response?.data?.detail || t('report.loadFailed'));
       })
       .finally(() => setLoading(false));
     return () => {
       ac.abort();
       closeRewriteEventSource();
     };
-  }, [id, closeRewriteEventSource, connectRewriteEvents]);
+  }, [id, closeRewriteEventSource, connectRewriteEvents, t]);
 
   useEffect(() => {
     if (rewritePollRef.current) {
@@ -1334,7 +1404,7 @@ export default function Report() {
       <div className="container">
         <div className="report-loading">
           <div className="report-pulse" />
-          <p>Analyzing your report...</p>
+          <p>{t('report.loading')}</p>
         </div>
       </div>
     </main>
@@ -1348,7 +1418,7 @@ export default function Report() {
 
   if (!report) return (
     <main className="dash-shell">
-      <div className="container"><p>Report not found.</p></div>
+      <div className="container"><p>{t('report.notFound')}</p></div>
     </main>
   );
 
@@ -1378,7 +1448,7 @@ export default function Report() {
   }
   const transformationSummary = transformation
     ? mergeTransformationSummary(
-      buildTransformationSummary(authorshipFeatures, transformationSignals, originalContributionOverride),
+      buildTransformationSummary(authorshipFeatures, transformationSignals, originalContributionOverride, t),
       originalScanContributionSummary
     )
     : null;
@@ -1402,7 +1472,7 @@ export default function Report() {
   }
   const rewrittenTransformationSummary = rewrittenTransformation
     ? mergeTransformationSummary(
-      buildTransformationSummary(rewrittenAuthorshipFeatures, rewrittenTransformationSignals, rewrittenContributionOverride),
+      buildTransformationSummary(rewrittenAuthorshipFeatures, rewrittenTransformationSignals, rewrittenContributionOverride, t),
       rewrittenScanContributionSummary
     )
     : rewrittenContributionOverride
@@ -1414,7 +1484,7 @@ export default function Report() {
         humanAnchorDiscount: 0,
         calibrationConfidence: 0,
         reportingSuppression: 0,
-        summary: 'Rewritten contribution estimate from the completed rewrite scan.',
+        summary: t('report.transformation.rewrittenContributionEstimate'),
       }
     : null;
   const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
@@ -1434,14 +1504,14 @@ export default function Report() {
     badge.ai_components,
     badge.writing_components
   ) || {};
-  const authorshipRating = deriveCalibratedAuthorshipRating(
+  const authorshipRating = translateAuthorshipRating(deriveCalibratedAuthorshipRating(
     calibratedAuthorshipRisk,
     topkPatternScore,
     topkCalibratedRisk,
     authorshipFeatures,
     originalDocumentContext,
     originalComparisonBadge.ai_components?.topk_calibration_eligible
-  ) || storedAuthorshipRating;
+  ) || storedAuthorshipRating, t);
   const authorshipTone = getAuthorshipTone(authorshipRating);
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
@@ -1451,7 +1521,7 @@ export default function Report() {
     topkCalibratedRisk,
     calibratedAuthorshipRisk,
     fallbackScore: originalComparisonAiScore,
-  });
+  }, t);
   const rewrittenStoredAuthorshipRating = rewrittenBadge.authorship_rating || deriveAuthorshipRatingFallback(
     rewrittenAiScore,
     rewrittenBadge.tier || badge.tier || report.tier,
@@ -1459,32 +1529,32 @@ export default function Report() {
     rewrittenBadge.ai_components,
     rewrittenBadge.writing_components
   ) || {};
-  const rewrittenAuthorshipRating = deriveCalibratedAuthorshipRating(
+  const rewrittenAuthorshipRating = translateAuthorshipRating(deriveCalibratedAuthorshipRating(
     rewrittenCalibratedAuthorshipRisk,
     rewrittenTopkPatternScore,
     rewrittenTopkCalibratedRisk,
     rewrittenAuthorshipFeatures,
     rewrittenDocumentContext,
     rewrittenBadge.ai_components?.topk_calibration_eligible
-  ) || rewrittenStoredAuthorshipRating;
+  ) || rewrittenStoredAuthorshipRating, t);
   const rewrittenAuthorshipSealDetail = formatAuthorshipSealDetail({
     rating: rewrittenAuthorshipRating,
     topkPatternScore: rewrittenTopkPatternScore,
     topkCalibratedRisk: rewrittenTopkCalibratedRisk,
     calibratedAuthorshipRisk: rewrittenCalibratedAuthorshipRisk,
     fallbackScore: rewrittenAiScore,
-  });
+  }, t);
   const rewrittenAuthorshipTone = getAuthorshipTone(rewrittenAuthorshipRating);
   const rewrittenAuthorshipRatingFullLabel = rewrittenAuthorshipRating.label || rewrittenBadge.authorship_rating_label || null;
   const rewrittenAuthorshipRatingLabel = rewrittenAuthorshipRating.short_label || rewrittenAuthorshipRatingFullLabel;
   const originalColumnRatingBadge = {
-    caption: 'Original Rating',
+    caption: t('report.transformation.originalRating'),
     label: authorshipRatingLabel,
     fullLabel: authorshipRatingFullLabel,
     tone: authorshipTone,
   };
   const rewrittenColumnRatingBadge = {
-    caption: 'Rewritten Rating',
+    caption: t('report.transformation.rewrittenRating'),
     label: rewrittenAuthorshipRatingLabel,
     fullLabel: rewrittenAuthorshipRatingFullLabel,
     tone: rewrittenAuthorshipTone,
@@ -1536,7 +1606,8 @@ export default function Report() {
     : 0;
   const rewriteProgressMessage = normalizeRewriteProgressMessage(
     currentRewrite?.progress_message,
-    currentRewrite?.status
+    currentRewrite?.status,
+    t
   );
   const rewriteProgressDetail = !rewriteError && rewriteInProgress
     ? getRewriteProgressDetail({
@@ -1544,6 +1615,7 @@ export default function Report() {
       progress: rewriteProgress,
       elapsedSeconds: rewriteElapsedSeconds,
       sseUnavailable: rewriteSseUnavailable,
+      t,
     })
     : null;
   const rewriteElapsedLabel = rewriteElapsedSeconds > 0 ? formatElapsed(rewriteElapsedSeconds) : null;
@@ -1563,8 +1635,8 @@ export default function Report() {
       id: null,
       scan_id: id,
       status: 'pending',
-      progress_percent: 3,
-      progress_message: 'Queuing rewrite',
+    progress_percent: 3,
+      progress_message: t('report.rewrite.queuing'),
     });
     try {
       const { data } = await createRewrite(id);
@@ -1575,7 +1647,7 @@ export default function Report() {
         }
       }
     } catch (err) {
-      const msg = err.response?.data?.detail || 'Failed to start rewrite';
+      const msg = err.response?.data?.detail || t('report.rewrite.startFailed');
       if (err.response?.status === 402) {
         setRewriteJob(null);
         setRewriteError(msg);
@@ -1585,7 +1657,7 @@ export default function Report() {
         setRewriteJob((prev) => prev ? {
           ...prev,
           status: 'failed',
-          progress_message: 'Rewrite failed',
+          progress_message: t('report.rewrite.failed'),
         } : null);
         setRewriteError(msg);
       }
@@ -1616,7 +1688,7 @@ export default function Report() {
       setShowCancelRewriteDialog(false);
       refreshBalance?.();
     } catch (err) {
-      setRewriteError(err.response?.data?.detail || 'Failed to cancel rewrite');
+      setRewriteError(err.response?.data?.detail || t('report.rewrite.cancelFailed'));
     } finally {
       setRewriteCanceling(false);
     }
@@ -1632,32 +1704,32 @@ export default function Report() {
           </svg>
         </span>
         <span className="report-risk-copy">
-          <span className="report-risk-value" style={{ color: tier.color }}>{tier.label}</span>
-          <span className="report-stat-label">Risk Tier</span>
+          <span className="report-risk-value" style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</span>
+          <span className="report-stat-label">{t('report.summary.riskTier')}</span>
         </span>
       </div>
       <div className="report-stat">
         <span className="report-stat-value">{report.issues.length}</span>
-        <span className="report-stat-label">Total Findings</span>
+        <span className="report-stat-label">{t('report.summary.totalFindings')}</span>
       </div>
       {authorshipRatingLabel && (
         <div className="report-stat">
           <span className="report-stat-value" style={{ color: authorshipTone.color }} title={authorshipRatingFullLabel || authorshipRatingLabel}>
             {authorshipRatingLabel}
           </span>
-          <span className="report-stat-label">Authorship Rating</span>
+          <span className="report-stat-label">{t('report.summary.authorshipRating')}</span>
         </div>
       )}
       {rawAuthorshipSignal != null && (
         <div className="report-stat">
           <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(rawAuthorshipSignal, 2)}</span>
-          <span className="report-stat-label">Raw AI-Style Signal</span>
+          <span className="report-stat-label">{t('report.summary.rawAiSignal')}</span>
         </div>
       )}
       {writingScore != null && (
         <div className="report-stat">
           <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 2)}</span>
-          <span className="report-stat-label">Writing Score</span>
+          <span className="report-stat-label">{t('report.summary.writingScore')}</span>
         </div>
       )}
       {Object.entries(issueCounts).filter(([, v]) => v > 0).map(([sev, count]) => {
@@ -1665,7 +1737,7 @@ export default function Report() {
         return (
           <div key={sev} className="report-stat">
             <span className="report-stat-value" style={{ color: sc.color }}>{count}</span>
-            <span className="report-stat-label">{sc.label}</span>
+            <span className="report-stat-label">{t(`report.severities.${sev}`, { defaultValue: sc.label })}</span>
           </div>
         );
       })}
@@ -1686,13 +1758,14 @@ export default function Report() {
         pairedDescription: pair.description,
       }))
       : sortTransformationSignalsForComparison(signals);
+    const localizedComparisonSignals = comparisonSignals.map((signal) => translatedSignal(signal, t));
 
     return (
       <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
         <div className="transformation-detail-head">
           <div>
-            <span>{variant === 'rewritten' ? 'Rewritten Scan' : 'Original Scan'}</span>
-            <strong>{pattern?.label || (variant === 'rewritten' ? 'Rewritten contribution pattern' : 'Pattern analysis')}</strong>
+            <span>{variant === 'rewritten' ? t('report.transformation.rewrittenScan') : t('report.transformation.originalScan')}</span>
+            <strong>{transformationLabel(pattern, t) || (variant === 'rewritten' ? t('report.transformation.rewrittenPatternFallback') : t('report.transformation.originalPatternFallback'))}</strong>
             {ratingBadge?.label && (
               <div
                 className="transformation-column-rating"
@@ -1712,25 +1785,25 @@ export default function Report() {
         {summary && (
           <div className="transformation-ratio-summary">
             <div className="transformation-ratio-copy">
-              <span>Estimated Contribution</span>
+              <span>{t('report.transformation.estimatedContribution')}</span>
               <p>{summary.summary}</p>
               <div className="transformation-adjustment-row">
-                <strong>Calibrated AI risk {summary.adjustedAiRisk}%</strong>
-                <strong>Human anchor discount {summary.humanAnchorDiscount}%</strong>
-                <strong>Calibration confidence {summary.calibrationConfidence}%</strong>
-                <strong>Reporting suppression {summary.reportingSuppression}%</strong>
+                <strong>{t('report.transformation.calibratedAiRisk', { value: summary.adjustedAiRisk })}</strong>
+                <strong>{t('report.transformation.humanAnchorDiscount', { value: summary.humanAnchorDiscount })}</strong>
+                <strong>{t('report.transformation.calibrationConfidence', { value: summary.calibrationConfidence })}</strong>
+                <strong>{t('report.transformation.reportingSuppression', { value: summary.reportingSuppression })}</strong>
               </div>
             </div>
-            <div className="transformation-ratio-bars" aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} human contribution versus AI transformation estimate`}>
+            <div className="transformation-ratio-bars" aria-label={t('report.transformation.contributionEstimate', { variant: variant === 'rewritten' ? t('report.transformation.rewritten') : t('report.transformation.original') })}>
               <div className="transformation-ratio-row">
-                <span>Human Contribution</span>
+                <span>{t('report.transformation.humanContribution')}</span>
                 <strong>{summary.humanContribution}%</strong>
                 <div className="transformation-ratio-track">
                   <div className="transformation-ratio-fill is-human" style={{ width: `${summary.humanContribution}%` }} />
                 </div>
               </div>
               <div className="transformation-ratio-row">
-                <span>AI Transformation</span>
+                <span>{t('report.transformation.aiTransformation')}</span>
                 <strong>{summary.aiTransformation}%</strong>
                 <div className="transformation-ratio-track">
                   <div className="transformation-ratio-fill is-ai" style={{ width: `${summary.aiTransformation}%` }} />
@@ -1742,17 +1815,17 @@ export default function Report() {
         {comparisonSignals.length > 0 && (
           <>
             <div className="transformation-chart-head">
-              <span>Signal Profile</span>
+              <span>{t('report.transformation.signalProfile')}</span>
             </div>
             <div className="transformation-bars">
-              {groupTransformationSignals(comparisonSignals).map((group) => (
+              {groupTransformationSignals(localizedComparisonSignals).map((group) => translatedGroup(group, t)).map((group) => (
                 <div className={`transformation-signal-group transformation-signal-group-${group.id}`} key={`${variant}-${group.id}`}>
                   <div className="transformation-signal-group-head">
                     <div>
                       <h4>{group.label}</h4>
                       {group.description && <p>{group.description}</p>}
                     </div>
-                    <span>{group.signals.length} signals</span>
+                    <span>{t('report.transformation.signals', { count: group.signals.length })}</span>
                   </div>
                   {group.signals.map((signal) => {
                     const baselineSignal = variant === 'rewritten'
@@ -1760,11 +1833,11 @@ export default function Report() {
                       : null;
                     const improvement = signal.isMissing ? null : getTransformationSignalImprovement(signal, baselineSignal);
                     const improvementCopy = improvement
-                      ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%.`
+                      ? t('report.transformation.improvedFromTo', { from: improvement.from.toFixed(0), to: improvement.to.toFixed(0) })
                       : '';
                     const tooltip = [
                       signal.pairedDescription || signal.description,
-                      signal.isMissing ? 'Signal not present in this scan.' : improvementCopy,
+                      signal.isMissing ? t('report.transformation.notPresent') : improvementCopy,
                     ].filter(Boolean).join(' ');
                     const valueLabel = signal.isMissing ? '—' : `${signal.value.toFixed(0)}%`;
                     const barWidth = signal.isMissing ? 0 : signal.value;
@@ -1775,15 +1848,15 @@ export default function Report() {
                         className={`transformation-bar-row${improvement ? ' is-improved' : ''}${signal.isMissing ? ' is-missing' : ''}`}
                         data-tooltip={tooltip}
                         tabIndex={0}
-                        aria-label={`${variant === 'rewritten' ? 'Rewritten' : 'Original'} ${signal.pairedLabel || signal.label}: ${valueLabel}. ${tooltip}`}
+                        aria-label={`${variant === 'rewritten' ? t('report.transformation.rewritten') : t('report.transformation.original')} ${signal.pairedLabel || signal.label}: ${valueLabel}. ${tooltip}`}
                         title={tooltip}
                       >
                         <div className="transformation-bar-label">
                           <span className="transformation-bar-name">{signal.pairedLabel || signal.label}</span>
                           <span
                             className={`transformation-improvement-slot${improvement ? ' is-visible' : ''}`}
-                            aria-label={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
-                            title={improvement ? `Improved from ${improvement.from.toFixed(0)}% to ${improvement.to.toFixed(0)}%` : undefined}
+                            aria-label={improvement ? t('report.transformation.improvedFromTo', { from: improvement.from.toFixed(0), to: improvement.to.toFixed(0) }) : undefined}
+                            title={improvement ? t('report.transformation.improvedFromTo', { from: improvement.from.toFixed(0), to: improvement.to.toFixed(0) }) : undefined}
                           >
                             {improvement && (
                               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -1812,7 +1885,7 @@ export default function Report() {
   };
 
   const transformationScorecard = transformation && transformationSignals.length > 0 ? (
-    <section className="transformation-scorecard" aria-label="Transformation pattern scorecard">
+    <section className="transformation-scorecard" aria-label={t('report.transformation.scorecard')}>
       <div className="transformation-header">
         <div className="transformation-summary">
           <div className="transformation-icon" aria-hidden="true">
@@ -1822,16 +1895,16 @@ export default function Report() {
             </svg>
           </div>
           <div>
-            <span className="transformation-kicker">Transformation Pattern</span>
-            <h2>{hasRewriteSignalComparison ? 'Original vs rewritten pattern' : transformation.label || 'Pattern analysis'}</h2>
+            <span className="transformation-kicker">{t('report.transformation.kicker')}</span>
+            <h2>{hasRewriteSignalComparison ? t('report.transformation.originalVsRewritten') : transformationLabel(transformation, t) || t('report.transformation.patternAnalysis')}</h2>
             <div className="transformation-meta-row">
               {transformation.confidence && (
-                <span className="transformation-pill">{transformation.confidence} confidence</span>
+                <span className="transformation-pill">{t('report.transformation.confidence', { value: confidenceLabel(transformation.confidence, t) })}</span>
               )}
               {hasRewriteSignalComparison && (
-                <span className="transformation-pill">rewrite comparison</span>
+                <span className="transformation-pill">{t('report.transformation.rewriteComparison')}</span>
               )}
-              <span className="transformation-pill">not a verdict</span>
+              <span className="transformation-pill">{t('report.transformation.notVerdict')}</span>
             </div>
           </div>
         </div>
@@ -1842,9 +1915,9 @@ export default function Report() {
             '--rating-bg': sealAuthorshipTone.bg,
           }}
         >
-          <span>{hasRewriteSignalComparison ? 'Rewritten Outcome' : 'Authorship Rating'}</span>
+          <span>{hasRewriteSignalComparison ? t('report.transformation.rewrittenOutcome') : t('report.summary.authorshipRating')}</span>
           <strong title={sealAuthorshipFullLabel || sealAuthorshipLabel || undefined}>
-            {sealAuthorshipLabel || 'Not Rated'}
+            {sealAuthorshipLabel || t('report.transformation.notRated')}
           </strong>
           <em>
             {sealAuthorshipDetail}
@@ -1863,7 +1936,7 @@ export default function Report() {
         {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
           <div className="transformation-evidence">
             {transformation.evidence.slice(0, 3).map((item) => (
-              <span key={item}>{item}</span>
+              <span key={item}>{evidenceLabel(item, t)}</span>
             ))}
           </div>
         )}
@@ -1878,21 +1951,21 @@ export default function Report() {
       ? 'completed'
       : '';
   const rewriteBandTitle = rewriteOutcome === 'ai_mitigated'
-    ? 'AI-Mitigation accepted'
+    ? t('report.rewrite.accepted')
     : rewriteOutcome === 'topk_blocked'
-      ? 'Top-k blocker remains'
+      ? t('report.rewrite.topkBlocked')
     : rewriteOutcome === 'suggestion_only'
-      ? 'Original preserved'
-      : rewriteOutcomeText || 'Rewrite complete';
+      ? t('report.rewrite.originalPreserved')
+      : rewriteOutcomeText || t('report.rewrite.completeTitle');
   const rewriteBandDetail = rewriteOutcome === 'ai_mitigated'
-    ? 'A candidate passed the mitigation gate and was kept.'
+    ? t('report.rewrite.acceptedDetail')
     : rewriteOutcome === 'topk_blocked'
-      ? 'Top-k predictability is still above the safe mark, so this is not detector-safe mitigation.'
+      ? t('report.rewrite.topkBlockedDetail')
     : rewriteOutcome === 'suggestion_only'
-      ? 'No candidate passed the rewrite gate; review the guidance before trying again.'
+      ? t('report.rewrite.originalPreservedDetail')
       : rewriteResultSummary?.ai_mitigation_selected
-        ? 'A mitigation candidate was selected after scanning.'
-        : 'Rewrite finished and the result is ready to review.';
+        ? t('report.rewrite.selectedDetail')
+        : t('report.rewrite.finishedDetail');
   const rewriteCompletionBand = hasRewriteResult ? (
     <div className={`report-rewrite-summary-bar${rewriteOutcome === 'suggestion_only' ? ' is-preserved' : ''}${rewriteOutcome === 'topk_blocked' ? ' is-blocked' : ''}${rewriteOutcome === 'ai_mitigated' ? ' is-mitigated' : ''}`}>
       <div className="rewrite-summary-icon" aria-hidden="true">
@@ -1908,33 +1981,33 @@ export default function Report() {
         </span>
       </div>
       <div className="rewrite-summary-main">
-        <span className="rewrite-summary-kicker">Rewrite completion</span>
+        <span className="rewrite-summary-kicker">{t('report.rewrite.completion')}</span>
         <strong>{rewriteBandTitle}</strong>
         <em>{rewriteBandDetail}</em>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatMetricPercent(rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk, 1)}</span>
-        <small>Rewrite AI authorship before</small>
+        <small>{t('report.rewrite.aiBefore')}</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatMetricPercent(rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk, 1)}</span>
-        <small>Rewrite AI authorship after</small>
+        <small>{t('report.rewrite.aiAfter')}</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatPlainScore(rewriteResultSummary?.human_shift_score, 1)}</span>
-        <small>Human Shift Score</small>
+        <small>{t('report.rewrite.humanShift')}</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatSignedDelta(rewriteResultSummary?.original_human_contribution, rewriteResultSummary?.rewritten_human_contribution)}</span>
-        <small>Rewrite human contribution</small>
+        <small>{t('report.rewrite.humanContribution')}</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatSignedDelta(rewriteResultSummary?.original_ai_transformation, rewriteResultSummary?.rewritten_ai_transformation)}</span>
-        <small>Rewrite AI transformation</small>
+        <small>{t('report.rewrite.aiTransformation')}</small>
       </div>
       <div className="rewrite-summary-stat">
         <span>{formatSignedDelta(rewriteResultSummary?.original_grounding_quality_risk, rewriteResultSummary?.rewritten_grounding_quality_risk)}</span>
-        <small>Rewrite grounding risk</small>
+        <small>{t('report.rewrite.groundingRisk')}</small>
       </div>
       <Link
         to={`/rewrite/${currentRewrite.id}`}
@@ -1944,7 +2017,7 @@ export default function Report() {
           <path d="M5 2.5h5.2L13 5.3v10.2H5V2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
           <path d="M10 2.5v3h3M6.8 8.3h4M6.8 11h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
         </svg>
-        View Rewrite Result
+        {t('report.rewrite.viewResult')}
       </Link>
     </div>
   ) : null;
@@ -1959,9 +2032,9 @@ export default function Report() {
       />
       <ConfirmDialog
         open={showCancelRewriteDialog}
-        title="Cancel this rewrite?"
-        message="DraftProof will stop tracking this rewrite, release the reserved tokens, and ignore any late worker result for this job."
-        confirmLabel={rewriteCanceling ? 'Canceling...' : 'Cancel rewrite'}
+        title={t('report.rewrite.cancelTitle')}
+        message={t('report.rewrite.cancelMessage')}
+        confirmLabel={rewriteCanceling ? t('report.rewrite.canceling') : t('report.rewrite.cancelRewrite')}
         onConfirm={confirmCancelRewrite}
         onCancel={() => {
           if (!rewriteCanceling) setShowCancelRewriteDialog(false);
@@ -1973,7 +2046,7 @@ export default function Report() {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          Back to Reports
+          {t('report.back')}
         </Link>
 
         {/* Report header */}
@@ -1986,14 +2059,14 @@ export default function Report() {
               </svg>
             </div>
             <div className="report-hero-info">
-              <div className="report-eyebrow">Analysis Report</div>
+              <div className="report-eyebrow">{t('report.eyebrow')}</div>
               <h1>{report.document_name}</h1>
               {report.created_at && (
                 <p className="report-meta">
                   <svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <path d="M4.5 1.8v2M11.5 1.8v2M2.5 6h11M3.5 3.5h9A1.5 1.5 0 0114 5v7.5A1.5 1.5 0 0112.5 14h-9A1.5 1.5 0 012 12.5V5a1.5 1.5 0 011.5-1.5z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
                   </svg>
-                  {formatDate(report.created_at)}
+                  {formatDate(report.created_at, locale)}
                 </p>
               )}
             </div>
@@ -2005,7 +2078,7 @@ export default function Report() {
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <path d="M3 10v2.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V10M8 2v8M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
-                  Download PDF
+                  {t('report.downloadPdf')}
                 </a>
               )}
               {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
@@ -2015,7 +2088,7 @@ export default function Report() {
                   onClick={handleRewrite}
                   disabled={rewriteLoading || rewriteCanceling}
                 >
-                  {rewriteLoading ? 'Starting rewrite...' : rewriteInProgress ? 'Resume Rewrite' : 'Rewrite AI Sections'}
+                  {rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
                 </button>
               )}
               {rewriteInProgress && currentRewrite?.id && (
@@ -2025,7 +2098,7 @@ export default function Report() {
                   onClick={handleCancelRewrite}
                   disabled={rewriteCanceling}
                 >
-                  {rewriteCanceling ? 'Canceling...' : 'Cancel Rewrite'}
+                  {rewriteCanceling ? t('report.rewrite.canceling') : t('report.rewrite.cancelRewrite')}
                 </button>
               )}
             </div>
@@ -2036,10 +2109,10 @@ export default function Report() {
             <div className="scan-progress" role="status" aria-live="polite">
               <div className="scan-progress-meta">
                 <span>
-                  {rewriteError || rewriteProgressMessage || 'Rewriting AI sections'}
-                  {rewriteInProgress && <em> Keep this report open; results will appear when ready.</em>}
+                  {rewriteError || rewriteProgressMessage || t('report.rewrite.processing')}
+                  {rewriteInProgress && <em> {t('report.rewrite.keepOpenInline')}</em>}
                 </span>
-                <span>{hasCompletedRewrite ? 'Done' : `${rewriteProgress}%`}</span>
+                <span>{hasCompletedRewrite ? t('report.rewrite.done') : `${rewriteProgress}%`}</span>
               </div>
               <div
                 className="scan-progress-track"
@@ -2061,8 +2134,8 @@ export default function Report() {
               )}
               {rewriteInProgress && (
                 <div className="rewrite-progress-footnote">
-                  {rewriteElapsedLabel && <span>Elapsed: {rewriteElapsedLabel}</span>}
-                  <span>Keep this page open; results will appear automatically.</span>
+                  {rewriteElapsedLabel && <span>{t('report.rewrite.elapsed', { elapsed: rewriteElapsedLabel })}</span>}
+                  <span>{t('report.rewrite.keepOpen')}</span>
                 </div>
               )}
             </div>
@@ -2072,12 +2145,12 @@ export default function Report() {
         {rewriteCompletionBand}
 
         {transformationScorecard ? (
-          <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label="Report overview">
+          <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label={t('report.overview')}>
             {hasRewriteSignalComparison ? (
               <>
                 {transformationScorecard}
-                <div className="report-baseline-summary" aria-label="Original scan summary">
-                  <span className="report-baseline-label">Original scan baseline</span>
+                <div className="report-baseline-summary" aria-label={t('report.originalScanSummary')}>
+                  <span className="report-baseline-label">{t('report.originalScanBaseline')}</span>
                   {reportSummaryBar}
                 </div>
               </>
@@ -2093,19 +2166,19 @@ export default function Report() {
         )}
 
         {submittedContent.segments.length > 0 && (
-          <section className="submitted-content-review" aria-label="Submitted content with scan signals">
+          <section className="submitted-content-review" aria-label={t('report.submitted.sectionLabel')}>
             <div className="submitted-content-head">
               <div>
-                <span className="submitted-content-kicker">Submitted Content</span>
-                <h2>Signal highlights</h2>
+                <span className="submitted-content-kicker">{t('report.submitted.kicker')}</span>
+                <h2>{t('report.submitted.title')}</h2>
               </div>
               <div className="submitted-content-count">
                 <strong>{submittedContent.highlightedCount}</strong>
-                <span>highlighted sections</span>
+                <span>{t('report.submitted.highlightedSections')}</span>
               </div>
             </div>
             {submittedContent.legend.length > 0 && (
-              <div className="submitted-signal-legend" aria-label="Signal color legend">
+              <div className="submitted-signal-legend" aria-label={t('report.submitted.legend')}>
                 {submittedContent.legend.slice(0, 6).map((signal) => (
                   <span
                     key={signal.key}
@@ -2113,14 +2186,14 @@ export default function Report() {
                     style={{ '--signal-color': signal.color }}
                   >
                     <i aria-hidden="true" />
-                    {signal.label}
+                    {signalLabel(signal.key, signal.label, t)}
                     <strong>{signal.count}</strong>
                   </span>
                 ))}
               </div>
             )}
             <div className="submitted-content-grid">
-              <div className="submitted-document" aria-label="Submitted document text">
+              <div className="submitted-document" aria-label={t('report.submitted.documentText')}>
                 {submittedContent.paragraphs.map((paragraph) => (
                   <p key={paragraph.id}>
                     {paragraph.segments.map((segment) => {
@@ -2135,7 +2208,7 @@ export default function Report() {
                           type="button"
                           className={`submitted-highlight signal-style-${signalClassName(signal.key)}${isSelected ? ' is-selected' : ''}`}
                           style={{ '--signal-color': signal.color }}
-                          title={signal.description}
+                          title={signalDescription(signal.key, signal.description, t)}
                           onMouseEnter={() => setSelectedSegmentId(segment.id)}
                           onFocus={() => setSelectedSegmentId(segment.id)}
                           onClick={() => {
@@ -2149,18 +2222,18 @@ export default function Report() {
                   </p>
                 ))}
               </div>
-              <aside className="submitted-signal-panel" aria-label="Selected signal detail">
+              <aside className="submitted-signal-panel" aria-label={t('report.submitted.selectedSignal')}>
                 {selectedSegment?.primarySignal ? (
                   <>
                     <span className="submitted-panel-kicker">{selectedSegment.sentence_id}</span>
-                    <h3>{selectedSegment.primarySignal.label}</h3>
-                    <p>{selectedSegment.primarySignal.description}</p>
+                    <h3>{signalLabel(selectedSegment.primarySignal.key, selectedSegment.primarySignal.label, t)}</h3>
+                    <p>{signalDescription(selectedSegment.primarySignal.key, selectedSegment.primarySignal.description, t)}</p>
                     <div className="submitted-panel-meta">
                       {selectedSegment.primarySignal.score != null && (
-                        <span>{Math.round(selectedSegment.primarySignal.score)}% signal strength</span>
+                        <span>{t('report.submitted.signalStrength', { value: Math.round(selectedSegment.primarySignal.score) })}</span>
                       )}
                       {selectedSegment.primarySignal.tier && (
-                        <span>{selectedSegment.primarySignal.tier} priority</span>
+                        <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedSegment.primarySignal.tier}`, { defaultValue: selectedSegment.primarySignal.tier }) })}</span>
                       )}
                       {selectedSegment.primarySignal.actionability && (
                         <span>{selectedSegment.primarySignal.actionability.replaceAll('_', ' ')}</span>
@@ -2168,24 +2241,24 @@ export default function Report() {
                     </div>
                     {selectedSegment.signals.length > 1 && (
                       <div className="submitted-panel-stack">
-                        <span>Also detected</span>
+                        <span>{t('report.submitted.alsoDetected')}</span>
                         {selectedSegment.signals.slice(1, 4).map((signal) => (
-                          <em key={`${selectedSegment.id}-${signal.key}-${signal.finding_id}`}>{signal.label}</em>
+                          <em key={`${selectedSegment.id}-${signal.key}-${signal.finding_id}`}>{signalLabel(signal.key, signal.label, t)}</em>
                         ))}
                       </div>
                     )}
                     {selectedSegment.primarySignal.recommendation && (
                       <div className="submitted-panel-note">
-                        <span>Recommendation</span>
+                        <span>{t('report.submitted.recommendation')}</span>
                         <p>{selectedSegment.primarySignal.recommendation}</p>
                       </div>
                     )}
                   </>
                 ) : (
                   <>
-                    <span className="submitted-panel-kicker">No highlighted signal</span>
-                    <h3>Content map ready</h3>
-                    <p>The submitted text is available for review. New scans include richer signal highlights for each affected sentence.</p>
+                    <span className="submitted-panel-kicker">{t('report.submitted.noSignal')}</span>
+                    <h3>{t('report.submitted.mapReady')}</h3>
+                    <p>{t('report.submitted.mapReadyBody')}</p>
                   </>
                 )}
               </aside>
@@ -2199,6 +2272,7 @@ export default function Report() {
 }
 
 function RewriteNoticeDialog({ open, title, message, onClose }) {
+  const { t } = useTranslation();
   const closeButtonRef = useRef(null);
 
   useEffect(() => {
@@ -2238,7 +2312,7 @@ function RewriteNoticeDialog({ open, title, message, onClose }) {
             className="btn btn-primary btn-small"
             onClick={onClose}
           >
-            OK
+            {t('report.ok')}
           </button>
         </div>
       </div>

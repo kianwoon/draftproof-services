@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import { useAuth } from '../context/AuthContext';
@@ -26,6 +27,7 @@ function renderPlaceholderText(value) {
 export default function Rewrite() {
   const { rewriteId } = useParams();
   const { refreshBalance } = useAuth();
+  const { t } = useTranslation();
   const [rewrite, setRewrite] = useState(null);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(Boolean(rewriteId));
@@ -44,7 +46,7 @@ export default function Rewrite() {
         if (cancelled) return;
         setRewrite(status);
         if (status.status !== 'completed') {
-          setError(status.status === 'failed' ? (status.error || 'Rewrite failed') : 'Rewrite is not complete yet.');
+          setError(status.status === 'failed' ? (status.error || t('rewritePage.failed')) : t('rewritePage.incomplete'));
           return;
         }
 
@@ -54,7 +56,7 @@ export default function Rewrite() {
         refreshBalance();
       } catch (err) {
         if (!cancelled) {
-          setError(err.response?.data?.detail || 'Failed to load rewrite result');
+          setError(err.response?.data?.detail || t('rewritePage.loadFailed'));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -65,7 +67,7 @@ export default function Rewrite() {
     return () => {
       cancelled = true;
     };
-  }, [rewriteId, refreshBalance]);
+  }, [rewriteId, refreshBalance, t]);
 
   if (!rewriteId) {
     return <Navigate to="/reports" replace />;
@@ -87,11 +89,11 @@ export default function Rewrite() {
         }
       } else {
         downloadWindow?.close();
-        setError('Download not available yet. Please try again in a moment.');
+        setError(t('rewritePage.downloadUnavailable'));
       }
     } catch (err) {
       downloadWindow?.close();
-      setError(err.response?.data?.detail || 'Download failed. Please try again.');
+      setError(err.response?.data?.detail || t('rewritePage.downloadFailed'));
     }
   };
 
@@ -101,10 +103,10 @@ export default function Rewrite() {
       if (data.url) {
         window.open(data.url, '_blank');
       } else {
-        setError('Detect scan JSON not available.');
+        setError(t('rewritePage.detectJsonUnavailable'));
       }
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to download detect scan JSON.');
+      setError(err.response?.data?.detail || t('rewritePage.detectJsonFailed'));
     }
   };
 
@@ -115,7 +117,7 @@ export default function Rewrite() {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(report.final_text);
       } else {
-        copyTextFallback(report.final_text);
+        copyTextFallback(report.final_text, t('rewritePage.copyCommandFailed'));
       }
       setCopyStatus('copied');
       window.setTimeout(() => setCopyStatus('idle'), 1800);
@@ -138,6 +140,9 @@ export default function Rewrite() {
     (row) => normalizeSentence(row.orig_sentence) !== normalizeSentence(row.new_sentence)
   );
   const outcome = summary.outcome || (rewrite?.status === 'completed' ? 'completed' : rewrite?.status || '');
+  const outcomeLabel = outcome
+    ? t(`rewritePage.outcomes.${outcome}`, { defaultValue: outcome.replaceAll('_', ' ') })
+    : '';
   const scanId = rewrite?.scan_id;
   const rewrittenWordCount = countWords(report?.final_text);
 
@@ -148,18 +153,18 @@ export default function Rewrite() {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          Back to Report
+          {t('rewritePage.back')}
         </Link>
 
         <div className="report-hero" style={{ marginTop: 16 }}>
           <div className="report-hero-info">
-            <div className="report-eyebrow">Rewrite Report</div>
-            <h1>AI Section Rewrite</h1>
+            <div className="report-eyebrow">{t('rewritePage.eyebrow')}</div>
+            <h1>{t('rewritePage.title')}</h1>
           </div>
           {outcome && (
             <div className="report-hero-tier" style={{ background: '#f0fdf4' }}>
               <span style={{ color: '#15803d', fontWeight: 700 }}>
-                {outcome.replaceAll('_', ' ')}
+                {outcomeLabel}
               </span>
             </div>
           )}
@@ -168,7 +173,7 @@ export default function Rewrite() {
         {loading && (
           <div className="report-loading">
             <div className="report-pulse" />
-            <p>Loading rewrite result...</p>
+            <p>{t('rewritePage.loading')}</p>
           </div>
         )}
 
@@ -178,8 +183,8 @@ export default function Rewrite() {
           <section className="rewritten-document-section">
             <div className="rewritten-document-heading">
               <div className="rewritten-document-title">
-                <h3>Rewritten Document</h3>
-                <span>{rewrittenWordCount.toLocaleString()} word{rewrittenWordCount === 1 ? '' : 's'}</span>
+                <h3>{t('rewritePage.rewrittenDocument')}</h3>
+                <span>{t('rewritePage.word', { count: rewrittenWordCount })}</span>
               </div>
               <button
                 type="button"
@@ -187,7 +192,7 @@ export default function Rewrite() {
                 onClick={handleCopyRewrittenDocument}
                 aria-live="polite"
               >
-                {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy'}
+                {copyStatus === 'copied' ? t('rewritePage.copied') : copyStatus === 'error' ? t('rewritePage.copyFailed') : t('rewritePage.copy')}
               </button>
             </div>
             <div className="rewritten-document-content">
@@ -198,14 +203,14 @@ export default function Rewrite() {
 
         {sentenceRows.length > 0 && (
           <div style={{ margin: '24px 0' }}>
-            <h3>Sentence Changes ({sentenceRows.length})</h3>
+            <h3>{t('rewritePage.sentenceChanges', { count: sentenceRows.length })}</h3>
             <div className="reports-table-wrap">
               <table className="reports-table">
                 <thead>
                   <tr>
                     <th>#</th>
-                    <th>Original</th>
-                    <th>Rewritten</th>
+                    <th>{t('rewritePage.original')}</th>
+                    <th>{t('rewritePage.rewritten')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -226,30 +231,30 @@ export default function Rewrite() {
           <section className="rewrite-review-section">
             <div className="rewrite-review-heading">
               <div>
-                <span className="rewrite-review-kicker">Review Required</span>
-                <h3>Suggested Additions For Review</h3>
+                <span className="rewrite-review-kicker">{t('rewritePage.reviewRequired')}</span>
+                <h3>{t('rewritePage.suggestedAdditions')}</h3>
               </div>
               <span className="rewrite-review-count">{markedSuggestions.length}</span>
             </div>
             <p className="rewrite-review-copy">
-              These suggestions are not inserted automatically. Bracketed text marks details the user must verify, replace, or remove before using.
+              {t('rewritePage.suggestedAdditionsCopy')}
             </p>
             <div className="rewrite-suggestion-grid">
               {markedSuggestions.map((item, i) => (
                 <article className="rewrite-suggestion-card" key={`${item.component || 'suggestion'}-${i}`}>
                   <div className="rewrite-suggestion-meta">
-                    <span>{item.priority ? String(item.priority).replaceAll('_', ' ') : `Suggestion ${i + 1}`}</span>
-                    <span>{item.where || 'Flagged text'}</span>
+                    <span>{item.priority ? String(item.priority).replaceAll('_', ' ') : t('rewritePage.suggestion', { count: i + 1 })}</span>
+                    <span>{item.where || t('rewritePage.flaggedText')}</span>
                   </div>
-                  <h4>{item.title || 'Suggested review addition'}</h4>
+                  <h4>{item.title || t('rewritePage.suggestedReviewAddition')}</h4>
                   {(item.target_text || item.evidence) && (
                     <div className="rewrite-target-block">
-                      <span>Target text</span>
+                      <span>{t('rewritePage.targetText')}</span>
                       <p>{item.target_text || item.evidence}</p>
                     </div>
                   )}
                   <div className="rewrite-addition-block">
-                    <span>Suggested addition</span>
+                    <span>{t('rewritePage.suggestedAddition')}</span>
                     <p>{renderPlaceholderText(item.suggested_addition)}</p>
                   </div>
                   {(item.why_it_helps || item.user_note) && (
@@ -268,8 +273,8 @@ export default function Rewrite() {
           <section className="rewrite-review-section">
             <div className="rewrite-review-heading">
               <div>
-                <span className="rewrite-review-kicker">Manual Options</span>
-                <h3>Manual Suggestions</h3>
+                <span className="rewrite-review-kicker">{t('rewritePage.manualOptions')}</span>
+                <h3>{t('rewritePage.manualSuggestions')}</h3>
               </div>
               <span className="rewrite-review-count">{manualSuggestions.length}</span>
             </div>
@@ -277,18 +282,18 @@ export default function Rewrite() {
               {manualSuggestions.slice(0, 12).map((item, i) => (
                 <article className="rewrite-suggestion-card" key={`${item.finding_id || 'manual'}-${i}`}>
                   <div className="rewrite-suggestion-meta">
-                    <span>{item.scanner_target || item.finding_type || `Suggestion ${i + 1}`}</span>
-                    <span>{item.rejection_reason || 'Review manually'}</span>
+                    <span>{item.scanner_target || item.finding_type || t('rewritePage.suggestion', { count: i + 1 })}</span>
+                    <span>{item.rejection_reason || t('rewritePage.reviewManually')}</span>
                   </div>
                   {item.original_sentence && (
                     <div className="rewrite-target-block">
-                      <span>Original</span>
+                      <span>{t('rewritePage.original')}</span>
                       <p>{item.original_sentence}</p>
                     </div>
                   )}
                   {item.suggested_sentence && (
                     <div className="rewrite-addition-block">
-                      <span>Suggested sentence</span>
+                      <span>{t('rewritePage.suggestedSentence')}</span>
                       <p>{item.suggested_sentence}</p>
                     </div>
                   )}
@@ -304,16 +309,16 @@ export default function Rewrite() {
         {rewrite?.status === 'completed' && (
           <div className="report-downloads">
             <button type="button" className="btn btn-primary" onClick={() => handleDownload('pdf')}>
-              Download PDF
+              {t('rewritePage.downloadPdf')}
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => handleDownload('txt')}>
-              Download Rewritten Text
+              {t('rewritePage.downloadText')}
             </button>
             <button type="button" className="btn btn-secondary" onClick={handleDownloadDetectJson}>
-              Download Detect Scan JSON
+              {t('rewritePage.downloadDetectJson')}
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => handleDownload('log')}>
-              Download Rewrite Debug Log
+              {t('rewritePage.downloadDebugLog')}
             </button>
           </div>
         )}
@@ -322,7 +327,7 @@ export default function Rewrite() {
   );
 }
 
-function copyTextFallback(text) {
+function copyTextFallback(text, errorMessage) {
   const textarea = document.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', '');
@@ -333,5 +338,5 @@ function copyTextFallback(text) {
   textarea.select();
   const copied = document.execCommand('copy');
   document.body.removeChild(textarea);
-  if (!copied) throw new Error('Copy command failed');
+  if (!copied) throw new Error(errorMessage || 'copy failed');
 }
