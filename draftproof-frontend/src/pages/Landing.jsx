@@ -81,6 +81,46 @@ const contentStrategies = [
   },
 ];
 
+const sampleReportStats = [
+  { label: 'Risk tier', value: 'Low Risk', tone: 'positive' },
+  { label: 'Total findings', value: '50' },
+  { label: 'Authorship rating', value: 'Good' },
+  { label: 'Raw AI-style signal', value: '29.46%', tone: 'positive' },
+  { label: 'Writing score', value: '32.84%', tone: 'accent' },
+];
+
+const sampleSignalGroups = [
+  {
+    title: 'AI Authorship Signals',
+    description: 'Pattern, predictability, and model-like texture signals.',
+    tone: 'ai',
+    signals: [
+      { label: 'Raw Top-k Predictability', value: 67 },
+      { label: 'Patchwork variance', value: 48 },
+      { label: 'AI likelihood', value: 29 },
+    ],
+  },
+  {
+    title: 'Human / Authenticity Signals',
+    description: 'Grounding and anchor signals that reduce authorship certainty.',
+    tone: 'human',
+    signals: [
+      { label: 'Human anchor', value: 84 },
+      { label: 'Human anchor discount', value: 38 },
+    ],
+  },
+  {
+    title: 'Quality & Calibration Signals',
+    description: 'Evidence quality, calibration confidence, and reporting caution.',
+    tone: 'quality',
+    signals: [
+      { label: 'Calibration confidence', value: 57 },
+      { label: 'Grounding risk', value: 50 },
+      { label: 'Reporting suppression', value: 43 },
+    ],
+  },
+];
+
 const beliefs = [
   'Every AI-like sentence is not misconduct.',
   'Every similarity match is not plagiarism.',
@@ -116,7 +156,7 @@ export default function Landing() {
             </div>
           </div>
 
-          <aside className="review-panel" id="report" aria-label="DraftProof quick summary">
+          <aside className="review-panel" aria-label="DraftProof quick summary">
             <div className="review-panel-top">
               <p className="card-kicker">DraftProof Quick Summary</p>
               <span className="live-dot">Live preview</span>
@@ -153,6 +193,28 @@ export default function Landing() {
           <span>PDF report</span>
           <span>Citation + source grounding</span>
           <span>Content-aware rewrite strategy</span>
+        </div>
+      </section>
+
+      <section id="report" className="landing-section sample-report-section">
+        <div className="section-inner sample-report-layout">
+          <div className="sample-report-copy">
+            <p className="eyebrow">Sample Report</p>
+            <h2>A report that separates risk, authorship, and evidence quality.</h2>
+            <p>
+              DraftProof shows the difference between an AI-style signal, human
+              grounding, and calibration confidence so reviewers can see why the
+              result is not a simple verdict.
+            </p>
+            <div className="sample-report-points">
+              <span>Risk summary before details</span>
+              <span>Grouped signal families</span>
+              <span>Actionable review context</span>
+            </div>
+            <Link to="/scan" className="btn btn-primary">Run your own scan</Link>
+          </div>
+
+          <SampleReportPreview />
         </div>
       </section>
 
@@ -277,6 +339,83 @@ export default function Landing() {
         </div>
       </footer>
     </main>
+  );
+}
+
+function SampleReportPreview() {
+  return (
+    <article className="sample-report-preview" aria-label="DraftProof sample analysis report preview">
+      <div className="sample-report-stats">
+        {sampleReportStats.map((stat) => (
+          <div className={`sample-report-stat${stat.tone ? ` is-${stat.tone}` : ''}`} key={stat.label}>
+            <strong>{stat.value}</strong>
+            <span>{stat.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="sample-report-pattern">
+        <div>
+          <span>Transformation Pattern</span>
+          <h3>Human / uncertain pattern</h3>
+          <div className="sample-report-tags">
+            <em>Low Confidence</em>
+            <em>Not a Verdict</em>
+          </div>
+        </div>
+        <div className="sample-authorship-badge">
+          <span>Authorship Rating</span>
+          <strong>GOOD</strong>
+          <small>11% calibrated risk</small>
+        </div>
+      </div>
+
+      <div className="sample-contribution">
+        <span>Estimated Contribution</span>
+        <p>Human anchoring dominates, with limited AI transformation signal.</p>
+        <div className="sample-contribution-bars">
+          <SampleSignalBar label="Human Contribution" value={100} tone="human" />
+          <SampleSignalBar label="AI Transformation" value={0} tone="ai" />
+        </div>
+      </div>
+
+      <div className="sample-signal-profile">
+        <div className="sample-signal-title">Signal Profile</div>
+        {sampleSignalGroups.map((group) => (
+          <div className={`sample-signal-group is-${group.tone}`} key={group.title}>
+            <div className="sample-signal-group-head">
+              <div>
+                <h4>{group.title}</h4>
+                <p>{group.description}</p>
+              </div>
+              <span>{group.signals.length} signals</span>
+            </div>
+            {group.signals.map((signal) => (
+              <SampleSignalBar
+                key={signal.label}
+                label={signal.label}
+                value={signal.value}
+                tone={group.tone}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function SampleSignalBar({ label, value, tone }) {
+  return (
+    <div className="sample-signal-row">
+      <div className="sample-signal-row-label">
+        <span>{label}</span>
+        <strong>{value}%</strong>
+      </div>
+      <div className="sample-signal-track">
+        <i className={`is-${tone}`} style={{ width: `${value}%` }} />
+      </div>
+    </div>
   );
 }
 
