@@ -174,10 +174,20 @@ def _external_detector_proxy_status(
     )
     warning_threshold = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_WARN_MAX", 32.0)
     hard_blockers = []
-    if after.get("topk_calibrated_risk", 0.0) > _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_TOPK_MAX", 25.0):
+    warnings = []
+    topk_risk = after.get("topk_calibrated_risk", 0.0)
+    density_max = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_DENSITY_MAX", 12.0)
+    topk_warn_max = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_TOPK_MAX", 25.0)
+    topk_hard_max = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_TOPK_HARD_MAX", 35.0)
+    density_hard_max = _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_DENSITY_HARD_MAX", 18.0)
+    if topk_risk > topk_hard_max:
         hard_blockers.append("topk_calibrated_risk_above_external_safe_band")
-    if density_ratio > _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_PROXY_DENSITY_MAX", 12.0):
+    elif topk_risk > topk_warn_max:
+        warnings.append("topk_calibrated_risk_above_external_warning_band")
+    if density_ratio > density_hard_max:
         hard_blockers.append("eligible_span_density_above_external_safe_band")
+    elif density_ratio > density_max:
+        warnings.append("eligible_span_density_above_external_warning_band")
     if low_sentence_variation_penalty >= 12.0 and after.get("ai_likelihood", 0.0) >= 30.0:
         hard_blockers.append("low_sentence_variation_with_active_ai_likelihood")
     safe = bool(score <= safe_threshold and not hard_blockers)
@@ -195,6 +205,7 @@ def _external_detector_proxy_status(
         "warning_threshold": warning_threshold,
         "outcome": outcome,
         "hard_blockers": hard_blockers,
+        "warnings": warnings,
         "signals": {
             "ai_likelihood": round(after.get("ai_likelihood", 0.0), 3),
             "topk_calibrated_risk": round(after.get("topk_calibrated_risk", 0.0), 3),

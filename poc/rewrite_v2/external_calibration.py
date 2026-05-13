@@ -25,6 +25,13 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def external_label_pass_max() -> float:
     """Maximum external AI percentage treated as a pass in calibration data."""
     return max(0.0, min(100.0, _float_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_LABEL_PASS_MAX", 35.0)))
@@ -172,10 +179,14 @@ def derive_external_proxy_thresholds(records: list[dict[str, Any]]) -> dict[str,
         if score is None or label.get("passed") is None:
             continue
         labeled.append((score, bool(label["passed"])))
-    if not labeled:
+    required_records = max(2, _int_env("DRAFTPROOF_REWRITE_V2_EXTERNAL_CALIBRATION_MIN_PROXY_RECORDS", 4))
+    label_classes = {passed for _score, passed in labeled}
+    if len(labeled) < required_records or len(label_classes) < 2:
         return {
             "status": "insufficient_labeled_proxy_records",
-            "labeled_proxy_records": 0,
+            "labeled_proxy_records": len(labeled),
+            "required_proxy_records": required_records,
+            "has_pass_and_fail": len(label_classes) >= 2,
             "safe_threshold": None,
         }
     candidates = sorted({score for score, _passed in labeled} | {0.0, 100.0})

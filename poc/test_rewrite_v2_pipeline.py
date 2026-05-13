@@ -65,7 +65,7 @@ from rewrite_v2.layers.academic import _exact_citation_markers
 from rewrite_v2.layers.academic import _generate_academic_all_section_candidates
 from rewrite_v2.layers.academic import _generate_academic_section_candidates
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
-from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
+from rewrite_v2.goal_contract import RewriteGoalStatus, _external_detector_proxy_status, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.layer_attempts import summarize_layer_attempts
 from rewrite_v2.external_calibration import (
     classify_external_label,
@@ -261,12 +261,60 @@ assert_test(
 seed_calibration_path = Path(__file__).parent / "rewrite_v2" / "calibration_external_labels.jsonl"
 seed_calibration_records = load_external_calibration_labels(seed_calibration_path)
 seed_calibration_summary = summarize_external_calibration_records(seed_calibration_records)
+seed_threshold_summary = derive_external_proxy_thresholds(seed_calibration_records)
 assert_test(
     seed_calibration_summary["labeled_records"] == 3
     and seed_calibration_summary["passed"] == 1
     and seed_calibration_summary["failed"] == 2
-    and derive_external_proxy_thresholds(seed_calibration_records)["status"] == "insufficient_labeled_proxy_records",
-    "V2 seed external labels capture user-reported detector outcomes before proxy scores are available",
+    and seed_threshold_summary["status"] == "insufficient_labeled_proxy_records"
+    and seed_threshold_summary["labeled_proxy_records"] == 1
+    and seed_threshold_summary["required_proxy_records"] == 4,
+    "V2 seed external labels are captured without activating under-sampled proxy thresholds",
+)
+low_proxy_mild_topk = _external_detector_proxy_status(
+    candidate_text=(
+        "The argument starts with a plain classroom problem, then moves into the evidence. "
+        "One section is shorter because the source does less work there. "
+        "The next point needs more space, since the example has to be explained before it matters. "
+        "That unevenness is part of the writing, not a formatting mistake. "
+        "The conclusion returns to the teaching choice and leaves the citation frame intact. "
+        "It is still careful academic prose, but it is no longer a perfectly smooth summary."
+    ),
+    ai_footprint_gate={
+        "after": {
+            "authorship_footprint": {
+                "ai_likelihood": 12.79,
+                "semantic_uniformity": 20.11,
+                "discourse_regularity": 10.0,
+            },
+            "semantic_footprint": {"generic_assertion_risk": 25.0},
+            "grounding_footprint": {"unsupported_claim_risk": 55.0, "source_grounding_risk": 40.0},
+            "structural_footprint": {"topk_calibrated_risk": 27.126},
+        }
+    },
+    turnitin_like_gate={"after": {"components": {"patchwork_expansion": 55.0}}},
+    eligible_span_density_gate={"unsafe_eligible_word_ratio": 3.636, "human_anchor_score": 64.0},
+)
+severe_topk_proxy = _external_detector_proxy_status(
+    candidate_text="One careful sentence starts the paragraph. A second sentence keeps the point moving with some texture.",
+    ai_footprint_gate={
+        "after": {
+            "authorship_footprint": {"ai_likelihood": 12.79, "semantic_uniformity": 20.11},
+            "semantic_footprint": {"generic_assertion_risk": 25.0},
+            "grounding_footprint": {"unsupported_claim_risk": 55.0, "source_grounding_risk": 40.0},
+            "structural_footprint": {"topk_calibrated_risk": 36.0},
+        }
+    },
+    turnitin_like_gate={"after": {"components": {"patchwork_expansion": 55.0}}},
+    eligible_span_density_gate={"unsafe_eligible_word_ratio": 3.636, "human_anchor_score": 64.0},
+)
+assert_test(
+    low_proxy_mild_topk["safe"]
+    and "topk_calibrated_risk_above_external_warning_band" in low_proxy_mild_topk["warnings"]
+    and not low_proxy_mild_topk["hard_blockers"]
+    and not severe_topk_proxy["safe"]
+    and "topk_calibrated_risk_above_external_safe_band" in severe_topk_proxy["hard_blockers"],
+    "V2 external proxy treats mild top-k overshoot as warning but keeps severe top-k risk fatal",
 )
 reflective_academic_route = classify_content_route(
     (
