@@ -1,217 +1,89 @@
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 
-const checks = [
-  {
-    title: 'Citation gaps',
-    body: "Identifies claims that need a source but don't have one.",
-  },
-  {
-    title: 'Source integrity',
-    body: 'Checks whether cited sources actually support the claim made.',
-  },
-  {
-    title: 'Generic phrasing',
-    body: 'Flags writing that sounds AI-generic or unsupported by evidence.',
-  },
-  {
-    title: 'Authorship signals',
-    body: 'Surfaces review-only patterns that deserve a human look before submission.',
-  },
-];
-
-const whyCards = [
-  {
-    title: 'We learn from synthetic information',
-    body: 'Search engines, chatbots, and writing assistants summarise knowledge before we reach the original source. Writing can become detached from its evidence.',
-    note: 'DraftProof bridges that gap',
-  },
-  {
-    title: 'Traditional media is no longer the only source',
-    body: 'Information now moves through AI newsrooms, generated summaries, and reported material. Polished does not mean proven.',
-    note: 'Check the source, check the claim',
-  },
-  {
-    title: 'AI detection alone is not enough',
-    body: 'A score is not feedback. DraftProof asks better questions: is the claim supported, and what needs fixing?',
-    note: 'Actionable, not just a verdict',
-  },
-];
-
-const contentStrategies = [
-  {
-    type: 'Essay',
-    strategy: 'Make the argument clearer',
-    detail: 'Keep your main point and make the reasoning easier to follow.',
-  },
-  {
-    type: 'Research with citations',
-    strategy: 'Improve wording without moving sources',
-    detail: 'Clean up weak sentences while keeping citations and source claims in place.',
-  },
-  {
-    type: 'Technical writing',
-    strategy: 'Keep exact meaning intact',
-    detail: 'Protect terms, steps, definitions, and requirements from being over-polished.',
-  },
-  {
-    type: 'Legal, policy, or medical text',
-    strategy: 'Make careful edits only',
-    detail: 'Change only what needs attention where wording mistakes can create risk.',
-  },
-  {
-    type: 'Lists and tables',
-    strategy: 'Keep the structure easy to follow',
-    detail: 'Improve wording without breaking rows, bullets, comparisons, or findings.',
-  },
-  {
-    type: 'Short answers',
-    strategy: 'Add context or ask for more',
-    detail: 'Tell you when the text is too short to judge instead of guessing.',
-  },
-  {
-    type: 'Personal reflection',
-    strategy: 'Keep your own voice',
-    detail: 'Preserve your experience and viewpoint instead of making it sound generic.',
-  },
-  {
-    type: 'Marketing copy',
-    strategy: 'Match the audience and format',
-    detail: 'Improve the message without forcing it into an academic writing style.',
-  },
-];
-
-const sampleReportStats = [
-  { label: 'Risk tier', value: 'Low Risk', tone: 'positive' },
-  { label: 'Total findings', value: '50' },
-  { label: 'Authorship rating', value: 'Good' },
-  { label: 'Raw AI-style signal', value: '29.46%', tone: 'positive' },
-  { label: 'Writing score', value: '32.84%', tone: 'accent' },
-];
-
-const sampleSignalGroups = [
-  {
-    title: 'AI Authorship Signals',
-    description: 'Pattern, predictability, and model-like texture signals.',
-    tone: 'ai',
-    signals: [
-      { label: 'Raw Top-k Predictability', value: 67 },
-      { label: 'Patchwork variance', value: 48 },
-      { label: 'AI likelihood', value: 29 },
-    ],
-  },
-  {
-    title: 'Human / Authenticity Signals',
-    description: 'Grounding and anchor signals that reduce authorship certainty.',
-    tone: 'human',
-    signals: [
-      { label: 'Human anchor', value: 84 },
-      { label: 'Human anchor discount', value: 38 },
-    ],
-  },
-  {
-    title: 'Quality & Calibration Signals',
-    description: 'Evidence quality, calibration confidence, and reporting caution.',
-    tone: 'quality',
-    signals: [
-      { label: 'Calibration confidence', value: 57 },
-      { label: 'Grounding risk', value: 50 },
-      { label: 'Reporting suppression', value: 43 },
-    ],
-  },
-];
-
-const beliefs = [
-  'Every AI-like sentence is not misconduct.',
-  'Every similarity match is not plagiarism.',
-  'Students should not be judged by black-box scores.',
-  'Rewriting everything does not make writing more honest.',
-];
-
 export default function Landing() {
+  const { t } = useTranslation();
+  const checks = t('landing.checks', { returnObjects: true });
+  const whyCards = t('landing.whyCards', { returnObjects: true });
+  const contentStrategies = t('landing.contentStrategies', { returnObjects: true });
+  const beliefs = t('landing.beliefs', { returnObjects: true });
+
   return (
     <main className="landing-page">
       <section id="hero" className="landing-hero">
         <CodeTexture id="landingHero" className="hero-code-field" />
         <div className="section-inner landing-hero-grid">
           <div className="hero-copy">
-            <p className="brand-pill">Writing integrity for education & research</p>
+            <p className="brand-pill">{t('landing.heroPill')}</p>
             <h1>
-              Before you submit, prove your work is <span>grounded.</span>
+              {t('landing.heroTitle').replace(t('landing.heroTitleHighlight'), '')}<span>{t('landing.heroTitleHighlight')}</span>
             </h1>
-            <p className="lead">
-              DraftProof reviews your writing for citation gaps, source integrity,
-              generic phrasing, and authorship signals, then applies the right strategy for
-              the content type before you submit.
-            </p>
+            <p className="lead">{t('landing.heroLead')}</p>
 
             <div className="hero-actions" id="check">
-              <Link to="/scan" className="btn btn-ghost">Run a pre-submission check</Link>
-              <a href="#report" className="btn btn-ghost">View sample report</a>
+              <Link to="/scan" className="btn btn-ghost">{t('landing.runCheck')}</Link>
+              <a href="#report" className="btn btn-ghost">{t('landing.viewSample')}</a>
             </div>
 
             <div className="trust-note">
               <span className="mini-shield" aria-hidden="true" />
-              <span>Not an AI detector · Not a plagiarism verdict · A writing integrity review you can act on.</span>
+              <span>{t('landing.trustNote')}</span>
             </div>
           </div>
 
-          <aside className="review-panel" aria-label="DraftProof quick summary">
+          <aside className="review-panel" aria-label={t('landing.quickSummary')}>
             <div className="review-panel-top">
-              <p className="card-kicker">DraftProof Quick Summary</p>
-              <span className="live-dot">Live preview</span>
+              <p className="card-kicker">{t('landing.quickSummary')}</p>
+              <span className="live-dot">{t('landing.livePreview')}</span>
             </div>
-            <h2>Pre-submission review</h2>
-            <p>Running integrity check on your draft...</p>
+            <h2>{t('landing.preSubmissionReview')}</h2>
+            <p>{t('landing.runningCheck')}</p>
 
             <div className="review-grid">
-              <Metric label="Review tier" value="Medium" tone="warning" width="50%" />
-              <Metric label="Grounding" value="Strong" tone="positive" width="82%" />
-              <Metric label="Citation gaps" value="2 found" tone="warning" width="35%" />
-              <Metric label="Source integrity" value="Verified" tone="positive" width="92%" />
+              <Metric label={t('landing.reviewTier')} value={t('landing.medium')} tone="warning" width="50%" />
+              <Metric label={t('landing.grounding')} value={t('landing.strong')} tone="positive" width="82%" />
+              <Metric label={t('landing.citationGaps')} value={t('landing.foundCount', { count: 2 })} tone="warning" width="35%" />
+              <Metric label={t('landing.sourceIntegrity')} value={t('landing.verified')} tone="positive" width="92%" />
             </div>
 
             <div className="primary-fix">
               <div>
-                <span>Primary fix</span>
-                <strong>1 citation</strong>
+                <span>{t('landing.primaryFix')}</span>
+                <strong>{t('landing.oneCitation')}</strong>
               </div>
-              <em>Actionable</em>
+              <em>{t('landing.actionable')}</em>
             </div>
           </aside>
         </div>
       </section>
 
-      <section className="trust-bar" aria-label="DraftProof audiences and review details">
+      <section className="trust-bar" aria-label={t('landing.audienceDetails')}>
         <div className="section-inner trust-bar-inner">
-          <span>Built for</span>
-          <strong>Students</strong>
-          <strong>Academic researchers</strong>
-          <strong>Educators</strong>
-          <strong>Policy writers</strong>
-          <span>1 token per 1,000 words</span>
-          <span>PDF report</span>
-          <span>Citation + source grounding</span>
-          <span>Content-aware rewrite strategy</span>
+          <span>{t('landing.builtFor')}</span>
+          <strong>{t('landing.students')}</strong>
+          <strong>{t('landing.researchers')}</strong>
+          <strong>{t('landing.educators')}</strong>
+          <strong>{t('landing.policyWriters')}</strong>
+          <span>{t('landing.tokenRate')}</span>
+          <span>{t('landing.pdfReport')}</span>
+          <span>{t('landing.citationGrounding')}</span>
+          <span>{t('landing.contentAwareRewrite')}</span>
         </div>
       </section>
 
       <section id="report" className="landing-section sample-report-section">
         <div className="section-inner sample-report-layout">
           <div className="sample-report-copy">
-            <p className="eyebrow">Sample Report</p>
-            <h2>A report that separates risk, authorship, and evidence quality.</h2>
-            <p>
-              DraftProof shows the difference between an AI-style signal, human
-              grounding, and calibration confidence so reviewers can see why the
-              result is not a simple verdict.
-            </p>
+            <p className="eyebrow">{t('landing.sampleEyebrow')}</p>
+            <h2>{t('landing.sampleTitle')}</h2>
+            <p>{t('landing.sampleBody')}</p>
             <div className="sample-report-points">
-              <span>Risk summary before details</span>
-              <span>Grouped signal families</span>
-              <span>Actionable review context</span>
+              <span>{t('landing.samplePoint1')}</span>
+              <span>{t('landing.samplePoint2')}</span>
+              <span>{t('landing.samplePoint3')}</span>
             </div>
-            <Link to="/scan" className="btn btn-primary">Run your own scan</Link>
+            <Link to="/scan" className="btn btn-primary">{t('landing.runOwnScan')}</Link>
           </div>
 
           <SampleReportPreview />
@@ -220,8 +92,8 @@ export default function Landing() {
 
       <section id="product" className="landing-section">
         <div className="section-inner">
-          <p className="eyebrow">Why DraftProof Exists</p>
-          <h2>The way people read, write, and cite has fundamentally changed.</h2>
+          <p className="eyebrow">{t('landing.whyEyebrow')}</p>
+          <h2>{t('landing.whyTitle')}</h2>
           <div className="why-card-grid">
             {whyCards.map((card, index) => (
               <article className="why-card" key={card.title}>
@@ -239,17 +111,13 @@ export default function Landing() {
         <div className="section-inner">
           <div className="strategy-heading">
             <div>
-              <p className="eyebrow">Content-Aware Help</p>
-              <h2>Different writing needs different help.</h2>
+              <p className="eyebrow">{t('landing.strategyEyebrow')}</p>
+              <h2>{t('landing.strategyTitle')}</h2>
             </div>
-            <p>
-              An essay, a research paragraph, a policy note, and a personal reflection
-              should not be rewritten the same way. DraftProof first understands what
-              you wrote, then suggests the safest way to improve it.
-            </p>
+            <p>{t('landing.strategyBody')}</p>
           </div>
 
-          <div className="strategy-grid" aria-label="DraftProof content-aware rewrite strategies">
+          <div className="strategy-grid" aria-label={t('landing.contentAwareRewrite')}>
             {contentStrategies.map((item) => (
               <article className="strategy-card" key={item.type}>
                 <span>{item.type}</span>
@@ -260,10 +128,8 @@ export default function Landing() {
           </div>
 
           <div className="strategy-proof">
-            <strong>DraftProof does not blindly humanize text.</strong>
-            <span>
-              It helps you fix the right thing for the kind of writing you actually have.
-            </span>
+            <strong>{t('landing.strategyProofStrong')}</strong>
+            <span>{t('landing.strategyProofBody')}</span>
           </div>
         </div>
       </section>
@@ -271,9 +137,9 @@ export default function Landing() {
       <section id="engine" className="landing-section checks-section">
         <CodeTexture id="landingChecks" />
         <div className="section-inner">
-          <p className="eyebrow">How It Works</p>
-          <h2>Four checks. One clear report.</h2>
-          <p className="section-lead">DraftProof analyses your writing across four dimensions before you submit.</p>
+          <p className="eyebrow">{t('landing.engineEyebrow')}</p>
+          <h2>{t('landing.engineTitle')}</h2>
+          <p className="section-lead">{t('landing.engineLead')}</p>
           <div className="check-line">
             {checks.map((check, index) => (
               <article className="check-step" key={check.title}>
@@ -288,8 +154,8 @@ export default function Landing() {
 
       <section id="trust" className="landing-section beliefs-section">
         <div className="section-inner">
-          <p className="eyebrow">What DraftProof Believes</p>
-          <h2>Writing tools should be fair, transparent, and useful.</h2>
+          <p className="eyebrow">{t('landing.beliefsEyebrow')}</p>
+          <h2>{t('landing.beliefsTitle')}</h2>
           <div className="belief-row-grid">
             {beliefs.map((belief) => (
               <div className="belief-row" key={belief}>
@@ -299,7 +165,7 @@ export default function Landing() {
             ))}
             <div className="belief-row belief-row-positive">
               <span aria-hidden="true">✓</span>
-              We believe users deserve clear, evidence-based feedback that helps them improve their work.
+              {t('landing.positiveBelief')}
             </div>
           </div>
         </div>
@@ -308,14 +174,11 @@ export default function Landing() {
       <section id="cta" className="landing-cta">
         <CodeTexture id="landingCta" />
         <div className="section-inner">
-          <p className="brand-pill">The world now produces more information than people can easily verify.</p>
-          <h2>DraftProof is that review layer.</h2>
-          <p>
-            Before a paper, report, or essay is submitted, check that the work
-            is properly grounded, clearly written, and responsibly supported.
-          </p>
-          <Link to="/scan" className="btn btn-ghost">Run a pre-submission review</Link>
-          <small>1 token per 1,000 words · PDF report included · No AI verdict</small>
+          <p className="brand-pill">{t('landing.ctaPill')}</p>
+          <h2>{t('landing.ctaTitle')}</h2>
+          <p>{t('landing.ctaBody')}</p>
+          <Link to="/scan" className="btn btn-ghost">{t('landing.ctaButton')}</Link>
+          <small>{t('landing.ctaSmall')}</small>
         </div>
       </section>
 
@@ -323,18 +186,15 @@ export default function Landing() {
         <div className="section-inner landing-footer-inner">
           <div>
             <Link to="/" className="footer-wordmark">DraftProof</Link>
-            <p>
-              DraftProof provides writing integrity signals and review guidance.
-              It does not determine misconduct, plagiarism, or AI authorship.
-            </p>
+            <p>{t('footer.disclaimer')}</p>
           </div>
-          <nav aria-label="Footer">
-            <a href="#product">Product</a>
-            <a href="#engine">How it works</a>
-            <a href="#report">Sample report</a>
-            <Link to="/pricing">Pricing</Link>
-            <Link to="/privacy">Privacy</Link>
-            <Link to="/security">Security</Link>
+          <nav aria-label={t('footer.product')}>
+            <a href="#product">{t('footer.product')}</a>
+            <a href="#engine">{t('footer.howItWorks')}</a>
+            <a href="#report">{t('footer.sampleReport')}</a>
+            <Link to="/pricing">{t('footer.pricing')}</Link>
+            <Link to="/privacy">{t('footer.privacy')}</Link>
+            <Link to="/security">{t('footer.security')}</Link>
           </nav>
         </div>
       </footer>
@@ -343,8 +203,12 @@ export default function Landing() {
 }
 
 function SampleReportPreview() {
+  const { t } = useTranslation();
+  const sampleReportStats = t('landing.sampleStats', { returnObjects: true });
+  const sampleSignalGroups = t('landing.sampleSignalGroups', { returnObjects: true });
+
   return (
-    <article className="sample-report-preview" aria-label="DraftProof sample analysis report preview">
+    <article className="sample-report-preview" aria-label={t('landing.reportPreviewLabel')}>
       <div className="sample-report-stats">
         {sampleReportStats.map((stat) => (
           <div className={`sample-report-stat${stat.tone ? ` is-${stat.tone}` : ''}`} key={stat.label}>
@@ -356,31 +220,31 @@ function SampleReportPreview() {
 
       <div className="sample-report-pattern">
         <div>
-          <span>Transformation Pattern</span>
-          <h3>Human / uncertain pattern</h3>
+          <span>{t('landing.transformationPattern')}</span>
+          <h3>{t('landing.humanUncertain')}</h3>
           <div className="sample-report-tags">
-            <em>Low Confidence</em>
-            <em>Not a Verdict</em>
+            <em>{t('landing.lowConfidence')}</em>
+            <em>{t('landing.notVerdict')}</em>
           </div>
         </div>
         <div className="sample-authorship-badge">
-          <span>Authorship Rating</span>
-          <strong>GOOD</strong>
-          <small>11% calibrated risk</small>
+          <span>{t('landing.authorshipRating')}</span>
+          <strong>{t('landing.good')}</strong>
+          <small>{t('landing.calibratedRisk')}</small>
         </div>
       </div>
 
       <div className="sample-contribution">
-        <span>Estimated Contribution</span>
-        <p>Human anchoring dominates, with limited AI transformation signal.</p>
+        <span>{t('landing.estimatedContribution')}</span>
+        <p>{t('landing.contributionBody')}</p>
         <div className="sample-contribution-bars">
-          <SampleSignalBar label="Human Contribution" value={100} tone="human" />
-          <SampleSignalBar label="AI Transformation" value={0} tone="ai" />
+          <SampleSignalBar label={t('landing.humanContribution')} value={100} tone="human" />
+          <SampleSignalBar label={t('landing.aiTransformation')} value={0} tone="ai" />
         </div>
       </div>
 
       <div className="sample-signal-profile">
-        <div className="sample-signal-title">Signal Profile</div>
+        <div className="sample-signal-title">{t('landing.signalProfile')}</div>
         {sampleSignalGroups.map((group) => (
           <div className={`sample-signal-group is-${group.tone}`} key={group.title}>
             <div className="sample-signal-group-head">
@@ -388,7 +252,7 @@ function SampleReportPreview() {
                 <h4>{group.title}</h4>
                 <p>{group.description}</p>
               </div>
-              <span>{group.signals.length} signals</span>
+              <span>{t('landing.signals', { count: group.signals.length })}</span>
             </div>
             {group.signals.map((signal) => (
               <SampleSignalBar

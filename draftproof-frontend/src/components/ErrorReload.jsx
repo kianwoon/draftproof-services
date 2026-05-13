@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 const MAX_RETRIES = 3;
 const RETRY_KEY = 'error_reload_retries';
 
 export default function ErrorReload({ message }) {
   const [count, setCount] = useState(10);
+  const { t } = useTranslation();
   const retries = parseInt(sessionStorage.getItem(RETRY_KEY) || '0', 10);
 
   useEffect(() => {
@@ -26,7 +28,7 @@ export default function ErrorReload({ message }) {
           sessionStorage.removeItem(RETRY_KEY);
           window.location.reload();
         }}>
-          Retry
+          {t('errorReload.retry')}
         </button>
       </div>
     );
@@ -35,7 +37,7 @@ export default function ErrorReload({ message }) {
   return (
     <div className="error-reload">
       <p className="error">{message}</p>
-      <p className="error-reload-hint">Refreshing in {count}s…</p>
+      <p className="error-reload-hint">{t('errorReload.refreshing', { count, defaultValue: `Refreshing in ${count}s...` })}</p>
     </div>
   );
 }

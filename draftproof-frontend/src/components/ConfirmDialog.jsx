@@ -1,17 +1,19 @@
 import { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export default function ConfirmDialog({
   open,
   title,
   message,
-  confirmLabel = 'Delete',
-  cancelLabel = 'Cancel',
+  confirmLabel = null,
+  cancelLabel = null,
   confirmClassName = 'btn-danger',
   hideCancel = false,
   onConfirm,
   onCancel,
 }) {
   const dialogRef = useRef(null);
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (open) dialogRef.current?.focus();
@@ -35,9 +37,9 @@ export default function ConfirmDialog({
         <p className="modal-message">{message}</p>
         <div className="modal-actions">
           {!hideCancel && (
-            <button className="btn btn-secondary btn-small" onClick={onCancel}>{cancelLabel}</button>
+            <button className="btn btn-secondary btn-small" onClick={onCancel}>{cancelLabel || t('dialog.cancel')}</button>
           )}
-          <button className={`btn btn-small ${confirmClassName}`} ref={dialogRef} onClick={onConfirm}>{confirmLabel}</button>
+          <button className={`btn btn-small ${confirmClassName}`} ref={dialogRef} onClick={onConfirm}>{confirmLabel || t('dialog.confirm')}</button>
         </div>
       </div>
     </div>

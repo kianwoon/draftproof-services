@@ -1,31 +1,33 @@
 import { useAuth } from '../context/AuthContext';
 import { googleAuthUrl, microsoftAuthUrl } from '../api/authApi';
 import { Navigate, useSearchParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 
 export default function SignIn() {
   const { user, loading } = useAuth();
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   if (loading) return (
     <div className="page-loading">
       <div className="reports-spinner" />
-      <p>Loading...</p>
+      <p>{t('common.loading')}</p>
     </div>
   );
   if (user) return <Navigate to="/" replace />;
 
   const errorMsg = searchParams.get('error');
   const knownErrors = {
-    'Session expired. Please sign in again.': true,
-    'Access denied. Your email domain is not supported.': true,
-    'Something went wrong during sign-in': true,
-    'Something went wrong. Please try again.': true,
-    'Invalid request. Please try again.': true,
-    'Too many requests. Please wait a moment.': true,
+    'Session expired. Please sign in again.': 'signin.errors.session',
+    'Access denied. Your email domain is not supported.': 'signin.errors.domain',
+    'Something went wrong during sign-in': 'signin.errors.signin',
+    'Something went wrong. Please try again.': 'signin.errors.generic',
+    'Invalid request. Please try again.': 'signin.errors.invalid',
+    'Too many requests. Please wait a moment.': 'signin.errors.tooMany',
   };
-  const safeErrorMsg = errorMsg && knownErrors[errorMsg] ? errorMsg : null;
+  const safeErrorMsg = errorMsg && knownErrors[errorMsg] ? t(knownErrors[errorMsg]) : null;
   const next = searchParams.get('next');
   if (next && !sessionStorage.getItem('auth_next')) {
     sessionStorage.setItem('auth_next', next);
@@ -36,30 +38,27 @@ export default function SignIn() {
       <div className="container signin-layout">
         <section className="signin-trust-panel">
           <CodeTexture id="signinTrust" />
-          <p className="brand-pill">Writing integrity for education & research</p>
-          <h1>Sign in to review drafts before submission.</h1>
-          <p>
-            DraftProof keeps feedback focused on evidence, citations, source fit,
-            and fixable writing signals.
-          </p>
+          <p className="brand-pill">{t('signin.trustPill')}</p>
+          <h1>{t('signin.title')}</h1>
+          <p>{t('signin.body')}</p>
           <div className="signin-proof-list">
-            <span>Not an AI verdict</span>
-            <span>PDF reports</span>
-            <span>1 token per 1,000 words</span>
+            <span>{t('signin.proof1')}</span>
+            <span>{t('signin.proof2')}</span>
+            <span>{t('signin.proof3')}</span>
           </div>
         </section>
 
         <section className="signin-card" aria-labelledby="signin-title">
-          <p className="eyebrow">Secure access</p>
-          <h2 id="signin-title">Continue to DraftProof</h2>
-          <p>Use your Google or Microsoft account to continue.</p>
+          <p className="eyebrow">{t('signin.secureAccess')}</p>
+          <h2 id="signin-title">{t('signin.continue')}</h2>
+          <p>{t('signin.providerHelp')}</p>
 
           {safeErrorMsg && (
             <div className="alert alert-error signin-error">
               <span>{safeErrorMsg}</span>
               <button
                 onClick={() => navigate('/signin', { replace: true })}
-                aria-label="Dismiss sign-in error"
+                aria-label={t('signin.dismissError')}
               >
                 &times;
               </button>
@@ -74,7 +73,7 @@ export default function SignIn() {
                 <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
                 <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
               </svg>
-              Sign in with Google
+              {t('signin.google')}
             </a>
 
             <a href={microsoftAuthUrl} className="btn btn-signin btn-microsoft">
@@ -84,12 +83,12 @@ export default function SignIn() {
                 <rect x="1" y="13" width="10" height="10" fill="#00A4EF"/>
                 <rect x="13" y="13" width="10" height="10" fill="#FFB900"/>
               </svg>
-              Sign in with Microsoft
+              {t('signin.microsoft')}
             </a>
           </div>
 
           <p className="signin-note">
-            Only Gmail and Hotmail/Outlook email addresses are accepted.
+            {t('signin.note')}
           </p>
         </section>
         </div>

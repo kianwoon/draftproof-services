@@ -1,22 +1,23 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { getPurchaseHistory } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import CodeTexture from '../components/CodeTexture';
 
 const PAGE_SIZE = 5;
 
-const STATUS_MAP = {
-  paid:      { label: 'Paid', tone: 'positive' },
-  pending:   { label: 'Pending', tone: 'neutral' },
-  failed:    { label: 'Failed', tone: 'negative' },
-  completed: { label: 'Completed', tone: 'positive' },
+const STATUS_TONES = {
+  paid: 'positive',
+  pending: 'neutral',
+  failed: 'negative',
+  completed: 'positive',
 };
 
-function formatDate(iso) {
+function formatDate(iso, locale) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function formatAmount(cents, currency) {
@@ -24,6 +25,7 @@ function formatAmount(cents, currency) {
 }
 
 export default function PurchaseHistory() {
+  const { t, i18n } = useTranslation();
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -31,6 +33,7 @@ export default function PurchaseHistory() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const navigate = useNavigate();
+  const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-SG';
 
   useEffect(() => {
     const ac = new AbortController();
@@ -43,11 +46,11 @@ export default function PurchaseHistory() {
       })
       .catch((err) => {
         if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
-        setError(err.response?.data?.detail || 'Failed to load history');
+        setError(err.response?.data?.detail || t('history.loadFailed'));
       })
       .finally(() => setLoading(false));
     return () => ac.abort();
-  }, [page]);
+  }, [page, t]);
 
   if (loading) {
     return (
@@ -55,7 +58,7 @@ export default function PurchaseHistory() {
         <div className="container">
           <div className="reports-loading">
             <div className="reports-spinner" />
-            <p>Loading purchase history...</p>
+            <p>{t('history.loading')}</p>
           </div>
         </div>
       </main>
@@ -78,30 +81,27 @@ export default function PurchaseHistory() {
         <section className="app-hero app-hero-dark reports-hero">
           <CodeTexture id="historyHero" />
           <div>
-            <p className="eyebrow">Billing</p>
-            <h1>Purchase history</h1>
-            <p>
-              Track token purchases, payment status, and billing activity for
-              your DraftProof account.
-            </p>
+            <p className="eyebrow">{t('history.billing')}</p>
+            <h1>{t('history.title')}</h1>
+            <p>{t('history.body')}</p>
           </div>
           <div className="reports-hero-actions">
             <div className="app-hero-stat">
-              <span>Transactions</span>
+              <span>{t('history.transactions')}</span>
               <strong>{total}</strong>
-              <small>{totalPages > 1 ? `Page ${page} of ${totalPages}` : 'Billing archive'}</small>
+              <small>{totalPages > 1 ? t('common.pageOf', { page, totalPages }) : t('history.archive')}</small>
             </div>
             <button onClick={() => navigate('/buy')} className="btn btn-ghost">
-              Buy tokens
+              {t('history.buyTokens')}
             </button>
           </div>
         </section>
 
         {payments.length === 0 ? (
           <div className="reports-empty">
-            <p>No purchases yet.</p>
+            <p>{t('history.empty')}</p>
             <button className="btn btn-primary" onClick={() => navigate('/buy')}>
-              Buy your first tokens
+              {t('history.firstTokens')}
             </button>
           </div>
         ) : (
@@ -109,23 +109,23 @@ export default function PurchaseHistory() {
             <table className="reports-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Tokens</th>
-                  <th>Amount</th>
-                  <th>Status</th>
+                  <th>{t('history.date')}</th>
+                  <th>{t('history.tokens')}</th>
+                  <th>{t('history.amount')}</th>
+                  <th>{t('history.status')}</th>
                 </tr>
               </thead>
               <tbody>
                 {payments.map((p) => {
-                  const st = STATUS_MAP[p.status] || { label: p.status, tone: 'neutral' };
+                  const tone = STATUS_TONES[p.status] || 'neutral';
                   return (
                     <tr key={p.id}>
-                      <td className="td-date">{formatDate(p.created_at)}</td>
+                      <td className="td-date">{formatDate(p.created_at, locale)}</td>
                       <td><strong className="history-token-count">{p.tokens}</strong></td>
                       <td className="history-amount">{formatAmount(p.amount_cents, p.currency)}</td>
                       <td>
-                        <span className={`status-badge status-badge-${st.tone}`}>
-                          {st.label}
+                        <span className={`status-badge status-badge-${tone}`}>
+                          {t(`history.statuses.${p.status}`, { defaultValue: p.status })}
                         </span>
                       </td>
                     </tr>
@@ -143,7 +143,7 @@ export default function PurchaseHistory() {
               disabled={page === 1}
               onClick={() => setPage(p => p - 1)}
             >
-              Previous
+              {t('common.previous')}
             </button>
             <span className="pagination-info">
               {(() => {
@@ -182,7 +182,7 @@ export default function PurchaseHistory() {
               disabled={page === totalPages}
               onClick={() => setPage(p => p + 1)}
             >
-              Next
+              {t('common.next')}
             </button>
           </div>
         )}

@@ -1,14 +1,16 @@
 import { Link, Navigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import CodeTexture from '../components/CodeTexture';
 
 export default function Dashboard() {
   const { user, loading, balance } = useAuth();
+  const { t } = useTranslation();
 
   if (loading) {
     return (
       <div className="container" style={{ paddingTop: 'calc(var(--header-h) + 4rem)', textAlign: 'center' }}>
-        <p>Loading...</p>
+        <p>{t('common.loading')}</p>
       </div>
     );
   }
@@ -18,7 +20,8 @@ export default function Dashboard() {
   }
 
   const initials = user.email?.charAt(0).toUpperCase() || '?';
-  const tokenLabel = balance === null ? 'Checking' : `${balance} token${balance === 1 ? '' : 's'}`;
+  const tokenLabel = balance === null ? t('common.checking') : t('common.token', { count: balance });
+  const steps = t('dashboard.steps', { returnObjects: true });
 
   return (
     <main className="dash-shell">
@@ -32,34 +35,31 @@ export default function Dashboard() {
               <div className="dash-avatar">{initials}</div>
             )}
             <div>
-              <p className="eyebrow">DraftProof Workspace</p>
-              <h1>Welcome back</h1>
+              <p className="eyebrow">{t('dashboard.workspace')}</p>
+              <h1>{t('dashboard.welcome')}</h1>
               <p className="dash-email">{user.email}</p>
             </div>
           </div>
 
-          <div className="dash-hero-panel" aria-label="Account summary">
+          <div className="dash-hero-panel" aria-label={t('dashboard.accountSummary')}>
             <div>
-              <span>Available balance</span>
+              <span>{t('dashboard.balance')}</span>
               <strong>{tokenLabel}</strong>
             </div>
-            <Link to="/buy" className="btn btn-ghost btn-small">Buy tokens</Link>
+            <Link to="/buy" className="btn btn-ghost btn-small">{t('dashboard.buyTokens')}</Link>
           </div>
         </section>
 
-        <section className="dash-grid" aria-label="Dashboard actions">
+        <section className="dash-grid" aria-label={t('dashboard.actions')}>
           <Link to="/scan" className="dash-primary-card">
             <div>
-              <span className="brand-pill">Pre-submission review</span>
-              <h2>Start a new integrity scan</h2>
-              <p>
-                Paste your draft and check citation gaps, source grounding, generic phrasing,
-                and review-only authorship signals before submission.
-              </p>
+              <span className="brand-pill">{t('dashboard.preSubmission')}</span>
+              <h2>{t('dashboard.startTitle')}</h2>
+              <p>{t('dashboard.startBody')}</p>
             </div>
             <div className="dash-card-footer">
-              <span>1 token per 1,000 words</span>
-              <strong>Start scan</strong>
+              <span>{t('dashboard.tokenRate')}</span>
+              <strong>{t('dashboard.startScan')}</strong>
             </div>
           </Link>
 
@@ -72,8 +72,8 @@ export default function Dashboard() {
                 </svg>
               </span>
               <div>
-                <h3>View reports</h3>
-                <p>Return to prior scans and download report PDFs.</p>
+                <h3>{t('dashboard.viewReports')}</h3>
+                <p>{t('dashboard.reportsBody')}</p>
               </div>
             </Link>
 
@@ -86,8 +86,8 @@ export default function Dashboard() {
                 </svg>
               </span>
               <div>
-                <h3>Purchase history</h3>
-                <p>Review token purchases and account activity.</p>
+                <h3>{t('dashboard.purchaseHistory')}</h3>
+                <p>{t('dashboard.historyBody')}</p>
               </div>
             </Link>
           </div>
@@ -95,31 +95,18 @@ export default function Dashboard() {
 
         <section className="dash-section">
           <div className="dash-section-heading">
-            <p className="eyebrow">Workflow</p>
-            <h2>From draft to defensible report</h2>
+            <p className="eyebrow">{t('dashboard.workflow')}</p>
+            <h2>{t('dashboard.workflowTitle')}</h2>
           </div>
 
           <ol className="dash-steps">
-            <li className="dash-step">
-              <span className="step-num">1</span>
-              <strong>Paste your text</strong>
-              <p>Use the scan page for draft text you want checked before submission.</p>
-            </li>
-            <li className="dash-step">
-              <span className="step-num">2</span>
-              <strong>Review the signals</strong>
-              <p>Check citation gaps, source integrity, grounding, and phrasing signals.</p>
-            </li>
-            <li className="dash-step">
-              <span className="step-num">3</span>
-              <strong>Fix what matters</strong>
-              <p>Use report guidance to strengthen evidence, clarity, and academic tone.</p>
-            </li>
-            <li className="dash-step">
-              <span className="step-num">4</span>
-              <strong>Keep the report</strong>
-              <p>Save the PDF as a review trail for yourself, your class, or your team.</p>
-            </li>
+            {steps.map((step, index) => (
+              <li className="dash-step" key={step.title}>
+                <span className="step-num">{index + 1}</span>
+                <strong>{step.title}</strong>
+                <p>{step.body}</p>
+              </li>
+            ))}
           </ol>
         </section>
       </div>

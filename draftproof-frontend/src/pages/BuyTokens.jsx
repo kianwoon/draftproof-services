@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import api from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ErrorReload from '../components/ErrorReload';
 import CodeTexture from '../components/CodeTexture';
 
 export default function BuyTokens() {
+  const { t } = useTranslation();
   const [packs, setPacks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -19,14 +21,14 @@ export default function BuyTokens() {
     api.get('/payments/packs', { signal: ac.signal }).then(r => setPacks(r.data)).catch(() => {});
 
     if (searchParams.get('success')) {
-      setMessage({ type: 'success', text: 'Payment successful! Your tokens have been added.' });
+      setMessage({ type: 'success', text: t('buy.paymentSuccess') });
       refreshBalance();
     } else if (searchParams.get('canceled')) {
-      setMessage({ type: 'info', text: 'Payment was canceled.' });
+      setMessage({ type: 'info', text: t('buy.paymentCanceled') });
     }
 
     return () => ac.abort();
-  }, [searchParams]);
+  }, [searchParams, refreshBalance, t]);
 
   const handleBuy = async (packId) => {
     setLoading(true);
@@ -34,7 +36,7 @@ export default function BuyTokens() {
       const { data } = await api.post('/payments/checkout', { pack_id: packId });
       window.location.href = data.url;
     } catch (err) {
-      const msg = err.response?.data?.detail || 'Failed to start checkout';
+      const msg = err.response?.data?.detail || t('buy.checkoutFailed');
       const status = err.response?.status;
       if (status >= 400) { setServerError(msg); } else { setMessage({ type: 'error', text: msg }); }
     } finally {
@@ -48,15 +50,15 @@ export default function BuyTokens() {
         <section className="app-hero app-hero-dark buy-hero">
           <CodeTexture id="buyHero" />
           <div>
-            <p className="eyebrow">Tokens</p>
-            <h1>Buy review credits when you need them.</h1>
-            <p>No subscription. Tokens stay in your account until you use them.</p>
+            <p className="eyebrow">{t('buy.eyebrow')}</p>
+            <h1>{t('buy.title')}</h1>
+            <p>{t('buy.body')}</p>
           </div>
           {balance !== null && (
             <div className="app-hero-stat">
-              <span>Current balance</span>
-              <strong>{balance} token{balance === 1 ? '' : 's'}</strong>
-              <small>1 token per 1,000 words</small>
+              <span>{t('buy.currentBalance')}</span>
+              <strong>{t('common.token', { count: balance })}</strong>
+              <small>{t('buy.tokenRate')}</small>
             </div>
           )}
         </section>
@@ -73,15 +75,15 @@ export default function BuyTokens() {
           {packs.map(pack => (
             <div key={pack.id} className="pack-card">
               <p className="eyebrow">{pack.name}</p>
-              <div className="pack-tokens">{pack.tokens} tokens</div>
+              <div className="pack-tokens">{t('buy.tokenCount', { count: pack.tokens })}</div>
               <div className="pack-price">USD ${pack.price_usd.toFixed(2)}</div>
-              <div className="pack-unit">${(pack.price_usd / pack.tokens).toFixed(2)} / token</div>
+              <div className="pack-unit">{t('buy.perToken', { amount: (pack.price_usd / pack.tokens).toFixed(2) })}</div>
               <button
                 className="btn btn-primary"
                 onClick={() => handleBuy(pack.id)}
                 disabled={loading}
               >
-                {loading ? 'Redirecting...' : 'Buy now'}
+                {loading ? t('buy.redirecting') : t('buy.buyNow')}
               </button>
             </div>
           ))}
@@ -89,7 +91,7 @@ export default function BuyTokens() {
 
         <div className="page-actions-center">
           <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>
-            Back to dashboard
+            {t('buy.backDashboard')}
           </button>
         </div>
       </div>

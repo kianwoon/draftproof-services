@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { startScanWithText, getScanStatus, buildApiEventUrl } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -9,10 +10,9 @@ const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
 const START_SCAN_TIMEOUT_MS = 20000;
 const FREE_SCAN_WORD_LIMIT = 300;
-const START_SCAN_TIMEOUT_MESSAGE =
-  'The scan server is restarting. Please try again in a moment.';
 
 export default function Scan() {
+  const { t } = useTranslation();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
@@ -66,15 +66,15 @@ export default function Scan() {
     setError(null);
     setServerError(null);
     setAuthExpired(true);
-  }, []);
+  }, [t]);
 
   const updateProgress = useCallback((data) => {
     const percent = Math.max(0, Math.min(100, Number(data.progress_percent) || 0));
-    const message = data.progress_message || formatStatus(data.status);
+    const message = data.progress_message || formatStatus(data.status, t);
     setProgressPercent(percent);
     setProgressMessage(message);
     setStatus(message);
-  }, []);
+  }, [t]);
 
   const pollUntilDone = useCallback(async (scanId, signal) => {
     for (let i = 0; i < MAX_POLLS; i++) {
@@ -85,17 +85,17 @@ export default function Scan() {
       updateProgress(data);
       if (data.status === 'completed') return true;
       if (data.status === 'failed') {
-        setProgressMessage('Scan failed');
-        setServerError('Scan failed on the server');
+        setProgressMessage(t('scan.failed'));
+        setServerError(t('scan.serverFailed'));
         return false;
       }
       if (data.status === 'retrying') {
-        setStatus('Retrying scan...');
+        setStatus(t('scan.retrying'));
       }
     }
-    setServerError('Scan timed out');
+    setServerError(t('scan.timedOut'));
     return false;
-  }, [updateProgress]);
+  }, [t, updateProgress]);
 
   const waitForScanEvents = useCallback((scanId, signal) => {
     if (!window.EventSource) return Promise.resolve(null);
@@ -128,15 +128,15 @@ export default function Scan() {
         updateProgress(data);
         if (data.status === 'completed') finish(true);
         if (data.status === 'failed') {
-          setProgressMessage('Scan failed');
-          setServerError('Scan failed on the server');
+          setProgressMessage(t('scan.failed'));
+          setServerError(t('scan.serverFailed'));
           finish(false);
         }
       });
 
       source.addEventListener('scan-error', () => {
-        setProgressMessage('Scan failed');
-        setServerError('Scan failed on the server');
+        setProgressMessage(t('scan.failed'));
+        setServerError(t('scan.serverFailed'));
         finish(false);
       });
 
@@ -144,12 +144,12 @@ export default function Scan() {
         finish(null);
       });
     });
-  }, [updateProgress]);
+  }, [t, updateProgress]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!text.trim()) {
-      setError('Please enter some text');
+      setError(t('scan.enterText'));
       setShowProgress(false);
       return;
     }
@@ -164,24 +164,24 @@ export default function Scan() {
     setServerError(null);
     setProgressPercent(0);
     setProgressMessage(null);
-    setStatus('Submitting...');
+    setStatus(t('scan.submitting'));
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
       let scan;
-      setStatus('Queuing scan...');
+      setStatus(t('scan.queueing'));
       setProgressPercent(3);
-      setProgressMessage('Queuing scan');
+      setProgressMessage(t('scan.queueingProgress'));
       ({ data: scan } = await startScanWithText(text, {
         signal: controller.signal,
         timeout: START_SCAN_TIMEOUT_MS,
       }));
 
-      setStatus('Scanning...');
+      setStatus(t('scan.scanning'));
       setProgressPercent(scan.progress_percent || 5);
-      setProgressMessage(scan.progress_message || 'Scan queued');
+      setProgressMessage(scan.progress_message || t('scan.queued'));
       let completed = await waitForScanEvents(scan.id, controller.signal);
       if (completed === null && !controller.signal.aborted) {
         completed = await pollUntilDone(scan.id, controller.signal);
@@ -198,10 +198,10 @@ export default function Scan() {
       if (isStartTimeout) {
         setShowProgress(false);
         setProgressMessage(null);
-        setServerError(START_SCAN_TIMEOUT_MESSAGE);
+        setServerError(t('scan.timeoutMessage'));
         return;
       }
-      const msg = err.response?.data?.detail || 'Scan failed';
+      const msg = err.response?.data?.detail || t('scan.failed');
       const httpStatus = err.response?.status;
       const isAuthExpired = httpStatus === 401 || (
         httpStatus === 403 &&
@@ -218,10 +218,10 @@ export default function Scan() {
         setShowProgress(false);
         setInsufficientTokens(true);
       } else if (httpStatus >= 400) {
-        setProgressMessage('Scan failed');
+        setProgressMessage(t('scan.failed'));
         setServerError(msg);
       } else {
-        setProgressMessage('Scan failed');
+        setProgressMessage(t('scan.failed'));
         setError(msg);
       }
     } finally {
@@ -241,34 +241,28 @@ export default function Scan() {
         <section className="app-hero app-hero-dark">
           <CodeTexture id="scanHero" />
           <div>
-            <p className="eyebrow">Pre-submission review</p>
-            <h1>Scan your draft for fixable integrity signals.</h1>
-            <p>
-              Paste your text to review citation gaps, source grounding, generic
-              phrasing, and authorship signals before submission.
-            </p>
+            <p className="eyebrow">{t('scan.eyebrow')}</p>
+            <h1>{t('scan.title')}</h1>
+            <p>{t('scan.body')}</p>
           </div>
           <div className="app-hero-stat">
-            <span>Available balance</span>
-            <strong>{balance === null ? 'Checking' : `${balance} token${balance === 1 ? '' : 's'}`}</strong>
-            <small>Free through 300 words</small>
+            <span>{t('scan.balance')}</span>
+            <strong>{balance === null ? t('common.checking') : t('common.token', { count: balance })}</strong>
+            <small>{t('scan.freeThrough')}</small>
           </div>
         </section>
 
         <section className="scan-workspace">
           <form onSubmit={handleSubmit} className="scan-form">
             <label className="scan-label" htmlFor="scan-text">
-              Document text
-              <span>Paste plain text from your paper, report, or essay.</span>
+              {t('scan.documentText')}
+              <span>{t('scan.documentHelp')}</span>
             </label>
-            <p className="scan-pricing-note">
-              Scans with 300 words or fewer are free. Token billing starts at
-              301 words.
-            </p>
+            <p className="scan-pricing-note">{t('scan.pricingNote')}</p>
             <textarea
               id="scan-text"
               className="scan-textarea"
-              placeholder="Paste your document text here..."
+              placeholder={t('scan.placeholder')}
               value={text}
               onChange={(e) => {
                 setText(e.target.value);
@@ -277,25 +271,23 @@ export default function Scan() {
               rows={16}
             />
             <div className="scan-meta-row">
-              <span>{wordCount.toLocaleString()} word{wordCount !== 1 ? 's' : ''}</span>
+              <span>{t('scan.word', { count: wordCount })}</span>
               {wordCount > 0 && tokensRequired === 0 && (
-                <strong>Free scan</strong>
+                <strong>{t('scan.freeScan')}</strong>
               )}
               {tokensRequired > 0 && (
-                <strong>
-                  {tokensRequired} token{tokensRequired !== 1 ? 's' : ''} required
-                </strong>
+                <strong>{t('scan.tokensRequired', { count: tokensRequired })}</strong>
               )}
             </div>
 
             <button type="submit" className="btn btn-primary" disabled={busy}>
-              {busy ? (status || 'Scanning...') : 'Start scan'}
+              {busy ? (status || t('scan.scanning')) : t('scan.start')}
             </button>
 
             {showProgress && (
               <div className="scan-progress" role="status" aria-live="polite">
                 <div className="scan-progress-meta">
-                  <span>{progressMessage || status || 'Scanning...'}</span>
+                  <span>{progressMessage || status || t('scan.scanning')}</span>
                   <span>{progressPercent}%</span>
                 </div>
                 <div
@@ -314,14 +306,14 @@ export default function Scan() {
             )}
           </form>
 
-          <aside className="scan-side-panel" aria-label="What DraftProof checks">
-            <p className="eyebrow">Review scope</p>
-            <h2>What gets checked</h2>
+          <aside className="scan-side-panel" aria-label={t('scan.scopeLabel')}>
+            <p className="eyebrow">{t('scan.reviewScope')}</p>
+            <h2>{t('scan.checksTitle')}</h2>
             <ul>
-              <li><span>1</span>Citation gaps and unsupported claims</li>
-              <li><span>2</span>Source fit against the claim being made</li>
-              <li><span>3</span>Generic or boilerplate phrasing</li>
-              <li><span>4</span>Review-only authorship signals</li>
+              <li><span>1</span>{t('scan.check1')}</li>
+              <li><span>2</span>{t('scan.check2')}</li>
+              <li><span>3</span>{t('scan.check3')}</li>
+              <li><span>4</span>{t('scan.check4')}</li>
             </ul>
           </aside>
         </section>
@@ -331,18 +323,18 @@ export default function Scan() {
 
         <ConfirmDialog
           open={insufficientTokens}
-          title="Not enough tokens"
-          message="You don't have enough tokens to scan this document. Purchase more tokens to continue."
-          confirmLabel="Buy tokens"
+          title={t('scan.notEnoughTitle')}
+          message={t('scan.notEnoughMessage')}
+          confirmLabel={t('scan.buyTokens')}
           onConfirm={() => navigate('/buy')}
           onCancel={() => setInsufficientTokens(false)}
         />
 
         <ConfirmDialog
           open={authExpired}
-          title="Please sign in again"
-          message="Your session has expired. Sign in again to continue your scan. Your pasted text will be restored when you return."
-          confirmLabel="Sign in"
+          title={t('scan.authTitle')}
+          message={t('scan.authMessage')}
+          confirmLabel={t('scan.signIn')}
           confirmClassName="btn-primary"
           hideCancel
           onConfirm={redirectToSignIn}
@@ -361,13 +353,13 @@ function buildScanEventsUrl(scanId) {
   return buildApiEventUrl(`/scans/${scanId}/events`);
 }
 
-function formatStatus(status) {
+function formatStatus(status, t) {
   switch (status) {
-    case 'pending': return 'Queued';
-    case 'processing': return 'Scanning document';
-    case 'retrying': return 'Retrying scan';
-    case 'completed': return 'Scan complete';
-    case 'failed': return 'Scan failed';
-    default: return status || 'Scanning...';
+    case 'pending': return t('scan.status.pending');
+    case 'processing': return t('scan.status.processing');
+    case 'retrying': return t('scan.status.retrying');
+    case 'completed': return t('scan.status.completed');
+    case 'failed': return t('scan.status.failed');
+    default: return status || t('scan.scanning');
   }
 }

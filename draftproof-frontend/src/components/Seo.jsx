@@ -1,43 +1,44 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 const SITE_URL = 'https://draftproof.app';
 const DEFAULT_IMAGE = `${SITE_URL}/og-image.png`;
 
 const PAGE_META = {
   '/': {
-    title: 'DraftProof | Pre-Submission Writing Integrity Review',
-    description: 'DraftProof helps students, educators, and researchers review writing before submission by checking citation gaps, source grounding, generic phrasing, and review-only authorship signals.',
+    titleKey: 'seo.defaultTitle',
+    descriptionKey: 'seo.defaultDescription',
     canonical: '/',
     schemaType: 'SoftwareApplication',
   },
   '/why': {
-    title: 'Why DraftProof Exists | Writing Integrity Review',
-    description: 'Learn why DraftProof focuses on writing integrity, source grounding, citation support, and actionable review signals instead of AI verdicts.',
+    titleKey: 'seo.whyTitle',
+    descriptionKey: 'seo.whyDescription',
     canonical: '/why',
     schemaType: 'AboutPage',
   },
   '/pricing': {
-    title: 'DraftProof Pricing | Writing Integrity Review Tokens',
-    description: 'Simple DraftProof pricing for pre-submission writing integrity reviews. Pay as you go with tokens for scans and guided revisions.',
+    titleKey: 'seo.pricingTitle',
+    descriptionKey: 'seo.pricingDescription',
     canonical: '/pricing',
     schemaType: 'WebPage',
   },
   '/privacy': {
-    title: 'Privacy Policy | DraftProof',
-    description: 'How DraftProof handles account data, documents, reports, payments, cookies, storage, and deletion requests.',
+    titleKey: 'seo.privacyTitle',
+    descriptionKey: 'seo.privacyDescription',
     canonical: '/privacy',
     schemaType: 'PrivacyPolicy',
   },
   '/security': {
-    title: 'Security | DraftProof',
-    description: 'How DraftProof protects academic documents with encrypted storage, OAuth sign-in, secure payments, and user-controlled deletion.',
+    titleKey: 'seo.securityTitle',
+    descriptionKey: 'seo.securityDescription',
     canonical: '/security',
     schemaType: 'WebPage',
   },
   '/signin': {
-    title: 'Sign In | DraftProof',
-    description: 'Sign in to DraftProof with Google or Microsoft to review drafts before submission.',
+    titleKey: 'seo.signInTitle',
+    descriptionKey: 'seo.signInDescription',
     canonical: '/signin',
     robots: 'noindex, nofollow',
     schemaType: 'WebPage',
@@ -48,9 +49,15 @@ const PRIVATE_PREFIXES = ['/dashboard', '/scan', '/reports', '/report/', '/rewri
 
 export default function Seo() {
   const { pathname } = useLocation();
+  const { t, i18n } = useTranslation();
 
   useEffect(() => {
-    const meta = PAGE_META[pathname] || privateMeta(pathname);
+    const metaConfig = PAGE_META[pathname] || privateMeta(pathname);
+    const meta = {
+      ...metaConfig,
+      title: t(metaConfig.titleKey),
+      description: t(metaConfig.descriptionKey),
+    };
     const canonicalUrl = `${SITE_URL}${meta.canonical}`;
 
     document.title = meta.title;
@@ -66,15 +73,15 @@ export default function Seo() {
     setProperty('og:image', DEFAULT_IMAGE);
     setProperty('og:image:width', '1200');
     setProperty('og:image:height', '630');
-    setProperty('og:image:alt', 'DraftProof writing integrity review dashboard preview');
+    setProperty('og:image:alt', t('seo.imageAlt'));
 
     setMeta('twitter:card', 'summary_large_image');
     setMeta('twitter:title', meta.title);
     setMeta('twitter:description', meta.description);
     setMeta('twitter:image', DEFAULT_IMAGE);
 
-    setJsonLd(buildSchema(meta, canonicalUrl));
-  }, [pathname]);
+    setJsonLd(buildSchema(meta, canonicalUrl, t));
+  }, [pathname, i18n.resolvedLanguage, t]);
 
   return null;
 }
@@ -84,7 +91,8 @@ function privateMeta(pathname) {
   if (isPrivate) {
     return {
       title: 'DraftProof App',
-      description: 'DraftProof account workspace for writing integrity reviews.',
+      titleKey: 'seo.privateTitle',
+      descriptionKey: 'seo.privateDescription',
       canonical: pathname,
       robots: 'noindex, nofollow',
       schemaType: 'WebPage',
@@ -134,7 +142,7 @@ function setJsonLd(schema) {
   tag.textContent = JSON.stringify(schema);
 }
 
-function buildSchema(meta, url) {
+function buildSchema(meta, url, t) {
   if (meta.schemaType === 'SoftwareApplication') {
     return {
       '@context': 'https://schema.org',
@@ -148,7 +156,7 @@ function buildSchema(meta, url) {
         '@type': 'Offer',
         price: '0.90',
         priceCurrency: 'USD',
-        description: 'Pre-submission writing integrity review per 1,000 words',
+        description: t('seo.offerDescription'),
       },
     };
   }
