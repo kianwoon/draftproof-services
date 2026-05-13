@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import time
+from pathlib import Path
 
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 from rewrite_v2 import run_rewrite_pipeline_v2
@@ -66,7 +67,13 @@ from rewrite_v2.layers.academic import _generate_academic_section_candidates
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.layer_attempts import summarize_layer_attempts
-from rewrite_v2.external_calibration import classify_external_label, derive_external_proxy_thresholds, normalize_external_ai_percent
+from rewrite_v2.external_calibration import (
+    classify_external_label,
+    derive_external_proxy_thresholds,
+    load_external_calibration_labels,
+    normalize_external_ai_percent,
+    summarize_external_calibration_records,
+)
 from rewrite_v2.frontier import candidate_applicable_by_policy
 from rewrite_v2.partial_policy import close_partial_candidate_allowed, partial_application_policy
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
@@ -250,6 +257,16 @@ assert_test(
     and calibrated_thresholds["safe_threshold"] == 34.0
     and calibrated_thresholds["false_positive"] == 0,
     "V2 external calibration derives proxy thresholds from labeled detector outcomes",
+)
+seed_calibration_path = Path(__file__).parent / "rewrite_v2" / "calibration_external_labels.jsonl"
+seed_calibration_records = load_external_calibration_labels(seed_calibration_path)
+seed_calibration_summary = summarize_external_calibration_records(seed_calibration_records)
+assert_test(
+    seed_calibration_summary["labeled_records"] == 3
+    and seed_calibration_summary["passed"] == 1
+    and seed_calibration_summary["failed"] == 2
+    and derive_external_proxy_thresholds(seed_calibration_records)["status"] == "insufficient_labeled_proxy_records",
+    "V2 seed external labels capture user-reported detector outcomes before proxy scores are available",
 )
 reflective_academic_route = classify_content_route(
     (
