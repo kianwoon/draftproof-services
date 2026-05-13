@@ -12,6 +12,7 @@ import {
   signalClassName,
   formatDate,
   signalLabel,
+  signalDescription,
   translatedSignal,
   translatedGroup,
   transformationLabel,

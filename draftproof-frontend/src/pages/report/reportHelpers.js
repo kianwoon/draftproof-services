@@ -1177,6 +1177,7 @@ export {
   signalClassName,
   formatDate,
   signalLabel,
+  signalDescription,
   translatedSignal,
   translatedGroup,
   transformationLabel,
