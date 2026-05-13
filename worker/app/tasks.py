@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 
 REWRITE_DEBUG_EXPORT_VERSION = "rewrite_controller_debug_passthrough_v3"
 
+NON_BILLABLE_REWRITE_OUTCOMES = {
+    "clean",
+    "mitigation_failed_no_safe_candidate",
+    "needs_author_context",
+    "no_safe_rewrite_applied",
+    "original_preserved",
+    "skipped",
+    "topk_blocked",
+}
+
 
 def _runtime_code_fingerprint() -> dict:
     """Return non-secret evidence of the worker code actually imported."""
@@ -76,6 +86,68 @@ def _runtime_code_fingerprint() -> dict:
 
 class RewriteCanceled(Exception):
     """Raised inside a worker task when the user cancels a rewrite cooperatively."""
+
+
+def _normalized_billable_text(value) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _rewrite_billing_decision(pipeline_result: dict, rewrite_json: dict) -> dict:
+    """Return whether a rewrite reservation should be captured.
+
+    Billing is tied to delivered rewritten content, not merely to a worker task
+    reaching the artifact-upload phase.
+    """
+    pipeline_result = pipeline_result if isinstance(pipeline_result, dict) else {}
+    rewrite_json = rewrite_json if isinstance(rewrite_json, dict) else {}
+    summary = rewrite_json.get("summary") if isinstance(rewrite_json.get("summary"), dict) else {}
+
+    status = str(pipeline_result.get("status") or rewrite_json.get("status") or "").strip()
+    outcome = str(summary.get("outcome") or summary.get("strict_goal_status") or "").strip()
+    normalized_status = status.lower()
+    normalized_outcome = outcome.lower()
+
+    if normalized_status in NON_BILLABLE_REWRITE_OUTCOMES:
+        return {
+            "billable": False,
+            "reason": f"non_billable_status:{normalized_status}",
+            "status": status,
+            "outcome": outcome,
+        }
+    if normalized_outcome in NON_BILLABLE_REWRITE_OUTCOMES:
+        return {
+            "billable": False,
+            "reason": f"non_billable_outcome:{normalized_outcome}",
+            "status": status,
+            "outcome": outcome,
+        }
+    if summary.get("rollback_applied") or summary.get("no_text_change"):
+        return {
+            "billable": False,
+            "reason": "original_text_preserved",
+            "status": status,
+            "outcome": outcome,
+        }
+
+    original_text = _normalized_billable_text(rewrite_json.get("original_text"))
+    final_text = _normalized_billable_text(rewrite_json.get("final_text") or summary.get("final_text"))
+    text_changed = bool(original_text and final_text and original_text != final_text)
+    if not final_text:
+        reason = "empty_final_text"
+    elif not original_text:
+        reason = "missing_original_text"
+    elif not text_changed:
+        reason = "final_text_unchanged"
+    else:
+        reason = "rewritten_content_delivered"
+
+    return {
+        "billable": text_changed,
+        "reason": reason,
+        "status": status,
+        "outcome": outcome,
+        "text_changed": text_changed,
+    }
 
 
 def _pct_score(value) -> int:
@@ -1195,6 +1267,11 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         if is_rewrite_canceled(rewrite_id):
             raise RewriteCanceled()
 
+    billing_decision = {
+        "billable": False,
+        "reason": "rewrite_not_completed",
+    }
+
     try:
         rewrite_job = claim_rewrite_job(rewrite_id)
         if not rewrite_job:
@@ -1478,6 +1555,8 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     rw.rewrite_plan if rw and hasattr(rw, "rewrite_plan") else None
                 ),
             }
+            billing_decision = _rewrite_billing_decision(result, rewrite_json)
+            rewrite_json["billing_decision"] = billing_decision
 
             debug_log = _build_rewrite_debug_log(
                 rewrite_id=rewrite_id,
@@ -1499,8 +1578,10 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         # 5. Capture credits
         raise_if_canceled()
         user_id = scan_job.get("user_id", "") if scan_job else ""
-        if user_id:
+        if user_id and billing_decision.get("billable"):
             capture_rewrite_credits(str(user_id), rewrite_id)
+        else:
+            release_rewrite_credits(rewrite_id)
 
         update_rewrite_status(
             rewrite_id,
