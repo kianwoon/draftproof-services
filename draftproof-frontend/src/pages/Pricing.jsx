@@ -111,7 +111,7 @@ export default function Pricing() {
             to={user ? '/scan' : '/signin'}
             className="btn btn-primary pricing-cta"
           >
-            {user ? 'Start a revision' : 'Sign in to get started'}
+            {user ? 'Start with a scan' : 'Sign in to get started'}
           </Link>
         </div>
         </div>
@@ -120,7 +120,7 @@ export default function Pricing() {
           <h2>Frequently asked questions</h2>
           <div className="faq-item">
             <h3>What counts as a scan?</h3>
-            <p>1 token covers up to 1,000 words. Documents over 1,000 words are automatically charged at 1 token per 1,000 words (rounded up). For example, a 2,500-word document costs 3 tokens.</p>
+            <p>Scans with 300 words or fewer are free. After that, 1 token covers each started 1,000-word block. For example, a 2,500-word document costs 3 tokens.</p>
           </div>
           <div className="faq-item">
             <h3>What does a rewrite do?</h3>
@@ -128,7 +128,7 @@ export default function Pricing() {
           </div>
           <div className="faq-item">
             <h3>Do I need a scan before a rewrite?</h3>
-            <p>No. You can request a revision independently. However, scanning first helps you see exactly where evidence, citation, and phrasing issues appear before deciding what to revise.</p>
+            <p>Yes. A completed scan is required before guided revision. DraftProof uses the scan report to identify which sections are safe and useful to revise, then charges rewrite tokens only when a rewrite is started.</p>
           </div>
           <div className="faq-item">
             <h3>Do tokens expire?</h3>
