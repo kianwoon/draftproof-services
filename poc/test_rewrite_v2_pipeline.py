@@ -9,6 +9,15 @@ import tempfile
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 from rewrite_v2 import run_rewrite_pipeline_v2
 from rewrite_v2.contracts import AnchorSeverity, anchor_present, build_rewrite_contract
+from rewrite_v2.diagnostics import (
+    DETECTOR_NOT_SAFE,
+    FIXABLE_CONTRACT_DRIFT,
+    GENERATION_FAILED,
+    HARD_ANCHOR_LOSS,
+    SEMANTIC_LOSS,
+    diagnose_candidate_failure,
+    summarize_candidate_diagnostics,
+)
 from rewrite_v2.pipeline import (
     _author_stance_thesis_filter_failures,
     _author_strategy_semantic_override_allowed,
@@ -1445,6 +1454,43 @@ citation_year_drift = check_semantic_drift(
 assert_test(
     citation_year_drift.accepted and all(", 2013" not in reason for reason in citation_year_drift.reasons),
     "V2 semantic guard does not treat APA years as Vancouver citation numbers",
+)
+
+fixable_contract_row = {
+    "local_filter_failures": ["p003:citation_lost:Billett (2013)"],
+    "decision": {"lane": "REJECT", "reason": "targeted_local_filter_rejected"},
+}
+hard_anchor_row = {
+    "local_filter_failures": ["direct_quote_lost:“practice architecture”"],
+    "protected_anchors_safe": False,
+    "decision": {"lane": "REJECT", "reason": "protected_anchor_or_semantic_scan_guard_rejected"},
+}
+semantic_row = {
+    "semantic_safe": False,
+    "semantic_reasons": ["lost_named_entity: 'Johnny'"],
+    "decision": {"lane": "REJECT", "reason": "protected_anchor_or_semantic_scan_guard_rejected"},
+}
+detector_row = {
+    "goal": {"external_detector_proxy": {"safe": False}},
+    "decision": {"lane": "PARTIAL_DIAGNOSTIC", "reason": "external_detector_proxy_not_safe"},
+}
+assert_test(
+    diagnose_candidate_failure(fixable_contract_row)["failure_class"] == FIXABLE_CONTRACT_DRIFT
+    and diagnose_candidate_failure(hard_anchor_row)["failure_class"] == HARD_ANCHOR_LOSS
+    and diagnose_candidate_failure(semantic_row)["failure_class"] == SEMANTIC_LOSS
+    and diagnose_candidate_failure(detector_row)["failure_class"] == DETECTOR_NOT_SAFE,
+    "V2 diagnostics classify contract drift, hard anchors, semantic loss, and detector blockers separately",
+)
+diagnostic_summary = summarize_candidate_diagnostics(
+    [fixable_contract_row, semantic_row, detector_row],
+    generated_count=3,
+)
+assert_test(
+    diagnostic_summary["fixable_contract_drift_count"] == 1
+    and diagnostic_summary["semantic_loss_count"] == 1
+    and diagnostic_summary["detector_not_safe_count"] == 1
+    and summarize_candidate_diagnostics([], generated_count=0)["primary_failure_class"] == GENERATION_FAILED,
+    "V2 diagnostics summarize candidate failure classes for replay experiments",
 )
 
 print("All rewrite V2 pipeline tests passed.")

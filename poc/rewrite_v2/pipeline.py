@@ -18,6 +18,7 @@ from report.report import ReportBuilder, report_to_dict
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 
 from .contracts import AnchorSeverity, anchor_present, build_rewrite_contract
+from .diagnostics import annotate_candidate_diagnostics, summarize_candidate_diagnostics
 from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from .goal_contract import RewriteGoalEvaluation
 from .selection import (
@@ -2518,6 +2519,10 @@ def run_rewrite_pipeline_v2(
         converged = False
         convergence_reason = f"rewrite_v2_{failure_reason}"
     elapsed = time.time() - started
+    diagnostic_candidate_rows = [
+        annotate_candidate_diagnostics(row)
+        for row in candidate_rows
+    ]
     summary = {
         "rewrite_pipeline_version": "rewrite_v2_scan_driven",
         "outcome": public_status,
@@ -2537,12 +2542,13 @@ def run_rewrite_pipeline_v2(
                 if ((row.get("decision") or {}).get("lane") == CandidateLane.REJECT.value)
             ),
             "reason": generation_reason,
+            "diagnostics": summarize_candidate_diagnostics(candidate_rows, generated_count=generated_count),
         },
         "content_router_trace": content_route.to_dict(),
         "strategy_trace": [strategy.to_dict() for strategy in strategies],
         "candidate_trace": [
             {key: value for key, value in row.items() if key not in {"text", "report"}}
-            for row in candidate_rows
+            for row in diagnostic_candidate_rows
         ],
         "selected_candidate": {
             key: value for key, value in (best or {}).items() if key not in {"text", "report"}
