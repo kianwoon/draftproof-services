@@ -28,6 +28,7 @@ from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_autho
 from .goal_contract import RewriteGoalEvaluation
 from .layer_attempts import record_layer_attempt, summarize_layer_attempts
 from .robustness import layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
+from .runtime_budget import RewriteV2RuntimeBudget
 from .selection import (
     CandidateLane,
     decide_candidate,
@@ -149,6 +150,15 @@ def _generation_budget_seconds(max_runtime_seconds: int) -> int:
     return max(30, min(180, int(max_runtime_seconds * 0.65), max(30, int(max_runtime_seconds) - 60)))
 
 
+def _phase_start_margin_seconds(default: int = 5) -> int:
+    raw = os.environ.get("DRAFTPROOF_REWRITE_V2_PHASE_START_MARGIN_SECONDS", str(default))
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(60, value))
+
+
 def _portfolio_mode_enabled() -> bool:
     return os.environ.get("DRAFTPROOF_REWRITE_V2_PORTFOLIO_MODE", "1").lower() not in {"0", "false", "no"}
 
@@ -182,13 +192,15 @@ def _effective_config(
 ) -> dict[str, Any]:
     effective_model = model or os.environ.get("LLM_MODEL") or "openai/gpt-4.1-mini"
     effective_base_url = base_url or os.environ.get("LLM_BASE_URL", "")
+    generation_budget = _generation_budget_seconds(max_runtime_seconds)
     return {
         "model": effective_model,
         "base_url": effective_base_url,
         "has_api_key": bool(api_key),
         "max_runtime_seconds": int(max_runtime_seconds),
         "llm_call_timeout_seconds": _llm_call_timeout_seconds(),
-        "generation_budget_seconds": _generation_budget_seconds(max_runtime_seconds),
+        "generation_budget_seconds": generation_budget,
+        "phase_start_margin_seconds": _phase_start_margin_seconds(),
         "apply_partial_max_gap": _close_partial_max_gap(),
         "apply_composition_max_gap": _composition_partial_max_gap(),
         "composition_ai_penalty_max": _composition_ai_penalty_max(),
@@ -794,6 +806,7 @@ def _generate_unsafe_cluster_rescue_candidates(
     timeout_seconds: int,
     starting_cost: int,
     max_rows: int | None = None,
+    deadline: float | None = None,
 ) -> list[dict[str, Any]]:
     if not api_key or not frontier:
         return []
@@ -829,6 +842,8 @@ def _generate_unsafe_cluster_rescue_candidates(
             continue
         for variant in range(1, variants + 1):
             if max_rows is not None and len(rows) >= max_rows:
+                break
+            if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
                 break
             prompt = _build_unsafe_cluster_rescue_prompt(
                 cluster_text=cluster_text,
@@ -2292,6 +2307,11 @@ def run_rewrite_pipeline_v2(
     full_rewrite_allowed: bool = True,
 ) -> dict[str, Any]:
     started = time.time()
+    runtime_budget = RewriteV2RuntimeBudget(
+        started_at=started,
+        max_runtime_seconds=max_runtime_seconds,
+        generation_budget_seconds=_generation_budget_seconds(max_runtime_seconds),
+    )
 
     def progress(percent: int, message: str) -> None:
         if progress_callback:
@@ -2352,6 +2372,7 @@ def run_rewrite_pipeline_v2(
             "required_ai_drop": required_ai_drop,
             "target_ai_score": target_ai_score,
             "rewrite_effective_config": effective_config,
+            "runtime_budget": runtime_budget.to_dict(),
             "candidate_generation_status": {
                 "generated_count": 0,
                 "candidate_rows": 0,
@@ -2428,7 +2449,7 @@ def run_rewrite_pipeline_v2(
             model=model,
             base_url=base_url,
             timeout_seconds=_llm_call_timeout_seconds(),
-            deadline=started + _generation_budget_seconds(max_runtime_seconds),
+            deadline=runtime_budget.generation_deadline,
             content_route=content_route,
             layer_attempts=layer_attempts,
         )
@@ -2437,8 +2458,36 @@ def run_rewrite_pipeline_v2(
         candidate_rows = []
         post_layer_trace: list[dict[str, Any]] = []
         protected = detect_protected_spans(original_text)
+
+        def record_post_layer(
+            *,
+            layer: str,
+            status: str,
+            reason: str,
+            before_count: int | None = None,
+            generated_count: int = 0,
+            allowed: bool | None = True,
+            applicable: bool | None = None,
+            extra: dict[str, Any] | None = None,
+        ) -> None:
+            trace_row = {"layer": layer, "status": status, "reason": reason}
+            if extra:
+                trace_row.update(extra)
+            post_layer_trace.append(trace_row)
+            record_layer_attempt(
+                layer_attempts,
+                layer=layer,
+                status=status,
+                reason=reason,
+                allowed=allowed,
+                applicable=applicable,
+                generated_count=generated_count,
+                candidate_count_before=before_count,
+                candidate_count_after=len(candidate_rows),
+            )
+
         for index, generated_candidate in enumerate(generated, start=1):
-            if candidate_rows and time.time() - started >= max_runtime_seconds:
+            if not runtime_budget.can_start(_phase_start_margin_seconds()):
                 break
             candidate_text = str(generated_candidate.get("text") or "").strip()
             if generated_candidate.get("local_filter_passed") is False:
@@ -2547,11 +2596,12 @@ def run_rewrite_pipeline_v2(
         composed_text, composed_patches = _compose_full_doc_delta_winners(original_text, candidate_rows, reference_ai)
         if composed_patches and composed_text.strip() != original_text.strip():
             index = len(candidate_rows) + 1
+            before_count = len(candidate_rows)
+            composition_budget_ok = runtime_budget.can_start(_phase_start_margin_seconds())
             if (
-                time.time() - started < max_runtime_seconds
+                composition_budget_ok
                 and _candidate_portfolio_allows(candidate_rows, content_route, "targeted_composition")
             ):
-                post_layer_trace.append({"layer": "targeted_composition", "status": "running", "reason": "composed_patches_available"})
                 progress(min(84, 64 + index * 4), "Scanning V2 composed local winners")
                 candidate_report = _scan_report(composed_text)
                 goal = evaluate_rewrite_goal(
@@ -2590,23 +2640,30 @@ def run_rewrite_pipeline_v2(
                     "report": candidate_report,
                     "text": composed_text,
                 })
-                post_layer_trace[-1] = {"layer": "targeted_composition", "status": "ran", "reason": "candidate_scored"}
+                record_post_layer(
+                    layer="targeted_composition",
+                    status="ran",
+                    reason="candidate_scored",
+                    before_count=before_count,
+                    generated_count=1,
+                    applicable=True,
+                )
             else:
-                post_layer_trace.append({
-                    "layer": "targeted_composition",
-                    "status": "skipped",
-                    "reason": (
-                        "runtime_budget_exhausted"
-                        if time.time() - started >= max_runtime_seconds
-                        else "portfolio_budget_exhausted"
-                    ),
-                })
+                record_post_layer(
+                    layer="targeted_composition",
+                    status="skipped",
+                    reason="runtime_budget_exhausted" if not composition_budget_ok else "portfolio_budget_exhausted",
+                    before_count=before_count,
+                    applicable=True,
+                )
         else:
-            post_layer_trace.append({
-                "layer": "targeted_composition",
-                "status": "skipped",
-                "reason": "no_composable_local_winners",
-            })
+            record_post_layer(
+                layer="targeted_composition",
+                status="skipped",
+                reason="no_composable_local_winners",
+                before_count=len(candidate_rows),
+                applicable=False,
+            )
         frontier = _select_best_v2_frontier(candidate_rows, content_route=content_route)
         frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
         academic_repair_frontier = frontier or select_best_candidate([
@@ -2614,15 +2671,17 @@ def run_rewrite_pipeline_v2(
             if str(row.get("strategy") or "").startswith("academic_")
             and isinstance(row.get("candidate_ai"), (int, float))
         ])
+        academic_repair_budget_ok = runtime_budget.can_start(_llm_call_timeout_seconds() + _phase_start_margin_seconds())
+        academic_repair_allowed = _strategy_family_allowed(content_route, "academic_anchor_repair_texture_pass")
         if (
             academic_repair_frontier
             and frontier_lane != CandidateLane.GOAL_MET.value
-            and _strategy_family_allowed(content_route, "academic_anchor_repair_texture_pass")
+            and academic_repair_allowed
             and str(academic_repair_frontier.get("strategy") or "").startswith("academic_")
-            and time.time() - started < max_runtime_seconds
+            and academic_repair_budget_ok
             and _candidate_portfolio_allows(candidate_rows, content_route, "academic_anchor_repair_texture_pass")
         ):
-            post_layer_trace.append({"layer": "academic_anchor_repair_texture_pass", "status": "running", "reason": "academic_frontier_available"})
+            before_count = len(candidate_rows)
             progress(82, "Running V2 academic anchor repair")
             repair_rows = _generate_academic_anchor_repair_candidates(
                 frontier=academic_repair_frontier,
@@ -2638,13 +2697,13 @@ def run_rewrite_pipeline_v2(
                     temperature=0.45,
                 )),
                 model=model,
-                deadline=started + _generation_budget_seconds(max_runtime_seconds),
+                deadline=runtime_budget.absolute_deadline,
                 timeout_seconds=_llm_call_timeout_seconds(),
             )
             repair_start = len(candidate_rows) + 1
             for offset, generated_candidate in enumerate(repair_rows):
                 index = repair_start + offset
-                if time.time() - started >= max_runtime_seconds:
+                if not runtime_budget.can_start(_phase_start_margin_seconds()):
                     break
                 candidate_text = str(generated_candidate.get("text") or "").strip()
                 if generated_candidate.get("local_filter_passed") is False:
@@ -2724,38 +2783,50 @@ def run_rewrite_pipeline_v2(
                     break
             frontier = _select_best_v2_frontier(candidate_rows, content_route=content_route)
             frontier_lane = ((frontier or {}).get("decision") or {}).get("lane")
-            post_layer_trace[-1] = {"layer": "academic_anchor_repair_texture_pass", "status": "ran", "reason": "repair_candidates_evaluated"}
+            generated_rows = max(0, len(candidate_rows) - before_count)
+            record_post_layer(
+                layer="academic_anchor_repair_texture_pass",
+                status="ran" if generated_rows else "skipped",
+                reason="repair_candidates_evaluated" if generated_rows else "no_repair_candidates",
+                before_count=before_count,
+                generated_count=generated_rows,
+                applicable=True,
+            )
         else:
             academic_skip_reasons = []
             if not academic_repair_frontier:
                 academic_skip_reasons.append("no_academic_frontier")
             if frontier_lane == CandidateLane.GOAL_MET.value:
                 academic_skip_reasons.append("goal_met")
-            if not _strategy_family_allowed(content_route, "academic_anchor_repair_texture_pass"):
+            if not academic_repair_allowed:
                 academic_skip_reasons.append("strategy_family_blocked")
             if academic_repair_frontier and not str(academic_repair_frontier.get("strategy") or "").startswith("academic_"):
                 academic_skip_reasons.append("frontier_not_academic")
-            if time.time() - started >= max_runtime_seconds:
+            if not academic_repair_budget_ok:
                 academic_skip_reasons.append("runtime_budget_exhausted")
             if not _candidate_portfolio_allows(candidate_rows, content_route, "academic_anchor_repair_texture_pass"):
                 academic_skip_reasons.append("portfolio_budget_exhausted")
-            post_layer_trace.append({
-                "layer": "academic_anchor_repair_texture_pass",
-                "status": "skipped",
-                "reason": ",".join(academic_skip_reasons) or "not_applicable",
-            })
+            record_post_layer(
+                layer="academic_anchor_repair_texture_pass",
+                status="skipped",
+                reason=",".join(academic_skip_reasons) or "not_applicable",
+                before_count=len(candidate_rows),
+                allowed=academic_repair_allowed,
+                applicable=bool(academic_repair_frontier and str(academic_repair_frontier.get("strategy") or "").startswith("academic_")),
+            )
         rescue_enabled = (
             os.environ.get("DRAFTPROOF_REWRITE_V2_UNSAFE_CLUSTER_RESCUE", "1").lower() not in {"0", "false", "no"}
             and _strategy_family_allowed(content_route, "unsafe_cluster_rescue")
         )
+        rescue_budget_ok = runtime_budget.can_start(_llm_call_timeout_seconds() + _phase_start_margin_seconds())
         if (
             rescue_enabled
             and frontier
             and frontier_lane != CandidateLane.GOAL_MET.value
-            and time.time() - started < max_runtime_seconds
+            and rescue_budget_ok
             and _candidate_portfolio_allows(candidate_rows, content_route, "unsafe_cluster_rescue")
         ):
-            post_layer_trace.append({"layer": "unsafe_cluster_rescue", "status": "running", "reason": "frontier_available"})
+            before_count = len(candidate_rows)
             progress(84, "Running V2 unsafe-cluster rescue")
             rescue_budget_remaining = max(
                 0,
@@ -2780,17 +2851,24 @@ def run_rewrite_pipeline_v2(
                 timeout_seconds=_llm_call_timeout_seconds(),
                 starting_cost=len(candidate_rows),
                 max_rows=rescue_budget_remaining,
+                deadline=runtime_budget.absolute_deadline,
             )
             for row in rescue_rows:
                 if not _candidate_portfolio_allows(candidate_rows, content_route, row):
                     break
                 candidate_rows.append(row)
-            post_layer_trace[-1] = {
-                "layer": "unsafe_cluster_rescue",
-                "status": "ran" if rescue_rows else "skipped",
-                "reason": "rescue_candidates_evaluated" if rescue_rows else "no_unsafe_clusters_or_budget",
+            trace_extra = {
                 "candidate_rows": len(rescue_rows),
             }
+            record_post_layer(
+                layer="unsafe_cluster_rescue",
+                status="ran" if rescue_rows else "skipped",
+                reason="rescue_candidates_evaluated" if rescue_rows else "no_unsafe_clusters_or_budget",
+                before_count=before_count,
+                generated_count=max(0, len(candidate_rows) - before_count),
+                applicable=True,
+                extra=trace_extra,
+            )
         else:
             rescue_skip_reasons = []
             if not rescue_enabled:
@@ -2799,15 +2877,18 @@ def run_rewrite_pipeline_v2(
                 rescue_skip_reasons.append("no_frontier")
             if frontier_lane == CandidateLane.GOAL_MET.value:
                 rescue_skip_reasons.append("goal_met")
-            if time.time() - started >= max_runtime_seconds:
+            if not rescue_budget_ok:
                 rescue_skip_reasons.append("runtime_budget_exhausted")
             if not _candidate_portfolio_allows(candidate_rows, content_route, "unsafe_cluster_rescue"):
                 rescue_skip_reasons.append("portfolio_budget_exhausted")
-            post_layer_trace.append({
-                "layer": "unsafe_cluster_rescue",
-                "status": "skipped",
-                "reason": ",".join(rescue_skip_reasons) or "not_applicable",
-            })
+            record_post_layer(
+                layer="unsafe_cluster_rescue",
+                status="skipped",
+                reason=",".join(rescue_skip_reasons) or "not_applicable",
+                before_count=len(candidate_rows),
+                allowed=rescue_enabled,
+                applicable=bool(frontier and frontier_lane != CandidateLane.GOAL_MET.value),
+            )
     if replay_candidate_records is not None:
         post_layer_trace = []
     close_partial_max_gap = _close_partial_max_gap()
@@ -2936,6 +3017,7 @@ def run_rewrite_pipeline_v2(
         "required_ai_drop": required_ai_drop,
         "target_ai_score": target_ai_score,
         "rewrite_effective_config": effective_config,
+        "runtime_budget": runtime_budget.to_dict(),
         "candidate_generation_status": {
             "generated_count": generated_count,
             "candidate_rows": len(candidate_rows),

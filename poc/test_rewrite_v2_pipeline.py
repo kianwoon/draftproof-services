@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+import time
 
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 from rewrite_v2 import run_rewrite_pipeline_v2
@@ -66,6 +67,7 @@ from rewrite_v2.layers.academic import _normalize_academic_section_patches
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.layer_attempts import summarize_layer_attempts
 from rewrite_v2.robustness import budget_status, content_mode_policy, layer_coverage, layer_failure_class_counts, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
+from rewrite_v2.runtime_budget import RewriteV2RuntimeBudget
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import RewriteStrategy, StrategyKind, classify_content_route, route_strategies
 from llm.gateway import model_supports_presence_frequency_penalties, model_supports_repetition_penalty
@@ -690,6 +692,20 @@ assert_test(
     and structured_route.allowed_strategy_families == ["targeted_paragraph_reconstruction"],
     "V2 content router keeps structured list/table content on targeted patches only",
 )
+hybrid_academic_list_route = classify_content_route(
+    (
+        "- Smith (2021) argues that feedback changes learner confidence.\n"
+        "- Jones (2022) finds that classroom practice affects retention.\n"
+        "- The review compares these findings with course assessment evidence."
+    ),
+    scan_json,
+)
+assert_test(
+    hybrid_academic_list_route.content_mode == "academic_cited_text"
+    and hybrid_academic_list_route.mode_scores[0]["content_mode"] == "academic_cited_text"
+    and any(row["content_mode"] == "structured_list_table" for row in hybrid_academic_list_route.mode_scores),
+    "V2 content router scores hybrid modes so citations can override bullet-list shape",
+)
 technical_route = classify_content_route(
     "The API endpoint returns JSON when the database repository raises an exception in the deployment.",
     scan_json,
@@ -1264,6 +1280,30 @@ assert_test(
     {row.get("layer") for row in no_candidate_summary["candidate_generation_status"].get("post_layer_trace", [])}
     >= {"targeted_composition", "academic_anchor_repair_texture_pass", "unsafe_cluster_rescue"},
     "V2 records skipped post-layer reasons when no candidates are generated",
+)
+no_candidate_layers = no_candidate_summary["candidate_generation_status"].get("layer_attempt_summary", {}).get("layers", {})
+assert_test(
+    {"llm_gateway", "targeted_composition", "academic_anchor_repair_texture_pass", "unsafe_cluster_rescue"}
+    <= set(no_candidate_layers)
+    and no_candidate_summary.get("runtime_budget", {}).get("generation_budget_seconds") >= 30,
+    "V2 layer attempt ledger includes gateway and post-layer skips with runtime budget metadata",
+)
+expired_budget = RewriteV2RuntimeBudget(
+    started_at=time.time() - 20,
+    max_runtime_seconds=10,
+    generation_budget_seconds=5,
+)
+fresh_budget = RewriteV2RuntimeBudget(
+    started_at=time.time(),
+    max_runtime_seconds=60,
+    generation_budget_seconds=30,
+)
+assert_test(
+    not expired_budget.can_start(1)
+    and expired_budget.skip_reason(1) == "runtime_budget_exhausted"
+    and fresh_budget.can_start(1)
+    and fresh_budget.generation_deadline <= fresh_budget.absolute_deadline,
+    "V2 runtime budget blocks late phases and exposes generation deadline bounds",
 )
 
 paragraph_map = _paragraph_target_map(

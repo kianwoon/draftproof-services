@@ -22,6 +22,7 @@ class ContentRoute:
     reasons: list[str]
     allowed_strategy_families: list[str]
     blocked_strategy_families: list[str]
+    mode_scores: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -142,7 +143,7 @@ def _has_first_person_stance(text: str) -> bool:
     return bool(re.search(r"\b(i think|i find|i believe|i argue|i feel|i noticed|my view|my experience|in my opinion)\b", lowered))
 
 
-def _route_payload(mode: str, confidence: float, reasons: list[str]) -> ContentRoute:
+def _route_payload(mode: str, confidence: float, reasons: list[str], mode_scores: list[dict[str, Any]] | None = None) -> ContentRoute:
     allowed_by_mode = {
         "broad_explanatory_essay": {
             "targeted_paragraph_reconstruction",
@@ -188,6 +189,7 @@ def _route_payload(mode: str, confidence: float, reasons: list[str]) -> ContentR
         reasons=reasons[:8],
         allowed_strategy_families=allowed,
         blocked_strategy_families=blocked,
+        mode_scores=list(mode_scores or [])[:8],
     )
 
 
@@ -208,31 +210,70 @@ def classify_content_route(original_text: str, scan_report: dict | None = None) 
     academic_reasons = _academic_profile_signal(stripped, scan_report)
     lowered = stripped.lower()
     sentence_map_size = len((scan_report or {}).get("sentence_map") or {})
+    has_table = bool(re.search(r"\|.+\|", stripped))
+    technical_detected = bool(
+        re.search(r"\b(api|sdk|json|yaml|http|endpoint|database|function|class|method|stack trace|schema|repository|deployment|kubernetes|docker)\b", lowered)
+        or re.search(r"[{}<>]|```|/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", stripped)
+    )
+    regulated_detected = bool(
+        re.search(r"\b(shall|must not|compliance|contract|liability|statutory|regulation|clinical|diagnosis|dosage|patient|medical|legal|terms and conditions)\b", lowered)
+        or re.search(r"\b(?:company|privacy|security|data|workplace|use|refund|billing)\s+policy\b|\bpolicy\s+(?:states|requires|prohibits|allows|applies)\b", lowered)
+    )
+    first_person_detected = bool(_has_first_person_stance(stripped) and re.search(r"\b(my|i|me)\b", lowered))
+    marketing_detected = bool(re.search(r"\b(buy|subscribe|limited offer|brand|customers|conversion|campaign|sales|pricing|launch|product)\b", lowered))
+    candidates: list[tuple[str, float, list[str], int]] = []
 
-    if bullet_ratio >= 0.35 or re.search(r"\|.+\|", stripped):
-        return _route_payload("structured_list_table", 0.86, [f"bullet_line_ratio={bullet_ratio:.2f}", "structured lines require shape preservation"])
+    def add(mode: str, score: float, reasons: list[str], priority: int) -> None:
+        candidates.append((mode, max(0.0, min(0.98, score)), reasons, priority))
+
+    if bullet_ratio >= 0.35 or has_table:
+        add("structured_list_table", 0.78 + min(0.12, bullet_ratio * 0.18), [f"bullet_line_ratio={bullet_ratio:.2f}", "structured lines require shape preservation"], 70)
     if citation_count >= 2 or (academic_reasons and citation_count >= 1) or (academic_reasons and word_count >= 450):
         reasons = [f"citation_count={citation_count}"] + academic_reasons
         if short_quote_count:
             reasons.append(f"short_conceptual_quotes={short_quote_count}")
-        return _route_payload("academic_cited_text", 0.86, reasons + ["academic citations require citation-preserving rewrite"])
+        add("academic_cited_text", 0.82 + min(0.08, citation_count * 0.025) + (0.03 if academic_reasons else 0.0), reasons + ["academic citations require citation-preserving rewrite"], 95)
     if long_quote_count >= 3 or (long_quote_count >= 2 and word_count < 450):
-        return _route_payload("quote_heavy", 0.82, [f"quote_count={quote_count}", f"long_quote_count={long_quote_count}", "quoted material should remain strict anchors"])
-    if re.search(r"\b(api|sdk|json|yaml|http|endpoint|database|function|class|method|stack trace|schema|repository|deployment|kubernetes|docker)\b", lowered) or re.search(r"[{}<>]|```|/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", stripped):
-        return _route_payload("technical_content", 0.82, ["technical markers detected", "technical content needs term and structure preservation"])
-    if re.search(r"\b(shall|must not|compliance|contract|liability|statutory|regulation|clinical|diagnosis|dosage|patient|medical|legal|terms and conditions)\b", lowered) or re.search(r"\b(?:company|privacy|security|data|workplace|use|refund|billing)\s+policy\b|\bpolicy\s+(?:states|requires|prohibits|allows|applies)\b", lowered):
-        return _route_payload("regulated_policy_content", 0.82, ["regulated wording detected", "obligations and claims need minimal targeted edits"])
-    if _has_first_person_stance(stripped) and re.search(r"\b(my|i|me)\b", lowered):
-        return _route_payload("personal_reflection", 0.78, ["first-person stance markers detected", "author voice already exists"])
+        add("quote_heavy", 0.8 + min(0.08, long_quote_count * 0.02), [f"quote_count={quote_count}", f"long_quote_count={long_quote_count}", "quoted material should remain strict anchors"], 85)
+    if technical_detected:
+        add("technical_content", 0.82, ["technical markers detected", "technical content needs term and structure preservation"], 90)
+    if regulated_detected:
+        add("regulated_policy_content", 0.82, ["regulated wording detected", "obligations and claims need minimal targeted edits"], 92)
+    if first_person_detected:
+        add("personal_reflection", 0.78, ["first-person stance markers detected", "author voice already exists"], 80)
     if paragraphs >= 6 and word_count >= 100:
-        return _route_payload("broad_explanatory_essay", 0.8, [f"paragraphs={paragraphs}", f"word_count={word_count}", "multi-paragraph explanatory essay shape"])
-    if word_count < 120:
-        return _route_payload("short_text", 0.88, [f"word_count={word_count}", "short input limits safe reconstruction context"])
-    if re.search(r"\b(buy|subscribe|limited offer|brand|customers|conversion|campaign|sales|pricing|launch|product)\b", lowered):
-        return _route_payload("creative_marketing", 0.74, ["marketing or product language detected", "essay thesis rewrite would change genre"])
+        add("broad_explanatory_essay", 0.8, [f"paragraphs={paragraphs}", f"word_count={word_count}", "multi-paragraph explanatory essay shape"], 60)
+    if marketing_detected:
+        add("creative_marketing", 0.74, ["marketing or product language detected", "essay thesis rewrite would change genre"], 75)
     if sentence_map_size >= 8 and word_count >= 240:
-        return _route_payload("broad_explanatory_essay", 0.72, [f"sentence_map_size={sentence_map_size}", f"word_count={word_count}", "scan map indicates document-level essay"])
-    return _route_payload("generic_expository", 0.62, [f"paragraphs={paragraphs}", f"word_count={word_count}", "fallback expository mode"])
+        add("broad_explanatory_essay", 0.72, [f"sentence_map_size={sentence_map_size}", f"word_count={word_count}", "scan map indicates document-level essay"], 55)
+    if word_count < 120:
+        add("short_text", 0.76 if not candidates else 0.64, [f"word_count={word_count}", "short input limits safe reconstruction context"], 40)
+    if not candidates:
+        add("generic_expository", 0.62, [f"paragraphs={paragraphs}", f"word_count={word_count}", "fallback expository mode"], 10)
+
+    max_score = max(row[1] for row in candidates)
+    close_cutoff = max_score - 0.05
+    close_modes = [row for row in candidates if row[1] >= close_cutoff]
+
+    def rank_key(row: tuple[str, float, list[str], int]) -> tuple[int, int, float]:
+        _mode, score, _reasons, priority = row
+        return (1 if score >= close_cutoff else 0, priority, score)
+
+    best = max(close_modes, key=rank_key)
+    mode_scores = [
+        {
+            "content_mode": mode,
+            "score": round(score, 3),
+            "priority": priority,
+            "reasons": reasons[:4],
+        }
+        for mode, score, reasons, priority in sorted(candidates, key=rank_key, reverse=True)
+    ]
+    mode, score, reasons, _priority = best
+    if len(mode_scores) > 1:
+        reasons = reasons + [f"competing_modes={','.join(row['content_mode'] for row in mode_scores[1:4])}"]
+    return _route_payload(mode, score, reasons, mode_scores)
 
 
 def _component_values(report: dict | None) -> dict[str, float]:
