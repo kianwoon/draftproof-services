@@ -1209,6 +1209,7 @@ export {
   buildRewriteContributionOverride,
   buildSubmittedContentModel,
   isRewriteActive,
+  normalizeRewriteProgressMessage,
   normalizeRewriteJob,
   formatElapsed,
   getRewriteProgressDetail,

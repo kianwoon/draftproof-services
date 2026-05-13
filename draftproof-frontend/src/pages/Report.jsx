@@ -44,6 +44,7 @@ import {
   buildRewriteContributionOverride,
   buildSubmittedContentModel,
   isRewriteActive,
+  normalizeRewriteProgressMessage,
   normalizeRewriteJob,
   formatElapsed,
   getRewriteProgressDetail,
@@ -301,6 +302,7 @@ export default function Report() {
   );
 
   const tier = TIER_CONFIG[report.tier] || TIER_CONFIG.moderate;
+  const issues = Array.isArray(report.issues) ? report.issues : [];
   const badge = report.ai_risk_badge || {};
   const aiScore = report.ai_score ?? badge.ai_likelihood_score ?? null;
   const writingScore = report.writing_score ?? badge.writing_quality_score ?? null;
@@ -438,15 +440,16 @@ export default function Report() {
     tone: rewrittenAuthorshipTone,
   };
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-  report.issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
-  const submittedContent = buildSubmittedContentModel(report);
+  issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
+  const normalizedReport = { ...report, issues };
+  const submittedContent = buildSubmittedContentModel(normalizedReport);
   const selectedSegment = (
     submittedContent.segments.find((segment) => segment.id === selectedSegmentId) ||
     submittedContent.segments.find((segment) => segment.signals.length > 0) ||
     null
   );
 
-  const hasAIFindings = report.issues.some(i =>
+  const hasAIFindings = issues.some(i =>
     i.category === 'ai_generation' ||
     i.scanner === 'ai_generation' ||
     i.signal_category === 'authorship_risk' ||
@@ -587,7 +590,7 @@ export default function Report() {
         </span>
       </div>
       <div className="report-stat">
-        <span className="report-stat-value">{report.issues.length}</span>
+        <span className="report-stat-value">{issues.length}</span>
         <span className="report-stat-label">{t('report.summary.totalFindings')}</span>
       </div>
       {authorshipRatingLabel && (
