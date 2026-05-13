@@ -50,6 +50,8 @@ _FULL_DOC_FAMILIES = {
     "author_stance_texture_pass",
 }
 _ALL_STRATEGY_FAMILIES = {
+    "academic_all_section_compact_reconstruction",
+    "academic_cited_section_density_resolver",
     "targeted_paragraph_reconstruction",
     "unsafe_cluster_rescue",
     *_FULL_DOC_FAMILIES,
@@ -103,7 +105,12 @@ def _route_payload(mode: str, confidence: float, reasons: list[str]) -> ContentR
             "author_stance_thesis_reframe",
             "author_stance_texture_pass",
         },
-        "academic_cited_text": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
+        "academic_cited_text": {
+            "academic_all_section_compact_reconstruction",
+            "academic_cited_section_density_resolver",
+            "targeted_paragraph_reconstruction",
+            "unsafe_cluster_rescue",
+        },
         "technical_content": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
         "regulated_policy_content": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
         "structured_list_table": {"targeted_paragraph_reconstruction"},

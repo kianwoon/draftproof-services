@@ -147,7 +147,14 @@ def _extract_named_entities(text: str) -> Set[str]:
     discourse_words = {
         "also", "although", "because", "but", "finally", "first",
         "furthermore", "however", "instead", "meanwhile", "moreover",
-        "second", "therefore", "thus", "when", "while",
+        "hence", "lastly", "next", "overall", "second", "therefore",
+        "thus", "when", "while",
+    }
+    generic_academic_terms = {
+        "behaviors", "challenges", "consumers", "costs", "customers",
+        "employees", "figure", "figures", "guidelines", "ideas", "programmes",
+        "reviews", "servers", "services", "shoppers", "solutions",
+        "staff", "students", "teachers", "tools", "users",
     }
     quantifier_prefixes = {
         "another", "different", "many", "millions", "several", "some",
@@ -159,14 +166,20 @@ def _extract_named_entities(text: str) -> Set[str]:
     for m in re.finditer(r'\b([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)\b', text):
         entity = m.group(1)
         first = entity.split()[0].lower()
-        if first in heading_words or first in discourse_words or first in quantifier_prefixes:
+        if (
+            first in heading_words
+            or first in discourse_words
+            or first in quantifier_prefixes
+            or first in generic_academic_terms
+        ):
             continue
         entities.add(entity)
 
     # Single capitalized words: only if NOT after sentence boundary
     for m in re.finditer(r'(?<!^)(?<![.!?]\s)\b([A-Z][a-z]{2,})\b', text):
         word = m.group(1)
-        if word.lower() in discourse_words:
+        lower_word = word.lower()
+        if lower_word in discourse_words or lower_word in generic_academic_terms:
             continue
         # Check it's not a sentence start
         start = m.start()

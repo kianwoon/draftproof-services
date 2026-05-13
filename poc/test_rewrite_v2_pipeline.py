@@ -11,6 +11,14 @@ from rewrite_v2 import run_rewrite_pipeline_v2
 from rewrite_v2.pipeline import (
     _author_stance_thesis_filter_failures,
     _author_strategy_semantic_override_allowed,
+    _academic_all_section_filter_failures,
+    _academic_assignment_sections,
+    _all_section_compact_allowed,
+    _normalize_academic_all_section_candidate,
+    _parse_academic_all_section_variants,
+    _academic_section_filter_failures,
+    _academic_section_targets,
+    _compose_academic_sections,
     _build_author_stance_texture_pass_prompt,
     _build_author_stance_thesis_reframe_prompt,
     _cluster_text_from_gate,
@@ -131,10 +139,158 @@ assert_test(
     and "author_stance_thesis_reframe" in academic_route.blocked_strategy_families,
     "V2 content router blocks author-thesis for citation-heavy academic text",
 )
+assert_test(
+    "academic_cited_section_density_resolver" in academic_route.allowed_strategy_families,
+    "V2 content router enables section-level resolver for academic cited text",
+)
+assert_test(
+    "academic_all_section_compact_reconstruction" in academic_route.allowed_strategy_families,
+    "V2 content router enables compact all-section academic reconstruction for assignment-shaped cited text",
+)
 academic_strategies = route_strategies(scan_json, full_rewrite_allowed=True, content_route=academic_route)
 assert_test(
     not any(strategy.kind == StrategyKind.FULL_REWRITE for strategy in academic_strategies),
     "V2 strategy router blocks full-document strategies for academic cited text",
+)
+academic_assignment = """Question 1
+Hai Di Lao is a people-processing service (Blog, 2025).
+
+Question 2
+Reviews shown in Figure 1 to 4 describe slow staff responses. During the service encounter stage, customers judge whether staff notice their needs. A recent study indicates that attentiveness affects service experience (Gao et al., 2025). Azemi et al. (2019) states that negative word-of-mouth often follows poor service encounters.
+
+Question 3
+The outlet could use a visual call-light system (Rizzo, 2021). It could also use a 10-minute mandatory first check-in and a monthly mystery shopper programme (Kinch, 2025)."""
+academic_assignment_scan = {
+    **scan_json,
+    "generation_handoff": {
+        "document_profile": {"document_type": "reflective_or_analytical_submission"},
+        "section_generation_units": [],
+    },
+}
+assert_test(
+    _all_section_compact_allowed(academic_assignment, academic_assignment_scan),
+    "V2 compact academic layer is allowed for assignment-shaped cited sections",
+)
+non_assignment_academic = "Research shows the effect remains contested (Smith, 2021). Later work reached another result (Jones, 2022)."
+assert_test(
+    not _all_section_compact_allowed(non_assignment_academic, scan_json),
+    "V2 compact academic layer does not run on unsectioned citation-heavy prose",
+)
+all_section_variants = _parse_academic_all_section_variants(
+    """===VARIANT 1===
+Question 1
+Hai Di Lao is a people-processing service (Blog, 2025).
+
+Question 2
+Reviews shown in Figure 1 to 4 still point to slow staff responses (Gao et al., 2025).
+===END==="""
+)
+assert_test(
+    len(all_section_variants) == 1 and all_section_variants[0]["candidate_id"] == "academic_all_section_variant_1",
+    "V2 compact academic layer parses delimited variants",
+)
+normalized_all_section = _normalize_academic_all_section_candidate(
+    '**Question 1**\nThis aligns with "renting rather than owning the service as a whole." (Blog, 2025)\n\n**Question 2**\nReviews shown in Figure 1 to 4 remain relevant. Gao et al. (2025) notes the service issue.',
+    [
+        {
+            "heading": "Question 1",
+            "text": 'Question 1\nThis aligns with “renting rather than owning the service as a whole.” (Blog, 2025)',
+        },
+        {
+            "heading": "Question 2",
+            "text": "Question 2\nReviews shown in Figure 1 to 4 remain relevant (Gao et al., 2025).",
+            "citations": ["(Gao et al., 2025)"],
+        },
+    ],
+)
+assert_test(
+    "Question 1" in normalized_all_section
+    and "“renting rather than owning the service as a whole.”" in normalized_all_section,
+    "V2 compact academic layer normalizes markdown headings and exact quote forms",
+)
+assert_test(
+    "(Gao et al., 2025)" in normalized_all_section
+    and "Gao et al. (2025)" not in normalized_all_section,
+    "V2 compact academic layer restores exact protected citation forms",
+)
+normalized_visual_reference = _normalize_academic_all_section_candidate(
+    "Question 2\nReviews still point to slow staff responses (Gao et al., 2025).",
+    [{
+        "heading": "Question 2",
+        "text": "Question 2\nReviews shown in Figure 1 to 4 remain relevant (Gao et al., 2025).",
+        "citations": ["(Gao et al., 2025)"],
+    }],
+)
+assert_test(
+    "Figure 1 to 4" in normalized_visual_reference,
+    "V2 compact academic layer restores protected visual evidence references",
+)
+academic_targets = _academic_section_targets(academic_assignment, scan_json, limit=3)
+assert_test(
+    len(academic_targets) >= 2
+    and any("(Gao et al., 2025)" in target.get("citations", []) for target in academic_targets),
+    "V2 academic resolver selects citation-bearing sections as rewrite targets",
+)
+section_patches = [
+    {
+        "section_id": academic_targets[0]["section_id"],
+        "rewritten_section": (
+            f"{academic_targets[0]['heading']}\n"
+            "Reviews shown in Figure 1 to 4 still point to slow staff responses. "
+            "During the service encounter stage, customers judge whether staff notice their needs. "
+            "A recent study indicates that attentiveness affects service experience (Gao et al., 2025). "
+            "Azemi et al. (2019) states that negative word-of-mouth often follows poor service encounters."
+        ),
+    },
+    {
+        "section_id": academic_targets[1]["section_id"],
+        "rewritten_section": (
+            f"{academic_targets[1]['heading']}\n"
+            "The outlet could use a visual call-light system (Rizzo, 2021). "
+            "It could also keep the 10-minute mandatory first check-in and a monthly mystery shopper programme (Kinch, 2025)."
+        ),
+    },
+]
+assert_test(
+    not _academic_section_filter_failures(academic_targets[:2], section_patches),
+    "V2 academic section filter accepts heading and citation preserving patches",
+)
+composed_academic, composed_academic_patches = _compose_academic_sections(
+    academic_assignment,
+    academic_targets[:2],
+    section_patches,
+)
+assert_test(
+    "(Gao et al., 2025)" in composed_academic
+    and "Azemi et al. (2019)" in composed_academic
+    and len([row for row in composed_academic_patches if row.get("applied")]) == 2,
+    "V2 academic section composition preserves required citations in the full document",
+)
+bad_section_patches = [{**section_patches[0], "rewritten_section": section_patches[0]["rewritten_section"].replace("(Gao et al., 2025)", "Gao et al. (2025)")}]
+assert_test(
+    any("citation_lost:(Gao et al., 2025)" in reason for reason in _academic_section_filter_failures(academic_targets[:1], bad_section_patches)),
+    "V2 academic section filter rejects citation form drift",
+)
+all_sections = _academic_assignment_sections(academic_assignment, academic_assignment_scan)
+all_section_candidate = """Question 1
+Hai Di Lao is a people-processing service (Blog, 2025).
+
+Question 2
+Reviews shown in Figure 1 to 4 still point to slow staff responses. A recent study indicates that attentiveness affects service experience (Gao et al., 2025). Azemi et al. (2019) states that negative word-of-mouth often follows poor service encounters.
+
+Question 3
+The outlet could use a visual call-light system (Rizzo, 2021). It could also keep the 10-minute mandatory first check-in and a monthly mystery shopper programme (Kinch, 2025).
+"""
+assert_test(
+    not _academic_all_section_filter_failures(all_sections, all_section_candidate),
+    "V2 compact academic layer accepts all-section candidates preserving headings and citations",
+)
+assert_test(
+    any(
+        "citation_lost:(Kinch, 2025)" in reason
+        for reason in _academic_all_section_filter_failures(all_sections, all_section_candidate.replace("(Kinch, 2025)", "Kinch 2025"))
+    ),
+    "V2 compact academic layer rejects citation loss",
 )
 quote_route = classify_content_route(
     'The interviewee said “I did not know where to begin.” A second student said “the instructions felt unclear.” A teacher added “support arrived too late.”',
@@ -484,6 +640,16 @@ safe_close_partial = {
 assert_test(
     select_best_applicable_candidate([unsafe_low_ai, safe_close_partial], close_partial_max_gap=1.0)["strategy"] == "safe_close_partial",
     "V2 selector prefers applicable safe frontiers over lower-scoring semantic-unsafe diagnostics",
+)
+
+academic_guard = check_semantic_drift(
+    "Consumers' experience is affected when staff miss requests. Hence, service quality declines.",
+    "Customer experience is affected when staff miss requests. Service quality therefore declines.",
+    threshold=0.15,
+)
+assert_test(
+    academic_guard.accepted,
+    "Semantic guard does not hard-fail generic capitalized academic terms",
 )
 
 compose_text, compose_patches = _compose_full_doc_delta_winners(

@@ -26,6 +26,18 @@ from .selection import (
     select_best_candidate,
     select_best_safe_progress_candidate,
 )
+from .layers.academic import (
+    _academic_all_section_filter_failures,
+    _academic_assignment_sections,
+    _academic_section_filter_failures,
+    _academic_section_targets,
+    _all_section_compact_allowed,
+    _compose_academic_sections,
+    _generate_academic_all_section_candidates,
+    _generate_academic_section_candidates,
+    _normalize_academic_all_section_candidate,
+    _parse_academic_all_section_variants,
+)
 from .strategy import (
     build_single_paragraph_reconstruction_prompt,
     build_strategy_prompt,
@@ -112,6 +124,11 @@ def _effective_config(
         "author_stance_thesis_reframe": os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", "1").lower() not in {"0", "false", "no"},
         "author_stance_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_CANDIDATES", "3") or 3),
         "author_stance_texture_pass": os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_TEXTURE_PASS", "0").lower() not in {"0", "false", "no"},
+        "academic_all_section_compact_reconstruction": os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_ALL_SECTION_COMPACT", "1").lower() not in {"0", "false", "no"},
+        "academic_all_section_compact_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_ALL_SECTION_CANDIDATES", "2") or 2),
+        "academic_section_resolver": os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_SECTION_RESOLVER", "1").lower() not in {"0", "false", "no"},
+        "academic_section_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_SECTION_CANDIDATES", "1") or 1),
+        "academic_section_max_sections": int(os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_SECTION_MAX_SECTIONS", "2") or 2),
     }
 
 
@@ -864,6 +881,7 @@ def _json_from_response(raw: str) -> dict[str, Any]:
             return {}
 
 
+
 def _apply_targeted_patches(original_text: str, payload: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     text = original_text
     applied: list[dict[str, Any]] = []
@@ -1600,6 +1618,32 @@ def _generate_candidates(
     author_stance_allowed = _strategy_family_allowed(content_route, "author_stance_thesis_reframe")
     keyword_texture_allowed = _strategy_family_allowed(content_route, "keyword_locked_short_texture")
     author_texture_allowed = _strategy_family_allowed(content_route, "author_stance_texture_pass")
+    if _strategy_family_allowed(content_route, "academic_all_section_compact_reconstruction"):
+        academic_all_section_candidates = _generate_academic_all_section_candidates(
+            original_text=original_text,
+            scan_report=scan_report,
+            gateway=gateway,
+            model=model,
+            deadline=deadline,
+            timeout_seconds=timeout_seconds,
+        )
+        if academic_all_section_candidates:
+            candidates.extend(academic_all_section_candidates)
+            if any(candidate.get("local_filter_passed") for candidate in academic_all_section_candidates):
+                return candidates
+    if _strategy_family_allowed(content_route, "academic_cited_section_density_resolver"):
+        academic_candidates = _generate_academic_section_candidates(
+            original_text=original_text,
+            scan_report=scan_report,
+            gateway=gateway,
+            model=model,
+            deadline=deadline,
+            timeout_seconds=timeout_seconds,
+        )
+        if academic_candidates:
+            candidates.extend(academic_candidates)
+            if any(candidate.get("local_filter_passed") for candidate in academic_candidates):
+                return candidates
     if (
         _should_entity_locked_full_reconstruction(scan_report)
         and (full_reconstruction_allowed or author_stance_allowed or keyword_texture_allowed)
