@@ -8,6 +8,7 @@ import tempfile
 
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 from rewrite_v2 import run_rewrite_pipeline_v2
+import rewrite_v2.pipeline as pipeline_module
 from rewrite_v2.contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from rewrite_v2.diagnostics import (
     DETECTOR_NOT_SAFE,
@@ -35,6 +36,7 @@ from rewrite_v2.pipeline import (
     _cluster_text_from_gate,
     _compose_full_doc_delta_winners,
     _expected_full_reconstruction_paragraph_count,
+    _generate_candidates,
     _paragraph_inventory_for_full_reconstruction,
     _paragraph_tactics,
     _paragraph_target_map,
@@ -49,6 +51,7 @@ from rewrite_v2.pipeline import (
 )
 from rewrite_v2.layers.academic import _exact_citation_markers
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
+from rewrite_v2.robustness import content_mode_policy, layer_coverage, normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
 from rewrite_v2.strategy import StrategyKind, classify_content_route, route_strategies
 
@@ -1492,6 +1495,123 @@ assert_test(
     and diagnostic_summary["detector_not_safe_count"] == 1
     and summarize_candidate_diagnostics([], generated_count=0)["primary_failure_class"] == GENERATION_FAILED,
     "V2 diagnostics summarize candidate failure classes for replay experiments",
+)
+academic_failure_policy = recommend_failure_policy(
+    [fixable_contract_row, detector_row],
+    generated_count=2,
+    content_route=academic_route,
+)
+technical_failure_policy = recommend_failure_policy(
+    [detector_row],
+    generated_count=1,
+    content_route=technical_route,
+)
+academic_layer_rows = [
+    {"strategy": "academic_all_section_compact_reconstruction", "decision": {"lane": "REJECT", "reason": "partial_progress_not_success"}},
+    {"strategy": "academic_cited_section_density_resolver", "decision": {"lane": "REJECT", "reason": "partial_progress_not_success"}},
+]
+academic_layer_policy = recommend_failure_policy(
+    academic_layer_rows,
+    generated_count=2,
+    content_route=academic_route,
+)
+assert_test(
+    "repair:fixable_contract_drift" in academic_failure_policy["recommended_actions"]
+    and "second_layer:detector_not_safe" in academic_failure_policy["recommended_actions"]
+    and "terminal:detector_not_safe" not in academic_failure_policy["recommended_actions"],
+    "V2 robustness policy routes academic detector failures to a second layer instead of terminal failure",
+)
+assert_test(
+    "terminal:detector_not_safe" in technical_failure_policy["recommended_actions"]
+    and not any(action.startswith("second_layer:") for action in technical_failure_policy["recommended_actions"])
+    and content_mode_policy(technical_route)["required_layers"] == ["targeted_paragraph_reconstruction"],
+    "V2 robustness policy keeps technical content structure-preserving and terminal on detector-only exhaustion",
+)
+assert_test(
+    normalize_strategy_layer({"strategy": "scan_keyword_locked_short_texture", "strategy_kind": "entity_locked_full_reconstruction"}) == "keyword_locked_short_texture"
+    and portfolio_limits(academic_route)["max_generated_candidates"] == 12,
+    "V2 robustness policy normalizes strategy layers and exposes per-mode portfolio caps",
+)
+assert_test(
+    layer_coverage(academic_layer_rows, academic_route)["missing_required_layers"] == ["targeted_paragraph_reconstruction"]
+    and "run_missing_layer:targeted_paragraph_reconstruction" in academic_layer_policy["recommended_actions"],
+    "V2 robustness policy detects missing required layers before declaring candidate exhaustion",
+)
+
+
+class _DummyRewriteResponse:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _DummyGateway:
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.calls = 0
+
+    def chat(self, *_args, **_kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return _DummyRewriteResponse("A rebuilt document keeps the original point.")
+        return _DummyRewriteResponse(json.dumps({
+            "paragraph_id": "p1",
+            "rewritten_paragraph": "The original paragraph now sounds less polished.",
+            "rationale": "varied paragraph texture",
+        }))
+
+
+original_portfolio = os.environ.get("DRAFTPROOF_REWRITE_V2_PORTFOLIO_MODE")
+original_full_candidates = os.environ.get("DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES")
+patched_names = [
+    "LLMGateway",
+    "_should_entity_locked_full_reconstruction",
+    "_required_entities_for_full_reconstruction",
+    "_expected_full_reconstruction_paragraph_count",
+    "_paragraph_inventory_for_full_reconstruction",
+    "_build_entity_locked_full_reconstruction_prompt",
+    "_full_reconstruction_filter_failures",
+    "_paragraph_target_map",
+    "targeted_paragraph_briefs",
+]
+patched_values = {name: getattr(pipeline_module, name) for name in patched_names}
+try:
+    os.environ["DRAFTPROOF_REWRITE_V2_PORTFOLIO_MODE"] = "1"
+    os.environ["DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES"] = "1"
+    pipeline_module.LLMGateway = _DummyGateway
+    pipeline_module._should_entity_locked_full_reconstruction = lambda _report: True
+    pipeline_module._required_entities_for_full_reconstruction = lambda _text: []
+    pipeline_module._expected_full_reconstruction_paragraph_count = lambda _report, _text: 1
+    pipeline_module._paragraph_inventory_for_full_reconstruction = lambda _report, _text: []
+    pipeline_module._build_entity_locked_full_reconstruction_prompt = lambda **_kwargs: "full"
+    pipeline_module._full_reconstruction_filter_failures = lambda **_kwargs: []
+    pipeline_module._paragraph_target_map = lambda _report, _text: {"p1": "The original paragraph is very polished."}
+    pipeline_module.targeted_paragraph_briefs = lambda _report: [{"paragraph_id": "p1"}]
+    portfolio_candidates = _generate_candidates(
+        original_text="The original paragraph is very polished.",
+        scan_report=scan_json,
+        strategies=[route_strategies(scan_json, full_rewrite_allowed=False)[0]],
+        api_key="test-key",
+        model="deepseek/deepseek-chat",
+        base_url="https://example.invalid",
+        timeout_seconds=5,
+        deadline=None,
+        content_route=broad_route,
+    )
+finally:
+    for name, value in patched_values.items():
+        setattr(pipeline_module, name, value)
+    if original_portfolio is None:
+        os.environ.pop("DRAFTPROOF_REWRITE_V2_PORTFOLIO_MODE", None)
+    else:
+        os.environ["DRAFTPROOF_REWRITE_V2_PORTFOLIO_MODE"] = original_portfolio
+    if original_full_candidates is None:
+        os.environ.pop("DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES", None)
+    else:
+        os.environ["DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES"] = original_full_candidates
+assert_test(
+    {"entity_locked_full_reconstruction", "targeted_paragraph_reconstruction"}.issubset(
+        {normalize_strategy_layer(row) for row in portfolio_candidates}
+    ),
+    "V2 portfolio mode continues from full reconstruction into targeted paragraph candidates",
 )
 
 print("All rewrite V2 pipeline tests passed.")

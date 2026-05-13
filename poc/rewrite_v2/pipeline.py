@@ -21,6 +21,7 @@ from .contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from .diagnostics import annotate_candidate_diagnostics, summarize_candidate_diagnostics
 from .goal_contract import RewriteGoalStatus, evaluate_rewrite_goal, needs_author_context
 from .goal_contract import RewriteGoalEvaluation
+from .robustness import normalize_strategy_layer, portfolio_limits, recommend_failure_policy
 from .selection import (
     CandidateLane,
     decide_candidate,
@@ -97,6 +98,10 @@ def _generation_budget_seconds(max_runtime_seconds: int) -> int:
     return max(30, min(180, int(max_runtime_seconds * 0.65), max(30, int(max_runtime_seconds) - 60)))
 
 
+def _portfolio_mode_enabled() -> bool:
+    return os.environ.get("DRAFTPROOF_REWRITE_V2_PORTFOLIO_MODE", "1").lower() not in {"0", "false", "no"}
+
+
 def _effective_config(
     *,
     api_key: str | None,
@@ -133,6 +138,8 @@ def _effective_config(
         "academic_section_resolver": os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_SECTION_RESOLVER", "1").lower() not in {"0", "false", "no"},
         "academic_section_candidates": int(os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_SECTION_CANDIDATES", "1") or 1),
         "academic_section_max_sections": int(os.environ.get("DRAFTPROOF_REWRITE_V2_ACADEMIC_SECTION_MAX_SECTIONS", "2") or 2),
+        "portfolio_mode": _portfolio_mode_enabled(),
+        "global_max_generated_candidates": os.environ.get("DRAFTPROOF_REWRITE_V2_MAX_GENERATED_CANDIDATES"),
     }
 
 
@@ -1655,6 +1662,29 @@ def _generate_candidates(
     author_stance_allowed = _strategy_family_allowed(content_route, "author_stance_thesis_reframe")
     keyword_texture_allowed = _strategy_family_allowed(content_route, "keyword_locked_short_texture")
     author_texture_allowed = _strategy_family_allowed(content_route, "author_stance_texture_pass")
+    limits = portfolio_limits(content_route)
+    layer_caps = limits.get("layer_candidate_caps") or {}
+    max_generated_candidates = int(limits.get("max_generated_candidates") or 8)
+
+    def budget_exhausted() -> bool:
+        return len(candidates) >= max_generated_candidates
+
+    def append_candidate(row: dict[str, Any]) -> bool:
+        if budget_exhausted():
+            return False
+        layer = normalize_strategy_layer(row)
+        cap = layer_caps.get(layer)
+        if isinstance(cap, int) and cap >= 0:
+            current = sum(1 for candidate in candidates if normalize_strategy_layer(candidate) == layer)
+            if current >= cap:
+                return False
+        candidates.append(row)
+        return True
+
+    def extend_candidates(rows: list[dict[str, Any]]) -> None:
+        for row in rows:
+            append_candidate(row)
+
     if _strategy_family_allowed(content_route, "academic_all_section_compact_reconstruction"):
         academic_all_section_candidates = _generate_academic_all_section_candidates(
             original_text=original_text,
@@ -1665,8 +1695,10 @@ def _generate_candidates(
             timeout_seconds=timeout_seconds,
         )
         if academic_all_section_candidates:
-            candidates.extend(academic_all_section_candidates)
-            if any(candidate.get("local_filter_passed") for candidate in academic_all_section_candidates):
+            extend_candidates(academic_all_section_candidates)
+            if not _portfolio_mode_enabled() and any(candidate.get("local_filter_passed") for candidate in academic_all_section_candidates):
+                return candidates
+            if budget_exhausted():
                 return candidates
     if _strategy_family_allowed(content_route, "academic_cited_section_density_resolver"):
         academic_candidates = _generate_academic_section_candidates(
@@ -1678,8 +1710,10 @@ def _generate_candidates(
             timeout_seconds=timeout_seconds,
         )
         if academic_candidates:
-            candidates.extend(academic_candidates)
-            if any(candidate.get("local_filter_passed") for candidate in academic_candidates):
+            extend_candidates(academic_candidates)
+            if not _portfolio_mode_enabled() and any(candidate.get("local_filter_passed") for candidate in academic_candidates):
+                return candidates
+            if budget_exhausted():
                 return candidates
     if (
         _should_entity_locked_full_reconstruction(scan_report)
@@ -1718,7 +1752,7 @@ def _generate_candidates(
                     required_entities=required_entities,
                     expected_paragraph_count=expected_paragraph_count,
                 )
-                candidates.append({
+                append_candidate({
                     "strategy": "scan_entity_locked_full_reconstruction",
                     "strategy_kind": "entity_locked_full_reconstruction",
                     "candidate_number": number,
@@ -1730,6 +1764,8 @@ def _generate_candidates(
                     "paragraph_count": _paragraph_count(candidate_text),
                     "expected_paragraph_count": expected_paragraph_count,
                 })
+                if budget_exhausted():
+                    return candidates
         else:
             variants = 0
         if (
@@ -1763,7 +1799,7 @@ def _generate_candidates(
                 required_entities=required_entities,
                 expected_paragraph_count=expected_paragraph_count,
             )
-            candidates.append({
+            append_candidate({
                 "strategy": "scan_keyword_locked_short_texture",
                 "strategy_kind": "entity_locked_full_reconstruction",
                 "candidate_number": variants + 1,
@@ -1776,6 +1812,8 @@ def _generate_candidates(
                 "paragraph_count": _paragraph_count(candidate_text),
                 "expected_paragraph_count": expected_paragraph_count,
             })
+            if budget_exhausted():
+                return candidates
         if (
             os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", "1").lower()
             not in {"0", "false", "no"}
@@ -1816,7 +1854,7 @@ def _generate_candidates(
                     min_paragraphs=target_paragraph_count,
                     max_paragraphs=target_paragraph_count,
                 )
-                candidates.append({
+                append_candidate({
                     "strategy": "scan_author_stance_thesis_reframe",
                     "strategy_kind": "author_stance_thesis_reframe",
                     "candidate_number": variants + 1 + author_number,
@@ -1830,6 +1868,8 @@ def _generate_candidates(
                     "paragraph_count": _paragraph_count(candidate_text),
                     "expected_paragraph_count": target_paragraph_count,
                 })
+                if budget_exhausted():
+                    return candidates
                 if (
                     not filter_failures
                     and os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_TEXTURE_PASS", "0").lower()
@@ -1867,7 +1907,7 @@ def _generate_candidates(
                         require_author_stance_marker=False,
                         reject_survey_style=True,
                     )
-                    candidates.append({
+                    append_candidate({
                         "strategy": "scan_author_stance_texture_pass",
                         "strategy_kind": "author_stance_texture_pass",
                         "candidate_number": variants + 1 + author_variants + author_number,
@@ -1882,10 +1922,16 @@ def _generate_candidates(
                         "expected_paragraph_count": target_paragraph_count,
                         "source_strategy": "scan_author_stance_thesis_reframe",
                     })
-        if candidates:
+                    if budget_exhausted():
+                        return candidates
+        if candidates and not _portfolio_mode_enabled():
+            return candidates
+        if budget_exhausted():
             return candidates
     for strategy in strategies:
         if getattr(strategy, "kind", None).value == "targeted":
+            if budget_exhausted():
+                return candidates
             paragraph_briefs = [
                 _enrich_paragraph_brief_with_target(brief, paragraph_targets)
                 for brief in targeted_paragraph_briefs(scan_report)
@@ -1924,7 +1970,7 @@ def _generate_candidates(
                     patch_payload = {"patches": candidate_payload.get("patches") or []}
                     candidate_text, applied_patches = _apply_targeted_patches(original_text, patch_payload)
                     filter_failures = _patch_filter_failures(patch_payload["patches"])
-                    candidates.append({
+                    append_candidate({
                         "strategy": strategy.strategy_id,
                         "strategy_kind": strategy.kind.value,
                         "candidate_number": number,
@@ -1938,6 +1984,8 @@ def _generate_candidates(
                         "patch_count": len(applied_patches),
                         "patches": applied_patches,
                     })
+                    if budget_exhausted():
+                        return candidates
             continue
         for number in range(1, max(1, int(strategy.max_candidates or 1)) + 1):
             if deadline is not None and time.time() + timeout_seconds + 2.0 >= deadline:
@@ -1952,13 +2000,15 @@ def _generate_candidates(
                 presence_penalty=0.15,
                 frequency_penalty=0.25,
             )
-            candidates.append({
+            append_candidate({
                 "strategy": strategy.strategy_id,
                 "strategy_kind": strategy.kind.value,
                 "candidate_number": number,
                 "text": clean_candidate_output(response.content),
                 "candidate_response": clean_candidate_output(response.content),
             })
+            if budget_exhausted():
+                return candidates
     return candidates
 
 
@@ -2008,6 +2058,7 @@ def run_rewrite_pipeline_v2(
         "content_mode_confidence": content_route.confidence,
         "allowed_strategy_families": content_route.allowed_strategy_families,
         "blocked_strategy_families": content_route.blocked_strategy_families,
+        "portfolio_limits": portfolio_limits(content_route),
     }
     author_context_blocked = (
         needs_author_context(original_report)
@@ -2523,6 +2574,12 @@ def run_rewrite_pipeline_v2(
         annotate_candidate_diagnostics(row)
         for row in candidate_rows
     ]
+    candidate_diagnostics = summarize_candidate_diagnostics(candidate_rows, generated_count=generated_count)
+    robustness_policy = recommend_failure_policy(
+        candidate_rows,
+        generated_count=generated_count,
+        content_route=content_route,
+    )
     summary = {
         "rewrite_pipeline_version": "rewrite_v2_scan_driven",
         "outcome": public_status,
@@ -2542,7 +2599,8 @@ def run_rewrite_pipeline_v2(
                 if ((row.get("decision") or {}).get("lane") == CandidateLane.REJECT.value)
             ),
             "reason": generation_reason,
-            "diagnostics": summarize_candidate_diagnostics(candidate_rows, generated_count=generated_count),
+            "diagnostics": candidate_diagnostics,
+            "robustness_policy": robustness_policy,
         },
         "content_router_trace": content_route.to_dict(),
         "strategy_trace": [strategy.to_dict() for strategy in strategies],
