@@ -337,6 +337,14 @@ def _build_academic_section_prompt(
     sections: list[dict[str, Any]],
     candidate_count: int,
 ) -> str:
+    def word_band(section: dict[str, Any]) -> dict[str, int]:
+        source_words = int(section.get("word_count") or 0)
+        return {
+            "source_word_count": source_words,
+            "min_words": max(35, int(source_words * 0.72)),
+            "max_words": max(60, int(source_words * 1.12)),
+        }
+
     payload = {
         "task": "Rewrite only the provided citation-bearing academic sections.",
         "candidate_count": candidate_count,
@@ -345,6 +353,7 @@ def _build_academic_section_prompt(
                 "section_id": section.get("section_id"),
                 "heading": section.get("heading"),
                 "word_count": section.get("word_count"),
+                "word_count_band": word_band(section),
                 "required_exact_citations": section.get("citations") or [],
                 "required_exact_protected_spans": section.get("protected_spans") or [],
                 "required_key_terms": _academic_required_terms_for_scope(str(section.get("text") or "")),
@@ -363,6 +372,7 @@ def _build_academic_section_prompt(
         "Every required_key_term is a meaning anchor and must remain in that section.\n"
         "Keep the same claims, source attribution, numbers, figure references, service-model terms, and solution list.\n"
         "Do not add new sources, facts, examples, personal experience, or references.\n"
+        "Respect each section word_count_band. Do not summarize or compress the section below min_words.\n"
         "Reduce detector risk by changing section rhythm, sentence routes, and generic academic phrasing.\n"
         "Avoid over-polished textbook phrasing, but keep normal academic student prose.\n"
         "Do not use typos, fake errors, fragments, slang, or bullet points.\n"
@@ -434,6 +444,35 @@ def _normalize_academic_section_patches(
             rewritten = _normalize_academic_all_section_candidate(rewritten, [section]).strip()
         normalized.append({**patch, "rewritten_section": rewritten})
     return normalized
+
+
+def _outline_texture_failures(candidate_text: str) -> list[str]:
+    """Reject answer-key/listified prose that external detectors often flag."""
+    text = str(candidate_text or "")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+    non_heading_lines = [
+        line for line in lines
+        if not re.match(r"^(?:Question|Section|Part|Task|Prompt|Answer)\s+\d+[A-Za-z]?\s*:?\s*$", line, flags=re.IGNORECASE)
+    ]
+    numbered_lines = [
+        line for line in non_heading_lines
+        if re.match(r"^(?:\d+[.)]|[-*•])\s+", line)
+        or re.match(r"^\d+\.\s*\*{1,2}[^*]{2,80}\*{1,2}\s*:", line)
+    ]
+    markdown_label_lines = [
+        line for line in non_heading_lines
+        if re.match(r"^(?:\d+[.)]\s*)?\*{1,2}[^*]{2,80}\*{1,2}\s*:", line)
+    ]
+    failures: list[str] = []
+    if numbered_lines and len(numbered_lines) / max(1, len(non_heading_lines)) >= 0.28:
+        failures.append("external_detector_outline_texture:numbered_or_bulleted_answer_shape")
+    if len(markdown_label_lines) >= 2:
+        failures.append("external_detector_outline_texture:markdown_labelled_subpoints")
+    if re.search(r"\*\*[^*\n]{2,80}\*\*", text) or re.search(r"(?m)^\s*\*[^*\n]{2,80}\*\s*:", text):
+        failures.append("external_detector_outline_texture:markdown_emphasis_labels")
+    return failures
 
 
 def _compose_academic_sections(original_text: str, sections: list[dict[str, Any]], patches: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -538,8 +577,17 @@ def _build_academic_all_section_prompt(
     sections: list[dict[str, Any]],
     candidate_count: int,
 ) -> str:
+    def word_band(section: dict[str, Any]) -> dict[str, int]:
+        source_words = int(section.get("word_count") or 0)
+        return {
+            "source_word_count": source_words,
+            "min_words": max(30, int(source_words * 0.72)),
+            "max_words": max(55, int(source_words * 1.12)),
+        }
+
     protected_all: list[str] = []
     required_terms_all: list[str] = []
+    global_source_words = sum(int(section.get("word_count") or 0) for section in sections)
     for section in sections:
         for value in _protected_texts_for_scope(str(section.get("text") or "")):
             if value and value not in protected_all:
@@ -555,6 +603,7 @@ def _build_academic_all_section_prompt(
                 "section_id": section.get("section_id"),
                 "heading": section.get("heading"),
                 "word_count": section.get("word_count"),
+                "word_count_band": word_band(section),
                 "required_exact_citations": section.get("citations") or [],
                 "required_exact_protected_spans": _protected_texts_for_scope(str(section.get("text") or "")),
                 "required_key_terms": _academic_required_terms_for_scope(str(section.get("text") or "")),
@@ -562,11 +611,16 @@ def _build_academic_all_section_prompt(
             }
             for section in sections
         ],
+        "global_word_count_band": {
+            "source_word_count": global_source_words,
+            "min_words": max(120, int(global_source_words * 0.72)),
+            "max_words": max(180, int(global_source_words * 1.12)),
+        },
         "global_required_protected_spans": protected_all,
         "global_required_key_terms": required_terms_all,
     }
     return (
-        "DraftProof academic all-section compact reconstruction.\n"
+        "DraftProof academic all-section shape-preserving reconstruction.\n"
         f"Create exactly {candidate_count} variants.\n"
         "Use this only for assignment-like academic content with numbered/labelled sections.\n"
         "Rewrite every provided section, including setup/classification sections, because leaving the setup frozen can keep detector predictability high.\n"
@@ -577,7 +631,9 @@ def _build_academic_all_section_prompt(
         "Do not convert parenthetical citations into narrative citations, or narrative citations into parenthetical citations. "
         "For example, keep '(Gao et al., 2025)' exactly instead of writing 'Gao et al. (2025)'.\n"
         "Keep the same claims, source attribution, required terms, and solution inventory. Do not add new sources, facts, examples, statistics, or personal experience.\n"
-        "Use compact structured academic reconstruction. Numbered subpoints are allowed when the source already has stages, answers, or solution lists.\n"
+        "Respect the global_word_count_band and every section word_count_band. Do not summarize, collapse, or compress the assignment into a short answer key.\n"
+        "Use paragraph-based academic reconstruction. Keep real question headings, but do not turn the body into numbered lists, bullets, answer-key subpoints, bold labels, or markdown emphasis.\n"
+        "If the source mentions stages or solutions, write them as flowing paragraph prose with varied sentence lengths rather than a visible list.\n"
         "Add a short continuity bridge when a setup/classification section leads into analysis, so the rewrite does not create semantic-shape jumps.\n"
         "Avoid polished textbook phrasing and smooth template transitions. Keep a believable undergraduate analytical voice.\n"
         "Do not use typos, slang, random fragments, or fake mistakes.\n"
@@ -725,7 +781,11 @@ def _restore_exact_citation_forms(candidate_text: str, sections: list[dict[str, 
             if parenthetical:
                 author = parenthetical.group("author")
                 year = parenthetical.group("year")
-                narrative_pattern = re.compile(rf"\b{re.escape(author)}\s+\({re.escape(year)}\)")
+                author_pattern = re.escape(author).replace(r"\ ", r"\s+")
+                narrative_pattern = re.compile(
+                    rf"\b{author_pattern}(?:['’]s)?\s+\({re.escape(year)}\)",
+                    flags=re.IGNORECASE,
+                )
                 text = narrative_pattern.sub(exact, text, count=1)
                 continue
 
@@ -850,6 +910,7 @@ def _academic_all_section_filter_failures(sections: list[dict[str, Any]], candid
         for anchor in contract.anchors_by_severity(AnchorSeverity.SOFT_REQUIRED):
             if anchor.section_id == section_id and not anchor_present(anchor, text):
                 failures.append(f"{section_id}:required_term_lost:{anchor.text}")
+    failures.extend(_outline_texture_failures(text))
     return failures[:30]
 
 

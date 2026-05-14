@@ -50,10 +50,14 @@ def compression_policy_for_family(family: str, source_words: int) -> Compression
     """Return the controlled compression band for a V3 strategy family."""
 
     family = str(family or "document_rhythm")
-    if family == "cited_practice_voice":
-        min_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_CITED_MIN_RATIO", 0.60)
-        preferred_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_CITED_PREFERRED_RATIO", 0.72)
-        max_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_CITED_MAX_RATIO", 0.86)
+    if family == "clean_texture_boundary":
+        min_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_TEXTURE_MIN_RATIO", 0.35)
+        preferred_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_TEXTURE_PREFERRED_RATIO", 1.0)
+        max_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_TEXTURE_MAX_RATIO", 1.5)
+    elif family == "cited_practice_voice":
+        min_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_CITED_MIN_RATIO", 0.80)
+        preferred_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_CITED_PREFERRED_RATIO", 1.0)
+        max_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_CITED_MAX_RATIO", 1.20)
     else:
         min_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_RHYTHM_MIN_RATIO", 0.58)
         preferred_ratio = _ratio_env("DRAFTPROOF_REWRITE_V3_RHYTHM_PREFERRED_RATIO", 0.68)

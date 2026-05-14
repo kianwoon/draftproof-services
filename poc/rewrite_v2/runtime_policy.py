@@ -17,6 +17,7 @@ MODE_RUNTIME_CAPS: dict[str, dict[str, int | float]] = {
     "short_text": {"generation_budget_max": 45, "runtime_fraction": 0.35, "reserved_tail_seconds": 45},
     "personal_reflection": {"generation_budget_max": 120, "runtime_fraction": 0.55, "reserved_tail_seconds": 60},
     "creative_marketing": {"generation_budget_max": 100, "runtime_fraction": 0.50, "reserved_tail_seconds": 60},
+    "hybrid_guarded": {"generation_budget_max": 60, "runtime_fraction": 0.35, "reserved_tail_seconds": 90},
 }
 
 

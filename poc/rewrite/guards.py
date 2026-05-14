@@ -227,9 +227,30 @@ def _extract_quotes(text: str) -> Set[str]:
     return quotes
 
 
+_NUMBER_WORD_ALIASES = {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+}
+
+
 def _semantic_key(value: str) -> str:
     """Normalize anchor text for semantic-preservation comparisons."""
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+    text = str(value or "").casefold()
+    text = re.sub(
+        r"\b(" + "|".join(_NUMBER_WORD_ALIASES) + r")\b",
+        lambda match: _NUMBER_WORD_ALIASES[match.group(1)],
+        text,
+    )
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 def _entity_present(entity: str, text: str) -> bool:

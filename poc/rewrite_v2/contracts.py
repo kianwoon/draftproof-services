@@ -75,8 +75,29 @@ _GENERIC_SINGLE_ENTITY_WORDS = {
 }
 
 
+_NUMBER_WORD_ALIASES = {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+}
+
+
 def normalized_anchor_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+    text = str(value or "").casefold()
+    text = re.sub(
+        r"\b(" + "|".join(_NUMBER_WORD_ALIASES) + r")\b",
+        lambda match: _NUMBER_WORD_ALIASES[match.group(1)],
+        text,
+    )
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 def anchor_present(anchor: ContractAnchor, text: str) -> bool:

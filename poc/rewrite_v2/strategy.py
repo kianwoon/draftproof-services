@@ -9,23 +9,16 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+from .content_router import (
+    ALL_STRATEGY_FAMILIES,
+    ContentRoute,
+    FULL_DOCUMENT_STRATEGY_FAMILIES,
+)
+
 
 class StrategyKind(str, Enum):
     TARGETED = "targeted"
     FULL_REWRITE = "full_rewrite"
-
-
-@dataclass(frozen=True)
-class ContentRoute:
-    content_mode: str
-    confidence: float
-    reasons: list[str]
-    allowed_strategy_families: list[str]
-    blocked_strategy_families: list[str]
-    mode_scores: list[dict[str, Any]] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -44,256 +37,8 @@ class RewriteStrategy:
         return payload
 
 
-_FULL_DOC_FAMILIES = {
-    "entity_locked_full_reconstruction",
-    "keyword_locked_short_texture",
-    "author_stance_thesis_reframe",
-    "author_stance_texture_pass",
-}
-_ALL_STRATEGY_FAMILIES = {
-    "academic_anchor_repair_texture_pass",
-    "academic_all_section_compact_reconstruction",
-    "academic_cited_section_density_resolver",
-    "targeted_paragraph_reconstruction",
-    "unsafe_cluster_rescue",
-    *_FULL_DOC_FAMILIES,
-}
-
-
-def _paragraph_count(text: str) -> int:
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", str(text or "").strip()) if p.strip()]
-    if len(paragraphs) > 1:
-        return len(paragraphs)
-    sentences = re.findall(r"[^.!?]+[.!?]", str(text or ""))
-    return max(1, min(12, len(sentences) // 4)) if sentences else 0
-
-
-def _citation_count(text: str) -> int:
-    patterns = [
-        r"\([A-Z][A-Za-z' -]+(?:\s+et\s+al\.)?,\s*(?:19|20)\d{2}(?:,\s*p\.?\s*\d+)?\)",
-        r"\b[A-Z][A-Za-z' -]+(?:\s+et\s+al\.|(?:,\s*[A-Z][A-Za-z' -]+)*(?:,\s*(?:and|&)\s*[A-Z][A-Za-z' -]+)?)?\s+\((?:19|20)\d{2}[a-z]?\)",
-        r"\[(?:\d+|[A-Za-z]+(?:,\s*(?:19|20)\d{2})?)\]",
-        r"\b(?:doi|DOI):\s*10\.\d{4,9}/[-._;()/:A-Z0-9]+\b",
-        r"\b(?:et al\.|References|Bibliography|Works Cited)\b",
-    ]
-    return sum(len(re.findall(pattern, text, flags=re.IGNORECASE)) for pattern in patterns)
-
-
-def _quote_count(text: str) -> int:
-    return len(re.findall(r"[\"“][^\"”]{8,}[\"”]", text or ""))
-
-
-def _quote_stats(text: str) -> dict[str, int]:
-    spans = re.findall(r"[\"“]([^\"”]{3,})[\"”]", text or "")
-    short_terms = 0
-    long_or_sentence = 0
-    for span in spans:
-        words = re.findall(r"\b[\w'-]+\b", span)
-        stripped = span.strip()
-        if len(words) <= 5 and not re.search(r"[.!?;:]", stripped):
-            short_terms += 1
-        else:
-            long_or_sentence += 1
-    return {
-        "total": len(spans),
-        "short_terms": short_terms,
-        "long_or_sentence": long_or_sentence,
-    }
-
-
-def _scan_document_profile(scan_report: dict | None) -> dict[str, Any]:
-    report = scan_report or {}
-    handoff = report.get("generation_handoff") if isinstance(report.get("generation_handoff"), dict) else {}
-    profile = handoff.get("document_profile") if isinstance(handoff.get("document_profile"), dict) else {}
-    if profile:
-        return profile
-    intelligence = report.get("scan_intelligence") if isinstance(report.get("scan_intelligence"), dict) else {}
-    nested_handoff = intelligence.get("generation_handoff") if isinstance(intelligence.get("generation_handoff"), dict) else {}
-    nested_profile = nested_handoff.get("document_profile") if isinstance(nested_handoff.get("document_profile"), dict) else {}
-    return nested_profile if isinstance(nested_profile, dict) else {}
-
-
-def _academic_profile_signal(text: str, scan_report: dict | None) -> list[str]:
-    reasons: list[str] = []
-    profile = _scan_document_profile(scan_report)
-    document_type = str(profile.get("document_type") or "").lower()
-    if re.search(r"\b(reflective_or_analytical_submission|academic|literature|analytical|submission|essay)\b", document_type):
-        reasons.append(f"document_type={document_type}")
-    lowered = text.lower()
-    if re.search(r"\b(literature review|taxonomy|pedagogy|educator|vocational education|vet\b|according to research|argue|suggests|report\s*\(?(?:19|20)\d{2}\)?)\b", lowered):
-        reasons.append("academic_discourse_markers")
-    reference_register = ((scan_report or {}).get("generation_handoff") or {}).get("reference_register")
-    if isinstance(reference_register, list) and reference_register:
-        reasons.append(f"reference_register={len(reference_register)}")
-    return reasons[:4]
-
-
-def _bullet_line_ratio(lines: list[str]) -> float:
-    if not lines:
-        return 0.0
-    bullet_lines = [
-        line for line in lines
-        if re.match(r"^\s*(?:[-*•]|\d+[.)]|[A-Za-z][.)])\s+", line)
-    ]
-    return len(bullet_lines) / max(1, len(lines))
-
-
-def _has_first_person_stance(text: str) -> bool:
-    lowered = text.lower()
-    return bool(re.search(r"\b(i think|i find|i believe|i argue|i feel|i noticed|my view|my experience|in my opinion)\b", lowered))
-
-
-def _route_payload(mode: str, confidence: float, reasons: list[str], mode_scores: list[dict[str, Any]] | None = None) -> ContentRoute:
-    allowed_by_mode = {
-        "broad_explanatory_essay": {
-            "targeted_paragraph_reconstruction",
-            "unsafe_cluster_rescue",
-            "entity_locked_full_reconstruction",
-            "keyword_locked_short_texture",
-            "author_stance_thesis_reframe",
-            "author_stance_texture_pass",
-        },
-        "academic_cited_text": {
-            "academic_anchor_repair_texture_pass",
-            "academic_all_section_compact_reconstruction",
-            "academic_cited_section_density_resolver",
-            "targeted_paragraph_reconstruction",
-            "unsafe_cluster_rescue",
-        },
-        "technical_content": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
-        "regulated_policy_content": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
-        "structured_list_table": {"targeted_paragraph_reconstruction"},
-        "quote_heavy": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
-        "short_text": {"targeted_paragraph_reconstruction"},
-        "personal_reflection": {
-            "targeted_paragraph_reconstruction",
-            "unsafe_cluster_rescue",
-            "author_stance_thesis_reframe",
-            "author_stance_texture_pass",
-        },
-        "creative_marketing": {"targeted_paragraph_reconstruction", "unsafe_cluster_rescue"},
-        "generic_expository": {
-            "targeted_paragraph_reconstruction",
-            "unsafe_cluster_rescue",
-            "entity_locked_full_reconstruction",
-            "keyword_locked_short_texture",
-            "author_stance_thesis_reframe",
-            "author_stance_texture_pass",
-        },
-    }
-    allowed = sorted(allowed_by_mode.get(mode, {"targeted_paragraph_reconstruction"}))
-    blocked = sorted(_ALL_STRATEGY_FAMILIES - set(allowed))
-    return ContentRoute(
-        content_mode=mode,
-        confidence=round(max(0.0, min(1.0, confidence)), 3),
-        reasons=reasons[:8],
-        allowed_strategy_families=allowed,
-        blocked_strategy_families=blocked,
-        mode_scores=list(mode_scores or [])[:8],
-    )
-
-
-def classify_content_route(original_text: str, scan_report: dict | None = None) -> ContentRoute:
-    """Classify document shape so V2 only runs strategies appropriate to the content."""
-    text = str(original_text or "")
-    stripped = text.strip()
-    words = re.findall(r"\b[\w'-]+\b", stripped)
-    word_count = len(words)
-    paragraphs = _paragraph_count(stripped)
-    lines = [line for line in stripped.splitlines() if line.strip()]
-    bullet_ratio = _bullet_line_ratio(lines)
-    citation_count = _citation_count(stripped)
-    quote_stats = _quote_stats(stripped)
-    quote_count = quote_stats["total"]
-    long_quote_count = quote_stats["long_or_sentence"]
-    short_quote_count = quote_stats["short_terms"]
-    academic_reasons = _academic_profile_signal(stripped, scan_report)
-    lowered = stripped.lower()
-    sentence_map_size = len((scan_report or {}).get("sentence_map") or {})
-    has_table = bool(re.search(r"\|.+\|", stripped))
-    technical_terms = re.findall(
-        r"\b(api|sdk|json|yaml|http|endpoint|database|function|class|method|stack trace|schema|repository|deployment|kubernetes|docker)\b",
-        lowered,
-    )
-    technical_syntax = bool(re.search(r"[{}<>]|```|/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", stripped))
-    technical_detected = bool(
-        technical_syntax
-        or len(set(technical_terms)) >= 2
-        or (len(set(technical_terms)) >= 1 and bullet_ratio < 0.35 and not has_table)
-    )
-    regulated_detected = bool(
-        re.search(r"\b(shall|must not|compliance|contract|liability|statutory|regulation|clinical|diagnosis|dosage|patient|medical|legal|terms and conditions)\b", lowered)
-        or re.search(r"\b(?:company|privacy|security|data|workplace|use|refund|billing)\s+policy\b|\bpolicy\s+(?:states|requires|prohibits|allows|applies)\b", lowered)
-    )
-    first_person_detected = bool(_has_first_person_stance(stripped) and re.search(r"\b(my|i|me)\b", lowered))
-    marketing_detected = bool(re.search(r"\b(buy|subscribe|limited offer|brand|customers|conversion|campaign|sales|pricing|launch|product)\b", lowered))
-    candidates: list[tuple[str, float, list[str], int]] = []
-
-    def add(mode: str, score: float, reasons: list[str], priority: int) -> None:
-        candidates.append((mode, max(0.0, min(0.98, score)), reasons, priority))
-
-    if bullet_ratio >= 0.35 or has_table:
-        add("structured_list_table", 0.78 + min(0.12, bullet_ratio * 0.18), [f"bullet_line_ratio={bullet_ratio:.2f}", "structured lines require shape preservation"], 70)
-    if citation_count >= 2 or (academic_reasons and citation_count >= 1) or (academic_reasons and word_count >= 450):
-        reasons = [f"citation_count={citation_count}"] + academic_reasons
-        if short_quote_count:
-            reasons.append(f"short_conceptual_quotes={short_quote_count}")
-        add("academic_cited_text", 0.82 + min(0.08, citation_count * 0.025) + (0.03 if academic_reasons else 0.0), reasons + ["academic citations require citation-preserving rewrite"], 95)
-    if long_quote_count >= 3 or (long_quote_count >= 2 and word_count < 450):
-        add("quote_heavy", 0.8 + min(0.08, long_quote_count * 0.02), [f"quote_count={quote_count}", f"long_quote_count={long_quote_count}", "quoted material should remain strict anchors"], 85)
-    if technical_detected:
-        technical_score = 0.88 if citation_count >= 1 or bullet_ratio >= 0.25 or has_table else 0.82
-        technical_priority = 98 if citation_count >= 1 or bullet_ratio >= 0.25 or has_table else 90
-        technical_reasons = ["technical markers detected", "technical content needs term and structure preservation"]
-        if citation_count:
-            technical_reasons.append(f"citations_inside_technical_content={citation_count}")
-        if bullet_ratio >= 0.25 or has_table:
-            technical_reasons.append("structured technical content beats essay reconstruction")
-        add("technical_content", technical_score, technical_reasons, technical_priority)
-    if regulated_detected:
-        regulated_score = 0.9 if citation_count >= 1 or bullet_ratio >= 0.2 or has_table else 0.82
-        regulated_priority = 99 if citation_count >= 1 or bullet_ratio >= 0.2 or has_table else 92
-        regulated_reasons = ["regulated wording detected", "obligations and claims need minimal targeted edits"]
-        if citation_count:
-            regulated_reasons.append(f"citations_inside_regulated_content={citation_count}")
-        if bullet_ratio >= 0.2 or has_table:
-            regulated_reasons.append("structured obligations beat essay reconstruction")
-        add("regulated_policy_content", regulated_score, regulated_reasons, regulated_priority)
-    if first_person_detected:
-        add("personal_reflection", 0.78, ["first-person stance markers detected", "author voice already exists"], 80)
-    if paragraphs >= 6 and word_count >= 100:
-        add("broad_explanatory_essay", 0.8, [f"paragraphs={paragraphs}", f"word_count={word_count}", "multi-paragraph explanatory essay shape"], 60)
-    if marketing_detected:
-        add("creative_marketing", 0.74, ["marketing or product language detected", "essay thesis rewrite would change genre"], 75)
-    if sentence_map_size >= 8 and word_count >= 240:
-        add("broad_explanatory_essay", 0.72, [f"sentence_map_size={sentence_map_size}", f"word_count={word_count}", "scan map indicates document-level essay"], 55)
-    if word_count < 120:
-        add("short_text", 0.76 if not candidates else 0.64, [f"word_count={word_count}", "short input limits safe reconstruction context"], 40)
-    if not candidates:
-        add("generic_expository", 0.62, [f"paragraphs={paragraphs}", f"word_count={word_count}", "fallback expository mode"], 10)
-
-    max_score = max(row[1] for row in candidates)
-    close_cutoff = max_score - 0.05
-    close_modes = [row for row in candidates if row[1] >= close_cutoff]
-
-    def rank_key(row: tuple[str, float, list[str], int]) -> tuple[int, int, float]:
-        _mode, score, _reasons, priority = row
-        return (1 if score >= close_cutoff else 0, priority, score)
-
-    best = max(close_modes, key=rank_key)
-    mode_scores = [
-        {
-            "content_mode": mode,
-            "score": round(score, 3),
-            "priority": priority,
-            "reasons": reasons[:4],
-        }
-        for mode, score, reasons, priority in sorted(candidates, key=rank_key, reverse=True)
-    ]
-    mode, score, reasons, _priority = best
-    if len(mode_scores) > 1:
-        reasons = reasons + [f"competing_modes={','.join(row['content_mode'] for row in mode_scores[1:4])}"]
-    return _route_payload(mode, score, reasons, mode_scores)
+_ALL_STRATEGY_FAMILIES = ALL_STRATEGY_FAMILIES
+_FULL_DOC_FAMILIES = FULL_DOCUMENT_STRATEGY_FAMILIES
 
 
 def _component_values(report: dict | None) -> dict[str, float]:
@@ -552,15 +297,23 @@ def targeted_paragraph_briefs(scan_report: dict | None) -> list[dict[str, Any]]:
 
 
 def build_strategy_prompt(original_text: str, scan_report: dict, strategy: RewriteStrategy) -> str:
+    text = str(original_text or "")
+    text_samples = {
+        "opening": text[:900],
+        "middle": text[max(0, len(text) // 2 - 450): max(0, len(text) // 2 - 450) + 900] if len(text) > 1800 else "",
+        "ending": text[-900:] if len(text) > 900 else "",
+        "word_count": len(text.split()),
+    }
     brief = {
         "strategy": strategy.to_dict(),
         "rewrite_decision": (scan_report or {}).get("rewrite_decision"),
-        "rewrite_edit_briefs": (scan_report or {}).get("rewrite_edit_briefs"),
+        "rewrite_edit_briefs": _compact_paragraph_briefs(scan_report),
         "scan_intelligence": {
             "transformation": ((scan_report or {}).get("scan_intelligence") or {}).get("transformation"),
             "generation_handoff": ((scan_report or {}).get("scan_intelligence") or {}).get("generation_handoff"),
         },
         "integrity_layers": (scan_report or {}).get("integrity_layers"),
+        "text_samples": text_samples,
     }
     return (
         "Rewrite the document to reduce AI-generated detection risk.\n"
@@ -568,7 +321,7 @@ def build_strategy_prompt(original_text: str, scan_report: dict, strategy: Rewri
         "Do not add unsupported facts, sources, methods, examples, or author experiences.\n"
         "Return only the complete rewritten document, no commentary.\n\n"
         f"SCAN-DRIVEN STRATEGY JSON:\n{json.dumps(brief, indent=2, default=str)[:12000]}\n\n"
-        f"ORIGINAL DOCUMENT:\n{original_text}"
+        "The full original document is intentionally not provided. Use the scan-driven strategy JSON only."
     )
 
 
@@ -578,6 +331,12 @@ def build_single_paragraph_reconstruction_prompt(
     *,
     tactic: str = "plain_student_draft",
 ) -> str:
+    preferred_word_count = int((brief.get("target_word_range") or {}).get("source") or 0)
+    if not preferred_word_count:
+        word_range = brief.get("target_word_range") if isinstance(brief.get("target_word_range"), dict) else {}
+        min_words = int(word_range.get("min") or 0)
+        max_words = int(word_range.get("max") or 0)
+        preferred_word_count = int((min_words + max_words) / 2) if min_words and max_words else 0
     tactic_instructions = {
         "plain_student_draft": "Use plain student analytical prose. Keep sentence choices direct and slightly uneven.",
         "constraint_first": "Start from a concrete constraint, tension, or limitation before naming broad influence.",
@@ -634,11 +393,19 @@ def build_single_paragraph_reconstruction_prompt(
             "persistent challenges",
         ],
         "paragraph_brief": brief,
+        "preferred_word_count": preferred_word_count or None,
     }
+    word_count_instruction = (
+        f"The original paragraph is about {preferred_word_count} words. "
+        f"Write the replacement paragraph at about {preferred_word_count} words. Do not summarize it into a shorter paragraph.\n"
+        if preferred_word_count
+        else ""
+    )
     return (
         "DraftProof paragraph reconstruction.\n"
         "Regenerate exactly one paragraph from the structured brief only.\n"
         f"Tactic: {tactic}. {tactic_instructions.get(tactic, tactic_instructions['plain_student_draft'])}\n"
+        f"{word_count_instruction}"
         "The original paragraph prose is intentionally not provided.\n"
         "Do not infer or recreate the original sentence order.\n"
         "Break predictable spans, repeated openings, transition rhythm, and paragraph-level uniformity.\n"

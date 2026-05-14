@@ -9,9 +9,11 @@ import tempfile
 
 from llm.gateway import LLMConfig, LLMGateway
 from rewrite_v2.contracts import build_rewrite_contract
-from detect.authorship_windows import build_authorship_window_profile
+from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
+from detect.rewrite_targets import build_rewrite_target_profile
 import rewrite_v3.pipeline as v3_pipeline
 from rewrite_v3.anchor_validation import validate_v3_candidate
+from rewrite_v3.assisted_footprint_executor import group_assisted_footprint_windows
 from rewrite_v3.authorship_window_gate import evaluate_authorship_window_gate, select_authorship_window_targets
 from rewrite_v3.candidate_loop import CandidateAction, CandidateIssue, decide_next_action, issues_from_trace
 from rewrite_v3.compression_policy import compression_policy_for_family, compression_status
@@ -23,6 +25,7 @@ from rewrite_v3.layers.authorship_window_repair import (
     extract_authorship_window_replacements,
 )
 from rewrite_v3.layers.boundary_adapter import build_boundary_adapter_prompt
+from rewrite_v3.layers.clean_texture_boundary import build_clean_texture_boundary_prompt
 from rewrite_v3.layers.contract_repair import build_contract_repair_prompt
 from rewrite_v3.layers.contrast_boundary import build_contrast_boundary_prompt, extract_contrast_boundary_output
 from rewrite_v3.layers.document_rhythm import build_document_rhythm_chunk_prompt
@@ -33,6 +36,7 @@ from rewrite_v3.portfolio import select_portfolio_candidate
 from rewrite_v3.router import route_from_scan_contract
 from rewrite_v3.scanner_contract import RewriteRiskClass, build_scan_contract
 from rewrite_v3.strategy_plan import build_strategy_plan
+from rewrite_v3.target_executor import apply_target_replacements, batch_target_groups, group_rewrite_targets, parse_target_replacements
 
 
 def assert_test(condition: bool, message: str) -> None:
@@ -63,6 +67,11 @@ provider_env_names = [
     "OPENROUTER_PROVIDER_SORT",
     "DRAFTPROOF_OPENROUTER_DATA_COLLECTION",
     "OPENROUTER_DATA_COLLECTION",
+    "DRAFTPROOF_LLM_EXTRA_BODY_JSON",
+    "OPENROUTER_EXTRA_BODY_JSON",
+    "LLM_EXTRA_BODY_JSON",
+    "DRAFTPROOF_OPENROUTER_REASONING_EFFORT",
+    "OPENROUTER_REASONING_EFFORT",
 ]
 saved_provider_env = {name: os.environ.get(name) for name in provider_env_names}
 try:
@@ -78,6 +87,28 @@ try:
     assert_test(
         gateway.provider == {"order": ["siliconflow"], "allow_fallbacks": False},
         "LLM gateway reads OpenRouter provider routing from environment",
+    )
+    os.environ.pop("DRAFTPROOF_OPENROUTER_PROVIDER_ORDER", None)
+    os.environ["DRAFTPROOF_OPENROUTER_ALLOW_FALLBACKS"] = "1"
+    os.environ["DRAFTPROOF_OPENROUTER_PROVIDER_SORT"] = "latency"
+    gateway = LLMGateway(LLMConfig(
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="deepseek/deepseek-v4-flash",
+    ))
+    assert_test(
+        gateway.provider == {"allow_fallbacks": True, "sort": "latency"},
+        "LLM gateway supports OpenRouter latency-priority routing",
+    )
+    os.environ["DRAFTPROOF_LLM_EXTRA_BODY_JSON"] = '{"reasoning":{"effort":"none"}}'
+    gateway = LLMGateway(LLMConfig(
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="deepseek/deepseek-v4-flash",
+    ))
+    assert_test(
+        gateway.extra_body == {"reasoning": {"effort": "none"}},
+        "LLM gateway reads OpenRouter reasoning extra body from environment",
     )
 finally:
     for name, value in saved_provider_env.items():
@@ -165,6 +196,19 @@ assert_test(rhythm_status["in_band"], "V3 document-rhythm compression accepts co
 too_short = "Education is changing fast.\n\nTeachers help students judge information."
 too_short_status = compression_status(broad_source, too_short, rhythm_policy)
 assert_test(too_short_status["status"] == "below_floor", "V3 compression policy rejects over-compressed candidates")
+
+texture_policy = compression_policy_for_family("clean_texture_boundary", word_count(broad_source))
+texture_status = compression_status(broad_source, broad_source, texture_policy)
+assert_test(texture_status["in_band"], "V3 clean-texture compression does not force shortening before scan")
+clean_prompt = build_clean_texture_boundary_prompt(
+    original_text=broad_source,
+    scan_report=report_for(broad_source, ai=70.0),
+    style_examples={"positive": [], "negative": []},
+)
+assert_test(
+    "target_word_band" not in clean_prompt and "scanner_problem_profile" in clean_prompt,
+    "V3 clean-texture prompt is scan-driven without a word band",
+)
 
 cited_source = (
     "Introduction\n\n"
@@ -312,6 +356,19 @@ assert_test(
     "plain_reasoning_broad_prose" in [step.strategy_id for step in broad_plan.steps],
     "V3 broad strategy plan includes plain reasoning broad prose layer",
 )
+assert_test(
+    [step.strategy_id for step in broad_plan.steps][0] == "clean_texture_boundary",
+    "V3 broad strategy plan starts with clean texture boundary layer",
+)
+assert_test(
+    not v3_pipeline._should_use_chunked_generation(
+        source_words=word_count("The country was founded in 1776. It changed quickly."),
+        scan_contract=build_scan_contract(report_for("The country was founded in 1776. It changed quickly.", mode="broad_explanatory_essay"), "The country was founded in 1776. It changed quickly."),
+        v3_route=route_from_scan_contract(broad_contract),
+        exact_anchor_count=1,
+    ),
+    "V3 does not force broad clean-texture prose into chunks for a simple numeric anchor",
+)
 
 hybrid_report = report_for(cited_source, mode="personal_reflection", ai=55.0)
 hybrid_contract = build_scan_contract(hybrid_report, cited_source)
@@ -339,9 +396,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
         required_ai_drop=20.0,
     )
     summary = result["result"].summary
-    assert_test(result["status"] == "external_calibrated_candidate_applied", "V3 can apply externally calibrated improvement without strict goal")
+    assert_test(result["status"] == "rewrite_candidate_generated_needs_external_review", "V3 does not mark externally calibrated improvement as strict mitigation")
     assert_test(summary["rewrite_pipeline_version"] == "rewrite_v3_external_calibrated", "V3 summary declares V3 pipeline version")
-    assert_test(summary["strategy_trace"][0]["strategy_family"] == "document_rhythm", "V3 routes broad content to document rhythm family")
+    assert_test(summary["strategy_trace"][0]["strategy_family"] == "clean_texture_boundary", "V3 routes broad content to clean texture boundary family")
     assert_test("v3_route" in summary and "v3_strategy_plan" in summary, "V3 summary exposes scanner route and strategy plan")
 
 bad_broad_proxy = evaluate_external_proxy(
@@ -386,19 +443,149 @@ segment_profile = build_authorship_window_profile(
             "paragraph_id": "p001",
             "sentence_ids": ["s001"],
             "start_char": 0,
-            "end_char": 48,
+            "end_char": 50,
             "top_signals": [{"key": "human_anchor_score", "score": 80}],
         },
         {
             "paragraph_id": "p002",
             "sentence_ids": ["s002"],
-            "start_char": 50,
-            "end_char": 122,
+            "start_char": 52,
+            "end_char": 132,
             "top_signals": [{"key": "ai_likelihood", "score": 92}, {"key": "topk_calibrated_risk", "score": 86}],
         },
     ],
 )
 assert_test(segment_profile["num_ai_segments"] == 1, "Scanner authorship windows classify high-risk window separately")
+footprint_profile = segment_profile["ai_footprint_profile"]
+assert_test(
+    footprint_profile["schema_version"] == "ai_footprint_profile.v2"
+    and footprint_profile["risky_window_count"] == 1
+    and footprint_profile["top_risky_windows"][0]["paragraph_id"] == "p002",
+    "Scanner emits AI footprint profile v2 with top risky windows",
+)
+assert_test(
+    "source_text" in segment_profile["windows"][1]
+    and segment_profile["windows"][1]["span_integrity"]["passed"],
+    "Scanner authorship windows carry stable source text and span integrity",
+)
+rebuilt_footprint = build_ai_footprint_profile(segment_profile)
+assert_test(
+    rebuilt_footprint["risky_window_density"] == footprint_profile["risky_window_density"],
+    "AI footprint profile aggregates authorship windows deterministically",
+)
+target_profile = build_rewrite_target_profile(
+    source_text=(
+        "A short human paragraph with concrete observation.\n\n"
+        "A riskier paragraph follows a predictable route and keeps a uniform explanation."
+    ),
+    authorship_window_profile=segment_profile,
+    ai_footprint_profile=footprint_profile,
+    preservation_inventory={"anchors": [{"text": "predictable route", "kind": "domain_term", "priority": 70}]},
+)
+assisted_groups = group_assisted_footprint_windows(
+    original_text=(
+        "A short human paragraph with concrete observation.\n\n"
+        "A riskier paragraph follows a predictable route and keeps a uniform explanation."
+    ),
+    authorship_window_profile=segment_profile,
+    rewrite_target_profile=target_profile,
+    max_groups=3,
+)
+assert_test(
+    assisted_groups and assisted_groups[0].operation == "assisted_footprint_paragraph_rewrite",
+    "V3 assisted-footprint executor builds paragraph groups from scanner authorship windows",
+)
+assert_test(
+    target_profile["schema_version"] == "rewrite_target_profile.v1"
+    and target_profile["targets"]
+    and target_profile["targets"][0]["source_text"],
+    "Scanner emits rewrite target profile v1 with stable target text",
+)
+assert_test(
+    target_profile["targets"][0]["recommended_operation"] in {
+        "grounded_author_reasoning_rewrite",
+        "citation_preserving_window_repair",
+        "protected_section_rewrite",
+        "light_texture_rewrite",
+    },
+    "Rewrite target profile declares allowed target operation",
+)
+target_groups = group_rewrite_targets(
+    original_text=(
+        "A short human paragraph with concrete observation.\n\n"
+        "A riskier paragraph follows a predictable route and keeps a uniform explanation."
+    ),
+    rewrite_target_profile=target_profile,
+    max_groups=2,
+)
+assert_test(
+    target_groups and target_groups[0].source_text,
+    "V3 target executor groups scanner targets into bounded replacement units",
+)
+assert_test(
+    target_groups[0].source_text.startswith("A riskier paragraph follows"),
+    "V3 target executor expands scanner windows to stable paragraph groups when paragraph ids exist",
+)
+target_replacements = parse_target_replacements(json.dumps({
+    "replacements": [{
+        "group_id": target_groups[0].group_id,
+        "replacement_text": "A riskier paragraph follows a predictable route, but it now explains the local reason in a less uniform way.",
+    }]
+}))
+target_applied, target_apply_status = apply_target_replacements(
+    original_text=(
+        "A short human paragraph with concrete observation.\n\n"
+        "A riskier paragraph follows a predictable route and keeps a uniform explanation."
+    ),
+    target_groups=target_groups,
+    replacements=target_replacements,
+)
+assert_test(
+    "less uniform way" in target_applied and target_apply_status[0]["applied"],
+    "V3 target executor applies scanner-span replacements back into the original document",
+)
+boundary_source = "Inclusive design opens learning opportunities for learners."
+boundary_profile = {
+    "targets": [{
+        "target_id": "rt_boundary",
+        "unit_id": "u_boundary",
+        "recommended_operation": "light_texture_rewrite",
+        "source_text": "learning opportunities ",
+        "span": {
+            "start_index": boundary_source.find("learning"),
+            "end_index": boundary_source.find("for"),
+            "integrity": {"passed": True},
+        },
+        "word_count_guide": {"source_words": 2, "preferred_words": 2},
+    }]
+}
+boundary_groups = group_rewrite_targets(original_text=boundary_source, rewrite_target_profile=boundary_profile)
+boundary_applied, _ = apply_target_replacements(
+    original_text=boundary_source,
+    target_groups=boundary_groups,
+    replacements=[{"group_id": boundary_groups[0].group_id, "replacement_text": "learning chances"}],
+)
+assert_test(
+    "chances for" in boundary_applied and "chancesfor" not in boundary_applied,
+    "V3 target executor preserves span-boundary spacing during replacement",
+)
+batched_target_groups = batch_target_groups(target_groups * 5, batch_size=2)
+assert_test(
+    len(batched_target_groups) == 3 and all(len(batch) <= 2 for batch in batched_target_groups),
+    "V3 target executor can process scanner targets in bounded batches",
+)
+missing_anchor_applied, missing_anchor_status = apply_target_replacements(
+    original_text=(
+        "A short human paragraph with concrete observation.\n\n"
+        "A riskier paragraph follows a predictable route and keeps a uniform explanation."
+    ),
+    target_groups=target_groups,
+    replacements=[{"group_id": target_groups[0].group_id, "replacement_text": "This replacement drops the required phrase."}],
+)
+assert_test(
+    "required phrase" not in missing_anchor_applied and not missing_anchor_status[0]["applied"],
+    "V3 target executor blocks replacements that drop protected anchors",
+)
 segment_gate = evaluate_authorship_window_gate(segment_profile)
 assert_test(not segment_gate.passed, "V3 authorship window gate fails high-risk segment profile")
 segment_targets = select_authorship_window_targets(segment_profile, max_targets=1)
@@ -444,6 +631,75 @@ segment_proxy = evaluate_external_proxy(
 )
 assert_test(not segment_proxy.accepted, "V3 external proxy rejects remaining segment-level AI footprint")
 assert_test("segment_ai_fraction_high" in segment_proxy.reasons, "V3 proxy records segment AI fraction blocker")
+contract_prefers_footprint = build_scan_contract(
+    {
+        **report_for(broad_source, ai=20.0),
+        "authorship_window_profile": {
+            "fraction_ai": 0.0,
+            "fraction_ai_assisted": 0.05,
+            "fraction_human": 0.95,
+            "windows": [],
+        },
+        "ai_footprint_profile": {
+            "schema_version": "ai_footprint_profile.v2",
+            "fraction_ai": 0.1,
+            "fraction_ai_assisted": 0.72,
+            "fraction_human": 0.18,
+            "risky_window_density": 0.31,
+            "max_risky_window_words": 88,
+            "high_confidence_risky_window_count": 2,
+            "risky_window_count": 3,
+            "confidence": "high",
+        },
+    },
+    broad_source,
+)
+assert_test(
+    contract_prefers_footprint.footprint_fraction_ai_assisted == 0.72
+    and contract_prefers_footprint.high_confidence_risky_window_count == 2,
+    "V3 ScanContract prefers AI footprint profile over legacy authorship profile",
+)
+localized_contract = build_scan_contract(
+    {
+        **report_for(broad_source, mode="unknown", ai=40.0),
+        "ai_footprint_profile": {
+            "schema_version": "ai_footprint_profile.v2",
+            "fraction_ai": 0.0,
+            "fraction_ai_assisted": 0.22,
+            "fraction_human": 0.78,
+            "risky_window_density": 0.12,
+            "max_risky_window_words": 70,
+            "high_confidence_risky_window_count": 0,
+            "risky_window_count": 1,
+            "confidence": "medium",
+        },
+    },
+    broad_source,
+)
+localized_plan = build_strategy_plan(route_from_scan_contract(localized_contract), localized_contract)
+assert_test(
+    [step.strategy_id for step in localized_plan.steps][0] == "authorship_window_repair",
+    "V3 strategy plan routes localized footprint to window repair first",
+)
+target_contract = build_scan_contract(
+    {
+        **report_for(broad_source, mode="unknown", ai=40.0),
+        "rewrite_target_profile": {
+            "schema_version": "rewrite_target_profile.v1",
+            "target_scope_policy": "target_profile_driven",
+            "operation_mix": {"protected_section_rewrite": 2},
+            "driver_summary": {"predictability_score": 2},
+            "targets": [{"target_id": "rt001", "risk_level": "medium", "recommended_operation": "protected_section_rewrite"}],
+        },
+    },
+    broad_source,
+)
+target_plan = build_strategy_plan(route_from_scan_contract(target_contract), target_contract)
+assert_test(
+    target_contract.rewrite_targets
+    and target_plan.steps[0].strategy_id == "protected_section_rewrite",
+    "V3 strategy plan is driven by rewrite target operation mix",
+)
 segment_loop = decide_next_action(
     [{
         "trace": {
@@ -460,6 +716,44 @@ segment_loop = decide_next_action(
 assert_test(
     segment_loop.action == CandidateAction.REPAIR_AUTHORSHIP_WINDOWS,
     "V3 loop routes segment footprint failures to authorship window repair",
+)
+no_movement_decision = decide_next_action(
+    [{
+        "trace": {
+            "validation": {"failures": ["document_unit_count_changed"]},
+            "compression_accepted": True,
+            "semantic_safe": True,
+            "detector_movement": False,
+            "external_proxy": {"reasons": ["validation_failed"]},
+            "text_integrity": {"passed": True},
+        }
+    }],
+    has_positive_boundaries=False,
+    tried_actions=set(),
+)
+assert_test(
+    no_movement_decision.action == CandidateAction.PLAIN_REASONING
+    and no_movement_decision.reason == "plain_reasoning_strategy_after_no_detector_movement",
+    "V3 loop switches strategy instead of blind structure repair when detector footprint does not move",
+)
+no_movement_stop_decision = decide_next_action(
+    [{
+        "trace": {
+            "validation": {"failures": ["document_unit_count_changed"]},
+            "compression_accepted": True,
+            "semantic_safe": True,
+            "detector_movement": False,
+            "external_proxy": {"reasons": ["validation_failed"]},
+            "text_integrity": {"passed": True},
+        }
+    }],
+    has_positive_boundaries=False,
+    tried_actions={CandidateAction.PLAIN_REASONING},
+)
+assert_test(
+    no_movement_stop_decision.action == CandidateAction.RETURN_BEST_FOR_REVIEW
+    and no_movement_stop_decision.reason == "stop_after_no_detector_movement",
+    "V3 loop stops after bounded no-movement strategy switch",
 )
 
 structure_trace = {
@@ -707,6 +1001,10 @@ with tempfile.TemporaryDirectory() as tmpdir:
         result["status"] == "rewrite_candidate_generated_needs_external_review",
         "V3 still returns a candidate when all replay candidates miss gates",
     )
+    assert_test(
+        result["result"].summary["selected_candidate"]["candidate_outcome"] == "invalid_detector_improved",
+        "V3 labels detector-improved but invalid candidates distinctly",
+    )
 
 with tempfile.TemporaryDirectory() as tmpdir:
     result = run_rewrite_pipeline_v3(
@@ -729,8 +1027,69 @@ with tempfile.TemporaryDirectory() as tmpdir:
         required_ai_drop=20.0,
     )
     summary = result["result"].summary
-    assert_test(result["status"] == "external_calibrated_candidate_applied", "V3 recovery replay can select a later candidate")
+    assert_test(result["status"] == "rewrite_candidate_generated_needs_external_review", "V3 recovery replay returns later external candidate for review")
     assert_test(summary["selected_candidate"]["generation_mode"] == "replay_recovery_2", "V3 does not stop at failed first candidate")
+
+integrity_bad = v3_pipeline._text_integrity(
+    "This source has normal spacing across several words.",
+    "Thissourcehasnormalspacingacrossseveralwordswithoutbreaks.",
+)
+assert_test(
+    not integrity_bad["passed"] and "merged_word_run" in integrity_bad["failures"],
+    "V3 text-integrity guard flags merged-word corruption",
+)
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    no_movement = run_rewrite_pipeline_v3(
+        detect_json=report_for(broad_source, ai=70.0),
+        output_dir=tmpdir,
+        replay_candidate_records=[{
+            "text": broad_candidate,
+            "ai": 70.0,
+            "wq": 60.0,
+            "topk": 90.0,
+        }],
+        required_ai_drop=5.0,
+    )
+    no_move_summary = no_movement["result"].summary
+    assert_test(
+        no_movement["status"] == "rewrite_candidate_generated_needs_external_review"
+        and no_move_summary["selected_candidate"]["candidate_outcome"] == "valid_no_detector_movement",
+        "V3 valid candidates without detector movement are not treated as mitigation success",
+    )
+    assert_test(
+        no_move_summary["public_candidate_warning"] == "best_candidate_has_no_detector_footprint_movement",
+        "V3 public summary explains no-movement candidate warning",
+    )
+
+target_gate_fixture = {
+    "schema_version": "rewrite_target_profile.v1",
+    "target_scope_policy": "target_profile_driven",
+    "operation_mix": {"grounded_author_reasoning_rewrite": 1},
+    "driver_summary": {"predictability_score": 1},
+    "targets": [{
+        "target_id": "rt001",
+        "risk_level": "medium",
+        "dominant_drivers": [{"key": "predictability_score", "score": 0.7}],
+        "recommended_operation": "grounded_author_reasoning_rewrite",
+    }],
+}
+with tempfile.TemporaryDirectory() as tmpdir:
+    target_blocked = run_rewrite_pipeline_v3(
+        detect_json={**report_for(broad_source, ai=70.0), "rewrite_target_profile": target_gate_fixture},
+        output_dir=tmpdir,
+        replay_candidate_records=[{
+            "text": broad_candidate,
+            "report": {**report_for(broad_candidate, ai=40.0), "rewrite_target_profile": target_gate_fixture},
+        }],
+        required_ai_drop=20.0,
+    )
+    blocked_summary = target_blocked["result"].summary
+    assert_test(
+        target_blocked["status"] == "rewrite_candidate_generated_needs_external_review"
+        and not blocked_summary["selected_candidate"]["target_gate_passed"],
+        "V3 candidates cannot pass mitigation success without target-level movement",
+    )
 
 with tempfile.TemporaryDirectory() as tmpdir:
     result = run_rewrite_pipeline_v3(

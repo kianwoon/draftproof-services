@@ -43,6 +43,7 @@ class LLMConfig:
     seed: Optional[int] = None
     response_format: Optional[dict[str, Any]] = None
     provider: Optional[dict[str, Any]] = None
+    extra_body: Optional[dict[str, Any]] = None
     max_retries: int = 3
     timeout: int = 120
     site_url: Optional[str] = None       # OpenRouter optional headers
@@ -122,6 +123,20 @@ _MODEL_CAPABILITIES = {
         "presence_penalty": True,
         "frequency_penalty": True,
         "repetition_penalty": True,
+        "structured_outputs": True,
+    },
+    "deepseek/deepseek-v4-flash": {
+        "top_k": False,
+        "presence_penalty": False,
+        "frequency_penalty": False,
+        "repetition_penalty": False,
+        "structured_outputs": True,
+    },
+    "deepseek/deepseek-v4-flash-20260423": {
+        "top_k": False,
+        "presence_penalty": False,
+        "frequency_penalty": False,
+        "repetition_penalty": False,
         "structured_outputs": True,
     },
 }
@@ -240,6 +255,39 @@ def _provider_from_env() -> dict[str, Any] | None:
     return provider or None
 
 
+def _extra_body_from_env() -> dict[str, Any] | None:
+    raw_json = _first_env(
+        "DRAFTPROOF_LLM_EXTRA_BODY_JSON",
+        "OPENROUTER_EXTRA_BODY_JSON",
+        "LLM_EXTRA_BODY_JSON",
+    )
+    extra: dict[str, Any] = {}
+    if raw_json:
+        parsed = json.loads(raw_json)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM extra body JSON must be an object")
+        extra.update(parsed)
+
+    reasoning_effort = _first_env("DRAFTPROOF_OPENROUTER_REASONING_EFFORT", "OPENROUTER_REASONING_EFFORT")
+    if reasoning_effort:
+        current_reasoning = extra.get("reasoning") if isinstance(extra.get("reasoning"), dict) else {}
+        extra["reasoning"] = {**current_reasoning, "effort": reasoning_effort}
+    return extra or None
+
+
+def _safe_extra_body(extra_body: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not extra_body:
+        return None
+    reserved = {"model", "messages", "max_tokens"}
+    safe: dict[str, Any] = {}
+    for key, value in extra_body.items():
+        if key in reserved:
+            logger.warning("Ignoring reserved LLM extra body key: %s", key)
+            continue
+        safe[key] = value
+    return safe or None
+
+
 def _classify_error(error: Exception, attempt: int, max_retries: int) -> _RetryAction:
     """Decide whether to retry or fail based on error type and attempt count."""
     if attempt >= max_retries:
@@ -295,6 +343,7 @@ class LLMGateway:
         self.seed = cfg.seed
         self.response_format = cfg.response_format
         self.provider = cfg.provider if cfg.provider is not None else _provider_from_env()
+        self.extra_body = _safe_extra_body(cfg.extra_body if cfg.extra_body is not None else _extra_body_from_env())
         self.max_retries = cfg.max_retries
         self.timeout = cfg.timeout
         self.site_url = cfg.site_url or os.environ.get("LLM_SITE_URL")
@@ -437,9 +486,9 @@ class LLMGateway:
             payload["top_p"] = effective_top_p
         if effective_top_k is not None and caps.get("top_k", True):
             payload["top_k"] = effective_top_k
-        if effective_presence_penalty is not None:
+        if effective_presence_penalty is not None and caps.get("presence_penalty", True):
             payload["presence_penalty"] = effective_presence_penalty
-        if effective_frequency_penalty is not None:
+        if effective_frequency_penalty is not None and caps.get("frequency_penalty", True):
             payload["frequency_penalty"] = effective_frequency_penalty
         if effective_repetition_penalty is not None and caps.get("repetition_penalty", True):
             payload["repetition_penalty"] = effective_repetition_penalty
@@ -449,6 +498,8 @@ class LLMGateway:
             payload["response_format"] = effective_response_format
         if effective_provider is not None:
             payload["provider"] = effective_provider
+        if self.extra_body is not None:
+            payload.update(self.extra_body)
         effective_sampling = {
             key: payload[key]
             for key in ("temperature", "top_p", "top_k", "presence_penalty", "frequency_penalty", "repetition_penalty", "seed")
@@ -458,7 +509,7 @@ class LLMGateway:
         headers = self._build_headers()
         prompt_chars = sum(len(m.get("content", "")) for m in messages)
         logger.info(
-            "LLM request: url=%s, model=%s, messages=%d, prompt_chars=%d, max_tokens=%s, requested_sampling=%s, effective_sampling=%s, provider=%s",
+            "LLM request: url=%s, model=%s, messages=%d, prompt_chars=%d, max_tokens=%s, requested_sampling=%s, effective_sampling=%s, provider=%s, extra_body_keys=%s",
             url,
             self.model,
             len(messages),
@@ -467,6 +518,7 @@ class LLMGateway:
             json.dumps(requested_sampling, sort_keys=True),
             json.dumps(effective_sampling, sort_keys=True),
             json.dumps(effective_provider, sort_keys=True) if effective_provider is not None else None,
+            sorted(self.extra_body.keys()) if self.extra_body is not None else [],
         )
 
         for attempt in range(1, self.max_retries + 1):

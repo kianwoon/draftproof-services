@@ -81,14 +81,14 @@ def evaluate_external_proxy(
     if ref_ai is not None and cand_ai is not None and cand_ai > ref_ai + max_internal_backfire:
         reasons.append("internal_ai_backfire")
 
-    if normalized_family == "document_rhythm":
+    if normalized_family in {"document_rhythm", "clean_texture_boundary"}:
         min_topk_drop = _float_env("DRAFTPROOF_REWRITE_V3_RHYTHM_MIN_TOPK_DROP", 8.0)
         max_wq_drop = _float_env("DRAFTPROOF_REWRITE_V3_RHYTHM_MAX_WQ_DROP", 6.0)
         if topk_delta is None or topk_delta < min_topk_drop:
             reasons.append("insufficient_topk_drop")
         if wq_delta is not None and wq_delta > max_wq_drop:
             reasons.append("writing_quality_collapse")
-        if status == "above_ceiling":
+        if normalized_family == "document_rhythm" and status == "above_ceiling":
             reasons.append("broad_candidate_too_long")
 
     segment_gate: dict[str, Any] = {}

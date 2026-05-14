@@ -20,6 +20,10 @@ class CandidateIssue(str, Enum):
     WRITING_QUALITY_COLLAPSE = "writing_quality_collapse"
     SEGMENT_AI_FOOTPRINT = "segment_ai_footprint"
     PROXY_NOT_ACCEPTED = "proxy_not_accepted"
+    NO_DETECTOR_MOVEMENT = "no_detector_movement"
+    NO_TARGET_MOVEMENT = "no_target_movement"
+    TEXT_CORRUPTED = "text_corrupted"
+    GENERATION_FAILED = "generation_failed"
 
 
 class CandidateAction(str, Enum):
@@ -31,6 +35,8 @@ class CandidateAction(str, Enum):
     PLAIN_REASONING = "plain_reasoning"
     REPAIR_AUTHORSHIP_WINDOWS = "repair_authorship_windows"
     REPAIR_TARGETED = "repair_targeted"
+    TARGET_EXECUTOR = "target_executor"
+    REPAIR_ASSISTED_FOOTPRINT = "repair_assisted_footprint"
     ADAPT_BOUNDARY = "adapt_boundary"
     RETURN_BEST_FOR_REVIEW = "return_best_for_review"
 
@@ -79,6 +85,16 @@ def issues_from_trace(trace: dict[str, Any]) -> tuple[CandidateIssue, ...]:
 
     if not bool(trace.get("semantic_safe")):
         issues.append(CandidateIssue.SEMANTIC_DRIFT)
+    if trace.get("detector_movement") is False:
+        issues.append(CandidateIssue.NO_DETECTOR_MOVEMENT)
+    if trace.get("target_gate_passed") is False:
+        issues.append(CandidateIssue.NO_TARGET_MOVEMENT)
+    text_integrity = trace.get("text_integrity") if isinstance(trace.get("text_integrity"), dict) else {}
+    if text_integrity and not bool(text_integrity.get("passed")):
+        issues.append(CandidateIssue.TEXT_CORRUPTED)
+    outcome = str(trace.get("candidate_outcome") or "")
+    if outcome.startswith("generation_failed"):
+        issues.append(CandidateIssue.GENERATION_FAILED)
 
     proxy_reasons = _issue_values(proxy.get("reasons"))
     if proxy_reasons:
@@ -110,6 +126,10 @@ def is_candidate_salvageable(trace: dict[str, Any]) -> bool:
     issues = set(issues_from_trace(trace))
     if CandidateIssue.INTERNAL_AI_BACKFIRE in issues:
         return False
+    if CandidateIssue.TEXT_CORRUPTED in issues:
+        return False
+    if CandidateIssue.GENERATION_FAILED in issues:
+        return False
     return True
 
 
@@ -139,8 +159,61 @@ def decide_next_action(
         for index, item in indexed
         if is_candidate_salvageable(item.get("trace") if isinstance(item.get("trace"), dict) else {})
     ]
+    latest_trace = candidate_evaluations[-1].get("trace") if isinstance(candidate_evaluations[-1].get("trace"), dict) else {}
+    latest_issues = issues_from_trace(latest_trace)
+    if CandidateIssue.NO_DETECTOR_MOVEMENT in latest_issues or CandidateIssue.NO_TARGET_MOVEMENT in latest_issues:
+        if (
+            bool(latest_trace.get("target_execution_available"))
+            and not bool(latest_trace.get("target_execution_attempted"))
+            and CandidateAction.TARGET_EXECUTOR not in tried_actions
+        ):
+            return LoopDecision(
+                action=CandidateAction.TARGET_EXECUTOR,
+                source_index=len(candidate_evaluations) - 1,
+                issues=latest_issues,
+                reason="target_execution_after_no_detector_movement",
+            )
+        if (
+            bool(latest_trace.get("assisted_footprint_executor_available"))
+            and CandidateAction.REPAIR_ASSISTED_FOOTPRINT not in tried_actions
+        ):
+            return LoopDecision(
+                action=CandidateAction.REPAIR_ASSISTED_FOOTPRINT,
+                source_index=len(candidate_evaluations) - 1,
+                issues=latest_issues,
+                reason="assisted_footprint_layer_after_target_miss",
+            )
+        if has_positive_boundaries and CandidateAction.ADAPT_BOUNDARY not in tried_actions:
+            return LoopDecision(
+                action=CandidateAction.ADAPT_BOUNDARY,
+                source_index=len(candidate_evaluations) - 1,
+                issues=latest_issues,
+                reason="switch_strategy_after_no_detector_movement",
+            )
+        if has_positive_boundaries and CandidateAction.CONTRAST_BOUNDARY not in tried_actions:
+            return LoopDecision(
+                action=CandidateAction.CONTRAST_BOUNDARY,
+                source_index=len(candidate_evaluations) - 1,
+                issues=latest_issues,
+                reason="second_strategy_after_no_detector_movement",
+            )
+        if CandidateAction.PLAIN_REASONING not in tried_actions:
+            return LoopDecision(
+                action=CandidateAction.PLAIN_REASONING,
+                source_index=len(candidate_evaluations) - 1,
+                issues=latest_issues,
+                reason="plain_reasoning_strategy_after_no_detector_movement",
+            )
+        return LoopDecision(
+            action=CandidateAction.RETURN_BEST_FOR_REVIEW,
+            source_index=len(candidate_evaluations) - 1,
+            issues=latest_issues,
+            reason="stop_after_no_detector_movement",
+        )
     for index, item in reversed(salvageable):
         issues = issues_from_trace(item["trace"])
+        if CandidateIssue.NO_DETECTOR_MOVEMENT in issues or CandidateIssue.NO_TARGET_MOVEMENT in issues:
+            continue
         if CandidateIssue.STRUCTURE_CHANGED in issues and CandidateAction.REPAIR_STRUCTURE not in tried_actions:
             return LoopDecision(
                 action=CandidateAction.REPAIR_STRUCTURE,
@@ -157,6 +230,8 @@ def decide_next_action(
     }
     for index, item in reversed(salvageable):
         issues = issues_from_trace(item["trace"])
+        if CandidateIssue.NO_DETECTOR_MOVEMENT in issues or CandidateIssue.NO_TARGET_MOVEMENT in issues:
+            continue
         if hard_contract_issues.intersection(issues) and CandidateAction.REPAIR_CONTRACT not in tried_actions:
             return LoopDecision(
                 action=CandidateAction.REPAIR_CONTRACT,
@@ -167,7 +242,19 @@ def decide_next_action(
 
     for index, item in reversed(salvageable):
         issues = issues_from_trace(item["trace"])
+        if CandidateIssue.NO_DETECTOR_MOVEMENT in issues or CandidateIssue.NO_TARGET_MOVEMENT in issues:
+            continue
         if CandidateIssue.SEGMENT_AI_FOOTPRINT in issues and CandidateAction.REPAIR_AUTHORSHIP_WINDOWS not in tried_actions:
+            if (
+                bool(item["trace"].get("assisted_footprint_executor_available"))
+                and CandidateAction.REPAIR_ASSISTED_FOOTPRINT not in tried_actions
+            ):
+                return LoopDecision(
+                    action=CandidateAction.REPAIR_ASSISTED_FOOTPRINT,
+                    source_index=index,
+                    issues=issues,
+                    reason="repair_broad_assisted_footprint",
+                )
             return LoopDecision(
                 action=CandidateAction.REPAIR_AUTHORSHIP_WINDOWS,
                 source_index=index,
@@ -177,6 +264,8 @@ def decide_next_action(
 
     for index, item in reversed(salvageable):
         issues = issues_from_trace(item["trace"])
+        if CandidateIssue.NO_DETECTOR_MOVEMENT in issues or CandidateIssue.NO_TARGET_MOVEMENT in issues:
+            continue
         if CandidateIssue.SEMANTIC_DRIFT in issues and CandidateAction.REPAIR_CONTRACT not in tried_actions:
             return LoopDecision(
                 action=CandidateAction.REPAIR_CONTRACT,

@@ -22,6 +22,15 @@ from report.render_rewrite import render_rewrite_report
 from report.report import ReportBuilder, report_to_dict
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 
+from .content_contract import candidate_shape_failures
+from .content_router import (
+    CONTENT_MODES,
+    content_route_from_scan,
+    content_route_from_semantic_payload,
+    guarded_content_route,
+    route_payload,
+    semantic_route_prompt,
+)
 from .contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from .diagnostics import annotate_candidate_diagnostics, summarize_candidate_diagnostics
 from .frontier import candidate_patch_coverage, select_best_v2_frontier
@@ -57,7 +66,6 @@ from .layers.academic import (
 from .strategy import (
     build_single_paragraph_reconstruction_prompt,
     build_strategy_prompt,
-    classify_content_route,
     clean_candidate_output,
     route_strategies,
     targeted_paragraph_briefs,
@@ -120,6 +128,18 @@ def _empty_generated_candidate_row(generated_candidate: dict[str, Any]) -> dict[
             "rank": [],
         },
     }
+
+
+def _content_contract_rejected_candidate_row(
+    generated_candidate: dict[str, Any],
+    failures: list[str],
+) -> dict[str, Any]:
+    return _local_filter_rejected_candidate_row({
+        **generated_candidate,
+        "local_filter_passed": False,
+        "local_filter_failures": failures,
+        "content_contract_failures": failures,
+    })
 
 
 def _close_partial_max_gap() -> float:
@@ -506,6 +526,26 @@ def _paragraph_inventory_for_full_reconstruction(scan_report: dict | None, origi
     return rows
 
 
+def _document_inventory_summary(paragraph_inventory: list[dict[str, Any]], original_text: str) -> dict[str, Any]:
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", str(original_text or "")) if part.strip()]
+    word_counts = [len(paragraph.split()) for paragraph in paragraphs]
+    return {
+        "paragraph_count": len(paragraphs) or len(paragraph_inventory),
+        "word_count": len(str(original_text or "").split()),
+        "paragraph_word_bands": [
+            {
+                "paragraph_id": row.get("paragraph_id"),
+                "approx_words": row.get("approx_words"),
+                "target_min_words": max(35, int(float(row.get("approx_words") or 0) * 0.75)),
+                "target_max_words": max(55, int(float(row.get("approx_words") or 0) * 1.15)),
+            }
+            for row in paragraph_inventory[:20]
+        ],
+        "min_paragraph_words": min(word_counts) if word_counts else None,
+        "max_paragraph_words": max(word_counts) if word_counts else None,
+    }
+
+
 def _entity_acronym(entity: str) -> str:
     words = re.findall(r"\b[A-Za-z][A-Za-z0-9&'-]*\b", str(entity or ""))
     skip = {"the", "and", "of", "for", "in", "on", "at", "to"}
@@ -648,6 +688,79 @@ def _structured_json_request_options(model: str | None, response_format: dict[st
     return structured_json_request_options(model, response_format)
 
 
+def _content_route_response_format() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "rewrite_v2_content_route",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "primary_mode": {
+                        "type": "string",
+                        "enum": sorted(CONTENT_MODES - {"hybrid_guarded"}),
+                    },
+                    "secondary_modes": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": sorted(CONTENT_MODES - {"hybrid_guarded"})},
+                    },
+                    "confidence": {"type": "number"},
+                    "reasons": {"type": "array", "items": {"type": "string"}},
+                    "allowed_strategy_families": {"type": "array", "items": {"type": "string"}},
+                    "blocked_strategy_families": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "primary_mode",
+                    "secondary_modes",
+                    "confidence",
+                    "reasons",
+                    "allowed_strategy_families",
+                    "blocked_strategy_families",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _semantic_content_route(
+    *,
+    original_text: str,
+    scan_report: dict[str, Any],
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+) -> Any:
+    if not api_key:
+        return guarded_content_route("semantic_content_route_skipped_no_api_key")
+    gateway = LLMGateway(LLMConfig(
+        api_key=api_key,
+        model=model or os.environ.get("LLM_MODEL") or "openai/gpt-4.1-mini",
+        base_url=base_url or os.environ.get("LLM_BASE_URL", ""),
+        timeout=_llm_call_timeout_seconds(30),
+        max_retries=1,
+        max_tokens=1200,
+        temperature=0.1,
+    ))
+    structured_options = _structured_json_request_options(model, _content_route_response_format())
+    try:
+        response = gateway.chat(
+            semantic_route_prompt(original_text, scan_report),
+            system="You are DraftProof's semantic content-mode router. Return only the requested JSON.",
+            max_tokens=1200,
+            temperature=0.1,
+            top_p=0.8,
+            response_format=structured_options["response_format"],
+            provider=structured_options["provider"],
+        )
+        parse_diagnostics = _json_parse_diagnostics(response.content)
+        payload = parse_diagnostics.get("payload") if isinstance(parse_diagnostics, dict) else {}
+    except Exception:
+        return guarded_content_route("semantic_content_route_failed")
+    return content_route_from_semantic_payload(payload) or guarded_content_route("semantic_content_route_invalid")
+
+
 def _build_unsafe_cluster_rescue_prompt(
     *,
     cluster_text: str,
@@ -728,6 +841,7 @@ def _generate_unsafe_cluster_rescue_candidates(
     variants = max(1, min(4, int(os.environ.get("DRAFTPROOF_REWRITE_V2_RESCUE_CANDIDATES", "2") or 2)))
     original_smoothness = _rewrite_smoothness(original_report)
     max_smoothness_regression = float(os.environ.get("DRAFTPROOF_REWRITE_V2_MAX_SMOOTHNESS_REGRESSION", "4.0") or 4.0)
+
     for cluster_index, cluster in enumerate(clusters, start=1):
         if max_rows is not None and len(rows) >= max_rows:
             break
@@ -1345,6 +1459,7 @@ def _build_entity_locked_full_reconstruction_prompt(
     expected_paragraph_count: int,
     variant: int,
 ) -> str:
+    inventory_summary = _document_inventory_summary(paragraph_inventory, original_text)
     variant_instruction = {
         1: "Keep the original ten paragraph topics in order. Remove broad filler and make examples do more work.",
         2: "Rewrite from structured memory rather than sentence-by-sentence paraphrase. Keep enough detail from each original paragraph.",
@@ -1356,14 +1471,14 @@ def _build_entity_locked_full_reconstruction_prompt(
         "Use the original facts only. Do not add new named people, places, organizations, dates, statistics, sources, or events.\n"
         f"Every required entity must appear at least once: {json.dumps(required_entities, ensure_ascii=False)}\n"
         f"Follow this paragraph inventory in order: {json.dumps(paragraph_inventory, ensure_ascii=False)}\n"
+        f"Respect this document length inventory: {json.dumps(inventory_summary, ensure_ascii=False)}\n"
         "Use complete sentences only. No fragments. No bullet lists.\n"
         "Avoid these phrases: often described, one of the most, in modern history, key role, significant, significantly, complex and influential, shaped the modern world, at the same time, land of opportunity, cultural powerhouse.\n"
         "Use varied paragraph openings. Avoid starting most paragraphs with \"The United States\".\n"
         "Rebuild each paragraph with 2 to 4 sentences. Prefer concrete noun-verb sentences over broad summary claims.\n"
         "Change sentence openings, clause order, and rhythm across the essay while preserving meaning.\n"
         "Keep a careful student essay tone: plain, specific, readable, not polished marketing copy.\n"
-        f"{variant_instruction}\n\n"
-        f"ORIGINAL:\n{original_text}"
+        f"{variant_instruction}"
     )
 
 
@@ -1375,12 +1490,14 @@ def _build_keyword_locked_short_texture_prompt(
     original_text: str,
 ) -> str:
     global_keywords = _keywords_from_target_text(original_text)[:55]
+    inventory_summary = _document_inventory_summary(paragraph_inventory, original_text)
     return (
         "Output only the rewritten essay. No title, notes, markdown, bullets, numbering, or explanation.\n"
         f"Return exactly {expected_paragraph_count} paragraphs separated by blank lines.\n"
         "Generate from structured anchors, not from original sentence phrasing.\n"
         f"Preserve required entities and numbers exactly where natural: {json.dumps(required_entities, ensure_ascii=False)}\n"
         f"Use this paragraph inventory in order: {json.dumps(paragraph_inventory, ensure_ascii=False)}\n"
+        f"Respect this document length inventory: {json.dumps(inventory_summary, ensure_ascii=False)}\n"
         f"Keep these topic keywords represented naturally across the essay: {json.dumps(global_keywords, ensure_ascii=False)}\n"
         "Use 2 to 3 complete sentences per paragraph. Keep semantic coverage, but avoid long generic explanation chains.\n"
         "Use varied sentence rhythm and concrete subjects. Do not add new facts, examples, named entities, citations, dates, or events.\n"
@@ -1398,6 +1515,7 @@ def _build_author_stance_thesis_reframe_prompt(
     variant: int = 1,
 ) -> str:
     global_keywords = _keywords_from_target_text(original_text)[:45]
+    inventory_summary = _document_inventory_summary(paragraph_inventory, original_text)
     variant_instruction = {
         1: "Use a skeptical student voice with clear judgment lines. Keep the argument direct.",
         2: "Start paragraphs with concrete claims, not category labels. Use shorter sentences where the point is simple.",
@@ -1411,22 +1529,22 @@ def _build_author_stance_thesis_reframe_prompt(
         "Core thesis pattern: this subject is difficult to judge cleanly because its power or importance comes from several places and has contradictions.\n"
         f"Preserve these required anchors exactly where relevant: {json.dumps(required_entities, ensure_ascii=False)}\n"
         f"Use this source inventory for factual coverage, but do not copy its structure: {json.dumps(paragraph_inventory, ensure_ascii=False)}\n"
+        f"Respect this document length inventory: {json.dumps(inventory_summary, ensure_ascii=False)}\n"
         f"Represent these topic keywords naturally, without forcing all of them: {json.dumps(global_keywords, ensure_ascii=False)}\n"
         "Use only source facts. Do not add new named people, places, organizations, dates, statistics, examples, events, or citations.\n"
         "Do not open paragraphs with category labels such as Economically, Culturally, Technologically, Politically, or On the global stage.\n"
         "Avoid polished survey phrases and academic nouns such as in conclusion, global impact, key role, significant influence, shaped the modern world, complex and influential, global influence is undeniable, powerhouse, melting pot, beacon of opportunity, systemic issues, narrative of progress, central to understanding, exerts immense influence, deep-seated, coexists, interventionism, societal concerns, duality, remarkable achievements, significant contradictions, significant challenges, global affairs, and defying simple judgment.\n"
         "Use plain judgment lines instead of formal topic sentences. Prefer sentences like: That picture is incomplete. The harder question is who benefits from it. I do not see that as a simple success story.\n"
         "Keep the voice readable, slightly uneven, and mildly opinionated, not encyclopedic, not balanced category coverage, and not over-compressed.\n\n"
-        f"{variant_instruction}\n\n"
-        f"SOURCE:\n{original_text}"
+        f"{variant_instruction}"
     )
 
 
 def _build_author_stance_texture_pass_prompt(
     *,
-    source_text: str,
     draft_text: str,
     required_entities: list[str],
+    paragraph_inventory: list[dict[str, Any]],
     target_paragraph_count: int = 4,
 ) -> str:
     return (
@@ -1434,14 +1552,14 @@ def _build_author_stance_texture_pass_prompt(
         f"Keep exactly {target_paragraph_count} paragraphs separated by blank lines.\n"
         "This is a texture pass, not a new essay. Preserve the same facts, claims, sequence of ideas, and overall stance.\n"
         f"Keep required anchors where natural and preserve high anchor coverage: {json.dumps(required_entities, ensure_ascii=False)}\n"
-        "Use only facts already present in SOURCE or CURRENT_DRAFT. Do not add new named people, places, organizations, dates, statistics, examples, events, or citations.\n"
+        "Use only facts already present in the source inventory or CURRENT_DRAFT. Do not add new named people, places, organizations, dates, statistics, examples, events, or citations.\n"
+        f"Source inventory for fact coverage: {json.dumps(paragraph_inventory, ensure_ascii=False)}\n"
         "Hard rule: no paragraph may begin with a category label or scope label. Banned paragraph openings include Economically, Culturally, Technologically, Politically, Globally, Internationally, On the global stage, and In conclusion.\n"
         "Use natural claim openings instead. Paragraph 1 should open with a judgment by the writer. Paragraph 2 should open with a concrete contrast. Paragraph 3 should open with public image or culture as part of the argument, not as a category label. Paragraph 4 should open with power outside the subject or wider consequences, not a scope label.\n"
         "Replace polished survey wording with plain judgment. Avoid phrases such as undeniably powerful, undeniably strong, wields immense influence, massive impact, global trends, stabilizing force, layer of complexity, unresolved challenges, internal tensions, powerhouse, remarkable achievements, significant contradictions, and dominant role.\n"
         "Vary sentence length naturally. Include 2 to 3 short complete judgment sentences where they fit. Do not create fragments or choppy notes.\n"
         "Keep first-person analytical stance where natural. Do not invent personal experience or pretend to have lived events.\n"
         "The result should sound like a careful student revising their own draft, not a balanced encyclopedia summary.\n\n"
-        f"SOURCE:\n{source_text}\n\n"
         f"CURRENT_DRAFT:\n{draft_text}"
     )
 
@@ -1754,7 +1872,8 @@ def _generate_candidates(
             allowed=False,
             applicable=False,
         )
-    full_doc_driver_applicable = _should_entity_locked_full_reconstruction(scan_report)
+    full_doc_strategy_requested = any(getattr(strategy, "kind", None).value == "full_rewrite" for strategy in strategies)
+    full_doc_driver_applicable = full_doc_strategy_requested and _should_entity_locked_full_reconstruction(scan_report)
     if (
         full_doc_driver_applicable
         and (full_reconstruction_allowed or author_stance_allowed or keyword_texture_allowed)
@@ -1963,9 +2082,9 @@ def _generate_candidates(
                 ):
                     texture_before = len(candidates)
                     prompt = _build_author_stance_texture_pass_prompt(
-                        source_text=original_text,
                         draft_text=candidate_text,
                         required_entities=required_entities,
+                        paragraph_inventory=paragraph_inventory,
                         target_paragraph_count=target_paragraph_count,
                     )
                     response = gateway.chat(
@@ -2215,7 +2334,28 @@ def run_rewrite_pipeline_v2(
         if isinstance(reference_ai, (int, float))
         else None
     )
-    content_route = classify_content_route(original_text, original_report)
+    content_route = content_route_from_scan(original_report)
+    if content_route is None:
+        paragraph_policy_briefs = targeted_paragraph_briefs(original_report)
+        if paragraph_policy_briefs:
+            content_route = route_payload(
+                "generic_expository",
+                0.74,
+                [
+                    "scan paragraph briefs present",
+                    "using paragraph-policy selector instead of document semantic router",
+                ],
+                [{"content_mode": "generic_expository", "score": 0.74, "source": "paragraph_policy_from_scan_briefs"}],
+            )
+        else:
+            progress(63, "Classifying V2 content mode semantically")
+            content_route = _semantic_content_route(
+                original_text=original_text,
+                scan_report=original_report,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+            )
     runtime_budget = RewriteV2RuntimeBudget(
         started_at=started,
         max_runtime_seconds=max_runtime_seconds,
@@ -2397,6 +2537,14 @@ def run_rewrite_pipeline_v2(
             if not candidate_text:
                 candidate_rows.append(_empty_generated_candidate_row(generated_candidate))
                 continue
+            contract_failures = candidate_shape_failures(
+                content_mode=content_route.content_mode,
+                original_text=original_text,
+                candidate_text=candidate_text,
+            )
+            if contract_failures:
+                candidate_rows.append(_content_contract_rejected_candidate_row(generated_candidate, contract_failures))
+                continue
             local_score = None
             if (
                 str(generated_candidate.get("strategy_kind") or "") == "targeted"
@@ -2503,52 +2651,77 @@ def run_rewrite_pipeline_v2(
                 composition_budget_ok
                 and _candidate_portfolio_allows(candidate_rows, content_route, "targeted_composition")
             ):
-                progress(min(84, 64 + index * 4), "Scanning V2 composed local winners")
-                candidate_report = _scan_report(composed_text)
-                goal = evaluate_rewrite_goal(
+                contract_failures = candidate_shape_failures(
+                    content_mode=content_route.content_mode,
                     original_text=original_text,
                     candidate_text=composed_text,
-                    original_report=original_report,
-                    candidate_report=candidate_report,
                 )
-                semantic = check_semantic_drift(original_text, composed_text, threshold=0.15)
-                anchors_safe = protected_spans_preserved(original_text, composed_text, protected)
-                decision = decide_candidate(
-                    goal=goal,
-                    original_report=original_report,
-                    candidate_report=candidate_report,
-                    reference_ai=reference_ai,
-                    required_ai_drop=required_ai_drop,
-                    target_ai_score=target_ai_score,
-                    semantic_safe=bool(semantic.accepted),
-                    quality_safe=anchors_safe,
-                    cost=index,
-                )
-                candidate_rows.append({
-                    "strategy": "scan_targeted_composed_full_doc_delta_winners",
-                    "strategy_kind": "targeted_composition",
-                    "candidate_number": 1,
-                    "candidate_ai": _badge_ai(candidate_report),
-                    "candidate_wq": _badge_wq(candidate_report),
-                    "composed_patches": composed_patches,
-                    "goal": goal.to_dict(),
-                    "decision": decision.to_dict(),
-                    "semantic_safe": bool(semantic.accepted),
-                    "protected_anchors_safe": bool(anchors_safe),
-                    "semantic_review_required": not bool(semantic.accepted),
-                    "semantic_similarity": getattr(semantic, "similarity", None),
-                    "semantic_reasons": getattr(semantic, "reasons", None),
-                    "report": candidate_report,
-                    "text": composed_text,
-                })
-                record_post_layer(
-                    layer="targeted_composition",
-                    status="ran",
-                    reason="candidate_scored",
-                    before_count=before_count,
-                    generated_count=1,
-                    applicable=True,
-                )
+                if contract_failures:
+                    candidate_rows.append(_content_contract_rejected_candidate_row({
+                        "strategy": "scan_targeted_composed_full_doc_delta_winners",
+                        "strategy_kind": "targeted_composition",
+                        "candidate_number": 1,
+                        "composed_patches": composed_patches,
+                        "text": composed_text,
+                    }, contract_failures))
+                    record_post_layer(
+                        layer="targeted_composition",
+                        status="rejected",
+                        reason="content_contract_failed",
+                        before_count=before_count,
+                        generated_count=1,
+                        applicable=True,
+                    )
+                    composition_budget_ok = False
+                if not composition_budget_ok:
+                    pass
+                else:
+                    progress(min(84, 64 + index * 4), "Scanning V2 composed local winners")
+                    candidate_report = _scan_report(composed_text)
+                    goal = evaluate_rewrite_goal(
+                        original_text=original_text,
+                        candidate_text=composed_text,
+                        original_report=original_report,
+                        candidate_report=candidate_report,
+                    )
+                    semantic = check_semantic_drift(original_text, composed_text, threshold=0.15)
+                    anchors_safe = protected_spans_preserved(original_text, composed_text, protected)
+                    decision = decide_candidate(
+                        goal=goal,
+                        original_report=original_report,
+                        candidate_report=candidate_report,
+                        reference_ai=reference_ai,
+                        required_ai_drop=required_ai_drop,
+                        target_ai_score=target_ai_score,
+                        semantic_safe=bool(semantic.accepted),
+                        quality_safe=anchors_safe,
+                        cost=index,
+                    )
+                    candidate_rows.append({
+                        "strategy": "scan_targeted_composed_full_doc_delta_winners",
+                        "strategy_kind": "targeted_composition",
+                        "candidate_number": 1,
+                        "candidate_ai": _badge_ai(candidate_report),
+                        "candidate_wq": _badge_wq(candidate_report),
+                        "composed_patches": composed_patches,
+                        "goal": goal.to_dict(),
+                        "decision": decision.to_dict(),
+                        "semantic_safe": bool(semantic.accepted),
+                        "protected_anchors_safe": bool(anchors_safe),
+                        "semantic_review_required": not bool(semantic.accepted),
+                        "semantic_similarity": getattr(semantic, "similarity", None),
+                        "semantic_reasons": getattr(semantic, "reasons", None),
+                        "report": candidate_report,
+                        "text": composed_text,
+                    })
+                    record_post_layer(
+                        layer="targeted_composition",
+                        status="ran",
+                        reason="candidate_scored",
+                        before_count=before_count,
+                        generated_count=1,
+                        applicable=True,
+                    )
             else:
                 record_post_layer(
                     layer="targeted_composition",
@@ -2616,6 +2789,14 @@ def run_rewrite_pipeline_v2(
                     continue
                 if not candidate_text:
                     candidate_rows.append(_empty_generated_candidate_row(generated_candidate))
+                    continue
+                contract_failures = candidate_shape_failures(
+                    content_mode=content_route.content_mode,
+                    original_text=original_text,
+                    candidate_text=candidate_text,
+                )
+                if contract_failures:
+                    candidate_rows.append(_content_contract_rejected_candidate_row(generated_candidate, contract_failures))
                     continue
                 semantic = check_semantic_drift(original_text, candidate_text, threshold=0.15)
                 anchors_safe = protected_spans_preserved(original_text, candidate_text, protected)
@@ -2765,6 +2946,14 @@ def run_rewrite_pipeline_v2(
             for row in rescue_rows:
                 if not _candidate_portfolio_allows(candidate_rows, content_route, row):
                     break
+                contract_failures = candidate_shape_failures(
+                    content_mode=content_route.content_mode,
+                    original_text=original_text,
+                    candidate_text=str(row.get("text") or ""),
+                )
+                if contract_failures:
+                    candidate_rows.append(_content_contract_rejected_candidate_row(row, contract_failures))
+                    continue
                 candidate_rows.append(row)
             trace_extra = {
                 "candidate_rows": len(rescue_rows),

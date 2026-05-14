@@ -17,12 +17,16 @@ def build_document_rhythm_prompt(
     original_text: str,
     compression_policy: CompressionPolicy,
     style_examples: dict[str, list[dict[str, Any]]] | None = None,
+    rewrite_target_profile: dict[str, Any] | None = None,
+    central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     examples = style_examples or {"positive": [], "negative": []}
     payload = {
         "source_document": original_text,
         "source_word_count": word_count(original_text),
         "document_inventory": compact_document_inventory(original_text),
+        "rewrite_target_profile": rewrite_target_profile or {},
+        "central_judgment_plan": central_judgment_plan or {},
         "target_word_band": {
             "min_words": compression_policy.min_words,
             "preferred_words": compression_policy.preferred_words,
@@ -32,6 +36,9 @@ def build_document_rhythm_prompt(
         "negative_external_boundaries": examples.get("negative") or [],
         "requirements": [
             "Preserve the source argument and paragraph order.",
+            "Use rewrite_target_profile targets as the primary rewrite instructions when present.",
+            "For each target, address dominant_drivers and required_movement without compressing meaning.",
+            "Use central_judgment_plan to add source-supported contextual reasoning and avoid formulaic survey closure.",
             "Use natural document rhythm instead of a uniformly balanced essay structure.",
             "Allow controlled compression, but do not collapse the document into a dense summary.",
             "Do not add unsupported facts, examples, names, or claims.",
@@ -54,11 +61,15 @@ def build_document_rhythm_chunk_prompt(
     global_plan: dict[str, Any],
     compression_policy: CompressionPolicy,
     style_examples: dict[str, list[dict[str, Any]]] | None = None,
+    rewrite_target_profile: dict[str, Any] | None = None,
+    central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     examples = style_examples or {"positive": [], "negative": []}
     payload = {
         "global_plan": global_plan,
         "source_units": source_units,
+        "rewrite_target_profile": rewrite_target_profile or {},
+        "central_judgment_plan": central_judgment_plan or {},
         "target_word_band": {
             "min_words": compression_policy.min_words,
             "preferred_words": compression_policy.preferred_words,
@@ -69,6 +80,8 @@ def build_document_rhythm_chunk_prompt(
         "requirements": [
             "Rewrite only the provided source units.",
             "Keep unit order and do not introduce facts outside these units.",
+            "Use rewrite_target_profile targets for this chunk when they overlap these units.",
+            "Use central_judgment_plan operations only where they fit these units.",
             "Use the global document rhythm plan, but preserve local meaning.",
             "Return only rewritten units joined with blank lines.",
         ],

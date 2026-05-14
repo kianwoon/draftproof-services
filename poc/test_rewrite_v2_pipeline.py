@@ -12,6 +12,8 @@ from pathlib import Path
 from rewrite.guards import check_semantic_drift, detect_protected_spans, protected_spans_preserved
 from rewrite_v2 import run_rewrite_pipeline_v2
 import rewrite_v2.pipeline as pipeline_module
+from rewrite_v2.content_contract import candidate_shape_failures
+from rewrite_v2.content_router import content_route_from_scan, guarded_content_route, semantic_route_prompt
 from rewrite_v2.contracts import AnchorSeverity, anchor_present, build_rewrite_contract
 from rewrite_v2.diagnostics import (
     DETECTOR_NOT_SAFE,
@@ -37,6 +39,8 @@ from rewrite_v2.pipeline import (
     _compose_academic_sections,
     _build_author_stance_texture_pass_prompt,
     _build_author_stance_thesis_reframe_prompt,
+    _build_entity_locked_full_reconstruction_prompt,
+    _build_keyword_locked_short_texture_prompt,
     _candidate_portfolio_allows,
     _cluster_text_from_gate,
     _compose_full_doc_delta_winners,
@@ -65,6 +69,7 @@ from rewrite_v2.layers.academic import _exact_citation_markers
 from rewrite_v2.layers.academic import _generate_academic_all_section_candidates
 from rewrite_v2.layers.academic import _generate_academic_section_candidates
 from rewrite_v2.layers.academic import _normalize_academic_section_patches
+from rewrite_v2.layers.academic import _outline_texture_failures
 from rewrite_v2.goal_contract import RewriteGoalStatus, _external_detector_proxy_status, evaluate_rewrite_goal, needs_author_context
 from rewrite_v2.layer_attempts import summarize_layer_attempts
 from rewrite_v2.external_calibration import (
@@ -80,7 +85,7 @@ from rewrite_v2.robustness import budget_status, content_mode_policy, layer_cove
 from rewrite_v2.runtime_budget import RewriteV2RuntimeBudget
 from rewrite_v2.runtime_policy import runtime_policy
 from rewrite_v2.selection import CandidateLane, decide_candidate, select_best_applicable_candidate
-from rewrite_v2.strategy import RewriteStrategy, StrategyKind, classify_content_route, route_strategies
+from rewrite_v2.strategy import RewriteStrategy, StrategyKind, build_strategy_prompt, route_strategies
 from llm.gateway import model_supports_presence_frequency_penalties, model_supports_repetition_penalty
 
 
@@ -118,7 +123,104 @@ scan_json = {
             "text": "The United States is often described as one of the most influential countries in modern history.",
         },
     },
+    "rewrite_v2_content_route": {
+        "primary_mode": "broad_explanatory_essay",
+        "secondary_modes": [],
+        "confidence": 0.86,
+        "reasons": ["test-provided typed content route"],
+    },
 }
+
+
+def scan_with_content_route(mode: str, *, secondary_modes: list[str] | None = None, confidence: float = 0.86) -> dict:
+    return {
+        **scan_json,
+        "rewrite_v2_content_route": {
+            "primary_mode": mode,
+            "secondary_modes": list(secondary_modes or []),
+            "confidence": confidence,
+            "reasons": ["test-provided typed content route"],
+        },
+    }
+
+
+def route_fixture(_text: str, scan_report: dict) -> Any:
+    return content_route_from_scan(scan_report) or guarded_content_route("test_route_missing")
+
+
+assert_test(
+    content_route_from_scan({"generation_handoff": {"document_profile": {"document_type": "academic_cited_text", "reference_count": 4}}}) is None,
+    "V2 content router does not infer mode from document-profile labels without typed route payload",
+)
+oversized_route_prompt = semantic_route_prompt(
+    "Original paragraph. " * 900,
+    {
+        "scan_intelligence": {
+            "document": {"dominant_risk_drivers": ["topk"] * 1000, "word_count": 1200},
+            "generation_handoff": {
+                "document_profile": {"document_type": "oversized"},
+                "logical_outline": "outline " * 5000,
+                "section_generation_units": [{"section_id": f"p{i}", "text": "section text " * 1000} for i in range(40)],
+                "anchor_register": [{"text": "anchor " * 100, "kind": "term"} for _ in range(100)],
+            },
+        },
+        "rewrite_constraints": {"preserve_terms": ["term"] * 500, "preservation_inventory": "inventory " * 5000},
+        "ai_mitigation": {"target_segments": [{"text": "segment " * 1000} for _ in range(200)], "rewrite_handoff": "handoff " * 5000},
+    },
+)
+assert_test(
+    len(oversized_route_prompt) < 18000,
+    "V2 semantic content router prompt stays bounded for oversized scan JSON",
+)
+assert_test(
+    "Original paragraph. Original paragraph. Original paragraph." in oversized_route_prompt
+    and ("Original paragraph. " * 200) not in oversized_route_prompt,
+    "V2 semantic content router uses text samples instead of sending the full submission",
+)
+long_source = "\n\n".join(
+    f"Paragraph {index} contains a unique validation sentence that should never be copied wholesale into prompts."
+    for index in range(1, 80)
+)
+long_inventory = _paragraph_inventory_for_full_reconstruction(scan_json, long_source)
+entity_prompt = _build_entity_locked_full_reconstruction_prompt(
+    original_text=long_source,
+    required_entities=["United States"],
+    paragraph_inventory=long_inventory,
+    expected_paragraph_count=len(long_inventory),
+    variant=1,
+)
+keyword_prompt = _build_keyword_locked_short_texture_prompt(
+    required_entities=["United States"],
+    paragraph_inventory=long_inventory,
+    expected_paragraph_count=len(long_inventory),
+    original_text=long_source,
+)
+author_prompt = _build_author_stance_thesis_reframe_prompt(
+    original_text=long_source,
+    required_entities=["United States"],
+    paragraph_inventory=long_inventory,
+    target_paragraph_count=4,
+)
+texture_prompt = _build_author_stance_texture_pass_prompt(
+    draft_text="The United States remains difficult to judge cleanly.\n\nThat picture is incomplete.\n\nI do not see it as a simple success story.\n\nThe harder issue is who benefits.",
+    required_entities=["United States"],
+    paragraph_inventory=long_inventory,
+    target_paragraph_count=4,
+)
+generic_prompt = build_strategy_prompt(
+    long_source,
+    scan_json,
+    RewriteStrategy(
+        strategy_id="generic_full_doc",
+        kind=StrategyKind.FULL_REWRITE,
+        targeted_drivers=[],
+        editable_scope="document",
+    ),
+)
+assert_test(
+    all(long_source not in prompt for prompt in [entity_prompt, keyword_prompt, author_prompt, texture_prompt, generic_prompt]),
+    "V2 full-document strategy prompts do not send the full raw submission",
+)
 replay_candidates = [
     {
         "strategy": "weak_candidate",
@@ -148,12 +250,35 @@ replay_candidates = [
     },
 ]
 
+paragraph_policy_scan = {key: value for key, value in scan_json.items() if key != "rewrite_v2_content_route"}
+paragraph_policy_scan["rewrite_edit_briefs"] = [{
+    "paragraph_id": "p001",
+    "target_sentence": "The United States has had influence in modern history.",
+    "paragraph_excerpt": paragraph_policy_scan["input_text"],
+    "signals": {"problem_tokens": [{"token": "influential"}]},
+}]
+original_semantic_content_route = pipeline_module._semantic_content_route
+try:
+    pipeline_module._semantic_content_route = lambda **_kwargs: (_ for _ in ()).throw(AssertionError("semantic router should be skipped"))
+    with tempfile.TemporaryDirectory() as tmpdir:
+        paragraph_policy_result = run_rewrite_pipeline_v2(
+            detect_json=paragraph_policy_scan,
+            output_dir=tmpdir,
+            replay_candidate_records=replay_candidates,
+        )
+finally:
+    pipeline_module._semantic_content_route = original_semantic_content_route
+assert_test(
+    paragraph_policy_result["result"].summary["content_router_trace"]["mode_scores"][0]["source"] == "paragraph_policy_from_scan_briefs",
+    "V2 uses paragraph-policy routing from scan briefs before semantic document classification",
+)
+
 strategies = route_strategies(scan_json, full_rewrite_allowed=True)
 assert_test(
     any(strategy.kind == StrategyKind.FULL_REWRITE for strategy in strategies),
     "V2 router allows full rewrite when no rewrite briefs exist",
 )
-broad_route = classify_content_route(
+broad_route = route_fixture(
     "\n\n".join([
         "The United States has a large role in world affairs and public debate.",
         "Its founding history still shapes how people talk about rights and power.",
@@ -166,7 +291,7 @@ broad_route = classify_content_route(
         "Technology keeps the country close to global change and new risks.",
         "That mix explains why the country remains difficult to judge simply.",
     ]),
-    scan_json,
+    scan_with_content_route("broad_explanatory_essay"),
 )
 assert_test(
     broad_route.content_mode == "broad_explanatory_essay"
@@ -190,9 +315,9 @@ assert_test(
     and structured_unknown_options["structured_output_mode"] == "prompt_json_fallback",
     "V2 structured JSON requests require schema support only for capable models",
 )
-academic_route = classify_content_route(
+academic_route = route_fixture(
     "Studies suggest feedback matters for learning (Smith, 2021). Other work reached a similar result [2]. References show the field is still divided.",
-    scan_json,
+    scan_with_content_route("academic_cited_text"),
 )
 assert_test(
     academic_route.content_mode == "academic_cited_text"
@@ -316,19 +441,14 @@ assert_test(
     and "topk_calibrated_risk_above_external_safe_band" in severe_topk_proxy["hard_blockers"],
     "V2 external proxy treats mild top-k overshoot as warning but keeps severe top-k risk fatal",
 )
-reflective_academic_route = classify_content_route(
+reflective_academic_route = route_fixture(
     (
         "This literature review considers VET teaching practice. According to the Australian Government Report (2024), "
         "many apprentices do not complete training. Brennan, Kemmis, and Atkin (2014) describe vocational education as "
         "a “practice architecture”, while Song et al. (2024) argue that platforms often show “highlight moment” clips. "
         "The teacher can use SOLO taxonomy and pedagogy to connect online examples with repeated classroom practice."
     ),
-    {
-        **scan_json,
-        "generation_handoff": {
-            "document_profile": {"document_type": "reflective_or_analytical_submission"},
-        },
-    },
+    scan_with_content_route("academic_cited_text", secondary_modes=["quote_heavy"]),
 )
 assert_test(
     reflective_academic_route.content_mode == "academic_cited_text"
@@ -376,6 +496,22 @@ assert_test(
 assert_test(
     any(anchor.text == "Tik Tok" and anchor_present(anchor, "TikTok practice still matters.") for anchor in academic_contract.anchors),
     "V2 contract matches normalized aliases for compact term variants",
+)
+number_word_contract = build_rewrite_contract(
+    "The Three Stage Model is used to explain service consumption.",
+    content_mode="academic_cited_text",
+)
+assert_test(
+    any(anchor.text == "The Three Stage Model" and anchor_present(anchor, "The 3 Stage Model is used here.") for anchor in number_word_contract.anchors),
+    "V2 contract matches number-word aliases for academic anchors",
+)
+assert_test(
+    check_semantic_drift(
+        "The Three Stage Model explains how customers judge service.",
+        "The 3 Stage Model explains how customers judge service.",
+        threshold=0.15,
+    ).accepted,
+    "V2 semantic guard treats number-word academic anchor aliases as preserved",
 )
 lead_in_context_contract = build_rewrite_contract(
     "",
@@ -683,6 +819,23 @@ assert_test(
     not _academic_all_section_filter_failures(all_sections, all_section_candidate),
     "V2 compact academic layer accepts all-section candidates preserving headings and citations",
 )
+outline_like_academic_candidate = """Question 1
+Hai Di Lao operates as a people processing service (Blog, 2025).
+
+Question 2
+1. **Pre-purchase**: Negative reviews create performance risk (Tsiotsou et al., 2015).
+2. **Service encounter**: Inattentiveness reduces perceived quality (Gao et al., 2025).
+3. **Post-encounter**: Dissatisfaction creates negative word-of-mouth (Azemi et al., 2019).
+
+Question 3
+1. **Call-light system**: A table light can improve visibility (Rizzo, 2021).
+2. **Mystery shopper program**: Monthly checks can identify training gaps (Kinch, 2025).
+"""
+assert_test(
+    _outline_texture_failures(outline_like_academic_candidate)
+    and any("external_detector_outline_texture" in reason for reason in _academic_all_section_filter_failures(all_sections, outline_like_academic_candidate)),
+    "V2 compact academic layer rejects outline-style candidates that external detectors flag",
+)
 assert_test(
     not _academic_all_section_filter_failures(
         paragraph_sections,
@@ -778,6 +931,22 @@ assert_test(
     and not _academic_all_section_filter_failures(narrative_source_sections, normalized_combined_parenthetical),
     "V2 compact academic layer restores narrative citations without leaking synthetic paragraph labels",
 )
+parenthetical_possessive_source_sections = [{
+    "section_id": "p001",
+    "heading": "Question 1",
+    "text": "Hai Di Lao is a people-processing service (Blog, 2025).",
+    "citations": ["(Blog, 2025)"],
+}]
+normalized_parenthetical_possessive = _normalize_academic_all_section_candidate(
+    "Question 1\nHai Di Lao aligns with Blog's (2025) classification of service delivery.",
+    parenthetical_possessive_source_sections,
+)
+assert_test(
+    "(Blog, 2025)" in normalized_parenthetical_possessive
+    and "Blog's (2025)" not in normalized_parenthetical_possessive
+    and not _academic_all_section_filter_failures(parenthetical_possessive_source_sections, normalized_parenthetical_possessive),
+    "V2 compact academic layer restores possessive narrative drift for parenthetical citations",
+)
 multi_author_source_sections = [{
     "section_id": "p001",
     "heading": "Paragraph 1",
@@ -794,31 +963,104 @@ assert_test(
     and not _academic_all_section_filter_failures(multi_author_source_sections, normalized_multi_author_sources),
     "V2 compact academic layer restores source-name and multi-author narrative citation forms",
 )
-quote_route = classify_content_route(
+quote_route = route_fixture(
     'The interviewee said “I did not know where to begin.” A second student said “the instructions felt unclear.” A teacher added “support arrived too late.”',
-    scan_json,
+    scan_with_content_route("quote_heavy"),
 )
 assert_test(
     quote_route.content_mode == "quote_heavy"
     and "entity_locked_full_reconstruction" in quote_route.blocked_strategy_families,
     "V2 content router blocks full reconstruction for quote-heavy text",
 )
-structured_route = classify_content_route(
+assert_test(
+    candidate_shape_failures(
+        content_mode="academic_cited_text",
+        original_text=academic_assignment,
+        candidate_text=outline_like_academic_candidate,
+    )
+    and not candidate_shape_failures(
+        content_mode="academic_cited_text",
+        original_text=academic_assignment,
+        candidate_text=all_section_candidate,
+    ),
+    "V2 content contract blocks academic outline shape while allowing paragraph prose",
+)
+flattened_academic_candidate = """Question 1
+Hai Di Lao is a people-processing service (Blog, 2025). Reviews shown in Figure 1 to 4 describe slow staff responses. The outlet could use a visual call-light system (Rizzo, 2021)."""
+malformed_academic_candidate = """Question 1
+Hai Di Lao is a people-processing service (Blog, 2025).
+
+Question 2
+Reviews shown in Figure 1 to 4 describe slow staff responses.trends and service gaps.
+
+Question 3
+The outlet could use a visual call-light system (Rizzo, 2021). It could also use a 10-minute mandatory first check-in and a monthly mystery shopper programme (Kinch, 2025)."""
+shape_failures_flattened = candidate_shape_failures(
+    content_mode="academic_cited_text",
+    original_text=academic_assignment,
+    candidate_text=flattened_academic_candidate,
+)
+shape_failures_malformed = candidate_shape_failures(
+    content_mode="academic_cited_text",
+    original_text=academic_assignment,
+    candidate_text=malformed_academic_candidate,
+)
+assert_test(
+    any("academic_heading_lost:Question 2" in reason for reason in shape_failures_flattened)
+    and any("academic_citation_lost:(Gao et al., 2025)" in reason for reason in shape_failures_flattened)
+    and "content_contract:malformed_sentence_splice_artifact" in shape_failures_malformed,
+    "V2 content contract rejects academic heading loss, citation drift, and malformed splice artifacts",
+)
+assert_test(
+    candidate_shape_failures(
+        content_mode="structured_list_table",
+        original_text="- Verify identity\n- Check balance\n- Send receipt\n- Archive record",
+        candidate_text="Verify identity, check balance, send receipt, and archive the record.",
+    )
+    and candidate_shape_failures(
+        content_mode="quote_heavy",
+        original_text='The learner said “I did not know where to begin.” The teacher replied “We need to slow the task down.”',
+        candidate_text="The learner was uncertain. The teacher wanted the task to slow down.",
+    )
+    and candidate_shape_failures(
+        content_mode="technical_content",
+        original_text="Call the `POST /api/rewrite` endpoint with JSON payload.",
+        candidate_text="Call the rewrite endpoint with the payload.",
+    )
+    and candidate_shape_failures(
+        content_mode="regulated_policy_content",
+        original_text="The processor must not retain customer data after deletion.",
+        candidate_text="The processor can avoid keeping customer data after deletion.",
+    )
+    and candidate_shape_failures(
+        content_mode="short_text",
+        original_text="The warranty lasts one year.",
+        candidate_text=(
+            "The warranty lasts one year. "
+            "This policy gives customers a detailed explanation of coverage, timing, repair limits, "
+            "replacement conditions, documentation expectations, service routes, claim handling, "
+            "notification steps, exclusions, and operational support. "
+            "It also outlines support ownership, record handling, escalation paths, and reporting expectations."
+        ),
+    ),
+    "V2 content contract enforces mode-specific shape safety across major content types",
+)
+structured_route = route_fixture(
     "1. Create the report\n2. Review every finding\n3. Export the JSON\n4. Send the result",
-    scan_json,
+    scan_with_content_route("structured_list_table"),
 )
 assert_test(
     structured_route.content_mode == "structured_list_table"
     and structured_route.allowed_strategy_families == ["targeted_paragraph_reconstruction"],
     "V2 content router keeps structured list/table content on targeted patches only",
 )
-hybrid_academic_list_route = classify_content_route(
+hybrid_academic_list_route = route_fixture(
     (
         "- Smith (2021) argues that feedback changes learner confidence.\n"
         "- Jones (2022) finds that classroom practice affects retention.\n"
         "- The review compares these findings with course assessment evidence."
     ),
-    scan_json,
+    scan_with_content_route("academic_cited_text", secondary_modes=["structured_list_table"]),
 )
 assert_test(
     hybrid_academic_list_route.content_mode == "academic_cited_text"
@@ -826,9 +1068,9 @@ assert_test(
     and any(row["content_mode"] == "structured_list_table" for row in hybrid_academic_list_route.mode_scores),
     "V2 content router scores hybrid modes so citations can override bullet-list shape",
 )
-hybrid_technical_cited_route = classify_content_route(
+hybrid_technical_cited_route = route_fixture(
     "The API endpoint returns JSON errors when the database transaction fails (Smith, 2021). The deployment guide shows the same schema in `/v1/rewrite` responses, and Lee (2022) reports similar API failure handling.",
-    scan_json,
+    scan_with_content_route("technical_content", secondary_modes=["academic_cited_text"]),
 )
 assert_test(
     hybrid_technical_cited_route.content_mode == "technical_content"
@@ -836,34 +1078,50 @@ assert_test(
     and any(row["content_mode"] == "academic_cited_text" for row in hybrid_technical_cited_route.mode_scores),
     "V2 content router lets technical structure beat citation-heavy academic routing in mixed technical text",
 )
-technical_route = classify_content_route(
+hybrid_guarded_route = route_fixture(
+    (
+        "| Control | Requirement |\n"
+        "| --- | --- |\n"
+        "| API | The processor must not expose JSON tokens. |\n"
+        "Smith (2021) says “access must remain auditable.” "
+        "The deployment policy shall preserve request logs."
+    ),
+    scan_with_content_route("hybrid_guarded", secondary_modes=["technical_content", "regulated_policy_content", "structured_list_table"]),
+)
+assert_test(
+    hybrid_guarded_route.content_mode == "hybrid_guarded"
+    and hybrid_guarded_route.allowed_strategy_families == ["targeted_paragraph_reconstruction"]
+    and "entity_locked_full_reconstruction" in hybrid_guarded_route.blocked_strategy_families,
+    "V2 content router uses guarded fallback for ambiguous protected-mode mixtures",
+)
+technical_route = route_fixture(
     "The API endpoint returns JSON when the database repository raises an exception in the deployment.",
-    scan_json,
+    scan_with_content_route("technical_content"),
 )
 assert_test(
     technical_route.content_mode == "technical_content"
     and "author_stance_thesis_reframe" in technical_route.blocked_strategy_families,
     "V2 content router blocks thesis rewrite for technical content",
 )
-regulated_route = classify_content_route(
+regulated_route = route_fixture(
     "The policy states that users must not disclose patient records, and compliance review shall document every exception.",
-    scan_json,
+    scan_with_content_route("regulated_policy_content"),
 )
 assert_test(
     regulated_route.content_mode == "regulated_policy_content"
     and "entity_locked_full_reconstruction" in regulated_route.blocked_strategy_families,
     "V2 content router limits regulated policy content to minimal strategies",
 )
-hybrid_regulated_cited_route = classify_content_route(
+hybrid_regulated_cited_route = route_fixture(
     "The privacy policy states that users must not disclose patient records, and clinical compliance shall document exceptions (Brown, 2023).",
-    scan_json,
+    scan_with_content_route("regulated_policy_content", secondary_modes=["academic_cited_text"]),
 )
 assert_test(
     hybrid_regulated_cited_route.content_mode == "regulated_policy_content"
     and hybrid_regulated_cited_route.mode_scores[0]["content_mode"] == "regulated_policy_content",
     "V2 content router lets regulated obligations beat citation-heavy academic routing in mixed policy text",
 )
-short_route = classify_content_route("This paragraph is too short to safely rebuild without more context.", scan_json)
+short_route = route_fixture("This paragraph is too short to safely rebuild without more context.", scan_with_content_route("short_text"))
 assert_test(
     short_route.content_mode == "short_text"
     and short_route.allowed_strategy_families == ["targeted_paragraph_reconstruction"],
@@ -875,9 +1133,9 @@ assert_test(
     and runtime_policy(technical_route, max_runtime_seconds=300)["generation_budget_seconds"] <= 90,
     "V2 runtime policy applies tighter generation budgets to short and technical content modes",
 )
-reflection_route = classify_content_route(
+reflection_route = route_fixture(
     "I think the lesson changed how I read evidence because my first answer was too quick and my later notes were more careful.",
-    scan_json,
+    scan_with_content_route("personal_reflection"),
 )
 assert_test(
     reflection_route.content_mode == "personal_reflection"
@@ -1297,7 +1555,7 @@ assert_test(
 )
 
 academic_partial_scan = {
-    **scan_json,
+    **scan_with_content_route("academic_cited_text"),
     "input_text": "Research on feedback shows uneven effects (Smith, 2021). Other classroom studies report similar limits [2]. References suggest the issue remains contested.",
 }
 with tempfile.TemporaryDirectory() as tmpdir:
@@ -1587,7 +1845,6 @@ assert_test(
     "V2 author-stance thesis filter allows high anchor coverage before semantic rescoring",
 )
 texture_prompt = _build_author_stance_texture_pass_prompt(
-    source_text="AlphaCom released NovaAI in 2025. Schools debated its use.",
     draft_text=(
         "Economically, AlphaCom is undeniably powerful because NovaAI changed schools.\n\n"
         "Culturally, the tool complicates its legacy.\n\n"
@@ -1595,6 +1852,12 @@ texture_prompt = _build_author_stance_texture_pass_prompt(
         "I do not see this as simple."
     ),
     required_entities=["AlphaCom", "NovaAI"],
+    paragraph_inventory=[{
+        "paragraph_id": "p001",
+        "required_entities": ["AlphaCom", "NovaAI", "2025"],
+        "keywords": ["released", "schools", "debated"],
+        "approx_words": 8,
+    }],
     target_paragraph_count=4,
 )
 assert_test(
@@ -2035,6 +2298,8 @@ class _DummyGateway:
 
 original_portfolio = os.environ.get("DRAFTPROOF_REWRITE_V2_PORTFOLIO_MODE")
 original_full_candidates = os.environ.get("DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES")
+original_author_stance_reframe = os.environ.get("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME")
+original_max_generated_candidates = os.environ.get("DRAFTPROOF_REWRITE_V2_MAX_GENERATED_CANDIDATES")
 patched_names = [
     "LLMGateway",
     "_should_entity_locked_full_reconstruction",
@@ -2050,6 +2315,8 @@ patched_values = {name: getattr(pipeline_module, name) for name in patched_names
 try:
     os.environ["DRAFTPROOF_REWRITE_V2_PORTFOLIO_MODE"] = "1"
     os.environ["DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES"] = "1"
+    os.environ["DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME"] = "0"
+    os.environ["DRAFTPROOF_REWRITE_V2_MAX_GENERATED_CANDIDATES"] = "8"
     pipeline_module.LLMGateway = _DummyGateway
     pipeline_module._should_entity_locked_full_reconstruction = lambda _report: True
     pipeline_module._required_entities_for_full_reconstruction = lambda _text: []
@@ -2081,11 +2348,18 @@ finally:
         os.environ.pop("DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES", None)
     else:
         os.environ["DRAFTPROOF_REWRITE_V2_FULL_RECONSTRUCTION_CANDIDATES"] = original_full_candidates
+    if original_author_stance_reframe is None:
+        os.environ.pop("DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME", None)
+    else:
+        os.environ["DRAFTPROOF_REWRITE_V2_AUTHOR_STANCE_THESIS_REFRAME"] = original_author_stance_reframe
+    if original_max_generated_candidates is None:
+        os.environ.pop("DRAFTPROOF_REWRITE_V2_MAX_GENERATED_CANDIDATES", None)
+    else:
+        os.environ["DRAFTPROOF_REWRITE_V2_MAX_GENERATED_CANDIDATES"] = original_max_generated_candidates
 assert_test(
-    {"entity_locked_full_reconstruction", "targeted_paragraph_reconstruction"}.issubset(
-        {normalize_strategy_layer(row) for row in portfolio_candidates}
-    ),
-    "V2 portfolio mode continues from full reconstruction into targeted paragraph candidates",
+    "targeted_paragraph_reconstruction" in {normalize_strategy_layer(row) for row in portfolio_candidates}
+    and "entity_locked_full_reconstruction" not in {normalize_strategy_layer(row) for row in portfolio_candidates},
+    "V2 paragraph-level strategy does not run hidden full-document reconstruction",
 )
 
 

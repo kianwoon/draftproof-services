@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .rewrite_targets import span_integrity
+
 
 @dataclass(frozen=True)
 class AuthorshipWindowThresholds:
@@ -32,6 +34,9 @@ HUMAN_SIGNAL_WEIGHTS: dict[str, float] = {
     "human_anchor_score": 0.26,
     "human_anchor_discount": 0.16,
 }
+
+RISKY_WINDOW_LABELS = {"ai_generated", "moderately_ai_assisted"}
+ASSISTED_WINDOW_LABELS = {"ai_generated", "moderately_ai_assisted", "lightly_ai_assisted"}
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -78,6 +83,13 @@ def _paragraph_text(source_text: str, paragraph: dict[str, Any]) -> str:
     if 0 <= start < end <= len(source_text):
         return source_text[start:end].strip()
     return ""
+
+
+def _stable_excerpt(text: str, limit: int = 420) -> str:
+    value = " ".join(str(text or "").split())
+    if len(value) <= limit:
+        return value
+    return value[:limit].rstrip()
 
 
 def _segments_for_paragraph(
@@ -166,6 +178,102 @@ def _confidence(
     return "low"
 
 
+def build_ai_footprint_profile(
+    authorship_window_profile: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Aggregate window-level authorship signals for rewrite selection.
+
+    This profile is intentionally derived from structured window scores. It is
+    not a classifier and it does not inspect content keywords.
+    """
+
+    profile = authorship_window_profile if isinstance(authorship_window_profile, dict) else {}
+    windows = profile.get("windows") if isinstance(profile.get("windows"), list) else []
+    normalized_windows = [window for window in windows if isinstance(window, dict)]
+    total_words = int(_number(profile.get("word_count"), 0))
+    if total_words <= 0:
+        total_words = sum(int(_number(window.get("word_count"), 0)) for window in normalized_windows)
+    denominator = max(1, total_words)
+
+    risky_windows = [
+        window
+        for window in normalized_windows
+        if str(window.get("label") or "") in RISKY_WINDOW_LABELS
+    ]
+    assisted_windows = [
+        window
+        for window in normalized_windows
+        if str(window.get("label") or "") in ASSISTED_WINDOW_LABELS
+    ]
+    risky_words = sum(int(_number(window.get("word_count"), 0)) for window in risky_windows)
+    assisted_words = sum(int(_number(window.get("word_count"), 0)) for window in assisted_windows)
+    human_words = max(0, denominator - assisted_words)
+    high_confidence_risky = [
+        window
+        for window in risky_windows
+        if str(window.get("confidence") or "").lower() == "high"
+    ]
+
+    def risk_rank(window: dict[str, Any]) -> tuple[float, float, float]:
+        label_weight = 1.0 if str(window.get("label") or "") == "ai_generated" else 0.7
+        return (
+            _number(window.get("ai_assistance_score")) * label_weight,
+            _number(window.get("word_count")),
+            _number(window.get("end_index")) - _number(window.get("start_index")),
+        )
+
+    top_risky = sorted(risky_windows, key=risk_rank, reverse=True)[:8]
+    confidence = "low"
+    if total_words >= 300 and len(normalized_windows) >= 3:
+        confidence = "medium"
+    if total_words >= 700 and len(normalized_windows) >= 6:
+        confidence = "high"
+    false_positive_guard = {
+        "enabled": True,
+        "basis": "human_anchor_and_low_high_confidence_risk",
+        "human_fraction": round(human_words / denominator, 4),
+        "high_confidence_risky_window_count": len(high_confidence_risky),
+        "caution": bool((human_words / denominator) >= 0.45 and not high_confidence_risky),
+    }
+    return {
+        "schema_version": "ai_footprint_profile.v2",
+        "basis": "structured_authorship_windows",
+        "word_count": total_words,
+        "window_count": len(normalized_windows),
+        "fraction_ai": round(_number(profile.get("fraction_ai")), 4),
+        "fraction_ai_assisted": round(_number(profile.get("fraction_ai_assisted")), 4),
+        "fraction_human": round(_number(profile.get("fraction_human"), human_words / denominator), 4),
+        "risky_window_density": round(risky_words / denominator, 4),
+        "assisted_window_density": round(assisted_words / denominator, 4),
+        "max_risky_window_words": max([int(_number(window.get("word_count"), 0)) for window in risky_windows] or [0]),
+        "max_ai_window_words": int(_number(profile.get("max_ai_window_words"), 0)),
+        "max_ai_assisted_window_words": int(_number(profile.get("max_ai_assisted_window_words"), 0)),
+        "high_confidence_risky_window_count": len(high_confidence_risky),
+        "risky_window_count": len(risky_windows),
+        "assisted_window_count": len(assisted_windows),
+        "top_risky_windows": [
+            {
+                "window_id": window.get("window_id"),
+                "paragraph_id": window.get("paragraph_id"),
+                "sentence_ids": list(window.get("sentence_ids") or []),
+                "label": window.get("label"),
+                "ai_assistance_score": window.get("ai_assistance_score"),
+                "confidence": window.get("confidence"),
+                "start_index": window.get("start_index"),
+                "end_index": window.get("end_index"),
+                "span_integrity": window.get("span_integrity") or {},
+                "source_text": window.get("source_text") or "",
+                "source_excerpt": window.get("source_excerpt") or _stable_excerpt(str(window.get("source_text") or "")),
+                "word_count": window.get("word_count"),
+                "score_components": window.get("score_components") or {},
+            }
+            for window in top_risky
+        ],
+        "false_positive_guard": false_positive_guard,
+        "confidence": confidence,
+    }
+
+
 def build_authorship_window_profile(
     *,
     source_text: str,
@@ -182,7 +290,8 @@ def build_authorship_window_profile(
             continue
         paragraph_id = str(paragraph.get("paragraph_id") or f"p{index:03d}")
         paragraph_segments = _segments_for_paragraph(segments, paragraph_id)
-        paragraph_text = _paragraph_text(source_text, paragraph)
+        integrity = span_integrity(source_text, paragraph.get("start_char"), paragraph.get("end_char"))
+        paragraph_text = _paragraph_text(source_text, paragraph) if integrity.get("passed") else ""
         if not paragraph_text:
             paragraph_text = " ".join(str(segment.get("text") or "") for segment in paragraph_segments).strip()
         words = _word_count(paragraph_text)
@@ -211,6 +320,9 @@ def build_authorship_window_profile(
             "sentence_ids": list(paragraph.get("sentence_ids") or []),
             "start_index": int(_number(paragraph.get("start_char"), 0)),
             "end_index": int(_number(paragraph.get("end_char"), 0)),
+            "span_integrity": integrity,
+            "source_text": paragraph_text,
+            "source_excerpt": _stable_excerpt(paragraph_text),
             "word_count": words,
             "token_length": words,
             "label": label,
@@ -251,7 +363,7 @@ def build_authorship_window_profile(
     denominator = max(1, total_words)
     ai_words = totals.get("ai_generated", 0)
     assisted_words = totals.get("moderately_ai_assisted", 0) + totals.get("lightly_ai_assisted", 0)
-    return {
+    authorship_profile = {
         "schema_version": "authorship_windows.v1",
         "basis": "structured_scan_signals",
         "scoring_policy": {
@@ -284,3 +396,5 @@ def build_authorship_window_profile(
         "word_breakdown": totals,
         "windows": windows,
     }
+    authorship_profile["ai_footprint_profile"] = build_ai_footprint_profile(authorship_profile)
+    return authorship_profile

@@ -138,6 +138,14 @@ CONTENT_MODE_POLICY: dict[str, dict[str, Any]] = {
         "second_layer_failures": [DETECTOR_NOT_SAFE],
         "terminal_failures": [HARD_ANCHOR_LOSS, SEMANTIC_LOSS],
     },
+    "hybrid_guarded": {
+        "max_generated_candidates": 3,
+        "layer_candidate_caps": {"targeted_paragraph_reconstruction": 3},
+        "required_layers": ["targeted_paragraph_reconstruction"],
+        "repairable_failures": [],
+        "second_layer_failures": [],
+        "terminal_failures": [HARD_ANCHOR_LOSS, SEMANTIC_LOSS, DETECTOR_NOT_SAFE, GENERATION_FAILED],
+    },
 }
 
 

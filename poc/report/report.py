@@ -18,7 +18,8 @@ from typing import List, Dict, Any, Optional
 from enum import Enum
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
-from detect.authorship_windows import build_authorship_window_profile
+from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
+from detect.rewrite_targets import build_rewrite_target_profile
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
@@ -3977,9 +3978,20 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             segments=segments,
             paragraphs=paragraph_rows,
         )
+        ai_footprint_profile = (
+            authorship_window_profile.get("ai_footprint_profile")
+            if isinstance(authorship_window_profile.get("ai_footprint_profile"), dict)
+            else build_ai_footprint_profile(authorship_window_profile)
+        )
         doc_findings = [_segment_signal(f) for f in document_level_findings]
         doc_findings.sort(key=lambda entry: entry.get("score", 0), reverse=True)
         preservation_inventory = _preservation_inventory(report.original_text or "")
+        rewrite_target_profile = build_rewrite_target_profile(
+            source_text=report.original_text or "",
+            authorship_window_profile=authorship_window_profile,
+            ai_footprint_profile=ai_footprint_profile,
+            preservation_inventory=preservation_inventory,
+        )
         blocker_radar = _blocker_radar(
             badge,
             features,
@@ -4029,6 +4041,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "segments": segments,
                 "paragraphs": paragraph_rows,
                 "authorship_window_profile": authorship_window_profile,
+                "ai_footprint_profile": ai_footprint_profile,
+                "rewrite_target_profile": rewrite_target_profile,
                 "preservation_inventory": preservation_inventory,
                 "anchor_metrics": rewrite_routing_signals.get("anchor_metrics") or {},
             },
@@ -4045,6 +4059,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "generation_handoff": generation_handoff,
             "rewrite_routing_signals": rewrite_routing_signals,
             "authorship_window_profile": authorship_window_profile,
+            "ai_footprint_profile": ai_footprint_profile,
+            "rewrite_target_profile": rewrite_target_profile,
             "calibration": {
                 "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
                 "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
@@ -4436,6 +4452,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     result["generation_handoff"] = scan_intelligence.get("generation_handoff") or {}
     result["rewrite_routing_signals"] = scan_intelligence.get("rewrite_routing_signals") or {}
     result["authorship_window_profile"] = scan_intelligence.get("authorship_window_profile") or {}
+    result["ai_footprint_profile"] = scan_intelligence.get("ai_footprint_profile") or {}
+    result["rewrite_target_profile"] = scan_intelligence.get("rewrite_target_profile") or {}
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 

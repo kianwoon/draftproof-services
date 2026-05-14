@@ -35,8 +35,30 @@ class StrategyPlan:
 def build_strategy_plan(route: V3Route, contract: ScanContract) -> StrategyPlan:
     classes = (route.primary_class, *route.secondary_classes)
     steps: list[StrategyStep] = []
+    operations = contract.target_operation_mix or {}
+    localized_footprint = (
+        contract.risky_window_density > 0.0
+        and contract.risky_window_density <= 0.28
+        and contract.max_risky_window_words <= 160
+    )
+    broad_footprint = (contract.footprint_fraction_ai + contract.footprint_fraction_ai_assisted) >= 0.55
+    if contract.target_scope_policy == "avoid_over_rewrite" and not contract.rewrite_targets:
+        steps.append(StrategyStep("portfolio_selection", "low_footprint_no_aggressive_rewrite", "candidate_set"))
+        return StrategyPlan(
+            risk_classes=tuple(item.value for item in classes),
+            steps=tuple(steps),
+        )
+    if operations.get("protected_section_rewrite"):
+        steps.append(StrategyStep("protected_section_rewrite", "scan_targeted_protected_sections", "target_profile_sections"))
+    if operations.get("citation_preserving_window_repair"):
+        steps.append(StrategyStep("citation_anchor_guard", "scan_targeted_citation_windows", "target_profile_windows"))
+    if operations.get("chunk_reconstruction"):
+        steps.append(StrategyStep("clean_texture_boundary", "scan_targeted_broad_footprint", "target_profile_chunks"))
+    if localized_footprint or operations.get("grounded_author_reasoning_rewrite") or operations.get("light_texture_rewrite"):
+        steps.append(StrategyStep("authorship_window_repair", "localized_ai_footprint", "risky_windows"))
     if RewriteRiskClass.BROAD_PROSE in classes:
         steps.extend([
+            StrategyStep("clean_texture_boundary", "broad_ai_texture", "full_document_or_chunked_document"),
             StrategyStep("document_rhythm", "broad_ai_rhythm", "full_document"),
             StrategyStep("contrast_boundary", "formal_generated_texture", "full_document"),
             StrategyStep("plain_reasoning_broad_prose", "formal_survey_texture", "full_document"),
@@ -47,6 +69,8 @@ def build_strategy_plan(route: V3Route, contract: ScanContract) -> StrategyPlan:
             StrategyStep("citation_anchor_guard", "citation_or_anchor_loss", "protected_anchors"),
             StrategyStep("cited_practice_voice", "academic_detector_texture", "section_or_document"),
         ])
+        if broad_footprint and contract.anchor_preservation_pressure >= 0.5:
+            steps.append(StrategyStep("protected_section_rewrite", "cited_broad_ai_footprint", "section_chunks"))
     if RewriteRiskClass.TECHNICAL_STRUCTURED in classes:
         steps.append(StrategyStep("structure_preserving_rewrite", "technical_structure_risk", "minimal_targeted"))
     if RewriteRiskClass.REGULATED_POLICY in classes:

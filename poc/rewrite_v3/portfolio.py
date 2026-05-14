@@ -54,6 +54,22 @@ def score_candidate(item: dict[str, Any], *, family: str, index: int) -> Portfol
     features = features_from_trace(trace)
     score = 0.0
     reasons: list[str] = []
+    outcome = str(trace.get("candidate_outcome") or "")
+    if outcome == "valid_detector_improved":
+        score += 120.0
+        reasons.append("valid_detector_improved")
+    elif outcome == "invalid_detector_improved":
+        score += 70.0
+        reasons.append("invalid_detector_improved")
+    elif outcome in {"valid_no_detector_movement", "invalid_no_detector_movement"}:
+        score -= 90.0
+        reasons.append("no_detector_movement")
+    elif outcome == "corrupted_output":
+        score -= 220.0
+        reasons.append("corrupted_output")
+    elif outcome.startswith("generation_failed"):
+        score -= 260.0
+        reasons.append("generation_failed")
     if features.validation_passed:
         score += 40.0
         reasons.append("valid_structure_and_anchors")

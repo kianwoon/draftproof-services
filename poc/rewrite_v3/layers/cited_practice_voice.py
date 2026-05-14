@@ -48,12 +48,16 @@ def build_cited_practice_voice_prompt(
     contract: RewriteContract,
     compression_policy: CompressionPolicy,
     style_examples: dict[str, list[dict[str, Any]]] | None = None,
+    rewrite_target_profile: dict[str, Any] | None = None,
+    central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     examples = style_examples or {"positive": [], "negative": []}
     payload = {
         "source_document": original_text,
         "source_word_count": word_count(original_text),
         "document_inventory": compact_document_inventory(original_text, max_units=120),
+        "rewrite_target_profile": rewrite_target_profile or {},
+        "central_judgment_plan": central_judgment_plan or {},
         "protected_anchors": _protected_anchor_payload(contract),
         "target_word_band": {
             "min_words": compression_policy.min_words,
@@ -65,6 +69,10 @@ def build_cited_practice_voice_prompt(
         "requirements": [
             "Keep the same section order and section headings.",
             "Preserve citations, unit codes, course names, named people, and support-needs details.",
+            "Use rewrite_target_profile targets as the primary rewrite instructions when present.",
+            "For each target, address dominant_drivers and required_movement while preserving protected_anchors.",
+            "Use central_judgment_plan to add source-supported contextual judgment without inventing evidence.",
+            "Represent every content unit listed in central_judgment_plan constraints; do not collapse the source into a summary.",
             "Keep a practice-grounded educator voice where the source already supports it.",
             "Avoid polished academic summary and avoid dense over-compression.",
             "Do not add new sources, client facts, diagnoses, names, events, or examples beyond the source.",
@@ -88,6 +96,8 @@ def build_cited_practice_voice_chunk_prompt(
     global_plan: dict[str, Any],
     compression_policy: CompressionPolicy,
     style_examples: dict[str, list[dict[str, Any]]] | None = None,
+    rewrite_target_profile: dict[str, Any] | None = None,
+    central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     examples = style_examples or {"positive": [], "negative": []}
     chunk_anchors = _chunk_anchor_payload(contract, source_units)
@@ -112,6 +122,8 @@ def build_cited_practice_voice_chunk_prompt(
         "global_plan": global_plan,
         "source_unit_count": len(source_units),
         "source_units": source_units,
+        "rewrite_target_profile": rewrite_target_profile or {},
+        "central_judgment_plan": central_judgment_plan or {},
         "unit_word_guides": unit_word_guides,
         "protected_anchors": chunk_anchors,
         "must_include_exact_anchors": [anchor["text"] for anchor in chunk_anchors],
@@ -125,6 +137,8 @@ def build_cited_practice_voice_chunk_prompt(
         "requirements": [
             "Rewrite only the provided source units.",
             "Keep headings and citations present in these units exactly.",
+            "Use rewrite_target_profile targets for this chunk when they overlap these units.",
+            "Use central_judgment_plan only to make the local reasoning less formulaic without adding facts.",
             "Copy every must_include_exact_anchors string verbatim into this chunk output.",
             "Use unit_word_guides as the coverage target for each returned unit.",
             "Do not compress a source unit into a summary; preserve its distinct evidence, constraints, examples, and reasoning path.",
