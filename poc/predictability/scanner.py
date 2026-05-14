@@ -9,7 +9,10 @@ import math
 import os
 import re
 import time
-from dataclasses import dataclass, field
+import hashlib
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
 from typing import List, Dict, Any, Optional
 
 import torch
@@ -28,6 +31,9 @@ SCANNER_VERSION = "vectorized-gpt2-v2"
 _PRELOADED_MODEL = None
 _PRELOADED_TOKENIZER = None
 _PRELOADED_MODEL_NAME = None
+
+_SENTENCE_CACHE_LOCK = threading.RLock()
+_SENTENCE_CACHE: "OrderedDict[str, SentenceResult]" = OrderedDict()
 
 
 def resolve_predictability_model_name(model_name: Optional[str] = None) -> str:
@@ -361,6 +367,117 @@ class PredictabilityScanner:
             ))
         return results
 
+    def _cache_enabled(self) -> bool:
+        value = os.environ.get("DRAFTPROOF_PREDICTABILITY_SENTENCE_CACHE", "1").lower()
+        return value not in {"0", "false", "no", "off"}
+
+    @staticmethod
+    def _cache_max_entries() -> int:
+        try:
+            value = int(os.environ.get("DRAFTPROOF_PREDICTABILITY_SENTENCE_CACHE_MAX", "4096"))
+        except (TypeError, ValueError):
+            value = 4096
+        return max(0, value)
+
+    def _cache_signature(self, max_tokens: int) -> str:
+        phrase_digest = hashlib.sha256(
+            "\n".join(str(phrase) for phrase in self.generic_phrases).encode("utf-8")
+        ).hexdigest()[:16]
+        weight_items = ",".join(
+            f"{key}:{self.weights[key]:.8f}" for key in sorted(self.weights)
+        )
+        threshold_items = (
+            f"high:{self.high_threshold:.8f},"
+            f"medium:{self.medium_threshold:.8f},"
+            f"review:{self.review_threshold:.8f}"
+        )
+        return "|".join((
+            SCANNER_VERSION,
+            self.model_name,
+            str(max_tokens),
+            weight_items,
+            threshold_items,
+            phrase_digest,
+        ))
+
+    @staticmethod
+    def _cache_key(signature: str, sentence: str) -> str:
+        return hashlib.sha256(f"{signature}\0{sentence}".encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _clone_sentence_result(
+        result: SentenceResult,
+        *,
+        start_char: int = 0,
+        end_char: int = 0,
+        paragraph_id: str = "p001",
+    ) -> SentenceResult:
+        return replace(
+            result,
+            matched_generic_phrases=list(result.matched_generic_phrases),
+            token_results=list(result.token_results),
+            start_char=start_char,
+            end_char=end_char,
+            paragraph_id=paragraph_id,
+        )
+
+    @classmethod
+    def clear_sentence_cache(cls) -> None:
+        """Clear the process-local predictability sentence cache."""
+        with _SENTENCE_CACHE_LOCK:
+            _SENTENCE_CACHE.clear()
+
+    def _scan_sentences_batch_cached(
+        self,
+        sentences: List[str],
+        *,
+        max_tokens: int,
+        cache_enabled: bool,
+    ) -> tuple[List[SentenceResult], Dict[str, int]]:
+        if not cache_enabled:
+            return self.scan_sentences_batch(sentences), {
+                "hits": 0,
+                "misses": len(sentences),
+                "stores": 0,
+            }
+
+        signature = self._cache_signature(max_tokens)
+        keys = [self._cache_key(signature, sentence) for sentence in sentences]
+        results: list[SentenceResult | None] = [None] * len(sentences)
+        missing_indexes: list[int] = []
+        hits = 0
+
+        with _SENTENCE_CACHE_LOCK:
+            for index, key in enumerate(keys):
+                cached = _SENTENCE_CACHE.get(key)
+                if cached is None:
+                    missing_indexes.append(index)
+                    continue
+                _SENTENCE_CACHE.move_to_end(key)
+                results[index] = self._clone_sentence_result(cached)
+                hits += 1
+
+        stores = 0
+        if missing_indexes:
+            missing_sentences = [sentences[index] for index in missing_indexes]
+            scanned = self.scan_sentences_batch(missing_sentences)
+            max_entries = self._cache_max_entries()
+            with _SENTENCE_CACHE_LOCK:
+                for index, scanned_result in zip(missing_indexes, scanned):
+                    results[index] = self._clone_sentence_result(scanned_result)
+                    if max_entries > 0:
+                        _SENTENCE_CACHE[keys[index]] = self._clone_sentence_result(scanned_result)
+                        _SENTENCE_CACHE.move_to_end(keys[index])
+                        stores += 1
+                while max_entries > 0 and len(_SENTENCE_CACHE) > max_entries:
+                    _SENTENCE_CACHE.popitem(last=False)
+
+        return [result for result in results if result is not None], {
+            "hits": hits,
+            "misses": len(missing_indexes),
+            "stores": stores,
+        }
+
     def detect_style_shifts(self, results: List[SentenceResult]) -> List[Dict[str, Any]]:
         """Flag sudden predictability changes between consecutive sentences."""
         shifts = []
@@ -379,14 +496,20 @@ class PredictabilityScanner:
         sentences = self.split_sentences(text)
         eligible = [s for s in sentences if len(str(s).split()) >= 8]
         total = len(eligible)
-        batch_size = max(1, int(os.environ.get("DRAFTPROOF_PREDICTABILITY_BATCH_SIZE", "8")))
+        batch_size = max(1, int(os.environ.get("DRAFTPROOF_PREDICTABILITY_BATCH_SIZE", "16")))
+        max_tokens = int(os.environ.get("DRAFTPROOF_PREDICTABILITY_MAX_TOKENS", "384"))
+        cache_enabled = self._cache_enabled()
+        cache_hits = 0
+        cache_misses = 0
+        cache_stores = 0
         logger.info(
-            "Predictability scan: %d eligible sentences (of %d total) model=%s version=%s batch_size=%d",
+            "Predictability scan: %d eligible sentences (of %d total) model=%s version=%s batch_size=%d cache=%s",
             total,
             len(sentences),
             self.model_name,
             SCANNER_VERSION,
             batch_size,
+            "on" if cache_enabled else "off",
         )
         if progress_callback:
             progress_callback(10, f"Checking {total} sentence{'' if total == 1 else 's'} for predictability")
@@ -395,7 +518,14 @@ class PredictabilityScanner:
         for batch_start in range(0, total, batch_size):
             batch = eligible[batch_start: batch_start + batch_size]
             batch_t0 = time.monotonic()
-            batch_results = self.scan_sentences_batch([str(s) for s in batch])
+            batch_results, batch_cache = self._scan_sentences_batch_cached(
+                [str(s) for s in batch],
+                max_tokens=max_tokens,
+                cache_enabled=cache_enabled,
+            )
+            cache_hits += batch_cache["hits"]
+            cache_misses += batch_cache["misses"]
+            cache_stores += batch_cache["stores"]
             for offset, sr in enumerate(batch_results):
                 s = batch[offset]
                 sr.start_char = getattr(s, "start_char", 0)
@@ -405,11 +535,13 @@ class PredictabilityScanner:
             completed = len(results)
             batch_seconds = time.monotonic() - batch_t0
             logger.info(
-                "Predictability batch: %d-%d/%d sentences in %.2fs",
+                "Predictability batch: %d-%d/%d sentences in %.2fs (cache_hits=%d cache_misses=%d)",
                 batch_start + 1,
                 completed,
                 total,
                 batch_seconds,
+                batch_cache["hits"],
+                batch_cache["misses"],
             )
             if completed % 5 == 0 or completed == total:
                 elapsed = time.monotonic() - t0
@@ -424,6 +556,18 @@ class PredictabilityScanner:
                     pct,
                     f"Checked {completed}/{total} predictability sentence{'' if total == 1 else 's'}",
                 )
+        scan_seconds = time.monotonic() - t0
+        with _SENTENCE_CACHE_LOCK:
+            cache_size = len(_SENTENCE_CACHE)
+        if cache_enabled:
+            logger.info(
+                "Predictability cache: hits=%d misses=%d stores=%d size=%d max=%d",
+                cache_hits,
+                cache_misses,
+                cache_stores,
+                cache_size,
+                self._cache_max_entries(),
+            )
         if progress_callback:
             progress_callback(96, "Reviewing predictability patterns")
         shifts = self.detect_style_shifts(results)
@@ -450,6 +594,15 @@ class PredictabilityScanner:
             "scanner_version": SCANNER_VERSION,
             "model_name": self.model_name,
             "overall_risk": round(overall, 4),
+            "scan_seconds": round(scan_seconds, 4),
+            "predictability_cache": {
+                "enabled": cache_enabled,
+                "hits": cache_hits,
+                "misses": cache_misses,
+                "stores": cache_stores,
+                "size": cache_size,
+                "max_entries": self._cache_max_entries(),
+            },
             "sample_confidence": sample_confidence,
             "sample_confidence_reason": sample_confidence_reason,
             "risk_distribution": {
