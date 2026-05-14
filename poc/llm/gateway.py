@@ -165,6 +165,81 @@ def model_supports_structured_outputs(model: str | None) -> bool:
     return bool(_model_capabilities(str(model or "")).get("structured_outputs"))
 
 
+def _first_env(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _list_env(*names: str) -> list[str]:
+    value = _first_env(*names)
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _bool_env(*names: str) -> bool | None:
+    value = _first_env(*names)
+    if value is None:
+        return None
+    normalized = value.lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _provider_from_env() -> dict[str, Any] | None:
+    raw_json = _first_env(
+        "DRAFTPROOF_OPENROUTER_PROVIDER_ROUTING_JSON",
+        "OPENROUTER_PROVIDER_ROUTING_JSON",
+        "LLM_PROVIDER_ROUTING_JSON",
+    )
+    if raw_json:
+        parsed = json.loads(raw_json)
+        if not isinstance(parsed, dict):
+            raise ValueError("OpenRouter provider routing JSON must be an object")
+        return parsed
+
+    provider: dict[str, Any] = {}
+    order = _list_env("DRAFTPROOF_OPENROUTER_PROVIDER_ORDER", "OPENROUTER_PROVIDER_ORDER")
+    only = _list_env("DRAFTPROOF_OPENROUTER_PROVIDER_ONLY", "OPENROUTER_PROVIDER_ONLY")
+    ignore = _list_env("DRAFTPROOF_OPENROUTER_PROVIDER_IGNORE", "OPENROUTER_PROVIDER_IGNORE")
+    if order:
+        provider["order"] = order
+    if only:
+        provider["only"] = only
+    if ignore:
+        provider["ignore"] = ignore
+
+    allow_fallbacks = _bool_env("DRAFTPROOF_OPENROUTER_ALLOW_FALLBACKS", "OPENROUTER_ALLOW_FALLBACKS")
+    require_parameters = _bool_env("DRAFTPROOF_OPENROUTER_REQUIRE_PARAMETERS", "OPENROUTER_REQUIRE_PARAMETERS")
+    zdr = _bool_env("DRAFTPROOF_OPENROUTER_ZDR", "OPENROUTER_ZDR")
+    enforce_distillable_text = _bool_env(
+        "DRAFTPROOF_OPENROUTER_ENFORCE_DISTILLABLE_TEXT",
+        "OPENROUTER_ENFORCE_DISTILLABLE_TEXT",
+    )
+    if allow_fallbacks is not None:
+        provider["allow_fallbacks"] = allow_fallbacks
+    if require_parameters is not None:
+        provider["require_parameters"] = require_parameters
+    if zdr is not None:
+        provider["zdr"] = zdr
+    if enforce_distillable_text is not None:
+        provider["enforce_distillable_text"] = enforce_distillable_text
+
+    sort = _first_env("DRAFTPROOF_OPENROUTER_PROVIDER_SORT", "OPENROUTER_PROVIDER_SORT")
+    data_collection = _first_env("DRAFTPROOF_OPENROUTER_DATA_COLLECTION", "OPENROUTER_DATA_COLLECTION")
+    if sort:
+        provider["sort"] = sort
+    if data_collection:
+        provider["data_collection"] = data_collection
+    return provider or None
+
+
 def _classify_error(error: Exception, attempt: int, max_retries: int) -> _RetryAction:
     """Decide whether to retry or fail based on error type and attempt count."""
     if attempt >= max_retries:
@@ -219,7 +294,7 @@ class LLMGateway:
         self.repetition_penalty = cfg.repetition_penalty
         self.seed = cfg.seed
         self.response_format = cfg.response_format
-        self.provider = cfg.provider
+        self.provider = cfg.provider if cfg.provider is not None else _provider_from_env()
         self.max_retries = cfg.max_retries
         self.timeout = cfg.timeout
         self.site_url = cfg.site_url or os.environ.get("LLM_SITE_URL")
@@ -383,7 +458,7 @@ class LLMGateway:
         headers = self._build_headers()
         prompt_chars = sum(len(m.get("content", "")) for m in messages)
         logger.info(
-            "LLM request: url=%s, model=%s, messages=%d, prompt_chars=%d, max_tokens=%s, requested_sampling=%s, effective_sampling=%s",
+            "LLM request: url=%s, model=%s, messages=%d, prompt_chars=%d, max_tokens=%s, requested_sampling=%s, effective_sampling=%s, provider=%s",
             url,
             self.model,
             len(messages),
@@ -391,6 +466,7 @@ class LLMGateway:
             payload["max_tokens"],
             json.dumps(requested_sampling, sort_keys=True),
             json.dumps(effective_sampling, sort_keys=True),
+            json.dumps(effective_provider, sort_keys=True) if effective_provider is not None else None,
         )
 
         for attempt in range(1, self.max_retries + 1):

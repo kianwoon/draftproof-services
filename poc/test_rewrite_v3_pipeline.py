@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 
+from llm.gateway import LLMConfig, LLMGateway
 from rewrite_v2.contracts import build_rewrite_contract
 from detect.authorship_windows import build_authorship_window_profile
 import rewrite_v3.pipeline as v3_pipeline
@@ -38,6 +39,52 @@ def assert_test(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
     print(f"PASS: {message}")
+
+
+provider_env_names = [
+    "DRAFTPROOF_OPENROUTER_PROVIDER_ROUTING_JSON",
+    "OPENROUTER_PROVIDER_ROUTING_JSON",
+    "LLM_PROVIDER_ROUTING_JSON",
+    "DRAFTPROOF_OPENROUTER_PROVIDER_ORDER",
+    "OPENROUTER_PROVIDER_ORDER",
+    "DRAFTPROOF_OPENROUTER_PROVIDER_ONLY",
+    "OPENROUTER_PROVIDER_ONLY",
+    "DRAFTPROOF_OPENROUTER_PROVIDER_IGNORE",
+    "OPENROUTER_PROVIDER_IGNORE",
+    "DRAFTPROOF_OPENROUTER_ALLOW_FALLBACKS",
+    "OPENROUTER_ALLOW_FALLBACKS",
+    "DRAFTPROOF_OPENROUTER_REQUIRE_PARAMETERS",
+    "OPENROUTER_REQUIRE_PARAMETERS",
+    "DRAFTPROOF_OPENROUTER_ZDR",
+    "OPENROUTER_ZDR",
+    "DRAFTPROOF_OPENROUTER_ENFORCE_DISTILLABLE_TEXT",
+    "OPENROUTER_ENFORCE_DISTILLABLE_TEXT",
+    "DRAFTPROOF_OPENROUTER_PROVIDER_SORT",
+    "OPENROUTER_PROVIDER_SORT",
+    "DRAFTPROOF_OPENROUTER_DATA_COLLECTION",
+    "OPENROUTER_DATA_COLLECTION",
+]
+saved_provider_env = {name: os.environ.get(name) for name in provider_env_names}
+try:
+    for name in provider_env_names:
+        os.environ.pop(name, None)
+    os.environ["DRAFTPROOF_OPENROUTER_PROVIDER_ORDER"] = "siliconflow"
+    os.environ["DRAFTPROOF_OPENROUTER_ALLOW_FALLBACKS"] = "0"
+    gateway = LLMGateway(LLMConfig(
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="deepseek/deepseek-v4-flash",
+    ))
+    assert_test(
+        gateway.provider == {"order": ["siliconflow"], "allow_fallbacks": False},
+        "LLM gateway reads OpenRouter provider routing from environment",
+    )
+finally:
+    for name, value in saved_provider_env.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 def report_for(text: str, *, mode: str = "broad_explanatory_essay", ai: float = 70.0) -> dict:
