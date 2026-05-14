@@ -34,6 +34,13 @@ from rewrite_v3.output_cleaning import clean_v3_candidate_output
 from rewrite_v3.pipeline import run_rewrite_pipeline_v3
 from rewrite_v3.portfolio import select_portfolio_candidate
 from rewrite_v3.router import route_from_scan_contract
+from rewrite_v3.scanner_controlled_executor import (
+    ScannerControlledConfig,
+    build_scanner_controlled_prompt,
+    parse_scanner_controlled_variants,
+    rank_scanner_target_groups,
+    scanner_controlled_rank,
+)
 from rewrite_v3.scanner_contract import RewriteRiskClass, build_scan_contract
 from rewrite_v3.strategy_plan import build_strategy_plan
 from rewrite_v3.target_executor import apply_target_replacements, batch_target_groups, group_rewrite_targets, parse_target_replacements
@@ -586,6 +593,84 @@ assert_test(
     "required phrase" not in missing_anchor_applied and not missing_anchor_status[0]["applied"],
     "V3 target executor blocks replacements that drop protected anchors",
 )
+scanner_loop_report = {
+    "scan_intelligence": {
+        "blocker_radar": {
+            "dominant_blockers": [
+                {
+                    "key": "topk_pattern",
+                    "score": 75,
+                    "scope": "localized",
+                    "severity": "high",
+                    "paragraph_ids": [target_groups[0].unit_id],
+                    "sentence_ids": ["s002"],
+                    "diagnostic_flags": {"texture_pressure": True},
+                },
+                {
+                    "key": "unsupported_claim_risk",
+                    "score": 68,
+                    "scope": "document_wide",
+                    "severity": "high",
+                    "paragraph_ids": [],
+                    "sentence_ids": [],
+                    "diagnostic_flags": {"evidence_gap": True},
+                },
+            ]
+        },
+        "human_contribution_contract": {
+            "weak_subsignals": ["causal_reasoning"],
+            "subsignals": [{
+                "key": "causal_reasoning",
+                "score": 32,
+                "label": "weak",
+                "rewrite_lever": "Make one supported cause-effect relation explicit.",
+            }],
+        },
+    }
+}
+scanner_loop_goal = {
+    "eligible_span_density_gate": {
+        "top_sentence_targets": [{"sentence_id": "s002", "risk_score": 4.5}],
+    }
+}
+ranked_scanner_groups = rank_scanner_target_groups(
+    report=scanner_loop_report,
+    goal=scanner_loop_goal,
+    groups=target_groups,
+)
+assert_test(
+    ranked_scanner_groups[0].group_id == target_groups[0].group_id,
+    "V3 scanner-controlled executor ranks target groups from scanner blockers and unsafe sentences",
+)
+scanner_loop_prompt = build_scanner_controlled_prompt(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variants_per_group=2,
+)
+assert_test(
+    "blocker_radar_for_this_group" in scanner_loop_prompt
+    and "weak_human_levers" in scanner_loop_prompt
+    and "source_text" in scanner_loop_prompt,
+    "V3 scanner-controlled prompt carries scanner blockers, human levers, and local source only",
+)
+scanner_variants = parse_scanner_controlled_variants(
+    '{"variants":[{"variant_id":"v1","replacement_text":"A local variant."},{"variant_id":"v2","replacement_text":"Another local variant."}]}',
+    limit=2,
+)
+assert_test(
+    len(scanner_variants) == 2 and scanner_variants[0]["replacement_text"] == "A local variant.",
+    "V3 scanner-controlled executor parses bounded local variants",
+)
+assert_test(
+    scanner_controlled_rank({"footprint_risk": 38, "external_proxy_score": 27, "topk": 70, "ai": 29, "unsafe_cluster_count": 2, "unsafe_word_ratio": 9})
+    < scanner_controlled_rank({"footprint_risk": 42, "external_proxy_score": 40, "topk": 74, "ai": 32, "unsafe_cluster_count": 8, "unsafe_word_ratio": 18}),
+    "V3 scanner-controlled rank rewards footprint, proxy, top-k, and unsafe-cluster movement",
+)
+assert_test(
+    v3_pipeline._scanner_controlled_config().max_rounds >= 1
+    and ScannerControlledConfig(max_rounds=2).to_dict()["max_rounds"] == 2,
+    "V3 scanner-controlled executor exposes bounded runtime config",
+)
 segment_gate = evaluate_authorship_window_gate(segment_profile)
 assert_test(not segment_gate.passed, "V3 authorship window gate fails high-risk segment profile")
 segment_targets = select_authorship_window_targets(segment_profile, max_targets=1)
@@ -1074,6 +1159,37 @@ target_gate_fixture = {
         "recommended_operation": "grounded_author_reasoning_rewrite",
     }],
 }
+original_scanner_controlled_generator = v3_pipeline._generate_scanner_controlled_candidate
+try:
+    def fake_scanner_controlled_generator(**kwargs):
+        return broad_candidate, {
+            "target_execution_attempted": True,
+            "scanner_controlled": True,
+            "scanner_controlled_config": {"max_rounds": 2, "groups_per_round": 4, "variants_per_group": 3},
+            "scanner_controlled_rounds": [],
+            "target_groups": [],
+            "target_replacements": [],
+            "target_apply_status": [],
+        }
+
+    v3_pipeline._generate_scanner_controlled_candidate = fake_scanner_controlled_generator
+    with tempfile.TemporaryDirectory() as tmpdir:
+        scanner_first = run_rewrite_pipeline_v3(
+            detect_json={**report_for(broad_source, ai=70.0), "rewrite_target_profile": target_gate_fixture},
+            output_dir=tmpdir,
+            required_ai_drop=20.0,
+            max_runtime_seconds=0,
+        )
+        scanner_first_summary = scanner_first["result"].summary
+        assert_test(
+            scanner_first_summary["strategy_trace"][0]["scanner_controlled_executor_first"]
+            and scanner_first_summary["candidate_trace"][0]["generation_mode"] == "scanner_controlled_executor"
+            and scanner_first_summary["candidate_trace"][0]["target_execution_trace"]["scanner_controlled"],
+            "V3 runs scanner-controlled executor before weaker target/full-document layers",
+        )
+finally:
+    v3_pipeline._generate_scanner_controlled_candidate = original_scanner_controlled_generator
+
 with tempfile.TemporaryDirectory() as tmpdir:
     target_blocked = run_rewrite_pipeline_v3(
         detect_json={**report_for(broad_source, ai=70.0), "rewrite_target_profile": target_gate_fixture},

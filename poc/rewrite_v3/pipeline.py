@@ -53,6 +53,14 @@ from .layers.authorship_window_repair import (
 from .output_cleaning import clean_v3_candidate_output
 from .portfolio import select_portfolio_candidate
 from .router import route_from_scan_contract
+from .scanner_controlled_executor import (
+    ScannerControlledConfig,
+    build_scanner_controlled_prompt,
+    parse_scanner_controlled_variants,
+    rank_scanner_target_groups,
+    scanner_controlled_metrics,
+    scanner_controlled_rank,
+)
 from .scanner_contract import RewriteRiskClass, ScanContract, build_scan_contract
 from .style_library import examples_for_family
 from .strategy_plan import build_strategy_plan
@@ -760,6 +768,28 @@ def _assisted_footprint_executor_available(scan_contract: ScanContract) -> bool:
     return bool(broad_assisted and scan_contract.risky_window_count + scan_contract.high_confidence_risky_window_count >= 0)
 
 
+def _scanner_controlled_config() -> ScannerControlledConfig:
+    def int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+        try:
+            value = int(os.environ.get(name, str(default)) or default)
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    return ScannerControlledConfig(
+        max_rounds=int_env("DRAFTPROOF_REWRITE_V3_SCANNER_LOOP_ROUNDS", 2, minimum=1, maximum=3),
+        groups_per_round=int_env("DRAFTPROOF_REWRITE_V3_SCANNER_LOOP_GROUPS", 4, minimum=1, maximum=8),
+        variants_per_group=int_env("DRAFTPROOF_REWRITE_V3_SCANNER_LOOP_VARIANTS", 3, minimum=1, maximum=4),
+        min_accept_delta=_float_env("DRAFTPROOF_REWRITE_V3_SCANNER_LOOP_MIN_DELTA", 0.2),
+    )
+
+
+def _scanner_controlled_executor_available(scan_contract: ScanContract) -> bool:
+    if os.environ.get("DRAFTPROOF_REWRITE_V3_SCANNER_CONTROLLED_ENABLED", "1").lower() in {"0", "false", "no", "off"}:
+        return False
+    return _target_executor_available(scan_contract)
+
+
 def _target_executor_available(scan_contract: ScanContract) -> bool:
     if not scan_contract.rewrite_targets:
         return False
@@ -876,6 +906,229 @@ def _generate_target_executor_candidate(
     if text.strip() == original_text.strip():
         trace = {**trace, "error": "no_target_replacement_applied"}
     return clean_v3_candidate_output(text), trace
+
+
+def _generate_scanner_controlled_candidate(
+    *,
+    original_text: str,
+    original_report: dict[str, Any],
+    scan_contract: ScanContract,
+    content_mode: str,
+    family: str,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+) -> tuple[str, dict[str, Any]]:
+    config = _scanner_controlled_config()
+    current_text = str(original_text or "")
+    current_report = original_report
+    original_goal = evaluate_rewrite_goal(
+        original_text=original_text,
+        candidate_text=original_text,
+        original_report=original_report,
+        candidate_report=original_report,
+    ).to_dict()
+    current_goal = original_goal
+    current_metrics = scanner_controlled_metrics(
+        report=current_report,
+        goal=current_goal,
+        footprint_risk=_footprint_risk(_ai_footprint_profile(current_report)),
+        ai_score=_badge_ai(current_report),
+        topk_score=_topk(current_report),
+    )
+    accepted: list[dict[str, Any]] = []
+    accepted_unit_ids: set[str] = set()
+    apply_statuses: list[dict[str, Any]] = []
+    round_trace: list[dict[str, Any]] = []
+    last_groups: list[Any] = []
+    errors: list[str] = []
+
+    gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(900))
+
+    for round_index in range(1, max(1, int(config.max_rounds)) + 1):
+        current_contract = build_scan_contract(current_report, current_text)
+        groups = group_rewrite_targets(
+            original_text=current_text,
+            rewrite_target_profile=current_contract.rewrite_target_profile,
+            max_groups=max(_max_target_executor_groups(), config.groups_per_round * 2),
+        )
+        groups = rank_scanner_target_groups(
+            report=current_report,
+            goal=current_goal,
+            groups=groups,
+        )
+        groups = [
+            group for group in groups
+            if str(group.unit_id or group.group_id) not in accepted_unit_ids
+        ][:config.groups_per_round]
+        last_groups = groups
+        round_log: dict[str, Any] = {
+            "round": round_index,
+            "start_metrics": current_metrics,
+            "start_rank": scanner_controlled_rank(current_metrics),
+            "groups": [],
+        }
+        improved_this_round = False
+        if not groups:
+            round_log["stop_reason"] = "no_scanner_target_groups"
+            round_trace.append(round_log)
+            break
+
+        for group in groups:
+            prompt = build_scanner_controlled_prompt(
+                report=current_report,
+                group=group,
+                variants_per_group=config.variants_per_group,
+            )
+            llm_error: str | None = None
+            raw = ""
+            try:
+                response = gateway.chat(
+                    prompt,
+                    system="Return only valid JSON with a variants array.",
+                    response_format={"type": "json_object"},
+                )
+                raw = response.content
+                provider = response.raw.get("provider")
+            except Exception as exc:
+                llm_error = str(exc)
+                provider = None
+                errors.append(llm_error)
+            variants = parse_scanner_controlled_variants(raw, limit=config.variants_per_group)
+            group_log: dict[str, Any] = {
+                "group_id": group.group_id,
+                "unit_id": group.unit_id,
+                "operation": group.operation,
+                "provider": provider,
+                "variant_count": len(variants),
+                "error": llm_error,
+                "variants": [],
+            }
+            best: dict[str, Any] | None = None
+            for variant_index, variant in enumerate(variants, start=1):
+                replacement_text = str(variant.get("replacement_text") or "").strip()
+                candidate_text, candidate_apply_status = apply_target_replacements(
+                    original_text=current_text,
+                    target_groups=[group],
+                    replacements=[{
+                        "group_id": group.group_id,
+                        "replacement_text": replacement_text,
+                    }],
+                )
+                candidate_report = _scan_report(candidate_text)
+                candidate_goal = evaluate_rewrite_goal(
+                    original_text=original_text,
+                    candidate_text=candidate_text,
+                    original_report=original_report,
+                    candidate_report=candidate_report,
+                ).to_dict()
+                candidate_metrics = scanner_controlled_metrics(
+                    report=candidate_report,
+                    goal=candidate_goal,
+                    footprint_risk=_footprint_risk(_ai_footprint_profile(candidate_report)),
+                    ai_score=_badge_ai(candidate_report),
+                    topk_score=_topk(candidate_report),
+                )
+                delta = round(scanner_controlled_rank(current_metrics) - scanner_controlled_rank(candidate_metrics), 3)
+                row = {
+                    "variant_index": variant_index,
+                    "variant_id": variant.get("variant_id"),
+                    "delta": delta,
+                    "word_count": word_count(replacement_text),
+                    "metrics": candidate_metrics,
+                    "apply_status": candidate_apply_status,
+                    "replacement_text": replacement_text,
+                    "text": candidate_text,
+                    "report": candidate_report,
+                    "goal": candidate_goal,
+                }
+                group_log["variants"].append({
+                    key: row[key]
+                    for key in ("variant_index", "variant_id", "delta", "word_count", "metrics", "apply_status")
+                })
+                if best is None or scanner_controlled_rank(candidate_metrics) < scanner_controlled_rank(best["metrics"]):
+                    best = row
+
+            if best and _number(best.get("delta")) >= config.min_accept_delta:
+                current_text = str(best["text"])
+                current_report = best["report"]
+                current_goal = best["goal"]
+                current_metrics = best["metrics"]
+                accepted_row = {
+                    "round": round_index,
+                    "group_id": group.group_id,
+                    "unit_id": group.unit_id,
+                    "variant_index": best["variant_index"],
+                    "delta": best["delta"],
+                    "replacement_text": best["replacement_text"],
+                    "metrics_after": current_metrics,
+                }
+                accepted.append(accepted_row)
+                accepted_unit_ids.add(str(group.unit_id or group.group_id))
+                apply_statuses.extend(best.get("apply_status") or [])
+                group_log["accepted_variant"] = best["variant_index"]
+                group_log["accepted_delta"] = best["delta"]
+                improved_this_round = True
+            elif best:
+                group_log["rejected_best_delta"] = best.get("delta")
+            else:
+                group_log["rejected_best_delta"] = None
+            round_log["groups"].append(group_log)
+
+        round_log["end_metrics"] = current_metrics
+        round_log["end_rank"] = scanner_controlled_rank(current_metrics)
+        round_trace.append(round_log)
+        if not improved_this_round:
+            break
+
+    accepted_replacements = [
+        {
+            "group_id": row["group_id"],
+            "unit_id": row["unit_id"],
+            "replacement_text": row["replacement_text"],
+            "round": row["round"],
+            "delta": row["delta"],
+        }
+        for row in accepted
+    ]
+    trace = target_execution_trace(
+        attempted=True,
+        target_groups=last_groups,
+        replacements=accepted_replacements,
+        apply_status=apply_statuses,
+        batches=[],
+        error="; ".join(errors) if errors else None,
+    )
+    trace = {
+        **trace,
+        "scanner_controlled": True,
+        "scanner_controlled_config": config.to_dict(),
+        "scanner_controlled_rounds": round_trace,
+        "scanner_controlled_accepted": accepted_replacements,
+        "scanner_controlled_initial_metrics": scanner_controlled_metrics(
+            report=original_report,
+            goal=original_goal,
+            footprint_risk=_footprint_risk(_ai_footprint_profile(original_report)),
+            ai_score=_badge_ai(original_report),
+            topk_score=_topk(original_report),
+        ),
+        "scanner_controlled_final_metrics": current_metrics,
+        "scanner_controlled_rank_delta": round(
+            scanner_controlled_rank(scanner_controlled_metrics(
+                report=original_report,
+                goal=original_goal,
+                footprint_risk=_footprint_risk(_ai_footprint_profile(original_report)),
+                ai_score=_badge_ai(original_report),
+                topk_score=_topk(original_report),
+            ))
+            - scanner_controlled_rank(current_metrics),
+            3,
+        ),
+    }
+    if not accepted:
+        trace = {**trace, "error": trace.get("error") or "no_scanner_controlled_positive_variant"}
+        return "", trace
+    return clean_v3_candidate_output(current_text), trace
 
 
 def _generate_assisted_footprint_candidate(
@@ -1182,7 +1435,19 @@ def run_rewrite_pipeline_v3(
         candidate_text, candidate_report = _candidate_from_replay(replay_candidate_records[0], original_report)
     elif full_rewrite_allowed:
         try:
-            if _strategy_plan_prefers_target_executor(strategy_plan, scan_contract):
+            if _scanner_controlled_executor_available(scan_contract):
+                generation_mode = "scanner_controlled_executor"
+                candidate_text, target_execution = _generate_scanner_controlled_candidate(
+                    original_text=original_text,
+                    original_report=original_report,
+                    scan_contract=scan_contract,
+                    content_mode=content_mode,
+                    family=family,
+                    api_key=api_key,
+                    model=model,
+                    base_url=base_url,
+                )
+            elif _strategy_plan_prefers_target_executor(strategy_plan, scan_contract):
                 generation_mode = "target_executor"
                 candidate_text, target_execution = _generate_target_executor_candidate(
                     original_text=original_text,
@@ -1233,6 +1498,13 @@ def run_rewrite_pipeline_v3(
                 target_execution = {
                     **target_execution,
                     "target_execution_attempted": True,
+                    "error": generation_error,
+                }
+            if generation_mode == "scanner_controlled_executor":
+                target_execution = {
+                    **target_execution,
+                    "target_execution_attempted": True,
+                    "scanner_controlled": True,
                     "error": generation_error,
                 }
 
@@ -1420,6 +1692,8 @@ def run_rewrite_pipeline_v3(
     loop_trace = []
     tried_actions: set[CandidateAction] = set()
     if generation_mode == "target_executor":
+        tried_actions.add(CandidateAction.TARGET_EXECUTOR)
+    if generation_mode == "scanner_controlled_executor":
         tried_actions.add(CandidateAction.TARGET_EXECUTOR)
     if replay_candidate_records and len(replay_candidate_records) > 1:
         for index, record in enumerate(replay_candidate_records[1:], start=2):
@@ -1669,6 +1943,9 @@ def run_rewrite_pipeline_v3(
             "first_strategy_step": _first_strategy_step_id(strategy_plan),
             "external_calibrated": True,
             "generation_mode": generation_mode,
+            "scanner_controlled_executor_available": _scanner_controlled_executor_available(scan_contract),
+            "scanner_controlled_executor_first": generation_mode == "scanner_controlled_executor",
+            "scanner_controlled_config": _scanner_controlled_config().to_dict(),
             "target_executor_available": _target_executor_available(scan_contract),
             "target_executor_first": generation_mode == "target_executor",
             "compression_policy": compression_policy.to_dict(),
