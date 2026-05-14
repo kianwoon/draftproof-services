@@ -25,6 +25,23 @@ def _protected_anchor_payload(contract: RewriteContract, *, limit: int = 80) -> 
     return anchors
 
 
+def _chunk_anchor_payload(contract: RewriteContract, source_units: list[dict[str, Any]], *, limit: int = 80) -> list[dict[str, Any]]:
+    source_text = "\n\n".join(str(unit.get("text") or unit.get("text_preview") or "") for unit in source_units)
+    anchors: list[dict[str, Any]] = []
+    for anchor in contract.anchors:
+        if anchor.text not in source_text:
+            continue
+        anchors.append({
+            "text": anchor.text,
+            "severity": anchor.severity.value,
+            "kind": anchor.kind,
+            "section_id": anchor.section_id,
+        })
+        if len(anchors) >= limit:
+            break
+    return anchors
+
+
 def build_cited_practice_voice_prompt(
     *,
     original_text: str,
@@ -73,10 +90,13 @@ def build_cited_practice_voice_chunk_prompt(
     style_examples: dict[str, list[dict[str, Any]]] | None = None,
 ) -> str:
     examples = style_examples or {"positive": [], "negative": []}
+    chunk_anchors = _chunk_anchor_payload(contract, source_units)
     payload = {
         "global_plan": global_plan,
+        "source_unit_count": len(source_units),
         "source_units": source_units,
-        "protected_anchors": _protected_anchor_payload(contract),
+        "protected_anchors": chunk_anchors,
+        "must_include_exact_anchors": [anchor["text"] for anchor in chunk_anchors],
         "target_word_band": {
             "min_words": compression_policy.min_words,
             "preferred_words": compression_policy.preferred_words,
@@ -87,6 +107,9 @@ def build_cited_practice_voice_chunk_prompt(
         "requirements": [
             "Rewrite only the provided source units.",
             "Keep headings and citations present in these units exactly.",
+            "Copy every must_include_exact_anchors string verbatim into this chunk output.",
+            "Aim near preferred_words so this chunk is not a compressed summary.",
+            "Return the same number of document units as source_unit_count.",
             "Keep the practice-grounded educator voice without adding unsupported events.",
             "Return only rewritten units joined with blank lines.",
         ],

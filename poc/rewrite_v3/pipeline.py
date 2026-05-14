@@ -48,7 +48,9 @@ def _scan_report(text: str) -> dict[str, Any]:
     if detect_report.postprocess_results:
         builder.add_postprocess_results(detect_report.postprocess_results)
     builder.set_meta(scan_time=0, original_text=text)
-    return report_to_dict(builder.build())
+    payload = report_to_dict(builder.build())
+    payload["input_text"] = text
+    return payload
 
 
 def _topk(report: dict | None) -> float | None:
@@ -106,6 +108,69 @@ def _family_for_route(content_mode: str, contract_anchor_count: int) -> str:
     if content_mode == "academic_cited_text" or contract_anchor_count >= 3:
         return "cited_practice_voice"
     return "document_rhythm"
+
+
+def _should_use_chunked_generation(
+    *,
+    source_words: int,
+    scan_contract: ScanContract,
+    v3_route: Any,
+    exact_anchor_count: int,
+) -> bool:
+    if source_words > _single_shot_word_limit():
+        return True
+    if exact_anchor_count > 0:
+        return True
+    if scan_contract.citation_anchor_count or scan_contract.quote_anchor_count or scan_contract.hard_anchor_count:
+        return True
+    protected_classes = {
+        RewriteRiskClass.CITED_ACADEMIC,
+        RewriteRiskClass.TECHNICAL_STRUCTURED,
+        RewriteRiskClass.REGULATED_POLICY,
+        RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY,
+    }
+    return v3_route.primary_class in protected_classes
+
+
+def _should_force_unit_chunks(*, scan_contract: ScanContract, v3_route: Any, exact_anchor_count: int) -> bool:
+    if exact_anchor_count > 0:
+        return True
+    if scan_contract.citation_anchor_count or scan_contract.quote_anchor_count or scan_contract.hard_anchor_count:
+        return True
+    protected_classes = {
+        RewriteRiskClass.CITED_ACADEMIC,
+        RewriteRiskClass.TECHNICAL_STRUCTURED,
+        RewriteRiskClass.REGULATED_POLICY,
+        RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY,
+    }
+    return v3_route.primary_class in protected_classes
+
+
+def _restore_exact_quote_anchors(text: str, contract: Any) -> str:
+    repaired = str(text or "")
+    quote_chars = {'"', "'", "“", "”", "‘", "’"}
+    for anchor in getattr(contract, "anchors", []) or []:
+        anchor_text = str(getattr(anchor, "text", "") or "")
+        if not anchor_text or anchor_text in repaired:
+            continue
+        kind = str(getattr(anchor, "kind", "") or "")
+        severity = getattr(getattr(anchor, "severity", None), "value", "")
+        if kind != "direct_quote" or severity != "hard_exact":
+            continue
+        inner = anchor_text.strip().strip("\"'“”‘’").strip()
+        if not inner:
+            continue
+        start = repaired.find(inner)
+        if start < 0:
+            continue
+        left = start - 1 if start > 0 and repaired[start - 1] in quote_chars else start
+        right = start + len(inner)
+        while right < len(repaired) and repaired[right] in ".,;:!?":
+            right += 1
+        if right < len(repaired) and repaired[right] in quote_chars:
+            right += 1
+        repaired = repaired[:left] + anchor_text + repaired[right:]
+    return repaired
 
 
 def _v3_content_mode(scan_contract: ScanContract, v3_route: Any) -> tuple[str, dict[str, Any]]:
@@ -314,13 +379,16 @@ def _generate_structure_repair_candidate(
     return clean_v3_candidate_output(gateway.chat(prompt, system="Return only the repaired text as plain text.").content)
 
 
-def _unit_chunks(original_text: str) -> list[list[dict[str, Any]]]:
+def _unit_chunks(original_text: str, *, force_unit_chunks: bool = False) -> list[list[dict[str, Any]]]:
     chunks: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     current_words = 0
     limit = _chunk_word_limit()
     for unit in document_units(original_text):
         payload = unit.to_dict()
+        if force_unit_chunks:
+            chunks.append([payload])
+            continue
         if current and current_words + unit.word_count > limit:
             chunks.append(current)
             current = []
@@ -332,6 +400,13 @@ def _unit_chunks(original_text: str) -> list[list[dict[str, Any]]]:
     return chunks
 
 
+def _normalize_chunk_unit_boundaries(text: str, *, expected_units: int) -> str:
+    units = document_units(text)
+    if expected_units == 1 and len(units) > 1:
+        return "\n".join(unit.text.strip() for unit in units if unit.text.strip()).strip()
+    return str(text or "").strip()
+
+
 def _generate_chunked_candidate(
     *,
     original_text: str,
@@ -341,6 +416,7 @@ def _generate_chunked_candidate(
     api_key: str | None,
     model: str | None,
     base_url: str | None,
+    force_unit_chunks: bool = False,
 ) -> str:
     examples = examples_for_family(family)
     global_plan = {
@@ -351,7 +427,7 @@ def _generate_chunked_candidate(
         "instruction": "Keep chunk outputs compatible when joined; do not add global conclusions unless present in the chunk.",
     }
     rewritten_chunks: list[str] = []
-    for chunk in _unit_chunks(original_text):
+    for chunk in _unit_chunks(original_text, force_unit_chunks=force_unit_chunks):
         chunk_words = sum(int(unit.get("word_count") or 0) for unit in chunk)
         chunk_policy = compression_policy_for_family(family, chunk_words)
         if family == "cited_practice_voice":
@@ -370,8 +446,10 @@ def _generate_chunked_candidate(
                 style_examples=examples,
             )
         gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(chunk_policy.max_words))
-        rewritten_chunks.append(clean_v3_candidate_output(gateway.chat(prompt, system="Return only rewritten plain text for this chunk.").content))
-    return compose_units(rewritten_chunks)
+        rewritten_chunk = clean_v3_candidate_output(gateway.chat(prompt, system="Return only rewritten plain text for this chunk.").content)
+        rewritten_chunk = _normalize_chunk_unit_boundaries(rewritten_chunk, expected_units=len(chunk))
+        rewritten_chunks.append(_restore_exact_quote_anchors(rewritten_chunk, contract))
+    return _restore_exact_quote_anchors(compose_units(rewritten_chunks), contract)
 
 
 def _candidate_from_replay(record: dict[str, Any], original_report: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -419,6 +497,11 @@ def run_rewrite_pipeline_v3(
     exact_anchor_count = sum(1 for anchor in contract.anchors if anchor.severity.value == "hard_exact")
     family = _family_for_route(content_mode, exact_anchor_count)
     compression_policy = compression_policy_for_family(family, word_count(original_text))
+    force_unit_chunks = _should_force_unit_chunks(
+        scan_contract=scan_contract,
+        v3_route=v3_route,
+        exact_anchor_count=exact_anchor_count,
+    )
     generation_mode = "replay"
     candidate_text = ""
     candidate_report: dict[str, Any] | None = None
@@ -428,9 +511,14 @@ def run_rewrite_pipeline_v3(
         candidate_text, candidate_report = _candidate_from_replay(replay_candidate_records[0], original_report)
     elif full_rewrite_allowed:
         try:
-            if word_count(original_text) <= _single_shot_word_limit():
-                generation_mode = "single_shot"
-                candidate_text = _generate_single_candidate(
+            if _should_use_chunked_generation(
+                source_words=word_count(original_text),
+                scan_contract=scan_contract,
+                v3_route=v3_route,
+                exact_anchor_count=exact_anchor_count,
+            ):
+                generation_mode = "chunked"
+                candidate_text = _generate_chunked_candidate(
                     original_text=original_text,
                     family=family,
                     contract=contract,
@@ -438,10 +526,11 @@ def run_rewrite_pipeline_v3(
                     api_key=api_key,
                     model=model,
                     base_url=base_url,
+                    force_unit_chunks=force_unit_chunks,
                 )
             else:
-                generation_mode = "chunked"
-                candidate_text = _generate_chunked_candidate(
+                generation_mode = "single_shot"
+                candidate_text = _generate_single_candidate(
                     original_text=original_text,
                     family=family,
                     contract=contract,
@@ -464,6 +553,7 @@ def run_rewrite_pipeline_v3(
         cost: int,
         error: str | None = None,
     ) -> dict[str, Any]:
+        text = _restore_exact_quote_anchors(text, contract)
         validation_result = validate_v3_candidate(
             original_text=original_text,
             candidate_text=text,
@@ -714,6 +804,7 @@ def run_rewrite_pipeline_v3(
             "compression_policy": compression_policy.to_dict(),
             "single_shot_word_limit": _single_shot_word_limit(),
             "chunk_word_limit": _chunk_word_limit(),
+            "force_unit_chunks": force_unit_chunks,
         }],
         "candidate_trace": candidate_trace,
         "candidate_loop_trace": loop_trace,

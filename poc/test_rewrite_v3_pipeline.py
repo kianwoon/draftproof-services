@@ -136,6 +136,22 @@ assert_test(
     not validate_v3_candidate(original_text=cited_source, candidate_text=cited_bad_candidate, contract=cited_contract).passed,
     "V3 anchor validator rejects lost citation anchor",
 )
+quote_source = 'Brennan calls vocational education a “practice architecture”.\n\nThe teacher then applies the idea.'
+quote_contract = build_rewrite_contract(quote_source, content_mode="academic_cited_text")
+quote_candidate = 'Brennan calls vocational education a "practice architecture."\n\nThe teacher then applies the idea.'
+quote_repaired = v3_pipeline._restore_exact_quote_anchors(quote_candidate, quote_contract)
+assert_test(
+    "“practice architecture”" in quote_repaired,
+    "V3 restores exact quote anchors when only quote punctuation drifted",
+)
+assert_test(
+    len(v3_pipeline._unit_chunks(cited_source, force_unit_chunks=True)) == len(document_units(cited_source)),
+    "V3 can force protected documents into unit-level chunks",
+)
+assert_test(
+    len(document_units(v3_pipeline._normalize_chunk_unit_boundaries("One part.\n\nSecond part.", expected_units=1))) == 1,
+    "V3 collapses extra blank-line boundaries inside single-unit chunks",
+)
 
 long_text = "\n\n".join(
     f"Section {index}\n\nThis section has a short source unit that should be represented compactly in prompts."
