@@ -15,7 +15,6 @@ from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
 from report.report import ReportBuilder, report_to_dict
 from rewrite.guards import check_semantic_drift
-from rewrite_v2.content_router import content_route_from_scan, guarded_content_route
 from rewrite_v2.contracts import build_rewrite_contract
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal
 from rewrite_v2.pipeline import _badge_ai, _badge_wq, _extract_original_text, _sentence_comparison
@@ -36,7 +35,7 @@ from .layers.structure_repair import build_structure_repair_prompt
 from .output_cleaning import clean_v3_candidate_output
 from .portfolio import select_portfolio_candidate
 from .router import route_from_scan_contract
-from .scanner_contract import build_scan_contract
+from .scanner_contract import RewriteRiskClass, ScanContract, build_scan_contract
 from .style_library import examples_for_family
 from .strategy_plan import build_strategy_plan
 
@@ -106,6 +105,40 @@ def _family_for_route(content_mode: str, contract_anchor_count: int) -> str:
     if content_mode == "academic_cited_text" or contract_anchor_count >= 3:
         return "cited_practice_voice"
     return "document_rhythm"
+
+
+def _v3_content_mode(scan_contract: ScanContract, v3_route: Any) -> tuple[str, dict[str, Any]]:
+    scan_mode = str(scan_contract.content_mode or "").strip()
+    confidence = float(scan_contract.content_mode_confidence or 0.0)
+    if scan_mode and scan_mode != "unknown" and confidence > 0:
+        return scan_mode, {
+            "content_mode": scan_mode,
+            "confidence": round(max(0.0, min(1.0, confidence)), 3),
+            "reasons": ["scan_contract_content_mode", *list(v3_route.reasons)],
+            "mode_scores": list(scan_contract.mode_scores),
+            "router_source": "rewrite_v3_scan_contract",
+        }
+
+    fallback_by_class = {
+        RewriteRiskClass.BROAD_PROSE: "broad_explanatory_essay",
+        RewriteRiskClass.CITED_ACADEMIC: "academic_cited_text",
+        RewriteRiskClass.TECHNICAL_STRUCTURED: "technical_content",
+        RewriteRiskClass.REGULATED_POLICY: "regulated_policy_content",
+        RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY: "quote_heavy",
+        RewriteRiskClass.PERSONAL_REFLECTIVE: "personal_reflection",
+        RewriteRiskClass.CREATIVE_MARKETING: "creative_marketing",
+        RewriteRiskClass.SHORT_OR_SPARSE: "short_text",
+    }
+    content_mode = fallback_by_class.get(v3_route.primary_class, "generic_expository")
+    return content_mode, {
+        "content_mode": content_mode,
+        "confidence": v3_route.confidence,
+        "reasons": ["derived_from_v3_route", *list(v3_route.reasons)],
+        "mode_scores": [
+            {"content_mode": content_mode, "score": v3_route.confidence, "source": "rewrite_v3_route"}
+        ],
+        "router_source": "rewrite_v3_route_fallback",
+    }
 
 
 def _gateway(api_key: str | None, model: str | None, base_url: str | None, *, max_tokens: int) -> LLMGateway:
@@ -358,10 +391,10 @@ def run_rewrite_pipeline_v3(
     scan_contract = build_scan_contract(original_report, original_text)
     v3_route = route_from_scan_contract(scan_contract)
     strategy_plan = build_strategy_plan(v3_route, scan_contract)
-    route = content_route_from_scan(original_report) or guarded_content_route("v3_scan_route_missing")
-    contract = build_rewrite_contract(original_text, content_mode=route.content_mode)
+    content_mode, content_router_trace = _v3_content_mode(scan_contract, v3_route)
+    contract = build_rewrite_contract(original_text, content_mode=content_mode)
     exact_anchor_count = sum(1 for anchor in contract.anchors if anchor.severity.value == "hard_exact")
-    family = _family_for_route(route.content_mode, exact_anchor_count)
+    family = _family_for_route(content_mode, exact_anchor_count)
     compression_policy = compression_policy_for_family(family, word_count(original_text))
     generation_mode = "replay"
     candidate_text = ""
@@ -634,7 +667,7 @@ def run_rewrite_pipeline_v3(
         "reference_ai": reference_ai,
         "required_ai_drop": required_ai_drop,
         "target_ai_score": target_ai_score,
-        "content_router_trace": route.to_dict(),
+        "content_router_trace": content_router_trace,
         "scan_contract": scan_contract.to_dict(),
         "v3_route": v3_route.to_dict(),
         "v3_strategy_plan": strategy_plan.to_dict(),

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import tempfile
 
 from rewrite_v2.contracts import build_rewrite_contract
+import rewrite_v3.pipeline as v3_pipeline
 from rewrite_v3.anchor_validation import validate_v3_candidate
 from rewrite_v3.candidate_loop import CandidateAction, CandidateIssue, decide_next_action, issues_from_trace
 from rewrite_v3.compression_policy import compression_policy_for_family, compression_status
@@ -75,6 +77,10 @@ units = document_units(broad_source)
 assert_test(len(units) == 2 and not units[0].is_heading, "V3 splits blank-line document units structurally")
 inventory = compact_document_inventory(broad_source, preview_chars=40)
 assert_test(inventory[0]["text_preview"].endswith("..."), "V3 compact inventory bounds source previews")
+assert_test(
+    "rewrite_v2.content_router" not in inspect.getsource(v3_pipeline),
+    "V3 pipeline does not depend on untracked V2 content router",
+)
 
 rhythm_policy = compression_policy_for_family("document_rhythm", word_count(broad_source))
 rhythm_status = compression_status(broad_source, broad_candidate, rhythm_policy)
