@@ -48,12 +48,14 @@ def validate_v3_candidate(
     candidate_text: str,
     contract: RewriteContract,
     require_unit_count: bool = True,
+    expected_unit_count: int | None = None,
 ) -> ValidationResult:
     failures: list[str] = []
     missing: list[dict[str, Any]] = []
     source_units = document_units(original_text)
     candidate_units = document_units(candidate_text)
-    if require_unit_count and len(candidate_units) != len(source_units):
+    expected_units = int(expected_unit_count) if isinstance(expected_unit_count, int) and expected_unit_count > 0 else len(source_units)
+    if require_unit_count and len(candidate_units) != expected_units:
         failures.append("document_unit_count_changed")
     for anchor in contract.anchors:
         if anchor.severity not in {AnchorSeverity.HARD_EXACT, AnchorSeverity.HARD_NORMALIZED, AnchorSeverity.TITLE_CONTEXT}:
@@ -66,6 +68,6 @@ def validate_v3_candidate(
         passed=not failures,
         failures=tuple(failures),
         missing_anchors=tuple(missing),
-        source_units=len(source_units),
+        source_units=expected_units,
         candidate_units=len(candidate_units),
     )

@@ -8,12 +8,19 @@ import os
 import tempfile
 
 from rewrite_v2.contracts import build_rewrite_contract
+from detect.authorship_windows import build_authorship_window_profile
 import rewrite_v3.pipeline as v3_pipeline
 from rewrite_v3.anchor_validation import validate_v3_candidate
+from rewrite_v3.authorship_window_gate import evaluate_authorship_window_gate, select_authorship_window_targets
 from rewrite_v3.candidate_loop import CandidateAction, CandidateIssue, decide_next_action, issues_from_trace
 from rewrite_v3.compression_policy import compression_policy_for_family, compression_status
 from rewrite_v3.document_units import compact_document_inventory, document_units, word_count
 from rewrite_v3.external_proxy import evaluate_external_proxy
+from rewrite_v3.layers.authorship_window_repair import (
+    apply_authorship_window_replacements,
+    build_authorship_window_repair_prompt,
+    extract_authorship_window_replacements,
+)
 from rewrite_v3.layers.boundary_adapter import build_boundary_adapter_prompt
 from rewrite_v3.layers.contract_repair import build_contract_repair_prompt
 from rewrite_v3.layers.contrast_boundary import build_contrast_boundary_prompt, extract_contrast_boundary_output
@@ -305,6 +312,108 @@ bad_broad_proxy = evaluate_external_proxy(
 )
 assert_test(not bad_broad_proxy.accepted, "V3 broad proxy rejects externally failed broad candidate pattern")
 assert_test("insufficient_topk_drop" in bad_broad_proxy.reasons, "V3 broad proxy records weak top-k movement")
+
+segment_profile = build_authorship_window_profile(
+    source_text=(
+        "A short human paragraph with concrete observation.\n\n"
+        "A riskier paragraph follows a predictable route and keeps a uniform explanation."
+    ),
+    segments=[
+        {
+            "sentence_id": "s001",
+            "paragraph_id": "p001",
+            "text": "A short human paragraph with concrete observation.",
+            "signals": [{"key": "human_anchor_score", "score": 80}],
+            "predictability": {"score": 0.1, "top10_ratio": 0.12, "top50_ratio": 0.2},
+        },
+        {
+            "sentence_id": "s002",
+            "paragraph_id": "p002",
+            "text": "A riskier paragraph follows a predictable route and keeps a uniform explanation.",
+            "signals": [{"key": "ai_likelihood", "score": 92}, {"key": "topk_calibrated_risk", "score": 86}],
+            "predictability": {"score": 0.76, "top10_ratio": 0.82, "top50_ratio": 0.91},
+        },
+    ],
+    paragraphs=[
+        {
+            "paragraph_id": "p001",
+            "sentence_ids": ["s001"],
+            "start_char": 0,
+            "end_char": 48,
+            "top_signals": [{"key": "human_anchor_score", "score": 80}],
+        },
+        {
+            "paragraph_id": "p002",
+            "sentence_ids": ["s002"],
+            "start_char": 50,
+            "end_char": 122,
+            "top_signals": [{"key": "ai_likelihood", "score": 92}, {"key": "topk_calibrated_risk", "score": 86}],
+        },
+    ],
+)
+assert_test(segment_profile["num_ai_segments"] == 1, "Scanner authorship windows classify high-risk window separately")
+segment_gate = evaluate_authorship_window_gate(segment_profile)
+assert_test(not segment_gate.passed, "V3 authorship window gate fails high-risk segment profile")
+segment_targets = select_authorship_window_targets(segment_profile, max_targets=1)
+assert_test(
+    len(segment_targets) == 1 and segment_targets[0]["label"] == "ai_generated",
+    "V3 authorship window gate selects worst failed window",
+)
+window_prompt = build_authorship_window_repair_prompt(
+    candidate_text=(
+        "A short human paragraph with concrete observation.\n\n"
+        "A riskier paragraph follows a predictable route and keeps a uniform explanation."
+    ),
+    target_windows=segment_targets,
+    strategy_family="document_rhythm",
+    contract=build_rewrite_contract("A short human paragraph.\n\nA riskier paragraph.", content_mode="broad_explanatory_essay"),
+)
+assert_test("selected_windows_only" in window_prompt, "V3 authorship repair prompt is window-scoped")
+window_replacements = extract_authorship_window_replacements(
+    '{"replacements":[{"window_id":"w002","replacement_text":"The second paragraph needs a more specific local reason, so it names the actual tension instead of smoothing it away."}]}'
+)
+window_repaired = apply_authorship_window_replacements(
+    candidate_text=(
+        "A short human paragraph with concrete observation.\n\n"
+        "A riskier paragraph follows a predictable route and keeps a uniform explanation."
+    ),
+    target_windows=segment_targets,
+    replacements=window_replacements,
+)
+assert_test("actual tension" in window_repaired, "V3 authorship repair applies replacement to failed window")
+segment_proxy = evaluate_external_proxy(
+    family="document_rhythm",
+    reference_ai=70.0,
+    candidate_ai=45.0,
+    reference_wq=65.0,
+    candidate_wq=63.0,
+    reference_topk=88.0,
+    candidate_topk=70.0,
+    candidate_authorship_profile=segment_profile,
+    compression={"status": "in_band"},
+    validation_passed=True,
+    compression_accepted=True,
+    semantic_safe=True,
+)
+assert_test(not segment_proxy.accepted, "V3 external proxy rejects remaining segment-level AI footprint")
+assert_test("segment_ai_fraction_high" in segment_proxy.reasons, "V3 proxy records segment AI fraction blocker")
+segment_loop = decide_next_action(
+    [{
+        "trace": {
+            "validation": {"passed": True, "failures": []},
+            "compression": {"status": "in_band"},
+            "compression_accepted": True,
+            "semantic_safe": True,
+            "external_proxy": {"reasons": ["segment_ai_fraction_high", "segment_human_fraction_low"]},
+        }
+    }],
+    has_positive_boundaries=False,
+    tried_actions=set(),
+)
+assert_test(
+    segment_loop.action == CandidateAction.REPAIR_AUTHORSHIP_WINDOWS,
+    "V3 loop routes segment footprint failures to authorship window repair",
+)
 
 structure_trace = {
     "validation": {"passed": False, "failures": ["document_unit_count_changed"]},

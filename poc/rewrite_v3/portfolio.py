@@ -74,6 +74,10 @@ def score_candidate(item: dict[str, Any], *, family: str, index: int) -> Portfol
         reasons.append("semantic_unsafe")
     score += min(max(features.topk_delta, -20.0), 35.0) * 2.0
     score += min(max(features.ai_delta, -20.0), 50.0) * 0.8
+    score -= features.fraction_ai * 80.0
+    score -= features.fraction_ai_assisted * 35.0
+    score += features.fraction_human * 30.0
+    score -= min(features.max_ai_window_words, 300.0) * 0.12
     score -= max(features.wq_delta, 0.0) * 1.4
     score -= features.proxy_reason_count * 10.0
     calibration, calibration_reasons = _calibration_adjustment(family, features)

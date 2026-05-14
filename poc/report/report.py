@@ -18,6 +18,7 @@ from typing import List, Dict, Any, Optional
 from enum import Enum
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
+from detect.authorship_windows import build_authorship_window_profile
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
@@ -3971,6 +3972,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         integrity_layers = _integrity_layers(badge, transformation, contribution)
         segments = _document_segments()
         paragraph_rows = _paragraph_map(segments)
+        authorship_window_profile = build_authorship_window_profile(
+            source_text=report.original_text or "",
+            segments=segments,
+            paragraphs=paragraph_rows,
+        )
         doc_findings = [_segment_signal(f) for f in document_level_findings]
         doc_findings.sort(key=lambda entry: entry.get("score", 0), reverse=True)
         preservation_inventory = _preservation_inventory(report.original_text or "")
@@ -4022,6 +4028,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "paragraph_count": len({s.get("paragraph_id") for s in segments if s.get("paragraph_id")}),
                 "segments": segments,
                 "paragraphs": paragraph_rows,
+                "authorship_window_profile": authorship_window_profile,
                 "preservation_inventory": preservation_inventory,
                 "anchor_metrics": rewrite_routing_signals.get("anchor_metrics") or {},
             },
@@ -4037,6 +4044,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "human_contribution_contract": human_contract,
             "generation_handoff": generation_handoff,
             "rewrite_routing_signals": rewrite_routing_signals,
+            "authorship_window_profile": authorship_window_profile,
             "calibration": {
                 "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
                 "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
@@ -4115,6 +4123,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "industry_baseline": industry_baseline,
                 "generation_handoff": generation_handoff,
                 "rewrite_routing_signals": rewrite_routing_signals,
+                "authorship_window_profile": authorship_window_profile,
                 "blocker_radar": blocker_radar,
                 "target_segment_ids": [
                     segment["segment_id"]
@@ -4426,6 +4435,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     result["industry_baseline"] = industry_baseline
     result["generation_handoff"] = scan_intelligence.get("generation_handoff") or {}
     result["rewrite_routing_signals"] = scan_intelligence.get("rewrite_routing_signals") or {}
+    result["authorship_window_profile"] = scan_intelligence.get("authorship_window_profile") or {}
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 

@@ -91,10 +91,28 @@ def build_cited_practice_voice_chunk_prompt(
 ) -> str:
     examples = style_examples or {"positive": [], "negative": []}
     chunk_anchors = _chunk_anchor_payload(contract, source_units)
+    unit_word_guides = []
+    for unit in source_units:
+        source_words = int(unit.get("word_count") or word_count(str(unit.get("text") or unit.get("text_preview") or "")))
+        unit_policy = CompressionPolicy(
+            family=compression_policy.family,
+            min_ratio=compression_policy.min_ratio,
+            preferred_ratio=compression_policy.preferred_ratio,
+            max_ratio=compression_policy.max_ratio,
+            source_words=source_words,
+        )
+        unit_word_guides.append({
+            "unit_id": unit.get("unit_id"),
+            "source_words": source_words,
+            "preferred_words": unit_policy.preferred_words,
+            "min_words": unit_policy.min_words,
+            "max_words": unit_policy.max_words,
+        })
     payload = {
         "global_plan": global_plan,
         "source_unit_count": len(source_units),
         "source_units": source_units,
+        "unit_word_guides": unit_word_guides,
         "protected_anchors": chunk_anchors,
         "must_include_exact_anchors": [anchor["text"] for anchor in chunk_anchors],
         "target_word_band": {
@@ -108,6 +126,8 @@ def build_cited_practice_voice_chunk_prompt(
             "Rewrite only the provided source units.",
             "Keep headings and citations present in these units exactly.",
             "Copy every must_include_exact_anchors string verbatim into this chunk output.",
+            "Use unit_word_guides as the coverage target for each returned unit.",
+            "Do not compress a source unit into a summary; preserve its distinct evidence, constraints, examples, and reasoning path.",
             "Aim near preferred_words so this chunk is not a compressed summary.",
             "Return the same number of document units as source_unit_count.",
             "Keep the practice-grounded educator voice without adding unsupported events.",

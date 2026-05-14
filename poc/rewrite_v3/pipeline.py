@@ -21,6 +21,7 @@ from rewrite_v2.pipeline import _badge_ai, _badge_wq, _extract_original_text, _s
 from rewrite_v2.selection import CandidateLane, decide_candidate
 
 from .anchor_validation import validate_v3_candidate
+from .authorship_window_gate import select_authorship_window_targets
 from .candidate_loop import CandidateAction, decide_next_action, select_candidate_index
 from .compression_policy import compression_policy_for_family, compression_status
 from .document_units import compose_units, document_units, word_count
@@ -33,6 +34,11 @@ from .layers.document_rhythm import build_document_rhythm_chunk_prompt, build_do
 from .layers.plain_reasoning_broad_prose import build_plain_reasoning_broad_prose_prompt
 from .layers.recovery_revision import build_recovery_revision_prompt
 from .layers.structure_repair import build_structure_repair_prompt
+from .layers.authorship_window_repair import (
+    apply_authorship_window_replacements,
+    build_authorship_window_repair_prompt,
+    extract_authorship_window_replacements,
+)
 from .output_cleaning import clean_v3_candidate_output
 from .portfolio import select_portfolio_candidate
 from .router import route_from_scan_contract
@@ -56,6 +62,60 @@ def _scan_report(text: str) -> dict[str, Any]:
 def _topk(report: dict | None) -> float | None:
     value = (((report or {}).get("ai_risk_badge") or {}).get("ai_components") or {}).get("topk_pattern_raw")
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _authorship_window_profile(report: dict | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    direct = report.get("authorship_window_profile")
+    if isinstance(direct, dict) and direct:
+        return direct
+    scan_intel = report.get("scan_intelligence") if isinstance(report.get("scan_intelligence"), dict) else {}
+    profile = scan_intel.get("authorship_window_profile")
+    if isinstance(profile, dict) and profile:
+        return profile
+    document = scan_intel.get("document") if isinstance(scan_intel.get("document"), dict) else {}
+    profile = document.get("authorship_window_profile")
+    return profile if isinstance(profile, dict) else {}
+
+
+def _logical_unit_count(original_text: str, report: dict | None) -> int:
+    return len(_logical_source_units(original_text, report))
+
+
+def _logical_source_units(original_text: str, report: dict | None) -> list[dict[str, Any]]:
+    structural_units = document_units(original_text)
+    structural_payload = [unit.to_dict() for unit in structural_units]
+    profile = _authorship_window_profile(report)
+    windows = profile.get("windows") if isinstance(profile.get("windows"), list) else []
+    if len(structural_units) != 1 or len(windows) <= 1:
+        return structural_payload
+
+    text = str(original_text or "")
+    sorted_windows = sorted(
+        [window for window in windows if isinstance(window, dict)],
+        key=lambda window: int(window.get("start_index") or 0),
+    )
+    units: list[dict[str, Any]] = []
+    previous_end = 0
+    for index, window in enumerate(sorted_windows, start=1):
+        raw_end = int(window.get("end_index") or previous_end)
+        end = max(previous_end, min(len(text), raw_end))
+        if index == len(sorted_windows):
+            end = len(text)
+        unit_text = text[previous_end:end].strip()
+        previous_end = end
+        if not unit_text:
+            continue
+        units.append({
+            "unit_id": f"u{len(units) + 1}",
+            "text": unit_text,
+            "word_count": word_count(unit_text),
+            "is_heading": False,
+            "source_window_id": window.get("window_id"),
+            "source_paragraph_id": window.get("paragraph_id"),
+        })
+    return units or structural_payload
 
 
 def _single_shot_word_limit() -> int:
@@ -369,11 +429,55 @@ def _generate_plain_reasoning_candidate(
     return clean_v3_candidate_output(gateway.chat(prompt, system="Return only the rewritten document as plain text.").content)
 
 
+def _max_authorship_window_repair_targets() -> int:
+    try:
+        return max(1, min(4, int(os.environ.get("DRAFTPROOF_REWRITE_V3_WINDOW_REPAIR_TARGETS", "2") or 2)))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _generate_authorship_window_repair_candidate(
+    *,
+    candidate_text: str,
+    candidate_trace: dict[str, Any],
+    family: str,
+    contract: Any,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+) -> str:
+    profile = candidate_trace.get("authorship_window_profile") if isinstance(candidate_trace.get("authorship_window_profile"), dict) else {}
+    target_windows = select_authorship_window_targets(
+        profile,
+        max_targets=_max_authorship_window_repair_targets(),
+    )
+    if not target_windows:
+        return str(candidate_text or "")
+    prompt = build_authorship_window_repair_prompt(
+        candidate_text=candidate_text,
+        target_windows=target_windows,
+        strategy_family=family,
+        contract=contract,
+    )
+    target_words = sum(int(window.get("word_count") or 0) for window in target_windows)
+    gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(max(120, target_words + 120)))
+    raw = gateway.chat(prompt, system="Return only valid JSON with a replacements array.").content
+    replacements = extract_authorship_window_replacements(raw)
+    if not replacements:
+        return str(candidate_text or "")
+    return clean_v3_candidate_output(apply_authorship_window_replacements(
+        candidate_text=candidate_text,
+        target_windows=target_windows,
+        replacements=replacements,
+    ))
+
+
 def _generate_structure_repair_candidate(
     *,
     original_text: str,
     candidate_text: str,
     validation: dict[str, Any],
+    expected_unit_count: int | None,
     api_key: str | None,
     model: str | None,
     base_url: str | None,
@@ -382,27 +486,32 @@ def _generate_structure_repair_candidate(
         source_text=original_text,
         candidate_text=candidate_text,
         validation=validation,
+        expected_unit_count=expected_unit_count,
     )
     gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(word_count(candidate_text)))
     return clean_v3_candidate_output(gateway.chat(prompt, system="Return only the repaired text as plain text.").content)
 
 
-def _unit_chunks(original_text: str, *, force_unit_chunks: bool = False) -> list[list[dict[str, Any]]]:
+def _unit_chunks(source_units: list[dict[str, Any]] | str, *, force_unit_chunks: bool = False) -> list[list[dict[str, Any]]]:
+    if isinstance(source_units, str):
+        units_payload = [unit.to_dict() for unit in document_units(source_units)]
+    else:
+        units_payload = source_units
     chunks: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     current_words = 0
     limit = _chunk_word_limit()
-    for unit in document_units(original_text):
-        payload = unit.to_dict()
+    for payload in units_payload:
+        unit_words = int(payload.get("word_count") or word_count(str(payload.get("text") or "")))
         if force_unit_chunks:
             chunks.append([payload])
             continue
-        if current and current_words + unit.word_count > limit:
+        if current and current_words + unit_words > limit:
             chunks.append(current)
             current = []
             current_words = 0
         current.append(payload)
-        current_words += unit.word_count
+        current_words += unit_words
     if current:
         chunks.append(current)
     return chunks
@@ -418,6 +527,7 @@ def _normalize_chunk_unit_boundaries(text: str, *, expected_units: int) -> str:
 def _generate_chunked_candidate(
     *,
     original_text: str,
+    source_units: list[dict[str, Any]],
     family: str,
     contract: Any,
     compression_policy: Any,
@@ -430,12 +540,12 @@ def _generate_chunked_candidate(
     global_plan = {
         "family": family,
         "source_words": word_count(original_text),
-        "source_units": len(document_units(original_text)),
+        "source_units": len(source_units),
         "compression_policy": compression_policy.to_dict(),
         "instruction": "Keep chunk outputs compatible when joined; do not add global conclusions unless present in the chunk.",
     }
     rewritten_chunks: list[str] = []
-    for chunk in _unit_chunks(original_text, force_unit_chunks=force_unit_chunks):
+    for chunk in _unit_chunks(source_units, force_unit_chunks=force_unit_chunks):
         chunk_words = sum(int(unit.get("word_count") or 0) for unit in chunk)
         chunk_policy = compression_policy_for_family(family, chunk_words)
         if family == "cited_practice_voice":
@@ -505,6 +615,7 @@ def run_rewrite_pipeline_v3(
     exact_anchor_count = sum(1 for anchor in contract.anchors if anchor.severity.value == "hard_exact")
     family = _family_for_route(content_mode, exact_anchor_count)
     compression_policy = compression_policy_for_family(family, word_count(original_text))
+    source_generation_units = _logical_source_units(original_text, original_report)
     force_unit_chunks = _should_force_unit_chunks(
         scan_contract=scan_contract,
         v3_route=v3_route,
@@ -528,6 +639,7 @@ def run_rewrite_pipeline_v3(
                 generation_mode = "chunked"
                 candidate_text = _generate_chunked_candidate(
                     original_text=original_text,
+                    source_units=source_generation_units,
                     family=family,
                     contract=contract,
                     compression_policy=compression_policy,
@@ -552,6 +664,7 @@ def run_rewrite_pipeline_v3(
 
     reference_ai = _badge_ai(original_report)
     target_ai_score = float(reference_ai) - float(required_ai_drop) if isinstance(reference_ai, (int, float)) else None
+    expected_unit_count = len(source_generation_units)
 
     def assess_candidate(
         *,
@@ -567,6 +680,7 @@ def run_rewrite_pipeline_v3(
             candidate_text=text,
             contract=contract,
             require_unit_count=True,
+            expected_unit_count=expected_unit_count,
         )
         compression_result = compression_status(original_text, text, compression_policy)
         compression_ok = _compression_accepted(compression_result)
@@ -603,6 +717,7 @@ def run_rewrite_pipeline_v3(
             candidate_wq=_badge_wq(scanned_report),
             reference_topk=_topk(original_report),
             candidate_topk=_topk(scanned_report),
+            candidate_authorship_profile=_authorship_window_profile(scanned_report),
             compression=compression_result,
             validation_passed=bool(validation_result.passed),
             compression_accepted=bool(compression_ok),
@@ -620,6 +735,7 @@ def run_rewrite_pipeline_v3(
                 "candidate_ai": _badge_ai(scanned_report),
                 "candidate_wq": _badge_wq(scanned_report),
                 "candidate_topk": _topk(scanned_report),
+                "authorship_window_profile": _authorship_window_profile(scanned_report),
                 "validation": validation_result.to_dict(),
                 "compression": compression_result,
                 "compression_accepted": compression_ok,
@@ -674,6 +790,7 @@ def run_rewrite_pipeline_v3(
                         original_text=original_text,
                         candidate_text=str(source_item.get("text") or ""),
                         validation=source_item["trace"]["validation"],
+                        expected_unit_count=expected_unit_count,
                         api_key=api_key,
                         model=model,
                         base_url=base_url,
@@ -729,6 +846,18 @@ def run_rewrite_pipeline_v3(
                         base_url=base_url,
                     )
                     mode = "plain_reasoning_broad_prose"
+                elif loop_decision.action == CandidateAction.REPAIR_AUTHORSHIP_WINDOWS:
+                    progress(85, "Repairing V3 authorship windows")
+                    new_text = _generate_authorship_window_repair_candidate(
+                        candidate_text=str(source_item.get("text") or candidate_text),
+                        candidate_trace=source_item["trace"],
+                        family=family,
+                        contract=contract,
+                        api_key=api_key,
+                        model=model,
+                        base_url=base_url,
+                    )
+                    mode = "authorship_window_repair"
                 else:
                     progress(80, "Running V3 targeted repair")
                     new_text = _generate_recovery_candidate(

@@ -22,6 +22,10 @@ class CandidateFeatures:
     compression_ratio: float
     source_units: int
     candidate_units: int
+    fraction_ai: float
+    fraction_ai_assisted: float
+    fraction_human: float
+    max_ai_window_words: float
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -33,6 +37,7 @@ def features_from_trace(trace: dict[str, Any]) -> CandidateFeatures:
     proxy = trace.get("external_proxy") if isinstance(trace.get("external_proxy"), dict) else {}
     metrics = proxy.get("metrics") if isinstance(proxy.get("metrics"), dict) else {}
     reasons = proxy.get("reasons") if isinstance(proxy.get("reasons"), list) else []
+    segment_gate = metrics.get("segment_authorship_gate") if isinstance(metrics.get("segment_authorship_gate"), dict) else {}
     return CandidateFeatures(
         validation_passed=bool(validation.get("passed")),
         compression_accepted=bool(trace.get("compression_accepted")),
@@ -44,4 +49,8 @@ def features_from_trace(trace: dict[str, Any]) -> CandidateFeatures:
         compression_ratio=_float(compression.get("ratio"), 1.0),
         source_units=int(validation.get("source_units") or 0),
         candidate_units=int(validation.get("candidate_units") or 0),
+        fraction_ai=_float(segment_gate.get("fraction_ai")),
+        fraction_ai_assisted=_float(segment_gate.get("fraction_ai_assisted")),
+        fraction_human=_float(segment_gate.get("fraction_human")),
+        max_ai_window_words=_float(segment_gate.get("max_ai_window_words")),
     )

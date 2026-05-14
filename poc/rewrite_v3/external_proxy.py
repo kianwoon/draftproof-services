@@ -6,6 +6,8 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .authorship_window_gate import evaluate_authorship_window_gate
+
 
 @dataclass(frozen=True)
 class ExternalProxyDecision:
@@ -40,6 +42,7 @@ def evaluate_external_proxy(
     candidate_wq: float | None,
     reference_topk: float | None,
     candidate_topk: float | None,
+    candidate_authorship_profile: dict[str, Any] | None = None,
     compression: dict[str, Any],
     validation_passed: bool,
     compression_accepted: bool,
@@ -88,6 +91,12 @@ def evaluate_external_proxy(
         if status == "above_ceiling":
             reasons.append("broad_candidate_too_long")
 
+    segment_gate: dict[str, Any] = {}
+    if isinstance(candidate_authorship_profile, dict) and candidate_authorship_profile:
+        gate = evaluate_authorship_window_gate(candidate_authorship_profile)
+        reasons.extend(gate.reasons)
+        segment_gate = gate.metrics
+
     metrics = {
         "reference_ai": ref_ai,
         "candidate_ai": cand_ai,
@@ -99,6 +108,7 @@ def evaluate_external_proxy(
         "candidate_topk": cand_topk,
         "topk_delta": topk_delta,
         "compression_status": status,
+        "segment_authorship_gate": segment_gate,
     }
     return ExternalProxyDecision(
         accepted=not reasons,

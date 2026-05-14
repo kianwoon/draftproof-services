@@ -18,6 +18,7 @@ class CandidateIssue(str, Enum):
     INTERNAL_AI_BACKFIRE = "internal_ai_backfire"
     INSUFFICIENT_TOPK_DROP = "insufficient_topk_drop"
     WRITING_QUALITY_COLLAPSE = "writing_quality_collapse"
+    SEGMENT_AI_FOOTPRINT = "segment_ai_footprint"
     PROXY_NOT_ACCEPTED = "proxy_not_accepted"
 
 
@@ -28,6 +29,7 @@ class CandidateAction(str, Enum):
     REPAIR_STRUCTURE = "repair_structure"
     CONTRAST_BOUNDARY = "contrast_boundary"
     PLAIN_REASONING = "plain_reasoning"
+    REPAIR_AUTHORSHIP_WINDOWS = "repair_authorship_windows"
     REPAIR_TARGETED = "repair_targeted"
     ADAPT_BOUNDARY = "adapt_boundary"
     RETURN_BEST_FOR_REVIEW = "return_best_for_review"
@@ -87,6 +89,15 @@ def issues_from_trace(trace: dict[str, Any]) -> tuple[CandidateIssue, ...]:
         issues.append(CandidateIssue.INSUFFICIENT_TOPK_DROP)
     if "writing_quality_collapse" in proxy_reasons:
         issues.append(CandidateIssue.WRITING_QUALITY_COLLAPSE)
+    segment_reasons = {
+        "segment_ai_fraction_high",
+        "segment_ai_or_assisted_fraction_high",
+        "segment_human_fraction_low",
+        "segment_ai_window_too_large",
+        "high_confidence_ai_window_remaining",
+    }
+    if segment_reasons.intersection(proxy_reasons):
+        issues.append(CandidateIssue.SEGMENT_AI_FOOTPRINT)
 
     unique: list[CandidateIssue] = []
     for issue in issues:
@@ -138,21 +149,40 @@ def decide_next_action(
                 reason="candidate_texture_ok_but_structure_changed",
             )
 
-    contract_issues = {
+    hard_contract_issues = {
         CandidateIssue.ANCHOR_MISSING,
         CandidateIssue.COMPRESSION_REJECTED,
         CandidateIssue.TOO_SHORT,
         CandidateIssue.TOO_LONG,
-        CandidateIssue.SEMANTIC_DRIFT,
     }
     for index, item in reversed(salvageable):
         issues = issues_from_trace(item["trace"])
-        if contract_issues.intersection(issues) and CandidateAction.REPAIR_CONTRACT not in tried_actions:
+        if hard_contract_issues.intersection(issues) and CandidateAction.REPAIR_CONTRACT not in tried_actions:
             return LoopDecision(
                 action=CandidateAction.REPAIR_CONTRACT,
                 source_index=index,
                 issues=issues,
                 reason="candidate_failed_generic_contract_invariants",
+            )
+
+    for index, item in reversed(salvageable):
+        issues = issues_from_trace(item["trace"])
+        if CandidateIssue.SEGMENT_AI_FOOTPRINT in issues and CandidateAction.REPAIR_AUTHORSHIP_WINDOWS not in tried_actions:
+            return LoopDecision(
+                action=CandidateAction.REPAIR_AUTHORSHIP_WINDOWS,
+                source_index=index,
+                issues=issues,
+                reason="repair_failed_authorship_windows",
+            )
+
+    for index, item in reversed(salvageable):
+        issues = issues_from_trace(item["trace"])
+        if CandidateIssue.SEMANTIC_DRIFT in issues and CandidateAction.REPAIR_CONTRACT not in tried_actions:
+            return LoopDecision(
+                action=CandidateAction.REPAIR_CONTRACT,
+                source_index=index,
+                issues=issues,
+                reason="candidate_failed_semantic_contract_invariant",
             )
 
     if has_positive_boundaries and CandidateAction.ADAPT_BOUNDARY not in tried_actions:
