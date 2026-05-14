@@ -60,6 +60,21 @@ def report_for(text: str, *, mode: str = "broad_explanatory_essay", ai: float = 
     }
 
 
+def report_with_preservation_inventory(text: str, anchors: list[dict]) -> dict:
+    report = report_for(text, mode="broad_explanatory_essay", ai=70.0)
+    report.pop("rewrite_v2_content_route", None)
+    report["ai_mitigation"] = {
+        "rewrite_handoff": {
+            "rewrite_constraints": {
+                "preservation_inventory": {
+                    "anchors": anchors,
+                }
+            }
+        }
+    }
+    return report
+
+
 broad_source = (
     "Education is changing quickly because students now meet information in many places. "
     "Schools still matter, but the old classroom model no longer explains how learning happens.\n\n"
@@ -151,6 +166,25 @@ assert_test(
 assert_test(
     "cited_practice_voice" in [step.strategy_id for step in academic_plan.steps],
     "V3 strategy plan includes cited academic strategy stack",
+)
+inventory_contract = build_scan_contract(
+    report_with_preservation_inventory(
+        cited_source,
+        [
+            {"text": "Billett (2013)", "kind": "citation", "severity": "hard_exact"},
+            {"text": "practice architecture", "kind": "direct_quote", "severity": "hard_exact"},
+        ],
+    ),
+    cited_source,
+)
+inventory_route = route_from_scan_contract(inventory_contract)
+assert_test(
+    inventory_contract.citation_anchor_count == 1 and inventory_contract.quote_anchor_count == 1,
+    "V3 scan contract reads structured preservation inventory anchors",
+)
+assert_test(
+    RewriteRiskClass.CITED_ACADEMIC in (inventory_route.primary_class, *inventory_route.secondary_classes),
+    "V3 preservation inventory can route unknown scans to cited academic handling",
 )
 broad_contract = build_scan_contract(report_for(broad_source, mode="broad_explanatory_essay", ai=70.0), broad_source)
 broad_plan = build_strategy_plan(route_from_scan_contract(broad_contract), broad_contract)
@@ -252,6 +286,10 @@ contract_prompt = build_contract_repair_prompt(
 assert_test(
     "failed_invariants" in contract_prompt and "Source Anchor" in contract_prompt,
     "V3 contract repair prompt carries failed invariants and missing anchors",
+)
+assert_test(
+    "must_include_exact_anchors" in contract_prompt,
+    "V3 contract repair prompt exposes exact anchors as mandatory copy strings",
 )
 
 proxy_trace = {

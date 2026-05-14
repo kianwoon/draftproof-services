@@ -40,10 +40,15 @@ def build_contract_repair_prompt(
             "preferred_words": compression_policy.preferred_words,
             "max_words": compression_policy.max_words,
         },
+        "must_include_exact_anchors": [
+            item.get("text")
+            for item in (validation.get("missing_anchors") or [])
+            if isinstance(item, dict) and item.get("text")
+        ],
         "requirements": [
             "Use the source document as the authority for meaning, facts, sequence, headings, citations, quotes, and protected anchors.",
             "Repair every failed invariant listed in failed_invariants before making style changes.",
-            "Preserve all missing anchors exactly as they appear in failed_invariants.validation.missing_anchors.",
+            "Copy every string in must_include_exact_anchors verbatim into the repaired document.",
             "Keep each source document unit represented in the same order.",
             "Aim near preferred_words so the candidate is not a compressed summary.",
             "Do not add unsupported facts, sources, numbers, names, headings, labels, bullets, paragraph numbers, markdown, or commentary.",

@@ -60,22 +60,34 @@ def _first_route(scan_report: dict[str, Any]) -> dict[str, Any]:
 
 
 def _anchor_counts(scan_report: dict[str, Any]) -> tuple[int, int, int]:
-    inventory = (((scan_report.get("scan_intelligence") or {}).get("document") or {}).get("preservation_inventory") or [])
+    inventories = [
+        ((scan_report.get("scan_intelligence") or {}).get("document") or {}).get("preservation_inventory"),
+        (((scan_report.get("scan_intelligence") or {}).get("mitigation_inputs") or {}).get("rewrite_handoff") or {})
+        .get("rewrite_constraints", {})
+        .get("preservation_inventory"),
+        ((scan_report.get("ai_mitigation") or {}).get("rewrite_handoff") or {})
+        .get("rewrite_constraints", {})
+        .get("preservation_inventory"),
+    ]
+    inventory: list[dict[str, Any]] = []
+    for candidate in inventories:
+        if isinstance(candidate, dict) and isinstance(candidate.get("anchors"), list):
+            inventory.extend(item for item in candidate["anchors"] if isinstance(item, dict))
+        elif isinstance(candidate, list):
+            inventory.extend(item for item in candidate if isinstance(item, dict))
     hard = 0
     citations = 0
     quotes = 0
-    if isinstance(inventory, list):
-        for item in inventory:
-            if not isinstance(item, dict):
-                continue
-            kind = str(item.get("kind") or item.get("type") or "")
-            severity = str(item.get("severity") or "")
-            if severity.startswith("hard"):
-                hard += 1
-            if "citation" in kind:
-                citations += 1
-            if "quote" in kind:
-                quotes += 1
+    for item in inventory:
+        kind = str(item.get("kind") or item.get("type") or "")
+        category = str(item.get("category") or "")
+        severity = str(item.get("severity") or "")
+        if severity.startswith("hard"):
+            hard += 1
+        if kind in {"citation", "source_citation"} or category == "citation":
+            citations += 1
+        if kind in {"direct_quote", "quote"} or category == "quote":
+            quotes += 1
     return hard, citations, quotes
 
 

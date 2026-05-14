@@ -45,9 +45,10 @@ def _score_classes(contract: ScanContract) -> dict[RewriteRiskClass, float]:
     if contract.word_count <= 120 or contract.unit_count <= 1:
         scores[RewriteRiskClass.SHORT_OR_SPARSE] += 0.35
     if contract.citation_anchor_count > 0:
-        scores[RewriteRiskClass.CITED_ACADEMIC] += min(0.45, contract.citation_anchor_count * 0.08)
+        scores[RewriteRiskClass.CITED_ACADEMIC] += min(0.7, 0.36 + contract.citation_anchor_count * 0.08)
     if contract.quote_anchor_count > 0:
-        scores[RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY] += min(0.45, contract.quote_anchor_count * 0.1)
+        scores[RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY] += min(0.6, 0.28 + contract.quote_anchor_count * 0.1)
+        scores[RewriteRiskClass.CITED_ACADEMIC] += min(0.24, contract.quote_anchor_count * 0.06)
     if contract.heading_count >= 2 and contract.avg_unit_words <= 90:
         scores[RewriteRiskClass.TECHNICAL_STRUCTURED] += 0.18
     if contract.hard_anchor_count >= 6:

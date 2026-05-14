@@ -468,7 +468,7 @@ def run_rewrite_pipeline_v3(
             original_text=original_text,
             candidate_text=text,
             contract=contract,
-            require_unit_count=family == "document_rhythm",
+            require_unit_count=True,
         )
         compression_result = compression_status(original_text, text, compression_policy)
         compression_ok = _compression_accepted(compression_result)
