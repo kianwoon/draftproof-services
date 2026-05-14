@@ -15,6 +15,7 @@ from rewrite_v3.compression_policy import compression_policy_for_family, compres
 from rewrite_v3.document_units import compact_document_inventory, document_units, word_count
 from rewrite_v3.external_proxy import evaluate_external_proxy
 from rewrite_v3.layers.boundary_adapter import build_boundary_adapter_prompt
+from rewrite_v3.layers.contract_repair import build_contract_repair_prompt
 from rewrite_v3.layers.contrast_boundary import build_contrast_boundary_prompt, extract_contrast_boundary_output
 from rewrite_v3.layers.document_rhythm import build_document_rhythm_chunk_prompt
 from rewrite_v3.layers.plain_reasoning_broad_prose import build_plain_reasoning_broad_prose_prompt
@@ -221,6 +222,37 @@ loop_decision = decide_next_action(
     tried_actions=set(),
 )
 assert_test(loop_decision.action == CandidateAction.REPAIR_STRUCTURE, "V3 loop repairs structure before adding another rewrite layer")
+
+anchor_trace = {
+    "validation": {
+        "passed": False,
+        "failures": ["protected_anchor_missing"],
+        "missing_anchors": [{"text": "Source Anchor", "kind": "citation", "severity": "hard_exact"}],
+    },
+    "compression": {"status": "below_floor"},
+    "compression_accepted": False,
+    "semantic_safe": False,
+    "semantic_similarity": 0.79,
+    "external_proxy": {"reasons": ["validation_failed", "compression_rejected", "semantic_drift"]},
+    "candidate_ai": 40.0,
+}
+anchor_decision = decide_next_action(
+    [{"text": "candidate", "strict_selected": False, "external_selected": False, "trace": anchor_trace}],
+    has_positive_boundaries=True,
+    tried_actions=set(),
+)
+assert_test(anchor_decision.action == CandidateAction.REPAIR_CONTRACT, "V3 repairs generic contract failures before style layers")
+contract_prompt = build_contract_repair_prompt(
+    original_text=broad_source,
+    failed_candidate=broad_candidate,
+    strategy_family="document_rhythm",
+    candidate_trace=anchor_trace,
+    compression_policy=compression_policy_for_family("document_rhythm", word_count(broad_source)),
+)
+assert_test(
+    "failed_invariants" in contract_prompt and "Source Anchor" in contract_prompt,
+    "V3 contract repair prompt carries failed invariants and missing anchors",
+)
 
 proxy_trace = {
     "validation": {"passed": True, "failures": []},

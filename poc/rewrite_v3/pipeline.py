@@ -27,6 +27,7 @@ from .document_units import compose_units, document_units, word_count
 from .external_proxy import evaluate_external_proxy
 from .layers.boundary_adapter import build_boundary_adapter_prompt
 from .layers.cited_practice_voice import build_cited_practice_voice_chunk_prompt, build_cited_practice_voice_prompt
+from .layers.contract_repair import build_contract_repair_prompt
 from .layers.contrast_boundary import build_contrast_boundary_prompt, extract_contrast_boundary_output
 from .layers.document_rhythm import build_document_rhythm_chunk_prompt, build_document_rhythm_prompt
 from .layers.plain_reasoning_broad_prose import build_plain_reasoning_broad_prose_prompt
@@ -206,6 +207,28 @@ def _generate_recovery_candidate(
     )
     gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(compression_policy.max_words))
     return clean_v3_candidate_output(gateway.chat(prompt, system="Return only the rewritten document as plain text.").content)
+
+
+def _generate_contract_repair_candidate(
+    *,
+    original_text: str,
+    failed_candidate: str,
+    family: str,
+    candidate_trace: dict[str, Any],
+    compression_policy: Any,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+) -> str:
+    prompt = build_contract_repair_prompt(
+        original_text=original_text,
+        failed_candidate=failed_candidate,
+        strategy_family=family,
+        candidate_trace=candidate_trace,
+        compression_policy=compression_policy,
+    )
+    gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(compression_policy.max_words))
+    return clean_v3_candidate_output(gateway.chat(prompt, system="Return only the repaired rewritten document as plain text.").content)
 
 
 def _generate_boundary_candidate(
@@ -558,6 +581,19 @@ def run_rewrite_pipeline_v3(
                         base_url=base_url,
                     )
                     mode = "structure_repair"
+                elif loop_decision.action == CandidateAction.REPAIR_CONTRACT:
+                    progress(81, "Repairing V3 candidate contract")
+                    new_text = _generate_contract_repair_candidate(
+                        original_text=original_text,
+                        failed_candidate=str(source_item.get("text") or candidate_text),
+                        family=family,
+                        candidate_trace=source_item["trace"],
+                        compression_policy=compression_policy,
+                        api_key=api_key,
+                        model=model,
+                        base_url=base_url,
+                    )
+                    mode = "contract_repair"
                 elif loop_decision.action == CandidateAction.ADAPT_BOUNDARY:
                     progress(82, "Running V3 boundary adapter")
                     new_text = _generate_boundary_candidate(

@@ -24,6 +24,7 @@ class CandidateIssue(str, Enum):
 class CandidateAction(str, Enum):
     ACCEPT_STRICT = "accept_strict"
     ACCEPT_EXTERNAL = "accept_external"
+    REPAIR_CONTRACT = "repair_contract"
     REPAIR_STRUCTURE = "repair_structure"
     CONTRAST_BOUNDARY = "contrast_boundary"
     PLAIN_REASONING = "plain_reasoning"
@@ -96,10 +97,6 @@ def issues_from_trace(trace: dict[str, Any]) -> tuple[CandidateIssue, ...]:
 
 def is_candidate_salvageable(trace: dict[str, Any]) -> bool:
     issues = set(issues_from_trace(trace))
-    if CandidateIssue.SEMANTIC_DRIFT in issues:
-        return False
-    if CandidateIssue.ANCHOR_MISSING in issues:
-        return False
     if CandidateIssue.INTERNAL_AI_BACKFIRE in issues:
         return False
     return True
@@ -139,6 +136,23 @@ def decide_next_action(
                 source_index=index,
                 issues=issues,
                 reason="candidate_texture_ok_but_structure_changed",
+            )
+
+    contract_issues = {
+        CandidateIssue.ANCHOR_MISSING,
+        CandidateIssue.COMPRESSION_REJECTED,
+        CandidateIssue.TOO_SHORT,
+        CandidateIssue.TOO_LONG,
+        CandidateIssue.SEMANTIC_DRIFT,
+    }
+    for index, item in reversed(salvageable):
+        issues = issues_from_trace(item["trace"])
+        if contract_issues.intersection(issues) and CandidateAction.REPAIR_CONTRACT not in tried_actions:
+            return LoopDecision(
+                action=CandidateAction.REPAIR_CONTRACT,
+                source_index=index,
+                issues=issues,
+                reason="candidate_failed_generic_contract_invariants",
             )
 
     if has_positive_boundaries and CandidateAction.ADAPT_BOUNDARY not in tried_actions:
