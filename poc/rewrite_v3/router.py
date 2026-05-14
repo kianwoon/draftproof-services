@@ -44,11 +44,16 @@ def _score_classes(contract: ScanContract) -> dict[RewriteRiskClass, float]:
 
     if contract.word_count <= 120 or contract.unit_count <= 1:
         scores[RewriteRiskClass.SHORT_OR_SPARSE] += 0.35
-    if contract.citation_anchor_count > 0:
-        scores[RewriteRiskClass.CITED_ACADEMIC] += min(0.7, 0.36 + contract.citation_anchor_count * 0.08)
-    if contract.quote_anchor_count > 0:
-        scores[RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY] += min(0.6, 0.28 + contract.quote_anchor_count * 0.1)
-        scores[RewriteRiskClass.CITED_ACADEMIC] += min(0.24, contract.quote_anchor_count * 0.06)
+    citation_signal = max(contract.citation_count, contract.citation_key_count, contract.reference_count)
+    if citation_signal > 0:
+        scores[RewriteRiskClass.CITED_ACADEMIC] += min(0.7, 0.36 + citation_signal * 0.08)
+    if contract.evidence_anchor_score >= 0.5:
+        scores[RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY] += 0.45
+    direct_quote_count = int((contract.quote_role_counts or {}).get("direct_quote") or 0)
+    if direct_quote_count >= 2:
+        scores[RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY] += 0.25
+    if contract.quote_count > 0 and contract.evidence_anchor_score < 0.3:
+        scores[RewriteRiskClass.BROAD_PROSE] += 0.12
     if contract.heading_count >= 2 and contract.avg_unit_words <= 90:
         scores[RewriteRiskClass.TECHNICAL_STRUCTURED] += 0.18
     if contract.hard_anchor_count >= 6:
@@ -69,8 +74,11 @@ def route_from_scan_contract(contract: ScanContract) -> V3Route:
         f"units={contract.unit_count}",
         f"words={contract.word_count}",
         f"hard_anchors={contract.hard_anchor_count}",
-        f"citations={contract.citation_anchor_count}",
-        f"quotes={contract.quote_anchor_count}",
+        f"citations={contract.citation_count}",
+        f"citation_keys={contract.citation_key_count}",
+        f"quotes={contract.quote_count}",
+        f"evidence_anchor_score={contract.evidence_anchor_score}",
+        f"anchor_preservation_pressure={contract.anchor_preservation_pressure}",
     ]
     return V3Route(
         primary_class=primary,

@@ -747,6 +747,23 @@ assert_true(
     set(anchor_texts).issubset(set(scan_json.get("rewrite_constraints", {}).get("preserve_terms", []))),
     "rewrite constraints carry scanner preservation anchors",
 )
+routing_signals = intel.get("rewrite_routing_signals", {})
+anchor_metrics = routing_signals.get("anchor_metrics", {})
+assert_equal(
+    routing_signals.get("schema_version"),
+    "rewrite_routing_signals.v1",
+    "scan intelligence exposes typed rewrite routing signals",
+)
+assert_true(
+    isinstance(anchor_metrics.get("evidence_anchor_score"), (int, float))
+    and isinstance(anchor_metrics.get("anchor_preservation_pressure"), (int, float)),
+    "rewrite routing signals expose evidence and preservation pressure metrics",
+)
+assert_equal(
+    scan_json.get("rewrite_routing_signals"),
+    routing_signals,
+    "scan JSON exposes top-level rewrite routing signals",
+)
 human_contract = intel.get("human_contribution_contract", {})
 assert_equal(
     human_contract.get("schema_version"),

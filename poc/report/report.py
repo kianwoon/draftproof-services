@@ -3583,6 +3583,137 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "industry_baseline_focus": (industry_baseline or {}).get("rewrite_gate_objectives") or {},
         }
 
+    def _unique_structured_values(values: list) -> list:
+        seen = set()
+        unique = []
+        for value in values or []:
+            if isinstance(value, dict):
+                key = tuple(sorted((str(k), str(v)) for k, v in value.items()))
+            else:
+                key = str(value)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(value)
+        return unique
+
+    def _dedupe_preservation_anchors(anchors: list) -> list[dict]:
+        seen = set()
+        unique = []
+        for anchor in anchors or []:
+            if not isinstance(anchor, dict):
+                continue
+            text_value = str(anchor.get("text") or "").strip()
+            if not text_value:
+                continue
+            key = (
+                text_value,
+                str(anchor.get("kind") or anchor.get("type") or ""),
+                str(anchor.get("category") or ""),
+                str(anchor.get("severity") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(anchor)
+        return unique
+
+    def _generation_handoff_citation_keys(generation_handoff: Dict[str, Any]) -> list:
+        keys = []
+        for unit in (generation_handoff or {}).get("section_generation_units") or []:
+            if not isinstance(unit, dict):
+                continue
+            keys.extend(unit.get("citation_keys_used") or [])
+            for meaning in unit.get("meaning_inventory") or []:
+                if isinstance(meaning, dict):
+                    keys.extend(meaning.get("citation_keys") or [])
+        return _unique_structured_values(keys)
+
+    def _rewrite_routing_signals(
+        preservation_inventory: Dict[str, Any],
+        generation_handoff: Dict[str, Any],
+        *,
+        word_count: int,
+    ) -> Dict[str, Any]:
+        anchors = _dedupe_preservation_anchors((preservation_inventory or {}).get("anchors") or [])
+        quote_values = _unique_structured_values((preservation_inventory or {}).get("quotes") or [])
+        citation_values = _unique_structured_values((preservation_inventory or {}).get("citations") or [])
+        reference_register = _unique_structured_values((generation_handoff or {}).get("reference_register") or [])
+        citation_keys = _generation_handoff_citation_keys(generation_handoff or {})
+
+        quote_anchor_count = sum(
+            1
+            for anchor in anchors
+            if str(anchor.get("kind") or anchor.get("type") or anchor.get("category") or "") in {"quote", "direct_quote"}
+        )
+        citation_anchor_count = sum(
+            1
+            for anchor in anchors
+            if str(anchor.get("kind") or anchor.get("type") or anchor.get("category") or "") in {"citation", "source_citation"}
+        )
+        hard_anchor_count = sum(1 for anchor in anchors if str(anchor.get("severity") or "").startswith("hard"))
+        role_counts = {
+            "direct_quote": 0,
+            "evidence_quote": 0,
+            "citation_quote": 0,
+            "concept_quote": 0,
+            "title_quote": 0,
+            "dialogue_quote": 0,
+            "ordinary_quote": 0,
+            "unknown_quote": 0,
+        }
+        for anchor in anchors:
+            role = str(anchor.get("quote_role") or anchor.get("anchor_role") or anchor.get("role") or "")
+            if role in role_counts:
+                role_counts[role] += 1
+            elif str(anchor.get("kind") or anchor.get("type") or anchor.get("category") or "") in {"quote", "direct_quote"}:
+                role_counts["unknown_quote"] += 1
+
+        quote_count = max(len(quote_values), quote_anchor_count)
+        citation_count = max(len(citation_values), citation_anchor_count)
+        citation_signal_count = max(citation_count, len(citation_keys), len(reference_register))
+        direct_evidence_score = min(
+            1.0,
+            (
+                role_counts["direct_quote"] * 0.35
+                + role_counts["evidence_quote"] * 0.45
+                + role_counts["citation_quote"] * 0.45
+                + citation_signal_count * 0.18
+                + hard_anchor_count * 0.08
+            ),
+        )
+        untyped_quote_score = 0.0 if direct_evidence_score >= 0.5 else min(0.12, quote_count * 0.03)
+        evidence_anchor_score = min(1.0, direct_evidence_score + untyped_quote_score)
+        anchor_preservation_pressure = min(
+            1.0,
+            direct_evidence_score
+            + hard_anchor_count * 0.08
+            + citation_signal_count * 0.08,
+        )
+        words = max(1, int(word_count or 0))
+        return {
+            "schema_version": "rewrite_routing_signals.v1",
+            "anchor_metrics": {
+                "raw_anchor_count": len((preservation_inventory or {}).get("anchors") or []),
+                "dedup_anchor_count": len(anchors),
+                "quote_count": quote_count,
+                "quote_density": round(quote_count / words, 4),
+                "citation_count": citation_count,
+                "citation_density": round(citation_count / words, 4),
+                "citation_key_count": len(citation_keys),
+                "reference_count": len(reference_register),
+                "hard_anchor_count": hard_anchor_count,
+                "quote_role_counts": role_counts,
+                "evidence_anchor_score": round(evidence_anchor_score, 3),
+                "anchor_preservation_pressure": round(anchor_preservation_pressure, 3),
+            },
+            "routing_policy": {
+                "quote_count_is_not_quote_heavy": True,
+                "untyped_quotes_are_low_confidence": True,
+                "chunking_requires_preservation_pressure": True,
+            },
+        }
+
     def _count_pattern(text: str, pattern: str) -> int:
         return len(_re.findall(pattern, text or "", flags=_re.I))
 
@@ -3873,6 +4004,12 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             human_contract,
             industry_baseline,
         )
+        rewrite_routing_signals = _rewrite_routing_signals(
+            preservation_inventory,
+            generation_handoff,
+            word_count=len((report.original_text or "").split()),
+        )
+        generation_handoff["rewrite_routing_signals"] = rewrite_routing_signals
         return {
             "schema_version": "scan_intelligence.v1",
             "purpose": {
@@ -3886,6 +4023,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "segments": segments,
                 "paragraphs": paragraph_rows,
                 "preservation_inventory": preservation_inventory,
+                "anchor_metrics": rewrite_routing_signals.get("anchor_metrics") or {},
             },
             "transformation": {
                 "classification": transformation,
@@ -3898,6 +4036,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "industry_baseline": industry_baseline,
             "human_contribution_contract": human_contract,
             "generation_handoff": generation_handoff,
+            "rewrite_routing_signals": rewrite_routing_signals,
             "calibration": {
                 "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
                 "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
@@ -3975,6 +4114,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "human_contribution_contract": human_contract,
                 "industry_baseline": industry_baseline,
                 "generation_handoff": generation_handoff,
+                "rewrite_routing_signals": rewrite_routing_signals,
                 "blocker_radar": blocker_radar,
                 "target_segment_ids": [
                     segment["segment_id"]
@@ -4285,6 +4425,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     result["ai_mitigation"] = ai_mitigation
     result["industry_baseline"] = industry_baseline
     result["generation_handoff"] = scan_intelligence.get("generation_handoff") or {}
+    result["rewrite_routing_signals"] = scan_intelligence.get("rewrite_routing_signals") or {}
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 

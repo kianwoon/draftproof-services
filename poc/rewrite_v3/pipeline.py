@@ -121,29 +121,37 @@ def _should_use_chunked_generation(
         return True
     if exact_anchor_count > 0:
         return True
-    if scan_contract.citation_anchor_count or scan_contract.quote_anchor_count or scan_contract.hard_anchor_count:
+    if scan_contract.anchor_preservation_pressure >= 0.55:
         return True
     protected_classes = {
         RewriteRiskClass.CITED_ACADEMIC,
         RewriteRiskClass.TECHNICAL_STRUCTURED,
         RewriteRiskClass.REGULATED_POLICY,
-        RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY,
     }
-    return v3_route.primary_class in protected_classes
+    if v3_route.primary_class in protected_classes:
+        return True
+    return (
+        v3_route.primary_class == RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY
+        and scan_contract.evidence_anchor_score >= 0.5
+    )
 
 
 def _should_force_unit_chunks(*, scan_contract: ScanContract, v3_route: Any, exact_anchor_count: int) -> bool:
     if exact_anchor_count > 0:
         return True
-    if scan_contract.citation_anchor_count or scan_contract.quote_anchor_count or scan_contract.hard_anchor_count:
+    if scan_contract.anchor_preservation_pressure >= 0.55:
         return True
     protected_classes = {
         RewriteRiskClass.CITED_ACADEMIC,
         RewriteRiskClass.TECHNICAL_STRUCTURED,
         RewriteRiskClass.REGULATED_POLICY,
-        RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY,
     }
-    return v3_route.primary_class in protected_classes
+    if v3_route.primary_class in protected_classes:
+        return True
+    return (
+        v3_route.primary_class == RewriteRiskClass.QUOTE_OR_EVIDENCE_HEAVY
+        and scan_contract.evidence_anchor_score >= 0.5
+    )
 
 
 def _restore_exact_quote_anchors(text: str, contract: Any) -> str:

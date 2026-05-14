@@ -208,6 +208,50 @@ assert_test(
     RewriteRiskClass.CITED_ACADEMIC in (inventory_route.primary_class, *inventory_route.secondary_classes),
     "V3 preservation inventory can route unknown scans to cited academic handling",
 )
+light_quote_source = "\n\n".join([broad_source] * 6)
+light_quote_report = report_for(light_quote_source, mode="unknown", ai=70.0)
+light_quote_report.pop("rewrite_v2_content_route", None)
+light_quote_inventory = {
+    "anchors": [
+        {"text": "what students know", "kind": "quote", "reason": "quoted/source wording"},
+        {"text": "how students think", "kind": "quote", "reason": "quoted/source wording"},
+    ],
+    "quotes": ["what students know", "how students think"],
+    "citations": [],
+}
+light_quote_report["scan_intelligence"] = {"document": {"preservation_inventory": light_quote_inventory}}
+light_quote_report["ai_mitigation"] = {
+    "rewrite_handoff": {"rewrite_constraints": {"preservation_inventory": light_quote_inventory}}
+}
+light_quote_contract = build_scan_contract(light_quote_report, light_quote_source)
+light_quote_route = route_from_scan_contract(light_quote_contract)
+assert_test(
+    light_quote_contract.quote_count == 2 and light_quote_contract.quote_anchor_count == 2,
+    "V3 scan contract dedupes duplicated quote inventories",
+)
+assert_test(
+    light_quote_route.primary_class == RewriteRiskClass.BROAD_PROSE,
+    "V3 routes untyped light quote anchors as broad prose",
+)
+citation_handoff_report = report_for(cited_source, mode="unknown", ai=55.0)
+citation_handoff_report.pop("rewrite_v2_content_route", None)
+citation_handoff_report["generation_handoff"] = {
+    "section_generation_units": [
+        {"citation_keys_used": ["Billett, 2013"], "meaning_inventory": [{"citation_keys": ["Billett, 2013"]}]},
+        {"citation_keys_used": ["Billett, 2020"], "meaning_inventory": []},
+    ],
+    "reference_register": [],
+}
+citation_handoff_contract = build_scan_contract(citation_handoff_report, cited_source)
+citation_handoff_route = route_from_scan_contract(citation_handoff_contract)
+assert_test(
+    citation_handoff_contract.citation_key_count == 2 and citation_handoff_contract.anchor_preservation_pressure >= 0.5,
+    "V3 scan contract reads citation keys as evidence preservation pressure",
+)
+assert_test(
+    citation_handoff_route.primary_class == RewriteRiskClass.CITED_ACADEMIC,
+    "V3 routes structured citation handoff as cited academic",
+)
 broad_contract = build_scan_contract(report_for(broad_source, mode="broad_explanatory_essay", ai=70.0), broad_source)
 broad_plan = build_strategy_plan(route_from_scan_contract(broad_contract), broad_contract)
 assert_test(
