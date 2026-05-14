@@ -1463,7 +1463,17 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             raise_if_canceled()
             heartbeat_thread.start()
             try:
-                if settings.DRAFTPROOF_REWRITE_V2_ENABLED:
+                if settings.DRAFTPROOF_REWRITE_V3_ENABLED:
+                    from rewrite_v3 import run_rewrite_pipeline_v3
+                    result = run_rewrite_pipeline_v3(
+                        detect_json=report_json,
+                        output_dir=tmpdir,
+                        api_key=llm_api_key or None,
+                        model=settings.LLM_MODEL or None,
+                        base_url=settings.LLM_BASE_URL or None,
+                        progress_callback=report_rewrite_progress,
+                    )
+                elif settings.DRAFTPROOF_REWRITE_V2_ENABLED:
                     from rewrite_v2 import run_rewrite_pipeline_v2
                     result = run_rewrite_pipeline_v2(
                         detect_json=report_json,
