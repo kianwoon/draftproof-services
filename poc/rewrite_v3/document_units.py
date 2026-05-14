@@ -33,7 +33,7 @@ def document_units(text: str) -> list[DocumentUnit]:
     terminal sentence punctuation. It is not a keyword or domain classifier.
     """
 
-    units: list[DocumentUnit] = []
+    raw_units: list[DocumentUnit] = []
     for index, raw in enumerate([item.strip() for item in str(text or "").split("\n\n") if item.strip()], start=1):
         lines = [line.strip() for line in raw.splitlines() if line.strip()]
         words = word_count(raw)
@@ -42,9 +42,41 @@ def document_units(text: str) -> list[DocumentUnit]:
             and 0 < words <= 14
             and not lines[0].endswith((".", "?", "!", ":"))
         )
-        units.append(DocumentUnit(unit_id=f"u{index}", text=raw, word_count=words, is_heading=is_heading))
-    if not units and str(text or "").strip():
-        units.append(DocumentUnit(unit_id="u1", text=str(text).strip(), word_count=word_count(text)))
+        raw_units.append(DocumentUnit(unit_id=f"u{index}", text=raw, word_count=words, is_heading=is_heading))
+    if not raw_units and str(text or "").strip():
+        raw_units.append(DocumentUnit(unit_id="u1", text=str(text).strip(), word_count=word_count(text)))
+
+    units: list[DocumentUnit] = []
+    pending_heading: DocumentUnit | None = None
+    for unit in raw_units:
+        if unit.is_heading:
+            if pending_heading is not None:
+                units.append(pending_heading)
+            pending_heading = unit
+            continue
+        if pending_heading is not None:
+            merged_text = f"{pending_heading.text}\n{unit.text}".strip()
+            units.append(DocumentUnit(
+                unit_id=f"u{len(units) + 1}",
+                text=merged_text,
+                word_count=word_count(merged_text),
+                is_heading=False,
+            ))
+            pending_heading = None
+        else:
+            units.append(DocumentUnit(
+                unit_id=f"u{len(units) + 1}",
+                text=unit.text,
+                word_count=unit.word_count,
+                is_heading=False,
+            ))
+    if pending_heading is not None:
+        units.append(DocumentUnit(
+            unit_id=f"u{len(units) + 1}",
+            text=pending_heading.text,
+            word_count=pending_heading.word_count,
+            is_heading=True,
+        ))
     return units
 
 

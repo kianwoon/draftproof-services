@@ -93,6 +93,12 @@ units = document_units(broad_source)
 assert_test(len(units) == 2 and not units[0].is_heading, "V3 splits blank-line document units structurally")
 inventory = compact_document_inventory(broad_source, preview_chars=40)
 assert_test(inventory[0]["text_preview"].endswith("..."), "V3 compact inventory bounds source previews")
+section_source = "Overview\nThis is the first body paragraph.\n\nMethod\nThis is the second body paragraph."
+section_candidate = "Overview\n\nThis is the first body paragraph.\n\nMethod\n\nThis is the second body paragraph."
+assert_test(
+    len(document_units(section_source)) == len(document_units(section_candidate)) == 2,
+    "V3 treats separated headings and heading-body blocks as equivalent document units",
+)
 assert_test(
     "rewrite_v2.content_router" not in inspect.getsource(v3_pipeline),
     "V3 pipeline does not depend on untracked V2 content router",
