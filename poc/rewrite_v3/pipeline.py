@@ -68,7 +68,7 @@ from .router import route_from_scan_contract
 from .scanner_controlled_executor import (
     ScannerControlledConfig,
     build_scanner_controlled_prompt,
-    parse_scanner_controlled_variants,
+    parse_scanner_controlled_variants_with_diagnostics,
     rank_scanner_target_groups,
     restore_protected_anchor_placeholders,
     scanner_controlled_candidate_quality,
@@ -1647,7 +1647,10 @@ def _generate_scanner_controlled_candidate(
                 llm_error = str(exc)
                 provider = None
                 errors.append(llm_error)
-            variants = parse_scanner_controlled_variants(raw, limit=config.variants_per_group)
+            variants, parse_diagnostics = parse_scanner_controlled_variants_with_diagnostics(
+                raw,
+                limit=config.variants_per_group,
+            )
             group_log: dict[str, Any] = {
                 "group_id": group.group_id,
                 "unit_id": group.unit_id,
@@ -1655,6 +1658,7 @@ def _generate_scanner_controlled_candidate(
                 "provider": provider,
                 "variant_count": len(variants),
                 "error": llm_error,
+                "parse_diagnostics": parse_diagnostics,
                 "variants": [],
             }
             best: dict[str, Any] | None = None

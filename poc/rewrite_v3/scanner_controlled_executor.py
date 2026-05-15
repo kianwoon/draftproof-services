@@ -461,7 +461,7 @@ def build_scanner_controlled_prompt(
             "Do not add fake first-person experience or unsupported anecdotes; preserve source viewpoint unless the source context already supports a viewpoint shift.",
             *(
                 [
-                    "This is an ownership repair pass: every kept variant must report at least one real ownership_changes row.",
+                    "This is an ownership repair pass: every kept variant must make the ownership repair visible in replacement_text itself.",
                     "Prioritize clear author trace, specific context, and real judgment over broad paragraph smoothing.",
                     "Only modify local wording needed to make the claim feel owned by the source context.",
                 ]
@@ -470,8 +470,7 @@ def build_scanner_controlled_prompt(
             ),
             "If scanner_action_contract.citation_pressure_zone is true, keep citation-adjacent wording source-like and do not upgrade it into smoother academic paraphrase.",
             "Patch scanner_action_contract.topk_repair_contract.predictable_spans_in_source when span_source is scanner_exact.",
-            "When predictable_span_rows are present, report modified_span_ids using those exact ids.",
-            "Do not guess predictable_spans_modified_count; only count a span if changed_spans.source_span exactly equals or fully contains one predictable_span_rows.text item.",
+            "Do not report changed_spans, modified_span_ids, predictable_spans_modified_count, ownership_changes, protected_anchors_preserved, or validation notes; the validator computes those fields.",
             "Stay inside scanner_action_contract.topk_repair_contract.locality_limits.",
             "Each variant must modify at least scanner_action_contract.topk_repair_contract.required_modified_spans predictable spans when span_source is scanner_exact.",
             "If an operator cannot modify enough predictable_spans_in_source without breaking meaning, omit that variant.",
@@ -483,6 +482,7 @@ def build_scanner_controlled_prompt(
             "Keep within +/-15% of preferred_words.",
             "Do not summarize the paragraph, but you may remove broad filler when it improves precision.",
             "Do not use synonym swapping, polished academic smoothing, tidy textbook phrasing, or formulaic transition openings.",
+            "Return exactly the allowed keys for each variant: variant_id, operator_used, replacement_text.",
             "Return only JSON matching response_schema.",
         ],
         "response_schema": {
@@ -491,28 +491,6 @@ def build_scanner_controlled_prompt(
                     "variant_id": "v1",
                     "operator_used": "CLAUSE_ROUTE_CHANGE",
                     "replacement_text": "plain replacement only",
-                    "changed_spans": [
-                        {
-                            "span_id": "ps001",
-                            "source_span": "scanner exact span",
-                            "before": "old local phrase",
-                            "after": "new local phrase",
-                            "operation": "TOPK_SPAN_REPATH",
-                        }
-                    ],
-                    "modified_span_ids": ["ps001"],
-                    "predictable_spans_modified_count": 0,
-                    "ownership_changes": [
-                        {
-                            "before": "generic local claim",
-                            "after": "owned local judgment",
-                            "operation": "CLAIM_OWNERSHIP_REPAIR",
-                            "trace_source": "source_text",
-                        }
-                    ],
-                    "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
-                    "protected_anchors_preserved": True,
-                    "new_claims_added": False,
                 }
             ]
         },
@@ -520,7 +498,17 @@ def build_scanner_controlled_prompt(
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def parse_scanner_controlled_variants(raw: str, *, limit: int = 3) -> list[dict[str, Any]]:
+def parse_scanner_controlled_variants_with_diagnostics(
+    raw: str,
+    *,
+    limit: int = 3,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Parse the model response as generation-only data.
+
+    The model is allowed to write candidate text. Validation metadata is owned by
+    the scanner/controller, so any extra fields are rejected instead of trusted.
+    """
+
     text = str(raw or "").strip()
     if text.startswith("```"):
         lines = text.splitlines()
@@ -531,31 +519,91 @@ def parse_scanner_controlled_variants(raw: str, *, limit: int = 3) -> list[dict[
         text = "\n".join(lines).strip()
     try:
         payload = json.loads(text)
-    except json.JSONDecodeError:
-        return []
-    rows = payload.get("variants") if isinstance(payload, dict) else None
+    except json.JSONDecodeError as exc:
+        return [], {
+            "parse_status": "json_parse_failed",
+            "error": str(exc),
+            "raw_length": len(text),
+        }
+    if not isinstance(payload, dict):
+        return [], {
+            "parse_status": "schema_failed",
+            "failure": "root_not_object",
+            "raw_length": len(text),
+        }
+    root_keys = set(payload.keys())
+    if root_keys != {"variants"}:
+        return [], {
+            "parse_status": "schema_failed",
+            "failure": "root_extra_or_missing_keys",
+            "top_level_keys": sorted(root_keys),
+            "raw_length": len(text),
+        }
+    rows = payload.get("variants")
     if not isinstance(rows, list):
-        return []
+        return [], {
+            "parse_status": "schema_failed",
+            "failure": "variants_not_array",
+            "top_level_keys": sorted(root_keys),
+            "raw_length": len(text),
+        }
+
+    allowed_keys = {"variant_id", "operator_used", "replacement_text"}
     variants: list[dict[str, Any]] = []
+    rejected_rows: list[dict[str, Any]] = []
+    max_rows = max(1, int(limit or 1))
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
+            rejected_rows.append({"index": index, "reason": "variant_not_object"})
             continue
-        replacement = str(row.get("replacement_text") or "").strip()
-        if not replacement:
+        row_keys = set(row.keys())
+        if row_keys != allowed_keys:
+            rejected_rows.append({
+                "index": index,
+                "reason": "variant_extra_or_missing_keys",
+                "keys": sorted(row_keys),
+            })
             continue
-        variant_id = str(row.get("variant_id") or f"v{index}").strip()
+        variant_id = row.get("variant_id")
+        operator_used = row.get("operator_used")
+        replacement = row.get("replacement_text")
+        if not isinstance(variant_id, str) or not variant_id.strip():
+            rejected_rows.append({"index": index, "reason": "variant_id_invalid"})
+            continue
+        if not isinstance(operator_used, str) or not operator_used.strip():
+            rejected_rows.append({"index": index, "reason": "operator_used_invalid"})
+            continue
+        if not isinstance(replacement, str) or not replacement.strip():
+            rejected_rows.append({"index": index, "reason": "replacement_text_invalid"})
+            continue
         variants.append({
-            "variant_id": variant_id,
-            "operator_used": row.get("operator_used"),
-            "replacement_text": replacement,
-            "changed_spans": row.get("changed_spans") if isinstance(row.get("changed_spans"), list) else [],
-            "modified_span_ids": row.get("modified_span_ids") if isinstance(row.get("modified_span_ids"), list) else [],
-            "predictable_spans_modified_count": row.get("predictable_spans_modified_count"),
-            "ownership_changes": row.get("ownership_changes") if isinstance(row.get("ownership_changes"), list) else [],
-            "ownership_elements_supported": row.get("ownership_elements_supported") if isinstance(row.get("ownership_elements_supported"), list) else [],
+            "variant_id": variant_id.strip(),
+            "operator_used": operator_used.strip(),
+            "replacement_text": replacement.strip(),
+            "changed_spans": [],
+            "modified_span_ids": [],
+            "predictable_spans_modified_count": None,
+            "ownership_changes": [],
+            "ownership_elements_supported": [],
         })
-        if len(variants) >= max(1, int(limit or 1)):
+        if len(variants) >= max_rows:
             break
+
+    diagnostics = {
+        "parse_status": "ok",
+        "raw_length": len(text),
+        "variant_count": len(variants),
+        "rejected_row_count": len(rejected_rows),
+        "rejected_rows": rejected_rows[:8],
+    }
+    if not variants and rejected_rows:
+        diagnostics["parse_status"] = "schema_failed"
+        diagnostics["failure"] = "no_valid_variants"
+    return variants, diagnostics
+
+
+def parse_scanner_controlled_variants(raw: str, *, limit: int = 3) -> list[dict[str, Any]]:
+    variants, _diagnostics = parse_scanner_controlled_variants_with_diagnostics(raw, limit=limit)
     return variants
 
 
@@ -588,10 +636,6 @@ def _actual_modified_span_ids(
     variant: dict[str, Any],
     replacement_text: str,
 ) -> list[str]:
-    changed_rows = [row for row in variant.get("changed_spans") or [] if isinstance(row, dict)]
-    changed_sources = [_span_source_text(row) for row in changed_rows]
-    changed_ids = {str(row.get("span_id") or "") for row in changed_rows if str(row.get("span_id") or "")}
-    reported_ids = {str(item) for item in variant.get("modified_span_ids") or [] if str(item or "")}
     normalized_replacement = _normalized_text(replacement_text)
     actual: list[str] = []
     for row in spans:
@@ -600,15 +644,26 @@ def _actual_modified_span_ids(
         normalized_span = _normalized_text(span_text)
         if not span_id or not normalized_span:
             continue
-        source_claimed = any(
-            source == normalized_span or normalized_span in source
-            for source in changed_sources
-            if source
-        )
-        id_claimed = span_id in changed_ids or span_id in reported_ids
-        if (source_claimed or id_claimed) and normalized_span not in normalized_replacement:
+        if normalized_span not in normalized_replacement:
             actual.append(span_id)
     return actual
+
+
+def _actual_changed_span_rows(
+    *,
+    spans: list[dict[str, str]],
+    modified_ids: list[str],
+) -> list[dict[str, str]]:
+    modified = set(modified_ids)
+    return [
+        {
+            "span_id": str(row.get("id") or ""),
+            "source_span": str(row.get("text") or ""),
+            "operation": "VALIDATOR_COMPUTED_SPAN_MOVEMENT",
+        }
+        for row in spans
+        if str(row.get("id") or "") in modified and str(row.get("text") or "")
+    ]
 
 
 def scanner_controlled_variant_gate(
@@ -698,6 +753,10 @@ def scanner_controlled_variant_gate(
         variant=variant,
         replacement_text=replacement_text,
     )
+    actual_changed_spans = _actual_changed_span_rows(
+        spans=spans,
+        modified_ids=actual_modified_ids,
+    )
     actual_count = len(actual_modified_ids)
     declared_count = _declared_changed_span_count(variant)
     modified_count = actual_count
@@ -712,6 +771,7 @@ def scanner_controlled_variant_gate(
                 "declared_predictable_spans_modified_count": declared_count,
                 "self_report_mismatch": declared_count != modified_count,
                 "actual_modified_span_ids": actual_modified_ids,
+                "actual_changed_spans": actual_changed_spans,
                 "required_predictable_spans_modified": required_count,
                 "available_predictable_spans": len(spans),
                 "predictable_spans": span_texts,
@@ -725,6 +785,7 @@ def scanner_controlled_variant_gate(
             "declared_predictable_spans_modified_count": declared_count,
             "self_report_mismatch": declared_count != modified_count,
             "actual_modified_span_ids": actual_modified_ids,
+            "actual_changed_spans": actual_changed_spans,
             "required_predictable_spans_modified": required_count,
             "available_predictable_spans": len(spans),
             "predictable_spans": span_texts,
@@ -738,6 +799,7 @@ def scanner_controlled_variant_gate(
         "declared_predictable_spans_modified_count": declared_count,
         "self_report_mismatch": declared_count != modified_count,
         "actual_modified_span_ids": actual_modified_ids,
+        "actual_changed_spans": actual_changed_spans,
         "required_predictable_spans_modified": required_count,
         "available_predictable_spans": len(spans),
         "predictable_spans": span_texts,
@@ -805,7 +867,12 @@ def scanner_controlled_candidate_quality(
     required = max(1, int(variant_gate.get("required_predictable_spans_modified") or topk_contract.get("required_modified_spans") or 1))
     actual = max(0, int(variant_gate.get("predictable_spans_modified_count") or 0))
     movement_score = min(1.0, actual / required) * 45.0
-    changed_rows = [row for row in variant.get("changed_spans") or [] if isinstance(row, dict)]
+    changed_rows = [
+        row for row in variant_gate.get("actual_changed_spans") or []
+        if isinstance(row, dict)
+    ]
+    if not changed_rows:
+        changed_rows = [row for row in variant.get("changed_spans") or [] if isinstance(row, dict)]
     max_changed_spans = max(1, int(limits.get("max_changed_spans") or 3))
     locality_overage = max(0, len(changed_rows) - max_changed_spans)
     locality_score = max(0.0, 20.0 - locality_overage * 6.0)
@@ -879,6 +946,7 @@ __all__ = [
     "build_scanner_controlled_prompt",
     "freeze_protected_anchors",
     "parse_scanner_controlled_variants",
+    "parse_scanner_controlled_variants_with_diagnostics",
     "protected_placeholder_integrity",
     "rank_scanner_target_groups",
     "restore_protected_anchor_placeholders",

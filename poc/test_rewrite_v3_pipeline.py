@@ -72,6 +72,7 @@ from rewrite_v3.scanner_controlled_executor import (
     build_scanner_controlled_prompt,
     freeze_protected_anchors,
     parse_scanner_controlled_variants,
+    parse_scanner_controlled_variants_with_diagnostics,
     protected_placeholder_integrity,
     rank_scanner_target_groups,
     scanner_controlled_candidate_quality,
@@ -1236,7 +1237,7 @@ assert_test(
 assert_test(
     '"repair_mode": "claim_ownership_repair"' in ownership_repair_prompt
     and ownership_repair_prompt.count('"operator": "CLAIM_OWNERSHIP_REPAIR"') == 2
-    and "every kept variant must report at least one real ownership_changes row" in ownership_repair_prompt,
+    and "Prioritize clear author trace" in ownership_repair_prompt,
     "V3 ownership repair prompt runs a bounded claim-ownership operator portfolio",
 )
 assert_test(
@@ -1257,11 +1258,11 @@ assert_test(
     "V3 scanner-controlled prompt assigns operator-shaped variants",
 )
 assert_test(
-    "changed_spans" in scanner_loop_prompt
-    and "predictable_spans_modified_count" in scanner_loop_prompt
+    "Do not report changed_spans" in scanner_loop_prompt
+    and "predictable_spans_modified_count" not in json.dumps(json.loads(scanner_loop_prompt.split("Return valid JSON only.\n", 1)[1])["response_schema"])
     and "required_modified_spans" in scanner_loop_prompt
     and "predictable_spans_in_source" in scanner_loop_prompt,
-    "V3 scanner-controlled prompt requires declared predictable-span movement",
+    "V3 scanner-controlled prompt keeps span requirements but removes self-reported validation fields",
 )
 assert_test(
     "omit it entirely" in scanner_loop_prompt
@@ -1382,14 +1383,36 @@ assert_test(
     "V3 scanner-controlled gate only requires placeholders present in the target source text",
 )
 scanner_variants = parse_scanner_controlled_variants(
-    '{"variants":[{"variant_id":"v1","replacement_text":"A local variant.","changed_spans":[{"source_span":"predictable route","before":"predictable route","after":"local route","operation":"TOPK_SPAN_REPATH"}],"predictable_spans_modified_count":1},{"variant_id":"v2","replacement_text":"Another local variant."}]}',
+    '{"variants":[{"variant_id":"v1","operator_used":"CLAUSE_ROUTE_CHANGE","replacement_text":"A local variant."},{"variant_id":"v2","operator_used":"BROAD_CLAIM_NARROWING","replacement_text":"Another local variant."}]}',
     limit=2,
 )
 assert_test(
     len(scanner_variants) == 2
     and scanner_variants[0]["replacement_text"] == "A local variant."
-    and scanner_variants[0]["predictable_spans_modified_count"] == 1,
-    "V3 scanner-controlled executor parses bounded local variants",
+    and scanner_variants[0]["changed_spans"] == [],
+    "V3 scanner-controlled executor parses generation-only local variants",
+)
+self_report_completion = (
+    '{"variants":[{"variant_id":"v1","operator_used":"CLAUSE_ROUTE_CHANGE",'
+    '"replacement_text":"A local variant.",'
+    '"changed_spans":[{"source_span":"predictable route","before":"predictable route","after":"local route"}],'
+    '"predictable_spans_modified_count":1}]}'
+)
+self_report_variants, self_report_parse = parse_scanner_controlled_variants_with_diagnostics(
+    self_report_completion,
+    limit=2,
+)
+malformed_completion_variants, malformed_completion_parse = parse_scanner_controlled_variants_with_diagnostics(
+    '{"variants":[{"variant_id":"v1","operator_used":"CLAUSE_ROUTE_CHANGE","replacement_text":"ok","changed_spans":[{"span_id":null,"before":"","after":""}]}], "" : "../bad." }]}',
+    limit=2,
+)
+assert_test(
+    self_report_variants == []
+    and self_report_parse["parse_status"] == "schema_failed"
+    and self_report_parse["failure"] == "no_valid_variants"
+    and malformed_completion_variants == []
+    and malformed_completion_parse["parse_status"] == "json_parse_failed",
+    "V3 scanner-controlled parser rejects self-reported compliance fields and malformed completion tails",
 )
 no_change_gate = scanner_controlled_variant_gate(
     report=scanner_loop_report,
