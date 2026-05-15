@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import os
 from typing import Any
 
 from .calibration_store import records_for_family
@@ -49,20 +50,45 @@ def _calibration_adjustment(family: str, features: CandidateFeatures) -> tuple[f
     return adjustment, reasons
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _material_ai_drop_for_review(features: CandidateFeatures) -> bool:
+    threshold = _float_env("DRAFTPROOF_REWRITE_V3_MATERIAL_AI_DROP_FOR_REVIEW", 8.0)
+    return (
+        features.validation_passed
+        and features.compression_accepted
+        and features.semantic_safe
+        and features.ai_delta >= threshold
+    )
+
+
 def score_candidate(item: dict[str, Any], *, family: str, index: int) -> PortfolioScore:
     trace = item.get("trace") if isinstance(item.get("trace"), dict) else {}
     features = features_from_trace(trace)
     score = 0.0
     reasons: list[str] = []
     outcome = str(trace.get("candidate_outcome") or "")
+    material_ai_drop = _material_ai_drop_for_review(features)
     if outcome == "valid_detector_improved":
-        score += 120.0
+        score += 55.0
         reasons.append("valid_detector_improved")
     elif outcome == "invalid_detector_improved":
-        score += 70.0
+        score += 15.0
         reasons.append("invalid_detector_improved")
-    elif outcome in {"valid_no_detector_movement", "invalid_no_detector_movement"}:
-        score -= 90.0
+    elif outcome == "valid_no_detector_movement":
+        if material_ai_drop:
+            score += 20.0
+            reasons.append("material_ai_drop_without_detector_gate")
+        else:
+            score -= 35.0
+            reasons.append("no_detector_movement")
+    elif outcome == "invalid_no_detector_movement":
+        score -= 100.0
         reasons.append("no_detector_movement")
     elif outcome == "corrupted_output":
         score -= 220.0
@@ -89,8 +115,12 @@ def score_candidate(item: dict[str, Any], *, family: str, index: int) -> Portfol
         score -= 100.0
         reasons.append("semantic_unsafe")
     if not features.target_gate_passed:
-        score -= 80.0
-        reasons.append("target_gate_failed")
+        if material_ai_drop:
+            score -= 35.0
+            reasons.append("target_gate_failed_but_material_ai_drop")
+        else:
+            score -= 80.0
+            reasons.append("target_gate_failed")
     if features.footprint_risk_drop < 0:
         score -= 160.0 + min(abs(features.footprint_risk_drop), 30.0) * 8.0
         reasons.append("footprint_regression")
@@ -102,7 +132,7 @@ def score_candidate(item: dict[str, Any], *, family: str, index: int) -> Portfol
     else:
         score += min(features.target_risk_drop, 20.0) * 2.0
     score += min(max(features.topk_delta, -20.0), 35.0) * 2.0
-    score += min(max(features.ai_delta, -20.0), 50.0) * 0.8
+    score += min(max(features.ai_delta, -20.0), 50.0) * 1.6
     score -= features.fraction_ai * 80.0
     score -= features.fraction_ai_assisted * 35.0
     score += features.fraction_human * 30.0

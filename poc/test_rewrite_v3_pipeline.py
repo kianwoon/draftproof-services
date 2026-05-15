@@ -1614,24 +1614,39 @@ proxy_trace = {
     "compression_accepted": True,
     "semantic_safe": True,
     "external_proxy": {"reasons": ["insufficient_topk_drop"]},
+    "scanner_controlled_executor_available": True,
     "candidate_ai": 45.0,
 }
+topk_issues = issues_from_trace({
+    **proxy_trace,
+    "topk_effect_failures": ["no_effect_span_patch", "self_report_mismatch", "insufficient_span_movement"],
+})
+assert_test(
+    CandidateIssue.TOPK_CANDIDATE_REJECTED in topk_issues
+    and CandidateIssue.NO_EFFECT_SPAN_PATCH in topk_issues
+    and CandidateIssue.SELF_REPORT_MISMATCH in topk_issues
+    and CandidateIssue.INSUFFICIENT_SPAN_MOVEMENT in topk_issues,
+    "V3 loop promotes Top-k validator failures into typed candidate issues",
+)
 proxy_decision = decide_next_action(
     [{"text": "candidate", "strict_selected": False, "external_selected": False, "trace": proxy_trace}],
     has_positive_boundaries=True,
     tried_actions=set(),
 )
-assert_test(proxy_decision.action == CandidateAction.ADAPT_BOUNDARY, "V3 loop uses boundary adaptation for unresolved proxy issues")
+assert_test(
+    proxy_decision.action == CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR,
+    "V3 loop routes insufficient Top-k movement to scanner-controlled span repair first",
+)
 contrast_decision = decide_next_action(
     [{"text": "candidate", "strict_selected": False, "external_selected": False, "trace": proxy_trace}],
     has_positive_boundaries=True,
-    tried_actions={CandidateAction.ADAPT_BOUNDARY},
+    tried_actions={CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR, CandidateAction.ADAPT_BOUNDARY},
 )
 assert_test(contrast_decision.action == CandidateAction.CONTRAST_BOUNDARY, "V3 loop runs contrast boundary after boundary adaptation misses")
 plain_decision = decide_next_action(
     [{"text": "candidate", "strict_selected": False, "external_selected": False, "trace": proxy_trace}],
     has_positive_boundaries=True,
-    tried_actions={CandidateAction.ADAPT_BOUNDARY, CandidateAction.CONTRAST_BOUNDARY},
+    tried_actions={CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR, CandidateAction.ADAPT_BOUNDARY, CandidateAction.CONTRAST_BOUNDARY},
 )
 assert_test(plain_decision.action == CandidateAction.PLAIN_REASONING, "V3 loop runs plain reasoning after contrast boundary misses")
 
@@ -1781,6 +1796,85 @@ with tempfile.TemporaryDirectory() as tmpdir:
         else:
             os.environ["DRAFTPROOF_REWRITE_V3_CALIBRATION_STORE"] = old_store
     assert_test(selected_idx == 1 and scores[1]["score"] > scores[0]["score"], "V3 portfolio selector uses external calibration records")
+
+review_material_scanner_candidate = {
+    "text": "scanner",
+    "strict_selected": False,
+    "external_selected": False,
+    "trace": {
+        "generation_mode": "scanner_controlled_executor",
+        "candidate_outcome": "valid_no_detector_movement",
+        "validation": {"passed": True, "failures": [], "source_units": 8, "candidate_units": 8},
+        "compression": {"status": "in_band", "ratio": 0.958},
+        "compression_accepted": True,
+        "semantic_safe": True,
+        "target_gate_passed": False,
+        "footprint_delta": {"risk_drop": 0.581},
+        "target_movement": {"risk_drop": 0.261},
+        "external_proxy": {
+            "reasons": [
+                "insufficient_topk_drop",
+                "segment_ai_or_assisted_fraction_high",
+                "segment_human_fraction_low",
+            ],
+            "metrics": {
+                "ai_delta": 14.66,
+                "topk_delta": 1.84,
+                "wq_delta": 1.58,
+                "segment_authorship_gate": {
+                    "fraction_ai": 0.0,
+                    "fraction_ai_assisted": 1.0,
+                    "fraction_human": 0.0,
+                    "max_ai_window_words": 0.0,
+                },
+            },
+        },
+    },
+}
+review_smaller_detector_candidate = {
+    "text": "paragraph",
+    "strict_selected": False,
+    "external_selected": False,
+    "trace": {
+        "generation_mode": "paragraph_preserving_broad_reconstruction",
+        "candidate_outcome": "valid_detector_improved",
+        "validation": {"passed": True, "failures": [], "source_units": 8, "candidate_units": 8},
+        "compression": {"status": "in_band", "ratio": 0.981},
+        "compression_accepted": True,
+        "semantic_safe": True,
+        "target_gate_passed": False,
+        "footprint_delta": {"risk_drop": 4.546},
+        "target_movement": {"risk_drop": 0.696},
+        "external_proxy": {
+            "reasons": [
+                "insufficient_topk_drop",
+                "segment_ai_or_assisted_fraction_high",
+                "segment_human_fraction_low",
+            ],
+            "metrics": {
+                "ai_delta": 4.57,
+                "topk_delta": -0.49,
+                "wq_delta": -0.68,
+                "segment_authorship_gate": {
+                    "fraction_ai": 0.0,
+                    "fraction_ai_assisted": 1.0,
+                    "fraction_human": 0.0,
+                    "max_ai_window_words": 0.0,
+                },
+            },
+        },
+    },
+}
+selected_idx, scores = select_portfolio_candidate(
+    [review_material_scanner_candidate, review_smaller_detector_candidate],
+    family="clean_texture_boundary",
+)
+assert_test(
+    selected_idx == 0
+    and "material_ai_drop_without_detector_gate" in scores[0]["reasons"]
+    and scores[0]["score"] > scores[1]["score"],
+    "V3 portfolio review selection preserves valid material AI improvement even when target gate remains partial",
+)
 
 seven_unit_candidate = "\n\n".join([
     "Alpha paragraph.",
@@ -2529,9 +2623,11 @@ try:
     v3_pipeline._generate_target_executor_candidate = fake_target_executor_for_strategy
     v3_pipeline._scan_report = fake_scan_report
     with tempfile.TemporaryDirectory() as tmpdir:
+        paragraph_first_report = report_for(broad_source, ai=70.0)
+        paragraph_first_report["ai_risk_badge"]["ai_components"]["topk_pattern_raw"] = 40.0
         paragraph_first = run_rewrite_pipeline_v3(
             detect_json={
-                **report_for(broad_source, ai=70.0),
+                **paragraph_first_report,
                 "rewrite_target_profile": paragraph_strategy_profile,
                 "problem_inventory": paragraph_problem_inventory,
             },
@@ -2622,9 +2718,11 @@ try:
     v3_pipeline._generate_scanner_controlled_candidate = fake_planned_scanner_controlled
     v3_pipeline._scan_report = fake_scan_report
     with tempfile.TemporaryDirectory() as tmpdir:
+        planned_followup_report = report_for(broad_source, ai=70.0)
+        planned_followup_report["ai_risk_badge"]["ai_components"]["topk_pattern_raw"] = 40.0
         planned_followup = run_rewrite_pipeline_v3(
             detect_json={
-                **report_for(broad_source, ai=70.0),
+                **planned_followup_report,
                 "rewrite_target_profile": paragraph_strategy_profile,
                 "problem_inventory": mixed_problem_inventory,
             },
@@ -2636,7 +2734,7 @@ try:
         assert_test(
             not planned_summary["candidate_trace"][0]["target_gate_passed"]
             and planned_summary["candidate_trace"][0]["unapplied_target_group_ids"] == ["tg002"]
-            and planned_calls == ["protected_section_rewrite"]
+            and planned_calls[:1] == ["protected_section_rewrite"]
             and planned_summary["candidate_loop_trace"][0]["reason"] == "execute_planned_problem_strategy:protected_section_rewrite",
             "V3 executes the next planned problem strategy when target application leaves unresolved groups",
         )
@@ -2671,9 +2769,11 @@ try:
     v3_pipeline._generate_plain_reasoning_candidate = fake_plain_reasoning_should_not_run
     v3_pipeline._scan_report = fake_no_movement_scan_report
     with tempfile.TemporaryDirectory() as tmpdir:
+        exhausted_report = report_for(broad_source, ai=70.0)
+        exhausted_report["ai_risk_badge"]["ai_components"]["topk_pattern_raw"] = 40.0
         exhausted_problem = run_rewrite_pipeline_v3(
             detect_json={
-                **report_for(broad_source, ai=70.0),
+                **exhausted_report,
                 "rewrite_target_profile": paragraph_strategy_profile,
                 "problem_inventory": paragraph_problem_inventory,
             },
@@ -2846,9 +2946,11 @@ try:
 
     v3_pipeline._generate_target_executor_candidate = fake_empty_target_executor
     with tempfile.TemporaryDirectory() as tmpdir:
+        empty_primary_report = report_for(broad_source, ai=70.0)
+        empty_primary_report["ai_risk_badge"]["ai_components"]["topk_pattern_raw"] = 40.0
         empty_primary = run_rewrite_pipeline_v3(
             detect_json={
-                **report_for(broad_source, ai=70.0),
+                **empty_primary_report,
                 "rewrite_target_profile": paragraph_strategy_profile,
                 "problem_inventory": paragraph_problem_inventory,
             },

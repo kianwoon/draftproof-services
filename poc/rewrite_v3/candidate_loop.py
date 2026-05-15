@@ -17,6 +17,11 @@ class CandidateIssue(str, Enum):
     SEMANTIC_DRIFT = "semantic_drift"
     INTERNAL_AI_BACKFIRE = "internal_ai_backfire"
     INSUFFICIENT_TOPK_DROP = "insufficient_topk_drop"
+    TOPK_CANDIDATE_REJECTED = "topk_candidate_rejected"
+    NO_EFFECT_SPAN_PATCH = "no_effect_span_patch"
+    ZERO_CHANGE_TOPK = "zero_change_topk"
+    SELF_REPORT_MISMATCH = "self_report_mismatch"
+    INSUFFICIENT_SPAN_MOVEMENT = "insufficient_span_movement"
     WRITING_QUALITY_COLLAPSE = "writing_quality_collapse"
     SEGMENT_AI_FOOTPRINT = "segment_ai_footprint"
     PROXY_NOT_ACCEPTED = "proxy_not_accepted"
@@ -34,6 +39,7 @@ class CandidateAction(str, Enum):
     CONTRAST_BOUNDARY = "contrast_boundary"
     PLAIN_REASONING = "plain_reasoning"
     REPAIR_AUTHORSHIP_WINDOWS = "repair_authorship_windows"
+    SCANNER_CONTROLLED_SPAN_REPAIR = "scanner_controlled_span_repair"
     REPAIR_TARGETED = "repair_targeted"
     TARGET_EXECUTOR = "target_executor"
     REPAIR_ASSISTED_FOOTPRINT = "repair_assisted_footprint"
@@ -59,6 +65,23 @@ def _issue_values(values: Any) -> set[str]:
     if not isinstance(values, (list, tuple)):
         return set()
     return {str(value) for value in values}
+
+
+def _topk_effect_failures(trace: dict[str, Any]) -> set[str]:
+    failures: set[str] = set()
+    direct = trace.get("topk_effect_failures")
+    failures.update(_issue_values(direct))
+    target_trace = trace.get("target_execution_trace") if isinstance(trace.get("target_execution_trace"), dict) else {}
+    stage_rows = target_trace.get("prompt_stage_trace") if isinstance(target_trace.get("prompt_stage_trace"), list) else []
+    for stage in stage_rows:
+        if not isinstance(stage, dict):
+            continue
+        diagnostics = stage.get("parse_diagnostics") if isinstance(stage.get("parse_diagnostics"), dict) else {}
+        effect_rows = diagnostics.get("effect_status") if isinstance(diagnostics.get("effect_status"), list) else []
+        for row in effect_rows:
+            if isinstance(row, dict):
+                failures.update(_issue_values(row.get("failures")))
+    return failures
 
 
 def issues_from_trace(trace: dict[str, Any]) -> tuple[CandidateIssue, ...]:
@@ -103,6 +126,17 @@ def issues_from_trace(trace: dict[str, Any]) -> tuple[CandidateIssue, ...]:
         issues.append(CandidateIssue.INTERNAL_AI_BACKFIRE)
     if "insufficient_topk_drop" in proxy_reasons:
         issues.append(CandidateIssue.INSUFFICIENT_TOPK_DROP)
+    topk_failures = _topk_effect_failures(trace)
+    if topk_failures:
+        issues.append(CandidateIssue.TOPK_CANDIDATE_REJECTED)
+    if "no_effect_span_patch" in topk_failures:
+        issues.append(CandidateIssue.NO_EFFECT_SPAN_PATCH)
+    if "zero_change_candidate" in topk_failures:
+        issues.append(CandidateIssue.ZERO_CHANGE_TOPK)
+    if "self_report_mismatch" in topk_failures:
+        issues.append(CandidateIssue.SELF_REPORT_MISMATCH)
+    if "insufficient_span_movement" in topk_failures:
+        issues.append(CandidateIssue.INSUFFICIENT_SPAN_MOVEMENT)
     if "writing_quality_collapse" in proxy_reasons:
         issues.append(CandidateIssue.WRITING_QUALITY_COLLAPSE)
     segment_reasons = {
@@ -161,6 +195,25 @@ def decide_next_action(
     ]
     latest_trace = candidate_evaluations[-1].get("trace") if isinstance(candidate_evaluations[-1].get("trace"), dict) else {}
     latest_issues = issues_from_trace(latest_trace)
+    topk_repair_issues = {
+        CandidateIssue.INSUFFICIENT_TOPK_DROP,
+        CandidateIssue.TOPK_CANDIDATE_REJECTED,
+        CandidateIssue.NO_EFFECT_SPAN_PATCH,
+        CandidateIssue.ZERO_CHANGE_TOPK,
+        CandidateIssue.SELF_REPORT_MISMATCH,
+        CandidateIssue.INSUFFICIENT_SPAN_MOVEMENT,
+    }
+    if (
+        topk_repair_issues.intersection(latest_issues)
+        and bool(latest_trace.get("scanner_controlled_executor_available") or latest_trace.get("target_execution_available"))
+        and CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR not in tried_actions
+    ):
+        return LoopDecision(
+            action=CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR,
+            source_index=len(candidate_evaluations) - 1,
+            issues=latest_issues,
+            reason="scanner_controlled_span_repair_after_topk_failure",
+        )
     if CandidateIssue.NO_DETECTOR_MOVEMENT in latest_issues or CandidateIssue.NO_TARGET_MOVEMENT in latest_issues:
         if (
             bool(latest_trace.get("target_execution_available"))

@@ -490,6 +490,13 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _compression_accepted(compression: dict[str, Any]) -> bool:
     if compression.get("in_band"):
         return True
@@ -889,6 +896,40 @@ def _scanner_controlled_executor_available(scan_contract: ScanContract) -> bool:
     return _target_executor_available(scan_contract)
 
 
+def _scanner_controlled_should_run_first(scan_contract: ScanContract) -> bool:
+    if os.environ.get("DRAFTPROOF_REWRITE_V3_SCANNER_CONTROLLED_FIRST_ENABLED", "1").lower() in {"0", "false", "no", "off"}:
+        return False
+    if not _scanner_controlled_executor_available(scan_contract):
+        return False
+    topk_score = scan_contract.topk_score
+    if isinstance(topk_score, (int, float)) and topk_score >= _float_env("DRAFTPROOF_REWRITE_V3_SCANNER_FIRST_TOPK_MIN", 80.0):
+        return True
+    drivers = scan_contract.target_driver_summary or {}
+    unsafe_driver = int(drivers.get("unsafe_word_share") or 0)
+    predictability_driver = int(drivers.get("predictability_score") or 0)
+    if unsafe_driver >= _int_env("DRAFTPROOF_REWRITE_V3_SCANNER_FIRST_UNSAFE_DRIVER_MIN", 5):
+        return True
+    if predictability_driver >= _int_env("DRAFTPROOF_REWRITE_V3_SCANNER_FIRST_PREDICTABILITY_DRIVER_MIN", 7):
+        return True
+    unsafe_score_min = _float_env("DRAFTPROOF_REWRITE_V3_SCANNER_FIRST_UNSAFE_SCORE_MIN", 0.55)
+    predictability_score_min = _float_env("DRAFTPROOF_REWRITE_V3_SCANNER_FIRST_PREDICTABILITY_SCORE_MIN", 0.60)
+    for target in scan_contract.rewrite_targets:
+        if not isinstance(target, dict):
+            continue
+        for driver in target.get("dominant_drivers") or []:
+            if not isinstance(driver, dict):
+                continue
+            key = str(driver.get("key") or "")
+            score = driver.get("score")
+            if not isinstance(score, (int, float)):
+                continue
+            if key == "unsafe_word_share" and float(score) >= unsafe_score_min:
+                return True
+            if key == "predictability_score" and float(score) >= predictability_score_min:
+                return True
+    return False
+
+
 def _target_executor_available(scan_contract: ScanContract) -> bool:
     if not scan_contract.rewrite_targets:
         return False
@@ -944,6 +985,38 @@ def _unapplied_target_group_ids(target_trace: dict[str, Any] | None) -> list[str
         and str(row.get("group_id") or "")
         and not bool(row.get("applied"))
     ]
+
+
+def _topk_effect_failure_rows(target_trace: dict[str, Any] | None) -> list[dict[str, Any]]:
+    trace = target_trace if isinstance(target_trace, dict) else {}
+    rows: list[dict[str, Any]] = []
+    stage_trace = trace.get("prompt_stage_trace") if isinstance(trace.get("prompt_stage_trace"), list) else []
+    for stage in stage_trace:
+        if not isinstance(stage, dict):
+            continue
+        diagnostics = stage.get("parse_diagnostics") if isinstance(stage.get("parse_diagnostics"), dict) else {}
+        effect_status = diagnostics.get("effect_status") if isinstance(diagnostics.get("effect_status"), list) else []
+        for status in effect_status:
+            if not isinstance(status, dict):
+                continue
+            failures = [str(item) for item in status.get("failures") or [] if str(item or "")]
+            if not failures:
+                continue
+            rows.append({
+                "group_id": str(status.get("group_id") or ""),
+                "failures": list(dict.fromkeys(failures)),
+                "required_modified_spans": status.get("required_modified_spans"),
+                "actual_predictable_spans_modified_count": status.get("actual_predictable_spans_modified_count"),
+                "actual_modified_span_ids": status.get("actual_modified_span_ids") if isinstance(status.get("actual_modified_span_ids"), list) else [],
+            })
+    return rows
+
+
+def _topk_effect_failures(target_trace: dict[str, Any] | None) -> list[str]:
+    failures: list[str] = []
+    for row in _topk_effect_failure_rows(target_trace):
+        failures.extend(str(item) for item in row.get("failures") or [] if str(item or ""))
+    return list(dict.fromkeys(failures))
 
 
 def _annotate_target_execution(
@@ -1456,6 +1529,8 @@ def _generate_scanner_controlled_candidate(
                 group_log["accepted_delta"] = best["delta"]
                 group_log["accepted_candidate_quality"] = best.get("candidate_quality")
                 improved_this_round = True
+                round_log["groups"].append(group_log)
+                break
             elif best:
                 group_log["rejected_best_delta"] = best.get("delta")
             else:
@@ -1846,6 +1921,27 @@ def run_rewrite_pipeline_v3(
                 )
             elif (
                 problem_inventory_driven
+                and not _uses_problem_scanner_controlled_strategy(first_strategy_step)
+                and _scanner_controlled_should_run_first(scan_contract)
+            ):
+                generation_mode = "scanner_controlled_executor"
+                candidate_text, target_execution = _generate_scanner_controlled_candidate(
+                    original_text=original_text,
+                    original_report=original_report,
+                    scan_contract=scan_contract,
+                    content_mode=content_mode,
+                    family=family,
+                    api_key=api_key,
+                    model=model,
+                    base_url=base_url,
+                )
+                target_execution = _annotate_target_execution(
+                    target_execution,
+                    executed_strategy="scanner_controlled_span_repair",
+                    executor_engine="scanner_controlled_executor",
+                )
+            elif (
+                problem_inventory_driven
                 and _uses_problem_scanner_controlled_strategy(first_strategy_step)
                 and _scanner_controlled_executor_available(scan_contract)
             ):
@@ -2043,6 +2139,8 @@ def run_rewrite_pipeline_v3(
             else []
         )
         target_trace = target_execution_info if isinstance(target_execution_info, dict) else {}
+        topk_effect_failure_rows = _topk_effect_failure_rows(target_trace)
+        topk_effect_failures = _topk_effect_failures(target_trace)
         unapplied_target_group_ids = _unapplied_target_group_ids(target_trace)
         target_gate_passed = bool(target_movement["moved"] and not unapplied_target_group_ids)
         central_profile_score = score_candidate_against_central_profile(
@@ -2133,6 +2231,7 @@ def run_rewrite_pipeline_v3(
                 "problem_inventory_after": candidate_problem_inventory,
                 "unresolved_problem_groups": unresolved_problem_groups,
                 "target_execution_available": _target_executor_available(scan_contract),
+                "scanner_controlled_executor_available": _scanner_controlled_executor_available(scan_contract),
                 "prune_bridge_available": _prune_bridge_available(scan_contract),
                 "assisted_footprint_executor_available": _assisted_footprint_executor_available(scan_contract),
                 "target_execution_attempted": target_attempted,
@@ -2144,6 +2243,8 @@ def run_rewrite_pipeline_v3(
                 "stage_apply_status": target_trace.get("stage_apply_status") if target_trace else [],
                 "stage_rescan_delta": target_trace.get("stage_rescan_delta") if target_trace else None,
                 "topk_repair_attempted": bool(target_trace.get("topk_repair_attempted")) if target_trace else False,
+                "topk_effect_failures": topk_effect_failures,
+                "topk_effect_failure_rows": topk_effect_failure_rows,
                 "strategy_stop_reason": target_trace.get("strategy_stop_reason") if target_trace else None,
                 "target_groups": target_trace.get("target_groups") if target_trace else [],
                 "target_replacements": target_trace.get("target_replacements") if target_trace else [],
@@ -2213,6 +2314,7 @@ def run_rewrite_pipeline_v3(
         tried_actions.add(CandidateAction.TARGET_EXECUTOR)
     if generation_mode == "scanner_controlled_executor" or _uses_problem_scanner_controlled_strategy(generation_mode):
         tried_actions.add(CandidateAction.TARGET_EXECUTOR)
+        tried_actions.add(CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR)
     primary_generation_failed = bool(
         not candidate_text
         and (
@@ -2348,6 +2450,24 @@ def run_rewrite_pipeline_v3(
                         central_judgment_plan=central_judgment_plan,
                     )
                     mode = "plain_reasoning_broad_prose"
+                elif loop_decision.action == CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR:
+                    progress(82, "Running V3 scanner-controlled span repair")
+                    new_text, loop_target_execution = _generate_scanner_controlled_candidate(
+                        original_text=str(source_item.get("text") or candidate_text or original_text),
+                        original_report=source_item.get("report") or original_report,
+                        scan_contract=scan_contract,
+                        content_mode=content_mode,
+                        family=family,
+                        api_key=api_key,
+                        model=model,
+                        base_url=base_url,
+                    )
+                    mode = "scanner_controlled_span_repair"
+                    loop_target_execution = _annotate_target_execution(
+                        loop_target_execution,
+                        executed_strategy="scanner_controlled_span_repair",
+                        executor_engine="scanner_controlled_executor",
+                    )
                 elif loop_decision.action == CandidateAction.TARGET_EXECUTOR:
                     if planned_problem_strategy in PROBLEM_SCANNER_CONTROLLED_STRATEGIES:
                         progress(82, f"Executing V3 planned strategy: {planned_problem_strategy}")
@@ -2438,7 +2558,7 @@ def run_rewrite_pipeline_v3(
                 ))
             except Exception as exc:
                 error_target_execution = None
-                if loop_decision.action == CandidateAction.TARGET_EXECUTOR:
+                if loop_decision.action in {CandidateAction.TARGET_EXECUTOR, CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR}:
                     error_target_execution = target_execution_trace(
                         attempted=True,
                         target_groups=group_rewrite_targets(
@@ -2448,6 +2568,13 @@ def run_rewrite_pipeline_v3(
                         ),
                         error=str(exc),
                     )
+                    if loop_decision.action == CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR:
+                        error_target_execution = {
+                            **error_target_execution,
+                            "scanner_controlled": True,
+                            "executed_strategy": "scanner_controlled_span_repair",
+                            "executor_engine": "scanner_controlled_executor",
+                        }
                 elif loop_decision.action == CandidateAction.REPAIR_ASSISTED_FOOTPRINT:
                     error_target_execution = target_execution_trace(
                         attempted=True,
