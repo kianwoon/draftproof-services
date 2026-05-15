@@ -18,6 +18,7 @@ SUPPORTED_TARGET_OPERATIONS = {
     "citation_preserving_window_repair",
     "grounded_author_reasoning_rewrite",
     "light_texture_rewrite",
+    "paragraph_preserving_broad_reconstruction",
 }
 
 
@@ -33,6 +34,7 @@ class TargetGroup:
     after_context: str
     targets: tuple[dict[str, Any], ...]
     protected_anchors: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    soft_guidance_anchors: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     word_count_guide: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,6 +163,21 @@ def _dedupe_anchors(targets: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]
     return tuple(anchors)
 
 
+def _dedupe_soft_guidance_anchors(targets: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+    seen: set[str] = set()
+    anchors: list[dict[str, Any]] = []
+    for target in targets:
+        for anchor in target.get("soft_guidance_anchors") or []:
+            if not isinstance(anchor, dict):
+                continue
+            text = str(anchor.get("text") or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            anchors.append(dict(anchor))
+    return tuple(anchors)
+
+
 def _combined_word_guide(targets: list[dict[str, Any]], source_text: str) -> dict[str, Any]:
     source_words = 0
     preferred_words = 0
@@ -238,6 +255,7 @@ def group_rewrite_targets(
             after_context=after,
             targets=tuple(rows),
             protected_anchors=_dedupe_anchors(rows),
+            soft_guidance_anchors=_dedupe_soft_guidance_anchors(rows),
             word_count_guide=_combined_word_guide(rows, source),
         ))
         if len(groups) >= max(1, int(max_groups or 1)):
@@ -277,9 +295,11 @@ def build_target_executor_prompt(
             "dominant_drivers": compact_targets[0].get("dominant_drivers") if compact_targets else [],
             "required_movement": compact_targets[0].get("required_movement") if compact_targets else {},
             "protected_anchors": list(group.protected_anchors),
+            "soft_guidance_anchors": list(group.soft_guidance_anchors),
             "word_count_guide": dict(group.word_count_guide),
             "targets": compact_targets,
         })
+    paragraph_preserving = any(group.operation == "paragraph_preserving_broad_reconstruction" for group in target_groups)
     payload = {
         "content_mode": content_mode,
         "strategy_family": strategy_family,
@@ -290,6 +310,7 @@ def build_target_executor_prompt(
             "Rewrite only source_text for each target group.",
             "Use before_context and after_context only for continuity.",
             "Preserve protected_anchors exactly when present.",
+            "Use soft_guidance_anchors as coverage hints, not exact strings.",
             "Address dominant_drivers and required_movement from the targets.",
             "Do not perform synonym swapping or tidy paraphrase only.",
             "Rebuild the target as a natural local passage with clearer cause, observation, judgement, or classroom-specific reasoning when the source supports it.",
@@ -309,6 +330,13 @@ def build_target_executor_prompt(
             ]
         },
     }
+    if paragraph_preserving:
+        payload["requirements"].extend([
+            "For paragraph_preserving_broad_reconstruction, return one replacement paragraph for each source paragraph.",
+            "Do not compress the paragraph into a summary. Stay near the preferred_words guide while prioritizing natural movement.",
+            "Avoid polished textbook paraphrase. Keep the facts, but make the paragraph read like a person deciding how the pieces connect.",
+            "Vary sentence length inside the paragraph and include one grounded judgement or relation that is already supported by source_text.",
+        ])
     return (
         "Rewrite only the scanner-targeted passages for DraftProof V3.\n"
         "The scanner has already identified the risky spans. Do not rewrite the whole document.\n\n"

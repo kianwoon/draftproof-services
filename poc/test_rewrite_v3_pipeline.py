@@ -10,7 +10,7 @@ import tempfile
 from llm.gateway import LLMConfig, LLMGateway
 from rewrite_v2.contracts import build_rewrite_contract
 from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
-from detect.rewrite_targets import build_rewrite_target_profile
+from detect.rewrite_targets import build_problem_inventory, build_rewrite_target_profile
 import rewrite_v3.pipeline as v3_pipeline
 from rewrite_v3.anchor_validation import validate_v3_candidate
 from rewrite_v3.assisted_footprint_executor import group_assisted_footprint_windows
@@ -31,8 +31,23 @@ from rewrite_v3.layers.contrast_boundary import build_contrast_boundary_prompt, 
 from rewrite_v3.layers.document_rhythm import build_document_rhythm_chunk_prompt
 from rewrite_v3.layers.plain_reasoning_broad_prose import build_plain_reasoning_broad_prose_prompt
 from rewrite_v3.output_cleaning import clean_v3_candidate_output
+from rewrite_v3.paragraph_portfolio_executor import (
+    build_reconstruction_batches_by_prompt,
+    paragraph_portfolio_config,
+    parse_replacements_with_diagnostics,
+)
 from rewrite_v3.pipeline import run_rewrite_pipeline_v3
 from rewrite_v3.portfolio import select_portfolio_candidate
+from rewrite_v3.prompt_templates.paragraph_portfolio import (
+    build_paragraph_portfolio_planner_prompt,
+    build_paragraph_portfolio_reconstruction_prompt,
+    build_paragraph_portfolio_topk_prompt,
+    fallback_paragraph_portfolio_plan,
+    paragraph_portfolio_context,
+    parse_paragraph_portfolio_plan,
+    parse_paragraph_portfolio_replacements,
+    validate_paragraph_portfolio_plan,
+)
 from rewrite_v3.router import route_from_scan_contract
 from rewrite_v3.scanner_controlled_executor import (
     ScannerControlledConfig,
@@ -44,6 +59,12 @@ from rewrite_v3.scanner_controlled_executor import (
 from rewrite_v3.scanner_contract import RewriteRiskClass, build_scan_contract
 from rewrite_v3.strategy_plan import build_strategy_plan
 from rewrite_v3.target_executor import apply_target_replacements, batch_target_groups, group_rewrite_targets, parse_target_replacements
+from rewrite_v3.unit_preserving_prune_bridge import (
+    apply_prune_bridge_replacements,
+    build_prune_bridge_prompt,
+    filter_prune_bridge_groups,
+    parse_prune_bridge_replacements,
+)
 
 
 def assert_test(condition: bool, message: str) -> None:
@@ -119,6 +140,29 @@ try:
     )
 finally:
     for name, value in saved_provider_env.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+model_env_names = ["DRAFTPROOF_REWRITE_MODEL_LOCK", "DRAFTPROOF_GENERATOR_MODEL", "LLM_MODEL"]
+saved_model_env = {name: os.environ.get(name) for name in model_env_names}
+try:
+    os.environ["DRAFTPROOF_REWRITE_MODEL_LOCK"] = "deepseek/deepseek-v4-flash"
+    os.environ["DRAFTPROOF_GENERATOR_MODEL"] = "deepseek/deepseek-v4-flash"
+    os.environ["LLM_MODEL"] = "deepseek/deepseek-chat"
+    gateway = v3_pipeline._gateway(
+        api_key="test-key",
+        model="deepseek/deepseek-chat",
+        base_url="https://openrouter.ai/api/v1",
+        max_tokens=1200,
+    )
+    assert_test(
+        gateway.model == "deepseek/deepseek-v4-flash",
+        "V3 rewrite model lock overrides generic LLM_MODEL and explicit worker model",
+    )
+finally:
+    for name, value in saved_model_env.items():
         if value is None:
             os.environ.pop(name, None)
         else:
@@ -480,6 +524,14 @@ assert_test(
     rebuilt_footprint["risky_window_density"] == footprint_profile["risky_window_density"],
     "AI footprint profile aggregates authorship windows deterministically",
 )
+backfire_delta = v3_pipeline._footprint_delta(
+    {"fraction_ai": 0.0, "fraction_ai_assisted": 0.5, "risky_window_density": 0.2, "max_risky_window_words": 20},
+    {"fraction_ai": 0.0, "fraction_ai_assisted": 0.7, "risky_window_density": 0.1, "max_risky_window_words": 20},
+)
+assert_test(
+    not backfire_delta["moved"] and not backfire_delta["risk_not_worse"],
+    "V3 footprint movement rejects density-only gains when total footprint risk worsens",
+)
 target_profile = build_rewrite_target_profile(
     source_text=(
         "A short human paragraph with concrete observation.\n\n"
@@ -509,7 +561,163 @@ assert_test(
     "Scanner emits rewrite target profile v1 with stable target text",
 )
 assert_test(
+    target_profile["targets"][0]["scope_level"] in {"span", "sentence_window", "paragraph", "chunk"}
+    and "target_anchor_pressure" in target_profile["targets"][0]
+    and isinstance(target_profile["targets"][0]["operation_candidates"], list),
+    "Rewrite target profile exposes hierarchy and target-level strategy eligibility",
+)
+problem_inventory = build_problem_inventory(
+    rewrite_target_profile=target_profile,
+    ai_footprint_profile=footprint_profile,
+)
+assert_test(
+    problem_inventory["schema_version"] == "problem_inventory.v1"
+    and problem_inventory["problem_groups"]
+    and problem_inventory["problem_groups"][0]["allowed_operations"],
+    "Scanner emits problem inventory v1 from structured target and footprint evidence",
+)
+broad_target_profile = build_rewrite_target_profile(
+    source_text=broad_source,
+    authorship_window_profile={
+        "windows": [
+            {
+                "window_id": "w001",
+                "paragraph_id": "p001",
+                "sentence_ids": ["s001", "s002"],
+                "label": "moderately_ai_assisted",
+                "ai_assistance_score": 0.66,
+                "start_index": 0,
+                "end_index": broad_source.find("\n\n"),
+                "span_integrity": {"passed": True, "start_index": 0, "end_index": broad_source.find("\n\n")},
+                "source_text": broad_source.split("\n\n")[0],
+                "word_count": len(broad_source.split("\n\n")[0].split()),
+                "score_components": {"unsafe_word_share": 0.8, "predictability_score": 0.7, "ai_signal_score": 0.6},
+            },
+            {
+                "window_id": "w002",
+                "paragraph_id": "p002",
+                "sentence_ids": ["s003", "s004"],
+                "label": "moderately_ai_assisted",
+                "ai_assistance_score": 0.64,
+                "start_index": broad_source.find("\n\n") + 2,
+                "end_index": len(broad_source),
+                "span_integrity": {"passed": True, "start_index": broad_source.find("\n\n") + 2, "end_index": len(broad_source)},
+                "source_text": broad_source.split("\n\n")[1],
+                "word_count": len(broad_source.split("\n\n")[1].split()),
+                "score_components": {"unsafe_word_share": 0.72, "predictability_score": 0.66, "ai_signal_score": 0.57},
+            },
+        ]
+    },
+    ai_footprint_profile={
+        "fraction_ai": 0.0,
+        "fraction_ai_assisted": 1.0,
+        "risky_window_density": 1.0,
+        "risky_window_count": 2,
+    },
+    preservation_inventory={"anchors": [{"text": "old classroom model", "kind": "domain_term", "priority": 70}]},
+)
+broad_inventory = build_problem_inventory(
+    rewrite_target_profile=broad_target_profile,
+    ai_footprint_profile={
+        "fraction_ai": 0.0,
+        "fraction_ai_assisted": 1.0,
+        "risky_window_density": 1.0,
+        "risky_window_count": 2,
+    },
+)
+broad_problem_contract = build_scan_contract(
+    {
+        **report_for(broad_source, ai=70.0),
+        "rewrite_target_profile": broad_target_profile,
+        "problem_inventory": broad_inventory,
+        "ai_footprint_profile": {
+            "fraction_ai": 0.0,
+            "fraction_ai_assisted": 1.0,
+            "fraction_human": 0.0,
+            "risky_window_density": 1.0,
+            "risky_window_count": 2,
+            "max_risky_window_words": 48,
+        },
+    },
+    broad_source,
+)
+broad_problem_plan = build_strategy_plan(route_from_scan_contract(broad_problem_contract), broad_problem_contract)
+assert_test(
+    broad_target_profile["operation_mix"].get("paragraph_preserving_broad_reconstruction") == 2
+    and not broad_target_profile["targets"][0]["protected_anchors"]
+    and broad_target_profile["targets"][0]["soft_guidance_anchors"]
+    and broad_problem_plan.steps[0].strategy_id == "paragraph_preserving_broad_reconstruction",
+    "V3 routes broad soft-anchor footprint to paragraph-preserving reconstruction first",
+)
+low_anchor_target_profile = {
+    "schema_version": "rewrite_target_profile.v1",
+    "document_shape": "mixed",
+    "target_scope_policy": "target_profile_driven",
+    "operation_mix": {"grounded_author_reasoning_rewrite": 2},
+    "targets": [
+        {
+            "target_id": "rt001",
+            "unit_id": "p001",
+            "paragraph_id": "p001",
+            "scope_level": "sentence_window",
+            "risk_level": "medium",
+            "target_anchor_pressure": 0.0,
+            "semantic_edit_cost": 0.1,
+            "operation_candidates": ["unit_preserving_prune_bridge", "authorship_window_repair"],
+            "recommended_operation": "grounded_author_reasoning_rewrite",
+            "source_text": "This approach benefits all students.",
+            "protected_anchors": [],
+            "word_count_guide": {"source_words": 5, "preferred_words": 5},
+        },
+        {
+            "target_id": "rt002",
+            "unit_id": "p001",
+            "paragraph_id": "p001",
+            "scope_level": "sentence_window",
+            "risk_level": "medium",
+            "target_anchor_pressure": 0.0,
+            "semantic_edit_cost": 0.1,
+            "operation_candidates": ["unit_preserving_prune_bridge"],
+            "recommended_operation": "light_texture_rewrite",
+            "source_text": "Students can then apply it.",
+            "protected_anchors": [],
+            "word_count_guide": {"source_words": 5, "preferred_words": 5},
+        },
+    ],
+}
+low_anchor_inventory = build_problem_inventory(
+    rewrite_target_profile=low_anchor_target_profile,
+    ai_footprint_profile={
+        "fraction_ai": 0.0,
+        "fraction_ai_assisted": 0.8,
+        "risky_window_density": 0.12,
+        "risky_window_count": 2,
+    },
+)
+low_anchor_contract = build_scan_contract(
+    {
+        **report_for("This approach benefits all students.\n\nStudents can then apply it.", mode="academic_cited_text", ai=35.0),
+        "rewrite_target_profile": low_anchor_target_profile,
+        "problem_inventory": low_anchor_inventory,
+        "ai_footprint_profile": {
+            "fraction_ai": 0.0,
+            "fraction_ai_assisted": 0.8,
+            "fraction_human": 0.2,
+            "risky_window_density": 0.12,
+            "risky_window_count": 2,
+            "max_risky_window_words": 9,
+        },
+    },
+    "This approach benefits all students.\n\nStudents can then apply it.",
+)
+low_anchor_plan = build_strategy_plan(route_from_scan_contract(low_anchor_contract), low_anchor_contract)
+assert_test(
+    [step.strategy_id for step in low_anchor_plan.steps][0] == "unit_preserving_prune_bridge",
+    "V3 problem-first strategy plan selects prune/bridge for localized low-anchor scanner targets",
+)
+assert_test(
     target_profile["targets"][0]["recommended_operation"] in {
+        "paragraph_preserving_broad_reconstruction",
         "grounded_author_reasoning_rewrite",
         "citation_preserving_window_repair",
         "protected_section_rewrite",
@@ -524,6 +732,37 @@ target_groups = group_rewrite_targets(
     ),
     rewrite_target_profile=target_profile,
     max_groups=2,
+)
+prune_groups = filter_prune_bridge_groups(
+    target_groups=group_rewrite_targets(
+        original_text="This approach benefits all students.\n\nStudents can then apply it.",
+        rewrite_target_profile=low_anchor_target_profile,
+        max_groups=2,
+    ),
+    problem_inventory=low_anchor_inventory,
+)
+assert_test(
+    prune_groups and prune_groups[0].operation == "unit_preserving_prune_bridge",
+    "V3 prune/bridge executor filters target groups from problem inventory",
+)
+prune_prompt = build_prune_bridge_prompt(target_groups=prune_groups)
+assert_test(
+    "unit_preserving_prune_bridge" in prune_prompt and "Return JSON only" in prune_prompt,
+    "V3 prune/bridge executor builds bounded scanner-target prompt",
+)
+prune_replacements = parse_prune_bridge_replacements(json.dumps({
+    "replacements": [
+        {"group_id": prune_groups[0].group_id, "replacement_text": "This helps students."}
+    ]
+}))
+prune_applied, prune_trace = apply_prune_bridge_replacements(
+    original_text="This approach benefits all students.\n\nStudents can then apply it.",
+    target_groups=prune_groups,
+    replacements=prune_replacements,
+)
+assert_test(
+    "This helps students." in prune_applied and prune_trace["problem_strategy"] == "unit_preserving_prune_bridge",
+    "V3 prune/bridge executor applies unit-preserving replacements",
 )
 assert_test(
     target_groups and target_groups[0].source_text,
@@ -581,17 +820,42 @@ assert_test(
     len(batched_target_groups) == 3 and all(len(batch) <= 2 for batch in batched_target_groups),
     "V3 target executor can process scanner targets in bounded batches",
 )
-missing_anchor_applied, missing_anchor_status = apply_target_replacements(
+soft_anchor_applied, soft_anchor_status = apply_target_replacements(
     original_text=(
         "A short human paragraph with concrete observation.\n\n"
         "A riskier paragraph follows a predictable route and keeps a uniform explanation."
     ),
     target_groups=target_groups,
-    replacements=[{"group_id": target_groups[0].group_id, "replacement_text": "This replacement drops the required phrase."}],
+    replacements=[{"group_id": target_groups[0].group_id, "replacement_text": "This replacement changes the soft phrase but keeps the same role."}],
+)
+assert_test(
+    soft_anchor_status[0]["applied"],
+    "V3 target executor does not block paragraph replacement on soft guidance anchors",
+)
+hard_anchor_profile = {
+    "targets": [{
+        "target_id": "rt_hard",
+        "unit_id": "p001",
+        "paragraph_id": "p001",
+        "recommended_operation": "light_texture_rewrite",
+        "source_text": "The class used 42 examples during revision.",
+        "span": {"start_index": 0, "end_index": 43, "integrity": {"passed": True}},
+        "protected_anchors": [{"text": "42", "kind": "number", "blocking": True}],
+        "word_count_guide": {"source_words": 7, "preferred_words": 7},
+    }]
+}
+hard_anchor_groups = group_rewrite_targets(
+    original_text="The class used 42 examples during revision.",
+    rewrite_target_profile=hard_anchor_profile,
+)
+missing_anchor_applied, missing_anchor_status = apply_target_replacements(
+    original_text="The class used 42 examples during revision.",
+    target_groups=hard_anchor_groups,
+    replacements=[{"group_id": hard_anchor_groups[0].group_id, "replacement_text": "The class used examples during revision."}],
 )
 assert_test(
     "required phrase" not in missing_anchor_applied and not missing_anchor_status[0]["applied"],
-    "V3 target executor blocks replacements that drop protected anchors",
+    "V3 target executor blocks replacements that drop hard protected anchors",
 )
 scanner_loop_report = {
     "scan_intelligence": {
@@ -648,10 +912,32 @@ scanner_loop_prompt = build_scanner_controlled_prompt(
     variants_per_group=2,
 )
 assert_test(
-    "blocker_radar_for_this_group" in scanner_loop_prompt
+    "movement_contract" in scanner_loop_prompt
     and "weak_human_levers" in scanner_loop_prompt
     and "source_text" in scanner_loop_prompt,
-    "V3 scanner-controlled prompt carries scanner blockers, human levers, and local source only",
+    "V3 scanner-controlled prompt carries movement contract, human levers, and local source only",
+)
+assert_test(
+    "blocker_radar_for_this_group" not in scanner_loop_prompt
+    and "target_drivers" not in scanner_loop_prompt,
+    "V3 scanner-controlled prompt does not dump raw blocker radar or target driver payloads",
+)
+anchor_prompt = build_scanner_controlled_prompt(
+    report=scanner_loop_report,
+    group=hard_anchor_groups[0],
+    variants_per_group=3,
+)
+assert_test(
+    "variant_plan" in anchor_prompt
+    and "CLAUSE_ROUTE_CHANGE" in anchor_prompt
+    and "BROAD_CLAIM_NARROWING" in anchor_prompt
+    and "CAUSE_EFFECT_OWNERSHIP" in anchor_prompt,
+    "V3 scanner-controlled prompt assigns operator-shaped variants",
+)
+assert_test(
+    "[[DP_ANCHOR_001]]" in anchor_prompt
+    and '"source_text": "The class used [[DP_ANCHOR_001]] examples during revision."' in anchor_prompt,
+    "V3 scanner-controlled prompt freezes protected anchors as placeholders",
 )
 scanner_variants = parse_scanner_controlled_variants(
     '{"variants":[{"variant_id":"v1","replacement_text":"A local variant."},{"variant_id":"v2","replacement_text":"Another local variant."}]}',
@@ -939,6 +1225,42 @@ plain_prompt = build_plain_reasoning_broad_prose_prompt(
     style_examples={"positive": [], "negative": []},
 )
 assert_test("plain-reasoning style" in plain_prompt and "formal generated-survey texture" in plain_prompt, "V3 plain reasoning prompt targets broad formal survey texture")
+bloated_plain_prompt = build_plain_reasoning_broad_prose_prompt(
+    original_text=broad_source * 20,
+    failed_candidates=[broad_candidate * 12, broad_candidate * 12],
+    compression_policy=compression_policy_for_family("document_rhythm", word_count(broad_source)),
+    style_examples={
+        "positive": [{"external_ai_percent": 18, "text": "positive boundary " * 500}],
+        "negative": [{"external_ai_percent": 89, "text": "negative boundary " * 500}],
+    },
+    rewrite_target_profile={
+        "schema_version": "rewrite_target_profile.v1",
+        "document_shape": "broad",
+        "targets": [
+            {
+                "target_id": f"rt{i:03d}",
+                "unit_id": f"p{i:03d}",
+                "source_text": "target source " * 1000,
+                "source_excerpt": "target excerpt " * 1000,
+                "dominant_drivers": [{"key": "predictability_score", "score": 0.8}],
+            }
+            for i in range(12)
+        ],
+    },
+    central_judgment_plan={
+        "strategy_id": "central_contextual_judgment_v1",
+        "generation_objective": {"primary_drivers": ["route_variation"] * 20},
+        "constraints": {"source_word_count": 518, "preserve_content_units": [{"meaning": "unit " * 200}] * 50},
+    },
+)
+assert_test(
+    len(bloated_plain_prompt) < 13000
+    and "source_document" not in bloated_plain_prompt
+    and "preserve_content_units" not in bloated_plain_prompt
+    and "target source " * 30 not in bloated_plain_prompt
+    and "positive boundary " * 30 not in bloated_plain_prompt,
+    "V3 plain reasoning prompt is compact and does not dump full scanner contracts or failed candidates",
+)
 
 with tempfile.TemporaryDirectory() as tmpdir:
     result = run_rewrite_pipeline_v3(
@@ -1190,6 +1512,702 @@ try:
 finally:
     v3_pipeline._generate_scanner_controlled_candidate = original_scanner_controlled_generator
 
+paragraph_problem_inventory = {
+    "schema_version": "problem_inventory.v1",
+    "problem_groups": [{
+        "group_id": "pg_paragraph",
+        "scope_level": "paragraph",
+        "unit_ids": ["p001"],
+        "target_ids": ["rt001"],
+        "problem_shape": "broad_assisted_footprint",
+        "anchor_pressure": 0.1,
+        "semantic_edit_cost": 0.2,
+        "allowed_operations": ["paragraph_preserving_broad_reconstruction", "chunk_reconstruction"],
+        "blocked_operations": ["unit_preserving_prune_bridge"],
+    }],
+}
+paragraph_strategy_profile = {
+    "schema_version": "rewrite_target_profile.v1",
+    "target_scope_policy": "problem_inventory_driven",
+    "operation_mix": {"paragraph_preserving_broad_reconstruction": 1},
+    "targets": [{
+        "target_id": "rt001",
+        "unit_id": "p001",
+        "paragraph_id": "p001",
+        "scope_level": "paragraph",
+        "risk_level": "medium",
+        "source_text": broad_source.split("\n\n")[0],
+        "recommended_operation": "paragraph_preserving_broad_reconstruction",
+        "operation_candidates": ["paragraph_preserving_broad_reconstruction", "chunk_reconstruction"],
+        "protected_anchors": [],
+        "soft_guidance_anchors": [{"text": "old classroom model", "kind": "domain_term", "blocking": False}],
+        "word_count_guide": {"source_words": len(broad_source.split("\n\n")[0].split()), "preferred_words": len(broad_source.split("\n\n")[0].split())},
+    }],
+}
+paragraph_contract = build_scan_contract(
+    {
+        **report_for(broad_source, ai=70.0),
+        "rewrite_target_profile": paragraph_strategy_profile,
+        "problem_inventory": paragraph_problem_inventory,
+    },
+    broad_source,
+)
+paragraph_groups = group_rewrite_targets(
+    original_text=broad_source,
+    rewrite_target_profile=paragraph_contract.rewrite_target_profile,
+    max_groups=4,
+)
+paragraph_context = paragraph_portfolio_context(
+    target_groups=paragraph_groups,
+    scan_contract=paragraph_contract,
+    content_mode=paragraph_contract.content_mode,
+    strategy_family="paragraph_preserving_broad_reconstruction",
+)
+planner_template = build_paragraph_portfolio_planner_prompt(paragraph_context)
+assert_test(
+    planner_template.template_id == "paragraph_portfolio.v1"
+    and "old classroom model" in planner_template.prompt
+    and "rewrite_target_profile.targets" in planner_template.scanner_context_used,
+    "V3 paragraph portfolio planner prompt is built from dynamic scanner context",
+)
+parsed_plan = parse_paragraph_portfolio_plan(json.dumps({
+    "paragraph_plans": [{
+        "group_id": "tg001",
+        "paragraph_role": "opening_frame",
+        "risk_drivers": ["predictability_score"],
+        "hard_anchors": [],
+        "soft_anchors": ["old classroom model"],
+        "repeated_patterns": ["broad opening followed by balanced explanation"],
+        "recommended_operator": "BREAK_SURVEY_TEMPLATE",
+        "rewrite_aggression_limit": "medium",
+    }]
+}))
+assert_test(
+    validate_paragraph_portfolio_plan(parsed_plan, paragraph_groups)["passed"],
+    "V3 paragraph portfolio planner output validates required paragraph groups",
+)
+fallback_plan = fallback_paragraph_portfolio_plan(paragraph_groups)
+reconstruction_template = build_paragraph_portfolio_reconstruction_prompt(paragraph_context, fallback_plan)
+topk_template = build_paragraph_portfolio_topk_prompt(
+    context=paragraph_context,
+    planner_output=fallback_plan,
+    replacements=[{"group_id": "tg001", "replacement_text": broad_candidate.split("\n\n")[0]}],
+)
+assert_test(
+    "word_count_guide" in reconstruction_template.prompt
+    and "execution_contract" in reconstruction_template.prompt
+    and "current_replacements" in topk_template.prompt
+    and "Return JSON only" in topk_template.prompt,
+    "V3 paragraph portfolio reconstruction and Top-k prompts expose bounded stage contracts",
+)
+assert_test(
+    "operator_used" not in reconstruction_template.prompt
+    and "new_claims_added" not in reconstruction_template.prompt
+    and "hard_anchors_preserved" not in reconstruction_template.prompt,
+    "V3 paragraph portfolio reconstruction prompt does not ask the LLM to self-certify validator fields",
+)
+bloated_context = {
+    **paragraph_context,
+    "ai_footprint_profile": {
+        "fraction_ai": 0.0,
+        "fraction_ai_assisted": 1.0,
+        "risky_window_density": 1.0,
+        "top_risky_windows": [{"source_text": "x" * 12000, "score": 0.9}],
+        "unused_large_blob": "x" * 50000,
+    },
+    "problem_inventory": {
+        "schema_version": "problem_inventory.v1",
+        "problem_groups": [
+            {
+                "group_id": f"pg{i:03d}",
+                "scope_level": "paragraph",
+                "problem_shape": "broad_assisted_footprint",
+                "target_ids": ["rt001"],
+                "allowed_operations": ["paragraph_preserving_broad_reconstruction"],
+                "expected_movement": {"details": "y" * 4000},
+            }
+            for i in range(20)
+        ],
+    },
+}
+bloated_prompt = build_paragraph_portfolio_planner_prompt(bloated_context)
+assert_test(
+    len(bloated_prompt.prompt) < 16000
+    and "x" * 1000 not in bloated_prompt.prompt
+    and "y" * 1000 not in bloated_prompt.prompt,
+    "V3 paragraph portfolio planner compacts oversized scanner payloads",
+)
+assert_test(
+    parse_paragraph_portfolio_replacements(json.dumps({
+        "replacements": [{"group_id": "tg001", "replacement_text": "Rebuilt paragraph."}]
+    })) == [{"group_id": "tg001", "replacement_text": "Rebuilt paragraph."}],
+    "V3 paragraph portfolio replacement parser extracts structured replacements",
+)
+diagnostic_replacements, diagnostic_parse = parse_replacements_with_diagnostics("{not json")
+assert_test(
+    diagnostic_replacements == []
+    and diagnostic_parse["parse_status"] == "invalid_json"
+    and diagnostic_parse["raw_preview"],
+    "V3 paragraph portfolio parser exposes invalid response diagnostics",
+)
+diagnostic_replacements, diagnostic_parse = parse_replacements_with_diagnostics(json.dumps({"items": []}))
+assert_test(
+    diagnostic_replacements == []
+    and diagnostic_parse["parse_status"] == "missing_replacements",
+    "V3 paragraph portfolio parser reports missing replacements arrays",
+)
+
+long_paragraphs = [
+    (
+        f"Paragraph {index} explains a broad classroom change through several connected details. "
+        "Students encounter information through lessons, screens, classmates, and home routines, so the paragraph has enough local material for a realistic prompt-size test. "
+        "The rewrite system should not combine too many of these paragraphs into one oversized model request."
+    )
+    for index in range(1, 5)
+]
+long_source = "\n\n".join(long_paragraphs)
+long_targets = []
+for index, paragraph in enumerate(long_paragraphs, start=1):
+    long_targets.append({
+        "target_id": f"rt_long_{index}",
+        "unit_id": f"p{index:03d}",
+        "paragraph_id": f"p{index:03d}",
+        "scope_level": "paragraph",
+        "risk_level": "medium",
+        "source_text": paragraph,
+        "recommended_operation": "paragraph_preserving_broad_reconstruction",
+        "operation_candidates": ["paragraph_preserving_broad_reconstruction"],
+        "dominant_drivers": [{"key": "predictability_score", "score": 0.8}],
+        "word_count_guide": {"source_words": len(paragraph.split()), "preferred_words": len(paragraph.split())},
+    })
+long_strategy_profile = {
+    "schema_version": "rewrite_target_profile.v1",
+    "target_scope_policy": "problem_inventory_driven",
+    "operation_mix": {"paragraph_preserving_broad_reconstruction": len(long_targets)},
+    "driver_summary": {"predictability_score": len(long_targets)},
+    "targets": long_targets,
+}
+long_contract = build_scan_contract(
+    {
+        **report_for(long_source, ai=72.0),
+        "rewrite_target_profile": long_strategy_profile,
+        "problem_inventory": paragraph_problem_inventory,
+    },
+    long_source,
+)
+long_groups = group_rewrite_targets(
+    original_text=long_source,
+    rewrite_target_profile=long_contract.rewrite_target_profile,
+    max_groups=8,
+)
+long_batches = build_reconstruction_batches_by_prompt(
+    target_groups=long_groups,
+    scan_contract=long_contract,
+    content_mode=long_contract.content_mode,
+    family="paragraph_preserving_broad_reconstruction",
+    planner_output=fallback_paragraph_portfolio_plan(long_groups),
+    max_prompt_chars=5200,
+    fallback_batch_size=4,
+)
+assert_test(
+    len(long_groups) == 4
+    and len(long_batches) > 1
+    and all(len(batch) < len(long_groups) for batch in long_batches),
+    "V3 paragraph portfolio batches reconstruction by rendered prompt size, not document word count",
+)
+assert_test(
+    paragraph_portfolio_config(fallback_batch_size=4).fallback_batch_size == 1,
+    "V3 paragraph portfolio defaults to one target paragraph per reconstruction call",
+)
+
+original_gateway_factory = v3_pipeline._gateway
+try:
+    class FakePromptTemplateResponse:
+        def __init__(self, content):
+            self.content = content
+            self.raw = {}
+
+    class FakePromptTemplateGateway:
+        def chat(self, prompt, **kwargs):
+            if '"prompt_stage":"planner"' in prompt or '"prompt_stage": "planner"' in prompt:
+                return FakePromptTemplateResponse(json.dumps({
+                    "paragraph_plans": [{
+                        "group_id": "tg001",
+                        "paragraph_role": "opening_frame",
+                        "risk_drivers": ["predictability_score"],
+                        "hard_anchors": [],
+                        "soft_anchors": ["old classroom model"],
+                        "repeated_patterns": ["balanced explanation"],
+                        "recommended_operator": "BREAK_SURVEY_TEMPLATE",
+                        "rewrite_aggression_limit": "medium",
+                    }]
+                }))
+            if '"prompt_stage":"topk_repair"' in prompt or '"prompt_stage": "topk_repair"' in prompt:
+                return FakePromptTemplateResponse(json.dumps({
+                    "replacements": [{
+                        "group_id": "tg001",
+                        "replacement_text": "Education is changing quickly because students meet information through phones, websites, classmates, and teachers. Schools still matter, but the old classroom model does not explain the whole picture."
+                    }]
+                }))
+            return FakePromptTemplateResponse(json.dumps({
+                "replacements": [{
+                    "group_id": "tg001",
+                    "replacement_text": "Education is changing quickly because students now meet information through phones, websites, classmates, and teachers. Schools still matter, but the old classroom model does not explain the whole picture."
+                }]
+            }))
+
+    def fake_gateway_factory(*args, **kwargs):
+        return FakePromptTemplateGateway()
+
+    v3_pipeline._gateway = fake_gateway_factory
+    os.environ["DRAFTPROOF_REWRITE_V3_PORTFOLIO_LLM_PLANNER"] = "1"
+    os.environ["DRAFTPROOF_REWRITE_V3_PORTFOLIO_BLIND_TOPK"] = "1"
+    paragraph_text, paragraph_trace = v3_pipeline._generate_target_executor_candidate(
+        original_text=broad_source,
+        scan_contract=paragraph_contract,
+        content_mode=paragraph_contract.content_mode,
+        family="paragraph_preserving_broad_reconstruction",
+        api_key=None,
+        model=None,
+        base_url=None,
+    )
+    assert_test(
+        "students meet information through phones" in paragraph_text
+        and paragraph_trace["executor_engine"] == "paragraph_portfolio_template"
+        and paragraph_trace["prompt_template_id"] == "paragraph_portfolio.v1"
+        and paragraph_trace["topk_repair_attempted"]
+        and len(paragraph_trace["prompt_stage_trace"]) == 3,
+        "V3 paragraph-preserving broad strategy executes planner, reconstruction, and Top-k templates",
+    )
+finally:
+    os.environ.pop("DRAFTPROOF_REWRITE_V3_PORTFOLIO_LLM_PLANNER", None)
+    os.environ.pop("DRAFTPROOF_REWRITE_V3_PORTFOLIO_BLIND_TOPK", None)
+    v3_pipeline._gateway = original_gateway_factory
+
+original_gateway_factory = v3_pipeline._gateway
+try:
+    default_calls = {"count": 0, "prompts": []}
+
+    class FakeMinimalGateway:
+        def chat(self, prompt, **kwargs):
+            default_calls["count"] += 1
+            default_calls["prompts"].append(prompt)
+            return FakePromptTemplateResponse(json.dumps({
+                "replacements": [{
+                    "group_id": "tg001",
+                    "replacement_text": "Education is changing quickly because students meet information through phones, websites, classmates, and teachers. Schools still matter, but the old classroom model does not explain the whole picture."
+                }]
+            }))
+
+    def fake_minimal_gateway_factory(*args, **kwargs):
+        return FakeMinimalGateway()
+
+    v3_pipeline._gateway = fake_minimal_gateway_factory
+    paragraph_text, paragraph_trace = v3_pipeline._generate_target_executor_candidate(
+        original_text=broad_source,
+        scan_contract=paragraph_contract,
+        content_mode=paragraph_contract.content_mode,
+        family="paragraph_preserving_broad_reconstruction",
+        api_key=None,
+        model=None,
+        base_url=None,
+    )
+    assert_test(
+        default_calls["count"] == 1
+        and paragraph_trace["prompt_stage_trace"][0]["planner_mode"] == "scanner_fallback"
+        and paragraph_trace["prompt_stage_trace"][-1]["topk_mode"] == "deferred_until_rescan"
+        and not paragraph_trace["topk_repair_attempted"],
+        "V3 paragraph portfolio default path uses one reconstruction LLM call and defers Top-k until rescan",
+    )
+finally:
+    v3_pipeline._gateway = original_gateway_factory
+
+two_paragraph_strategy_profile = {
+    "schema_version": "rewrite_target_profile.v1",
+    "target_scope_policy": "problem_inventory_driven",
+    "operation_mix": {"paragraph_preserving_broad_reconstruction": 2},
+    "driver_summary": {"predictability_score": 2},
+    "targets": [
+        {
+            "target_id": "rt_p1",
+            "unit_id": "p001",
+            "paragraph_id": "p001",
+            "scope_level": "paragraph",
+            "risk_level": "medium",
+            "source_text": broad_source.split("\n\n")[0],
+            "recommended_operation": "paragraph_preserving_broad_reconstruction",
+            "operation_candidates": ["paragraph_preserving_broad_reconstruction"],
+            "word_count_guide": {"source_words": len(broad_source.split("\n\n")[0].split()), "preferred_words": len(broad_source.split("\n\n")[0].split())},
+        },
+        {
+            "target_id": "rt_p2",
+            "unit_id": "p002",
+            "paragraph_id": "p002",
+            "scope_level": "paragraph",
+            "risk_level": "medium",
+            "source_text": broad_source.split("\n\n")[1],
+            "recommended_operation": "paragraph_preserving_broad_reconstruction",
+            "operation_candidates": ["paragraph_preserving_broad_reconstruction"],
+            "word_count_guide": {"source_words": len(broad_source.split("\n\n")[1].split()), "preferred_words": len(broad_source.split("\n\n")[1].split())},
+        },
+    ],
+}
+two_paragraph_contract = build_scan_contract(
+    {
+        **report_for(broad_source, ai=70.0),
+        "rewrite_target_profile": two_paragraph_strategy_profile,
+        "problem_inventory": paragraph_problem_inventory,
+    },
+    broad_source,
+)
+original_gateway_factory = v3_pipeline._gateway
+try:
+    class FakePartialGateway:
+        def chat(self, prompt, **kwargs):
+            return FakePromptTemplateResponse(json.dumps({
+                "replacements": [{
+                    "group_id": "tg001",
+                    "replacement_text": "Education is changing quickly because students meet information through phones, websites, classmates, and teachers."
+                }]
+            }))
+
+    def fake_partial_gateway_factory(*args, **kwargs):
+        return FakePartialGateway()
+
+    v3_pipeline._gateway = fake_partial_gateway_factory
+    partial_text, partial_trace = v3_pipeline._generate_target_executor_candidate(
+        original_text=broad_source,
+        scan_contract=two_paragraph_contract,
+        content_mode=two_paragraph_contract.content_mode,
+        family="paragraph_preserving_broad_reconstruction",
+        api_key=None,
+        model=None,
+        base_url=None,
+    )
+    assert_test(
+        partial_text == ""
+        and partial_trace["error"] == "generation_failed_incomplete_replacements"
+        and partial_trace["missing_replacement_group_ids"] == ["tg002"],
+        "V3 paragraph portfolio rejects incomplete batch output instead of applying partial rewrites",
+    )
+finally:
+    v3_pipeline._gateway = original_gateway_factory
+
+original_target_executor_generator = v3_pipeline._generate_target_executor_candidate
+original_scan_report = v3_pipeline._scan_report
+try:
+    target_executor_called = {"value": False}
+
+    def fake_target_executor_for_strategy(**kwargs):
+        target_executor_called["value"] = True
+        return broad_candidate, {
+            "target_execution_attempted": True,
+            "prompt_template_id": "paragraph_portfolio.v1",
+            "prompt_stage": "topk_repair",
+            "scanner_context_used": ["rewrite_target_profile.targets"],
+            "planner_output": {"paragraph_plans": [{"group_id": "tg001"}]},
+            "stage_apply_status": [{"group_id": "tg001", "applied": True}],
+            "stage_rescan_delta": None,
+            "topk_repair_attempted": True,
+            "strategy_stop_reason": "topk_repair_applied",
+            "target_groups": [],
+            "target_replacements": [],
+            "target_apply_status": [],
+        }
+
+    def fake_scan_report(text):
+        return report_for(text, ai=45.0)
+
+    v3_pipeline._generate_target_executor_candidate = fake_target_executor_for_strategy
+    v3_pipeline._scan_report = fake_scan_report
+    with tempfile.TemporaryDirectory() as tmpdir:
+        paragraph_first = run_rewrite_pipeline_v3(
+            detect_json={
+                **report_for(broad_source, ai=70.0),
+                "rewrite_target_profile": paragraph_strategy_profile,
+                "problem_inventory": paragraph_problem_inventory,
+            },
+            output_dir=tmpdir,
+            required_ai_drop=20.0,
+            max_runtime_seconds=0,
+        )
+        paragraph_summary = paragraph_first["result"].summary
+        paragraph_trace = paragraph_summary["candidate_trace"][0]["target_execution_trace"]
+        assert_test(
+            target_executor_called["value"]
+            and paragraph_summary["strategy_trace"][0]["first_strategy_step"] == "paragraph_preserving_broad_reconstruction"
+            and paragraph_summary["strategy_trace"][0]["first_strategy_obeyed"]
+            and paragraph_summary["candidate_trace"][0]["generation_mode"] == "paragraph_preserving_broad_reconstruction"
+            and paragraph_summary["candidate_trace"][0]["prompt_template_id"] == "paragraph_portfolio.v1"
+            and paragraph_summary["candidate_trace"][0]["topk_repair_attempted"]
+            and paragraph_trace["executor_engine"] == "target_executor",
+            "V3 executes paragraph-preserving broad reconstruction before chunk fallback",
+        )
+finally:
+    v3_pipeline._generate_target_executor_candidate = original_target_executor_generator
+    v3_pipeline._scan_report = original_scan_report
+
+original_target_executor_generator = v3_pipeline._generate_target_executor_candidate
+original_scanner_controlled_generator = v3_pipeline._generate_scanner_controlled_candidate
+original_scan_report = v3_pipeline._scan_report
+try:
+    planned_calls = []
+    mixed_problem_inventory = {
+        "schema_version": "problem_inventory.v1",
+        "problem_groups": [
+            {
+                "group_id": "pg_paragraph",
+                "scope_level": "paragraph",
+                "unit_ids": ["p001"],
+                "target_ids": ["rt001"],
+                "problem_shape": "broad_assisted_footprint",
+                "anchor_pressure": 0.1,
+                "semantic_edit_cost": 0.2,
+                "allowed_operations": ["paragraph_preserving_broad_reconstruction", "chunk_reconstruction"],
+                "blocked_operations": [],
+            },
+            {
+                "group_id": "pg_protected",
+                "scope_level": "paragraph",
+                "unit_ids": ["p002"],
+                "target_ids": ["rt002"],
+                "problem_shape": "protected_section_risk",
+                "anchor_pressure": 0.7,
+                "semantic_edit_cost": 0.7,
+                "allowed_operations": ["protected_section_rewrite", "chunk_reconstruction"],
+                "blocked_operations": [],
+            },
+        ],
+    }
+
+    def fake_target_executor_with_unapplied_group(**kwargs):
+        return broad_candidate, {
+            "target_execution_attempted": True,
+            "prompt_template_id": "paragraph_portfolio.v1",
+            "target_groups": [{"group_id": "tg001"}, {"group_id": "tg002"}],
+            "target_replacements": [{"group_id": "tg001", "replacement_text": "x"}],
+            "target_apply_status": [
+                {"group_id": "tg001", "applied": True, "method": "span", "reason": ""},
+                {"group_id": "tg002", "applied": False, "method": "none", "reason": "protected_anchor_missing"},
+            ],
+        }
+
+    def fake_planned_scanner_controlled(**kwargs):
+        planned_calls.append(kwargs.get("strategy_id"))
+        return (
+            broad_candidate.replace("handing out facts", "delivering facts in a fixed order"),
+            {
+                "target_execution_attempted": True,
+                "scanner_controlled": True,
+                "executor_engine": "scanner_controlled_executor",
+                "planned_strategy_id": kwargs.get("strategy_id"),
+                "target_groups": [{"group_id": "tg002"}],
+                "target_replacements": [{"group_id": "tg002", "replacement_text": "replacement"}],
+                "target_apply_status": [{"group_id": "tg002", "applied": True, "method": "span", "reason": ""}],
+            },
+        )
+
+    def fake_scan_report(text):
+        return report_for(text, ai=45.0)
+
+    v3_pipeline._generate_target_executor_candidate = fake_target_executor_with_unapplied_group
+    v3_pipeline._generate_scanner_controlled_candidate = fake_planned_scanner_controlled
+    v3_pipeline._scan_report = fake_scan_report
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planned_followup = run_rewrite_pipeline_v3(
+            detect_json={
+                **report_for(broad_source, ai=70.0),
+                "rewrite_target_profile": paragraph_strategy_profile,
+                "problem_inventory": mixed_problem_inventory,
+            },
+            output_dir=tmpdir,
+            required_ai_drop=20.0,
+            max_runtime_seconds=60,
+        )
+        planned_summary = planned_followup["result"].summary
+        assert_test(
+            not planned_summary["candidate_trace"][0]["target_gate_passed"]
+            and planned_summary["candidate_trace"][0]["unapplied_target_group_ids"] == ["tg002"]
+            and planned_calls == ["protected_section_rewrite"]
+            and planned_summary["candidate_loop_trace"][0]["reason"] == "execute_planned_problem_strategy:protected_section_rewrite",
+            "V3 executes the next planned problem strategy when target application leaves unresolved groups",
+        )
+finally:
+    v3_pipeline._generate_target_executor_candidate = original_target_executor_generator
+    v3_pipeline._generate_scanner_controlled_candidate = original_scanner_controlled_generator
+    v3_pipeline._scan_report = original_scan_report
+
+original_target_executor_generator = v3_pipeline._generate_target_executor_candidate
+original_plain_reasoning_generator = v3_pipeline._generate_plain_reasoning_candidate
+original_scan_report = v3_pipeline._scan_report
+try:
+    plain_reasoning_calls = {"count": 0}
+
+    def fake_target_executor_no_movement(**kwargs):
+        return broad_candidate, {
+            "target_execution_attempted": True,
+            "prompt_template_id": "paragraph_portfolio.v1",
+            "target_groups": [{"group_id": "tg001"}],
+            "target_replacements": [],
+            "target_apply_status": [{"group_id": "tg001", "applied": False, "method": "none", "reason": "no_safe_replacement"}],
+        }
+
+    def fake_plain_reasoning_should_not_run(**kwargs):
+        plain_reasoning_calls["count"] += 1
+        return "plain reasoning should not run"
+
+    def fake_no_movement_scan_report(text):
+        return report_for(text, ai=70.0)
+
+    v3_pipeline._generate_target_executor_candidate = fake_target_executor_no_movement
+    v3_pipeline._generate_plain_reasoning_candidate = fake_plain_reasoning_should_not_run
+    v3_pipeline._scan_report = fake_no_movement_scan_report
+    with tempfile.TemporaryDirectory() as tmpdir:
+        exhausted_problem = run_rewrite_pipeline_v3(
+            detect_json={
+                **report_for(broad_source, ai=70.0),
+                "rewrite_target_profile": paragraph_strategy_profile,
+                "problem_inventory": paragraph_problem_inventory,
+            },
+            output_dir=tmpdir,
+            required_ai_drop=20.0,
+            max_runtime_seconds=60,
+        )
+        exhausted_summary = exhausted_problem["result"].summary
+        assert_test(
+            plain_reasoning_calls["count"] == 0
+            and exhausted_summary["candidate_loop_trace"][0]["reason"] == "stop_after_problem_strategy_exhausted"
+            and exhausted_summary["candidate_trace"][0]["target_gate_passed"] is False,
+            "V3 stops scanner-driven problem runs after exhausted no-movement targets instead of falling back to full-document plain reasoning",
+        )
+finally:
+    v3_pipeline._generate_target_executor_candidate = original_target_executor_generator
+    v3_pipeline._generate_plain_reasoning_candidate = original_plain_reasoning_generator
+    v3_pipeline._scan_report = original_scan_report
+
+chunk_strategy_profile = {
+    "schema_version": "rewrite_target_profile.v1",
+    "target_scope_policy": "problem_inventory_driven",
+    "operation_mix": {"chunk_reconstruction": 1},
+    "driver_summary": {"ai_footprint": 1},
+    "targets": [{
+        "target_id": "rt_chunk",
+        "unit_id": "document",
+        "scope_level": "document",
+        "risk_level": "high",
+        "source_text": broad_source,
+        "recommended_operation": "chunk_reconstruction",
+        "operation_candidates": ["chunk_reconstruction"],
+    }],
+}
+chunk_problem_inventory = {
+    "schema_version": "problem_inventory.v1",
+    "problem_groups": [{
+        "group_id": "pg_chunk",
+        "scope_level": "document",
+        "unit_ids": ["document"],
+        "target_ids": ["rt_chunk"],
+        "problem_shape": "broad_assisted_footprint",
+        "anchor_pressure": 0.0,
+        "semantic_edit_cost": 0.5,
+        "allowed_operations": ["chunk_reconstruction"],
+        "blocked_operations": ["unit_preserving_prune_bridge"],
+    }],
+}
+original_chunked_generator = v3_pipeline._generate_chunked_candidate
+original_scan_report = v3_pipeline._scan_report
+try:
+    chunk_called = {"value": False}
+
+    def fake_chunked_generator(**kwargs):
+        chunk_called["value"] = True
+        return broad_candidate
+
+    def fake_scan_report(text):
+        return report_for(text, ai=45.0)
+
+    v3_pipeline._generate_chunked_candidate = fake_chunked_generator
+    v3_pipeline._scan_report = fake_scan_report
+    with tempfile.TemporaryDirectory() as tmpdir:
+        chunk_first = run_rewrite_pipeline_v3(
+            detect_json={
+                **report_for(broad_source, ai=70.0),
+                "rewrite_target_profile": chunk_strategy_profile,
+                "problem_inventory": chunk_problem_inventory,
+            },
+            output_dir=tmpdir,
+            required_ai_drop=20.0,
+            max_runtime_seconds=0,
+        )
+        chunk_summary = chunk_first["result"].summary
+        assert_test(
+            chunk_called["value"]
+            and chunk_summary["strategy_trace"][0]["first_strategy_step"] == "chunk_reconstruction"
+            and chunk_summary["strategy_trace"][0]["first_strategy_obeyed"]
+            and chunk_summary["candidate_trace"][0]["generation_mode"] == "chunk_reconstruction",
+            "V3 executes problem-inventory chunk strategy before scanner-controlled fallback",
+        )
+finally:
+    v3_pipeline._generate_chunked_candidate = original_chunked_generator
+    v3_pipeline._scan_report = original_scan_report
+
+protected_problem_inventory = {
+    "schema_version": "problem_inventory.v1",
+    "problem_groups": [{
+        "group_id": "pg_protected",
+        "scope_level": "section",
+        "unit_ids": ["p001"],
+        "target_ids": ["rt001"],
+        "problem_shape": "anchored_local_window",
+        "anchor_pressure": 0.4,
+        "semantic_edit_cost": 0.3,
+        "allowed_operations": ["protected_section_rewrite", "chunk_reconstruction"],
+        "blocked_operations": ["unit_preserving_prune_bridge"],
+    }],
+}
+original_scanner_controlled_generator = v3_pipeline._generate_scanner_controlled_candidate
+original_scan_report = v3_pipeline._scan_report
+try:
+    def fake_scanner_controlled_for_strategy(**kwargs):
+        return broad_candidate, {
+            "target_execution_attempted": True,
+            "scanner_controlled": True,
+            "scanner_controlled_rounds": [],
+            "target_groups": [],
+            "target_replacements": [],
+            "target_apply_status": [],
+        }
+
+    def fake_scan_report(text):
+        return report_for(text, ai=45.0)
+
+    v3_pipeline._generate_scanner_controlled_candidate = fake_scanner_controlled_for_strategy
+    v3_pipeline._scan_report = fake_scan_report
+    with tempfile.TemporaryDirectory() as tmpdir:
+        protected_first = run_rewrite_pipeline_v3(
+            detect_json={
+                **report_for(broad_source, ai=70.0),
+                "rewrite_target_profile": target_gate_fixture,
+                "problem_inventory": protected_problem_inventory,
+            },
+            output_dir=tmpdir,
+            required_ai_drop=20.0,
+            max_runtime_seconds=0,
+        )
+        protected_summary = protected_first["result"].summary
+        protected_trace = protected_summary["candidate_trace"][0]["target_execution_trace"]
+        assert_test(
+            protected_summary["strategy_trace"][0]["first_strategy_step"] == "protected_section_rewrite"
+            and protected_summary["strategy_trace"][0]["first_strategy_obeyed"]
+            and protected_summary["candidate_trace"][0]["generation_mode"] == "protected_section_rewrite"
+            and protected_trace["executor_engine"] == "scanner_controlled_executor"
+            and protected_trace["executed_strategy"] == "protected_section_rewrite",
+            "V3 records scanner-controlled execution under the planned protected-section strategy",
+        )
+finally:
+    v3_pipeline._generate_scanner_controlled_candidate = original_scanner_controlled_generator
+    v3_pipeline._scan_report = original_scan_report
+
 with tempfile.TemporaryDirectory() as tmpdir:
     target_blocked = run_rewrite_pipeline_v3(
         detect_json={**report_for(broad_source, ai=70.0), "rewrite_target_profile": target_gate_fixture},
@@ -1206,6 +2224,38 @@ with tempfile.TemporaryDirectory() as tmpdir:
         and not blocked_summary["selected_candidate"]["target_gate_passed"],
         "V3 candidates cannot pass mitigation success without target-level movement",
     )
+
+original_target_executor_generator = v3_pipeline._generate_target_executor_candidate
+try:
+    def fake_empty_target_executor(**kwargs):
+        return "", {
+            "target_execution_attempted": True,
+            "error": "generation_failed_empty_output",
+            "target_groups": [],
+            "target_replacements": [],
+            "target_apply_status": [],
+        }
+
+    v3_pipeline._generate_target_executor_candidate = fake_empty_target_executor
+    with tempfile.TemporaryDirectory() as tmpdir:
+        empty_primary = run_rewrite_pipeline_v3(
+            detect_json={
+                **report_for(broad_source, ai=70.0),
+                "rewrite_target_profile": paragraph_strategy_profile,
+                "problem_inventory": paragraph_problem_inventory,
+            },
+            output_dir=tmpdir,
+            required_ai_drop=20.0,
+            max_runtime_seconds=60,
+        )
+        empty_summary = empty_primary["result"].summary
+        assert_test(
+            len(empty_summary["candidate_trace"]) == 1
+            and empty_summary["candidate_trace"][0]["candidate_outcome"] == "generation_failed_empty_output",
+            "V3 stops after primary paragraph-portfolio generation failure instead of burning fallback LLM calls",
+        )
+finally:
+    v3_pipeline._generate_target_executor_candidate = original_target_executor_generator
 
 with tempfile.TemporaryDirectory() as tmpdir:
     result = run_rewrite_pipeline_v3(

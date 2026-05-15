@@ -29,7 +29,7 @@ from .assisted_footprint_executor import (
     group_assisted_footprint_windows,
 )
 from .authorship_window_gate import select_authorship_window_targets
-from .candidate_loop import CandidateAction, decide_next_action, select_candidate_index
+from .candidate_loop import CandidateAction, CandidateIssue, LoopDecision, decide_next_action, issues_from_trace, select_candidate_index
 from .compression_policy import compression_policy_for_family, compression_status
 from .document_units import compose_units, document_units, word_count
 from .external_proxy import evaluate_external_proxy
@@ -52,12 +52,17 @@ from .layers.authorship_window_repair import (
 )
 from .output_cleaning import clean_v3_candidate_output
 from .portfolio import select_portfolio_candidate
+from .paragraph_portfolio_executor import (
+    generate_paragraph_portfolio_candidate as _run_paragraph_portfolio_candidate,
+    paragraph_portfolio_config,
+)
 from .router import route_from_scan_contract
 from .scanner_controlled_executor import (
     ScannerControlledConfig,
     build_scanner_controlled_prompt,
     parse_scanner_controlled_variants,
     rank_scanner_target_groups,
+    restore_protected_anchor_placeholders,
     scanner_controlled_metrics,
     scanner_controlled_rank,
 )
@@ -72,6 +77,12 @@ from .target_executor import (
     group_rewrite_targets,
     parse_target_replacements,
     target_execution_trace,
+)
+from .unit_preserving_prune_bridge import (
+    apply_prune_bridge_replacements,
+    build_prune_bridge_prompt,
+    filter_prune_bridge_groups,
+    parse_prune_bridge_replacements,
 )
 
 
@@ -138,6 +149,20 @@ def _rewrite_target_profile(report: dict | None) -> dict[str, Any]:
     return {}
 
 
+def _problem_inventory(report: dict | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    candidates = [
+        report.get("problem_inventory"),
+        (((report.get("scan_intelligence") or {}).get("document") or {}).get("problem_inventory")),
+        ((report.get("scan_intelligence") or {}).get("problem_inventory")),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+    return {}
+
+
 def _number(value: Any, default: float = 0.0) -> float:
     if isinstance(value, bool):
         return default
@@ -166,12 +191,16 @@ def _footprint_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str,
     risky_density_drop = _number(before.get("risky_window_density")) - _number(after.get("risky_window_density"))
     high_conf_drop = _number(before.get("high_confidence_risky_window_count")) - _number(after.get("high_confidence_risky_window_count"))
     risk_drop = before_risk - after_risk
-    moved = (
-        risk_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MIN_FOOTPRINT_RISK_DROP", 2.0)
-        or fraction_ai_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MIN_FRACTION_AI_DROP", 0.03)
-        or assisted_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MIN_ASSISTED_FRACTION_DROP", 0.04)
-        or risky_density_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MIN_RISKY_DENSITY_DROP", 0.04)
-        or high_conf_drop >= 1.0
+    risk_not_worse = risk_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MAX_FOOTPRINT_BACKFIRE", 0.0)
+    moved = bool(
+        risk_not_worse
+        and (
+            risk_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MIN_FOOTPRINT_RISK_DROP", 2.0)
+            or fraction_ai_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MIN_FRACTION_AI_DROP", 0.03)
+            or assisted_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MIN_ASSISTED_FRACTION_DROP", 0.04)
+            or risky_density_drop >= _float_env("DRAFTPROOF_REWRITE_V3_MIN_RISKY_DENSITY_DROP", 0.04)
+            or high_conf_drop >= 1.0
+        )
     )
     return {
         "before_risk": before_risk,
@@ -181,6 +210,7 @@ def _footprint_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str,
         "fraction_ai_assisted_drop": round(assisted_drop, 4),
         "risky_window_density_drop": round(risky_density_drop, 4),
         "high_confidence_risky_window_drop": round(high_conf_drop, 3),
+        "risk_not_worse": bool(risk_not_worse),
         "moved": bool(moved),
     }
 
@@ -544,9 +574,21 @@ def _v3_content_mode(scan_contract: ScanContract, v3_route: Any) -> tuple[str, d
 
 
 def _gateway(api_key: str | None, model: str | None, base_url: str | None, *, max_tokens: int) -> LLMGateway:
+    def active_model() -> str:
+        for value in (
+            os.environ.get("DRAFTPROOF_REWRITE_MODEL_LOCK"),
+            os.environ.get("DRAFTPROOF_GENERATOR_MODEL"),
+            model,
+            os.environ.get("LLM_MODEL"),
+        ):
+            candidate = str(value or "").strip()
+            if candidate and candidate.lower() not in {"0", "false", "no", "off"}:
+                return candidate
+        return "deepseek/deepseek-v4-flash"
+
     return LLMGateway(LLMConfig(
         api_key=api_key,
-        model=model or os.environ.get("LLM_MODEL") or "deepseek/deepseek-chat",
+        model=active_model(),
         base_url=base_url or os.environ.get("LLM_BASE_URL", ""),
         max_tokens=max_tokens,
         temperature=float(os.environ.get("DRAFTPROOF_REWRITE_V3_TEMPERATURE", "0.82") or 0.82),
@@ -803,13 +845,75 @@ def _target_executor_available(scan_contract: ScanContract) -> bool:
     )
 
 
+def _prune_bridge_available(scan_contract: ScanContract) -> bool:
+    for group in scan_contract.problem_groups:
+        if not isinstance(group, dict):
+            continue
+        allowed = {str(item) for item in group.get("allowed_operations") or []}
+        if "unit_preserving_prune_bridge" in allowed:
+            return True
+    return False
+
+
+PROBLEM_SCANNER_CONTROLLED_STRATEGIES = {
+    "authorship_window_repair",
+    "citation_anchor_guard",
+    "citation_preserving_window_repair",
+    "paragraph_surgery",
+    "protected_section_rewrite",
+}
+
+
+PROBLEM_TARGET_EXECUTOR_STRATEGIES = {
+    "paragraph_preserving_broad_reconstruction",
+}
+
+
+def _uses_problem_scanner_controlled_strategy(strategy_id: str) -> bool:
+    return strategy_id in PROBLEM_SCANNER_CONTROLLED_STRATEGIES
+
+
+def _uses_problem_target_executor_strategy(strategy_id: str) -> bool:
+    return strategy_id in PROBLEM_TARGET_EXECUTOR_STRATEGIES
+
+
+def _unapplied_target_group_ids(target_trace: dict[str, Any] | None) -> list[str]:
+    trace = target_trace if isinstance(target_trace, dict) else {}
+    rows = trace.get("target_apply_status") if isinstance(trace.get("target_apply_status"), list) else []
+    return [
+        str(row.get("group_id") or "")
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("group_id") or "")
+        and not bool(row.get("applied"))
+    ]
+
+
+def _annotate_target_execution(
+    trace: dict[str, Any],
+    *,
+    executed_strategy: str,
+    executor_engine: str,
+) -> dict[str, Any]:
+    annotated = dict(trace or {})
+    annotated["executed_strategy"] = executed_strategy
+    if annotated.get("executor_engine"):
+        annotated["dispatcher_engine"] = executor_engine
+    else:
+        annotated["executor_engine"] = executor_engine
+    return annotated
+
+
 def _strategy_plan_prefers_target_executor(strategy_plan: Any, scan_contract: ScanContract) -> bool:
     if not _target_executor_available(scan_contract):
         return False
     target_step_ids = {
         "protected_section_rewrite",
         "citation_anchor_guard",
+        "citation_preserving_window_repair",
+        "paragraph_surgery",
         "authorship_window_repair",
+        "paragraph_preserving_broad_reconstruction",
     }
     for step in getattr(strategy_plan, "steps", ()) or ():
         step_id = str(getattr(step, "strategy_id", "") or "")
@@ -828,6 +932,79 @@ def _first_strategy_step_id(strategy_plan: Any) -> str:
         if step_id and step_id != "portfolio_selection":
             return step_id
     return ""
+
+
+def _next_planned_problem_strategy(
+    *,
+    strategy_plan: Any,
+    tried_strategy_ids: set[str],
+    latest_trace: dict[str, Any],
+) -> str:
+    if not isinstance(latest_trace, dict):
+        return ""
+    if latest_trace.get("target_gate_passed", True) and not latest_trace.get("unapplied_target_group_ids"):
+        return ""
+    eligible = PROBLEM_SCANNER_CONTROLLED_STRATEGIES | PROBLEM_TARGET_EXECUTOR_STRATEGIES
+    for step in getattr(strategy_plan, "steps", ()) or ():
+        step_id = str(getattr(step, "strategy_id", "") or "")
+        if not step_id or step_id in tried_strategy_ids or step_id not in eligible:
+            continue
+        return step_id
+    return ""
+
+
+def _missing_protected_anchors(text: str, group: Any) -> list[str]:
+    missing: list[str] = []
+    for anchor in getattr(group, "protected_anchors", ()) or ():
+        if not isinstance(anchor, dict):
+            continue
+        anchor_text = str(anchor.get("text") or "")
+        if anchor_text and anchor_text not in text:
+            missing.append(anchor_text)
+    return missing
+
+
+def _merge_replacements(
+    base_replacements: list[dict[str, str]],
+    patch_replacements: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    merged = {
+        str(row.get("group_id") or ""): str(row.get("replacement_text") or "").strip()
+        for row in base_replacements
+        if str(row.get("group_id") or "") and str(row.get("replacement_text") or "").strip()
+    }
+    for row in patch_replacements:
+        group_id = str(row.get("group_id") or "")
+        replacement = str(row.get("replacement_text") or "").strip()
+        if group_id and replacement:
+            merged[group_id] = replacement
+    return [
+        {"group_id": group_id, "replacement_text": replacement}
+        for group_id, replacement in merged.items()
+    ]
+
+
+def _generate_paragraph_portfolio_candidate(
+    *,
+    original_text: str,
+    scan_contract: ScanContract,
+    content_mode: str,
+    family: str,
+    target_groups: list[Any],
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+) -> tuple[str, dict[str, Any]]:
+    return _run_paragraph_portfolio_candidate(
+        original_text=original_text,
+        scan_contract=scan_contract,
+        content_mode=content_mode,
+        family=family,
+        target_groups=target_groups,
+        gateway_factory=lambda max_tokens: _gateway(api_key, model, base_url, max_tokens=max_tokens),
+        token_budget=_max_tokens_for_words,
+        config=paragraph_portfolio_config(fallback_batch_size=_target_executor_batch_size()),
+    )
 
 
 def _generate_target_executor_candidate(
@@ -850,6 +1027,20 @@ def _generate_target_executor_candidate(
             attempted=True,
             target_groups=[],
             error="no_supported_target_groups",
+        )
+    if family == "paragraph_preserving_broad_reconstruction" or any(
+        group.operation == "paragraph_preserving_broad_reconstruction"
+        for group in groups
+    ):
+        return _generate_paragraph_portfolio_candidate(
+            original_text=original_text,
+            scan_contract=scan_contract,
+            content_mode=content_mode,
+            family=family,
+            target_groups=groups,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
         )
     replacements: list[dict[str, str]] = []
     batch_trace: list[dict[str, Any]] = []
@@ -908,6 +1099,60 @@ def _generate_target_executor_candidate(
     return clean_v3_candidate_output(text), trace
 
 
+def _generate_prune_bridge_candidate(
+    *,
+    original_text: str,
+    scan_contract: ScanContract,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+) -> tuple[str, dict[str, Any]]:
+    base_groups = group_rewrite_targets(
+        original_text=original_text,
+        rewrite_target_profile=scan_contract.rewrite_target_profile,
+        max_groups=max(_max_target_executor_groups(), 8),
+    )
+    groups = filter_prune_bridge_groups(
+        target_groups=base_groups,
+        problem_inventory=scan_contract.problem_inventory,
+    )
+    if not groups:
+        return "", target_execution_trace(
+            attempted=True,
+            target_groups=[],
+            error="no_prune_bridge_problem_groups",
+        )
+    prompt = build_prune_bridge_prompt(target_groups=groups[:_max_target_executor_groups()])
+    target_words = sum(int(group.word_count_guide.get("preferred_words") or word_count(group.source_text)) for group in groups)
+    gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(max(180, target_words + 360)))
+    try:
+        raw = gateway.chat(
+            prompt,
+            system="Return only valid JSON with a replacements array.",
+            response_format={"type": "json_object"},
+        ).content
+        replacements = parse_prune_bridge_replacements(raw)
+    except Exception as exc:
+        return "", target_execution_trace(
+            attempted=True,
+            target_groups=groups,
+            error=str(exc),
+        )
+    if not replacements:
+        return "", target_execution_trace(
+            attempted=True,
+            target_groups=groups,
+            replacements=[],
+            error="generation_failed_empty_output",
+        )
+    text, trace = apply_prune_bridge_replacements(
+        original_text=original_text,
+        target_groups=groups,
+        replacements=replacements,
+    )
+    return clean_v3_candidate_output(text), trace
+
+
 def _generate_scanner_controlled_candidate(
     *,
     original_text: str,
@@ -918,6 +1163,7 @@ def _generate_scanner_controlled_candidate(
     api_key: str | None,
     model: str | None,
     base_url: str | None,
+    strategy_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     config = _scanner_controlled_config()
     current_text = str(original_text or "")
@@ -952,6 +1198,33 @@ def _generate_scanner_controlled_candidate(
             rewrite_target_profile=current_contract.rewrite_target_profile,
             max_groups=max(_max_target_executor_groups(), config.groups_per_round * 2),
         )
+        if strategy_id:
+            allowed_target_ids: set[str] = set()
+            for problem_group in current_contract.problem_groups or []:
+                if not isinstance(problem_group, dict):
+                    continue
+                allowed = {str(item) for item in problem_group.get("allowed_operations") or []}
+                if strategy_id not in allowed:
+                    continue
+                allowed_target_ids.update(
+                    str(target_id)
+                    for target_id in problem_group.get("target_ids") or []
+                    if str(target_id)
+                )
+            if allowed_target_ids:
+                groups = [
+                    group for group in groups
+                    if any(
+                        str(target.get("target_id") or "") in allowed_target_ids
+                        for target in group.targets
+                        if isinstance(target, dict)
+                    )
+                ]
+            else:
+                groups = [
+                    group for group in groups
+                    if group.operation == strategy_id
+                ]
         groups = rank_scanner_target_groups(
             report=current_report,
             goal=current_goal,
@@ -1006,7 +1279,23 @@ def _generate_scanner_controlled_candidate(
             }
             best: dict[str, Any] | None = None
             for variant_index, variant in enumerate(variants, start=1):
-                replacement_text = str(variant.get("replacement_text") or "").strip()
+                replacement_text = restore_protected_anchor_placeholders(
+                    str(variant.get("replacement_text") or "").strip(),
+                    group,
+                )
+                missing_anchors = _missing_protected_anchors(replacement_text, group)
+                if missing_anchors:
+                    group_log["variants"].append({
+                        "variant_index": variant_index,
+                        "variant_id": variant.get("variant_id"),
+                        "delta": None,
+                        "word_count": word_count(replacement_text),
+                        "metrics": None,
+                        "apply_status": [],
+                        "rejected_reason": "protected_anchor_missing",
+                        "missing_protected_anchors": missing_anchors,
+                    })
+                    continue
                 candidate_text, candidate_apply_status = apply_target_replacements(
                     original_text=current_text,
                     target_groups=[group],
@@ -1102,6 +1391,7 @@ def _generate_scanner_controlled_candidate(
     trace = {
         **trace,
         "scanner_controlled": True,
+        "planned_strategy_id": strategy_id,
         "scanner_controlled_config": config.to_dict(),
         "scanner_controlled_rounds": round_trace,
         "scanner_controlled_accepted": accepted_replacements,
@@ -1430,12 +1720,84 @@ def run_rewrite_pipeline_v3(
             max_groups=_max_target_executor_groups(),
         ) if _target_executor_available(scan_contract) else [],
     )
+    first_strategy_step = _first_strategy_step_id(strategy_plan)
+    problem_inventory_driven = bool(scan_contract.problem_groups)
 
     if replay_candidate_records:
         candidate_text, candidate_report = _candidate_from_replay(replay_candidate_records[0], original_report)
     elif full_rewrite_allowed:
         try:
-            if _scanner_controlled_executor_available(scan_contract):
+            if first_strategy_step == "unit_preserving_prune_bridge" and _prune_bridge_available(scan_contract):
+                generation_mode = "unit_preserving_prune_bridge"
+                candidate_text, target_execution = _generate_prune_bridge_candidate(
+                    original_text=original_text,
+                    scan_contract=scan_contract,
+                    api_key=api_key,
+                    model=model,
+                    base_url=base_url,
+                )
+                target_execution = _annotate_target_execution(
+                    target_execution,
+                    executed_strategy="unit_preserving_prune_bridge",
+                    executor_engine="unit_preserving_prune_bridge",
+                )
+            elif (
+                problem_inventory_driven
+                and _uses_problem_scanner_controlled_strategy(first_strategy_step)
+                and _scanner_controlled_executor_available(scan_contract)
+            ):
+                generation_mode = first_strategy_step
+                candidate_text, target_execution = _generate_scanner_controlled_candidate(
+                    original_text=original_text,
+                    original_report=original_report,
+                    scan_contract=scan_contract,
+                    content_mode=content_mode,
+                    family=family,
+                    api_key=api_key,
+                    model=model,
+                    base_url=base_url,
+                )
+                target_execution = _annotate_target_execution(
+                    target_execution,
+                    executed_strategy=first_strategy_step,
+                    executor_engine="scanner_controlled_executor",
+                )
+            elif (
+                problem_inventory_driven
+                and _uses_problem_target_executor_strategy(first_strategy_step)
+                and _target_executor_available(scan_contract)
+            ):
+                generation_mode = first_strategy_step
+                candidate_text, target_execution = _generate_target_executor_candidate(
+                    original_text=original_text,
+                    scan_contract=scan_contract,
+                    content_mode=content_mode,
+                    family=family,
+                    api_key=api_key,
+                    model=model,
+                    base_url=base_url,
+                )
+                target_execution = _annotate_target_execution(
+                    target_execution,
+                    executed_strategy=first_strategy_step,
+                    executor_engine="target_executor",
+                )
+            elif problem_inventory_driven and first_strategy_step == "chunk_reconstruction":
+                generation_mode = "chunk_reconstruction"
+                candidate_text = _generate_chunked_candidate(
+                    original_text=original_text,
+                    source_units=source_generation_units,
+                    family=family,
+                    contract=contract,
+                    compression_policy=compression_policy,
+                    rewrite_target_profile=scan_contract.rewrite_target_profile,
+                    central_judgment_plan=central_judgment_plan,
+                    api_key=api_key,
+                    model=model,
+                    base_url=base_url,
+                    force_unit_chunks=force_unit_chunks,
+                )
+            elif _scanner_controlled_executor_available(scan_contract):
                 generation_mode = "scanner_controlled_executor"
                 candidate_text, target_execution = _generate_scanner_controlled_candidate(
                     original_text=original_text,
@@ -1446,6 +1808,11 @@ def run_rewrite_pipeline_v3(
                     api_key=api_key,
                     model=model,
                     base_url=base_url,
+                )
+                target_execution = _annotate_target_execution(
+                    target_execution,
+                    executed_strategy="scanner_controlled_executor",
+                    executor_engine="scanner_controlled_executor",
                 )
             elif _strategy_plan_prefers_target_executor(strategy_plan, scan_contract):
                 generation_mode = "target_executor"
@@ -1500,11 +1867,28 @@ def run_rewrite_pipeline_v3(
                     "target_execution_attempted": True,
                     "error": generation_error,
                 }
-            if generation_mode == "scanner_controlled_executor":
+            if _uses_problem_target_executor_strategy(generation_mode):
+                target_execution = {
+                    **target_execution,
+                    "target_execution_attempted": True,
+                    "executed_strategy": generation_mode,
+                    "executor_engine": "target_executor",
+                    "error": generation_error,
+                }
+            if generation_mode == "unit_preserving_prune_bridge":
+                target_execution = {
+                    **target_execution,
+                    "target_execution_attempted": True,
+                    "problem_strategy": "unit_preserving_prune_bridge",
+                    "error": generation_error,
+                }
+            if generation_mode == "scanner_controlled_executor" or _uses_problem_scanner_controlled_strategy(generation_mode):
                 target_execution = {
                     **target_execution,
                     "target_execution_attempted": True,
                     "scanner_controlled": True,
+                    "executed_strategy": generation_mode,
+                    "executor_engine": "scanner_controlled_executor",
                     "error": generation_error,
                 }
 
@@ -1513,6 +1897,7 @@ def run_rewrite_pipeline_v3(
     expected_unit_count = len(source_generation_units)
     original_footprint = _ai_footprint_profile(original_report) or scan_contract.ai_footprint_profile
     original_target_profile = _rewrite_target_profile(original_report) or scan_contract.rewrite_target_profile
+    original_problem_inventory = _problem_inventory(original_report) or scan_contract.problem_inventory
 
     def assess_candidate(
         *,
@@ -1545,6 +1930,15 @@ def run_rewrite_pipeline_v3(
         footprint_delta = _footprint_delta(original_footprint, candidate_footprint)
         candidate_target_profile = _rewrite_target_profile(scanned_report)
         target_movement = _target_profile_movement(original_target_profile, candidate_target_profile)
+        candidate_problem_inventory = _problem_inventory(scanned_report)
+        unresolved_problem_groups = (
+            candidate_problem_inventory.get("problem_groups")
+            if isinstance(candidate_problem_inventory.get("problem_groups"), list)
+            else []
+        )
+        target_trace = target_execution_info if isinstance(target_execution_info, dict) else {}
+        unapplied_target_group_ids = _unapplied_target_group_ids(target_trace)
+        target_gate_passed = bool(target_movement["moved"] and not unapplied_target_group_ids)
         central_profile_score = score_candidate_against_central_profile(
             scanned_report,
             baseline_report=original_report,
@@ -1570,7 +1964,7 @@ def run_rewrite_pipeline_v3(
                 and compression_ok
                 and integrity_result["passed"]
                 and footprint_delta["moved"]
-                and target_movement["moved"]
+                and target_gate_passed
             ),
             cost=cost,
         )
@@ -1604,10 +1998,9 @@ def run_rewrite_pipeline_v3(
             text
             and validity == "valid"
             and footprint_delta["moved"]
-            and target_movement["moved"]
+            and target_gate_passed
             and integrity_result["passed"]
         )
-        target_trace = target_execution_info if isinstance(target_execution_info, dict) else {}
         target_attempted = bool(target_trace.get("target_execution_attempted"))
         return {
             "text": text,
@@ -1628,11 +2021,24 @@ def run_rewrite_pipeline_v3(
                 "target_profile_before": original_target_profile,
                 "target_profile_after": candidate_target_profile,
                 "target_movement": target_movement,
-                "target_gate_passed": bool(target_movement["moved"]),
+                "target_gate_passed": target_gate_passed,
+                "unapplied_target_group_ids": unapplied_target_group_ids,
+                "problem_inventory_before": original_problem_inventory,
+                "problem_inventory_after": candidate_problem_inventory,
+                "unresolved_problem_groups": unresolved_problem_groups,
                 "target_execution_available": _target_executor_available(scan_contract),
+                "prune_bridge_available": _prune_bridge_available(scan_contract),
                 "assisted_footprint_executor_available": _assisted_footprint_executor_available(scan_contract),
                 "target_execution_attempted": target_attempted,
                 "target_execution_trace": target_trace,
+                "prompt_template_id": target_trace.get("prompt_template_id") if target_trace else None,
+                "prompt_stage": target_trace.get("prompt_stage") if target_trace else None,
+                "scanner_context_used": target_trace.get("scanner_context_used") if target_trace else [],
+                "planner_output": target_trace.get("planner_output") if target_trace else None,
+                "stage_apply_status": target_trace.get("stage_apply_status") if target_trace else [],
+                "stage_rescan_delta": target_trace.get("stage_rescan_delta") if target_trace else None,
+                "topk_repair_attempted": bool(target_trace.get("topk_repair_attempted")) if target_trace else False,
+                "strategy_stop_reason": target_trace.get("strategy_stop_reason") if target_trace else None,
                 "target_groups": target_trace.get("target_groups") if target_trace else [],
                 "target_replacements": target_trace.get("target_replacements") if target_trace else [],
                 "target_apply_status": target_trace.get("target_apply_status") if target_trace else [],
@@ -1658,6 +2064,7 @@ def run_rewrite_pipeline_v3(
                     reason for reason, failed in (
                         ("detector_footprint_not_improved", not footprint_delta["moved"]),
                         ("rewrite_targets_not_improved", not target_movement["moved"]),
+                        ("rewrite_targets_not_applied", bool(unapplied_target_group_ids)),
                         ("central_profile_not_improved", _number(central_profile_score.get("weighted_delta")) <= 0.0),
                         ("validation_failed", not validation_result.passed),
                         ("compression_rejected", not compression_ok),
@@ -1691,10 +2098,22 @@ def run_rewrite_pipeline_v3(
     ))
     loop_trace = []
     tried_actions: set[CandidateAction] = set()
+    tried_problem_strategy_ids: set[str] = set()
+    if generation_mode:
+        tried_problem_strategy_ids.add(str(generation_mode))
     if generation_mode == "target_executor":
         tried_actions.add(CandidateAction.TARGET_EXECUTOR)
-    if generation_mode == "scanner_controlled_executor":
+    if _uses_problem_target_executor_strategy(generation_mode):
         tried_actions.add(CandidateAction.TARGET_EXECUTOR)
+    if generation_mode == "scanner_controlled_executor" or _uses_problem_scanner_controlled_strategy(generation_mode):
+        tried_actions.add(CandidateAction.TARGET_EXECUTOR)
+    primary_generation_failed = bool(
+        not candidate_text
+        and (
+            generation_error
+            or (isinstance(target_execution, dict) and str(target_execution.get("error") or "").startswith("generation_failed"))
+        )
+    )
     if replay_candidate_records and len(replay_candidate_records) > 1:
         for index, record in enumerate(replay_candidate_records[1:], start=2):
             replay_text, replay_report = _candidate_from_replay(record, original_report)
@@ -1704,13 +2123,47 @@ def run_rewrite_pipeline_v3(
                 mode=f"replay_recovery_{index}",
                 cost=index,
             ))
-    elif full_rewrite_allowed:
+    elif full_rewrite_allowed and not primary_generation_failed:
         while (time.time() - started) < max_runtime_seconds and len(candidate_evaluations) < 5:
-            loop_decision = decide_next_action(
-                candidate_evaluations,
-                has_positive_boundaries=bool(examples_for_family(family).get("positive") or []),
-                tried_actions=tried_actions,
+            latest_trace = candidate_evaluations[-1].get("trace") if isinstance(candidate_evaluations[-1].get("trace"), dict) else {}
+            planned_problem_strategy = _next_planned_problem_strategy(
+                strategy_plan=strategy_plan,
+                tried_strategy_ids=tried_problem_strategy_ids,
+                latest_trace=latest_trace,
             )
+            if planned_problem_strategy:
+                loop_decision = LoopDecision(
+                    action=CandidateAction.TARGET_EXECUTOR,
+                    source_index=len(candidate_evaluations) - 1,
+                    issues=issues_from_trace(latest_trace),
+                    reason=f"execute_planned_problem_strategy:{planned_problem_strategy}",
+                )
+            else:
+                latest_issues = issues_from_trace(latest_trace)
+                exhausted_scanner_problem = (
+                    problem_inventory_driven
+                    and any(
+                        issue in latest_issues
+                        for issue in (
+                            CandidateIssue.NO_DETECTOR_MOVEMENT,
+                            CandidateIssue.NO_TARGET_MOVEMENT,
+                            CandidateIssue.GENERATION_FAILED,
+                        )
+                    )
+                )
+                if exhausted_scanner_problem:
+                    loop_decision = LoopDecision(
+                        action=CandidateAction.RETURN_BEST_FOR_REVIEW,
+                        source_index=len(candidate_evaluations) - 1,
+                        issues=latest_issues,
+                        reason="stop_after_problem_strategy_exhausted",
+                    )
+                else:
+                    loop_decision = decide_next_action(
+                        candidate_evaluations,
+                        has_positive_boundaries=bool(examples_for_family(family).get("positive") or []),
+                        tried_actions=tried_actions,
+                    )
             loop_trace.append(loop_decision.to_dict())
             if loop_decision.action in {
                 CandidateAction.ACCEPT_STRICT,
@@ -1719,6 +2172,8 @@ def run_rewrite_pipeline_v3(
             }:
                 break
             tried_actions.add(loop_decision.action)
+            if planned_problem_strategy:
+                tried_problem_strategy_ids.add(planned_problem_strategy)
             source_item = candidate_evaluations[loop_decision.source_index]
             try:
                 loop_target_execution: dict[str, Any] | None = None
@@ -1787,17 +2242,37 @@ def run_rewrite_pipeline_v3(
                     )
                     mode = "plain_reasoning_broad_prose"
                 elif loop_decision.action == CandidateAction.TARGET_EXECUTOR:
-                    progress(82, "Executing V3 scanner target profile")
-                    new_text, loop_target_execution = _generate_target_executor_candidate(
-                        original_text=original_text,
-                        scan_contract=scan_contract,
-                        content_mode=content_mode,
-                        family=family,
-                        api_key=api_key,
-                        model=model,
-                        base_url=base_url,
-                    )
-                    mode = "target_executor"
+                    if planned_problem_strategy in PROBLEM_SCANNER_CONTROLLED_STRATEGIES:
+                        progress(82, f"Executing V3 planned strategy: {planned_problem_strategy}")
+                        new_text, loop_target_execution = _generate_scanner_controlled_candidate(
+                            original_text=str(source_item.get("text") or candidate_text or original_text),
+                            original_report=source_item.get("report") or original_report,
+                            scan_contract=scan_contract,
+                            content_mode=content_mode,
+                            family=family,
+                            strategy_id=planned_problem_strategy,
+                            api_key=api_key,
+                            model=model,
+                            base_url=base_url,
+                        )
+                        mode = planned_problem_strategy
+                        loop_target_execution = _annotate_target_execution(
+                            loop_target_execution,
+                            executed_strategy=planned_problem_strategy,
+                            executor_engine="scanner_controlled_executor",
+                        )
+                    else:
+                        progress(82, "Executing V3 scanner target profile")
+                        new_text, loop_target_execution = _generate_target_executor_candidate(
+                            original_text=original_text,
+                            scan_contract=scan_contract,
+                            content_mode=content_mode,
+                            family=planned_problem_strategy or family,
+                            api_key=api_key,
+                            model=model,
+                            base_url=base_url,
+                        )
+                        mode = planned_problem_strategy or "target_executor"
                 elif loop_decision.action == CandidateAction.REPAIR_ASSISTED_FOOTPRINT:
                     progress(83, "Repairing V3 assisted footprint paragraphs")
                     new_text, loop_target_execution = _generate_assisted_footprint_candidate(
@@ -1838,6 +2313,15 @@ def run_rewrite_pipeline_v3(
                         base_url=base_url,
                     )
                     mode = "targeted_repair"
+                source_text_for_noop = str(source_item.get("text") or "")
+                if new_text and source_text_for_noop and new_text.strip() == source_text_for_noop.strip():
+                    loop_target_execution = {
+                        **(loop_target_execution or {}),
+                        "target_execution_attempted": bool(loop_target_execution),
+                        "error": "generation_failed_no_effect",
+                        "strategy_stop_reason": "no_effect_candidate_discarded",
+                    }
+                    new_text = ""
                 candidate_evaluations.append(assess_candidate(
                     text=new_text,
                     report=None,
@@ -1898,6 +2382,24 @@ def run_rewrite_pipeline_v3(
 
     elapsed = time.time() - started
     candidate_trace = [item["trace"] for item in candidate_evaluations]
+    strategy_stack = [step.to_dict() for step in getattr(strategy_plan, "steps", ()) or ()]
+    executed_problem_groups = []
+    problem_group_results = []
+    for trace in candidate_trace:
+        target_trace = trace.get("target_execution_trace") if isinstance(trace.get("target_execution_trace"), dict) else {}
+        executed_problem_groups.extend(
+            group.get("group_id")
+            for group in target_trace.get("target_groups") or []
+            if isinstance(group, dict) and group.get("group_id")
+        )
+        problem_group_results.append({
+            "generation_mode": trace.get("generation_mode"),
+            "detector_movement": trace.get("detector_movement"),
+            "target_gate_passed": trace.get("target_gate_passed"),
+            "candidate_outcome": trace.get("candidate_outcome"),
+            "footprint_delta": trace.get("footprint_delta"),
+            "target_movement": trace.get("target_movement"),
+        })
     final_goal = selected["trace"]["goal"]
     selected_trace = selected["trace"]
     best_candidate_external_review_required = public_status == "rewrite_candidate_generated_needs_external_review"
@@ -1938,16 +2440,42 @@ def run_rewrite_pipeline_v3(
         "scan_contract": scan_contract.to_dict(),
         "v3_route": v3_route.to_dict(),
         "v3_strategy_plan": strategy_plan.to_dict(),
+        "problem_inventory_before": original_problem_inventory,
+        "strategy_stack": strategy_stack,
+        "executed_problem_groups": list(dict.fromkeys(str(item) for item in executed_problem_groups if item)),
+        "problem_group_results": problem_group_results,
+        "unresolved_problem_groups": selected_trace.get("unresolved_problem_groups") if isinstance(selected_trace, dict) else [],
+        "strategy_switch_reason": loop_trace[-1]["reason"] if loop_trace else "",
         "strategy_trace": [{
             "strategy_family": family,
-            "first_strategy_step": _first_strategy_step_id(strategy_plan),
+            "first_strategy_step": first_strategy_step,
+            "strategy_stack": strategy_stack,
+            "problem_inventory_driven": problem_inventory_driven,
             "external_calibrated": True,
             "generation_mode": generation_mode,
+            "executed_initial_strategy": generation_mode,
+            "executor_engine": target_execution.get("executor_engine") if isinstance(target_execution, dict) else "",
+            "first_strategy_obeyed": bool(
+                not problem_inventory_driven
+                or not first_strategy_step
+                or generation_mode == first_strategy_step
+                or first_strategy_step == "unit_preserving_prune_bridge"
+            ),
             "scanner_controlled_executor_available": _scanner_controlled_executor_available(scan_contract),
-            "scanner_controlled_executor_first": generation_mode == "scanner_controlled_executor",
+            "scanner_controlled_executor_first": bool(
+                generation_mode == "scanner_controlled_executor"
+                or (
+                    _uses_problem_scanner_controlled_strategy(generation_mode)
+                    and isinstance(target_execution, dict)
+                    and target_execution.get("executor_engine") == "scanner_controlled_executor"
+                )
+            ),
             "scanner_controlled_config": _scanner_controlled_config().to_dict(),
             "target_executor_available": _target_executor_available(scan_contract),
+            "prune_bridge_available": _prune_bridge_available(scan_contract),
+            "prune_bridge_first": generation_mode == "unit_preserving_prune_bridge",
             "target_executor_first": generation_mode == "target_executor",
+            "problem_target_executor_first": _uses_problem_target_executor_strategy(generation_mode),
             "compression_policy": compression_policy.to_dict(),
             "single_shot_word_limit": _single_shot_word_limit(),
             "chunk_word_limit": _chunk_word_limit(),

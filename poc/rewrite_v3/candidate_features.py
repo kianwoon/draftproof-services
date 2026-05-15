@@ -26,6 +26,9 @@ class CandidateFeatures:
     fraction_ai_assisted: float
     fraction_human: float
     max_ai_window_words: float
+    footprint_risk_drop: float
+    target_risk_drop: float
+    target_gate_passed: bool
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -38,6 +41,8 @@ def features_from_trace(trace: dict[str, Any]) -> CandidateFeatures:
     metrics = proxy.get("metrics") if isinstance(proxy.get("metrics"), dict) else {}
     reasons = proxy.get("reasons") if isinstance(proxy.get("reasons"), list) else []
     segment_gate = metrics.get("segment_authorship_gate") if isinstance(metrics.get("segment_authorship_gate"), dict) else {}
+    footprint_delta = trace.get("footprint_delta") if isinstance(trace.get("footprint_delta"), dict) else {}
+    target_movement = trace.get("target_movement") if isinstance(trace.get("target_movement"), dict) else {}
     return CandidateFeatures(
         validation_passed=bool(validation.get("passed")),
         compression_accepted=bool(trace.get("compression_accepted")),
@@ -53,4 +58,7 @@ def features_from_trace(trace: dict[str, Any]) -> CandidateFeatures:
         fraction_ai_assisted=_float(segment_gate.get("fraction_ai_assisted")),
         fraction_human=_float(segment_gate.get("fraction_human")),
         max_ai_window_words=_float(segment_gate.get("max_ai_window_words")),
+        footprint_risk_drop=_float(footprint_delta.get("risk_drop")),
+        target_risk_drop=_float(target_movement.get("risk_drop")),
+        target_gate_passed=bool(trace.get("target_gate_passed")),
     )

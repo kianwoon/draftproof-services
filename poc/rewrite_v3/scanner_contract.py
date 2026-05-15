@@ -47,7 +47,9 @@ class ScanContract:
     quote_role_counts: dict[str, int] = field(default_factory=dict)
     ai_footprint_profile: dict[str, Any] = field(default_factory=dict)
     rewrite_target_profile: dict[str, Any] = field(default_factory=dict)
+    problem_inventory: dict[str, Any] = field(default_factory=dict)
     rewrite_targets: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    problem_groups: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     target_driver_summary: dict[str, int] = field(default_factory=dict)
     target_operation_mix: dict[str, int] = field(default_factory=dict)
     target_scope_policy: str = ""
@@ -343,6 +345,18 @@ def _rewrite_target_profile(scan_report: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _problem_inventory(scan_report: dict[str, Any]) -> dict[str, Any]:
+    candidates = [
+        scan_report.get("problem_inventory"),
+        _dict_at(scan_report, ("scan_intelligence", "problem_inventory")),
+        _dict_at(scan_report, ("scan_intelligence", "document", "problem_inventory")),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+    return {}
+
+
 def build_scan_contract(scan_report: dict[str, Any], original_text: str) -> ScanContract:
     units = document_units(original_text)
     total_words = word_count(original_text)
@@ -352,7 +366,9 @@ def build_scan_contract(scan_report: dict[str, Any], original_text: str) -> Scan
     anchor_metrics = _routing_anchor_metrics(scan_report, total_words)
     footprint = _ai_footprint_profile(scan_report)
     target_profile = _rewrite_target_profile(scan_report)
+    problem_inventory = _problem_inventory(scan_report)
     rewrite_targets = target_profile.get("targets") if isinstance(target_profile.get("targets"), list) else []
+    problem_groups = problem_inventory.get("problem_groups") if isinstance(problem_inventory.get("problem_groups"), list) else []
     mode_scores = route.get("mode_scores") if isinstance(route.get("mode_scores"), list) else []
     return ScanContract(
         word_count=total_words,
@@ -380,7 +396,9 @@ def build_scan_contract(scan_report: dict[str, Any], original_text: str) -> Scan
         quote_role_counts=dict(anchor_metrics.get("quote_role_counts") or {}),
         ai_footprint_profile=dict(footprint),
         rewrite_target_profile=dict(target_profile),
+        problem_inventory=dict(problem_inventory),
         rewrite_targets=tuple(row for row in rewrite_targets if isinstance(row, dict)),
+        problem_groups=tuple(row for row in problem_groups if isinstance(row, dict)),
         target_driver_summary={
             str(key): int(value or 0)
             for key, value in (target_profile.get("driver_summary") or {}).items()

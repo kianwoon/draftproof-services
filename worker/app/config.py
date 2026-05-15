@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = ""
     DRAFTPROOF_PLANNER_MODEL: str = ""
     DRAFTPROOF_GENERATOR_MODEL: str = ""
+    DRAFTPROOF_REWRITE_MODEL_LOCK: str = ""
     DRAFTPROOF_RETRY_MODEL: str = ""
     DRAFTPROOF_RETRY_MODEL_ENABLED: bool = False
     DRAFTPROOF_RETRY_MODEL_MAX_CALLS: int = 1

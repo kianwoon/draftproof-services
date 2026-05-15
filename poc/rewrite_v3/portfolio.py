@@ -88,6 +88,19 @@ def score_candidate(item: dict[str, Any], *, family: str, index: int) -> Portfol
     else:
         score -= 100.0
         reasons.append("semantic_unsafe")
+    if not features.target_gate_passed:
+        score -= 80.0
+        reasons.append("target_gate_failed")
+    if features.footprint_risk_drop < 0:
+        score -= 160.0 + min(abs(features.footprint_risk_drop), 30.0) * 8.0
+        reasons.append("footprint_regression")
+    else:
+        score += min(features.footprint_risk_drop, 25.0) * 3.0
+    if features.target_risk_drop < 0:
+        score -= 80.0 + min(abs(features.target_risk_drop), 20.0) * 4.0
+        reasons.append("target_regression")
+    else:
+        score += min(features.target_risk_drop, 20.0) * 2.0
     score += min(max(features.topk_delta, -20.0), 35.0) * 2.0
     score += min(max(features.ai_delta, -20.0), 50.0) * 0.8
     score -= features.fraction_ai * 80.0

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .problem_inventory import build_problem_strategy_steps
 from .router import V3Route
 from .scanner_contract import RewriteRiskClass, ScanContract
 
@@ -15,6 +16,8 @@ class StrategyStep:
     target_issue: str
     editable_scope: str
     max_candidates: int = 1
+    problem_group_ids: tuple[str, ...] = ()
+    target_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -34,6 +37,36 @@ class StrategyPlan:
 
 def build_strategy_plan(route: V3Route, contract: ScanContract) -> StrategyPlan:
     classes = (route.primary_class, *route.secondary_classes)
+    problem_steps = build_problem_strategy_steps(contract)
+    if problem_steps:
+        steps = [
+            StrategyStep(
+                strategy_id=step.strategy_id,
+                target_issue=step.target_issue,
+                editable_scope=step.editable_scope,
+                max_candidates=step.max_candidates,
+                problem_group_ids=step.problem_group_ids,
+                target_ids=step.target_ids,
+            )
+            for step in problem_steps
+        ]
+        if not any(step.strategy_id == "portfolio_selection" for step in steps):
+            steps.append(StrategyStep("portfolio_selection", "candidate_selection", "candidate_set"))
+        if contract.hard_anchor_count > 0:
+            steps.append(StrategyStep("anchor_repair", "protected_anchor_loss", "exact_anchor_restoration"))
+        steps.append(StrategyStep("structure_repair", "document_structure_changed", "candidate_boundaries"))
+        unique_problem_steps: list[StrategyStep] = []
+        seen_problem_steps: set[str] = set()
+        for step in steps:
+            if step.strategy_id in seen_problem_steps:
+                continue
+            seen_problem_steps.add(step.strategy_id)
+            unique_problem_steps.append(step)
+        return StrategyPlan(
+            risk_classes=tuple(item.value for item in classes),
+            steps=tuple(unique_problem_steps),
+        )
+
     steps: list[StrategyStep] = []
     operations = contract.target_operation_mix or {}
     localized_footprint = (
@@ -54,6 +87,12 @@ def build_strategy_plan(route: V3Route, contract: ScanContract) -> StrategyPlan:
         steps.append(StrategyStep("citation_anchor_guard", "scan_targeted_citation_windows", "target_profile_windows"))
     if operations.get("chunk_reconstruction"):
         steps.append(StrategyStep("clean_texture_boundary", "scan_targeted_broad_footprint", "target_profile_chunks"))
+    if operations.get("paragraph_preserving_broad_reconstruction"):
+        steps.append(StrategyStep(
+            "paragraph_preserving_broad_reconstruction",
+            "scan_targeted_broad_paragraph_footprint",
+            "target_profile_paragraphs",
+        ))
     if localized_footprint or operations.get("grounded_author_reasoning_rewrite") or operations.get("light_texture_rewrite"):
         steps.append(StrategyStep("authorship_window_repair", "localized_ai_footprint", "risky_windows"))
     if RewriteRiskClass.BROAD_PROSE in classes:

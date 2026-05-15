@@ -16,6 +16,20 @@ from .document_units import word_count
 from .target_executor import TargetGroup
 
 
+DRIVER_FOCUS = {
+    "predictability_score": "predictable sentence route",
+    "ai_signal_score": "generated overview texture",
+    "ai_likelihood": "model-like paragraph movement",
+    "unsafe_word_share": "weak process reasoning / weak cause-effect ownership",
+}
+
+VARIANT_OPERATORS = (
+    "CLAUSE_ROUTE_CHANGE",
+    "BROAD_CLAIM_NARROWING",
+    "CAUSE_EFFECT_OWNERSHIP",
+)
+
+
 @dataclass(frozen=True)
 class ScannerControlledConfig:
     max_rounds: int = 2
@@ -159,6 +173,103 @@ def weak_human_levers(report: dict[str, Any], *, limit: int = 4) -> list[dict[st
     return rows
 
 
+def _driver_focus_for_group(group: TargetGroup, *, limit: int = 4) -> list[str]:
+    focus: list[str] = []
+    for target in group.targets:
+        if not isinstance(target, dict):
+            continue
+        for driver in sorted(target.get("dominant_drivers") or [], key=lambda item: _number(item.get("score")) if isinstance(item, dict) else 0.0, reverse=True):
+            if not isinstance(driver, dict):
+                continue
+            label = DRIVER_FOCUS.get(str(driver.get("key") or ""))
+            if label and label not in focus:
+                focus.append(label)
+            if len(focus) >= limit:
+                return focus
+    return focus
+
+
+def protected_anchor_placeholders(group: TargetGroup) -> list[dict[str, Any]]:
+    anchors: list[dict[str, Any]] = []
+    for index, anchor in enumerate(group.protected_anchors, start=1):
+        if not isinstance(anchor, dict):
+            continue
+        text = str(anchor.get("text") or "")
+        if text:
+            anchors.append({
+                "placeholder": f"[[DP_ANCHOR_{index:03d}]]",
+                "text": text,
+                "kind": anchor.get("kind"),
+                "blocking": bool(anchor.get("blocking")),
+            })
+    return anchors
+
+
+def freeze_protected_anchors(text: str, anchors: list[dict[str, Any]]) -> str:
+    frozen = str(text or "")
+    for anchor in anchors:
+        source = str(anchor.get("text") or "")
+        placeholder = str(anchor.get("placeholder") or "")
+        if source and placeholder:
+            frozen = frozen.replace(source, placeholder)
+    return frozen
+
+
+def restore_protected_anchor_placeholders(text: str, group: TargetGroup) -> str:
+    restored = str(text or "")
+    for anchor in protected_anchor_placeholders(group):
+        placeholder = str(anchor.get("placeholder") or "")
+        source = str(anchor.get("text") or "")
+        if placeholder and source:
+            restored = restored.replace(placeholder, source)
+    return restored
+
+
+def _movement_contract(report: dict[str, Any], group: TargetGroup) -> dict[str, Any]:
+    blockers = blocker_rows_for_group(report, group, limit=5)
+    flags = {
+        "texture_pressure": False,
+        "evidence_gap": False,
+        "source_dependency": False,
+        "author_context_gap": False,
+    }
+    blocker_focus: list[str] = []
+    for blocker in blockers:
+        if not isinstance(blocker, dict):
+            continue
+        key = str(blocker.get("key") or "")
+        if key and key not in blocker_focus:
+            blocker_focus.append(key)
+        diagnostic_flags = blocker.get("diagnostic_flags") if isinstance(blocker.get("diagnostic_flags"), dict) else {}
+        for flag in flags:
+            flags[flag] = bool(flags[flag] or diagnostic_flags.get(flag))
+    operations: list[str] = []
+    if flags["texture_pressure"] or "predictable sentence route" in _driver_focus_for_group(group):
+        operations.append("Change sentence route and relation, not synonyms.")
+    if flags["evidence_gap"] or flags["author_context_gap"]:
+        operations.append("Narrow broad claims or attach them to reasoning already present in source_text.")
+    if flags["source_dependency"]:
+        operations.append("Make the source-to-claim relation explicit without adding new evidence.")
+    if not operations:
+        operations.append("Keep meaning stable while making the paragraph less polished and less generic.")
+    return {
+        "risk_focus": _driver_focus_for_group(group),
+        "blocker_focus": blocker_focus[:5],
+        "operations": operations,
+        "variant_plan": [
+            {"variant_id": f"v{index}", "operator": operator}
+            for index, operator in enumerate(VARIANT_OPERATORS, start=1)
+        ],
+        "style_boundary": [
+            "Use direct plain prose.",
+            "Keep simple source wording when it is already direct.",
+            "Avoid formulaic transition openings.",
+            "Do not upgrade the source into elevated formal wording.",
+            "Do not use tidy textbook phrasing when the source can stay simpler.",
+        ],
+    }
+
+
 def rank_scanner_target_groups(
     *,
     report: dict[str, Any],
@@ -205,42 +316,50 @@ def build_scanner_controlled_prompt(
     group: TargetGroup,
     variants_per_group: int,
 ) -> str:
+    anchors = protected_anchor_placeholders(group)
+    variant_plan = [
+        {"variant_id": f"v{index}", "operator": operator}
+        for index, operator in enumerate(VARIANT_OPERATORS[: max(1, int(variants_per_group))], start=1)
+    ]
+    movement_contract = _movement_contract(report, group)
+    movement_contract["variant_plan"] = variant_plan
     payload = {
         "group_id": group.group_id,
         "unit_id": group.unit_id,
         "operation": group.operation,
-        "source_text": group.source_text,
-        "before_context": group.before_context[-420:],
-        "after_context": group.after_context[:420],
-        "protected_anchors": list(group.protected_anchors),
+        "source_text": freeze_protected_anchors(group.source_text, anchors),
+        "before_context": freeze_protected_anchors(group.before_context[-420:], anchors),
+        "after_context": freeze_protected_anchors(group.after_context[:420], anchors),
+        "protected_anchors": anchors,
         "word_count_guide": dict(group.word_count_guide),
-        "target_drivers": [
-            target.get("dominant_drivers")
-            for target in group.targets
-            if isinstance(target, dict)
+        "movement_contract": movement_contract,
+        "weak_human_levers": [
+            {
+                "key": row.get("key"),
+                "rewrite_lever": row.get("rewrite_lever"),
+            }
+            for row in weak_human_levers(report)
         ],
-        "required_movement": [
-            target.get("required_movement")
-            for target in group.targets
-            if isinstance(target, dict)
-        ],
-        "blocker_radar_for_this_group": blocker_rows_for_group(report, group),
-        "weak_human_levers": weak_human_levers(report),
         "instructions": [
-            f"Create {max(1, int(variants_per_group))} replacement variants for this target group only.",
-            "Use scanner blocker_radar and target_drivers as the movement contract.",
-            "If blocker flags texture pressure or predictability, change sentence route and concrete relation, not just synonyms.",
-            "If blocker flags evidence gap or author context gap, narrow the claim or attach it to reasoning already present in source_text; do not invent new facts.",
-            "If weak human lever says causal reasoning, make one supported cause-effect relation explicit.",
-            "Preserve meaning, claims, citations, codes, numbers, and protected anchors.",
-            "Keep close to preferred_words; do not summarize or compress.",
-            "Avoid polished academic smoothing and tidy paraphrase.",
+            f"Create exactly {len(variant_plan)} replacement variants for source_text only.",
+            "Each variant must use its assigned movement_contract.variant_plan operator as the main change.",
+            "Use movement_contract as the rewrite contract.",
+            "Preserve protected anchor placeholders exactly; do not alter placeholder punctuation, brackets, or numbering.",
+            "Preserve the same core meaning and claims.",
+            "Do not add unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
+            "Keep within +/-15% of preferred_words.",
+            "Do not summarize the paragraph, but you may remove broad filler when it improves precision.",
+            "Do not use synonym swapping, polished academic smoothing, tidy textbook phrasing, or formulaic transition openings.",
+            "Return only JSON matching response_schema.",
         ],
         "response_schema": {
             "variants": [
                 {
                     "variant_id": "v1",
-                    "replacement_text": "plain replacement only"
+                    "operator_used": "CLAUSE_ROUTE_CHANGE",
+                    "replacement_text": "plain replacement only",
+                    "protected_anchors_preserved": True,
+                    "new_claims_added": False,
                 }
             ]
         },
