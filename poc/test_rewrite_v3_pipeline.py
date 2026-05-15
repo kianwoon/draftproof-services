@@ -35,6 +35,11 @@ from rewrite_v3.layers.cited_practice_voice import build_cited_practice_voice_ch
 from rewrite_v3.layers.clean_texture_boundary import build_clean_texture_boundary_chunk_prompt, build_clean_texture_boundary_prompt
 from rewrite_v3.layers.contract_repair import build_contract_repair_prompt
 from rewrite_v3.layers.contrast_boundary import build_contrast_boundary_prompt, extract_contrast_boundary_output
+from rewrite_v3.layers.detector_ownership_fusion import (
+    build_detector_ownership_fusion_prompt,
+    extract_fused_document,
+    extract_fused_document_with_diagnostics,
+)
 from rewrite_v3.layers.document_rhythm import build_document_rhythm_chunk_prompt, build_document_rhythm_prompt
 from rewrite_v3.layers.plain_reasoning_broad_prose import build_plain_reasoning_broad_prose_prompt
 from rewrite_v3.layers.structure_repair import build_structure_repair_prompt
@@ -168,6 +173,18 @@ finally:
             os.environ.pop(name, None)
         else:
             os.environ[name] = value
+
+json_with_curly_quotes = '{"rewritten_document":"Education should not only focus on \\"what students know,\\" but also on \\"how students think.\\" Today’s schools need that distinction."}'
+json_response = LLMResponse(
+    content=LLMGateway._normalize_quotes(json_with_curly_quotes),
+    model="test",
+    raw={"choices": [{"message": {"content": json_with_curly_quotes}, "finish_reason": "stop"}]},
+)
+assert_test(
+    json.loads(json_response.raw_content)["rewritten_document"].startswith("Education should not only")
+    and json_response.content != json_response.raw_content,
+    "LLM response exposes raw JSON content before quote normalization for schema parsing",
+)
 
 model_env_names = ["DRAFTPROOF_REWRITE_MODEL_LOCK", "DRAFTPROOF_GENERATOR_MODEL", "LLM_MODEL"]
 saved_model_env = {name: os.environ.get(name) for name in model_env_names}
@@ -303,6 +320,87 @@ clean_prompt = build_clean_texture_boundary_prompt(
 assert_test(
     "target_word_band" not in clean_prompt and "scanner_problem_profile" in clean_prompt,
     "V3 clean-texture prompt is scan-driven without a word band",
+)
+
+fusion_prompt = build_detector_ownership_fusion_prompt(
+    source_text=broad_source,
+    detector_candidate=broad_candidate,
+    ownership_candidate=(
+        "Education is changing fast because students meet information everywhere. "
+        "From my view, schools still matter, but I would not treat the old classroom model as the whole explanation.\n\n"
+        "Teachers help students judge sources and build practical judgment. "
+        "That is harder than handing out facts."
+    ),
+    detector_trace={
+        "candidate_ai": 42.0,
+        "candidate_topk": 70.0,
+        "authorship_window_profile": {
+            "windows": [{
+                "window_id": "w001",
+                "paragraph_id": "p001",
+                "label": "moderately_ai_assisted",
+                "confidence": "high",
+                "word_count": 32,
+                "ai_assistance_score": 0.8,
+                "source_excerpt": "Education is changing fast because students meet information everywhere.",
+            }]
+        },
+        "external_proxy": {
+            "reasons": ["segment_human_fraction_low"],
+            "metrics": {"segment_authorship_gate": {"fraction_human": 0.1}},
+        },
+    },
+    ownership_trace={
+        "ownership_gate": {
+            "active": True,
+            "passed": True,
+            "ownership_score": 10.0,
+            "ownership_change_count": 3,
+            "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
+        },
+        "target_execution_trace": {
+            "target_replacements": [{
+                "group_id": "tg001",
+                "replacement_text": "From my view, schools still matter, but I would not treat the old classroom model as the whole explanation.",
+                "candidate_quality": {
+                    "ownership_score": 10.0,
+                    "ownership_change_count": 3,
+                    "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
+                },
+            }]
+        },
+    },
+    family="clean_texture_boundary",
+)
+assert_test(
+    "Use detector_strong_candidate as the base structure" in fusion_prompt
+    and "Fuse ownership only inside failed_windows" in fusion_prompt
+    and "Do not humanize the whole document" in fusion_prompt,
+    "V3 fusion prompt targets detector-hot windows instead of whole-document humanizing",
+)
+fusion_payload = json.loads(fusion_prompt.split("PAYLOAD:\n", 1)[1])
+assert_test(
+    fusion_payload["source_structure_contract"]["block_count"] == len(document_units(broad_source))
+    and len(fusion_payload["source_document_inventory"]) == len(document_units(broad_source))
+    and "do not merge, split, drop, or reorder units" in " ".join(fusion_payload["requirements"]),
+    "V3 fusion prompt carries hard source structure inventory",
+)
+assert_test(
+    extract_fused_document(json.dumps({"rewritten_document": broad_candidate})) == broad_candidate,
+    "V3 fusion parser extracts rewritten_document JSON",
+)
+assert_test(
+    extract_fused_document(json.dumps({"fused_document": broad_candidate})) == broad_candidate
+    and extract_fused_document(broad_candidate) == broad_candidate,
+    "V3 fusion parser accepts full-document aliases and plain-text fallback",
+)
+empty_fusion, empty_fusion_diagnostics = extract_fused_document_with_diagnostics("{}")
+assert_test(
+    empty_fusion == ""
+    and empty_fusion_diagnostics["parse_status"] == "ok"
+    and empty_fusion_diagnostics["failure"] == "missing_nonempty_document_field"
+    and empty_fusion_diagnostics["top_level_keys"] == [],
+    "V3 fusion parser reports missing document field instead of opaque empty output",
 )
 
 cited_source = (
@@ -2013,6 +2111,16 @@ assert_test(
     and "ownership_gate_passed" in ownership_scores[1]["reasons"],
     "V3 portfolio selector treats ownership as an executable gate when human fraction remains low",
 )
+fusion_decision = decide_next_action(
+    [ownership_blocked_candidate, ownership_repaired_candidate],
+    has_positive_boundaries=False,
+    tried_actions={CandidateAction.CLAIM_OWNERSHIP_REPAIR},
+)
+assert_test(
+    fusion_decision.action == CandidateAction.FUSE_DETECTOR_AND_OWNERSHIP
+    and fusion_decision.reason == "fuse_detector_movement_with_window_ownership",
+    "V3 loop fuses split detector movement and ownership success before review fallback",
+)
 with tempfile.TemporaryDirectory() as tmpdir:
     empty_review_result = run_rewrite_pipeline_v3(
         detect_json=report_for(broad_source, ai=70.0),
@@ -2027,6 +2135,22 @@ with tempfile.TemporaryDirectory() as tmpdir:
         and empty_review_summary["rewrite_goal_status"]["reason"] == "rewrite_v3_no_safe_candidate_generated"
         and empty_review_summary["final_text"] == broad_source,
         "V3 does not report empty generation failures as reviewable rewrite candidates",
+    )
+with tempfile.TemporaryDirectory() as tmpdir:
+    empty_no_report_result = run_rewrite_pipeline_v3(
+        detect_json=report_for(broad_source, ai=70.0),
+        output_dir=tmpdir,
+        replay_candidate_records=[{"text": ""}],
+        full_rewrite_allowed=False,
+        max_runtime_seconds=60,
+    )
+    empty_no_report_trace = empty_no_report_result["result"].summary["candidate_trace"][0]
+    assert_test(
+        empty_no_report_trace["candidate_ai"] is None
+        and empty_no_report_trace["scan_freshness"]["empty_candidate_no_report_fallback"] is True
+        and empty_no_report_trace["scan_freshness"]["input_text_present"] is False
+        and empty_no_report_trace["candidate_outcome"] == "generation_failed_empty_output",
+        "V3 empty generated candidates do not borrow original scan metrics",
     )
 
 seven_unit_candidate = "\n\n".join([

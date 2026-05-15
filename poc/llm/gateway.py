@@ -83,6 +83,23 @@ class LLMResponse:
         value = first.get("native_finish_reason")
         return str(value) if value is not None else None
 
+    @property
+    def raw_content(self) -> str:
+        """Return provider message content before gateway text normalization.
+
+        JSON-mode callers need this because quote normalization can turn valid
+        escaped JSON string content into invalid JSON before schema parsing.
+        """
+        choices = self.raw.get("choices") if isinstance(self.raw, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return ""
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        message = first.get("message") if isinstance(first.get("message"), dict) else {}
+        raw = message.get("content")
+        if raw is None:
+            return ""
+        return raw if isinstance(raw, str) else str(raw)
+
 
 # ---------------------------------------------------------------------------
 # Error classification

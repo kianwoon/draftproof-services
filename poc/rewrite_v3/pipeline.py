@@ -44,6 +44,11 @@ from .layers.clean_texture_boundary import (
 from .layers.contract_repair import build_contract_repair_prompt
 from .layers.contrast_boundary import build_contrast_boundary_prompt, extract_contrast_boundary_output
 from .layers.document_rhythm import build_document_rhythm_chunk_prompt, build_document_rhythm_prompt
+from .layers.detector_ownership_fusion import (
+    build_detector_ownership_fusion_prompt,
+    extract_fused_document,
+    extract_fused_document_with_diagnostics,
+)
 from .layers.plain_reasoning_broad_prose import build_plain_reasoning_broad_prose_prompt
 from .layers.recovery_revision import build_recovery_revision_prompt
 from .layers.structure_repair import build_structure_repair_prompt
@@ -591,6 +596,17 @@ def _reject_length_limited_response(response: Any, *, stage: str) -> str:
     if finish_reason == "length":
         logger.warning("Rejected V3 LLM response truncated by max_tokens at stage=%s", stage)
         return ""
+    return str(getattr(response, "content", "") or "")
+
+
+def _reject_length_limited_raw_response(response: Any, *, stage: str) -> str:
+    finish_reason = str(getattr(response, "finish_reason", "") or "").strip().lower()
+    if finish_reason == "length":
+        logger.warning("Rejected V3 LLM response truncated by max_tokens at stage=%s", stage)
+        return ""
+    raw_content = getattr(response, "raw_content", "")
+    if raw_content:
+        return str(raw_content)
     return str(getattr(response, "content", "") or "")
 
 
@@ -1913,6 +1929,99 @@ def _generate_authorship_window_repair_candidate(
     ))
 
 
+def _split_success_pair(candidate_evaluations: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    detector_best: dict[str, Any] | None = None
+    ownership_best: dict[str, Any] | None = None
+
+    def detector_score(item: dict[str, Any]) -> tuple[float, float, float]:
+        trace = item.get("trace") if isinstance(item.get("trace"), dict) else {}
+        proxy = trace.get("external_proxy") if isinstance(trace.get("external_proxy"), dict) else {}
+        metrics = proxy.get("metrics") if isinstance(proxy.get("metrics"), dict) else {}
+        ai_delta = metrics.get("ai_delta") if isinstance(metrics.get("ai_delta"), (int, float)) else 0.0
+        topk_delta = metrics.get("topk_delta") if isinstance(metrics.get("topk_delta"), (int, float)) else 0.0
+        candidate_ai = trace.get("candidate_ai") if isinstance(trace.get("candidate_ai"), (int, float)) else 100.0
+        return (float(ai_delta), float(topk_delta), -float(candidate_ai))
+
+    def ownership_score(item: dict[str, Any]) -> tuple[float, float]:
+        gate = ((item.get("trace") or {}).get("ownership_gate") if isinstance(item.get("trace"), dict) else {}) or {}
+        return (
+            float(gate.get("ownership_score") or 0.0) if isinstance(gate.get("ownership_score"), (int, float)) else 0.0,
+            float(gate.get("ownership_change_count") or 0.0) if isinstance(gate.get("ownership_change_count"), (int, float)) else 0.0,
+        )
+
+    for item in candidate_evaluations:
+        text = str(item.get("text") or "").strip()
+        trace = item.get("trace") if isinstance(item.get("trace"), dict) else {}
+        if not text or trace.get("validity_status") != "valid":
+            continue
+        gate = trace.get("ownership_gate") if isinstance(trace.get("ownership_gate"), dict) else {}
+        if bool(trace.get("detector_movement")) and bool(gate.get("active")) and not bool(gate.get("passed")):
+            if detector_best is None or detector_score(item) > detector_score(detector_best):
+                detector_best = item
+        if bool(gate.get("active")) and bool(gate.get("passed")):
+            if ownership_best is None or ownership_score(item) > ownership_score(ownership_best):
+                ownership_best = item
+    return detector_best, ownership_best
+
+
+def _generate_detector_ownership_fusion_candidate(
+    *,
+    source_text: str,
+    candidate_evaluations: list[dict[str, Any]],
+    family: str,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+) -> tuple[str, dict[str, Any]]:
+    detector_item, ownership_item = _split_success_pair(candidate_evaluations)
+    if not detector_item or not ownership_item:
+        return "", {
+            "target_execution_attempted": True,
+            "executor_engine": "detector_ownership_fusion",
+            "executed_strategy": "fuse_detector_and_ownership",
+            "error": "split_success_pair_not_found",
+        }
+    prompt = build_detector_ownership_fusion_prompt(
+        source_text=source_text,
+        detector_candidate=str(detector_item.get("text") or ""),
+        ownership_candidate=str(ownership_item.get("text") or ""),
+        detector_trace=detector_item.get("trace") if isinstance(detector_item.get("trace"), dict) else {},
+        ownership_trace=ownership_item.get("trace") if isinstance(ownership_item.get("trace"), dict) else {},
+        family=family,
+    )
+    gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(max(word_count(str(detector_item.get("text") or "")), word_count(source_text)) + 420))
+    response = gateway.chat(
+        prompt,
+        system="Return only valid JSON with rewritten_document.",
+        response_format={"type": "json_object"},
+    )
+    raw_content = _reject_length_limited_raw_response(response, stage="detector_ownership_fusion")
+    fused, extraction_diagnostics = extract_fused_document_with_diagnostics(raw_content)
+    response_diagnostics = {
+        "finish_reason": getattr(response, "finish_reason", None),
+        "native_finish_reason": getattr(response, "native_finish_reason", None),
+        "content_chars": len(str(getattr(response, "content", "") or "")),
+        "content_preview": str(getattr(response, "content", "") or "")[:1200],
+        "raw_content_chars": len(str(getattr(response, "raw_content", "") or "")),
+        "raw_content_preview": str(getattr(response, "raw_content", "") or "")[:1200],
+        "extraction": extraction_diagnostics,
+    }
+    return clean_v3_candidate_output(fused), {
+        "target_execution_attempted": True,
+        "executor_engine": "detector_ownership_fusion",
+        "executed_strategy": "fuse_detector_and_ownership",
+        "prompt_stage": "detector_ownership_fusion",
+        "detector_source_mode": (detector_item.get("trace") or {}).get("generation_mode"),
+        "ownership_source_mode": (ownership_item.get("trace") or {}).get("generation_mode"),
+        "detector_source_ai": (detector_item.get("trace") or {}).get("candidate_ai"),
+        "ownership_source_ai": (ownership_item.get("trace") or {}).get("candidate_ai"),
+        "detector_source_ownership_gate": (detector_item.get("trace") or {}).get("ownership_gate"),
+        "ownership_source_ownership_gate": (ownership_item.get("trace") or {}).get("ownership_gate"),
+        "fusion_response_diagnostics": response_diagnostics,
+        "error": None if fused else "empty_fusion_output",
+    }
+
+
 def _generate_structure_repair_candidate(
     *,
     original_text: str,
@@ -2325,14 +2434,17 @@ def run_rewrite_pipeline_v3(
         compression_result = compression_status(original_text, text, compression_policy)
         compression_ok = _compression_accepted(compression_result)
         integrity_result = _text_integrity(original_text, text)
-        should_scan_candidate = bool(text)
+        generated_empty = not bool(str(text or "").strip())
+        should_scan_candidate = not generated_empty
         scanned_report = report
         scan_input_hash = _text_hash(text)
         if should_scan_candidate and scanned_report is None:
             progress(78, f"Scanning V3 {mode} candidate")
             scanned_report = _scan_report(text)
-        elif scanned_report is None:
+        elif scanned_report is None and not generated_empty:
             scanned_report = original_report
+        elif scanned_report is None:
+            scanned_report = {}
         report_input_text = str((scanned_report or {}).get("input_text") or "")
         report_input_hash = _text_hash(report_input_text)
         scan_freshness = {
@@ -2341,6 +2453,7 @@ def run_rewrite_pipeline_v3(
             "input_text_present": bool(report_input_text),
             "input_text_matches_candidate": bool(report_input_text == str(text or "")),
             "scan_reused_supplied_report": bool(report is not None),
+            "empty_candidate_no_report_fallback": bool(generated_empty and report is None),
             "predictability_sentence_cache_enabled": os.environ.get("DRAFTPROOF_PREDICTABILITY_SENTENCE_CACHE", "1").lower() not in {"0", "false", "no", "off"},
             "predictability_cache": _predictability_cache_info(scanned_report),
         }
@@ -2598,7 +2711,14 @@ def run_rewrite_pipeline_v3(
                         )
                     )
                 )
-                if exhausted_scanner_problem:
+                fallback_loop_decision = decide_next_action(
+                    candidate_evaluations,
+                    has_positive_boundaries=bool(examples_for_family(family).get("positive") or []),
+                    tried_actions=tried_actions,
+                )
+                if fallback_loop_decision.action == CandidateAction.FUSE_DETECTOR_AND_OWNERSHIP:
+                    loop_decision = fallback_loop_decision
+                elif exhausted_scanner_problem:
                     loop_decision = LoopDecision(
                         action=CandidateAction.RETURN_BEST_FOR_REVIEW,
                         source_index=len(candidate_evaluations) - 1,
@@ -2606,11 +2726,7 @@ def run_rewrite_pipeline_v3(
                         reason="stop_after_problem_strategy_exhausted",
                     )
                 else:
-                    loop_decision = decide_next_action(
-                        candidate_evaluations,
-                        has_positive_boundaries=bool(examples_for_family(family).get("positive") or []),
-                        tried_actions=tried_actions,
-                    )
+                    loop_decision = fallback_loop_decision
                 if (
                     loop_decision.action == CandidateAction.REPAIR_TARGETED
                     and not _unbounded_recovery_enabled()
@@ -2792,6 +2908,17 @@ def run_rewrite_pipeline_v3(
                         base_url=base_url,
                     )
                     mode = "authorship_window_repair"
+                elif loop_decision.action == CandidateAction.FUSE_DETECTOR_AND_OWNERSHIP:
+                    progress(86, "Fusing V3 detector movement with ownership")
+                    new_text, loop_target_execution = _generate_detector_ownership_fusion_candidate(
+                        source_text=original_text,
+                        candidate_evaluations=candidate_evaluations,
+                        family=family,
+                        api_key=api_key,
+                        model=model,
+                        base_url=base_url,
+                    )
+                    mode = "fuse_detector_and_ownership"
                 else:
                     progress(80, "Running V3 targeted repair")
                     new_text = _generate_recovery_candidate(

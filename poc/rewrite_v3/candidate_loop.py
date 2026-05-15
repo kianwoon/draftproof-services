@@ -41,6 +41,7 @@ class CandidateAction(str, Enum):
     PLAIN_REASONING = "plain_reasoning"
     REPAIR_AUTHORSHIP_WINDOWS = "repair_authorship_windows"
     CLAIM_OWNERSHIP_REPAIR = "claim_ownership_repair"
+    FUSE_DETECTOR_AND_OWNERSHIP = "fuse_detector_and_ownership"
     SCANNER_CONTROLLED_SPAN_REPAIR = "scanner_controlled_span_repair"
     REPAIR_TARGETED = "repair_targeted"
     TARGET_EXECUTOR = "target_executor"
@@ -182,6 +183,47 @@ def select_candidate_index(candidate_evaluations: list[dict[str, Any]]) -> tuple
     return 0, CandidateAction.RETURN_BEST_FOR_REVIEW, "best_generated_candidate_requires_external_review"
 
 
+def _ownership_passed(trace: dict[str, Any]) -> bool:
+    gate = trace.get("ownership_gate") if isinstance(trace.get("ownership_gate"), dict) else {}
+    return bool(gate.get("active")) and bool(gate.get("passed"))
+
+
+def _ownership_failed(trace: dict[str, Any]) -> bool:
+    gate = trace.get("ownership_gate") if isinstance(trace.get("ownership_gate"), dict) else {}
+    return bool(gate.get("active")) and not bool(gate.get("passed"))
+
+
+def _detector_strong(trace: dict[str, Any]) -> bool:
+    if trace.get("validity_status") != "valid":
+        validation = trace.get("validation") if isinstance(trace.get("validation"), dict) else {}
+        if not bool(validation.get("passed")):
+            return False
+    proxy = trace.get("external_proxy") if isinstance(trace.get("external_proxy"), dict) else {}
+    metrics = proxy.get("metrics") if isinstance(proxy.get("metrics"), dict) else {}
+    ai_delta = metrics.get("ai_delta")
+    topk_delta = metrics.get("topk_delta")
+    target_gate_passed = bool(trace.get("target_gate_passed"))
+    detector_movement = bool(trace.get("detector_movement"))
+    return (
+        detector_movement
+        or target_gate_passed
+        or (isinstance(ai_delta, (int, float)) and ai_delta >= 8.0)
+        or (isinstance(topk_delta, (int, float)) and topk_delta >= 5.0)
+    )
+
+
+def _has_split_detector_ownership_success(candidate_evaluations: list[dict[str, Any]]) -> bool:
+    detector_strong = False
+    ownership_strong = False
+    for item in candidate_evaluations:
+        trace = item.get("trace") if isinstance(item.get("trace"), dict) else {}
+        if _detector_strong(trace) and _ownership_failed(trace):
+            detector_strong = True
+        if _ownership_passed(trace):
+            ownership_strong = True
+    return detector_strong and ownership_strong
+
+
 def decide_next_action(
     candidate_evaluations: list[dict[str, Any]],
     *,
@@ -200,6 +242,16 @@ def decide_next_action(
     ]
     latest_trace = candidate_evaluations[-1].get("trace") if isinstance(candidate_evaluations[-1].get("trace"), dict) else {}
     latest_issues = issues_from_trace(latest_trace)
+    if (
+        CandidateAction.FUSE_DETECTOR_AND_OWNERSHIP not in tried_actions
+        and _has_split_detector_ownership_success(candidate_evaluations)
+    ):
+        return LoopDecision(
+            action=CandidateAction.FUSE_DETECTOR_AND_OWNERSHIP,
+            source_index=len(candidate_evaluations) - 1,
+            issues=latest_issues,
+            reason="fuse_detector_movement_with_window_ownership",
+        )
     topk_repair_issues = {
         CandidateIssue.INSUFFICIENT_TOPK_DROP,
         CandidateIssue.TOPK_CANDIDATE_REJECTED,
