@@ -554,13 +554,11 @@ def _topk_context(
             "protected_anchors": _compact_anchors(protected_anchors, limit=4),
             "required_protected_anchors": _compact_anchors(required_protected_anchors, limit=4),
             "word_count_guide": group.get("word_count_guide") or {},
-            "ownership_contract": ownership_contract_for_group(group),
             "topk_repair_contract": target_contract,
         })
     return {
         "target_profile_summary": (context.get("target_profile_summary") or {}),
         "target_groups": compact_groups,
-        "paragraph_plans": _plan_rows_for_groups(planner_output, group_ids),
     }
 
 
@@ -882,7 +880,9 @@ def build_paragraph_portfolio_ownership_prompt(
         "Do not intensify source claims, learner ability, certainty, or outcome strength.",
         "Keep the paragraph near word_count_guide.preferred_words and do not compress it into a summary.",
         "For each returned row, include ownership_changes and ownership_elements_supported.",
+        "Return exactly these row keys: group_id, replacement_text, ownership_changes, ownership_elements_supported, new_claims_added, hard_anchors_preserved.",
         "Every ownership_changes row must have different before and after values.",
+        "Every ownership_changes item must use exactly these keys: before, after, operation, trace_source.",
         "If no source-supported ownership repair is possible for a group, omit that group instead of returning a no-op.",
         "Escape any straight quotation marks inside JSON string values.",
     ]
@@ -894,6 +894,7 @@ def build_paragraph_portfolio_ownership_prompt(
             "Preserve factual meaning, paragraph role, citations, and source viewpoint.",
             "Use ownership_contract: add source-supported trace, context, and judgment without inventing events.",
             "Return ownership_changes and ownership_elements_supported for every replacement.",
+            "Use exactly the response_schema keys; no extra keys.",
             "Omit groups that cannot be repaired without unsupported claims.",
             "Do not compress into a summary.",
             "Escape quotation marks inside JSON string values.",
@@ -976,25 +977,23 @@ def build_paragraph_portfolio_topk_prompt(
         "template_id": TEMPLATE_ID,
         "strategy_id": STRATEGY_ID,
         "prompt_stage": "topk_repair",
-        "task": "Patch only the reconstructed replacement paragraphs where scanner drivers indicate predictable wording.",
+        "task": "Patch only the reconstructed replacement text where scanner drivers indicate predictable wording.",
         "scanner_context": _topk_context(context, planner_output, replacements),
-        "planner_output": {
-            "paragraph_plans": _plan_rows_for_groups(planner_output),
-        },
         "current_replacements": replacements,
         "rules": [
             "Return JSON only with a replacements array.",
             "Return one row per replacement you modify; unchanged rows may be omitted.",
-            "Do not rewrite the full document.",
+            "Use current_replacements[].replacement_text as the repair text.",
+            "Do not use the original source_text as the text to patch.",
+            "Do not rewrite the full document or unrelated sentences.",
             "Do not introduce unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
             "Preserve hard anchors exactly.",
             "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
             "Do not add blank-line paragraph splits or merge source blocks inside a replacement.",
+            "Return exactly these row keys: group_id, replacement_text.",
             "Patch only topk_repair_contract.predictable_spans_in_source and their local wording path.",
-            "Use ownership_contract to avoid local patches that only change viewpoint or wording without author trace, specific context, or real judgment.",
-            "When predictable_span_rows are present, report modified_span_ids using those exact ids.",
-            "Do not guess changed span counts; count a span only when changed_spans.source_span exactly equals or fully contains one predictable_span_rows.text item.",
-            "Do not return a changed_spans row where before and after are identical.",
+            "Do not perform ownership repair in this pass.",
+            "Do not report changed_spans, modified_span_ids, predictable_spans_modified_count, ownership_changes, protected_anchors_preserved, changed_word_estimate, or validation notes; the validator computes those fields.",
             "If no predictable span can be changed without breaking meaning, omit that replacement row.",
             "Use raw_predictable_spans and rejected_predictable_spans only as diagnostics; do not count them as repaired spans.",
             "Modify at least topk_repair_contract.required_modified_spans phrase spans when span_source is scanner_exact.",
@@ -1007,14 +1006,6 @@ def build_paragraph_portfolio_topk_prompt(
                 {
                     "group_id": "tg001",
                     "replacement_text": "patched replacement paragraph only",
-                    "changed_spans": [
-                        {"span_id": "ps001", "source_span": "scanner phrase span", "before": "old local phrase", "after": "new local phrase", "operation": "TOPK_SPAN_REPATH"}
-                    ],
-                    "modified_span_ids": ["ps001"],
-                    "predictable_spans_modified_count": 0,
-                    "new_claims_added": False,
-                    "hard_anchors_preserved": True,
-                    "changed_word_estimate": 0,
                 }
             ]
         },

@@ -46,8 +46,11 @@ from rewrite_v3.layers.structure_repair import build_structure_repair_prompt
 from rewrite_v3.output_cleaning import clean_v3_candidate_output
 from rewrite_v3.paragraph_portfolio_executor import (
     build_reconstruction_batches_by_prompt,
+    OWNERSHIP_REPLACEMENT_KEYS,
     paragraph_portfolio_config,
     parse_replacements_with_diagnostics,
+    RECONSTRUCTION_REPLACEMENT_KEYS,
+    TOPK_REPLACEMENT_KEYS,
     validate_ownership_replacement_effect,
     validate_replacement_structure,
     validate_topk_replacement_effect,
@@ -95,6 +98,10 @@ from rewrite_v3.unit_preserving_prune_bridge import (
     filter_prune_bridge_groups,
     parse_prune_bridge_replacements,
 )
+from rewrite_v4.generator import build_generator_prompt
+from rewrite_v4.models import RepairBrief
+from rewrite_v4.experiment import run_v4_fast_rewrite, run_v4_iterative_rewrite
+from rewrite_v4.validation import parse_generator_variants, sanitize_repair_brief
 
 
 def assert_test(condition: bool, message: str) -> None:
@@ -709,6 +716,32 @@ assert_test(
     and isinstance(target_profile["targets"][0]["operation_candidates"], list),
     "Rewrite target profile exposes hierarchy and target-level strategy eligibility",
 )
+boundary_leak_source = "First paragraph stays here.\n\nSecond paragraph owns this sentence.\n\nThird paragraph starts here."
+boundary_leak_profile = build_rewrite_target_profile(
+    source_text=boundary_leak_source,
+    authorship_window_profile={
+        "windows": [{
+            "window_id": "w_boundary",
+            "paragraph_id": "p002",
+            "sentence_ids": ["s002", "s003"],
+            "label": "moderately_ai_assisted",
+            "ai_assistance_score": 0.61,
+            "start_index": boundary_leak_source.find("Second"),
+            "end_index": boundary_leak_source.find("Third") + len("Third"),
+            "span_integrity": {"passed": True},
+            "source_text": "Second paragraph owns this sentence.\n\nThird",
+            "word_count": 6,
+            "score_components": {"predictability_score": 0.7, "ai_signal_score": 0.6},
+        }]
+    },
+    ai_footprint_profile={"fraction_ai_assisted": 1.0, "risky_window_density": 1.0},
+    preservation_inventory={},
+)
+assert_test(
+    boundary_leak_profile["targets"][0]["source_text"] == "Second paragraph owns this sentence."
+    and boundary_leak_profile["targets"][0]["word_count_guide"]["source_words"] == 5,
+    "Rewrite target profile snaps paragraph-scoped scanner windows back to clean document paragraphs",
+)
 problem_inventory = build_problem_inventory(
     rewrite_target_profile=target_profile,
     ai_footprint_profile=footprint_profile,
@@ -1227,12 +1260,43 @@ ownership_repair_prompt = build_scanner_controlled_prompt(
 )
 assert_test(
     "movement_contract" in scanner_loop_prompt
-    and "scanner_action_contract" in scanner_loop_prompt
-    and "ownership_contract" in scanner_loop_prompt
-    and "Do not just change point of view" in scanner_loop_prompt
-    and "weak_human_levers" in scanner_loop_prompt
-    and "source_text" in scanner_loop_prompt,
-    "V3 scanner-controlled prompt carries movement, ownership, human levers, and local source only",
+    and "topk_repair_contract" in scanner_loop_prompt
+    and ("repair_text" in scanner_loop_prompt or "source_text" in scanner_loop_prompt)
+    and "Return only JSON matching response_schema" in scanner_loop_prompt,
+    "V3 scanner-controlled prompt carries movement, Top-k span contract, and local repair text",
+)
+exact_topk_group = TargetGroup(
+    group_id="tg_exact_topk",
+    unit_id="p_exact_topk",
+    operation="paragraph_preserving_broad_reconstruction",
+    start_index=0,
+    end_index=74,
+    source_text="Teachers still work with predictable route wording inside this sentence.",
+    before_context="",
+    after_context="",
+    targets=({"paragraph_id": "p_exact_topk", "dominant_drivers": [{"key": "predictability_score", "score": 0.7}]},),
+    word_count_guide={"source_words": 3, "preferred_words": 3},
+)
+exact_topk_prompt = build_scanner_controlled_prompt(
+    report={
+        "rewrite_edit_briefs": [{
+            "paragraph_id": "p_exact_topk",
+            "target_sentence": exact_topk_group.source_text,
+            "predictable_token_spans": ["predictable route wording"],
+        }]
+    },
+    group=exact_topk_group,
+    variants_per_group=3,
+)
+assert_test(
+    '"task": "local_topk_span_repair"' in exact_topk_prompt
+    and "repair_text" in exact_topk_prompt
+    and "source_text" not in exact_topk_prompt
+    and "ownership_contract" not in exact_topk_prompt
+    and "Do not add author trace" in exact_topk_prompt
+    and exact_topk_prompt.count('"operator": "TOPK_SPAN_REPATH"') == 1
+    and '"preferred_words": 10' in exact_topk_prompt,
+    "V3 scanner-controlled exact Top-k prompt uses compact one-task repair text and actual word count",
 )
 assert_test(
     '"repair_mode": "claim_ownership_repair"' in ownership_repair_prompt
@@ -1258,16 +1322,16 @@ assert_test(
     "V3 scanner-controlled prompt assigns operator-shaped variants",
 )
 assert_test(
-    "Do not report changed_spans" in scanner_loop_prompt
+    "changed_spans" not in json.dumps(json.loads(scanner_loop_prompt.split("Return valid JSON only.\n", 1)[1])["response_schema"])
     and "predictable_spans_modified_count" not in json.dumps(json.loads(scanner_loop_prompt.split("Return valid JSON only.\n", 1)[1])["response_schema"])
     and "required_modified_spans" in scanner_loop_prompt
     and "predictable_spans_in_source" in scanner_loop_prompt,
     "V3 scanner-controlled prompt keeps span requirements but removes self-reported validation fields",
 )
 assert_test(
-    "omit it entirely" in scanner_loop_prompt
-    and "do not return no-op variants" in scanner_loop_prompt
-    and "Do not intensify source claims" in scanner_loop_prompt,
+    ("omit it entirely" in scanner_loop_prompt or "omit the variant" in scanner_loop_prompt)
+    and ("do not return no-op variants" in scanner_loop_prompt or "If the span cannot be repaired" in scanner_loop_prompt)
+    and ("Do not intensify source claims" in scanner_loop_prompt or "Preserve the same core meaning" in scanner_loop_prompt),
     "V3 scanner-controlled prompt omits failed variants and blocks semantic-intensity drift",
 )
 citation_pressure_contract = group_action_contract(
@@ -1406,6 +1470,23 @@ malformed_completion_variants, malformed_completion_parse = parse_scanner_contro
     '{"variants":[{"variant_id":"v1","operator_used":"CLAUSE_ROUTE_CHANGE","replacement_text":"ok","changed_spans":[{"span_id":null,"before":"","after":""}]}], "" : "../bad." }]}',
     limit=2,
 )
+artifact_variants, artifact_parse = parse_scanner_controlled_variants_with_diagnostics(
+    json.dumps({
+        "variants": [
+            {
+                "variant_id": "v1",
+                "operator_used": "CLAUSE_ROUTE_CHANGE",
+                "replacement_text": "Education used to rest on three fixed points: the classroom, the textbook, and the teacher.",
+            },
+            {
+                "variant_id": "v2",
+                "operator_used": "BROAD_CLAIM_NARROWING",
+                "replacement_text": "Students rehearsed it at home,## and repeated what they had learned in exams.",
+            },
+        ]
+    }),
+    limit=2,
+)
 assert_test(
     self_report_variants == []
     and self_report_parse["parse_status"] == "schema_failed"
@@ -1414,11 +1495,32 @@ assert_test(
     and malformed_completion_parse["parse_status"] == "json_parse_failed",
     "V3 scanner-controlled parser rejects self-reported compliance fields and malformed completion tails",
 )
+assert_test(
+    len(artifact_variants) == 1
+    and artifact_parse["parse_status"] == "ok"
+    and artifact_parse["rejected_row_count"] == 1
+    and artifact_parse["rejected_rows"][0]["reason"] == "replacement_text_integrity_failed"
+    and "repeated_markup_punctuation_artifact" in artifact_parse["rejected_rows"][0]["integrity"]["failures"],
+    "V3 scanner-controlled parser rejects parseable replacement text with markup artifacts before scan",
+)
 no_change_gate = scanner_controlled_variant_gate(
     report=scanner_loop_report,
     group=target_groups[0],
     variant={"variant_id": "v_same", "replacement_text": target_groups[0].source_text},
     replacement_text=target_groups[0].source_text,
+)
+ramble_gate = scanner_controlled_variant_gate(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variant={
+        "variant_id": "v_ramble",
+        "replacement_text": (
+            target_groups[0].source_text
+            + " "
+            + " ".join(["validated repeated filler"] * 40)
+        ),
+    },
+    replacement_text=target_groups[0].source_text + " " + " ".join(["validated repeated filler"] * 40),
 )
 weak_span_gate = scanner_controlled_variant_gate(
     report=scanner_loop_report,
@@ -1485,6 +1587,7 @@ ownership_pass_gate = scanner_controlled_variant_gate(
 )
 assert_test(
     no_change_gate["reason"] == "no_material_change"
+    and ramble_gate["reason"] == "word_count_contract_failed"
     and weak_span_gate["passed"]
     and weak_span_gate["required_predictable_spans_modified"] == 1
     and strong_span_gate["passed"]
@@ -2529,16 +2632,9 @@ assert_test(
     and "source_structure_contract" in reconstruction_template.prompt
     and "required_protected_anchors" in reconstruction_template.prompt
     and "out_of_scope_protected_anchors" in reconstruction_template.prompt
-    and "source_structure_contract" in topk_template.prompt
     and "current_replacements" in topk_template.prompt
-    and "topk_repair_contract" in topk_template.prompt
-    and "ownership_contract" in topk_template.prompt
-    and "predictable_spans" in topk_template.prompt
-    and "locality_limits" in topk_template.prompt
-    and "changed_word_estimate" in topk_template.prompt
-    and "Education is changing quickly" in topk_template.prompt
-    and "Return JSON only" in topk_template.prompt,
-    "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted ownership, scoped anchors, and structure contracts",
+    and "topk_repair" in topk_template.prompt,
+    "V3 paragraph portfolio reconstruction and Top-k prompts separate ownership from compact current-replacement span repair",
 )
 assert_test(
     '"prompt_stage":"claim_ownership_repair"' in ownership_template.prompt
@@ -2656,11 +2752,10 @@ topk_valid_rows, topk_valid_status = validate_topk_replacement_effect(
 assert_test(
     not topk_noop_rows
     and "no_material_change" in topk_noop_status[0]["failures"]
-    and "no_effect_span_patch" in topk_noop_status[0]["failures"]
-    and "self_report_mismatch" in topk_noop_status[0]["failures"]
+    and "insufficient_span_movement" in topk_noop_status[0]["failures"]
     and topk_valid_rows
     and topk_valid_status[0]["actual_modified_span_ids"] == ["ps001"],
-    "V3 paragraph portfolio Top-k gate rejects fake no-effect span repairs and accepts real span movement",
+    "V3 paragraph portfolio Top-k gate computes span movement instead of trusting model self-report",
 )
 ownership_valid_rows, ownership_valid_status = validate_ownership_replacement_effect(
     target_groups=[topk_noop_group],
@@ -2754,6 +2849,82 @@ assert_test(
     and diagnostic_parse["parse_status"] == "missing_replacements",
     "V3 paragraph portfolio parser reports missing replacements arrays",
 )
+diagnostic_replacements, diagnostic_parse = parse_replacements_with_diagnostics(json.dumps({
+    "replacements": [{
+        "group_id": "tg004",
+        "replacement_text": "Students rehearsed the material at home,## then repeated what they had learned in exams.",
+    }]
+}), expected_row_keys=RECONSTRUCTION_REPLACEMENT_KEYS, schema_name="paragraph_reconstruction")
+assert_test(
+    diagnostic_replacements == []
+    and diagnostic_parse["parse_status"] == "empty_replacements"
+    and diagnostic_parse["rejected_rows"][0]["reason"] == "replacement_text_integrity_failed",
+    "V3 paragraph portfolio parser rejects parseable replacement text with markup artifacts",
+)
+diagnostic_replacements, diagnostic_parse = parse_replacements_with_diagnostics(json.dumps({
+    "replacements": [{
+        "group_id": "tg004",
+        "replacement_text": "This pushes classrooms toward memorisation more often than toward understanding.",
+        "ownership_changes": [{
+            "before": "This can encourage memorisation rather than understanding.",
+            "after": "This pushes classrooms toward memorisation more often than toward understanding.",
+            "operation": "CLAIM_OWNERSHIP_REPAIR",
+            "trace#mentarios": "",
+        }],
+        "ownership_elements_supported": ["specific_context"],
+        "new_claims_added": False,
+        "hard_anchors_preserved": True,
+    }]
+}), expected_row_keys=OWNERSHIP_REPLACEMENT_KEYS, schema_name="claim_ownership_repair")
+assert_test(
+    diagnostic_replacements == []
+    and diagnostic_parse["parse_status"] == "empty_replacements"
+    and diagnostic_parse["rejected_rows"][0]["reason"] == "ownership_changes_schema_failed"
+    and "ownership_change_0_extra_keys" in diagnostic_parse["rejected_rows"][0]["integrity"]["failures"],
+    "V3 paragraph ownership parser rejects polluted ownership metadata before validation",
+)
+diagnostic_replacements, diagnostic_parse = parse_replacements_with_diagnostics(json.dumps({
+    "replacements": [{
+        "group_id": "tg004",
+        "replacement_text": "This pushes classrooms toward memorisation more often than toward understanding.",
+        "ownership_changes": [{
+            "before": "This can encourage memorisation rather than understanding.",
+            "after": "This pushes classrooms toward memorisation more often than toward understanding.",
+            "operation": "CLAIM_OWNERSHIP_REPAIR",
+            "trace_source": "source_text",
+        }],
+        "ownership_elements_supported": ["specific_context"],
+    }]
+}), expected_row_keys=OWNERSHIP_REPLACEMENT_KEYS, schema_name="claim_ownership_repair")
+assert_test(
+    diagnostic_replacements == []
+    and diagnostic_parse["parse_status"] == "empty_replacements"
+    and diagnostic_parse["rejected_rows"][0]["reason"] == "replacement_row_keys_mismatch",
+    "V3 paragraph parser rejects replacement rows that do not match the exact stage schema",
+)
+diagnostic_replacements, diagnostic_parse = parse_replacements_with_diagnostics(json.dumps({
+    "replacements": [{
+        "group_id": "tg003",
+        "replacement_text": "Patched paragraph.",
+    }]
+}), expected_row_keys=TOPK_REPLACEMENT_KEYS, schema_name="topk_repair")
+assert_test(
+    len(diagnostic_replacements) == 1
+    and diagnostic_parse["parse_status"] == "ok"
+    and diagnostic_parse["schema_name"] == "topk_repair",
+    "V3 paragraph parser accepts exact Top-k replacement schema before validator-owned effect checks",
+)
+diagnostic_replacements, diagnostic_parse = parse_replacements_with_diagnostics(
+    "{\"replacements\":[{\"group_id\":\"tg004\",\"replacement_text\":\"ok\"}\u200b]}",
+    expected_row_keys=RECONSTRUCTION_REPLACEMENT_KEYS,
+    schema_name="paragraph_reconstruction",
+)
+assert_test(
+    diagnostic_replacements == []
+    and diagnostic_parse["parse_status"] == "completion_corrupted"
+    and "format_character_injection" in diagnostic_parse["raw_integrity"]["failures"],
+    "V3 paragraph parser rejects corrupted raw completions before JSON parsing",
+)
 
 long_paragraphs = [
     (
@@ -2845,16 +3016,6 @@ try:
                     "replacements": [{
                         "group_id": "tg001",
                         "replacement_text": "Education is changing quickly because students meet information through phones, websites, classmates, and teachers. Schools still matter, but the old classroom model does not explain the whole picture.",
-                        "changed_spans": [{
-                            "span_id": "ps001",
-                            "source_span": "Education is changing quickly",
-                            "before": "students now meet information",
-                            "after": "students meet information through phones",
-                            "operation": "TOPK_SPAN_REPATH",
-                        }],
-                        "modified_span_ids": ["ps001"],
-                        "predictable_spans_modified_count": 1,
-                        "changed_word_estimate": 3,
                     }]
                 }))
             return FakePromptTemplateResponse(json.dumps({
@@ -2952,6 +3113,8 @@ try:
                         "trace_source": "source_text",
                     }],
                     "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
+                    "new_claims_added": False,
+                    "hard_anchors_preserved": True,
                 }]
             }))
 
@@ -3678,6 +3841,75 @@ assert_test(
     and length_response.native_finish_reason == "max_tokens"
     and v3_pipeline._reject_length_limited_response(length_response, stage="test") == "",
     "V3 exposes and rejects length-limited LLM responses before candidate selection",
+)
+
+unsafe_brief = sanitize_repair_brief(
+    normalizer="llm_v0",
+    paragraph_role="body paragraph",
+    repair_tasks=[
+        "Add a concrete example or scenario to illustrate the claim.",
+        "Improve sentence linkage without adding information.",
+        "Lower AI likelihood score.",
+    ],
+    constraints=["Preserve meaning."],
+    avoid=["Slang."],
+)
+assert_test(
+    unsafe_brief.repair_tasks == ("Improve sentence linkage without adding information.",)
+    and len(unsafe_brief.rejected_tasks) == 2,
+    "V4 normalizer validator rejects raw detector language and unsupported example tasks",
+)
+
+valid_variants, valid_variant_diag = parse_generator_variants(
+    json.dumps({
+        "variants": [
+            {
+                "variant_id": "v1",
+                "text": "Schools should still teach core knowledge, but the paragraph now links the learning process more plainly through drafts, reflection, discussion, feedback, and improvement.",
+            },
+            {
+                "variant_id": "v2",
+                "text": "Too short.",
+            },
+        ]
+    }),
+    min_words=12,
+    max_words=30,
+)
+assert_test(
+    valid_variant_diag["status"] == "ok"
+    and len(valid_variants) == 1
+    and valid_variants[0].variant_id == "v1"
+    and valid_variant_diag["rejected"][0]["reason"] == "word_count_contract_failed",
+    "V4 generator parser accepts exact schema variants and rejects word-count failures",
+)
+
+sample_group_for_v4 = group_rewrite_targets(
+    original_text=broad_source,
+    rewrite_target_profile=broad_problem_contract.rewrite_target_profile,
+    max_groups=1,
+)[0]
+brief = RepairBrief(
+    normalizer="deterministic_v0",
+    paragraph_role="body paragraph",
+    repair_tasks=("Improve sentence linkage.",),
+    constraints=("Preserve meaning.",),
+    avoid=("new facts",),
+)
+v4_prompt = build_generator_prompt(group=sample_group_for_v4, repair_brief=brief, variant_count=3)
+assert_test(
+    '"repair_tasks"' in v4_prompt
+    and "AI likelihood" not in v4_prompt
+    and "detector" not in v4_prompt.casefold(),
+    "V4 generator prompt uses normalized editorial tasks without raw detector language",
+)
+assert_test(
+    callable(run_v4_iterative_rewrite),
+    "V4 exposes an iterative full-document experiment loop",
+)
+assert_test(
+    callable(run_v4_fast_rewrite),
+    "V4 exposes a production-shaped fast rewrite loop",
 )
 
 print("Rewrite V3 pipeline tests passed.")

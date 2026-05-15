@@ -33,10 +33,22 @@ from .target_executor import (
     batch_target_groups,
     target_execution_trace,
 )
+from .text_integrity import minimal_replacement_text_integrity, raw_completion_integrity
 
 
 GatewayFactory = Callable[[int], Any]
 TokenBudget = Callable[[int], int]
+
+RECONSTRUCTION_REPLACEMENT_KEYS = frozenset({"group_id", "replacement_text"})
+OWNERSHIP_REPLACEMENT_KEYS = frozenset({
+    "group_id",
+    "replacement_text",
+    "ownership_changes",
+    "ownership_elements_supported",
+    "new_claims_added",
+    "hard_anchors_preserved",
+})
+TOPK_REPLACEMENT_KEYS = frozenset({"group_id", "replacement_text"})
 
 
 @dataclass(frozen=True)
@@ -121,6 +133,8 @@ def parse_replacements_with_diagnostics(
     raw: str,
     *,
     preview_chars: int = 1200,
+    expected_row_keys: frozenset[str] | None = None,
+    schema_name: str = "replacement",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     text = _strip_json_fences(raw)
     diagnostics: dict[str, Any] = {
@@ -129,9 +143,15 @@ def parse_replacements_with_diagnostics(
         "parse_status": "ok",
         "top_level_keys": [],
         "replacement_count": 0,
+        "schema_name": schema_name,
     }
     if not text:
         diagnostics["parse_status"] = "empty_response"
+        return [], diagnostics
+    raw_integrity = raw_completion_integrity(text)
+    if not raw_integrity["passed"]:
+        diagnostics["parse_status"] = "completion_corrupted"
+        diagnostics["raw_integrity"] = raw_integrity
         return [], diagnostics
     try:
         payload = json.loads(text)
@@ -147,18 +167,44 @@ def parse_replacements_with_diagnostics(
     if not isinstance(rows, list):
         diagnostics["parse_status"] = "missing_replacements"
         return [], diagnostics
+    if set(payload.keys()) != {"replacements"}:
+        diagnostics["parse_status"] = "root_extra_or_missing_keys"
+        return [], diagnostics
     replacements: list[dict[str, Any]] = []
     skipped = 0
+    rejected_rows: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             skipped += 1
+            rejected_rows.append({"reason": "replacement_not_object"})
+            continue
+        row_keys = set(row.keys())
+        if expected_row_keys is not None and row_keys != set(expected_row_keys):
+            skipped += 1
+            rejected_rows.append({
+                "group_id": str(row.get("group_id") or "").strip(),
+                "reason": "replacement_row_keys_mismatch",
+                "keys": sorted(row_keys),
+                "expected_keys": sorted(expected_row_keys),
+            })
             continue
         group_id = str(row.get("group_id") or "").strip()
         replacement = str(row.get("replacement_text") or "").strip()
         if not group_id or not replacement:
             skipped += 1
+            rejected_rows.append({"group_id": group_id, "reason": "missing_group_or_replacement_text"})
+            continue
+        replacement_integrity = minimal_replacement_text_integrity(replacement)
+        if not replacement_integrity["passed"]:
+            skipped += 1
+            rejected_rows.append({
+                "group_id": group_id,
+                "reason": "replacement_text_integrity_failed",
+                "integrity": replacement_integrity,
+            })
             continue
         parsed_row: dict[str, Any] = {"group_id": group_id, "replacement_text": replacement}
+        row_rejected = False
         for key in (
             "changed_spans",
             "modified_span_ids",
@@ -170,13 +216,78 @@ def parse_replacements_with_diagnostics(
             "hard_anchors_preserved",
         ):
             if key in row:
+                if key == "ownership_changes":
+                    ownership_integrity = _ownership_changes_schema_integrity(row.get(key))
+                    if not ownership_integrity["passed"]:
+                        skipped += 1
+                        rejected_rows.append({
+                            "group_id": group_id,
+                            "reason": "ownership_changes_schema_failed",
+                            "integrity": ownership_integrity,
+                        })
+                        row_rejected = True
+                        break
+                if key == "ownership_elements_supported":
+                    element_integrity = _ownership_elements_schema_integrity(row.get(key))
+                    if not element_integrity["passed"]:
+                        skipped += 1
+                        rejected_rows.append({
+                            "group_id": group_id,
+                            "reason": "ownership_elements_schema_failed",
+                            "integrity": element_integrity,
+                        })
+                        row_rejected = True
+                        break
                 parsed_row[key] = row.get(key)
+        if row_rejected:
+            continue
         replacements.append(parsed_row)
     diagnostics["replacement_count"] = len(replacements)
     diagnostics["skipped_rows"] = skipped
+    diagnostics["rejected_rows"] = rejected_rows[:8]
     if not replacements:
         diagnostics["parse_status"] = "empty_replacements"
     return replacements, diagnostics
+
+
+def _ownership_changes_schema_integrity(value: Any) -> dict[str, Any]:
+    allowed_keys = {"before", "after", "operation", "trace_source"}
+    failures: list[str] = []
+    if not isinstance(value, list):
+        return {"passed": False, "failures": ["ownership_changes_not_array"]}
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            failures.append(f"ownership_change_{index}_not_object")
+            continue
+        keys = set(item.keys())
+        if not keys.issubset(allowed_keys):
+            failures.append(f"ownership_change_{index}_extra_keys")
+        before = item.get("before")
+        after = item.get("after")
+        operation = item.get("operation")
+        trace_source = item.get("trace_source")
+        if not isinstance(before, str) or not before.strip():
+            failures.append(f"ownership_change_{index}_before_invalid")
+        if not isinstance(after, str) or not after.strip():
+            failures.append(f"ownership_change_{index}_after_invalid")
+        if isinstance(before, str) and isinstance(after, str) and before.strip() == after.strip():
+            failures.append(f"ownership_change_{index}_no_effect")
+        if not isinstance(operation, str) or operation.strip() != "CLAIM_OWNERSHIP_REPAIR":
+            failures.append(f"ownership_change_{index}_operation_invalid")
+        if not isinstance(trace_source, str) or not trace_source.strip():
+            failures.append(f"ownership_change_{index}_trace_source_invalid")
+    return {"passed": not failures, "failures": list(dict.fromkeys(failures))}
+
+
+def _ownership_elements_schema_integrity(value: Any) -> dict[str, Any]:
+    allowed = {"author_trace", "specific_context", "real_judgment"}
+    failures: list[str] = []
+    if not isinstance(value, list):
+        return {"passed": False, "failures": ["ownership_elements_not_array"]}
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or item not in allowed:
+            failures.append(f"ownership_element_{index}_invalid")
+    return {"passed": not failures, "failures": list(dict.fromkeys(failures))}
 
 
 def validate_replacement_structure(
@@ -224,6 +335,24 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _normalized_text(text: str) -> str:
+    return " ".join(str(text or "").casefold().split())
+
+
+def _computed_modified_span_ids(
+    *,
+    span_rows: dict[str, str],
+    replacement_text: str,
+) -> list[str]:
+    normalized_replacement = _normalized_text(replacement_text)
+    actual: list[str] = []
+    for span_id, span_text in span_rows.items():
+        normalized_span = _normalized_text(span_text)
+        if span_id and normalized_span and normalized_span not in normalized_replacement:
+            actual.append(span_id)
+    return actual
+
+
 def validate_topk_replacement_effect(
     *,
     target_groups: list[TargetGroup],
@@ -252,10 +381,6 @@ def validate_topk_replacement_effect(
         if current_text and replacement_text == current_text:
             failures.append("no_material_change")
 
-        changed_rows = [item for item in row.get("changed_spans") or [] if isinstance(item, dict)]
-        if not changed_rows:
-            failures.append("missing_changed_spans")
-
         contract = (
             topk_repair_contract_for_group(
                 group=group,
@@ -270,51 +395,22 @@ def validate_topk_replacement_effect(
             for item in contract.get("predictable_span_rows") or []
             if isinstance(item, dict) and item.get("id") and item.get("text")
         }
-        actual_modified_ids: list[str] = []
-        effect_failures: list[str] = []
-        for changed in changed_rows:
-            span_id = str(changed.get("span_id") or "")
-            before = str(changed.get("before") or "").strip()
-            after = str(changed.get("after") or "").strip()
-            source_span = str(changed.get("source_span") or before).strip()
-            expected_span = span_rows.get(span_id)
-            if not span_id or span_id not in span_rows:
-                effect_failures.append("unknown_span_id")
-                continue
-            if not before or not after or before == after:
-                effect_failures.append("no_effect_span_patch")
-                continue
-            if current_text and before not in current_text:
-                effect_failures.append("reported_before_not_in_current")
-                continue
-            if replacement_text and after not in replacement_text:
-                effect_failures.append("reported_after_not_in_output")
-                continue
-            if expected_span and expected_span not in source_span and expected_span not in before:
-                effect_failures.append("invalid_span_compliance")
-                continue
-            if span_id not in actual_modified_ids:
-                actual_modified_ids.append(span_id)
+        actual_modified_ids = _computed_modified_span_ids(
+            span_rows=span_rows,
+            replacement_text=replacement_text,
+        )
 
         required_count = max(1, int(contract.get("required_modified_spans") or 1))
         modified_count = len(actual_modified_ids)
         if modified_count < required_count:
             failures.append("insufficient_span_movement")
-        failures.extend(effect_failures)
-
-        declared_count = _int_or_none(row.get("predictable_spans_modified_count"))
-        if declared_count is not None and declared_count != modified_count:
-            failures.append("self_report_mismatch")
-        changed_word_estimate = _int_or_none(row.get("changed_word_estimate"))
-        if changed_word_estimate == 0 and modified_count == 0:
-            failures.append("zero_change_candidate")
 
         status = {
             "group_id": group_id,
             "passed": not failures,
             "failures": list(dict.fromkeys(failures)),
             "required_modified_spans": required_count,
-            "declared_predictable_spans_modified_count": declared_count,
+            "declared_predictable_spans_modified_count": None,
             "actual_predictable_spans_modified_count": modified_count,
             "actual_modified_span_ids": actual_modified_ids,
         }
@@ -560,6 +656,8 @@ def _call_reconstruction_batch(
         batch_replacements, diagnostics = parse_replacements_with_diagnostics(
             reconstruction_raw,
             preview_chars=preview_chars,
+            expected_row_keys=RECONSTRUCTION_REPLACEMENT_KEYS,
+            schema_name="paragraph_reconstruction",
         ) if not reconstruction_error else ([], diagnostics)
         if not reconstruction_error:
             batch_replacements, structure_status = validate_replacement_structure(
@@ -665,6 +763,8 @@ def _call_ownership_batch(
         batch_replacements, diagnostics = parse_replacements_with_diagnostics(
             ownership_raw,
             preview_chars=preview_chars,
+            expected_row_keys=OWNERSHIP_REPLACEMENT_KEYS,
+            schema_name="claim_ownership_repair",
         ) if not ownership_error else ([], diagnostics)
         if not ownership_error:
             batch_replacements, structure_status = validate_replacement_structure(
@@ -1116,6 +1216,8 @@ def generate_paragraph_portfolio_candidate(
                     batch_topk_replacements, topk_diagnostics = parse_replacements_with_diagnostics(
                         topk_raw,
                         preview_chars=config.raw_preview_chars,
+                        expected_row_keys=TOPK_REPLACEMENT_KEYS,
+                        schema_name="topk_repair",
                     )
                     batch_topk_replacements, topk_structure_status = validate_replacement_structure(
                         target_groups=topk_batch,

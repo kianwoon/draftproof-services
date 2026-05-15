@@ -16,6 +16,7 @@ from .document_units import word_count
 from .prompt_contract import group_action_contract
 from .scanner_contract import predictability_briefs_from_report
 from .target_executor import TargetGroup
+from .text_integrity import minimal_replacement_text_integrity, raw_completion_integrity
 
 
 DRIVER_FOCUS = {
@@ -417,30 +418,87 @@ def build_scanner_controlled_prompt(
     ownership_repair_mode: bool = False,
 ) -> str:
     anchors = protected_anchor_placeholders(group)
+    repair_text = freeze_protected_anchors(group.source_text, anchors)
+    source_words = max(1, word_count(group.source_text))
+    movement_contract = _movement_contract(report, group)
+    scanner_action_contract = group_action_contract(
+        group=group,
+        predictability_briefs=predictability_briefs_from_report(report),
+        compact=not ownership_repair_mode,
+    )
+    topk_contract = scanner_action_contract.get("topk_repair_contract") if isinstance(scanner_action_contract.get("topk_repair_contract"), dict) else {}
+    local_topk_mode = (
+        not ownership_repair_mode
+        and topk_contract.get("span_source") == "scanner_exact"
+        and bool(topk_contract.get("predictable_span_rows") or topk_contract.get("predictable_spans_in_source"))
+    )
     operators = (
         ("CLAIM_OWNERSHIP_REPAIR",) * max(1, int(variants_per_group))
         if ownership_repair_mode
+        else ("TOPK_SPAN_REPATH",)
+        if local_topk_mode
         else VARIANT_OPERATORS[: max(1, int(variants_per_group))]
     )
     variant_plan = [
         {"variant_id": f"v{index}", "operator": operator}
         for index, operator in enumerate(operators, start=1)
     ]
-    movement_contract = _movement_contract(report, group)
     movement_contract["variant_plan"] = variant_plan
-    scanner_action_contract = group_action_contract(
-        group=group,
-        predictability_briefs=predictability_briefs_from_report(report),
-    )
+    word_count_guide = {
+        "source_words": source_words,
+        "preferred_words": source_words,
+    }
+    if local_topk_mode:
+        payload = {
+            "task": "local_topk_span_repair",
+            "group_id": group.group_id,
+            "unit_id": group.unit_id,
+            "repair_text": repair_text,
+            "before_context": freeze_protected_anchors(group.before_context[-220:], anchors),
+            "after_context": freeze_protected_anchors(group.after_context[:220], anchors),
+            "protected_anchors": anchors,
+            "word_count_guide": word_count_guide,
+            "movement_contract": {
+                "risk_focus": movement_contract.get("risk_focus") or [],
+                "style_boundary": movement_contract.get("style_boundary") or [],
+                "variant_plan": variant_plan,
+            },
+            "topk_repair_contract": topk_contract,
+            "instructions": [
+                "Create exactly one replacement variant for repair_text.",
+                "Use only the assigned TOPK_SPAN_REPATH operator.",
+                "Patch only topk_repair_contract.predictable_spans_in_source and their local wording path.",
+                "Do not rewrite unrelated sentences.",
+                "Do not add author trace, first-person wording, examples, facts, sources, names, dates, numbers, headings, bullets, markdown, HTML, labels, or commentary.",
+                "Preserve protected anchor placeholders exactly; do not alter placeholder punctuation, brackets, or numbering.",
+                "Preserve the same core meaning and source viewpoint.",
+                "Keep within +/-15% of word_count_guide.preferred_words.",
+                "If the span cannot be repaired without breaking meaning, omit the variant.",
+                "Escape any quotation marks inside JSON string values.",
+                "Return exactly the allowed keys for each variant: variant_id, operator_used, replacement_text.",
+                "Return only JSON matching response_schema.",
+            ],
+            "response_schema": {
+                "variants": [
+                    {
+                        "variant_id": "v1",
+                        "operator_used": "TOPK_SPAN_REPATH",
+                        "replacement_text": "plain replacement only",
+                    }
+                ]
+            },
+        }
+        return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
     payload = {
         "group_id": group.group_id,
         "unit_id": group.unit_id,
         "operation": group.operation,
-        "source_text": freeze_protected_anchors(group.source_text, anchors),
+        "source_text": repair_text,
         "before_context": freeze_protected_anchors(group.before_context[-420:], anchors),
         "after_context": freeze_protected_anchors(group.after_context[:420], anchors),
         "protected_anchors": anchors,
-        "word_count_guide": dict(group.word_count_guide),
+        "word_count_guide": word_count_guide,
         "movement_contract": movement_contract,
         "scanner_action_contract": scanner_action_contract,
         "weak_human_levers": [
@@ -483,6 +541,7 @@ def build_scanner_controlled_prompt(
             "Do not summarize the paragraph, but you may remove broad filler when it improves precision.",
             "Do not use synonym swapping, polished academic smoothing, tidy textbook phrasing, or formulaic transition openings.",
             "Return exactly the allowed keys for each variant: variant_id, operator_used, replacement_text.",
+            "Escape any quotation marks inside JSON string values.",
             "Return only JSON matching response_schema.",
         ],
         "response_schema": {
@@ -517,6 +576,13 @@ def parse_scanner_controlled_variants_with_diagnostics(
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         text = "\n".join(lines).strip()
+    raw_integrity = raw_completion_integrity(text)
+    if not raw_integrity["passed"]:
+        return [], {
+            "parse_status": "completion_corrupted",
+            "raw_length": len(text),
+            "raw_integrity": raw_integrity,
+        }
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -575,6 +641,14 @@ def parse_scanner_controlled_variants_with_diagnostics(
             continue
         if not isinstance(replacement, str) or not replacement.strip():
             rejected_rows.append({"index": index, "reason": "replacement_text_invalid"})
+            continue
+        replacement_integrity = minimal_replacement_text_integrity(replacement)
+        if not replacement_integrity["passed"]:
+            rejected_rows.append({
+                "index": index,
+                "reason": "replacement_text_integrity_failed",
+                "integrity": replacement_integrity,
+            })
             continue
         variants.append({
             "variant_id": variant_id.strip(),
@@ -695,6 +769,22 @@ def scanner_controlled_variant_gate(
             "passed": False,
             "reason": "no_material_change",
             "predictable_spans_modified_count": 0,
+        }
+    source_words = max(1, word_count(group.source_text))
+    preferred_words = source_words
+    replacement_words = word_count(replacement_text)
+    word_floor = max(1, int(float(preferred_words) * 0.85))
+    word_ceiling = max(word_floor, int(float(preferred_words) * 1.15) + 1)
+    if replacement_words < word_floor or replacement_words > word_ceiling:
+        return {
+            "passed": False,
+            "reason": "word_count_contract_failed",
+            "predictable_spans_modified_count": 0,
+            "source_words": source_words,
+            "preferred_words": int(preferred_words),
+            "replacement_words": replacement_words,
+            "word_floor": word_floor,
+            "word_ceiling": word_ceiling,
         }
     action_contract = group_action_contract(
         group=group,

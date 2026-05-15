@@ -50,10 +50,16 @@ def span_integrity(source_text: str, start: Any, end: Any) -> dict[str, Any]:
 
 
 def _window_text(source_text: str, window: dict[str, Any]) -> str:
+    text = str(source_text or "")
+    paragraph_id = str(window.get("paragraph_id") or "")
+    if paragraph_id.startswith("p") and paragraph_id[1:].isdigit():
+        paragraph_index = int(paragraph_id[1:]) - 1
+        paragraphs = [part.strip() for part in text.split("\n\n")]
+        if 0 <= paragraph_index < len(paragraphs) and paragraphs[paragraph_index]:
+            return paragraphs[paragraph_index]
     embedded = str(window.get("source_text") or "").strip()
     if embedded:
         return embedded
-    text = str(source_text or "")
     start = int(_number(window.get("start_index"), -1))
     end = int(_number(window.get("end_index"), -1))
     if 0 <= start < end <= len(text):
@@ -459,7 +465,7 @@ def build_rewrite_target_profile(
             if key:
                 driver_summary[key] = driver_summary.get(key, 0) + 1
         target_id = f"rt{index:03d}"
-        source_words = int(_number(window.get("word_count"), _word_count(source)))
+        source_words = _word_count(source) or int(_number(window.get("word_count"), 0))
         risk_level = _risk_level(window)
         target_anchor_pressure = _target_anchor_pressure(anchors, source_words)
         semantic_edit_cost = _semantic_edit_cost(
