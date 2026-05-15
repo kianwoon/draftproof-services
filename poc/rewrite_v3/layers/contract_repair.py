@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from rewrite_v3.compression_policy import CompressionPolicy
-from rewrite_v3.document_units import compact_document_inventory, word_count
+from rewrite_v3.document_units import compact_document_inventory, structural_shape_contract, word_count
 
 
 FAMILY = "contract_repair"
@@ -27,6 +27,7 @@ def build_contract_repair_prompt(
         "failed_candidate": failed_candidate,
         "source_word_count": word_count(original_text),
         "document_inventory": compact_document_inventory(original_text),
+        "source_structure_contract": structural_shape_contract(original_text),
         "strategy_family": strategy_family,
         "failed_invariants": {
             "validation": validation,
@@ -50,6 +51,8 @@ def build_contract_repair_prompt(
             "Repair every failed invariant listed in failed_invariants before making style changes.",
             "Copy every string in must_include_exact_anchors verbatim into the repaired document.",
             "Keep each source document unit represented in the same order.",
+            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+            "Do not add blank-line paragraph splits or merge source blocks.",
             "Aim near preferred_words so the candidate is not a compressed summary.",
             "Do not add unsupported facts, sources, numbers, names, headings, labels, bullets, paragraph numbers, markdown, or commentary.",
             "Return only the repaired rewritten document as plain text.",

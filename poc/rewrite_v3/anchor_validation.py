@@ -7,7 +7,7 @@ from typing import Any
 
 from rewrite_v2.contracts import AnchorSeverity, RewriteContract, anchor_present
 
-from .document_units import document_units
+from .document_units import document_units, structural_shape_failures
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,10 @@ def validate_v3_candidate(
     expected_units = int(expected_unit_count) if isinstance(expected_unit_count, int) and expected_unit_count > 0 else len(source_units)
     if require_unit_count and len(candidate_units) != expected_units:
         failures.append("document_unit_count_changed")
+    if require_unit_count and expected_units == len(source_units):
+        for failure in structural_shape_failures(original_text, candidate_text):
+            if failure not in failures:
+                failures.append(failure)
     for anchor in contract.anchors:
         if anchor.severity not in {AnchorSeverity.HARD_EXACT, AnchorSeverity.HARD_NORMALIZED, AnchorSeverity.TITLE_CONTEXT}:
             continue

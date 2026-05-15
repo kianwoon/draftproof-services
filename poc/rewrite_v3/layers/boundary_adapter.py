@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from rewrite_v3.compression_policy import CompressionPolicy
-from rewrite_v3.document_units import compact_document_inventory, word_count
+from rewrite_v3.document_units import compact_document_inventory, structural_shape_contract, word_count
 
 
 FAMILY = "boundary_adapter"
@@ -26,6 +26,7 @@ def build_boundary_adapter_prompt(
         "failed_candidates": failed_candidates,
         "source_word_count": word_count(original_text),
         "document_inventory": compact_document_inventory(original_text),
+        "source_structure_contract": structural_shape_contract(original_text),
         "strategy_family": strategy_family,
         "proxy_feedback": proxy_feedback,
         "target_word_band": {
@@ -41,6 +42,8 @@ def build_boundary_adapter_prompt(
             "Avoid the patterns shown by negative boundaries and failed candidates.",
             "For paragraph-based prose, preserve the same paragraph count as the source.",
             "Keep each source paragraph represented by one rewritten paragraph in the same position.",
+            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+            "Do not add blank-line paragraph splits or merge source blocks.",
             "Aim near the preferred word count, not the minimum word count.",
             "Do not add unsupported facts, citations, people, places, numbers, or anecdotes.",
             "Do not add headings, bullets, paragraph numbers, labels, markdown, or commentary.",

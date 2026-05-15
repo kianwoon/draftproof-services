@@ -6,7 +6,12 @@ import json
 from typing import Any
 
 from rewrite_v3.compression_policy import CompressionPolicy
-from rewrite_v3.document_units import compact_document_inventory, word_count
+from rewrite_v3.document_units import (
+    compact_document_inventory,
+    structural_shape_contract,
+    structural_shape_contract_for_units,
+    word_count,
+)
 from rewrite_v3.prompt_contract import profile_action_contracts
 
 
@@ -27,6 +32,7 @@ def build_document_rhythm_prompt(
         "source_document": original_text,
         "source_word_count": word_count(original_text),
         "document_inventory": compact_document_inventory(original_text),
+        "source_structure_contract": structural_shape_contract(original_text),
         "rewrite_target_profile": rewrite_target_profile or {},
         "scanner_action_contracts": profile_action_contracts(
             rewrite_target_profile=rewrite_target_profile,
@@ -43,6 +49,8 @@ def build_document_rhythm_prompt(
         "negative_external_boundaries": examples.get("negative") or [],
         "requirements": [
             "Preserve the source argument and paragraph order.",
+            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+            "Do not add blank-line paragraph splits or merge source blocks.",
             "Use rewrite_target_profile targets as the primary rewrite instructions when present.",
             "Use scanner_action_contracts for exact target operations and predictable spans when present.",
             "For each target, address dominant_drivers and required_movement without compressing meaning.",
@@ -76,7 +84,9 @@ def build_document_rhythm_chunk_prompt(
     examples = style_examples or {"positive": [], "negative": []}
     payload = {
         "global_plan": global_plan,
+        "source_unit_count": len(source_units),
         "source_units": source_units,
+        "source_structure_contract": structural_shape_contract_for_units(source_units),
         "rewrite_target_profile": rewrite_target_profile or {},
         "scanner_action_contracts": profile_action_contracts(
             rewrite_target_profile=rewrite_target_profile,
@@ -93,7 +103,10 @@ def build_document_rhythm_chunk_prompt(
         "negative_external_boundaries": examples.get("negative") or [],
         "requirements": [
             "Rewrite only the provided source units.",
+            "Return the same number of document units as source_unit_count.",
             "Keep unit order and do not introduce facts outside these units.",
+            "Preserve source_structure_contract exactly for this chunk: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+            "Do not add blank-line unit splits or merge source units inside this chunk.",
             "Use rewrite_target_profile targets for this chunk when they overlap these units.",
             "Use scanner_action_contracts for exact target operations and predictable spans when present.",
             "Use central_judgment_plan operations only where they fit these units.",

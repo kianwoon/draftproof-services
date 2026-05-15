@@ -17,7 +17,13 @@ from rewrite_v3.assisted_footprint_executor import group_assisted_footprint_wind
 from rewrite_v3.authorship_window_gate import evaluate_authorship_window_gate, select_authorship_window_targets
 from rewrite_v3.candidate_loop import CandidateAction, CandidateIssue, decide_next_action, issues_from_trace
 from rewrite_v3.compression_policy import compression_policy_for_family, compression_status
-from rewrite_v3.document_units import compact_document_inventory, document_units, word_count
+from rewrite_v3.document_units import (
+    compact_document_inventory,
+    document_units,
+    structural_shape_contract,
+    structural_shape_failures,
+    word_count,
+)
 from rewrite_v3.external_proxy import evaluate_external_proxy
 from rewrite_v3.layers.authorship_window_repair import (
     apply_authorship_window_replacements,
@@ -25,17 +31,19 @@ from rewrite_v3.layers.authorship_window_repair import (
     extract_authorship_window_replacements,
 )
 from rewrite_v3.layers.boundary_adapter import build_boundary_adapter_prompt
-from rewrite_v3.layers.cited_practice_voice import build_cited_practice_voice_prompt
-from rewrite_v3.layers.clean_texture_boundary import build_clean_texture_boundary_prompt
+from rewrite_v3.layers.cited_practice_voice import build_cited_practice_voice_chunk_prompt, build_cited_practice_voice_prompt
+from rewrite_v3.layers.clean_texture_boundary import build_clean_texture_boundary_chunk_prompt, build_clean_texture_boundary_prompt
 from rewrite_v3.layers.contract_repair import build_contract_repair_prompt
 from rewrite_v3.layers.contrast_boundary import build_contrast_boundary_prompt, extract_contrast_boundary_output
 from rewrite_v3.layers.document_rhythm import build_document_rhythm_chunk_prompt, build_document_rhythm_prompt
 from rewrite_v3.layers.plain_reasoning_broad_prose import build_plain_reasoning_broad_prose_prompt
+from rewrite_v3.layers.structure_repair import build_structure_repair_prompt
 from rewrite_v3.output_cleaning import clean_v3_candidate_output
 from rewrite_v3.paragraph_portfolio_executor import (
     build_reconstruction_batches_by_prompt,
     paragraph_portfolio_config,
     parse_replacements_with_diagnostics,
+    validate_replacement_structure,
 )
 from rewrite_v3.pipeline import run_rewrite_pipeline_v3
 from rewrite_v3.portfolio import select_portfolio_candidate
@@ -247,6 +255,26 @@ section_candidate = "Overview\n\nThis is the first body paragraph.\n\nMethod\n\n
 assert_test(
     len(document_units(section_source)) == len(document_units(section_candidate)) == 2,
     "V3 treats separated headings and heading-body blocks as equivalent document units",
+)
+shape_source = "Heading One\nThis is the first body paragraph.\n\nHeading Two\nThis is the second body paragraph."
+shape_candidate = "Heading One\nThis is the first body paragraph.\n\nHeading Two\nThis is the revised body paragraph."
+shape_split_candidate = "Heading One\nThis is the first body paragraph.\n\nHeading Two\n\nThis is the revised body paragraph."
+shape_lost_heading_candidate = "Heading One\nThis is the first body paragraph.\n\nThis is the revised body paragraph."
+assert_test(
+    structural_shape_contract(shape_source)["block_count"] == 2
+    and not structural_shape_failures(shape_source, shape_candidate)
+    and "block_count_changed" in structural_shape_failures(shape_source, shape_split_candidate)
+    and "heading_like_line_missing" in structural_shape_failures(shape_source, shape_lost_heading_candidate),
+    "V3 structural shape contract detects paragraph splits and heading loss",
+)
+shape_validation = validate_v3_candidate(
+    original_text=shape_source,
+    candidate_text=shape_lost_heading_candidate,
+    contract=build_rewrite_contract(shape_source, content_mode="broad_explanatory_essay"),
+)
+assert_test(
+    "heading_like_line_missing" in shape_validation.failures,
+    "V3 candidate validation rejects heading loss even when unit count is unchanged",
 )
 assert_test(
     "rewrite_v2.content_router" not in inspect.getsource(v3_pipeline),
@@ -844,6 +872,11 @@ full_layer_contract = build_rewrite_contract(
     content_mode="broad_explanatory_essay",
 )
 full_layer_policy = compression_policy_for_family("clean_texture_boundary", word_count(target_groups[0].source_text))
+full_layer_source_units = [{
+    "unit_id": target_groups[0].unit_id,
+    "text": target_groups[0].source_text,
+    "word_count": word_count(target_groups[0].source_text),
+}]
 full_layer_prompts = [
     build_clean_texture_boundary_prompt(
         original_text=target_groups[0].source_text,
@@ -872,8 +905,22 @@ full_layer_prompts = [
         rewrite_target_profile=target_profile,
         predictability_briefs=predictability_briefs_fixture,
     ),
+    build_clean_texture_boundary_chunk_prompt(
+        source_units=full_layer_source_units,
+        global_plan={"strategy": "test"},
+        rewrite_target_profile=target_profile,
+        predictability_briefs=predictability_briefs_fixture,
+    ),
+    build_cited_practice_voice_chunk_prompt(
+        source_units=full_layer_source_units,
+        contract=full_layer_contract,
+        global_plan={"strategy": "test"},
+        compression_policy=full_layer_policy,
+        rewrite_target_profile=target_profile,
+        predictability_briefs=predictability_briefs_fixture,
+    ),
     build_document_rhythm_chunk_prompt(
-        source_units=[{"unit_id": target_groups[0].unit_id, "text": target_groups[0].source_text, "word_count": word_count(target_groups[0].source_text)}],
+        source_units=full_layer_source_units,
         global_plan={"strategy": "test"},
         compression_policy=full_layer_policy,
         rewrite_target_profile=target_profile,
@@ -883,8 +930,9 @@ full_layer_prompts = [
 assert_test(
     all("scanner_action_contracts" in prompt for prompt in full_layer_prompts)
     and all("predictable_spans" in prompt for prompt in full_layer_prompts)
+    and all("source_structure_contract" in prompt for prompt in full_layer_prompts)
     and all("predictable route" in prompt for prompt in full_layer_prompts),
-    "V3 fallback prompt constructors carry scanner action contracts and exact predictable spans",
+    "V3 fallback prompt constructors carry scanner action contracts, exact predictable spans, and structure contracts",
 )
 assert_test(
     target_groups[0].source_text.startswith("A riskier paragraph follows"),
@@ -1512,6 +1560,17 @@ loop_decision = decide_next_action(
     tried_actions=set(),
 )
 assert_test(loop_decision.action == CandidateAction.REPAIR_STRUCTURE, "V3 loop repairs structure before adding another rewrite layer")
+structure_repair_prompt = build_structure_repair_prompt(
+    source_text=shape_source,
+    candidate_text=shape_split_candidate,
+    validation={"failures": ["document_unit_count_changed"]},
+    expected_unit_count=2,
+)
+assert_test(
+    "source_structure_contract" in structure_repair_prompt
+    and "heading_like_lines" in structure_repair_prompt,
+    "V3 structure repair prompt carries source shape contract",
+)
 
 anchor_trace = {
     "validation": {
@@ -1540,8 +1599,8 @@ contract_prompt = build_contract_repair_prompt(
     compression_policy=compression_policy_for_family("document_rhythm", word_count(broad_source)),
 )
 assert_test(
-    "failed_invariants" in contract_prompt and "Source Anchor" in contract_prompt,
-    "V3 contract repair prompt carries failed invariants and missing anchors",
+    "failed_invariants" in contract_prompt and "Source Anchor" in contract_prompt and "source_structure_contract" in contract_prompt,
+    "V3 contract repair prompt carries failed invariants, missing anchors, and source structure",
 )
 assert_test(
     "must_include_exact_anchors" in contract_prompt,
@@ -1582,7 +1641,12 @@ contrast_prompt = build_contrast_boundary_prompt(
     compression_policy=compression_policy_for_family("document_rhythm", word_count(broad_source)),
     style_examples={"positive": [{"external_ai_percent": 18, "text": "Plain boundary."}], "negative": []},
 )
-assert_test("current_failed_rewrite" in contrast_prompt and "positive_boundary_samples" in contrast_prompt, "V3 contrast boundary prompt includes failed and positive examples")
+assert_test(
+    "current_failed_rewrite" in contrast_prompt
+    and "positive_boundary_samples" in contrast_prompt
+    and "source_structure_contract" in contrast_prompt,
+    "V3 contrast boundary prompt includes failed and positive examples plus source structure",
+)
 assert_test(
     extract_contrast_boundary_output('{"rewritten_document":"A clean rewrite.","notes":["ok"]}') == "A clean rewrite.",
     "V3 contrast boundary extracts JSON rewritten_document",
@@ -1593,7 +1657,12 @@ plain_prompt = build_plain_reasoning_broad_prose_prompt(
     compression_policy=compression_policy_for_family("document_rhythm", word_count(broad_source)),
     style_examples={"positive": [], "negative": []},
 )
-assert_test("plain-reasoning style" in plain_prompt and "formal generated-survey texture" in plain_prompt, "V3 plain reasoning prompt targets broad formal survey texture")
+assert_test(
+    "plain-reasoning style" in plain_prompt
+    and "formal generated-survey texture" in plain_prompt
+    and "source_structure_contract" in plain_prompt,
+    "V3 plain reasoning prompt targets broad formal survey texture and source structure",
+)
 bloated_plain_prompt = build_plain_reasoning_broad_prose_prompt(
     original_text=broad_source * 20,
     failed_candidates=[broad_candidate * 12, broad_candidate * 12],
@@ -1757,8 +1826,9 @@ boundary_prompt = build_boundary_adapter_prompt(
     style_examples={"positive": [], "negative": []},
 )
 assert_test(
-    "same paragraph count as the source" in boundary_prompt,
-    "V3 boundary adapter prompt requires source paragraph count preservation",
+    "same paragraph count as the source" in boundary_prompt
+    and "source_structure_contract" in boundary_prompt,
+    "V3 boundary adapter prompt requires source paragraph count and structure preservation",
 )
 
 with tempfile.TemporaryDirectory() as tmpdir:
@@ -2000,8 +2070,10 @@ topk_template = build_paragraph_portfolio_topk_prompt(
 assert_test(
     "word_count_guide" in reconstruction_template.prompt
     and "execution_contract" in reconstruction_template.prompt
+    and "source_structure_contract" in reconstruction_template.prompt
     and "required_protected_anchors" in reconstruction_template.prompt
     and "out_of_scope_protected_anchors" in reconstruction_template.prompt
+    and "source_structure_contract" in topk_template.prompt
     and "current_replacements" in topk_template.prompt
     and "topk_repair_contract" in topk_template.prompt
     and "predictable_spans" in topk_template.prompt
@@ -2009,7 +2081,37 @@ assert_test(
     and "changed_word_estimate" in topk_template.prompt
     and "Education is changing quickly" in topk_template.prompt
     and "Return JSON only" in topk_template.prompt,
-    "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted stage contracts and scoped anchors",
+    "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted stage contracts, scoped anchors, and structure contracts",
+)
+shape_group = TargetGroup(
+    group_id="tg_shape",
+    unit_id="p_shape",
+    operation="paragraph_preserving_broad_reconstruction",
+    start_index=0,
+    end_index=len(shape_source),
+    source_text=shape_source,
+    before_context="",
+    after_context="",
+    targets=(),
+    word_count_guide={
+        "source_words": word_count(shape_source),
+        "preferred_words": word_count(shape_source),
+    },
+)
+valid_shape_replacements, valid_shape_status = validate_replacement_structure(
+    target_groups=[shape_group],
+    replacements=[{"group_id": "tg_shape", "replacement_text": shape_candidate}],
+)
+invalid_shape_replacements, invalid_shape_status = validate_replacement_structure(
+    target_groups=[shape_group],
+    replacements=[{"group_id": "tg_shape", "replacement_text": shape_split_candidate}],
+)
+assert_test(
+    valid_shape_replacements
+    and valid_shape_status[0]["passed"]
+    and not invalid_shape_replacements
+    and "block_count_changed" in invalid_shape_status[0]["failures"],
+    "V3 paragraph portfolio executor filters candidates that change source block structure",
 )
 assert_test(
     "operator_used" not in reconstruction_template.prompt

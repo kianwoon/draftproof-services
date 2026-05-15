@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .document_units import word_count
+from .document_units import structural_shape_contract, structural_shape_failures, word_count
 from .output_cleaning import clean_v3_candidate_output
 from .prompt_templates.paragraph_portfolio import (
     build_paragraph_portfolio_planner_prompt,
@@ -158,6 +158,38 @@ def parse_replacements_with_diagnostics(
     return replacements, diagnostics
 
 
+def validate_replacement_structure(
+    *,
+    target_groups: list[TargetGroup],
+    replacements: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    groups_by_id = {group.group_id: group for group in target_groups}
+    valid: list[dict[str, str]] = []
+    statuses: list[dict[str, Any]] = []
+    for row in replacements:
+        group_id = str(row.get("group_id") or "")
+        replacement_text = str(row.get("replacement_text") or "")
+        group = groups_by_id.get(group_id)
+        if group is None:
+            statuses.append({
+                "group_id": group_id,
+                "passed": False,
+                "failures": ["unknown_group"],
+            })
+            continue
+        failures = structural_shape_failures(group.source_text, replacement_text)
+        statuses.append({
+            "group_id": group_id,
+            "passed": not failures,
+            "failures": failures,
+            "source_structure_contract": structural_shape_contract(group.source_text),
+            "replacement_structure_contract": structural_shape_contract(replacement_text),
+        })
+        if not failures:
+            valid.append(row)
+    return valid, statuses
+
+
 def _context_for_batch(
     *,
     batch: list[TargetGroup],
@@ -273,8 +305,14 @@ def _call_reconstruction_batch(
             reconstruction_raw,
             preview_chars=preview_chars,
         )
+        batch_replacements, structure_status = validate_replacement_structure(
+            target_groups=batch,
+            replacements=batch_replacements,
+        )
+        diagnostics["structure_status"] = structure_status
+        diagnostics["structure_valid_count"] = len(batch_replacements)
         if not batch_replacements:
-            reconstruction_error = str(diagnostics.get("parse_status") or "empty_replacements")
+            reconstruction_error = "structure_contract_failed" if structure_status else str(diagnostics.get("parse_status") or "empty_replacements")
     except Exception as exc:
         reconstruction_error = str(exc)
         diagnostics = {
@@ -527,6 +565,12 @@ def generate_paragraph_portfolio_candidate(
                     topk_raw,
                     preview_chars=config.raw_preview_chars,
                 )
+                batch_topk_replacements, topk_structure_status = validate_replacement_structure(
+                    target_groups=batch,
+                    replacements=batch_topk_replacements,
+                )
+                topk_diagnostics["structure_status"] = topk_structure_status
+                topk_diagnostics["structure_valid_count"] = len(batch_topk_replacements)
             except Exception as exc:
                 topk_error = str(exc)
                 batch_topk_replacements = []

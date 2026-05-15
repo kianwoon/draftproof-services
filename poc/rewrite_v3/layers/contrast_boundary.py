@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from rewrite_v3.compression_policy import CompressionPolicy
-from rewrite_v3.document_units import word_count
+from rewrite_v3.document_units import structural_shape_contract, word_count
 
 
 FAMILY = "contrast_boundary"
@@ -29,6 +29,7 @@ def build_contrast_boundary_prompt(
         "positive_boundary_samples": style_examples.get("positive") or [],
         "negative_boundary_samples": style_examples.get("negative") or [],
         "source_word_count": word_count(original_text),
+        "source_structure_contract": structural_shape_contract(original_text),
         "target_word_band": {
             "min_words": compression_policy.min_words,
             "preferred_words": compression_policy.preferred_words,
@@ -42,6 +43,8 @@ def build_contrast_boundary_prompt(
             "Use plain reasoning turns learned from positive boundaries, without copying them.",
             "Avoid the formal texture shown in failed and negative samples.",
             "Keep paragraph count aligned with the source when the source is paragraph-based.",
+            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+            "Do not add blank-line paragraph splits or merge source blocks.",
         ],
         "output_schema": {
             "rewritten_document": "plain text with paragraphs separated by blank lines",

@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from ..document_units import structural_shape_contract
 from ..prompt_contract import phrase_level_spans, span_rows
 from ..target_executor import TargetGroup, required_protected_anchors_for_source
 
@@ -372,6 +373,7 @@ def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, A
             "source_text": group.get("source_text"),
             "before_context": _limit_text(group.get("before_context"), before_after_limit),
             "after_context": _limit_text(group.get("after_context"), before_after_limit),
+            "source_structure_contract": structural_shape_contract(str(group.get("source_text") or "")),
             "execution_contract": _execution_contract(group, plan),
             "required_movement": group.get("required_movement") or {},
             "protected_anchors": _compact_anchors(protected_anchors, limit=4),
@@ -527,11 +529,18 @@ def _topk_context(
         group_id = str(group.get("group_id") or "")
         group_ids.add(group_id)
         target_contract = _topk_targets_for_group(group, replacements_by_group.get(group_id, ""), briefs)
+        protected_anchors = list(group.get("protected_anchors") or [])
+        required_protected_anchors = list(required_protected_anchors_for_source(
+            str(group.get("source_text") or ""),
+            protected_anchors,
+        ))
         compact_groups.append({
             "group_id": group_id,
             "dominant_drivers": _compact_driver_rows(list(group.get("dominant_drivers") or []), limit=2),
             "required_movement": group.get("required_movement") or {},
-            "protected_anchors": _compact_anchors(list(group.get("protected_anchors") or []), limit=4),
+            "source_structure_contract": structural_shape_contract(str(group.get("source_text") or "")),
+            "protected_anchors": _compact_anchors(protected_anchors, limit=4),
+            "required_protected_anchors": _compact_anchors(required_protected_anchors, limit=4),
             "word_count_guide": group.get("word_count_guide") or {},
             "topk_repair_contract": target_contract,
         })
@@ -775,6 +784,9 @@ def build_paragraph_portfolio_reconstruction_prompt(
             "Do not force out_of_scope_protected_anchors into replacement_text; they are shown only for diagnostics and are not part of this target source_text.",
             "Use soft anchors as coverage hints, not exact strings.",
             "Preserve factual meaning and paragraph role.",
+            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+            "Do not add blank-line paragraph splits or merge source blocks inside a replacement.",
+            "If source_structure_contract.heading_like_lines is not empty, copy those heading-like lines exactly.",
             "Do not add unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
             "Use word_count_guide as a preferred length guide, not a min/max band.",
             "Do not compress the paragraph into a summary.",
@@ -803,6 +815,7 @@ def build_paragraph_portfolio_reconstruction_prompt(
             "source_text",
             "before_context",
             "after_context",
+            "source_structure_contract",
             "execution_contract",
             "required_movement",
             "hard_anchors",
@@ -850,6 +863,8 @@ def build_paragraph_portfolio_topk_prompt(
             "Do not rewrite the full document.",
             "Do not introduce unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
             "Preserve hard anchors exactly.",
+            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+            "Do not add blank-line paragraph splits or merge source blocks inside a replacement.",
             "Patch only topk_repair_contract.predictable_spans_in_source and their local wording path.",
             "When predictable_span_rows are present, report modified_span_ids using those exact ids.",
             "Do not guess changed span counts; count a span only when changed_spans.source_span exactly equals or fully contains one predictable_span_rows.text item.",
@@ -884,6 +899,7 @@ def build_paragraph_portfolio_topk_prompt(
         scanner_context_used=(
             "planner_output",
             "current_replacements",
+            "source_structure_contract",
             "dominant_drivers",
             "predictability_briefs",
             "predictable_spans",

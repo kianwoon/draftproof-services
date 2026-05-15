@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from rewrite_v3.document_units import compact_document_inventory, word_count
+from rewrite_v3.document_units import (
+    compact_document_inventory,
+    structural_shape_contract,
+    structural_shape_contract_for_units,
+    word_count,
+)
 from rewrite_v3.prompt_contract import profile_action_contracts
 
 
@@ -44,6 +49,7 @@ def build_clean_texture_boundary_prompt(
         "source_document": original_text,
         "source_word_count": word_count(original_text),
         "document_inventory": compact_document_inventory(original_text),
+        "source_structure_contract": structural_shape_contract(original_text),
         "scanner_problem_profile": _scan_problem_profile(scan_report),
         "rewrite_target_profile": rewrite_target_profile or {},
         "scanner_action_contracts": profile_action_contracts(
@@ -62,10 +68,12 @@ def build_clean_texture_boundary_prompt(
             "Replace formal survey rhythm with clean natural reasoning.",
             "Keep the writing grammatical, readable, and suitable for the source content.",
             "Preserve source facts, paragraph order, entities, numbers, examples, and claims.",
+            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
         ],
         "hard_limits": [
             "Do not optimize for word count or follow a word band.",
             "Do not add unsupported facts, names, numbers, examples, citations, headings, bullets, labels, or markdown.",
+            "Do not add blank-line paragraph splits or merge source blocks.",
             "Do not use artificial roughness, fragments, ellipses as style devices, or deliberate errors.",
             "Do not mention detectors, AI, rewriting, prompts, scores, or these instructions.",
             "Return only the rewritten document with blank lines between paragraphs.",
@@ -93,7 +101,9 @@ def build_clean_texture_boundary_chunk_prompt(
     examples = style_examples or {"positive": [], "negative": []}
     payload = {
         "global_plan": global_plan,
+        "source_unit_count": len(source_units),
         "source_units": source_units,
+        "source_structure_contract": structural_shape_contract_for_units(source_units),
         "rewrite_target_profile": rewrite_target_profile or {},
         "scanner_action_contracts": profile_action_contracts(
             rewrite_target_profile=rewrite_target_profile,
@@ -105,16 +115,19 @@ def build_clean_texture_boundary_chunk_prompt(
         "negative_external_boundaries": examples.get("negative") or [],
         "objective": [
             "Rewrite only the provided source units.",
+            "Return the same number of document units as source_unit_count.",
             "Use rewrite_target_profile targets for this chunk when they overlap these units.",
             "Use scanner_action_contracts for exact target operations and predictable spans when present.",
             "Use central_judgment_plan operations only where they fit the source units.",
             "Reduce formal survey texture and predictable sentence paths inside this chunk.",
             "Keep unit order and preserve local meaning, facts, entities, numbers, examples, and claims.",
+            "Preserve source_structure_contract exactly for this chunk: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
             "Keep clean readable prose; do not create artificial roughness.",
         ],
         "hard_limits": [
             "Do not optimize for word count or follow a word band.",
             "Do not add unsupported facts, names, numbers, examples, citations, headings, bullets, labels, or markdown.",
+            "Do not add blank-line unit splits or merge source units inside this chunk.",
             "Do not mention detectors, AI, rewriting, prompts, scores, or these instructions.",
             "Return only rewritten units joined with blank lines.",
         ],

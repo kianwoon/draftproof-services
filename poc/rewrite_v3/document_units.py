@@ -26,6 +26,77 @@ def word_count(text: str) -> int:
     return len(str(text or "").split())
 
 
+def is_heading_like_line(line: str) -> bool:
+    stripped = str(line or "").strip()
+    return bool(
+        stripped
+        and "\n" not in stripped
+        and 0 < word_count(stripped) <= 14
+        and not stripped.endswith((".", "?", "!", ":"))
+    )
+
+
+def structural_blocks(text: str) -> list[str]:
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in str(text or "").splitlines():
+        if not line.strip():
+            if current:
+                blocks.append("\n".join(current).strip())
+                current = []
+            continue
+        current.append(line.rstrip())
+    if current:
+        blocks.append("\n".join(current).strip())
+    return blocks
+
+
+def structural_shape_contract(text: str) -> dict[str, Any]:
+    blocks = structural_blocks(text)
+    heading_lines: list[str] = []
+    nonempty_lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    for line in nonempty_lines:
+        if is_heading_like_line(line):
+            heading_lines.append(line)
+    return {
+        "block_count": len(blocks),
+        "blank_line_boundary_count": max(0, len(blocks) - 1),
+        "heading_like_line_count": len(heading_lines),
+        "heading_like_lines": heading_lines,
+        "first_nonempty_line": nonempty_lines[0] if nonempty_lines else "",
+        "last_nonempty_line": nonempty_lines[-1] if nonempty_lines else "",
+    }
+
+
+def structural_shape_contract_for_units(source_units: list[dict[str, Any]]) -> dict[str, Any]:
+    unit_texts = [
+        str(unit.get("text") or unit.get("text_preview") or "").strip()
+        for unit in source_units or []
+        if str(unit.get("text") or unit.get("text_preview") or "").strip()
+    ]
+    shape = structural_shape_contract("\n\n".join(unit_texts))
+    shape["source_unit_count"] = len(unit_texts)
+    return shape
+
+
+def structural_shape_failures(source_text: str, replacement_text: str) -> list[str]:
+    source_shape = structural_shape_contract(source_text)
+    replacement_shape = structural_shape_contract(replacement_text)
+    failures: list[str] = []
+    if replacement_shape["block_count"] != source_shape["block_count"]:
+        failures.append("block_count_changed")
+    if replacement_shape["blank_line_boundary_count"] != source_shape["blank_line_boundary_count"]:
+        failures.append("blank_line_boundary_count_changed")
+    missing_headings = [
+        heading
+        for heading in source_shape["heading_like_lines"]
+        if heading not in replacement_shape["heading_like_lines"]
+    ]
+    if missing_headings:
+        failures.append("heading_like_line_missing")
+    return failures
+
+
 def document_units(text: str) -> list[DocumentUnit]:
     """Split a document into blank-line units and detect heading-like units.
 
@@ -34,13 +105,12 @@ def document_units(text: str) -> list[DocumentUnit]:
     """
 
     raw_units: list[DocumentUnit] = []
-    for index, raw in enumerate([item.strip() for item in str(text or "").split("\n\n") if item.strip()], start=1):
+    for index, raw in enumerate(structural_blocks(text), start=1):
         lines = [line.strip() for line in raw.splitlines() if line.strip()]
         words = word_count(raw)
         is_heading = bool(
             len(lines) == 1
-            and 0 < words <= 14
-            and not lines[0].endswith((".", "?", "!", ":"))
+            and is_heading_like_line(lines[0])
         )
         raw_units.append(DocumentUnit(unit_id=f"u{index}", text=raw, word_count=words, is_heading=is_heading))
     if not raw_units and str(text or "").strip():

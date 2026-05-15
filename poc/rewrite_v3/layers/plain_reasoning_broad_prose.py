@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from rewrite_v3.compression_policy import CompressionPolicy
-from rewrite_v3.document_units import compact_document_inventory, word_count
+from rewrite_v3.document_units import compact_document_inventory, structural_shape_contract, word_count
 from rewrite_v3.prompt_contract import profile_action_contracts
 
 
@@ -118,6 +118,7 @@ def build_plain_reasoning_broad_prose_prompt(
         "source_excerpt": _limit_text(original_text, 600),
         "source_word_count": word_count(original_text),
         "document_inventory": compact_document_inventory(original_text, max_units=10, preview_chars=160),
+        "source_structure_contract": structural_shape_contract(original_text),
         "rewrite_target_profile_summary": _compact_target_profile(rewrite_target_profile),
         "scanner_action_contracts": profile_action_contracts(
             rewrite_target_profile=rewrite_target_profile,
@@ -137,6 +138,8 @@ def build_plain_reasoning_broad_prose_prompt(
         "requirements": [
             "Rewrite as broad prose with plain reasoning, not as a formal survey.",
             "Preserve source paragraph order and source paragraph count.",
+            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+            "Do not add blank-line paragraph splits or merge source blocks.",
             "Preserve the source meaning, factual claims, entities, and examples.",
             "Represent the source document inventory; do not collapse the document into a summary.",
             "Use rewrite_target_profile_summary as scanner-derived repair guidance.",
