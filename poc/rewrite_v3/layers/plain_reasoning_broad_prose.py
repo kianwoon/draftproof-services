@@ -7,6 +7,7 @@ from typing import Any
 
 from rewrite_v3.compression_policy import CompressionPolicy
 from rewrite_v3.document_units import compact_document_inventory, word_count
+from rewrite_v3.prompt_contract import profile_action_contracts
 
 
 FAMILY = "plain_reasoning_broad_prose"
@@ -36,10 +37,10 @@ def _compact_target_profile(profile: dict[str, Any] | None) -> dict[str, Any]:
             "dominant_drivers": list(target.get("dominant_drivers") or [])[:3],
             "required_movement": target.get("required_movement") or {},
             "recommended_operation": target.get("recommended_operation"),
-            "source_excerpt": _limit_text(target.get("source_excerpt") or target.get("source_text"), 240),
+            "source_excerpt": _limit_text(target.get("source_excerpt") or target.get("source_text"), 180),
             "word_count_guide": target.get("word_count_guide") or {},
         })
-        if len(targets) >= 6:
+        if len(targets) >= 4:
             break
     return {
         "schema_version": payload.get("schema_version"),
@@ -81,7 +82,7 @@ def _compact_failed_candidates(candidates: list[str]) -> list[dict[str, Any]]:
         compact.append({
             "candidate_index": index,
             "word_count": word_count(candidate),
-            "excerpt": _limit_text(candidate, 320),
+            "excerpt": _limit_text(candidate, 220),
         })
         if len(compact) >= 2:
             break
@@ -96,7 +97,7 @@ def _compact_style_examples(examples: list[dict[str, Any]] | None) -> list[dict[
         compact.append({
             "external_ai_percent": example.get("external_ai_percent"),
             "label": example.get("label") or example.get("source"),
-            "excerpt": _limit_text(example.get("text") or example.get("content"), 240),
+            "excerpt": _limit_text(example.get("text") or example.get("content"), 180),
         })
         if len(compact) >= 2:
             break
@@ -110,13 +111,20 @@ def build_plain_reasoning_broad_prose_prompt(
     compression_policy: CompressionPolicy,
     style_examples: dict[str, list[dict[str, Any]]],
     rewrite_target_profile: dict[str, Any] | None = None,
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     payload = {
-        "source_excerpt": _limit_text(original_text, 800),
+        "source_excerpt": _limit_text(original_text, 600),
         "source_word_count": word_count(original_text),
         "document_inventory": compact_document_inventory(original_text, max_units=10, preview_chars=160),
         "rewrite_target_profile_summary": _compact_target_profile(rewrite_target_profile),
+        "scanner_action_contracts": profile_action_contracts(
+            rewrite_target_profile=rewrite_target_profile,
+            predictability_briefs=predictability_briefs,
+            max_contracts=3,
+            compact=True,
+        ),
         "central_judgment_plan_summary": _compact_central_plan(central_judgment_plan),
         "failed_candidate_summaries": _compact_failed_candidates(failed_candidates),
         "positive_external_boundaries": _compact_style_examples(style_examples.get("positive")),
@@ -132,6 +140,7 @@ def build_plain_reasoning_broad_prose_prompt(
             "Preserve the source meaning, factual claims, entities, and examples.",
             "Represent the source document inventory; do not collapse the document into a summary.",
             "Use rewrite_target_profile_summary as scanner-derived repair guidance.",
+            "Use scanner_action_contracts for exact target operations and predictable spans when present.",
             "Use direct language and human judgment lines where the source supports them.",
             "Avoid textbook openings, balanced report phrasing, and polished summary transitions.",
             "Do not add unsupported facts, numbers, names, examples, headings, bullets, labels, or markdown.",

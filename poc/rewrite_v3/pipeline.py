@@ -63,10 +63,13 @@ from .scanner_controlled_executor import (
     parse_scanner_controlled_variants,
     rank_scanner_target_groups,
     restore_protected_anchor_placeholders,
+    scanner_controlled_candidate_quality,
     scanner_controlled_metrics,
     scanner_controlled_rank,
+    scanner_controlled_variant_gate,
 )
-from .scanner_contract import RewriteRiskClass, ScanContract, build_scan_contract
+from .prompt_contract import group_action_contract
+from .scanner_contract import RewriteRiskClass, ScanContract, build_scan_contract, predictability_briefs_from_report
 from .style_library import examples_for_family
 from .strategy_plan import build_strategy_plan
 from .target_executor import (
@@ -260,6 +263,49 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
     source = str(source_text or "")
     candidate = str(candidate_text or "")
 
+    def normalized_alpha_tokens(text: str) -> list[str]:
+        tokens: list[str] = []
+        current: list[str] = []
+        for char in str(text or "").casefold():
+            if char.isalpha():
+                current.append(char)
+            else:
+                if current:
+                    tokens.append("".join(current))
+                    current = []
+        if current:
+            tokens.append("".join(current))
+        return tokens
+
+    def near_source_token(token: str, source_tokens: set[str]) -> bool:
+        if token in source_tokens:
+            return True
+        if len(token) < 4:
+            return False
+        return any(
+            abs(len(source_token) - len(token)) <= 2
+            and (source_token.startswith(token) or token.startswith(source_token))
+            for source_token in source_tokens
+            if len(source_token) >= 4
+        )
+
+    def merged_source_token_candidates(source_text: str, candidate_text: str) -> list[dict[str, Any]]:
+        source_tokens = set(normalized_alpha_tokens(source_text))
+        candidate_tokens = normalized_alpha_tokens(candidate_text)
+        rows: list[dict[str, Any]] = []
+        for token in candidate_tokens:
+            if token in source_tokens or len(token) < 9:
+                continue
+            for split_at in range(3, len(token) - 2):
+                left = token[:split_at]
+                right = token[split_at:]
+                if near_source_token(left, source_tokens) and near_source_token(right, source_tokens):
+                    rows.append({"token": token, "split": [left, right]})
+                    break
+            if len(rows) >= 8:
+                break
+        return rows
+
     def metrics(text: str) -> dict[str, Any]:
         chars = list(text)
         char_count = max(1, len(chars))
@@ -292,6 +338,7 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
 
     src = metrics(source)
     cand = metrics(candidate)
+    merged_candidates = merged_source_token_candidates(source, candidate)
     failures: list[str] = []
     if candidate.strip() and cand["space_ratio"] < max(0.02, src["space_ratio"] * 0.55):
         failures.append("spacing_collapse")
@@ -299,6 +346,8 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
         failures.append("merged_word_run")
     if cand["long_token_ratio"] > max(0.04, src["long_token_ratio"] + 0.035):
         failures.append("merged_long_tokens")
+    if merged_candidates:
+        failures.append("merged_source_token")
     if cand["non_ascii_punctuation_ratio"] > max(0.025, src["non_ascii_punctuation_ratio"] + 0.02):
         failures.append("punctuation_script_shift")
     if cand["punctuation_ratio"] > max(0.18, src["punctuation_ratio"] + 0.10):
@@ -308,6 +357,7 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
         "failures": failures,
         "source": src,
         "candidate": cand,
+        "merged_source_token_candidates": merged_candidates,
     }
 
 
@@ -612,6 +662,7 @@ def _generate_single_candidate(
     model: str | None,
     base_url: str | None,
     rewrite_target_profile: dict[str, Any] | None = None,
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     examples = examples_for_family(family)
@@ -622,6 +673,7 @@ def _generate_single_candidate(
             compression_policy=compression_policy,
             style_examples=examples,
             rewrite_target_profile=rewrite_target_profile,
+            predictability_briefs=predictability_briefs,
             central_judgment_plan=central_judgment_plan,
         )
     elif family == "clean_texture_boundary":
@@ -630,6 +682,7 @@ def _generate_single_candidate(
             scan_report=original_report,
             style_examples=examples,
             rewrite_target_profile=rewrite_target_profile,
+            predictability_briefs=predictability_briefs,
             central_judgment_plan=central_judgment_plan,
         )
     else:
@@ -638,6 +691,7 @@ def _generate_single_candidate(
             compression_policy=compression_policy,
             style_examples=examples,
             rewrite_target_profile=rewrite_target_profile,
+            predictability_briefs=predictability_briefs,
             central_judgment_plan=central_judgment_plan,
         )
     token_words = word_count(original_text) if family == "clean_texture_boundary" else compression_policy.max_words
@@ -750,6 +804,7 @@ def _generate_plain_reasoning_candidate(
     model: str | None,
     base_url: str | None,
     rewrite_target_profile: dict[str, Any] | None = None,
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     prompt = build_plain_reasoning_broad_prose_prompt(
@@ -758,6 +813,7 @@ def _generate_plain_reasoning_candidate(
         compression_policy=compression_policy,
         style_examples=examples_for_family(family),
         rewrite_target_profile=rewrite_target_profile,
+        predictability_briefs=predictability_briefs,
         central_judgment_plan=central_judgment_plan,
     )
     gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(compression_policy.max_words))
@@ -1050,6 +1106,7 @@ def _generate_target_executor_candidate(
             target_groups=batch,
             content_mode=content_mode,
             strategy_family=family,
+            predictability_briefs=scan_contract.predictability_briefs,
         )
         target_words = sum(int(group.word_count_guide.get("preferred_words") or word_count(group.source_text)) for group in batch)
         gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(max(220, target_words + 420)))
@@ -1122,7 +1179,10 @@ def _generate_prune_bridge_candidate(
             target_groups=[],
             error="no_prune_bridge_problem_groups",
         )
-    prompt = build_prune_bridge_prompt(target_groups=groups[:_max_target_executor_groups()])
+    prompt = build_prune_bridge_prompt(
+        target_groups=groups[:_max_target_executor_groups()],
+        predictability_briefs=scan_contract.predictability_briefs,
+    )
     target_words = sum(int(group.word_count_guide.get("preferred_words") or word_count(group.source_text)) for group in groups)
     gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(max(180, target_words + 360)))
     try:
@@ -1278,10 +1338,39 @@ def _generate_scanner_controlled_candidate(
                 "variants": [],
             }
             best: dict[str, Any] | None = None
+            action_contract = group_action_contract(
+                group=group,
+                predictability_briefs=predictability_briefs_from_report(current_report),
+            )
             for variant_index, variant in enumerate(variants, start=1):
                 replacement_text = restore_protected_anchor_placeholders(
                     str(variant.get("replacement_text") or "").strip(),
                     group,
+                )
+                variant_gate = scanner_controlled_variant_gate(
+                    report=current_report,
+                    group=group,
+                    variant=variant,
+                    replacement_text=replacement_text,
+                )
+                if not variant_gate.get("passed"):
+                    group_log["variants"].append({
+                        "variant_index": variant_index,
+                        "variant_id": variant.get("variant_id"),
+                        "delta": None,
+                        "word_count": word_count(replacement_text),
+                        "metrics": None,
+                        "apply_status": [],
+                        "rejected_reason": variant_gate.get("reason"),
+                        "variant_gate": variant_gate,
+                    })
+                    continue
+                candidate_quality = scanner_controlled_candidate_quality(
+                    action_contract=action_contract,
+                    variant_gate=variant_gate,
+                    source_text=group.source_text,
+                    replacement_text=replacement_text,
+                    variant=variant,
                 )
                 missing_anchors = _missing_protected_anchors(replacement_text, group)
                 if missing_anchors:
@@ -1294,6 +1383,8 @@ def _generate_scanner_controlled_candidate(
                         "apply_status": [],
                         "rejected_reason": "protected_anchor_missing",
                         "missing_protected_anchors": missing_anchors,
+                        "variant_gate": variant_gate,
+                        "candidate_quality": candidate_quality,
                     })
                     continue
                 candidate_text, candidate_apply_status = apply_target_replacements(
@@ -1330,12 +1421,21 @@ def _generate_scanner_controlled_candidate(
                     "text": candidate_text,
                     "report": candidate_report,
                     "goal": candidate_goal,
+                    "variant_gate": variant_gate,
+                    "candidate_quality": candidate_quality,
                 }
                 group_log["variants"].append({
                     key: row[key]
-                    for key in ("variant_index", "variant_id", "delta", "word_count", "metrics", "apply_status")
+                    for key in ("variant_index", "variant_id", "delta", "word_count", "metrics", "apply_status", "variant_gate", "candidate_quality")
                 })
-                if best is None or scanner_controlled_rank(candidate_metrics) < scanner_controlled_rank(best["metrics"]):
+                if (
+                    best is None
+                    or scanner_controlled_rank(candidate_metrics) < scanner_controlled_rank(best["metrics"])
+                    or (
+                        scanner_controlled_rank(candidate_metrics) == scanner_controlled_rank(best["metrics"])
+                        and _number(candidate_quality.get("score")) > _number((best.get("candidate_quality") or {}).get("score"))
+                    )
+                ):
                     best = row
 
             if best and _number(best.get("delta")) >= config.min_accept_delta:
@@ -1350,6 +1450,7 @@ def _generate_scanner_controlled_candidate(
                     "variant_index": best["variant_index"],
                     "delta": best["delta"],
                     "replacement_text": best["replacement_text"],
+                    "candidate_quality": best.get("candidate_quality"),
                     "metrics_after": current_metrics,
                 }
                 accepted.append(accepted_row)
@@ -1357,6 +1458,7 @@ def _generate_scanner_controlled_candidate(
                 apply_statuses.extend(best.get("apply_status") or [])
                 group_log["accepted_variant"] = best["variant_index"]
                 group_log["accepted_delta"] = best["delta"]
+                group_log["accepted_candidate_quality"] = best.get("candidate_quality")
                 improved_this_round = True
             elif best:
                 group_log["rejected_best_delta"] = best.get("delta")
@@ -1450,6 +1552,7 @@ def _generate_assisted_footprint_candidate(
         prompt = build_assisted_footprint_prompt(
             target_groups=batch,
             content_mode=content_mode,
+            predictability_briefs=scan_contract.predictability_briefs,
         )
         target_words = sum(int(group.word_count_guide.get("preferred_words") or word_count(group.source_text)) for group in batch)
         gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(max(260, target_words + 520)))
@@ -1598,6 +1701,7 @@ def _generate_chunked_candidate(
     model: str | None,
     base_url: str | None,
     rewrite_target_profile: dict[str, Any] | None = None,
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     central_judgment_plan: dict[str, Any] | None = None,
     force_unit_chunks: bool = False,
 ) -> str:
@@ -1621,6 +1725,7 @@ def _generate_chunked_candidate(
                 compression_policy=chunk_policy,
                 style_examples=examples,
                 rewrite_target_profile=rewrite_target_profile,
+                predictability_briefs=predictability_briefs,
                 central_judgment_plan=central_judgment_plan,
             )
         elif family == "clean_texture_boundary":
@@ -1629,6 +1734,7 @@ def _generate_chunked_candidate(
                 global_plan=global_plan,
                 style_examples=examples,
                 rewrite_target_profile=rewrite_target_profile,
+                predictability_briefs=predictability_briefs,
                 central_judgment_plan=central_judgment_plan,
             )
         else:
@@ -1638,6 +1744,7 @@ def _generate_chunked_candidate(
                 compression_policy=chunk_policy,
                 style_examples=examples,
                 rewrite_target_profile=rewrite_target_profile,
+                predictability_briefs=predictability_briefs,
                 central_judgment_plan=central_judgment_plan,
             )
         token_words = chunk_words if family == "clean_texture_boundary" else chunk_policy.max_words
@@ -1791,6 +1898,7 @@ def run_rewrite_pipeline_v3(
                     contract=contract,
                     compression_policy=compression_policy,
                     rewrite_target_profile=scan_contract.rewrite_target_profile,
+                    predictability_briefs=scan_contract.predictability_briefs,
                     central_judgment_plan=central_judgment_plan,
                     api_key=api_key,
                     model=model,
@@ -1839,6 +1947,7 @@ def run_rewrite_pipeline_v3(
                     contract=contract,
                     compression_policy=compression_policy,
                     rewrite_target_profile=scan_contract.rewrite_target_profile,
+                    predictability_briefs=scan_contract.predictability_briefs,
                     central_judgment_plan=central_judgment_plan,
                     api_key=api_key,
                     model=model,
@@ -1854,6 +1963,7 @@ def run_rewrite_pipeline_v3(
                     contract=contract,
                     compression_policy=compression_policy,
                     rewrite_target_profile=scan_contract.rewrite_target_profile,
+                    predictability_briefs=scan_contract.predictability_briefs,
                     central_judgment_plan=central_judgment_plan,
                     api_key=api_key,
                     model=model,
@@ -2238,6 +2348,7 @@ def run_rewrite_pipeline_v3(
                         model=model,
                         base_url=base_url,
                         rewrite_target_profile=scan_contract.rewrite_target_profile,
+                        predictability_briefs=scan_contract.predictability_briefs,
                         central_judgment_plan=central_judgment_plan,
                     )
                     mode = "plain_reasoning_broad_prose"

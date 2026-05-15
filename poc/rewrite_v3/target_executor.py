@@ -12,6 +12,8 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .prompt_contract import group_action_contract
+
 
 SUPPORTED_TARGET_OPERATIONS = {
     "protected_section_rewrite",
@@ -273,6 +275,7 @@ def build_target_executor_prompt(
     target_groups: list[TargetGroup],
     content_mode: str,
     strategy_family: str,
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> str:
     compact_groups = []
     for group in target_groups:
@@ -298,6 +301,10 @@ def build_target_executor_prompt(
             "soft_guidance_anchors": list(group.soft_guidance_anchors),
             "word_count_guide": dict(group.word_count_guide),
             "targets": compact_targets,
+            "scanner_action_contract": group_action_contract(
+                group=group,
+                predictability_briefs=predictability_briefs,
+            ),
         })
     paragraph_preserving = any(group.operation == "paragraph_preserving_broad_reconstruction" for group in target_groups)
     payload = {
@@ -311,6 +318,11 @@ def build_target_executor_prompt(
             "Use before_context and after_context only for continuity.",
             "Preserve protected_anchors exactly when present.",
             "Use soft_guidance_anchors as coverage hints, not exact strings.",
+            "Use scanner_action_contract as the execution contract for each group.",
+            "Patch scanner_action_contract.topk_repair_contract.predictable_spans_in_source when span_source is scanner_exact.",
+            "Use raw/rejected predictable spans only as diagnostics; count movement only on valid phrase spans.",
+            "Modify at least scanner_action_contract.topk_repair_contract.required_modified_spans phrase spans when span_source is scanner_exact.",
+            "Stay inside scanner_action_contract.topk_repair_contract.locality_limits for local predictability repair.",
             "Address dominant_drivers and required_movement from the targets.",
             "Do not perform synonym swapping or tidy paraphrase only.",
             "Rebuild the target as a natural local passage with clearer cause, observation, judgement, or classroom-specific reasoning when the source supports it.",
@@ -441,6 +453,7 @@ def target_execution_trace(
     replacements: list[dict[str, str]] | None = None,
     apply_status: list[dict[str, Any]] | None = None,
     batches: list[dict[str, Any]] | None = None,
+    llm_calls: list[dict[str, Any]] | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
     unresolved = []
@@ -453,6 +466,8 @@ def target_execution_trace(
         "target_replacements": list(replacements or []),
         "target_apply_status": list(apply_status or []),
         "target_batches": list(batches or []),
+        "llm_calls": list(llm_calls or []),
+        "llm_call_count": len(llm_calls or []),
         "unresolved_targets": unresolved,
         "error": error,
     }

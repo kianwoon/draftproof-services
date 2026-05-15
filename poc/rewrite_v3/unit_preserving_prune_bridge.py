@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .prompt_contract import group_action_contract
 from .target_executor import TargetGroup, apply_target_replacements, target_execution_trace
 
 
@@ -75,7 +76,11 @@ def filter_prune_bridge_groups(
     return sorted(filtered, key=_group_rank, reverse=True)
 
 
-def build_prune_bridge_prompt(*, target_groups: list[TargetGroup]) -> str:
+def build_prune_bridge_prompt(
+    *,
+    target_groups: list[TargetGroup],
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+) -> str:
     payload = {
         "strategy": "unit_preserving_prune_bridge",
         "repair_scope": "scanner_problem_groups_only",
@@ -88,6 +93,10 @@ def build_prune_bridge_prompt(*, target_groups: list[TargetGroup]) -> str:
                 "after_context": group.after_context[:320],
                 "protected_anchors": list(group.protected_anchors),
                 "word_count_guide": dict(group.word_count_guide),
+                "scanner_action_contract": group_action_contract(
+                    group=group,
+                    predictability_briefs=predictability_briefs,
+                ),
                 "preferred_reduction": {
                     "source_words": group.word_count_guide.get("source_words"),
                     "preferred_words": group.word_count_guide.get("preferred_words"),
@@ -119,6 +128,11 @@ def build_prune_bridge_prompt(*, target_groups: list[TargetGroup]) -> str:
             "Preserve protected anchors exactly when present.",
             "Do not add facts, citations, dates, names, numbers, examples, bullets, labels, markdown, or commentary.",
             "Use plain local wording; avoid polished summary style.",
+            "Use scanner_action_contract as the execution contract for each group.",
+            "Patch scanner_action_contract.topk_repair_contract.predictable_spans_in_source when span_source is scanner_exact.",
+            "Use raw/rejected predictable spans only as diagnostics; count movement only on valid phrase spans.",
+            "Modify at least scanner_action_contract.topk_repair_contract.required_modified_spans phrase spans when span_source is scanner_exact.",
+            "Stay inside scanner_action_contract.topk_repair_contract.locality_limits.",
         ],
         "response_schema": {
             "replacements": [

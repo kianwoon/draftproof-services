@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from .document_units import word_count
+from .prompt_contract import group_action_contract
+from .scanner_contract import predictability_briefs_from_report
 from .target_executor import TargetGroup
 
 
@@ -205,14 +207,110 @@ def protected_anchor_placeholders(group: TargetGroup) -> list[dict[str, Any]]:
     return anchors
 
 
+def _placeholder_ranges(text: str) -> list[tuple[int, int]]:
+    value = str(text or "")
+    ranges: list[tuple[int, int]] = []
+    marker = "[[DP_ANCHOR_"
+    search_from = 0
+    while True:
+        start = value.find(marker, search_from)
+        if start < 0:
+            break
+        end = value.find("]]", start)
+        if end < 0:
+            ranges.append((start, len(value)))
+            break
+        ranges.append((start, end + 2))
+        search_from = end + 2
+    return ranges
+
+
+def _inside_ranges(index: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start <= index < end for start, end in ranges)
+
+
+def _anchor_boundary_ok(text: str, start: int, end: int, source: str) -> bool:
+    if not source:
+        return False
+    if source.isdigit():
+        before = text[start - 1] if start > 0 else ""
+        after = text[end] if end < len(text) else ""
+        return not before.isdigit() and not after.isdigit()
+    return True
+
+
 def freeze_protected_anchors(text: str, anchors: list[dict[str, Any]]) -> str:
-    frozen = str(text or "")
-    for anchor in anchors:
+    original = str(text or "")
+    placeholder_ranges = _placeholder_ranges(original)
+    candidates: list[tuple[int, int, str]] = []
+    for anchor in sorted(anchors, key=lambda row: len(str(row.get("text") or "")), reverse=True):
         source = str(anchor.get("text") or "")
         placeholder = str(anchor.get("placeholder") or "")
-        if source and placeholder:
-            frozen = frozen.replace(source, placeholder)
-    return frozen
+        if not source or not placeholder:
+            continue
+        search_from = 0
+        while True:
+            start = original.find(source, search_from)
+            if start < 0:
+                break
+            end = start + len(source)
+            if not _inside_ranges(start, placeholder_ranges) and _anchor_boundary_ok(original, start, end, source):
+                candidates.append((start, end, placeholder))
+            search_from = max(end, start + 1)
+
+    selected: list[tuple[int, int, str]] = []
+    occupied: list[tuple[int, int]] = []
+    for start, end, placeholder in sorted(candidates, key=lambda item: (item[0], -(item[1] - item[0]))):
+        if any(not (end <= used_start or start >= used_end) for used_start, used_end in occupied):
+            continue
+        selected.append((start, end, placeholder))
+        occupied.append((start, end))
+    if not selected:
+        return original
+
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, placeholder in selected:
+        pieces.append(original[cursor:start])
+        pieces.append(placeholder)
+        cursor = end
+    pieces.append(original[cursor:])
+    return "".join(pieces)
+
+
+def protected_placeholder_integrity(text: str, expected_placeholders: list[str] | None = None) -> dict[str, Any]:
+    value = str(text or "")
+    failures: list[str] = []
+    placeholders: list[str] = []
+    marker = "[[DP_ANCHOR_"
+    search_from = 0
+    while True:
+        start = value.find(marker, search_from)
+        if start < 0:
+            break
+        end = value.find("]]", start)
+        if end < 0:
+            failures.append("dangling_anchor_placeholder")
+            break
+        token = value[start:end + 2]
+        placeholders.append(token)
+        inner = token[len(marker):-2]
+        if len(inner) != 3 or not inner.isdigit():
+            failures.append("malformed_anchor_placeholder")
+        if token.find(marker, 2) >= 0:
+            failures.append("nested_anchor_placeholder")
+        search_from = end + 2
+
+    expected = [str(item) for item in expected_placeholders or [] if str(item or "")]
+    missing = [placeholder for placeholder in expected if placeholder not in value]
+    if missing:
+        failures.append("anchor_placeholder_missing")
+    return {
+        "passed": not failures,
+        "failures": sorted(set(failures)),
+        "placeholders": placeholders,
+        "missing_placeholders": missing,
+    }
 
 
 def restore_protected_anchor_placeholders(text: str, group: TargetGroup) -> str:
@@ -323,6 +421,10 @@ def build_scanner_controlled_prompt(
     ]
     movement_contract = _movement_contract(report, group)
     movement_contract["variant_plan"] = variant_plan
+    scanner_action_contract = group_action_contract(
+        group=group,
+        predictability_briefs=predictability_briefs_from_report(report),
+    )
     payload = {
         "group_id": group.group_id,
         "unit_id": group.unit_id,
@@ -333,6 +435,7 @@ def build_scanner_controlled_prompt(
         "protected_anchors": anchors,
         "word_count_guide": dict(group.word_count_guide),
         "movement_contract": movement_contract,
+        "scanner_action_contract": scanner_action_contract,
         "weak_human_levers": [
             {
                 "key": row.get("key"),
@@ -344,6 +447,16 @@ def build_scanner_controlled_prompt(
             f"Create exactly {len(variant_plan)} replacement variants for source_text only.",
             "Each variant must use its assigned movement_contract.variant_plan operator as the main change.",
             "Use movement_contract as the rewrite contract.",
+            "Use scanner_action_contract as the span and operation contract.",
+            "If scanner_action_contract.citation_pressure_zone is true, keep citation-adjacent wording source-like and do not upgrade it into smoother academic paraphrase.",
+            "Patch scanner_action_contract.topk_repair_contract.predictable_spans_in_source when span_source is scanner_exact.",
+            "When predictable_span_rows are present, report modified_span_ids using those exact ids.",
+            "Do not guess predictable_spans_modified_count; only count a span if changed_spans.source_span exactly equals or fully contains one predictable_span_rows.text item.",
+            "Stay inside scanner_action_contract.topk_repair_contract.locality_limits.",
+            "Each variant must modify at least scanner_action_contract.topk_repair_contract.required_modified_spans predictable spans when span_source is scanner_exact.",
+            "If an operator cannot modify enough predictable_spans_in_source without breaking meaning, omit that variant.",
+            "If a variant cannot satisfy its assigned operator, omit it entirely; do not return no-op variants, notes, explanations, or unchanged replacement_text.",
+            "Do not intensify source claims, learner ability, certainty, or outcome strength; keep replacement wording at the same strength or weaker unless source_text already supports stronger wording.",
             "Preserve protected anchor placeholders exactly; do not alter placeholder punctuation, brackets, or numbering.",
             "Preserve the same core meaning and claims.",
             "Do not add unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
@@ -358,6 +471,17 @@ def build_scanner_controlled_prompt(
                     "variant_id": "v1",
                     "operator_used": "CLAUSE_ROUTE_CHANGE",
                     "replacement_text": "plain replacement only",
+                    "changed_spans": [
+                        {
+                            "span_id": "ps001",
+                            "source_span": "scanner exact span",
+                            "before": "old local phrase",
+                            "after": "new local phrase",
+                            "operation": "TOPK_SPAN_REPATH",
+                        }
+                    ],
+                    "modified_span_ids": ["ps001"],
+                    "predictable_spans_modified_count": 0,
                     "protected_anchors_preserved": True,
                     "new_claims_added": False,
                 }
@@ -367,7 +491,7 @@ def build_scanner_controlled_prompt(
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def parse_scanner_controlled_variants(raw: str, *, limit: int = 3) -> list[dict[str, str]]:
+def parse_scanner_controlled_variants(raw: str, *, limit: int = 3) -> list[dict[str, Any]]:
     text = str(raw or "").strip()
     if text.startswith("```"):
         lines = text.splitlines()
@@ -383,7 +507,7 @@ def parse_scanner_controlled_variants(raw: str, *, limit: int = 3) -> list[dict[
     rows = payload.get("variants") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return []
-    variants: list[dict[str, str]] = []
+    variants: list[dict[str, Any]] = []
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             continue
@@ -391,18 +515,287 @@ def parse_scanner_controlled_variants(raw: str, *, limit: int = 3) -> list[dict[
         if not replacement:
             continue
         variant_id = str(row.get("variant_id") or f"v{index}").strip()
-        variants.append({"variant_id": variant_id, "replacement_text": replacement})
+        variants.append({
+            "variant_id": variant_id,
+            "operator_used": row.get("operator_used"),
+            "replacement_text": replacement,
+            "changed_spans": row.get("changed_spans") if isinstance(row.get("changed_spans"), list) else [],
+            "modified_span_ids": row.get("modified_span_ids") if isinstance(row.get("modified_span_ids"), list) else [],
+            "predictable_spans_modified_count": row.get("predictable_spans_modified_count"),
+        })
         if len(variants) >= max(1, int(limit or 1)):
             break
     return variants
+
+
+def _normalized_text(text: str) -> str:
+    return " ".join(str(text or "").casefold().split())
+
+
+def _declared_changed_span_count(variant: dict[str, Any]) -> int:
+    value = variant.get("predictable_spans_modified_count")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(0, value)
+    count = 0
+    for row in variant.get("changed_spans") or []:
+        if not isinstance(row, dict):
+            continue
+        before = _normalized_text(str(row.get("before") or row.get("source_span") or ""))
+        after = _normalized_text(str(row.get("after") or ""))
+        if before and before != after:
+            count += 1
+    return count
+
+
+def _span_source_text(row: dict[str, Any]) -> str:
+    return _normalized_text(str(row.get("source_span") or row.get("before") or ""))
+
+
+def _actual_modified_span_ids(
+    *,
+    spans: list[dict[str, str]],
+    variant: dict[str, Any],
+    replacement_text: str,
+) -> list[str]:
+    changed_rows = [row for row in variant.get("changed_spans") or [] if isinstance(row, dict)]
+    changed_sources = [_span_source_text(row) for row in changed_rows]
+    changed_ids = {str(row.get("span_id") or "") for row in changed_rows if str(row.get("span_id") or "")}
+    reported_ids = {str(item) for item in variant.get("modified_span_ids") or [] if str(item or "")}
+    normalized_replacement = _normalized_text(replacement_text)
+    actual: list[str] = []
+    for row in spans:
+        span_id = str(row.get("id") or "")
+        span_text = str(row.get("text") or "")
+        normalized_span = _normalized_text(span_text)
+        if not span_id or not normalized_span:
+            continue
+        source_claimed = any(
+            source == normalized_span or normalized_span in source
+            for source in changed_sources
+            if source
+        )
+        id_claimed = span_id in changed_ids or span_id in reported_ids
+        if (source_claimed or id_claimed) and normalized_span not in normalized_replacement:
+            actual.append(span_id)
+    return actual
+
+
+def scanner_controlled_variant_gate(
+    *,
+    report: dict[str, Any],
+    group: TargetGroup,
+    variant: dict[str, Any],
+    replacement_text: str,
+) -> dict[str, Any]:
+    raw_replacement = str(variant.get("replacement_text") or "")
+    anchors = protected_anchor_placeholders(group)
+    frozen_source = freeze_protected_anchors(group.source_text, anchors)
+    expected_placeholders = [
+        str(row.get("placeholder") or "")
+        for row in anchors
+        if str(row.get("placeholder") or "") and str(row.get("placeholder") or "") in frozen_source
+    ]
+    placeholder_integrity = protected_placeholder_integrity(raw_replacement, expected_placeholders)
+    if not placeholder_integrity["passed"]:
+        return {
+            "passed": False,
+            "reason": "anchor_placeholder_corruption",
+            "placeholder_integrity": placeholder_integrity,
+            "predictable_spans_modified_count": 0,
+        }
+    if _normalized_text(replacement_text) == _normalized_text(group.source_text):
+        return {
+            "passed": False,
+            "reason": "no_material_change",
+            "predictable_spans_modified_count": 0,
+        }
+    action_contract = group_action_contract(
+        group=group,
+        predictability_briefs=predictability_briefs_from_report(report),
+    )
+    topk_contract = action_contract.get("topk_repair_contract") if isinstance(action_contract.get("topk_repair_contract"), dict) else {}
+    span_rows = [
+        {"id": str(row.get("id") or ""), "text": str(row.get("text") or "")}
+        for row in topk_contract.get("predictable_span_rows") or []
+        if isinstance(row, dict)
+    ]
+    if not span_rows:
+        span_rows = [
+            {"id": f"ps{index:03d}", "text": str(span)}
+            for index, span in enumerate(topk_contract.get("predictable_spans_in_source") or topk_contract.get("predictable_spans") or [], start=1)
+        ]
+    spans = [
+        row
+        for row in span_rows
+        if row["text"] and row["text"] in str(group.source_text or "")
+    ]
+    span_texts = [
+        row["text"]
+        for row in spans
+    ]
+    if topk_contract.get("span_source") != "scanner_exact" or not spans:
+        return {
+            "passed": True,
+            "reason": "no_exact_span_gate",
+            "predictable_spans_modified_count": 0,
+        }
+    actual_modified_ids = _actual_modified_span_ids(
+        spans=spans,
+        variant=variant,
+        replacement_text=replacement_text,
+    )
+    actual_count = len(actual_modified_ids)
+    declared_count = _declared_changed_span_count(variant)
+    modified_count = actual_count
+    required_count = int(topk_contract.get("required_modified_spans") or min(2, len(spans)))
+    required_count = max(1, min(required_count, len(spans)))
+    if modified_count < required_count:
+        return {
+            "passed": False,
+            "reason": "insufficient_predictable_span_movement",
+            "predictable_spans_modified_count": modified_count,
+            "declared_predictable_spans_modified_count": declared_count,
+            "self_report_mismatch": declared_count != modified_count,
+            "actual_modified_span_ids": actual_modified_ids,
+            "required_predictable_spans_modified": required_count,
+            "available_predictable_spans": len(spans),
+            "predictable_spans": span_texts,
+        }
+    return {
+        "passed": True,
+        "reason": "passed",
+        "predictable_spans_modified_count": modified_count,
+        "declared_predictable_spans_modified_count": declared_count,
+        "self_report_mismatch": declared_count != modified_count,
+        "actual_modified_span_ids": actual_modified_ids,
+        "required_predictable_spans_modified": required_count,
+        "available_predictable_spans": len(spans),
+        "predictable_spans": span_texts,
+    }
+
+
+def _alpha_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for char in str(text or "").casefold():
+        if char.isalpha():
+            current.append(char)
+        else:
+            if current:
+                tokens.append("".join(current))
+                current = []
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _average_token_length(text: str) -> float:
+    tokens = _alpha_tokens(text)
+    if not tokens:
+        return 0.0
+    return sum(len(token) for token in tokens) / len(tokens)
+
+
+def _bigrams(tokens: list[str]) -> set[tuple[str, str]]:
+    return {
+        (tokens[index], tokens[index + 1])
+        for index in range(0, max(0, len(tokens) - 1))
+    }
+
+
+def _source_likeness_ratio(source_text: str, replacement_text: str) -> float:
+    source_bigrams = _bigrams(_alpha_tokens(source_text))
+    if not source_bigrams:
+        return 0.0
+    replacement_bigrams = _bigrams(_alpha_tokens(replacement_text))
+    return len(source_bigrams.intersection(replacement_bigrams)) / len(source_bigrams)
+
+
+def _novel_content_token_ratio(source_text: str, replacement_text: str) -> float:
+    source_tokens = set(_alpha_tokens(source_text))
+    replacement_tokens = [token for token in _alpha_tokens(replacement_text) if len(token) >= 4]
+    if not replacement_tokens:
+        return 0.0
+    novel_count = sum(1 for token in replacement_tokens if token not in source_tokens)
+    return novel_count / len(replacement_tokens)
+
+
+def scanner_controlled_candidate_quality(
+    *,
+    action_contract: dict[str, Any],
+    variant_gate: dict[str, Any],
+    source_text: str,
+    replacement_text: str,
+    variant: dict[str, Any],
+) -> dict[str, Any]:
+    topk_contract = action_contract.get("topk_repair_contract") if isinstance(action_contract.get("topk_repair_contract"), dict) else {}
+    limits = topk_contract.get("locality_limits") if isinstance(topk_contract.get("locality_limits"), dict) else {}
+    required = max(1, int(variant_gate.get("required_predictable_spans_modified") or topk_contract.get("required_modified_spans") or 1))
+    actual = max(0, int(variant_gate.get("predictable_spans_modified_count") or 0))
+    movement_score = min(1.0, actual / required) * 45.0
+    changed_rows = [row for row in variant.get("changed_spans") or [] if isinstance(row, dict)]
+    max_changed_spans = max(1, int(limits.get("max_changed_spans") or 3))
+    locality_overage = max(0, len(changed_rows) - max_changed_spans)
+    locality_score = max(0.0, 20.0 - locality_overage * 6.0)
+    source_words = max(1, len(str(source_text or "").split()))
+    replacement_words = max(1, len(str(replacement_text or "").split()))
+    ratio_delta = abs(replacement_words - source_words) / source_words
+    preservation_score = max(0.0, 20.0 - ratio_delta * 80.0)
+    avg_delta = _average_token_length(replacement_text) - _average_token_length(source_text)
+    polish_risk = max(0.0, min(20.0, avg_delta * 18.0))
+    source_likeness_ratio = _source_likeness_ratio(source_text, replacement_text)
+    source_likeness_score = source_likeness_ratio * (14.0 if action_contract.get("citation_pressure_zone") else 6.0)
+    novel_token_ratio = _novel_content_token_ratio(source_text, replacement_text)
+    novel_token_penalty = min(10.0, novel_token_ratio * (8.0 if action_contract.get("citation_pressure_zone") else 4.0))
+    citation_smoothing_risk = polish_risk if action_contract.get("citation_pressure_zone") else 0.0
+    self_report_penalty = 5.0 if variant_gate.get("self_report_mismatch") else 0.0
+    span_operations = [
+        str(row.get("operation") or "")
+        for row in changed_rows
+        if str(row.get("operation") or "")
+    ]
+    score = round(
+        movement_score
+        + locality_score
+        + preservation_score
+        + source_likeness_score
+        - polish_risk
+        - novel_token_penalty
+        - citation_smoothing_risk
+        - self_report_penalty,
+        3,
+    )
+    return {
+        "score": score,
+        "movement_score": round(movement_score, 3),
+        "locality_score": round(locality_score, 3),
+        "preservation_score": round(preservation_score, 3),
+        "source_likeness_ratio": round(source_likeness_ratio, 4),
+        "source_likeness_score": round(source_likeness_score, 3),
+        "novel_token_ratio": round(novel_token_ratio, 4),
+        "novel_token_penalty": round(novel_token_penalty, 3),
+        "polish_risk": round(polish_risk, 3),
+        "citation_smoothing_risk": round(citation_smoothing_risk, 3),
+        "self_report_penalty": round(self_report_penalty, 3),
+        "actual_modified_span_ids": list(variant_gate.get("actual_modified_span_ids") or []),
+        "operator_used": variant.get("operator_used"),
+        "span_operations": span_operations,
+        "source_words": source_words,
+        "replacement_words": replacement_words,
+    }
 
 
 __all__ = [
     "ScannerControlledConfig",
     "blocker_rows_for_group",
     "build_scanner_controlled_prompt",
+    "freeze_protected_anchors",
     "parse_scanner_controlled_variants",
+    "protected_placeholder_integrity",
     "rank_scanner_target_groups",
+    "restore_protected_anchor_placeholders",
+    "scanner_controlled_candidate_quality",
+    "scanner_controlled_variant_gate",
     "scanner_controlled_metrics",
     "scanner_controlled_rank",
     "weak_human_levers",

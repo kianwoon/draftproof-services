@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .prompt_contract import group_action_contract
 from .target_executor import (
     TargetGroup,
     _looks_like_structural_label,
@@ -154,6 +155,7 @@ def build_assisted_footprint_prompt(
     *,
     target_groups: list[TargetGroup],
     content_mode: str,
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> str:
     groups = []
     for group in target_groups:
@@ -167,6 +169,10 @@ def build_assisted_footprint_prompt(
             "protected_anchors": list(group.protected_anchors),
             "word_count_guide": dict(group.word_count_guide),
             "window_drivers": [target.get("dominant_drivers") for target in group.targets],
+            "scanner_action_contract": group_action_contract(
+                group=group,
+                predictability_briefs=predictability_briefs,
+            ),
         })
     payload = {
         "content_mode": content_mode,
@@ -177,6 +183,11 @@ def build_assisted_footprint_prompt(
             "Rewrite each source_text as a whole local paragraph.",
             "Do not rewrite the full document.",
             "Preserve protected_anchors exactly when present.",
+            "Use scanner_action_contract as the execution contract for each group.",
+            "Patch scanner_action_contract.topk_repair_contract.predictable_spans_in_source when span_source is scanner_exact.",
+            "Use raw/rejected predictable spans only as diagnostics; count movement only on valid phrase spans.",
+            "Modify at least scanner_action_contract.topk_repair_contract.required_modified_spans phrase spans when span_source is scanner_exact.",
+            "Stay inside scanner_action_contract.topk_repair_contract.locality_limits for local predictability repair.",
             "Keep the same claims, citations, codes, names, and paragraph role.",
             "Do not summarize or compress the paragraph.",
             "Do not do synonym swapping or clean paraphrase.",

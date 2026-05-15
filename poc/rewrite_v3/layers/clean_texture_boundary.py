@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from rewrite_v3.document_units import compact_document_inventory, word_count
+from rewrite_v3.prompt_contract import profile_action_contracts
 
 
 FAMILY = "clean_texture_boundary"
@@ -35,6 +36,7 @@ def build_clean_texture_boundary_prompt(
     scan_report: dict[str, Any] | None,
     style_examples: dict[str, list[dict[str, Any]]] | None = None,
     rewrite_target_profile: dict[str, Any] | None = None,
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     examples = style_examples or {"positive": [], "negative": []}
@@ -44,12 +46,18 @@ def build_clean_texture_boundary_prompt(
         "document_inventory": compact_document_inventory(original_text),
         "scanner_problem_profile": _scan_problem_profile(scan_report),
         "rewrite_target_profile": rewrite_target_profile or {},
+        "scanner_action_contracts": profile_action_contracts(
+            rewrite_target_profile=rewrite_target_profile,
+            predictability_briefs=predictability_briefs,
+            compact=True,
+        ),
         "central_judgment_plan": central_judgment_plan or {},
         "positive_external_boundaries": examples.get("positive") or [],
         "negative_external_boundaries": examples.get("negative") or [],
         "objective": [
             "Reduce scanner-visible authorship texture and predictable sentence paths.",
             "Use rewrite_target_profile targets as the primary scanner-derived repair contract when present.",
+            "Use scanner_action_contracts for exact target operations and predictable spans when present.",
             "Use central_judgment_plan to choose contextual anchors, reasoning turns, and non-formulaic judgment.",
             "Replace formal survey rhythm with clean natural reasoning.",
             "Keep the writing grammatical, readable, and suitable for the source content.",
@@ -79,6 +87,7 @@ def build_clean_texture_boundary_chunk_prompt(
     global_plan: dict[str, Any],
     style_examples: dict[str, list[dict[str, Any]]] | None = None,
     rewrite_target_profile: dict[str, Any] | None = None,
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     central_judgment_plan: dict[str, Any] | None = None,
 ) -> str:
     examples = style_examples or {"positive": [], "negative": []}
@@ -86,12 +95,18 @@ def build_clean_texture_boundary_chunk_prompt(
         "global_plan": global_plan,
         "source_units": source_units,
         "rewrite_target_profile": rewrite_target_profile or {},
+        "scanner_action_contracts": profile_action_contracts(
+            rewrite_target_profile=rewrite_target_profile,
+            predictability_briefs=predictability_briefs,
+            compact=True,
+        ),
         "central_judgment_plan": central_judgment_plan or {},
         "positive_external_boundaries": examples.get("positive") or [],
         "negative_external_boundaries": examples.get("negative") or [],
         "objective": [
             "Rewrite only the provided source units.",
             "Use rewrite_target_profile targets for this chunk when they overlap these units.",
+            "Use scanner_action_contracts for exact target operations and predictable spans when present.",
             "Use central_judgment_plan operations only where they fit the source units.",
             "Reduce formal survey texture and predictable sentence paths inside this chunk.",
             "Keep unit order and preserve local meaning, facts, entities, numbers, examples, and claims.",

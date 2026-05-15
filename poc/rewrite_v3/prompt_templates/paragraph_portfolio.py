@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from ..prompt_contract import phrase_level_spans, span_rows
 from ..target_executor import TargetGroup
 
 
@@ -307,6 +308,44 @@ def _execution_contract(group: dict[str, Any], plan: dict[str, Any]) -> dict[str
     }
 
 
+def _target_sentence_ids(group: TargetGroup) -> list[str]:
+    values: list[Any] = []
+    for target in group.targets:
+        values.extend(target.get("sentence_ids") or [])
+    return [
+        str(item)
+        for item in _unique_ordered_text(values)
+        if str(item or "")
+    ]
+
+
+def _target_paragraph_ids(group: TargetGroup) -> list[str]:
+    values: list[Any] = [group.unit_id]
+    for target in group.targets:
+        values.extend([
+            target.get("paragraph_id"),
+            target.get("parent_unit_id"),
+            target.get("unit_id"),
+        ])
+    return [
+        str(item)
+        for item in _unique_ordered_text(values)
+        if str(item or "")
+    ]
+
+
+def _unique_ordered_text(values: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    return unique
+
+
 def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, Any]) -> dict[str, Any]:
     before_after_limit = _int_env("DRAFTPROOF_REWRITE_V3_PORTFOLIO_CONTEXT_CHARS", 100, low=40, high=240)
     compact_groups = []
@@ -341,18 +380,148 @@ def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, A
     }
 
 
-def _topk_context(context: dict[str, Any], planner_output: dict[str, Any]) -> dict[str, Any]:
+def _split_sentences(text: str) -> list[str]:
+    sentences: list[str] = []
+    start = 0
+    for index, char in enumerate(text or ""):
+        if char not in ".!?":
+            continue
+        end = index + 1
+        sentence = text[start:end].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = end
+    tail = (text or "")[start:].strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
+def _problem_tokens_from_spans(spans: list[str], *, extra_tokens: list[Any] | None = None, limit: int = 10) -> list[str]:
+    tokens: list[Any] = []
+    tokens.extend(extra_tokens or [])
+    for span in spans:
+        tokens.extend(str(span or "").replace(",", " ").replace(";", " ").replace(":", " ").split())
+    return _unique_ordered_text(tokens)[:limit]
+
+
+def _fallback_predictable_spans(text: str) -> list[str]:
+    candidates: list[tuple[float, str]] = []
+    for sentence in _split_sentences(text):
+        words = sentence.split()
+        if len(words) < 6:
+            continue
+        punctuation_weight = sentence.count(",") * 1.5 + sentence.count(":") * 2.0 + sentence.count(";") * 2.0
+        length_weight = min(len(words), 24) / 24
+        candidates.append((punctuation_weight + length_weight, sentence))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return _unique_ordered_text([sentence for _, sentence in candidates])[:3]
+
+
+def _brief_matches_group(brief: dict[str, Any], group: dict[str, Any]) -> bool:
+    sentence_ids = set(str(item) for item in group.get("sentence_ids") or [] if str(item or ""))
+    paragraph_ids = set(str(item) for item in group.get("paragraph_ids") or [] if str(item or ""))
+    brief_sentence_ids = set(str(item) for item in brief.get("sentence_ids") or [] if str(item or ""))
+    if str(brief.get("sentence_id") or ""):
+        brief_sentence_ids.add(str(brief.get("sentence_id")))
+    brief_paragraph_ids = set(str(item) for item in brief.get("paragraph_ids") or [] if str(item or ""))
+    if str(brief.get("paragraph_id") or ""):
+        brief_paragraph_ids.add(str(brief.get("paragraph_id")))
+    if sentence_ids and brief_sentence_ids and sentence_ids.intersection(brief_sentence_ids):
+        return True
+    if paragraph_ids and brief_paragraph_ids and paragraph_ids.intersection(brief_paragraph_ids):
+        return True
+    source_text = str(group.get("source_text") or "")
+    target_sentence = str(brief.get("target_sentence") or "").strip()
+    if target_sentence and target_sentence in source_text:
+        return True
+    return any(str(span or "").strip() and str(span).strip() in source_text for span in brief.get("predictable_token_spans") or [])
+
+
+def _topk_targets_for_group(group: dict[str, Any], replacement_text: str, briefs: list[dict[str, Any]]) -> dict[str, Any]:
+    spans: list[Any] = []
+    problem_tokens: list[Any] = []
+    source_sentences: list[Any] = []
+    span_source = "scanner_exact"
+    for brief in briefs:
+        if not _brief_matches_group(brief, group):
+            continue
+        spans.extend(brief.get("predictable_token_spans") or [])
+        problem_tokens.extend(brief.get("problem_tokens") or [])
+        sentence = str(brief.get("target_sentence") or "").strip()
+        if sentence:
+            source_sentences.append(_limit_text(sentence, 180))
+    raw_predictable_spans = [
+        span for span in _unique_ordered_text(spans)
+        if str(span or "") and str(span) in replacement_text
+    ]
+    phrase_payload = phrase_level_spans(raw_predictable_spans, replacement_text, limit=6)
+    predictable_spans = phrase_payload["predictable_spans"]
+    if not predictable_spans:
+        span_source = "structural_fallback"
+        predictable_spans = _fallback_predictable_spans(replacement_text)
+    preferred_words = int((group.get("word_count_guide") or {}).get("preferred_words") or 0)
+    max_changed_words = max(10, min(24, round((preferred_words or max(1, len(replacement_text.split()))) * 0.28)))
+    max_changed_spans = max(1, min(3, len(predictable_spans) or 1))
+    high_quality_spans = [span for span in predictable_spans if len(span) >= 12 and len(span.split()) >= 3]
+    required_modified_spans = min(2, len(high_quality_spans)) if span_source == "scanner_exact" else 1
+    if span_source == "scanner_exact" and preferred_words < 60:
+        required_modified_spans = min(1, len(high_quality_spans))
+    required_modified_spans = max(1, required_modified_spans) if predictable_spans else 1
+    return {
+        "span_source": span_source,
+        "raw_predictable_spans": raw_predictable_spans[:6],
+        "predictable_spans": predictable_spans,
+        "predictable_spans_in_source": predictable_spans,
+        "predictable_span_rows": span_rows(predictable_spans),
+        "rejected_predictable_spans": phrase_payload["rejected_predictable_spans"],
+        "expanded_predictable_spans": phrase_payload["expanded_predictable_spans"],
+        "required_modified_spans": required_modified_spans,
+        "source_sentences": _unique_ordered_text(source_sentences)[:3],
+        "problem_tokens": _problem_tokens_from_spans(predictable_spans, extra_tokens=problem_tokens),
+        "avoid_phrases": predictable_spans[:6],
+        "locality_limits": {
+            "max_changed_spans": max_changed_spans,
+            "max_changed_words": max_changed_words,
+            "max_sentence_changes": min(2, max_changed_spans),
+        },
+        "allowed_operations": [
+            "CLAUSE_ROUTE_CHANGE",
+            "DELETE_EMPTY_PHRASE",
+            "LIST_BREAK",
+            "CONCRETE_SOURCE_WORDING",
+            "TOPK_SPAN_REPATH",
+        ],
+    }
+
+
+def _topk_context(
+    context: dict[str, Any],
+    planner_output: dict[str, Any],
+    replacements: list[dict[str, str]],
+) -> dict[str, Any]:
     compact_groups = []
     group_ids = set()
+    replacements_by_group = {
+        str(row.get("group_id") or ""): str(row.get("replacement_text") or "")
+        for row in replacements or []
+        if isinstance(row, dict)
+    }
+    briefs = [
+        row for row in context.get("predictability_briefs") or []
+        if isinstance(row, dict)
+    ]
     for group in context.get("target_groups") or []:
         group_id = str(group.get("group_id") or "")
         group_ids.add(group_id)
+        target_contract = _topk_targets_for_group(group, replacements_by_group.get(group_id, ""), briefs)
         compact_groups.append({
             "group_id": group_id,
             "dominant_drivers": _compact_driver_rows(list(group.get("dominant_drivers") or []), limit=2),
             "required_movement": group.get("required_movement") or {},
             "protected_anchors": _compact_anchors(list(group.get("protected_anchors") or []), limit=4),
             "word_count_guide": group.get("word_count_guide") or {},
+            "topk_repair_contract": target_contract,
         })
     return {
         "target_profile_summary": (context.get("target_profile_summary") or {}),
@@ -442,9 +611,12 @@ def paragraph_portfolio_context(
                 "soft_guidance_anchors": list(group.soft_guidance_anchors),
                 "word_count_guide": dict(group.word_count_guide),
                 "target_ids": _target_ids(group),
+                "sentence_ids": _target_sentence_ids(group),
+                "paragraph_ids": _target_paragraph_ids(group),
             }
             for group in target_groups
         ],
+        "predictability_briefs": list(getattr(scan_contract, "predictability_briefs", ()) or ()),
     }
 
 
@@ -654,7 +826,7 @@ def build_paragraph_portfolio_topk_prompt(
         "strategy_id": STRATEGY_ID,
         "prompt_stage": "topk_repair",
         "task": "Patch only the reconstructed replacement paragraphs where scanner drivers indicate predictable wording.",
-        "scanner_context": _topk_context(context, planner_output),
+        "scanner_context": _topk_context(context, planner_output, replacements),
         "planner_output": {
             "paragraph_plans": _plan_rows_for_groups(planner_output),
         },
@@ -665,8 +837,14 @@ def build_paragraph_portfolio_topk_prompt(
             "Do not rewrite the full document.",
             "Do not introduce unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
             "Preserve hard anchors exactly.",
-            "Change the smallest local wording path needed to reduce predictable texture.",
-            "Prefer clause movement, deletion of empty phrasing, or concrete source-supported wording over polished paraphrase.",
+            "Patch only topk_repair_contract.predictable_spans_in_source and their local wording path.",
+            "When predictable_span_rows are present, report modified_span_ids using those exact ids.",
+            "Do not guess changed span counts; count a span only when changed_spans.source_span exactly equals or fully contains one predictable_span_rows.text item.",
+            "Use raw_predictable_spans and rejected_predictable_spans only as diagnostics; do not count them as repaired spans.",
+            "Modify at least topk_repair_contract.required_modified_spans phrase spans when span_source is scanner_exact.",
+            "Use only clause movement, deletion of empty phrasing, list breaking, or concrete source-supported wording.",
+            "Do not perform a full sentence rewrite unless the entire sentence is listed as a predictable_span.",
+            "Stay inside topk_repair_contract.locality_limits.",
         ],
         "response_schema": {
             "replacements": [
@@ -674,8 +852,13 @@ def build_paragraph_portfolio_topk_prompt(
                     "group_id": "tg001",
                     "replacement_text": "patched replacement paragraph only",
                     "changed_spans": [
-                        {"before": "old local phrase", "after": "new local phrase", "operation": "TOPK_SPAN_REPATH"}
+                        {"span_id": "ps001", "before": "old local phrase", "after": "new local phrase", "operation": "TOPK_SPAN_REPATH"}
                     ],
+                    "modified_span_ids": ["ps001"],
+                    "predictable_spans_modified_count": 0,
+                    "new_claims_added": False,
+                    "hard_anchors_preserved": True,
+                    "changed_word_estimate": 0,
                 }
             ]
         },
@@ -689,6 +872,10 @@ def build_paragraph_portfolio_topk_prompt(
             "planner_output",
             "current_replacements",
             "dominant_drivers",
+            "predictability_briefs",
+            "predictable_spans",
+            "problem_tokens",
+            "locality_limits",
             "required_movement",
             "hard_anchors",
         ),

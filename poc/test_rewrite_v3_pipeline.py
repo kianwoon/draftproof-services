@@ -25,10 +25,11 @@ from rewrite_v3.layers.authorship_window_repair import (
     extract_authorship_window_replacements,
 )
 from rewrite_v3.layers.boundary_adapter import build_boundary_adapter_prompt
+from rewrite_v3.layers.cited_practice_voice import build_cited_practice_voice_prompt
 from rewrite_v3.layers.clean_texture_boundary import build_clean_texture_boundary_prompt
 from rewrite_v3.layers.contract_repair import build_contract_repair_prompt
 from rewrite_v3.layers.contrast_boundary import build_contrast_boundary_prompt, extract_contrast_boundary_output
-from rewrite_v3.layers.document_rhythm import build_document_rhythm_chunk_prompt
+from rewrite_v3.layers.document_rhythm import build_document_rhythm_chunk_prompt, build_document_rhythm_prompt
 from rewrite_v3.layers.plain_reasoning_broad_prose import build_plain_reasoning_broad_prose_prompt
 from rewrite_v3.output_cleaning import clean_v3_candidate_output
 from rewrite_v3.paragraph_portfolio_executor import (
@@ -48,17 +49,29 @@ from rewrite_v3.prompt_templates.paragraph_portfolio import (
     parse_paragraph_portfolio_replacements,
     validate_paragraph_portfolio_plan,
 )
+from rewrite_v3.prompt_contract import group_action_contract, topk_repair_contract_for_group
 from rewrite_v3.router import route_from_scan_contract
 from rewrite_v3.scanner_controlled_executor import (
     ScannerControlledConfig,
     build_scanner_controlled_prompt,
+    freeze_protected_anchors,
     parse_scanner_controlled_variants,
+    protected_placeholder_integrity,
     rank_scanner_target_groups,
+    scanner_controlled_candidate_quality,
     scanner_controlled_rank,
+    scanner_controlled_variant_gate,
 )
 from rewrite_v3.scanner_contract import RewriteRiskClass, build_scan_contract
 from rewrite_v3.strategy_plan import build_strategy_plan
-from rewrite_v3.target_executor import apply_target_replacements, batch_target_groups, group_rewrite_targets, parse_target_replacements
+from rewrite_v3.target_executor import (
+    TargetGroup,
+    apply_target_replacements,
+    batch_target_groups,
+    build_target_executor_prompt,
+    group_rewrite_targets,
+    parse_target_replacements,
+)
 from rewrite_v3.unit_preserving_prune_bridge import (
     apply_prune_bridge_replacements,
     build_prune_bridge_prompt,
@@ -745,9 +758,23 @@ assert_test(
     prune_groups and prune_groups[0].operation == "unit_preserving_prune_bridge",
     "V3 prune/bridge executor filters target groups from problem inventory",
 )
-prune_prompt = build_prune_bridge_prompt(target_groups=prune_groups)
+predictability_briefs_fixture = [
+    {
+        "sentence_id": "s002",
+        "paragraph_id": target_groups[0].unit_id,
+        "target_sentence": target_groups[0].source_text,
+        "predictable_token_spans": ["predictable route", "uniform explanation", "outside context phrase"],
+        "problem_tokens": ["predictable", "uniform"],
+    }
+]
+prune_prompt = build_prune_bridge_prompt(
+    target_groups=prune_groups,
+    predictability_briefs=predictability_briefs_fixture,
+)
 assert_test(
-    "unit_preserving_prune_bridge" in prune_prompt and "Return JSON only" in prune_prompt,
+    "unit_preserving_prune_bridge" in prune_prompt
+    and "scanner_action_contract" in prune_prompt
+    and "Return JSON only" in prune_prompt,
     "V3 prune/bridge executor builds bounded scanner-target prompt",
 )
 prune_replacements = parse_prune_bridge_replacements(json.dumps({
@@ -767,6 +794,97 @@ assert_test(
 assert_test(
     target_groups and target_groups[0].source_text,
     "V3 target executor groups scanner targets into bounded replacement units",
+)
+target_prompt = build_target_executor_prompt(
+    target_groups=target_groups,
+    content_mode="broad_explanatory_essay",
+    strategy_family="grounded_author_reasoning_rewrite",
+    predictability_briefs=predictability_briefs_fixture,
+)
+assert_test(
+    "scanner_action_contract" in target_prompt
+    and "predictable_spans" in target_prompt
+    and "predictable route" in target_prompt
+    and "outside context phrase" not in target_prompt
+    and "locality_limits" in target_prompt,
+    "V3 target executor prompt carries exact scanner span repair contract",
+)
+span_quality_source = "Inclusive Learning Design is essential in Hairdressing Certificate III as learner diversity increases, making a uniform approach ineffective."
+span_quality_contract = topk_repair_contract_for_group(
+    group={
+        "unit_id": "p027",
+        "paragraph_id": "p027",
+        "sentence_ids": ["s027"],
+        "source_text": span_quality_source,
+        "word_count_guide": {"preferred_words": 39},
+        "targets": [],
+    },
+    predictability_briefs=[
+        {
+            "paragraph_id": "p027",
+            "sentence_id": "s027",
+            "target_sentence": span_quality_source,
+            "predictable_token_spans": ["irdressing", "increases,"],
+            "problem_tokens": ["ressing", "increases"],
+        }
+    ],
+)
+assert_test(
+    "irdressing" not in span_quality_contract["predictable_spans_in_source"]
+    and "increases," not in span_quality_contract["predictable_spans_in_source"]
+    and "as learner diversity increases" in span_quality_contract["predictable_spans_in_source"]
+    and span_quality_contract["predictable_span_rows"][0]["id"] == "ps001"
+    and span_quality_contract["required_modified_spans"] == 1
+    and span_quality_contract["expanded_predictable_spans"],
+    "V3 prompt contract expands raw token fragments into id-addressable phrase-level repair spans",
+)
+full_layer_contract = build_rewrite_contract(
+    "A short human paragraph with concrete observation.\n\n"
+    "A riskier paragraph follows a predictable route and keeps a uniform explanation.",
+    content_mode="broad_explanatory_essay",
+)
+full_layer_policy = compression_policy_for_family("clean_texture_boundary", word_count(target_groups[0].source_text))
+full_layer_prompts = [
+    build_clean_texture_boundary_prompt(
+        original_text=target_groups[0].source_text,
+        scan_report=report_for(target_groups[0].source_text),
+        rewrite_target_profile=target_profile,
+        predictability_briefs=predictability_briefs_fixture,
+    ),
+    build_document_rhythm_prompt(
+        original_text=target_groups[0].source_text,
+        compression_policy=full_layer_policy,
+        rewrite_target_profile=target_profile,
+        predictability_briefs=predictability_briefs_fixture,
+    ),
+    build_cited_practice_voice_prompt(
+        original_text=target_groups[0].source_text,
+        contract=full_layer_contract,
+        compression_policy=full_layer_policy,
+        rewrite_target_profile=target_profile,
+        predictability_briefs=predictability_briefs_fixture,
+    ),
+    build_plain_reasoning_broad_prose_prompt(
+        original_text=target_groups[0].source_text,
+        failed_candidates=[],
+        compression_policy=full_layer_policy,
+        style_examples={"positive": [], "negative": []},
+        rewrite_target_profile=target_profile,
+        predictability_briefs=predictability_briefs_fixture,
+    ),
+    build_document_rhythm_chunk_prompt(
+        source_units=[{"unit_id": target_groups[0].unit_id, "text": target_groups[0].source_text, "word_count": word_count(target_groups[0].source_text)}],
+        global_plan={"strategy": "test"},
+        compression_policy=full_layer_policy,
+        rewrite_target_profile=target_profile,
+        predictability_briefs=predictability_briefs_fixture,
+    ),
+]
+assert_test(
+    all("scanner_action_contracts" in prompt for prompt in full_layer_prompts)
+    and all("predictable_spans" in prompt for prompt in full_layer_prompts)
+    and all("predictable route" in prompt for prompt in full_layer_prompts),
+    "V3 fallback prompt constructors carry scanner action contracts and exact predictable spans",
 )
 assert_test(
     target_groups[0].source_text.startswith("A riskier paragraph follows"),
@@ -858,6 +976,7 @@ assert_test(
     "V3 target executor blocks replacements that drop hard protected anchors",
 )
 scanner_loop_report = {
+    "rewrite_edit_briefs": predictability_briefs_fixture,
     "scan_intelligence": {
         "blocker_radar": {
             "dominant_blockers": [
@@ -913,6 +1032,7 @@ scanner_loop_prompt = build_scanner_controlled_prompt(
 )
 assert_test(
     "movement_contract" in scanner_loop_prompt
+    and "scanner_action_contract" in scanner_loop_prompt
     and "weak_human_levers" in scanner_loop_prompt
     and "source_text" in scanner_loop_prompt,
     "V3 scanner-controlled prompt carries movement contract, human levers, and local source only",
@@ -935,17 +1055,236 @@ assert_test(
     "V3 scanner-controlled prompt assigns operator-shaped variants",
 )
 assert_test(
+    "changed_spans" in scanner_loop_prompt
+    and "predictable_spans_modified_count" in scanner_loop_prompt
+    and "required_modified_spans" in scanner_loop_prompt
+    and "predictable_spans_in_source" in scanner_loop_prompt,
+    "V3 scanner-controlled prompt requires declared predictable-span movement",
+)
+assert_test(
+    "omit it entirely" in scanner_loop_prompt
+    and "do not return no-op variants" in scanner_loop_prompt
+    and "Do not intensify source claims" in scanner_loop_prompt,
+    "V3 scanner-controlled prompt omits failed variants and blocks semantic-intensity drift",
+)
+citation_pressure_contract = group_action_contract(
+    group={
+        "operation": "protected_section_rewrite",
+        "unit_id": "p_citation",
+        "paragraph_id": "p_citation",
+        "source_text": "Billett (2013) and CAST (2024) say learning connects with how each person thinks.",
+        "word_count_guide": {"preferred_words": 13},
+        "targets": [{
+            "target_id": "rt_citation",
+            "target_anchor_pressure": 0.9,
+            "operation_candidates": ["citation_preserving_window_repair", "protected_section_rewrite"],
+        }],
+    },
+    predictability_briefs=[],
+)
+assert_test(
+    citation_pressure_contract["citation_pressure_zone"]
+    and "source-like wording" in citation_pressure_contract["citation_zone_instruction"],
+    "V3 scanner prompt contract flags citation-pressure zones against academic smoothing",
+)
+assert_test(
     "[[DP_ANCHOR_001]]" in anchor_prompt
     and '"source_text": "The class used [[DP_ANCHOR_001]] examples during revision."' in anchor_prompt,
     "V3 scanner-controlled prompt freezes protected anchors as placeholders",
 )
+numeric_anchor_frozen = freeze_protected_anchors(
+    "Billett (2013) and CAST (2024) use a 2-D chart with a 45-degree angle from 0 to 180.",
+    [
+        {"placeholder": "[[DP_ANCHOR_001]]", "text": "0"},
+        {"placeholder": "[[DP_ANCHOR_002]]", "text": "1"},
+        {"placeholder": "[[DP_ANCHOR_003]]", "text": "2"},
+        {"placeholder": "[[DP_ANCHOR_004]]", "text": "45"},
+    ],
+)
+assert_test(
+    "2013" in numeric_anchor_frozen
+    and "2024" in numeric_anchor_frozen
+    and "[[DP_ANCHOR_003]]-D" in numeric_anchor_frozen
+    and "[[DP_ANCHOR_004]]-degree" in numeric_anchor_frozen
+    and "[[DP_ANCHOR_00[[" not in numeric_anchor_frozen
+    and protected_placeholder_integrity(numeric_anchor_frozen)["passed"],
+    "V3 scanner-controlled anchor freezing avoids nested numeric placeholders",
+)
+malformed_anchor_gate = scanner_controlled_variant_gate(
+    report=scanner_loop_report,
+    group=hard_anchor_groups[0],
+    variant={
+        "variant_id": "v_bad_anchor",
+        "replacement_text": "The class used [[DP_ANCHOR_00[[DP_ANCHOR_001]]]] examples during revision.",
+    },
+    replacement_text="The class used 42 examples during revision.",
+)
+assert_test(
+    malformed_anchor_gate["reason"] == "anchor_placeholder_corruption",
+    "V3 scanner-controlled gate rejects malformed anchor placeholders before scan",
+)
+partial_anchor_group = TargetGroup(
+    group_id="tg_partial_anchor",
+    unit_id="p_partial_anchor",
+    operation="protected_section_rewrite",
+    start_index=0,
+    end_index=80,
+    source_text="Students need 12-15 months to get good at the structures.",
+    before_context="",
+    after_context="",
+    targets=(
+        {
+            "target_id": "rt_partial_anchor",
+            "paragraph_id": "p_partial_anchor",
+            "sentence_ids": ["s_partial_anchor"],
+            "dominant_drivers": [{"key": "predictability_score", "score": 0.6}],
+            "protected_anchors": [
+                {"text": "1", "kind": "number"},
+                {"text": "12", "kind": "number"},
+                {"text": "15 months", "kind": "number"},
+                {"text": "2", "kind": "number"},
+            ],
+        },
+    ),
+    word_count_guide={"preferred_words": 10},
+)
+partial_anchor_report = {
+    "rewrite_edit_briefs": [
+        {
+            "paragraph_id": "p_partial_anchor",
+            "sentence_id": "s_partial_anchor",
+            "target_sentence": partial_anchor_group.source_text,
+            "predictable_token_spans": ["get good at"],
+        }
+    ]
+}
+partial_anchor_gate = scanner_controlled_variant_gate(
+    report=partial_anchor_report,
+    group=partial_anchor_group,
+    variant={
+        "variant_id": "v_partial_anchor",
+        "replacement_text": "Students need [[DP_ANCHOR_002]]-[[DP_ANCHOR_003]] to become confident with the structures.",
+        "changed_spans": [{"source_span": "get good at", "before": "get good at", "after": "become confident with"}],
+        "predictable_spans_modified_count": 1,
+    },
+    replacement_text="Students need 12-15 months to become confident with the structures.",
+)
+assert_test(
+    partial_anchor_gate["passed"]
+    and partial_anchor_gate["reason"] == "passed",
+    "V3 scanner-controlled gate only requires placeholders present in the target source text",
+)
 scanner_variants = parse_scanner_controlled_variants(
-    '{"variants":[{"variant_id":"v1","replacement_text":"A local variant."},{"variant_id":"v2","replacement_text":"Another local variant."}]}',
+    '{"variants":[{"variant_id":"v1","replacement_text":"A local variant.","changed_spans":[{"source_span":"predictable route","before":"predictable route","after":"local route","operation":"TOPK_SPAN_REPATH"}],"predictable_spans_modified_count":1},{"variant_id":"v2","replacement_text":"Another local variant."}]}',
     limit=2,
 )
 assert_test(
-    len(scanner_variants) == 2 and scanner_variants[0]["replacement_text"] == "A local variant.",
+    len(scanner_variants) == 2
+    and scanner_variants[0]["replacement_text"] == "A local variant."
+    and scanner_variants[0]["predictable_spans_modified_count"] == 1,
     "V3 scanner-controlled executor parses bounded local variants",
+)
+no_change_gate = scanner_controlled_variant_gate(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variant={"variant_id": "v_same", "replacement_text": target_groups[0].source_text},
+    replacement_text=target_groups[0].source_text,
+)
+weak_span_gate = scanner_controlled_variant_gate(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variant={
+        "variant_id": "v_weak",
+        "replacement_text": target_groups[0].source_text.replace("predictable route", "local route"),
+        "changed_spans": [{"source_span": "predictable route", "before": "predictable route", "after": "local route"}],
+        "predictable_spans_modified_count": 1,
+    },
+    replacement_text=target_groups[0].source_text.replace("predictable route", "local route"),
+)
+strong_span_gate = scanner_controlled_variant_gate(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variant={
+        "variant_id": "v_strong",
+        "replacement_text": target_groups[0].source_text.replace("predictable route", "local route").replace("uniform explanation", "specific explanation"),
+        "changed_spans": [
+            {"source_span": "predictable route", "before": "predictable route", "after": "local route"},
+            {"source_span": "uniform explanation", "before": "uniform explanation", "after": "specific explanation"},
+        ],
+        "predictable_spans_modified_count": 2,
+    },
+    replacement_text=target_groups[0].source_text.replace("predictable route", "local route").replace("uniform explanation", "specific explanation"),
+)
+self_report_mismatch_gate = scanner_controlled_variant_gate(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variant={
+        "variant_id": "v_fake_count",
+        "replacement_text": target_groups[0].source_text.replace("predictable route", "local route"),
+        "changed_spans": [{"source_span": "predictable route", "before": "predictable route", "after": "local route"}],
+        "modified_span_ids": ["ps001", "ps002"],
+        "predictable_spans_modified_count": 2,
+    },
+    replacement_text=target_groups[0].source_text.replace("predictable route", "local route"),
+)
+assert_test(
+    no_change_gate["reason"] == "no_material_change"
+    and weak_span_gate["passed"]
+    and weak_span_gate["required_predictable_spans_modified"] == 1
+    and strong_span_gate["passed"]
+    and self_report_mismatch_gate["passed"]
+    and self_report_mismatch_gate["self_report_mismatch"]
+    and self_report_mismatch_gate["declared_predictable_spans_modified_count"] == 2,
+    "V3 scanner-controlled gate rejects no-change variants, uses dynamic short-target thresholds, and flags fake span counts",
+)
+quality_score = scanner_controlled_candidate_quality(
+    action_contract=group_action_contract(group=target_groups[0], predictability_briefs=predictability_briefs_fixture),
+    variant_gate=strong_span_gate,
+    source_text=target_groups[0].source_text,
+    replacement_text=target_groups[0].source_text.replace("predictable route", "local route").replace("uniform explanation", "specific explanation"),
+    variant={
+        "changed_spans": [
+            {"span_id": "ps001", "source_span": "predictable route", "before": "predictable route", "after": "local route"},
+            {"span_id": "ps002", "source_span": "uniform explanation", "before": "uniform explanation", "after": "specific explanation"},
+        ],
+    },
+)
+citation_voice_contract = {
+    "citation_pressure_zone": True,
+    "topk_repair_contract": {"required_modified_spans": 2, "locality_limits": {"max_changed_spans": 3}},
+}
+plain_voice_quality = scanner_controlled_candidate_quality(
+    action_contract=citation_voice_contract,
+    variant_gate={"predictable_spans_modified_count": 2, "required_predictable_spans_modified": 2, "actual_modified_span_ids": ["ps001", "ps002"]},
+    source_text="From my experience, watching videos isn't enough; they need to practice under my watch and get feedback.",
+    replacement_text="From my experience, watching videos is not enough; they need to practice under my watch and get feedback.",
+    variant={
+        "operator_used": "BROAD_CLAIM_NARROWING",
+        "changed_spans": [{"span_id": "ps001", "operation": "TOPK_SPAN_REPATH"}],
+    },
+)
+polished_voice_quality = scanner_controlled_candidate_quality(
+    action_contract=citation_voice_contract,
+    variant_gate={"predictable_spans_modified_count": 2, "required_predictable_spans_modified": 2, "actual_modified_span_ids": ["ps001", "ps002"]},
+    source_text="From my experience, watching videos isn't enough; they need to practice under my watch and get feedback.",
+    replacement_text="From my experience, watching videos is insufficient; they need to practice under my supervision and receive feedback.",
+    variant={
+        "operator_used": "CLAUSE_ROUTE_CHANGE",
+        "changed_spans": [{"span_id": "ps001", "operation": "TOPK_SPAN_REPATH"}],
+    },
+)
+assert_test(
+    quality_score["score"] > 0
+    and quality_score["movement_score"] > 0
+    and "ps001" in quality_score["actual_modified_span_ids"],
+    "V3 scanner-controlled candidate quality scores span movement and locality before scan selection",
+)
+assert_test(
+    plain_voice_quality["score"] > polished_voice_quality["score"]
+    and plain_voice_quality["source_likeness_score"] > polished_voice_quality["source_likeness_score"]
+    and polished_voice_quality["novel_token_penalty"] > plain_voice_quality["novel_token_penalty"]
+    and plain_voice_quality["span_operations"] == ["TOPK_SPAN_REPATH"],
+    "V3 scanner-controlled candidate quality prefers source-like citation-zone edits over polished or novel rewrites",
 )
 assert_test(
     scanner_controlled_rank({"footprint_risk": 38, "external_proxy_score": 27, "topk": 70, "ai": 29, "unsafe_cluster_count": 2, "unsafe_word_ratio": 9})
@@ -1445,6 +1784,14 @@ assert_test(
     not integrity_bad["passed"] and "merged_word_run" in integrity_bad["failures"],
     "V3 text-integrity guard flags merged-word corruption",
 )
+integrity_joined_token = v3_pipeline._text_integrity(
+    "When students start cutting hair, the theory becomes very real.",
+    "When students start cutting hair, the theory becomevery real.",
+)
+assert_test(
+    not integrity_joined_token["passed"] and "merged_source_token" in integrity_joined_token["failures"],
+    "V3 text-integrity guard flags source-token boundary joins",
+)
 
 with tempfile.TemporaryDirectory() as tmpdir:
     no_movement = run_rewrite_pipeline_v3(
@@ -1534,6 +1881,7 @@ paragraph_strategy_profile = {
         "target_id": "rt001",
         "unit_id": "p001",
         "paragraph_id": "p001",
+        "sentence_ids": ["s001", "s002"],
         "scope_level": "paragraph",
         "risk_level": "medium",
         "source_text": broad_source.split("\n\n")[0],
@@ -1549,6 +1897,32 @@ paragraph_contract = build_scan_contract(
         **report_for(broad_source, ai=70.0),
         "rewrite_target_profile": paragraph_strategy_profile,
         "problem_inventory": paragraph_problem_inventory,
+        "rewrite_edit_briefs": [
+            {
+                "brief_id": "reb001",
+                "sentence_id": "s001",
+                "paragraph_id": "p001",
+                "target_sentence": "Education is changing quickly because students now meet information in many places.",
+                "signals": {
+                    "predictable_token_spans": [
+                        "Education is changing quickly",
+                        "students now meet information",
+                    ]
+                },
+            },
+            {
+                "brief_id": "reb002",
+                "sentence_id": "s002",
+                "paragraph_id": "p001",
+                "target_sentence": "Schools still matter, but the old classroom model no longer explains how learning happens.",
+                "signals": {
+                    "predictable_token_spans": [
+                        "Schools still matter",
+                        "old classroom model",
+                    ]
+                },
+            },
+        ],
     },
     broad_source,
 )
@@ -1597,8 +1971,13 @@ assert_test(
     "word_count_guide" in reconstruction_template.prompt
     and "execution_contract" in reconstruction_template.prompt
     and "current_replacements" in topk_template.prompt
+    and "topk_repair_contract" in topk_template.prompt
+    and "predictable_spans" in topk_template.prompt
+    and "locality_limits" in topk_template.prompt
+    and "changed_word_estimate" in topk_template.prompt
+    and "Education is changing quickly" in topk_template.prompt
     and "Return JSON only" in topk_template.prompt,
-    "V3 paragraph portfolio reconstruction and Top-k prompts expose bounded stage contracts",
+    "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted stage contracts",
 )
 assert_test(
     "operator_used" not in reconstruction_template.prompt

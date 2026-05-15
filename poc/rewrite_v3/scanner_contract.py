@@ -50,6 +50,7 @@ class ScanContract:
     problem_inventory: dict[str, Any] = field(default_factory=dict)
     rewrite_targets: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     problem_groups: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    predictability_briefs: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     target_driver_summary: dict[str, int] = field(default_factory=dict)
     target_operation_mix: dict[str, int] = field(default_factory=dict)
     target_scope_policy: str = ""
@@ -357,6 +358,94 @@ def _problem_inventory(scan_report: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _span_texts_from_brief(brief: dict[str, Any]) -> list[str]:
+    spans: list[Any] = []
+    for container_key in ("signals", "rewrite_context", "context"):
+        container = brief.get(container_key)
+        if isinstance(container, dict):
+            spans.extend(container.get("predictable_token_spans") or [])
+            spans.extend(container.get("predictable_spans") or [])
+    spans.extend(brief.get("predictable_token_spans") or [])
+    spans.extend(brief.get("predictable_spans") or [])
+    return [
+        str(span).strip()
+        for span in _unique_values(spans)
+        if str(span or "").strip()
+    ]
+
+
+def _problem_token_texts_from_brief(brief: dict[str, Any]) -> list[str]:
+    tokens: list[Any] = []
+    for container_key in ("signals", "rewrite_context", "context"):
+        container = brief.get(container_key)
+        if isinstance(container, dict):
+            tokens.extend(container.get("problem_tokens") or [])
+    tokens.extend(brief.get("problem_tokens") or [])
+    texts: list[str] = []
+    for token in tokens:
+        if isinstance(token, dict):
+            value = token.get("token") or token.get("raw_token") or token.get("text")
+        else:
+            value = token
+        text = str(value or "").strip()
+        if text:
+            texts.append(text)
+    return _unique_values(texts)[:12]
+
+
+def _predictability_briefs(scan_report: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_rows: list[dict[str, Any]] = []
+    for candidate in [
+        scan_report.get("rewrite_edit_briefs"),
+        _list_at(scan_report, ("scan_intelligence", "rewrite_edit_briefs")),
+        _list_at(scan_report, ("scan_intelligence", "document", "rewrite_edit_briefs")),
+    ]:
+        raw_rows.extend(row for row in candidate or [] if isinstance(row, dict))
+
+    findings = scan_report.get("findings")
+    if isinstance(findings, dict):
+        for bucket in findings.values():
+            if not isinstance(bucket, list):
+                continue
+            raw_rows.extend(row for row in bucket if isinstance(row, dict))
+
+    rows: list[dict[str, Any]] = []
+    for row in raw_rows:
+        spans = _span_texts_from_brief(row)
+        if not spans:
+            continue
+        sentence_ids = row.get("sentence_ids") if isinstance(row.get("sentence_ids"), list) else []
+        paragraph_ids = row.get("paragraph_ids") if isinstance(row.get("paragraph_ids"), list) else []
+        rows.append({
+            "brief_id": row.get("brief_id") or row.get("finding_id") or row.get("id"),
+            "sentence_id": row.get("sentence_id") or row.get("target_sentence_id"),
+            "sentence_ids": [str(item) for item in sentence_ids if str(item or "")],
+            "paragraph_id": row.get("paragraph_id") or row.get("unit_id"),
+            "paragraph_ids": [str(item) for item in paragraph_ids if str(item or "")],
+            "target_sentence": row.get("target_sentence") or row.get("sentence") or row.get("text"),
+            "predictable_token_spans": spans[:8],
+            "problem_tokens": _problem_token_texts_from_brief(row),
+        })
+
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for row in rows:
+        key = "|".join([
+            str(row.get("sentence_id") or ""),
+            str(row.get("paragraph_id") or ""),
+            "||".join(row.get("predictable_token_spans") or []),
+        ])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    return unique
+
+
+def predictability_briefs_from_report(scan_report: dict[str, Any]) -> list[dict[str, Any]]:
+    return _predictability_briefs(scan_report)
+
+
 def build_scan_contract(scan_report: dict[str, Any], original_text: str) -> ScanContract:
     units = document_units(original_text)
     total_words = word_count(original_text)
@@ -369,6 +458,7 @@ def build_scan_contract(scan_report: dict[str, Any], original_text: str) -> Scan
     problem_inventory = _problem_inventory(scan_report)
     rewrite_targets = target_profile.get("targets") if isinstance(target_profile.get("targets"), list) else []
     problem_groups = problem_inventory.get("problem_groups") if isinstance(problem_inventory.get("problem_groups"), list) else []
+    predictability_briefs = _predictability_briefs(scan_report)
     mode_scores = route.get("mode_scores") if isinstance(route.get("mode_scores"), list) else []
     return ScanContract(
         word_count=total_words,
@@ -399,6 +489,7 @@ def build_scan_contract(scan_report: dict[str, Any], original_text: str) -> Scan
         problem_inventory=dict(problem_inventory),
         rewrite_targets=tuple(row for row in rewrite_targets if isinstance(row, dict)),
         problem_groups=tuple(row for row in problem_groups if isinstance(row, dict)),
+        predictability_briefs=tuple(predictability_briefs),
         target_driver_summary={
             str(key): int(value or 0)
             for key, value in (target_profile.get("driver_summary") or {}).items()
@@ -417,5 +508,5 @@ def build_scan_contract(scan_report: dict[str, Any], original_text: str) -> Scan
         risky_window_count=int(footprint.get("risky_window_count") or 0),
         footprint_confidence=str(footprint.get("confidence") or "low"),
         findings_count=_findings_count(scan_report),
-        rewrite_brief_count=len(scan_report.get("rewrite_edit_briefs") or []),
+        rewrite_brief_count=len(predictability_briefs),
     )
