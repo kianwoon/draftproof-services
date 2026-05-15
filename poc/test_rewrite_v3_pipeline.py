@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 
-from llm.gateway import LLMConfig, LLMGateway
+from llm.gateway import LLMConfig, LLMGateway, LLMResponse
 from rewrite_v2.contracts import build_rewrite_contract
 from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
 from detect.rewrite_targets import build_problem_inventory, build_rewrite_target_profile
@@ -43,12 +43,14 @@ from rewrite_v3.paragraph_portfolio_executor import (
     build_reconstruction_batches_by_prompt,
     paragraph_portfolio_config,
     parse_replacements_with_diagnostics,
+    validate_ownership_replacement_effect,
     validate_replacement_structure,
     validate_topk_replacement_effect,
 )
 from rewrite_v3.pipeline import run_rewrite_pipeline_v3
 from rewrite_v3.portfolio import select_portfolio_candidate
 from rewrite_v3.prompt_templates.paragraph_portfolio import (
+    build_paragraph_portfolio_ownership_prompt,
     build_paragraph_portfolio_planner_prompt,
     build_paragraph_portfolio_reconstruction_prompt,
     build_paragraph_portfolio_topk_prompt,
@@ -2011,6 +2013,21 @@ assert_test(
     and "ownership_gate_passed" in ownership_scores[1]["reasons"],
     "V3 portfolio selector treats ownership as an executable gate when human fraction remains low",
 )
+with tempfile.TemporaryDirectory() as tmpdir:
+    empty_review_result = run_rewrite_pipeline_v3(
+        detect_json=report_for(broad_source, ai=70.0),
+        output_dir=tmpdir,
+        replay_candidate_records=[{"text": "", "ai": 70.0, "topk": 90.0, "wq": 50.0}],
+        full_rewrite_allowed=False,
+        max_runtime_seconds=60,
+    )
+    empty_review_summary = empty_review_result["result"].summary
+    assert_test(
+        empty_review_summary["outcome"] == "mitigation_failed_no_safe_candidate"
+        and empty_review_summary["rewrite_goal_status"]["reason"] == "rewrite_v3_no_safe_candidate_generated"
+        and empty_review_summary["final_text"] == broad_source,
+        "V3 does not report empty generation failures as reviewable rewrite candidates",
+    )
 
 seven_unit_candidate = "\n\n".join([
     "Alpha paragraph.",
@@ -2328,6 +2345,7 @@ assert_test(
 )
 fallback_plan = fallback_paragraph_portfolio_plan(paragraph_groups)
 reconstruction_template = build_paragraph_portfolio_reconstruction_prompt(paragraph_context, fallback_plan)
+ownership_template = build_paragraph_portfolio_ownership_prompt(paragraph_context, fallback_plan)
 topk_template = build_paragraph_portfolio_topk_prompt(
     context=paragraph_context,
     planner_output=fallback_plan,
@@ -2350,6 +2368,14 @@ assert_test(
     and "Education is changing quickly" in topk_template.prompt
     and "Return JSON only" in topk_template.prompt,
     "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted ownership, scoped anchors, and structure contracts",
+)
+assert_test(
+    '"prompt_stage":"claim_ownership_repair"' in ownership_template.prompt
+    and "ownership_changes" in ownership_template.prompt
+    and "ownership_elements_supported" in ownership_template.prompt
+    and "point of view" in ownership_template.prompt
+    and "source-supported" in ownership_template.prompt,
+    "V3 paragraph ownership prompt asks for source-grounded ownership changes, not broad smoothing",
 )
 shape_group = TargetGroup(
     group_id="tg_shape",
@@ -2464,6 +2490,42 @@ assert_test(
     and topk_valid_rows
     and topk_valid_status[0]["actual_modified_span_ids"] == ["ps001"],
     "V3 paragraph portfolio Top-k gate rejects fake no-effect span repairs and accepts real span movement",
+)
+ownership_valid_rows, ownership_valid_status = validate_ownership_replacement_effect(
+    target_groups=[topk_noop_group],
+    replacements=[{
+        "group_id": "tg_topk_noop",
+        "replacement_text": (
+            "Because of this, the education system needs to evolve. "
+            "For this classroom problem, I would keep core knowledge in place while making digital literacy and ethical technology use part of how students practise judgment. "
+            "Assessment should still include drafts, reflection, discussion, feedback, and improvement because those steps show how the student is learning."
+        ),
+        "ownership_changes": [{
+            "before": "Schools should still teach core knowledge",
+            "after": "I would keep core knowledge in place",
+            "operation": "CLAIM_OWNERSHIP_REPAIR",
+            "trace_source": "source_text",
+        }],
+        "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
+    }],
+)
+ownership_invalid_rows, ownership_invalid_status = validate_ownership_replacement_effect(
+    target_groups=[topk_noop_group],
+    replacements=[{
+        "group_id": "tg_topk_noop",
+        "replacement_text": topk_noop_source,
+        "ownership_changes": [],
+        "ownership_elements_supported": [],
+    }],
+)
+assert_test(
+    ownership_valid_rows
+    and ownership_valid_rows[0]["candidate_quality"]["ownership_score"] > 0
+    and ownership_valid_status[0]["passed"]
+    and not ownership_invalid_rows
+    and "no_material_change" in ownership_invalid_status[0]["failures"]
+    and "missing_ownership_changes" in ownership_invalid_status[0]["failures"],
+    "V3 ownership validator accepts only real source-owned changes with quality metadata",
 )
 assert_test(
     "operator_used" not in reconstruction_template.prompt
@@ -2697,6 +2759,60 @@ try:
 finally:
     v3_pipeline._gateway = original_gateway_factory
 
+original_gateway_factory = v3_pipeline._gateway
+try:
+    ownership_calls = {"count": 0, "prompts": []}
+
+    class FakeOwnershipGateway:
+        def chat(self, prompt, **kwargs):
+            ownership_calls["count"] += 1
+            ownership_calls["prompts"].append(prompt)
+            return FakePromptTemplateResponse(json.dumps({
+                "replacements": [{
+                    "group_id": "tg001",
+                    "replacement_text": (
+                        "Education is changing quickly because students meet information through phones, websites, classmates, and teachers. "
+                        "In this classroom problem, I would still keep schools in the picture, but I would not treat the old classroom model as the whole explanation for learning."
+                    ),
+                    "ownership_changes": [{
+                        "before": "Schools still matter",
+                        "after": "I would still keep schools in the picture",
+                        "operation": "CLAIM_OWNERSHIP_REPAIR",
+                        "trace_source": "source_text",
+                    }],
+                    "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
+                }]
+            }))
+
+    def fake_ownership_gateway_factory(*args, **kwargs):
+        return FakeOwnershipGateway()
+
+    v3_pipeline._gateway = fake_ownership_gateway_factory
+    ownership_text, ownership_trace = v3_pipeline._generate_scanner_controlled_candidate(
+        original_text=broad_source,
+        original_report={
+            **report_for(broad_source, ai=72.0),
+            "rewrite_target_profile": paragraph_strategy_profile,
+            "problem_inventory": paragraph_problem_inventory,
+        },
+        scan_contract=paragraph_contract,
+        content_mode=paragraph_contract.content_mode,
+        family="paragraph_preserving_broad_reconstruction",
+        api_key=None,
+        model=None,
+        base_url=None,
+        ownership_repair_mode=True,
+    )
+    assert_test(
+        "I would still keep schools in the picture" in ownership_text
+        and ownership_trace["executor_engine"] == "paragraph_ownership_template"
+        and ownership_trace["ownership_repair_mode"]
+        and ownership_trace["target_replacements"][0]["candidate_quality"]["ownership_score"] > 0,
+        "V3 ownership repair routes broad paragraph groups through the paragraph ownership executor",
+    )
+finally:
+    v3_pipeline._gateway = original_gateway_factory
+
 two_paragraph_strategy_profile = {
     "schema_version": "rewrite_target_profile.v1",
     "target_scope_policy": "problem_inventory_driven",
@@ -2830,6 +2946,7 @@ original_scanner_controlled_generator = v3_pipeline._generate_scanner_controlled
 original_scan_report = v3_pipeline._scan_report
 try:
     planned_calls = []
+    ownership_calls = {"count": 0}
     mixed_problem_inventory = {
         "schema_version": "problem_inventory.v1",
         "problem_groups": [
@@ -2885,6 +3002,32 @@ try:
             },
         )
 
+    def fake_ownership_preempting_scanner_controlled(**kwargs):
+        if kwargs.get("ownership_repair_mode"):
+            ownership_calls["count"] += 1
+            return (
+                broad_candidate.replace("Schools are handing out facts", "In this classroom example, I would not treat school as only handing out facts"),
+                {
+                    "target_execution_attempted": True,
+                    "scanner_controlled": True,
+                    "executor_engine": "scanner_controlled_executor",
+                    "ownership_repair_mode": True,
+                    "scanner_controlled_accepted": [{
+                        "group_id": "tg001",
+                        "replacement_text": "In this classroom example, I would not treat school as only handing out facts",
+                        "candidate_quality": {
+                            "ownership_score": 6.0,
+                            "ownership_change_count": 1,
+                            "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
+                        },
+                    }],
+                    "target_groups": [{"group_id": "tg001"}, {"group_id": "tg002"}],
+                    "target_replacements": [{"group_id": "tg001", "replacement_text": "x"}],
+                    "target_apply_status": [{"group_id": "tg001", "applied": True, "method": "span", "reason": ""}],
+                },
+            )
+        return fake_planned_scanner_controlled(**kwargs)
+
     def fake_scan_report(text):
         return report_for(text, ai=45.0)
 
@@ -2911,6 +3054,106 @@ try:
             and planned_calls[:1] == ["protected_section_rewrite"]
             and planned_summary["candidate_loop_trace"][0]["reason"] == "execute_planned_problem_strategy:protected_section_rewrite",
             "V3 executes the next planned problem strategy when target application leaves unresolved groups",
+        )
+finally:
+    v3_pipeline._generate_target_executor_candidate = original_target_executor_generator
+    v3_pipeline._generate_scanner_controlled_candidate = original_scanner_controlled_generator
+    v3_pipeline._scan_report = original_scan_report
+
+original_target_executor_generator = v3_pipeline._generate_target_executor_candidate
+original_scanner_controlled_generator = v3_pipeline._generate_scanner_controlled_candidate
+original_scan_report = v3_pipeline._scan_report
+try:
+    planned_calls = []
+    ownership_calls = {"count": 0}
+
+    def fake_partial_target_executor_ownership_missing(**kwargs):
+        return broad_candidate.replace("handing out facts", "handing out facts in one repeated pattern"), {
+            "target_execution_attempted": True,
+            "prompt_template_id": "paragraph_portfolio.v1",
+            "executor_engine": "paragraph_portfolio_template",
+            "partial_candidate": True,
+            "missing_replacement_group_ids": ["tg002"],
+            "target_groups": [{"group_id": "tg001"}, {"group_id": "tg002"}],
+            "target_replacements": [{"group_id": "tg001", "replacement_text": "x"}],
+            "target_apply_status": [
+                {"group_id": "tg001", "applied": True, "method": "span", "reason": ""},
+                {"group_id": "tg002", "applied": False, "method": "none", "reason": "missing_replacement"},
+            ],
+        }
+
+    def fake_ownership_repair_after_partial(**kwargs):
+        if kwargs.get("ownership_repair_mode"):
+            ownership_calls["count"] += 1
+            return (
+                broad_candidate.replace("Schools are handing out facts", "In my classroom judgment, schools cannot be reduced to handing out facts"),
+                {
+                    "target_execution_attempted": True,
+                    "scanner_controlled": True,
+                    "executor_engine": "scanner_controlled_executor",
+                    "ownership_repair_mode": True,
+                    "scanner_controlled_accepted": [{
+                        "group_id": "tg001",
+                        "replacement_text": "In my classroom judgment, schools cannot be reduced to handing out facts",
+                        "candidate_quality": {
+                            "ownership_score": 6.0,
+                            "ownership_change_count": 1,
+                            "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
+                        },
+                    }],
+                    "target_groups": [{"group_id": "tg001"}],
+                    "target_replacements": [{"group_id": "tg001", "replacement_text": "x"}],
+                    "target_apply_status": [{"group_id": "tg001", "applied": True, "method": "span", "reason": ""}],
+                },
+            )
+        planned_calls.append(kwargs.get("strategy_id"))
+        return broad_candidate, {
+            "target_execution_attempted": True,
+            "scanner_controlled": True,
+            "executor_engine": "scanner_controlled_executor",
+            "planned_strategy_id": kwargs.get("strategy_id"),
+            "target_groups": [{"group_id": "tg002"}],
+            "target_replacements": [],
+            "target_apply_status": [{"group_id": "tg002", "applied": False, "method": "none", "reason": "not_called"}],
+        }
+
+    def fake_ownership_missing_scan_report(text):
+        report = report_for(text, ai=45.0)
+        profile = {
+            "schema_version": "ai_footprint_profile.v2",
+            "fraction_ai": 0.0,
+            "fraction_ai_assisted": 1.0,
+            "fraction_human": 0.0,
+            "risky_window_density": 1.0,
+            "max_ai_window_words": 0,
+            "top_risky_windows": [],
+        }
+        report["ai_footprint_profile"] = dict(profile)
+        report["authorship_window_profile"] = dict(profile)
+        return report
+
+    v3_pipeline._generate_target_executor_candidate = fake_partial_target_executor_ownership_missing
+    v3_pipeline._generate_scanner_controlled_candidate = fake_ownership_repair_after_partial
+    v3_pipeline._scan_report = fake_ownership_missing_scan_report
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ownership_preempt_report = report_for(broad_source, ai=70.0)
+        ownership_preempt_report["ai_risk_badge"]["ai_components"]["topk_pattern_raw"] = 40.0
+        ownership_preempt = run_rewrite_pipeline_v3(
+            detect_json={
+                **ownership_preempt_report,
+                "rewrite_target_profile": paragraph_strategy_profile,
+                "problem_inventory": mixed_problem_inventory,
+            },
+            output_dir=tmpdir,
+            required_ai_drop=20.0,
+            max_runtime_seconds=60,
+        )
+        ownership_summary = ownership_preempt["result"].summary
+        assert_test(
+            ownership_calls["count"] == 1
+            and ownership_summary["candidate_loop_trace"][0]["action"] == "claim_ownership_repair"
+            and ownership_summary["candidate_loop_trace"][0]["reason"] == "claim_ownership_repair_before_problem_strategy_exhaustion",
+            "V3 claim ownership repair preempts planned problem strategies after a partial portfolio candidate fails ownership",
         )
 finally:
     v3_pipeline._generate_target_executor_candidate = original_target_executor_generator
@@ -3226,5 +3469,44 @@ with tempfile.TemporaryDirectory() as tmpdir:
         result["result"].summary["strategy_trace"][0]["strategy_family"] == "cited_practice_voice",
         "V3 routes cited academic content to cited-practice voice family",
     )
+
+old_min_completion_tokens = os.environ.get("DRAFTPROOF_REWRITE_V3_MIN_COMPLETION_TOKENS")
+old_max_completion_tokens = os.environ.get("DRAFTPROOF_REWRITE_V3_MAX_COMPLETION_TOKENS")
+try:
+    os.environ.pop("DRAFTPROOF_REWRITE_V3_MIN_COMPLETION_TOKENS", None)
+    os.environ.pop("DRAFTPROOF_REWRITE_V3_MAX_COMPLETION_TOKENS", None)
+    assert_test(
+        v3_pipeline._max_tokens_for_words(557) >= 5000
+        and v3_pipeline._max_tokens_for_words(12000) <= 12000,
+        "V3 completion budget defaults to a 5000-token floor and bounded cap",
+    )
+    os.environ["DRAFTPROOF_REWRITE_V3_MIN_COMPLETION_TOKENS"] = "7000"
+    os.environ["DRAFTPROOF_REWRITE_V3_MAX_COMPLETION_TOKENS"] = "8000"
+    assert_test(
+        v3_pipeline._max_tokens_for_words(100) == 7000
+        and v3_pipeline._max_tokens_for_words(20000) == 8000,
+        "V3 completion budget supports configurable floor and cap",
+    )
+finally:
+    if old_min_completion_tokens is None:
+        os.environ.pop("DRAFTPROOF_REWRITE_V3_MIN_COMPLETION_TOKENS", None)
+    else:
+        os.environ["DRAFTPROOF_REWRITE_V3_MIN_COMPLETION_TOKENS"] = old_min_completion_tokens
+    if old_max_completion_tokens is None:
+        os.environ.pop("DRAFTPROOF_REWRITE_V3_MAX_COMPLETION_TOKENS", None)
+    else:
+        os.environ["DRAFTPROOF_REWRITE_V3_MAX_COMPLETION_TOKENS"] = old_max_completion_tokens
+
+length_response = LLMResponse(
+    content='{"replacements": [',
+    model="test-model",
+    raw={"choices": [{"finish_reason": "length", "native_finish_reason": "max_tokens"}]},
+)
+assert_test(
+    length_response.finish_reason == "length"
+    and length_response.native_finish_reason == "max_tokens"
+    and v3_pipeline._reject_length_limited_response(length_response, stage="test") == "",
+    "V3 exposes and rejects length-limited LLM responses before candidate selection",
+)
 
 print("Rewrite V3 pipeline tests passed.")

@@ -16,6 +16,8 @@ from .document_units import structural_shape_contract, structural_shape_failures
 from .output_cleaning import clean_v3_candidate_output
 from .prompt_templates.paragraph_portfolio import (
     PromptTemplatePayload,
+    TEMPLATE_ID,
+    build_paragraph_portfolio_ownership_prompt,
     build_paragraph_portfolio_planner_prompt,
     build_paragraph_portfolio_reconstruction_prompt,
     build_paragraph_portfolio_topk_prompt,
@@ -65,6 +67,10 @@ def _number(value: Any, default: float = 0.0) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return default
+
+
+def _finish_reason(response: Any) -> str:
+    return str(getattr(response, "finish_reason", "") or "").strip().lower()
 
 
 def paragraph_portfolio_config(*, fallback_batch_size: int) -> ParagraphPortfolioConfig:
@@ -158,6 +164,10 @@ def parse_replacements_with_diagnostics(
             "modified_span_ids",
             "predictable_spans_modified_count",
             "changed_word_estimate",
+            "ownership_changes",
+            "ownership_elements_supported",
+            "new_claims_added",
+            "hard_anchors_preserved",
         ):
             if key in row:
                 parsed_row[key] = row.get(key)
@@ -314,6 +324,90 @@ def validate_topk_replacement_effect(
     return valid, statuses
 
 
+def _ownership_rows(row: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in row.get("ownership_changes") or []:
+        if not isinstance(item, dict):
+            continue
+        before = str(item.get("before") or "").strip()
+        after = str(item.get("after") or "").strip()
+        if before and after and before != after:
+            rows.append(item)
+    return rows
+
+
+def _ownership_elements(row: dict[str, Any]) -> list[str]:
+    allowed = {"author_trace", "specific_context", "real_judgment"}
+    elements: list[str] = []
+    for item in row.get("ownership_elements_supported") or []:
+        text = str(item or "").strip()
+        if text in allowed and text not in elements:
+            elements.append(text)
+    return elements
+
+
+def ownership_candidate_quality(
+    *,
+    group: TargetGroup,
+    replacement: dict[str, Any],
+) -> dict[str, Any]:
+    rows = _ownership_rows(replacement)
+    elements = _ownership_elements(replacement)
+    source_words = max(1, word_count(group.source_text))
+    replacement_words = max(1, word_count(str(replacement.get("replacement_text") or "")))
+    ratio_delta = abs(replacement_words - source_words) / source_words
+    preservation_score = max(0.0, 20.0 - ratio_delta * 80.0)
+    ownership_score = min(10.0, len(rows) * 3.0 + len(elements) * 1.5)
+    score = round(ownership_score * 4.0 + preservation_score, 3)
+    return {
+        "score": score,
+        "ownership_score": round(ownership_score, 3),
+        "ownership_change_count": len(rows),
+        "ownership_elements_supported": elements,
+        "source_words": source_words,
+        "replacement_words": replacement_words,
+        "preservation_score": round(preservation_score, 3),
+        "operator_used": "CLAIM_OWNERSHIP_REPAIR",
+    }
+
+
+def validate_ownership_replacement_effect(
+    *,
+    target_groups: list[TargetGroup],
+    replacements: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    groups_by_id = {group.group_id: group for group in target_groups}
+    valid: list[dict[str, Any]] = []
+    statuses: list[dict[str, Any]] = []
+    for row in replacements:
+        group_id = str(row.get("group_id") or "")
+        replacement_text = str(row.get("replacement_text") or "")
+        group = groups_by_id.get(group_id)
+        failures: list[str] = []
+        if group is None:
+            failures.append("unknown_group")
+        elif replacement_text.strip() == str(group.source_text or "").strip():
+            failures.append("no_material_change")
+        ownership_rows = _ownership_rows(row)
+        ownership_elements = _ownership_elements(row)
+        if not ownership_rows:
+            failures.append("missing_ownership_changes")
+        if not ownership_elements:
+            failures.append("missing_ownership_elements")
+        if group is not None and not failures:
+            enriched = dict(row)
+            enriched["candidate_quality"] = ownership_candidate_quality(group=group, replacement=row)
+            valid.append(enriched)
+        statuses.append({
+            "group_id": group_id,
+            "passed": not failures,
+            "failures": list(dict.fromkeys(failures)),
+            "ownership_change_count": len(ownership_rows),
+            "ownership_elements_supported": ownership_elements,
+        })
+    return valid, statuses
+
+
 def _context_for_batch(
     *,
     batch: list[TargetGroup],
@@ -447,23 +541,35 @@ def _call_reconstruction_batch(
         "replacement_count": 0,
     }
     try:
-        reconstruction_raw = gateway_factory(token_budget(_batch_word_budget(batch, extra_words=720))).chat(
+        reconstruction_response = gateway_factory(token_budget(_batch_word_budget(batch, extra_words=720))).chat(
             reconstruction_template.prompt,
             system="Return only valid JSON with a replacements array.",
             response_format={"type": "json_object"},
-        ).content
+        )
+        reconstruction_raw = reconstruction_response.content
+        if _finish_reason(reconstruction_response) == "length":
+            reconstruction_error = "llm_finish_reason_length"
+            diagnostics = {
+                "parse_status": "truncated_length",
+                "finish_reason": "length",
+                "raw_chars": len(str(reconstruction_raw or "")),
+                "replacement_count": 0,
+                "error": reconstruction_error,
+            }
+            reconstruction_raw = ""
         batch_replacements, diagnostics = parse_replacements_with_diagnostics(
             reconstruction_raw,
             preview_chars=preview_chars,
-        )
-        batch_replacements, structure_status = validate_replacement_structure(
-            target_groups=batch,
-            replacements=batch_replacements,
-        )
-        diagnostics["structure_status"] = structure_status
-        diagnostics["structure_valid_count"] = len(batch_replacements)
-        if not batch_replacements:
-            reconstruction_error = "structure_contract_failed" if structure_status else str(diagnostics.get("parse_status") or "empty_replacements")
+        ) if not reconstruction_error else ([], diagnostics)
+        if not reconstruction_error:
+            batch_replacements, structure_status = validate_replacement_structure(
+                target_groups=batch,
+                replacements=batch_replacements,
+            )
+            diagnostics["structure_status"] = structure_status
+            diagnostics["structure_valid_count"] = len(batch_replacements)
+            if not batch_replacements:
+                reconstruction_error = "structure_contract_failed" if structure_status else str(diagnostics.get("parse_status") or "empty_replacements")
     except Exception as exc:
         reconstruction_error = str(exc)
         diagnostics = {
@@ -488,6 +594,308 @@ def _call_reconstruction_batch(
         "error": reconstruction_error,
     }
     return batch_replacements, diagnostics, trace, reconstruction_error
+
+
+def _ownership_prompt_for_budget(
+    context: dict[str, Any],
+    planner_output: dict[str, Any],
+    *,
+    max_prompt_chars: int,
+) -> tuple[PromptTemplatePayload, bool]:
+    template = build_paragraph_portfolio_ownership_prompt(context, planner_output)
+    if len(template.prompt) <= max_prompt_chars:
+        return template, False
+    compact_template = build_paragraph_portfolio_ownership_prompt(
+        context,
+        planner_output,
+        compact_for_budget=True,
+    )
+    return compact_template, True
+
+
+def _call_ownership_batch(
+    *,
+    batch: list[TargetGroup],
+    scan_contract: Any,
+    content_mode: str,
+    family: str,
+    planner_output: dict[str, Any],
+    gateway_factory: GatewayFactory,
+    token_budget: TokenBudget,
+    preview_chars: int,
+    batch_index: int,
+    max_prompt_chars: int,
+    retry_of_batch: int | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], str | None]:
+    batch_context = _context_for_batch(
+        batch=batch,
+        scan_contract=scan_contract,
+        content_mode=content_mode,
+        family=family,
+    )
+    ownership_template, budget_compacted = _ownership_prompt_for_budget(
+        batch_context,
+        planner_output,
+        max_prompt_chars=max_prompt_chars,
+    )
+    ownership_error = None
+    batch_replacements: list[dict[str, Any]] = []
+    diagnostics: dict[str, Any] = {
+        "parse_status": "not_attempted",
+        "raw_chars": 0,
+        "replacement_count": 0,
+    }
+    try:
+        ownership_response = gateway_factory(token_budget(_batch_word_budget(batch, extra_words=520))).chat(
+            ownership_template.prompt,
+            system="Return only valid JSON with a replacements array.",
+            response_format={"type": "json_object"},
+        )
+        ownership_raw = ownership_response.content
+        if _finish_reason(ownership_response) == "length":
+            ownership_error = "llm_finish_reason_length"
+            diagnostics = {
+                "parse_status": "truncated_length",
+                "finish_reason": "length",
+                "raw_chars": len(str(ownership_raw or "")),
+                "replacement_count": 0,
+                "error": ownership_error,
+            }
+            ownership_raw = ""
+        batch_replacements, diagnostics = parse_replacements_with_diagnostics(
+            ownership_raw,
+            preview_chars=preview_chars,
+        ) if not ownership_error else ([], diagnostics)
+        if not ownership_error:
+            batch_replacements, structure_status = validate_replacement_structure(
+                target_groups=batch,
+                replacements=batch_replacements,
+            )
+            diagnostics["structure_status"] = structure_status
+            diagnostics["structure_valid_count"] = len(batch_replacements)
+            batch_replacements, ownership_status = validate_ownership_replacement_effect(
+                target_groups=batch,
+                replacements=batch_replacements,
+            )
+            diagnostics["ownership_status"] = ownership_status
+            diagnostics["ownership_valid_count"] = len(batch_replacements)
+            if not batch_replacements:
+                ownership_error = "ownership_contract_failed" if ownership_status else str(diagnostics.get("parse_status") or "empty_replacements")
+    except Exception as exc:
+        ownership_error = str(exc)
+        diagnostics = {
+            "parse_status": "provider_error",
+            "raw_chars": 0,
+            "replacement_count": 0,
+            "error": ownership_error,
+        }
+    trace = {
+        **ownership_template.to_trace(),
+        "batch_index": batch_index,
+        "group_ids": [group.group_id for group in batch],
+        "requested_groups": len(batch),
+        "replacement_count": len(batch_replacements),
+        "parse_diagnostics": diagnostics,
+        "prompt_budget": {
+            "max_prompt_chars": max_prompt_chars,
+            "within_budget": len(ownership_template.prompt) <= max_prompt_chars,
+            "compacted": budget_compacted,
+        },
+        "retry_of_batch": retry_of_batch,
+        "error": ownership_error,
+    }
+    return batch_replacements, diagnostics, trace, ownership_error
+
+
+def generate_paragraph_ownership_candidate(
+    *,
+    original_text: str,
+    scan_contract: Any,
+    content_mode: str,
+    family: str,
+    target_groups: list[TargetGroup],
+    gateway_factory: GatewayFactory,
+    token_budget: TokenBudget,
+    config: ParagraphPortfolioConfig,
+) -> tuple[str, dict[str, Any]]:
+    stage_trace: list[dict[str, Any]] = []
+    planner_output = fallback_paragraph_portfolio_plan(target_groups)
+    planner_validation = {
+        **validate_paragraph_portfolio_plan(planner_output, target_groups),
+        "fallback_used": True,
+        "fallback_reason": "claim_ownership_repair_uses_scanner_fallback_plan",
+    }
+    stage_trace.append({
+        "prompt_template_id": TEMPLATE_ID,
+        "strategy_id": "claim_ownership_repair",
+        "prompt_stage": "planner",
+        "prompt_chars": 0,
+        "scanner_context_used": [
+            "rewrite_target_profile.targets",
+            "dominant_drivers",
+            "hard_anchors",
+            "soft_guidance_anchors",
+            "word_count_guide",
+        ],
+        "validation": planner_validation,
+        "error": None,
+        "planner_mode": "scanner_fallback",
+    })
+    ownership_batches = build_reconstruction_batches_by_prompt(
+        target_groups=target_groups,
+        scan_contract=scan_contract,
+        content_mode=content_mode,
+        family=family,
+        planner_output=planner_output,
+        max_prompt_chars=config.max_reconstruction_prompt_chars,
+        fallback_batch_size=config.fallback_batch_size,
+    )
+    replacements: list[dict[str, Any]] = []
+    ownership_errors: list[str] = []
+    parse_diagnostics: list[dict[str, Any]] = []
+    for batch_index, batch in enumerate(ownership_batches, start=1):
+        batch_replacements, diagnostics, trace, ownership_error = _call_ownership_batch(
+            batch=batch,
+            scan_contract=scan_contract,
+            content_mode=content_mode,
+            family=family,
+            planner_output=planner_output,
+            gateway_factory=gateway_factory,
+            token_budget=token_budget,
+            preview_chars=config.raw_preview_chars,
+            batch_index=batch_index,
+            max_prompt_chars=config.max_reconstruction_prompt_chars,
+        )
+        if ownership_error and len(batch) > 1:
+            retry_replacements: list[dict[str, Any]] = []
+            retry_errors: list[str] = []
+            for retry_offset, retry_group in enumerate(batch, start=1):
+                retry_batch_index = (batch_index * 100) + retry_offset
+                single_replacements, single_diagnostics, single_trace, single_error = _call_ownership_batch(
+                    batch=[retry_group],
+                    scan_contract=scan_contract,
+                    content_mode=content_mode,
+                    family=family,
+                    planner_output=planner_output,
+                    gateway_factory=gateway_factory,
+                    token_budget=token_budget,
+                    preview_chars=config.raw_preview_chars,
+                    batch_index=retry_batch_index,
+                    max_prompt_chars=config.max_reconstruction_prompt_chars,
+                    retry_of_batch=batch_index,
+                )
+                stage_trace.append(single_trace)
+                parse_diagnostics.append(single_diagnostics)
+                retry_replacements.extend(single_replacements)
+                if single_error:
+                    retry_errors.append(single_error)
+            if retry_replacements:
+                batch_replacements = retry_replacements
+                diagnostics = {
+                    "parse_status": "retry_recovered" if not retry_errors else "retry_partial",
+                    "replacement_count": len(retry_replacements),
+                    "retry_error_count": len(retry_errors),
+                    "original_error": ownership_error,
+                }
+                ownership_error = "; ".join(retry_errors) if retry_errors else None
+        if ownership_error:
+            ownership_errors.append(ownership_error)
+        replacements.extend(batch_replacements)
+        parse_diagnostics.append(diagnostics)
+        stage_trace.append({**trace, "replacement_count": len(batch_replacements), "parse_diagnostics": diagnostics, "error": ownership_error})
+
+    if not replacements:
+        return "", target_execution_trace(
+            attempted=True,
+            target_groups=target_groups,
+            replacements=[],
+            batches=[
+                {
+                    "batch_index": index,
+                    "group_ids": [group.group_id for group in batch],
+                }
+                for index, batch in enumerate(ownership_batches, start=1)
+            ],
+            error="; ".join(ownership_errors) if ownership_errors else "no_ownership_positive_replacement",
+        ) | {
+            "executor_engine": "paragraph_ownership_template",
+            "prompt_template_id": "paragraph_portfolio.v1",
+            "prompt_stage": "claim_ownership_repair",
+            "ownership_repair_mode": True,
+            "scanner_context_used": ["planner_output", "source_text", "ownership_contract", "hard_anchors", "word_count_guide"],
+            "planner_output": planner_output,
+            "prompt_stage_trace": stage_trace,
+            "parse_diagnostics": parse_diagnostics,
+            "strategy_stop_reason": "ownership_repair_failed",
+        }
+
+    text, apply_status = apply_target_replacements(
+        original_text=original_text,
+        target_groups=target_groups,
+        replacements=replacements,
+    )
+    applied_group_ids = {
+        str(row.get("group_id") or "")
+        for row in apply_status
+        if isinstance(row, dict) and row.get("applied")
+    }
+    applied_replacements = [
+        row for row in replacements
+        if str(row.get("group_id") or "") in applied_group_ids
+    ]
+    expected_group_ids = {group.group_id for group in target_groups}
+    replaced_group_ids = {
+        str(row.get("group_id") or "")
+        for row in applied_replacements
+        if str(row.get("group_id") or "")
+    }
+    missing_replacement_group_ids = sorted(expected_group_ids - replaced_group_ids)
+    stop_reason = "ownership_repair_generated" if applied_replacements else "no_target_replacement_applied"
+    trace = target_execution_trace(
+        attempted=True,
+        target_groups=target_groups,
+        replacements=applied_replacements,
+        apply_status=apply_status,
+        batches=[
+            {
+                "batch_index": index,
+                "group_ids": [group.group_id for group in batch],
+            }
+            for index, batch in enumerate(ownership_batches, start=1)
+        ],
+        error=None if applied_replacements else stop_reason,
+    )
+    trace.update({
+        "executor_engine": "paragraph_ownership_template",
+        "prompt_template_id": "paragraph_portfolio.v1",
+        "prompt_stage": "claim_ownership_repair",
+        "ownership_repair_mode": True,
+        "scanner_context_used": list(dict.fromkeys([
+            "rewrite_target_profile.targets",
+            "planner_output",
+            "source_text",
+            "before_context",
+            "after_context",
+            "ownership_contract",
+            "hard_anchors",
+            "soft_guidance_anchors",
+            "word_count_guide",
+        ])),
+        "planner_output": planner_output,
+        "prompt_stage_trace": stage_trace,
+        "parse_diagnostics": parse_diagnostics,
+        "stage_apply_status": apply_status,
+        "partial_candidate": bool(missing_replacement_group_ids),
+        "missing_replacement_group_ids": missing_replacement_group_ids,
+        "accepted_replacements": applied_replacements,
+        "strategy_stop_reason": stop_reason if stop_reason != "ownership_repair_generated" else (
+            "partial_ownership_repair_generated" if missing_replacement_group_ids else "ownership_repair_generated"
+        ),
+    })
+    if text.strip() == original_text.strip():
+        trace["error"] = "no_target_replacement_applied"
+        trace["strategy_stop_reason"] = "no_target_replacement_applied"
+    return clean_v3_candidate_output(text), trace
 
 
 def generate_paragraph_portfolio_candidate(
@@ -688,29 +1096,41 @@ def generate_paragraph_portfolio_candidate(
             topk_error = None
             topk_diagnostics: dict[str, Any] = {"parse_status": "not_attempted", "replacement_count": 0}
             try:
-                topk_raw = gateway_factory(token_budget(_batch_word_budget(batch, extra_words=260))).chat(
+                topk_response = gateway_factory(token_budget(_batch_word_budget(batch, extra_words=260))).chat(
                     topk_template.prompt,
                     system="Return only valid JSON with a replacements array.",
                     response_format={"type": "json_object"},
-                ).content
-                batch_topk_replacements, topk_diagnostics = parse_replacements_with_diagnostics(
-                    topk_raw,
-                    preview_chars=config.raw_preview_chars,
                 )
-                batch_topk_replacements, topk_structure_status = validate_replacement_structure(
-                    target_groups=topk_batch,
-                    replacements=batch_topk_replacements,
-                )
-                topk_diagnostics["structure_status"] = topk_structure_status
-                topk_diagnostics["structure_valid_count"] = len(batch_topk_replacements)
-                batch_topk_replacements, topk_effect_status = validate_topk_replacement_effect(
-                    target_groups=topk_batch,
-                    current_replacements=batch_replacements,
-                    replacements=batch_topk_replacements,
-                    predictability_briefs=list(getattr(scan_contract, "predictability_briefs", ()) or ()),
-                )
-                topk_diagnostics["effect_status"] = topk_effect_status
-                topk_diagnostics["effect_valid_count"] = len(batch_topk_replacements)
+                topk_raw = topk_response.content
+                if _finish_reason(topk_response) == "length":
+                    topk_error = "llm_finish_reason_length"
+                    topk_diagnostics = {
+                        "parse_status": "truncated_length",
+                        "finish_reason": "length",
+                        "raw_chars": len(str(topk_raw or "")),
+                        "replacement_count": 0,
+                        "error": topk_error,
+                    }
+                    batch_topk_replacements = []
+                else:
+                    batch_topk_replacements, topk_diagnostics = parse_replacements_with_diagnostics(
+                        topk_raw,
+                        preview_chars=config.raw_preview_chars,
+                    )
+                    batch_topk_replacements, topk_structure_status = validate_replacement_structure(
+                        target_groups=topk_batch,
+                        replacements=batch_topk_replacements,
+                    )
+                    topk_diagnostics["structure_status"] = topk_structure_status
+                    topk_diagnostics["structure_valid_count"] = len(batch_topk_replacements)
+                    batch_topk_replacements, topk_effect_status = validate_topk_replacement_effect(
+                        target_groups=topk_batch,
+                        current_replacements=batch_replacements,
+                        replacements=batch_topk_replacements,
+                        predictability_briefs=list(getattr(scan_contract, "predictability_briefs", ()) or ()),
+                    )
+                    topk_diagnostics["effect_status"] = topk_effect_status
+                    topk_diagnostics["effect_valid_count"] = len(batch_topk_replacements)
             except Exception as exc:
                 topk_error = str(exc)
                 batch_topk_replacements = []

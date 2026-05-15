@@ -860,6 +860,96 @@ def build_paragraph_portfolio_reconstruction_prompt(
     )
 
 
+def build_paragraph_portfolio_ownership_prompt(
+    context: dict[str, Any],
+    planner_output: dict[str, Any],
+    *,
+    compact_for_budget: bool = False,
+) -> PromptTemplatePayload:
+    rules = [
+        "Return JSON only with a replacements array.",
+        "Return one replacement for every target group where ownership can be repaired from the supplied source context.",
+        "Rewrite only source_text for each target group.",
+        "Preserve hard anchors exactly.",
+        "Copy each required_protected_anchors.text exactly as provided, including punctuation and quote style.",
+        "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+        "Do not add blank-line paragraph splits or merge source blocks inside a replacement.",
+        "Preserve factual meaning, citations, technical codes, paragraph role, and source viewpoint.",
+        "Follow ownership_contract.golden_rule: do not just change point of view; add source-supported author trace, specific context, and real judgment.",
+        "Use only trace sources listed in ownership_contract.available_trace_sources.",
+        "Do not invent personal events, cases, student details, sources, dates, numbers, or examples.",
+        "Do not make a broad polished rewrite. Change only enough wording to make the claim feel owned by the provided context.",
+        "Do not intensify source claims, learner ability, certainty, or outcome strength.",
+        "Keep the paragraph near word_count_guide.preferred_words and do not compress it into a summary.",
+        "For each returned row, include ownership_changes and ownership_elements_supported.",
+        "Every ownership_changes row must have different before and after values.",
+        "If no source-supported ownership repair is possible for a group, omit that group instead of returning a no-op.",
+        "Escape any straight quotation marks inside JSON string values.",
+    ]
+    if compact_for_budget:
+        rules = [
+            "Return JSON only with a replacements array.",
+            "Rewrite only source_text; keep the same block structure.",
+            "Preserve required hard anchors exactly.",
+            "Preserve factual meaning, paragraph role, citations, and source viewpoint.",
+            "Use ownership_contract: add source-supported trace, context, and judgment without inventing events.",
+            "Return ownership_changes and ownership_elements_supported for every replacement.",
+            "Omit groups that cannot be repaired without unsupported claims.",
+            "Do not compress into a summary.",
+            "Escape quotation marks inside JSON string values.",
+        ]
+    payload = {
+        "template_id": TEMPLATE_ID,
+        "strategy_id": "claim_ownership_repair",
+        "prompt_stage": "claim_ownership_repair",
+        "prompt_budget_mode": "compact" if compact_for_budget else "normal",
+        "task": "Repair authorship ownership for the target paragraphs without broad smoothing.",
+        "scanner_context": _reconstruction_context(
+            context,
+            planner_output,
+            compact_for_budget=compact_for_budget,
+        ),
+        "rules": rules,
+        "response_schema": {
+            "replacements": [
+                {
+                    "group_id": "tg001",
+                    "replacement_text": "replacement paragraph only",
+                    "ownership_changes": [
+                        {
+                            "before": "generic local claim",
+                            "after": "source-owned local judgment",
+                            "operation": "CLAIM_OWNERSHIP_REPAIR",
+                            "trace_source": "source_text",
+                        }
+                    ],
+                    "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
+                    "new_claims_added": False,
+                    "hard_anchors_preserved": True,
+                }
+            ]
+        },
+    }
+    return PromptTemplatePayload(
+        template_id=TEMPLATE_ID,
+        strategy_id="claim_ownership_repair",
+        prompt_stage="claim_ownership_repair",
+        prompt=_json_payload("You are a source-grounded ownership repair engine.", payload),
+        scanner_context_used=(
+            "planner_output",
+            "source_text",
+            "before_context",
+            "after_context",
+            "source_structure_contract",
+            "ownership_contract",
+            "required_movement",
+            "hard_anchors",
+            "soft_guidance_anchors",
+            "word_count_guide",
+        ),
+    )
+
+
 def parse_paragraph_portfolio_replacements(raw: str) -> list[dict[str, str]]:
     payload = _parse_json_object(raw)
     rows = payload.get("replacements") if isinstance(payload, dict) else None

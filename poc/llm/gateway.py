@@ -65,6 +65,24 @@ class LLMResponse:
     def is_empty(self) -> bool:
         return not self.content or not self.content.strip()
 
+    @property
+    def finish_reason(self) -> str | None:
+        choices = self.raw.get("choices") if isinstance(self.raw, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return None
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        value = first.get("finish_reason")
+        return str(value) if value is not None else None
+
+    @property
+    def native_finish_reason(self) -> str | None:
+        choices = self.raw.get("choices") if isinstance(self.raw, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return None
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        value = first.get("native_finish_reason")
+        return str(value) if value is not None else None
+
 
 # ---------------------------------------------------------------------------
 # Error classification

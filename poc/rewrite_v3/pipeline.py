@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 import unicodedata
@@ -54,6 +55,7 @@ from .layers.authorship_window_repair import (
 from .output_cleaning import clean_v3_candidate_output
 from .portfolio import select_portfolio_candidate
 from .paragraph_portfolio_executor import (
+    generate_paragraph_ownership_candidate as _run_paragraph_ownership_candidate,
     generate_paragraph_portfolio_candidate as _run_paragraph_portfolio_candidate,
     paragraph_portfolio_config,
 )
@@ -89,6 +91,8 @@ from .unit_preserving_prune_bridge import (
     filter_prune_bridge_groups,
     parse_prune_bridge_replacements,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _scan_report(text: str) -> dict[str, Any]:
@@ -575,7 +579,19 @@ def _llm_timeout_seconds() -> int:
 
 
 def _max_tokens_for_words(words: int) -> int:
-    return max(1200, min(12000, int(words * 2.4) + 900))
+    floor = _int_env("DRAFTPROOF_REWRITE_V3_MIN_COMPLETION_TOKENS", 5000)
+    cap = _int_env("DRAFTPROOF_REWRITE_V3_MAX_COMPLETION_TOKENS", 12000)
+    floor = max(1200, floor)
+    cap = max(floor, cap)
+    return max(floor, min(cap, int(words * 2.4) + 900))
+
+
+def _reject_length_limited_response(response: Any, *, stage: str) -> str:
+    finish_reason = str(getattr(response, "finish_reason", "") or "").strip().lower()
+    if finish_reason == "length":
+        logger.warning("Rejected V3 LLM response truncated by max_tokens at stage=%s", stage)
+        return ""
+    return str(getattr(response, "content", "") or "")
 
 
 def _float_env(name: str, default: float) -> float:
@@ -800,11 +816,12 @@ def _generate_single_candidate(
     token_words = word_count(original_text) if family == "clean_texture_boundary" else compression_policy.max_words
     gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(token_words))
     kwargs = _clean_texture_chat_kwargs() if family == "clean_texture_boundary" else {}
-    return clean_v3_candidate_output(gateway.chat(
+    response = gateway.chat(
         prompt,
         system="Return only the rewritten document as plain text.",
         **kwargs,
-    ).content)
+    )
+    return clean_v3_candidate_output(_reject_length_limited_response(response, stage=f"{family}:initial"))
 
 
 def _generate_recovery_candidate(
@@ -826,8 +843,10 @@ def _generate_recovery_candidate(
         compression_policy=compression_policy,
         style_examples=examples_for_family(family),
     )
-    gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(compression_policy.max_words))
-    return clean_v3_candidate_output(gateway.chat(prompt, system="Return only the rewritten document as plain text.").content)
+    token_words = max(compression_policy.max_words, word_count(original_text) + 420)
+    gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(token_words))
+    response = gateway.chat(prompt, system="Return only the rewritten document as plain text.")
+    return clean_v3_candidate_output(_reject_length_limited_response(response, stage="recovery_revision"))
 
 
 def _generate_contract_repair_candidate(
@@ -1231,6 +1250,29 @@ def _generate_paragraph_portfolio_candidate(
     )
 
 
+def _generate_paragraph_ownership_candidate(
+    *,
+    original_text: str,
+    scan_contract: ScanContract,
+    content_mode: str,
+    family: str,
+    target_groups: list[Any],
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+) -> tuple[str, dict[str, Any]]:
+    return _run_paragraph_ownership_candidate(
+        original_text=original_text,
+        scan_contract=scan_contract,
+        content_mode=content_mode,
+        family=family,
+        target_groups=target_groups,
+        gateway_factory=lambda max_tokens: _gateway(api_key, model, base_url, max_tokens=max_tokens),
+        token_budget=_max_tokens_for_words,
+        config=paragraph_portfolio_config(fallback_batch_size=_target_executor_batch_size()),
+    )
+
+
 def _generate_target_executor_candidate(
     *,
     original_text: str,
@@ -1417,6 +1459,64 @@ def _generate_scanner_controlled_candidate(
     round_trace: list[dict[str, Any]] = []
     last_groups: list[Any] = []
     errors: list[str] = []
+
+    if ownership_repair_mode:
+        current_contract = build_scan_contract(current_report, current_text)
+        ownership_groups = group_rewrite_targets(
+            original_text=current_text,
+            rewrite_target_profile=current_contract.rewrite_target_profile,
+            max_groups=max(_max_target_executor_groups(), config.groups_per_round * 2),
+        )
+        if strategy_id:
+            allowed_target_ids: set[str] = set()
+            for problem_group in current_contract.problem_groups or []:
+                if not isinstance(problem_group, dict):
+                    continue
+                allowed = {str(item) for item in problem_group.get("allowed_operations") or []}
+                if strategy_id not in allowed:
+                    continue
+                allowed_target_ids.update(
+                    str(target_id)
+                    for target_id in problem_group.get("target_ids") or []
+                    if str(target_id)
+                )
+            if allowed_target_ids:
+                ownership_groups = [
+                    group for group in ownership_groups
+                    if any(
+                        str(target.get("target_id") or "") in allowed_target_ids
+                        for target in group.targets
+                        if isinstance(target, dict)
+                    )
+                ]
+            else:
+                ownership_groups = [
+                    group for group in ownership_groups
+                    if group.operation == strategy_id
+                ]
+        ownership_groups = rank_scanner_target_groups(
+            report=current_report,
+            goal=current_goal,
+            groups=ownership_groups,
+        )[:config.groups_per_round]
+        if any(group.operation == "paragraph_preserving_broad_reconstruction" for group in ownership_groups):
+            text, trace = _generate_paragraph_ownership_candidate(
+                original_text=current_text,
+                scan_contract=current_contract,
+                content_mode=content_mode,
+                family=family,
+                target_groups=ownership_groups,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+            )
+            return text, {
+                **trace,
+                "scanner_controlled": True,
+                "planned_strategy_id": strategy_id,
+                "ownership_repair_mode": True,
+                "executed_strategy": "claim_ownership_repair",
+            }
 
     gateway = _gateway(api_key, model, base_url, max_tokens=_max_tokens_for_words(900))
 
@@ -2459,11 +2559,26 @@ def run_rewrite_pipeline_v3(
     elif full_rewrite_allowed and not primary_generation_failed:
         while (time.time() - started) < max_runtime_seconds and len(candidate_evaluations) < 5:
             latest_trace = candidate_evaluations[-1].get("trace") if isinstance(candidate_evaluations[-1].get("trace"), dict) else {}
-            planned_problem_strategy = _next_planned_problem_strategy(
-                strategy_plan=strategy_plan,
-                tried_strategy_ids=tried_problem_strategy_ids,
-                latest_trace=latest_trace,
+            latest_issues = issues_from_trace(latest_trace)
+            ownership_repair_due = (
+                CandidateIssue.OWNERSHIP_MISSING in latest_issues
+                and CandidateAction.CLAIM_OWNERSHIP_REPAIR not in tried_actions
+                and bool(latest_trace.get("scanner_controlled_executor_available") or latest_trace.get("target_execution_available"))
             )
+            if ownership_repair_due:
+                planned_problem_strategy = ""
+                loop_decision = LoopDecision(
+                    action=CandidateAction.CLAIM_OWNERSHIP_REPAIR,
+                    source_index=len(candidate_evaluations) - 1,
+                    issues=latest_issues,
+                    reason="claim_ownership_repair_before_problem_strategy_exhaustion",
+                )
+            else:
+                planned_problem_strategy = _next_planned_problem_strategy(
+                    strategy_plan=strategy_plan,
+                    tried_strategy_ids=tried_problem_strategy_ids,
+                    latest_trace=latest_trace,
+                )
             if planned_problem_strategy:
                 loop_decision = LoopDecision(
                     action=CandidateAction.TARGET_EXECUTOR,
@@ -2471,8 +2586,7 @@ def run_rewrite_pipeline_v3(
                     issues=issues_from_trace(latest_trace),
                     reason=f"execute_planned_problem_strategy:{planned_problem_strategy}",
                 )
-            else:
-                latest_issues = issues_from_trace(latest_trace)
+            elif not ownership_repair_due:
                 exhausted_scanner_problem = (
                     problem_inventory_driven
                     and any(
@@ -2761,17 +2875,33 @@ def run_rewrite_pipeline_v3(
     if selected_action == CandidateAction.RETURN_BEST_FOR_REVIEW:
         selected_index, portfolio_scores = select_portfolio_candidate(candidate_evaluations, family=family)
     selected = candidate_evaluations[selected_index]
-    public_status = {
-        CandidateAction.ACCEPT_STRICT: RewriteGoalStatus.AI_MITIGATED.value,
-        CandidateAction.ACCEPT_EXTERNAL: "rewrite_candidate_generated_needs_external_review",
-        CandidateAction.RETURN_BEST_FOR_REVIEW: "rewrite_candidate_generated_needs_external_review",
-    }[selected_action]
+    selected_trace_for_status = selected.get("trace") if isinstance(selected.get("trace"), dict) else {}
+    selected_outcome_for_status = str(selected_trace_for_status.get("candidate_outcome") or "")
+    no_reviewable_candidate = bool(
+        selected_action == CandidateAction.RETURN_BEST_FOR_REVIEW
+        and (
+            not str(selected.get("text") or "").strip()
+            or selected_outcome_for_status.startswith("generation_failed")
+        )
+    )
+    if no_reviewable_candidate:
+        public_status = RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value
+    else:
+        public_status = {
+            CandidateAction.ACCEPT_STRICT: RewriteGoalStatus.AI_MITIGATED.value,
+            CandidateAction.ACCEPT_EXTERNAL: "rewrite_candidate_generated_needs_external_review",
+            CandidateAction.RETURN_BEST_FOR_REVIEW: "rewrite_candidate_generated_needs_external_review",
+        }[selected_action]
     converged = selected_action == CandidateAction.ACCEPT_STRICT
-    convergence_reason = {
-        CandidateAction.ACCEPT_STRICT: "rewrite_v3_strict_goal_met",
-        CandidateAction.ACCEPT_EXTERNAL: "rewrite_v3_external_calibrated_candidate_requires_review",
-        CandidateAction.RETURN_BEST_FOR_REVIEW: "rewrite_v3_best_candidate_needs_external_review",
-    }[selected_action]
+    convergence_reason = (
+        "rewrite_v3_no_safe_candidate_generated"
+        if no_reviewable_candidate
+        else {
+            CandidateAction.ACCEPT_STRICT: "rewrite_v3_strict_goal_met",
+            CandidateAction.ACCEPT_EXTERNAL: "rewrite_v3_external_calibrated_candidate_requires_review",
+            CandidateAction.RETURN_BEST_FOR_REVIEW: "rewrite_v3_best_candidate_needs_external_review",
+        }[selected_action]
+    )
     final_text = selected["text"] or original_text
     final_report = selected["report"] or original_report
 
