@@ -2993,6 +2993,57 @@ try:
 finally:
     v3_pipeline._generate_target_executor_candidate = original_target_executor_generator
 
+original_next_planned_problem_strategy = v3_pipeline._next_planned_problem_strategy
+original_decide_next_action = v3_pipeline.decide_next_action
+original_recovery_generator = v3_pipeline._generate_recovery_candidate
+try:
+    recovery_called = {"value": False}
+
+    def fake_no_planned_problem_strategy(**kwargs):
+        return None
+
+    def fake_decide_targeted_repair(*args, **kwargs):
+        return v3_pipeline.LoopDecision(
+            action=CandidateAction.REPAIR_TARGETED,
+            source_index=0,
+            issues=(CandidateIssue.SEGMENT_AI_FOOTPRINT,),
+            reason="target_unresolved_candidate_issues",
+        )
+
+    def fake_recovery_should_not_run(**kwargs):
+        recovery_called["value"] = True
+        raise AssertionError("unbounded recovery revision should not run for problem-inventory V3")
+
+    v3_pipeline._next_planned_problem_strategy = fake_no_planned_problem_strategy
+    v3_pipeline.decide_next_action = fake_decide_targeted_repair
+    v3_pipeline._generate_recovery_candidate = fake_recovery_should_not_run
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stopped_recovery = run_rewrite_pipeline_v3(
+            detect_json={
+                **report_for(broad_source, ai=70.0),
+                "rewrite_target_profile": paragraph_strategy_profile,
+                "problem_inventory": paragraph_problem_inventory,
+            },
+            output_dir=tmpdir,
+            replay_candidate_records=[{
+                "text": broad_candidate,
+                "report": report_for(broad_candidate, ai=60.0),
+            }],
+            required_ai_drop=20.0,
+            max_runtime_seconds=60,
+        )
+        stopped_summary = stopped_recovery["result"].summary
+        assert_test(
+            not recovery_called["value"]
+            and stopped_summary["candidate_loop_trace"][0]["reason"] == "stop_before_unbounded_recovery_revision"
+            and len(stopped_summary["candidate_trace"]) == 1,
+            "V3 problem-inventory loop stops before unbounded whole-document recovery revision",
+        )
+finally:
+    v3_pipeline._next_planned_problem_strategy = original_next_planned_problem_strategy
+    v3_pipeline.decide_next_action = original_decide_next_action
+    v3_pipeline._generate_recovery_candidate = original_recovery_generator
+
 with tempfile.TemporaryDirectory() as tmpdir:
     result = run_rewrite_pipeline_v3(
         detect_json=report_for(cited_source, mode="academic_cited_text", ai=55.0),

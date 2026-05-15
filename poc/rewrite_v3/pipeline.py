@@ -950,6 +950,10 @@ def _scanner_controlled_should_run_first(scan_contract: ScanContract) -> bool:
     return False
 
 
+def _unbounded_recovery_enabled() -> bool:
+    return os.environ.get("DRAFTPROOF_REWRITE_V3_ALLOW_UNBOUNDED_RECOVERY", "0").lower() in {"1", "true", "yes", "on"}
+
+
 def _target_executor_available(scan_contract: ScanContract) -> bool:
     if not scan_contract.rewrite_targets:
         return False
@@ -2404,6 +2408,17 @@ def run_rewrite_pipeline_v3(
                         candidate_evaluations,
                         has_positive_boundaries=bool(examples_for_family(family).get("positive") or []),
                         tried_actions=tried_actions,
+                    )
+                if (
+                    loop_decision.action == CandidateAction.REPAIR_TARGETED
+                    and problem_inventory_driven
+                    and not _unbounded_recovery_enabled()
+                ):
+                    loop_decision = LoopDecision(
+                        action=CandidateAction.RETURN_BEST_FOR_REVIEW,
+                        source_index=loop_decision.source_index,
+                        issues=loop_decision.issues,
+                        reason="stop_before_unbounded_recovery_revision",
                     )
             loop_trace.append(loop_decision.to_dict())
             if loop_decision.action in {
