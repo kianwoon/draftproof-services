@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from llm.gateway import LLMGateway
@@ -10,6 +11,14 @@ from rewrite_v3.document_units import word_count
 
 from .models import RepairBrief
 from .validation import parse_json_object, sanitize_repair_brief
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def scanner_evidence_for_group(group: Any) -> dict[str, Any]:
@@ -105,7 +114,7 @@ def llm_repair_brief(group: Any, gateway: LLMGateway) -> RepairBrief:
         response_format={"type": "json_object"},
         temperature=0.1,
         top_p=0.8,
-        max_tokens=900,
+        max_tokens=_int_env("DRAFTPROOF_REWRITE_V4_NORMALIZER_MAX_TOKENS", 3000, minimum=600, maximum=8000),
     )
     data, diagnostics = parse_json_object(response.content)
     if data is None:

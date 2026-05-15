@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from llm.gateway import LLMGateway
@@ -10,6 +11,14 @@ from rewrite_v3.document_units import word_count
 
 from .models import CandidateVariant, RepairBrief
 from .validation import parse_generator_variants
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def word_bounds(source_text: str, *, tolerance: float = 0.10) -> tuple[int, int]:
@@ -67,7 +76,7 @@ def generate_variants(
         response_format={"type": "json_object"},
         temperature=0.35,
         top_p=0.85,
-        max_tokens=1800,
+        max_tokens=_int_env("DRAFTPROOF_REWRITE_V4_GENERATOR_MAX_TOKENS", 6000, minimum=800, maximum=12000),
     )
     min_words, max_words = word_bounds(str(getattr(group, "source_text", "") or ""))
     variants, diagnostics = parse_generator_variants(response.content, min_words=min_words, max_words=max_words)

@@ -34,6 +34,7 @@ def run_v4_experiment(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -58,7 +59,7 @@ def run_v4_experiment(
     if unit_ids:
         groups = [group for group in groups if str(group.unit_id) in unit_ids]
 
-    gateway = LLMGateway(LLMConfig(api_key=api_key, model=model, base_url=base_url, max_tokens=1800, temperature=0.25, top_p=0.85, timeout=180))
+    gateway = LLMGateway(LLMConfig(api_key=api_key, model=model, base_url=base_url, max_tokens=6000, temperature=0.25, top_p=0.85, timeout=180, extra_body=extra_body))
     experiments: list[dict[str, Any]] = []
     for group in groups:
         briefs: list[RepairBrief] = [deterministic_repair_brief(group)]
@@ -123,6 +124,7 @@ def run_v4_iterative_rewrite(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a full rewritten document by applying safe V4 candidates one at a time."""
 
@@ -139,7 +141,7 @@ def run_v4_iterative_rewrite(
     original_metrics = _metrics(input_text=input_text, report=original_report, goal=original_goal)
     original_baseline = _score_summary(original_report, original_metrics)
 
-    gateway = LLMGateway(LLMConfig(api_key=api_key, model=model, base_url=base_url, max_tokens=1800, temperature=0.25, top_p=0.85, timeout=180))
+    gateway = LLMGateway(LLMConfig(api_key=api_key, model=model, base_url=base_url, max_tokens=6000, temperature=0.25, top_p=0.85, timeout=180, extra_body=extra_body))
     accepted: list[dict[str, Any]] = []
     rounds: list[dict[str, Any]] = []
     current_report = original_report
@@ -294,6 +296,7 @@ def run_v4_fast_rewrite(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Production-shaped V4 experiment with bounded search cost."""
 
@@ -310,6 +313,7 @@ def run_v4_fast_rewrite(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        extra_body=extra_body,
     )
 
 

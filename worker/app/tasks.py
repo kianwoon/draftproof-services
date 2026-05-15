@@ -1477,7 +1477,18 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 )
                 if isinstance(rewrite_model, str) and rewrite_model.strip().lower() in {"0", "false", "no", "off"}:
                     rewrite_model = settings.DRAFTPROOF_GENERATOR_MODEL or settings.LLM_MODEL or None
-                if settings.DRAFTPROOF_REWRITE_V3_ENABLED:
+                if settings.DRAFTPROOF_REWRITE_V4_ENABLED:
+                    from rewrite_v4 import run_rewrite_pipeline_v4
+                    v4_rewrite_model = settings.DRAFTPROOF_REWRITE_V4_MODEL or rewrite_model
+                    result = run_rewrite_pipeline_v4(
+                        detect_json=report_json,
+                        output_dir=tmpdir,
+                        api_key=llm_api_key or None,
+                        model=v4_rewrite_model,
+                        base_url=settings.LLM_BASE_URL or None,
+                        progress_callback=report_rewrite_progress,
+                    )
+                elif settings.DRAFTPROOF_REWRITE_V3_ENABLED:
                     from rewrite_v3 import run_rewrite_pipeline_v3
                     result = run_rewrite_pipeline_v3(
                         detect_json=report_json,
