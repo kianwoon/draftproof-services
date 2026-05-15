@@ -410,19 +410,38 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
         tokens = text.split()
         alpha_run = 0
         max_alpha_run = 0
+        non_alnum_run = 0
+        max_non_alnum_run = 0
         punctuation = 0
         non_ascii_punctuation = 0
+        symbol = 0
+        emoji_like = 0
+        zero_width = 0
+        control_or_unassigned = 0
         for char in chars:
             if char.isalpha():
                 alpha_run += 1
                 max_alpha_run = max(max_alpha_run, alpha_run)
             else:
                 alpha_run = 0
+            if char.isalnum() or char.isspace():
+                non_alnum_run = 0
+            else:
+                non_alnum_run += 1
+                max_non_alnum_run = max(max_non_alnum_run, non_alnum_run)
             category = unicodedata.category(char)
             if category.startswith("P"):
                 punctuation += 1
                 if ord(char) > 127:
                     non_ascii_punctuation += 1
+            if category.startswith("S"):
+                symbol += 1
+            if category == "Cf":
+                zero_width += 1
+            if category.startswith("C") and category not in {"Cc", "Cf"}:
+                control_or_unassigned += 1
+            if ord(char) >= 0x1F000:
+                emoji_like += 1
         long_tokens = [token for token in tokens if len(token) >= 24]
         return {
             "char_count": len(chars),
@@ -430,7 +449,12 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
             "space_ratio": sum(1 for char in chars if char.isspace()) / char_count,
             "punctuation_ratio": punctuation / char_count,
             "non_ascii_punctuation_ratio": non_ascii_punctuation / char_count,
+            "symbol_ratio": symbol / char_count,
+            "emoji_like_count": emoji_like,
+            "zero_width_count": zero_width,
+            "control_or_unassigned_count": control_or_unassigned,
             "max_alpha_run": max_alpha_run,
+            "max_non_alnum_run": max_non_alnum_run,
             "long_token_ratio": len(long_tokens) / max(1, len(tokens)),
         }
 
@@ -456,6 +480,16 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
         failures.append("punctuation_script_shift")
     if cand["punctuation_ratio"] > max(0.18, src["punctuation_ratio"] + 0.10):
         failures.append("punctuation_density_shift")
+    if cand["symbol_ratio"] > max(0.03, src["symbol_ratio"] + 0.02):
+        failures.append("unicode_symbol_burst")
+    if cand["emoji_like_count"] > src["emoji_like_count"]:
+        failures.append("emoji_or_decorative_symbol_injection")
+    if cand["zero_width_count"] > src["zero_width_count"]:
+        failures.append("zero_width_character_injection")
+    if cand["control_or_unassigned_count"] > src["control_or_unassigned_count"]:
+        failures.append("control_or_unassigned_character_injection")
+    if cand["max_non_alnum_run"] > max(12, src["max_non_alnum_run"] + 8):
+        failures.append("non_language_symbol_run")
     return {
         "passed": not failures,
         "failures": failures,
@@ -2435,13 +2469,14 @@ def run_rewrite_pipeline_v3(
         compression_ok = _compression_accepted(compression_result)
         integrity_result = _text_integrity(original_text, text)
         generated_empty = not bool(str(text or "").strip())
-        should_scan_candidate = not generated_empty
+        integrity_passed = bool(integrity_result["passed"])
+        should_scan_candidate = bool(not generated_empty and integrity_passed)
         scanned_report = report
         scan_input_hash = _text_hash(text)
         if should_scan_candidate and scanned_report is None:
             progress(78, f"Scanning V3 {mode} candidate")
             scanned_report = _scan_report(text)
-        elif scanned_report is None and not generated_empty:
+        elif scanned_report is None and not generated_empty and integrity_passed:
             scanned_report = original_report
         elif scanned_report is None:
             scanned_report = {}
@@ -2454,6 +2489,7 @@ def run_rewrite_pipeline_v3(
             "input_text_matches_candidate": bool(report_input_text == str(text or "")),
             "scan_reused_supplied_report": bool(report is not None),
             "empty_candidate_no_report_fallback": bool(generated_empty and report is None),
+            "integrity_failed_no_scan": bool(not integrity_passed and report is None),
             "predictability_sentence_cache_enabled": os.environ.get("DRAFTPROOF_PREDICTABILITY_SENTENCE_CACHE", "1").lower() not in {"0", "false", "no", "off"},
             "predictability_cache": _predictability_cache_info(scanned_report),
         }

@@ -2299,6 +2299,30 @@ assert_test(
     and "merged_source_token" in integrity_single_compound["warnings"],
     "V3 text-integrity guard treats a single normal compound-like merge as a repairable warning, not hard corruption",
 )
+integrity_unicode_garbage = v3_pipeline._text_integrity(
+    "Assessment should include drafts, reflection, feedback, and improvement.",
+    "Assessment should include drafts and revision. \u2060\u200b⚖🧩♻🗺✂📎🔗〰✅❇⬆↔◀▶◇◆○●□■☆★",
+)
+assert_test(
+    not integrity_unicode_garbage["passed"]
+    and {"unicode_symbol_burst", "emoji_or_decorative_symbol_injection", "zero_width_character_injection", "non_language_symbol_run"}.intersection(integrity_unicode_garbage["failures"]),
+    "V3 text-integrity guard rejects Unicode symbol and invisible-character corruption",
+)
+with tempfile.TemporaryDirectory() as tmpdir:
+    corrupted_replay = run_rewrite_pipeline_v3(
+        detect_json=report_for(broad_source, ai=70.0),
+        output_dir=tmpdir,
+        replay_candidate_records=[{"text": f"{broad_candidate}\n\n\u2060\u200b⚖🧩♻🗺✂📎🔗〰✅❇⬆↔◀▶◇◆○●□■☆★"}],
+        full_rewrite_allowed=False,
+        max_runtime_seconds=60,
+    )
+    corrupted_trace = corrupted_replay["result"].summary["candidate_trace"][0]
+    assert_test(
+        corrupted_trace["candidate_outcome"] == "corrupted_output"
+        and corrupted_trace["scan_freshness"]["integrity_failed_no_scan"] is True
+        and corrupted_trace["scan_freshness"]["input_text_present"] is False,
+        "V3 corrupted generated candidates are rejected before scanner/proxy evaluation",
+    )
 
 with tempfile.TemporaryDirectory() as tmpdir:
     no_movement = run_rewrite_pipeline_v3(
