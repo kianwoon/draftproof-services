@@ -15,6 +15,7 @@ from typing import Any, Callable
 from .document_units import structural_shape_contract, structural_shape_failures, word_count
 from .output_cleaning import clean_v3_candidate_output
 from .prompt_templates.paragraph_portfolio import (
+    PromptTemplatePayload,
     build_paragraph_portfolio_planner_prompt,
     build_paragraph_portfolio_reconstruction_prompt,
     build_paragraph_portfolio_topk_prompt,
@@ -350,7 +351,13 @@ def build_reconstruction_batches_by_prompt(
             content_mode=content_mode,
             family=family,
         )
-        prompt_chars = len(build_paragraph_portfolio_reconstruction_prompt(trial_context, planner_output).prompt)
+        prompt_chars = len(
+            _reconstruction_prompt_for_budget(
+                trial_context,
+                planner_output,
+                max_prompt_chars=max_prompt_chars,
+            )[0].prompt
+        )
         too_many_groups = len(trial) > max(1, int(fallback_batch_size or 1))
         if current and (prompt_chars > max_prompt_chars or too_many_groups):
             batches.append(current)
@@ -390,6 +397,23 @@ def _auto_topk_repair_enabled(scan_contract: Any, target_groups: list[TargetGrou
     return False
 
 
+def _reconstruction_prompt_for_budget(
+    context: dict[str, Any],
+    planner_output: dict[str, Any],
+    *,
+    max_prompt_chars: int,
+) -> tuple[PromptTemplatePayload, bool]:
+    template = build_paragraph_portfolio_reconstruction_prompt(context, planner_output)
+    if len(template.prompt) <= max_prompt_chars:
+        return template, False
+    compact_template = build_paragraph_portfolio_reconstruction_prompt(
+        context,
+        planner_output,
+        compact_for_budget=True,
+    )
+    return compact_template, True
+
+
 def _call_reconstruction_batch(
     *,
     batch: list[TargetGroup],
@@ -410,7 +434,11 @@ def _call_reconstruction_batch(
         content_mode=content_mode,
         family=family,
     )
-    reconstruction_template = build_paragraph_portfolio_reconstruction_prompt(batch_context, planner_output)
+    reconstruction_template, budget_compacted = _reconstruction_prompt_for_budget(
+        batch_context,
+        planner_output,
+        max_prompt_chars=max_prompt_chars,
+    )
     reconstruction_error = None
     batch_replacements: list[dict[str, str]] = []
     diagnostics: dict[str, Any] = {
@@ -454,6 +482,7 @@ def _call_reconstruction_batch(
         "prompt_budget": {
             "max_prompt_chars": max_prompt_chars,
             "within_budget": len(reconstruction_template.prompt) <= max_prompt_chars,
+            "compacted": budget_compacted,
         },
         "retry_of_batch": retry_of_batch,
         "error": reconstruction_error,
@@ -626,31 +655,7 @@ def generate_paragraph_portfolio_candidate(
             "topk_repair_attempted": False,
             "strategy_stop_reason": "reconstruction_failed",
         }
-    if missing_replacement_group_ids:
-        return "", target_execution_trace(
-            attempted=True,
-            target_groups=target_groups,
-            replacements=replacements,
-            batches=[
-                {
-                    "batch_index": index,
-                    "group_ids": [group.group_id for group in batch],
-                }
-                for index, batch in enumerate(reconstruction_batches, start=1)
-            ],
-            error="generation_failed_incomplete_replacements",
-        ) | {
-            "executor_engine": "paragraph_portfolio_template",
-            "prompt_template_id": "paragraph_portfolio.v1",
-            "prompt_stage": "paragraph_reconstruction",
-            "scanner_context_used": ["planner_output", "source_text", "dominant_drivers", "word_count_guide"],
-            "planner_output": planner_output,
-            "prompt_stage_trace": stage_trace,
-            "parse_diagnostics": parse_diagnostics,
-            "missing_replacement_group_ids": missing_replacement_group_ids,
-            "topk_repair_attempted": False,
-            "strategy_stop_reason": "reconstruction_incomplete",
-        }
+    partial_candidate = bool(missing_replacement_group_ids)
 
     replacements_by_group = {
         row["group_id"]: row
@@ -665,8 +670,12 @@ def generate_paragraph_portfolio_candidate(
             batch_replacements = [row for row in replacements if row.get("group_id") in batch_ids]
             if not batch_replacements:
                 continue
+            replacement_group_ids = {str(row.get("group_id") or "") for row in batch_replacements}
+            topk_batch = [group for group in batch if group.group_id in replacement_group_ids]
+            if not topk_batch:
+                continue
             batch_context = _context_for_batch(
-                batch=batch,
+                batch=topk_batch,
                 scan_contract=scan_contract,
                 content_mode=content_mode,
                 family=family,
@@ -689,13 +698,13 @@ def generate_paragraph_portfolio_candidate(
                     preview_chars=config.raw_preview_chars,
                 )
                 batch_topk_replacements, topk_structure_status = validate_replacement_structure(
-                    target_groups=batch,
+                    target_groups=topk_batch,
                     replacements=batch_topk_replacements,
                 )
                 topk_diagnostics["structure_status"] = topk_structure_status
                 topk_diagnostics["structure_valid_count"] = len(batch_topk_replacements)
                 batch_topk_replacements, topk_effect_status = validate_topk_replacement_effect(
-                    target_groups=batch,
+                    target_groups=topk_batch,
                     current_replacements=batch_replacements,
                     replacements=batch_topk_replacements,
                     predictability_briefs=list(getattr(scan_contract, "predictability_briefs", ()) or ()),
@@ -717,7 +726,7 @@ def generate_paragraph_portfolio_candidate(
             stage_trace.append({
                 **topk_template.to_trace(),
                 "batch_index": batch_index,
-                "group_ids": [group.group_id for group in batch],
+                "group_ids": [group.group_id for group in topk_batch],
                 "replacement_count": len(batch_topk_replacements),
                 "parse_diagnostics": topk_diagnostics,
                 "error": topk_error,
@@ -783,9 +792,17 @@ def generate_paragraph_portfolio_candidate(
         "parse_diagnostics": parse_diagnostics,
         "stage_apply_status": apply_status,
         "stage_rescan_delta": None,
+        "partial_candidate": partial_candidate,
+        "missing_replacement_group_ids": missing_replacement_group_ids,
         "topk_repair_attempted": bool(topk_enabled),
         "strategy_stop_reason": stop_reason if stop_reason != "candidate_generated" else (
-            "topk_repair_applied" if topk_replacements else "reconstruction_generated_topk_deferred"
+            "partial_topk_repair_applied" if partial_candidate and topk_replacements else (
+                "topk_repair_applied" if topk_replacements else (
+                    "partial_reconstruction_generated_topk_deferred"
+                    if partial_candidate
+                    else "reconstruction_generated_topk_deferred"
+                )
+            )
         ),
     })
     if text.strip() == original_text.strip():

@@ -1576,6 +1576,30 @@ assert_test(
     segment_loop.action == CandidateAction.CLAIM_OWNERSHIP_REPAIR,
     "V3 loop routes segment footprint failures with no owned trace to claim ownership repair first",
 )
+latest_failed_ownership_loop = decide_next_action(
+    [{
+        "trace": {
+            "validation": {"passed": False, "failures": []},
+            "compression": {"status": "below_floor"},
+            "compression_accepted": False,
+            "semantic_safe": True,
+            "detector_movement": False,
+            "target_gate_passed": False,
+            "candidate_outcome": "generation_failed_empty_output",
+            "target_execution_available": True,
+            "scanner_controlled_executor_available": True,
+            "external_proxy": {"reasons": ["segment_ai_or_assisted_fraction_high", "segment_human_fraction_low"]},
+            "ownership_gate": {"active": True, "passed": False, "ownership_score": 0.0, "ownership_change_count": 0},
+        }
+    }],
+    has_positive_boundaries=False,
+    tried_actions=set(),
+)
+assert_test(
+    latest_failed_ownership_loop.action == CandidateAction.CLAIM_OWNERSHIP_REPAIR
+    and latest_failed_ownership_loop.reason == "claim_ownership_repair_after_latest_ownership_failure",
+    "V3 loop prioritizes ownership repair before planned broad recovery when the latest candidate is empty but ownership-missing",
+)
 segment_authorship_loop = decide_next_action(
     [{
         "trace": {
@@ -2736,10 +2760,11 @@ try:
         base_url=None,
     )
     assert_test(
-        partial_text == ""
-        and partial_trace["error"] == "generation_failed_incomplete_replacements"
+        "students meet information through phones" in partial_text
+        and partial_trace["error"] is None
+        and partial_trace["partial_candidate"] is True
         and partial_trace["missing_replacement_group_ids"] == ["tg002"],
-        "V3 paragraph portfolio rejects incomplete batch output instead of applying partial rewrites",
+        "V3 paragraph portfolio applies valid partial replacements instead of discarding the whole candidate",
     )
 finally:
     v3_pipeline._gateway = original_gateway_factory

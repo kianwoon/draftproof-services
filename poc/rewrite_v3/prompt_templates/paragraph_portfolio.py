@@ -347,8 +347,19 @@ def _unique_ordered_text(values: list[Any]) -> list[str]:
     return unique
 
 
-def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, Any]) -> dict[str, Any]:
-    before_after_limit = _int_env("DRAFTPROOF_REWRITE_V3_PORTFOLIO_CONTEXT_CHARS", 100, low=40, high=240)
+def _reconstruction_context(
+    context: dict[str, Any],
+    planner_output: dict[str, Any],
+    *,
+    compact_for_budget: bool = False,
+) -> dict[str, Any]:
+    before_after_limit = (
+        48
+        if compact_for_budget
+        else _int_env("DRAFTPROOF_REWRITE_V3_PORTFOLIO_CONTEXT_CHARS", 100, low=40, high=240)
+    )
+    anchor_limit = 2 if compact_for_budget else 4
+    soft_anchor_limit = 3 if compact_for_budget else 5
     compact_groups = []
     group_ids = set()
     plans = _plan_by_group(planner_output)
@@ -375,12 +386,12 @@ def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, A
             "after_context": _limit_text(group.get("after_context"), before_after_limit),
             "source_structure_contract": structural_shape_contract(str(group.get("source_text") or "")),
             "execution_contract": _execution_contract(group, plan),
-            "ownership_contract": ownership_contract_for_group(group),
+            "ownership_contract": ownership_contract_for_group(group, compact=compact_for_budget),
             "required_movement": group.get("required_movement") or {},
-            "protected_anchors": _compact_anchors(protected_anchors, limit=4),
-            "required_protected_anchors": _compact_anchors(required_protected_anchors, limit=4),
-            "out_of_scope_protected_anchors": _compact_anchors(out_of_scope_protected_anchors, limit=4),
-            "soft_guidance_anchors": _compact_anchors(list(group.get("soft_guidance_anchors") or []), limit=5),
+            "protected_anchors": _compact_anchors(protected_anchors, limit=anchor_limit),
+            "required_protected_anchors": _compact_anchors(required_protected_anchors, limit=anchor_limit),
+            "out_of_scope_protected_anchors": _compact_anchors(out_of_scope_protected_anchors, limit=anchor_limit),
+            "soft_guidance_anchors": _compact_anchors(list(group.get("soft_guidance_anchors") or []), limit=soft_anchor_limit),
             "word_count_guide": group.get("word_count_guide") or {},
             "target_ids": list(group.get("target_ids") or [])[:3],
         })
@@ -389,7 +400,7 @@ def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, A
         "content_mode": summary.get("content_mode"),
         "strategy_family": summary.get("strategy_family"),
         "target_profile_summary": summary.get("target_profile_summary"),
-        "footprint_summary": summary.get("ai_footprint_profile"),
+        "footprint_summary": {} if compact_for_budget else summary.get("ai_footprint_profile"),
         "target_groups": compact_groups,
         "paragraph_plans": _plan_rows_for_groups(planner_output, group_ids),
     }
@@ -770,36 +781,56 @@ def fallback_paragraph_portfolio_plan(target_groups: list[TargetGroup]) -> dict[
 def build_paragraph_portfolio_reconstruction_prompt(
     context: dict[str, Any],
     planner_output: dict[str, Any],
+    *,
+    compact_for_budget: bool = False,
 ) -> PromptTemplatePayload:
+    rules = [
+        "Return JSON only with a replacements array.",
+        "Return one replacement for every target group.",
+        "Rewrite only the source_text for each target group.",
+        "Preserve hard anchors exactly.",
+        "Copy each required_protected_anchors.text exactly as provided, including punctuation and quote style.",
+        "Do not force out_of_scope_protected_anchors into replacement_text; they are shown only for diagnostics and are not part of this target source_text.",
+        "Use soft anchors as coverage hints, not exact strings.",
+        "Preserve factual meaning and paragraph role.",
+        "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
+        "Do not add blank-line paragraph splits or merge source blocks inside a replacement.",
+        "If source_structure_contract.heading_like_lines is not empty, copy those heading-like lines exactly.",
+        "Do not add unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
+        "Use word_count_guide as a preferred length guide, not a min/max band.",
+        "Do not compress the paragraph into a summary.",
+        "Follow execution_contract.movement and execution_contract.method.",
+        "Follow ownership_contract.golden_rule: do not just change point of view; add source-supported author trace, specific context, and real judgment.",
+        "Preserve source viewpoint unless source_text, before_context, or after_context already supports author experience, action, observation, or decision.",
+        "Do not solve the task by synonym swapping or elevated paraphrase.",
+        "Keep local continuity with before_context and after_context.",
+        "Escape any straight quotation marks inside JSON string values.",
+        "Do not add optional quotation marks inside replacement_text. If a quoted phrase is not a protected hard anchor, write it without quote marks so the JSON remains valid.",
+    ]
+    if compact_for_budget:
+        rules = [
+            "Return JSON only with a replacements array.",
+            "Return one replacement for every target group.",
+            "Rewrite only source_text; keep the same block structure.",
+            "Preserve required hard anchors exactly.",
+            "Preserve factual meaning, paragraph role, and source viewpoint.",
+            "Use the ownership_contract: add source-supported author trace, specific context, and real judgment without inventing events.",
+            "Do not add unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
+            "Do not compress the paragraph into a summary.",
+            "Escape quotation marks inside JSON string values.",
+        ]
     payload = {
         "template_id": TEMPLATE_ID,
         "strategy_id": STRATEGY_ID,
         "prompt_stage": "paragraph_reconstruction",
+        "prompt_budget_mode": "compact" if compact_for_budget else "normal",
         "task": "Rewrite each target paragraph according to its plan and scanner context.",
-        "scanner_context": _reconstruction_context(context, planner_output),
-        "rules": [
-            "Return JSON only with a replacements array.",
-            "Return one replacement for every target group.",
-            "Rewrite only the source_text for each target group.",
-            "Preserve hard anchors exactly.",
-            "Copy each required_protected_anchors.text exactly as provided, including punctuation and quote style.",
-            "Do not force out_of_scope_protected_anchors into replacement_text; they are shown only for diagnostics and are not part of this target source_text.",
-            "Use soft anchors as coverage hints, not exact strings.",
-            "Preserve factual meaning and paragraph role.",
-            "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
-            "Do not add blank-line paragraph splits or merge source blocks inside a replacement.",
-            "If source_structure_contract.heading_like_lines is not empty, copy those heading-like lines exactly.",
-            "Do not add unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",
-            "Use word_count_guide as a preferred length guide, not a min/max band.",
-            "Do not compress the paragraph into a summary.",
-            "Follow execution_contract.movement and execution_contract.method.",
-            "Follow ownership_contract.golden_rule: do not just change point of view; add source-supported author trace, specific context, and real judgment.",
-            "Preserve source viewpoint unless source_text, before_context, or after_context already supports author experience, action, observation, or decision.",
-            "Do not solve the task by synonym swapping or elevated paraphrase.",
-            "Keep local continuity with before_context and after_context.",
-            "Escape any straight quotation marks inside JSON string values.",
-            "Do not add optional quotation marks inside replacement_text. If a quoted phrase is not a protected hard anchor, write it without quote marks so the JSON remains valid.",
-        ],
+        "scanner_context": _reconstruction_context(
+            context,
+            planner_output,
+            compact_for_budget=compact_for_budget,
+        ),
+        "rules": rules,
         "response_schema": {
             "replacements": [
                 {

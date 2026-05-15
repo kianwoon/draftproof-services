@@ -219,6 +219,17 @@ def decide_next_action(
             issues=latest_issues,
             reason="scanner_controlled_span_repair_after_topk_failure",
         )
+    if (
+        CandidateIssue.OWNERSHIP_MISSING in latest_issues
+        and bool(latest_trace.get("scanner_controlled_executor_available") or latest_trace.get("target_execution_available"))
+        and CandidateAction.CLAIM_OWNERSHIP_REPAIR not in tried_actions
+    ):
+        return LoopDecision(
+            action=CandidateAction.CLAIM_OWNERSHIP_REPAIR,
+            source_index=len(candidate_evaluations) - 1,
+            issues=latest_issues,
+            reason="claim_ownership_repair_after_latest_ownership_failure",
+        )
     if CandidateIssue.NO_DETECTOR_MOVEMENT in latest_issues or CandidateIssue.NO_TARGET_MOVEMENT in latest_issues:
         if (
             bool(latest_trace.get("target_execution_available"))
