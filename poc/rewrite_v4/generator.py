@@ -21,14 +21,25 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
-def word_bounds(source_text: str, *, tolerance: float = 0.10) -> tuple[int, int]:
+def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def word_bounds(source_text: str, *, tolerance: float | None = None) -> tuple[int, int]:
     count = max(1, word_count(source_text))
+    if tolerance is None:
+        tolerance = _float_env("DRAFTPROOF_REWRITE_V4_WORD_TOLERANCE", 0.18, minimum=0.05, maximum=0.35)
     return round(count * (1.0 - tolerance)), round(count * (1.0 + tolerance))
 
 
 def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_count: int = 3) -> str:
     source_text = str(getattr(group, "source_text", "") or "")
     min_words, max_words = word_bounds(source_text)
+    source_words = max(1, word_count(source_text))
     payload = {
         "task": "editorial_repair_candidate_generation",
         "paragraph_role": repair_brief.paragraph_role,
@@ -36,7 +47,7 @@ def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_cou
         "repair_tasks": list(repair_brief.repair_tasks),
         "constraints": [
             *repair_brief.constraints,
-            f"Keep between {min_words} and {max_words} words.",
+            f"Stay near the original length of about {source_words} words; do not compress into a summary or expand with new material.",
             f"Return exactly {max(1, int(variant_count))} variants.",
             "Keep it as one paragraph.",
         ],
