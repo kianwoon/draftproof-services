@@ -29,6 +29,7 @@ VARIANT_OPERATORS = (
     "CLAUSE_ROUTE_CHANGE",
     "BROAD_CLAIM_NARROWING",
     "CAUSE_EFFECT_OWNERSHIP",
+    "CLAIM_OWNERSHIP_REPAIR",
 )
 
 
@@ -413,11 +414,17 @@ def build_scanner_controlled_prompt(
     report: dict[str, Any],
     group: TargetGroup,
     variants_per_group: int,
+    ownership_repair_mode: bool = False,
 ) -> str:
     anchors = protected_anchor_placeholders(group)
+    operators = (
+        ("CLAIM_OWNERSHIP_REPAIR",) * max(1, int(variants_per_group))
+        if ownership_repair_mode
+        else VARIANT_OPERATORS[: max(1, int(variants_per_group))]
+    )
     variant_plan = [
         {"variant_id": f"v{index}", "operator": operator}
-        for index, operator in enumerate(VARIANT_OPERATORS[: max(1, int(variants_per_group))], start=1)
+        for index, operator in enumerate(operators, start=1)
     ]
     movement_contract = _movement_contract(report, group)
     movement_contract["variant_plan"] = variant_plan
@@ -443,11 +450,24 @@ def build_scanner_controlled_prompt(
             }
             for row in weak_human_levers(report)
         ],
+        "repair_mode": "claim_ownership_repair" if ownership_repair_mode else "scanner_controlled_span_repair",
         "instructions": [
             f"Create exactly {len(variant_plan)} replacement variants for source_text only.",
             "Each variant must use its assigned movement_contract.variant_plan operator as the main change.",
             "Use movement_contract as the rewrite contract.",
             "Use scanner_action_contract as the span and operation contract.",
+            "Use scanner_action_contract.ownership_contract as the ownership contract.",
+            "Do not just change point of view; every kept variant must improve author_trace, specific_context, or real_judgment using only source_text, before_context, after_context, anchors, or scanner context.",
+            "Do not add fake first-person experience or unsupported anecdotes; preserve source viewpoint unless the source context already supports a viewpoint shift.",
+            *(
+                [
+                    "This is an ownership repair pass: every kept variant must report at least one real ownership_changes row.",
+                    "Prioritize clear author trace, specific context, and real judgment over broad paragraph smoothing.",
+                    "Only modify local wording needed to make the claim feel owned by the source context.",
+                ]
+                if ownership_repair_mode
+                else []
+            ),
             "If scanner_action_contract.citation_pressure_zone is true, keep citation-adjacent wording source-like and do not upgrade it into smoother academic paraphrase.",
             "Patch scanner_action_contract.topk_repair_contract.predictable_spans_in_source when span_source is scanner_exact.",
             "When predictable_span_rows are present, report modified_span_ids using those exact ids.",
@@ -482,6 +502,15 @@ def build_scanner_controlled_prompt(
                     ],
                     "modified_span_ids": ["ps001"],
                     "predictable_spans_modified_count": 0,
+                    "ownership_changes": [
+                        {
+                            "before": "generic local claim",
+                            "after": "owned local judgment",
+                            "operation": "CLAIM_OWNERSHIP_REPAIR",
+                            "trace_source": "source_text",
+                        }
+                    ],
+                    "ownership_elements_supported": ["author_trace", "specific_context", "real_judgment"],
                     "protected_anchors_preserved": True,
                     "new_claims_added": False,
                 }
@@ -522,6 +551,8 @@ def parse_scanner_controlled_variants(raw: str, *, limit: int = 3) -> list[dict[
             "changed_spans": row.get("changed_spans") if isinstance(row.get("changed_spans"), list) else [],
             "modified_span_ids": row.get("modified_span_ids") if isinstance(row.get("modified_span_ids"), list) else [],
             "predictable_spans_modified_count": row.get("predictable_spans_modified_count"),
+            "ownership_changes": row.get("ownership_changes") if isinstance(row.get("ownership_changes"), list) else [],
+            "ownership_elements_supported": row.get("ownership_elements_supported") if isinstance(row.get("ownership_elements_supported"), list) else [],
         })
         if len(variants) >= max(1, int(limit or 1)):
             break
@@ -586,6 +617,7 @@ def scanner_controlled_variant_gate(
     group: TargetGroup,
     variant: dict[str, Any],
     replacement_text: str,
+    require_ownership: bool = False,
 ) -> dict[str, Any]:
     raw_replacement = str(variant.get("replacement_text") or "")
     anchors = protected_anchor_placeholders(group)
@@ -613,6 +645,26 @@ def scanner_controlled_variant_gate(
         group=group,
         predictability_briefs=predictability_briefs_from_report(report),
     )
+    ownership_rows = [
+        row for row in variant.get("ownership_changes") or []
+        if isinstance(row, dict)
+        and _normalized_text(str(row.get("before") or ""))
+        and _normalized_text(str(row.get("before") or "")) != _normalized_text(str(row.get("after") or ""))
+    ]
+    ownership_elements = {
+        str(item)
+        for item in variant.get("ownership_elements_supported") or []
+        if str(item or "") in {"author_trace", "specific_context", "real_judgment"}
+    }
+    ownership_passed = bool(ownership_rows or ownership_elements)
+    if require_ownership and not ownership_passed:
+        return {
+            "passed": False,
+            "reason": "ownership_repair_required",
+            "predictable_spans_modified_count": 0,
+            "ownership_change_count": 0,
+            "ownership_elements_supported": [],
+        }
     topk_contract = action_contract.get("topk_repair_contract") if isinstance(action_contract.get("topk_repair_contract"), dict) else {}
     span_rows = [
         {"id": str(row.get("id") or ""), "text": str(row.get("text") or "")}
@@ -638,6 +690,8 @@ def scanner_controlled_variant_gate(
             "passed": True,
             "reason": "no_exact_span_gate",
             "predictable_spans_modified_count": 0,
+            "ownership_change_count": len(ownership_rows),
+            "ownership_elements_supported": sorted(ownership_elements),
         }
     actual_modified_ids = _actual_modified_span_ids(
         spans=spans,
@@ -650,6 +704,20 @@ def scanner_controlled_variant_gate(
     required_count = int(topk_contract.get("required_modified_spans") or min(2, len(spans)))
     required_count = max(1, min(required_count, len(spans)))
     if modified_count < required_count:
+        if require_ownership and ownership_passed:
+            return {
+                "passed": True,
+                "reason": "ownership_repair_passed_without_required_topk_movement",
+                "predictable_spans_modified_count": modified_count,
+                "declared_predictable_spans_modified_count": declared_count,
+                "self_report_mismatch": declared_count != modified_count,
+                "actual_modified_span_ids": actual_modified_ids,
+                "required_predictable_spans_modified": required_count,
+                "available_predictable_spans": len(spans),
+                "predictable_spans": span_texts,
+                "ownership_change_count": len(ownership_rows),
+                "ownership_elements_supported": sorted(ownership_elements),
+            }
         return {
             "passed": False,
             "reason": "insufficient_predictable_span_movement",
@@ -660,6 +728,8 @@ def scanner_controlled_variant_gate(
             "required_predictable_spans_modified": required_count,
             "available_predictable_spans": len(spans),
             "predictable_spans": span_texts,
+            "ownership_change_count": len(ownership_rows),
+            "ownership_elements_supported": sorted(ownership_elements),
         }
     return {
         "passed": True,
@@ -671,6 +741,8 @@ def scanner_controlled_variant_gate(
         "required_predictable_spans_modified": required_count,
         "available_predictable_spans": len(spans),
         "predictable_spans": span_texts,
+        "ownership_change_count": len(ownership_rows),
+        "ownership_elements_supported": sorted(ownership_elements),
     }
 
 
@@ -749,6 +821,18 @@ def scanner_controlled_candidate_quality(
     novel_token_penalty = min(10.0, novel_token_ratio * (8.0 if action_contract.get("citation_pressure_zone") else 4.0))
     citation_smoothing_risk = polish_risk if action_contract.get("citation_pressure_zone") else 0.0
     self_report_penalty = 5.0 if variant_gate.get("self_report_mismatch") else 0.0
+    ownership_rows = [
+        row for row in variant.get("ownership_changes") or []
+        if isinstance(row, dict)
+        and _normalized_text(str(row.get("before") or ""))
+        and _normalized_text(str(row.get("before") or "")) != _normalized_text(str(row.get("after") or ""))
+    ]
+    ownership_elements = {
+        str(item)
+        for item in variant.get("ownership_elements_supported") or []
+        if str(item or "") in {"author_trace", "specific_context", "real_judgment"}
+    }
+    ownership_score = min(10.0, len(ownership_rows) * 3.0 + len(ownership_elements) * 1.5)
     span_operations = [
         str(row.get("operation") or "")
         for row in changed_rows
@@ -759,6 +843,7 @@ def scanner_controlled_candidate_quality(
         + locality_score
         + preservation_score
         + source_likeness_score
+        + ownership_score
         - polish_risk
         - novel_token_penalty
         - citation_smoothing_risk
@@ -777,6 +862,9 @@ def scanner_controlled_candidate_quality(
         "polish_risk": round(polish_risk, 3),
         "citation_smoothing_risk": round(citation_smoothing_risk, 3),
         "self_report_penalty": round(self_report_penalty, 3),
+        "ownership_score": round(ownership_score, 3),
+        "ownership_change_count": len(ownership_rows),
+        "ownership_elements_supported": sorted(ownership_elements),
         "actual_modified_span_ids": list(variant_gate.get("actual_modified_span_ids") or []),
         "operator_used": variant.get("operator_used"),
         "span_operations": span_operations,

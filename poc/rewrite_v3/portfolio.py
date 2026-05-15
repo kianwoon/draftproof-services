@@ -136,6 +136,17 @@ def score_candidate(item: dict[str, Any], *, family: str, index: int) -> Portfol
     score -= features.fraction_ai * 80.0
     score -= features.fraction_ai_assisted * 35.0
     score += features.fraction_human * 30.0
+    if features.ownership_gate_active:
+        if features.ownership_gate_passed:
+            score += min(features.ownership_score, 15.0) * 4.0
+            score += min(features.ownership_change_count, 4) * 8.0
+            reasons.append("ownership_gate_passed")
+        else:
+            score -= 140.0
+            reasons.append("ownership_gate_failed")
+            if features.fraction_human <= 0.0:
+                score -= 60.0
+                reasons.append("zero_human_fraction_with_ownership_blocker")
     score -= min(features.max_ai_window_words, 300.0) * 0.12
     score -= max(features.wq_delta, 0.0) * 1.4
     score -= features.proxy_reason_count * 10.0

@@ -280,6 +280,74 @@ def _target_profile_movement(before: dict[str, Any], after: dict[str, Any]) -> d
     }
 
 
+def _ownership_summary_from_target_trace(target_trace: dict[str, Any] | None) -> dict[str, Any]:
+    trace = target_trace if isinstance(target_trace, dict) else {}
+    quality_rows: list[dict[str, Any]] = []
+    for key in ("accepted_replacements", "target_replacements", "scanner_controlled_accepted"):
+        rows = trace.get(key) if isinstance(trace.get(key), list) else []
+        for row in rows:
+            if isinstance(row, dict) and isinstance(row.get("candidate_quality"), dict):
+                quality_rows.append(row["candidate_quality"])
+    for row in trace.get("prompt_stage_trace") or []:
+        if not isinstance(row, dict):
+            continue
+        for group in row.get("groups") or []:
+            if not isinstance(group, dict):
+                continue
+            quality = group.get("accepted_candidate_quality")
+            if isinstance(quality, dict):
+                quality_rows.append(quality)
+
+    ownership_elements: set[str] = set()
+    ownership_score = 0.0
+    ownership_change_count = 0
+    for quality in quality_rows:
+        ownership_score = max(ownership_score, _number(quality.get("ownership_score")))
+        ownership_change_count += int(quality.get("ownership_change_count") or 0)
+        ownership_elements.update(
+            str(item)
+            for item in quality.get("ownership_elements_supported") or []
+            if str(item or "")
+        )
+    return {
+        "ownership_score": round(ownership_score, 3),
+        "ownership_change_count": ownership_change_count,
+        "ownership_elements_supported": sorted(ownership_elements),
+        "quality_rows": len(quality_rows),
+    }
+
+
+def _ownership_gate(*, proxy_result: Any, target_trace: dict[str, Any] | None, goal_result: Any) -> dict[str, Any]:
+    proxy_payload = proxy_result.to_dict() if hasattr(proxy_result, "to_dict") else {}
+    reasons = {
+        str(reason)
+        for reason in proxy_payload.get("reasons") or []
+        if str(reason)
+    }
+    segment_blockers = {
+        "segment_ai_fraction_high",
+        "segment_ai_or_assisted_fraction_high",
+        "segment_human_fraction_low",
+        "segment_ai_window_too_large",
+        "high_confidence_ai_window_remaining",
+    }
+    goal_payload = goal_result.to_dict() if hasattr(goal_result, "to_dict") else {}
+    eligible = goal_payload.get("eligible_span_density_gate") if isinstance(goal_payload.get("eligible_span_density_gate"), dict) else {}
+    active = bool(segment_blockers.intersection(reasons) or eligible.get("needs_author_context"))
+    summary = _ownership_summary_from_target_trace(target_trace)
+    passed = (
+        not active
+        or _number(summary.get("ownership_score")) > 0.0
+        or int(summary.get("ownership_change_count") or 0) > 0
+    )
+    return {
+        "active": active,
+        "passed": bool(passed),
+        "reason": "" if passed else "ownership_required_for_human_fraction_blocker",
+        **summary,
+    }
+
+
 def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
     source = str(source_text or "")
     candidate = str(candidate_text or "")
@@ -361,14 +429,20 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
     cand = metrics(candidate)
     merged_candidates = merged_source_token_candidates(source, candidate)
     failures: list[str] = []
+    warnings: list[str] = []
     if candidate.strip() and cand["space_ratio"] < max(0.02, src["space_ratio"] * 0.55):
         failures.append("spacing_collapse")
     if cand["max_alpha_run"] >= max(36, src["max_alpha_run"] * 2):
         failures.append("merged_word_run")
     if cand["long_token_ratio"] > max(0.04, src["long_token_ratio"] + 0.035):
         failures.append("merged_long_tokens")
-    if merged_candidates:
+    if merged_candidates and (
+        failures
+        or any(len(str(row.get("token") or "")) >= 18 for row in merged_candidates if isinstance(row, dict))
+    ):
         failures.append("merged_source_token")
+    elif merged_candidates:
+        warnings.append("merged_source_token")
     if cand["non_ascii_punctuation_ratio"] > max(0.025, src["non_ascii_punctuation_ratio"] + 0.02):
         failures.append("punctuation_script_shift")
     if cand["punctuation_ratio"] > max(0.18, src["punctuation_ratio"] + 0.10):
@@ -376,6 +450,7 @@ def _text_integrity(source_text: str, candidate_text: str) -> dict[str, Any]:
     return {
         "passed": not failures,
         "failures": failures,
+        "warnings": warnings,
         "source": src,
         "candidate": cand,
         "merged_source_token_candidates": merged_candidates,
@@ -1317,6 +1392,7 @@ def _generate_scanner_controlled_candidate(
     model: str | None,
     base_url: str | None,
     strategy_id: str | None = None,
+    ownership_repair_mode: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     config = _scanner_controlled_config()
     current_text = str(original_text or "")
@@ -1405,6 +1481,7 @@ def _generate_scanner_controlled_candidate(
                 report=current_report,
                 group=group,
                 variants_per_group=config.variants_per_group,
+                ownership_repair_mode=ownership_repair_mode,
             )
             llm_error: str | None = None
             raw = ""
@@ -1445,6 +1522,7 @@ def _generate_scanner_controlled_candidate(
                     group=group,
                     variant=variant,
                     replacement_text=replacement_text,
+                    require_ownership=ownership_repair_mode,
                 )
                 if not variant_gate.get("passed"):
                     group_log["variants"].append({
@@ -1574,6 +1652,7 @@ def _generate_scanner_controlled_candidate(
             "replacement_text": row["replacement_text"],
             "round": row["round"],
             "delta": row["delta"],
+            "candidate_quality": row.get("candidate_quality"),
         }
         for row in accepted
     ]
@@ -1589,6 +1668,7 @@ def _generate_scanner_controlled_candidate(
         **trace,
         "scanner_controlled": True,
         "planned_strategy_id": strategy_id,
+        "ownership_repair_mode": bool(ownership_repair_mode),
         "scanner_controlled_config": config.to_dict(),
         "scanner_controlled_rounds": round_trace,
         "scanner_controlled_accepted": accepted_replacements,
@@ -2234,12 +2314,18 @@ def run_rewrite_pipeline_v3(
             compression_accepted=bool(compression_ok),
             semantic_safe=semantic_safe,
         )
+        ownership_gate = _ownership_gate(
+            proxy_result=proxy_result,
+            target_trace=target_trace,
+            goal_result=goal_result,
+        )
         can_select = bool(
             text
             and validity == "valid"
             and footprint_delta["moved"]
             and target_gate_passed
             and integrity_result["passed"]
+            and ownership_gate["passed"]
         )
         target_attempted = bool(target_trace.get("target_execution_attempted"))
         return {
@@ -2314,6 +2400,7 @@ def run_rewrite_pipeline_v3(
                         ("compression_rejected", not compression_ok),
                         ("semantic_drift", not semantic_safe),
                         ("text_integrity_failed", not integrity_result["passed"]),
+                        ("ownership_gate_failed", not ownership_gate["passed"]),
                     )
                     if failed
                 ],
@@ -2327,6 +2414,7 @@ def run_rewrite_pipeline_v3(
                 "semantic_reasons": list(getattr(semantic_result, "reasons", []) or []),
                 "semantic_similarity": getattr(semantic_result, "similarity", None),
                 "external_proxy": proxy_result.to_dict(),
+                "ownership_gate": ownership_gate,
                 "generation_error": error,
             },
         }
@@ -2411,7 +2499,6 @@ def run_rewrite_pipeline_v3(
                     )
                 if (
                     loop_decision.action == CandidateAction.REPAIR_TARGETED
-                    and problem_inventory_driven
                     and not _unbounded_recovery_enabled()
                 ):
                     loop_decision = LoopDecision(
@@ -2516,6 +2603,25 @@ def run_rewrite_pipeline_v3(
                         executed_strategy="scanner_controlled_span_repair",
                         executor_engine="scanner_controlled_executor",
                     )
+                elif loop_decision.action == CandidateAction.CLAIM_OWNERSHIP_REPAIR:
+                    progress(84, "Running V3 claim ownership repair")
+                    new_text, loop_target_execution = _generate_scanner_controlled_candidate(
+                        original_text=str(source_item.get("text") or candidate_text or original_text),
+                        original_report=source_item.get("report") or original_report,
+                        scan_contract=scan_contract,
+                        content_mode=content_mode,
+                        family=family,
+                        ownership_repair_mode=True,
+                        api_key=api_key,
+                        model=model,
+                        base_url=base_url,
+                    )
+                    mode = "claim_ownership_repair"
+                    loop_target_execution = _annotate_target_execution(
+                        loop_target_execution,
+                        executed_strategy="claim_ownership_repair",
+                        executor_engine="scanner_controlled_executor",
+                    )
                 elif loop_decision.action == CandidateAction.TARGET_EXECUTOR:
                     if planned_problem_strategy in PROBLEM_SCANNER_CONTROLLED_STRATEGIES:
                         progress(82, f"Executing V3 planned strategy: {planned_problem_strategy}")
@@ -2606,7 +2712,11 @@ def run_rewrite_pipeline_v3(
                 ))
             except Exception as exc:
                 error_target_execution = None
-                if loop_decision.action in {CandidateAction.TARGET_EXECUTOR, CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR}:
+                if loop_decision.action in {
+                    CandidateAction.TARGET_EXECUTOR,
+                    CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR,
+                    CandidateAction.CLAIM_OWNERSHIP_REPAIR,
+                }:
                     error_target_execution = target_execution_trace(
                         attempted=True,
                         target_groups=group_rewrite_targets(
@@ -2616,11 +2726,14 @@ def run_rewrite_pipeline_v3(
                         ),
                         error=str(exc),
                     )
-                    if loop_decision.action == CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR:
+                    if loop_decision.action in {
+                        CandidateAction.SCANNER_CONTROLLED_SPAN_REPAIR,
+                        CandidateAction.CLAIM_OWNERSHIP_REPAIR,
+                    }:
                         error_target_execution = {
                             **error_target_execution,
                             "scanner_controlled": True,
-                            "executed_strategy": "scanner_controlled_span_repair",
+                            "executed_strategy": loop_decision.action.value,
                             "executor_engine": "scanner_controlled_executor",
                         }
                 elif loop_decision.action == CandidateAction.REPAIR_ASSISTED_FOOTPRINT:

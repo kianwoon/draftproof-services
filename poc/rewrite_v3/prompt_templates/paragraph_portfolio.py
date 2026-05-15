@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..document_units import structural_shape_contract
-from ..prompt_contract import phrase_level_spans, span_rows
+from ..prompt_contract import ownership_contract_for_group, phrase_level_spans, span_rows
 from ..target_executor import TargetGroup, required_protected_anchors_for_source
 
 
@@ -375,6 +375,7 @@ def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, A
             "after_context": _limit_text(group.get("after_context"), before_after_limit),
             "source_structure_contract": structural_shape_contract(str(group.get("source_text") or "")),
             "execution_contract": _execution_contract(group, plan),
+            "ownership_contract": ownership_contract_for_group(group),
             "required_movement": group.get("required_movement") or {},
             "protected_anchors": _compact_anchors(protected_anchors, limit=4),
             "required_protected_anchors": _compact_anchors(required_protected_anchors, limit=4),
@@ -542,6 +543,7 @@ def _topk_context(
             "protected_anchors": _compact_anchors(protected_anchors, limit=4),
             "required_protected_anchors": _compact_anchors(required_protected_anchors, limit=4),
             "word_count_guide": group.get("word_count_guide") or {},
+            "ownership_contract": ownership_contract_for_group(group),
             "topk_repair_contract": target_contract,
         })
     return {
@@ -791,6 +793,8 @@ def build_paragraph_portfolio_reconstruction_prompt(
             "Use word_count_guide as a preferred length guide, not a min/max band.",
             "Do not compress the paragraph into a summary.",
             "Follow execution_contract.movement and execution_contract.method.",
+            "Follow ownership_contract.golden_rule: do not just change point of view; add source-supported author trace, specific context, and real judgment.",
+            "Preserve source viewpoint unless source_text, before_context, or after_context already supports author experience, action, observation, or decision.",
             "Do not solve the task by synonym swapping or elevated paraphrase.",
             "Keep local continuity with before_context and after_context.",
             "Escape any straight quotation marks inside JSON string values.",
@@ -866,6 +870,7 @@ def build_paragraph_portfolio_topk_prompt(
             "Preserve source_structure_contract exactly: same block_count, same blank_line_boundary_count, and same heading_like_lines.",
             "Do not add blank-line paragraph splits or merge source blocks inside a replacement.",
             "Patch only topk_repair_contract.predictable_spans_in_source and their local wording path.",
+            "Use ownership_contract to avoid local patches that only change viewpoint or wording without author trace, specific context, or real judgment.",
             "When predictable_span_rows are present, report modified_span_ids using those exact ids.",
             "Do not guess changed span counts; count a span only when changed_spans.source_span exactly equals or fully contains one predictable_span_rows.text item.",
             "Do not return a changed_spans row where before and after are identical.",

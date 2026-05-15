@@ -58,7 +58,7 @@ from rewrite_v3.prompt_templates.paragraph_portfolio import (
     parse_paragraph_portfolio_replacements,
     validate_paragraph_portfolio_plan,
 )
-from rewrite_v3.prompt_contract import group_action_contract, topk_repair_contract_for_group
+from rewrite_v3.prompt_contract import group_action_contract, ownership_contract_for_group, topk_repair_contract_for_group
 from rewrite_v3.router import route_from_scan_contract
 from rewrite_v3.scanner_controlled_executor import (
     ScannerControlledConfig,
@@ -832,11 +832,19 @@ target_prompt = build_target_executor_prompt(
 )
 assert_test(
     "scanner_action_contract" in target_prompt
+    and "ownership_contract" in target_prompt
     and "predictable_spans" in target_prompt
     and "predictable route" in target_prompt
     and "outside context phrase" not in target_prompt
     and "locality_limits" in target_prompt,
-    "V3 target executor prompt carries exact scanner span repair contract",
+    "V3 target executor prompt carries exact scanner span repair and ownership contracts",
+)
+ownership_contract = ownership_contract_for_group(target_groups[0])
+assert_test(
+    ownership_contract["golden_rule"].startswith("Do not just change the point of view")
+    and ownership_contract["required_elements"] == ["author_trace", "specific_context", "real_judgment"]
+    and "soft_guidance_anchors" in ownership_contract["available_trace_sources"],
+    "V3 ownership contract encodes author trace, specific context, and real judgment without topic routing",
 )
 span_quality_source = "Inclusive Learning Design is essential in Hairdressing Certificate III as learner diversity increases, making a uniform approach ineffective."
 span_quality_contract = topk_repair_contract_for_group(
@@ -930,10 +938,11 @@ full_layer_prompts = [
 ]
 assert_test(
     all("scanner_action_contracts" in prompt for prompt in full_layer_prompts)
+    and all("ownership_contract" in prompt for prompt in full_layer_prompts)
     and all("predictable_spans" in prompt for prompt in full_layer_prompts)
     and all("source_structure_contract" in prompt for prompt in full_layer_prompts)
     and all("predictable route" in prompt for prompt in full_layer_prompts),
-    "V3 fallback prompt constructors carry scanner action contracts, exact predictable spans, and structure contracts",
+    "V3 fallback prompt constructors carry scanner action, ownership, exact predictable span, and structure contracts",
 )
 assert_test(
     target_groups[0].source_text.startswith("A riskier paragraph follows"),
@@ -1109,12 +1118,26 @@ scanner_loop_prompt = build_scanner_controlled_prompt(
     group=target_groups[0],
     variants_per_group=2,
 )
+ownership_repair_prompt = build_scanner_controlled_prompt(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variants_per_group=2,
+    ownership_repair_mode=True,
+)
 assert_test(
     "movement_contract" in scanner_loop_prompt
     and "scanner_action_contract" in scanner_loop_prompt
+    and "ownership_contract" in scanner_loop_prompt
+    and "Do not just change point of view" in scanner_loop_prompt
     and "weak_human_levers" in scanner_loop_prompt
     and "source_text" in scanner_loop_prompt,
-    "V3 scanner-controlled prompt carries movement contract, human levers, and local source only",
+    "V3 scanner-controlled prompt carries movement, ownership, human levers, and local source only",
+)
+assert_test(
+    '"repair_mode": "claim_ownership_repair"' in ownership_repair_prompt
+    and ownership_repair_prompt.count('"operator": "CLAIM_OWNERSHIP_REPAIR"') == 2
+    and "every kept variant must report at least one real ownership_changes row" in ownership_repair_prompt,
+    "V3 ownership repair prompt runs a bounded claim-ownership operator portfolio",
 )
 assert_test(
     "blocker_radar_for_this_group" not in scanner_loop_prompt
@@ -1165,6 +1188,11 @@ assert_test(
     citation_pressure_contract["citation_pressure_zone"]
     and "source-like wording" in citation_pressure_contract["citation_zone_instruction"],
     "V3 scanner prompt contract flags citation-pressure zones against academic smoothing",
+)
+assert_test(
+    citation_pressure_contract["ownership_contract"]["required_move"] == "CLAIM_OWNERSHIP_REPAIR"
+    and "point-of-view swap without added ownership" in citation_pressure_contract["ownership_contract"]["forbidden_moves"],
+    "V3 scanner prompt contract makes ownership repair a first-class movement",
 )
 assert_test(
     "[[DP_ANCHOR_001]]" in anchor_prompt
@@ -1306,6 +1334,32 @@ self_report_mismatch_gate = scanner_controlled_variant_gate(
     },
     replacement_text=target_groups[0].source_text.replace("predictable route", "local route"),
 )
+ownership_required_gate = scanner_controlled_variant_gate(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variant={
+        "variant_id": "v_ownership",
+        "replacement_text": target_groups[0].source_text.replace("predictable route", "local route"),
+        "changed_spans": [{"source_span": "predictable route", "before": "predictable route", "after": "local route"}],
+        "predictable_spans_modified_count": 1,
+    },
+    replacement_text=target_groups[0].source_text.replace("predictable route", "local route"),
+    require_ownership=True,
+)
+ownership_pass_gate = scanner_controlled_variant_gate(
+    report=scanner_loop_report,
+    group=target_groups[0],
+    variant={
+        "variant_id": "v_ownership_pass",
+        "replacement_text": target_groups[0].source_text.replace("predictable route", "local route"),
+        "changed_spans": [{"source_span": "predictable route", "before": "predictable route", "after": "local route"}],
+        "predictable_spans_modified_count": 1,
+        "ownership_changes": [{"before": "generic claim", "after": "claim tied to this source context"}],
+        "ownership_elements_supported": ["specific_context"],
+    },
+    replacement_text=target_groups[0].source_text.replace("predictable route", "local route"),
+    require_ownership=True,
+)
 assert_test(
     no_change_gate["reason"] == "no_material_change"
     and weak_span_gate["passed"]
@@ -1316,12 +1370,26 @@ assert_test(
     and self_report_mismatch_gate["declared_predictable_spans_modified_count"] == 2,
     "V3 scanner-controlled gate rejects no-change variants, uses dynamic short-target thresholds, and flags fake span counts",
 )
+assert_test(
+    ownership_required_gate["reason"] == "ownership_repair_required"
+    and ownership_pass_gate["passed"]
+    and ownership_pass_gate["ownership_change_count"] == 1,
+    "V3 scanner-controlled ownership mode rejects no-ownership variants and accepts source-grounded ownership movement",
+)
 quality_score = scanner_controlled_candidate_quality(
     action_contract=group_action_contract(group=target_groups[0], predictability_briefs=predictability_briefs_fixture),
     variant_gate=strong_span_gate,
     source_text=target_groups[0].source_text,
     replacement_text=target_groups[0].source_text.replace("predictable route", "local route").replace("uniform explanation", "specific explanation"),
     variant={
+        "ownership_changes": [
+            {
+                "before": "generic claim",
+                "after": "claim tied to the local classroom context",
+                "operation": "CLAIM_OWNERSHIP_REPAIR",
+            }
+        ],
+        "ownership_elements_supported": ["specific_context", "real_judgment"],
         "changed_spans": [
             {"span_id": "ps001", "source_span": "predictable route", "before": "predictable route", "after": "local route"},
             {"span_id": "ps002", "source_span": "uniform explanation", "before": "uniform explanation", "after": "specific explanation"},
@@ -1355,8 +1423,9 @@ polished_voice_quality = scanner_controlled_candidate_quality(
 assert_test(
     quality_score["score"] > 0
     and quality_score["movement_score"] > 0
+    and quality_score["ownership_score"] > 0
     and "ps001" in quality_score["actual_modified_span_ids"],
-    "V3 scanner-controlled candidate quality scores span movement and locality before scan selection",
+    "V3 scanner-controlled candidate quality scores span movement, ownership, and locality before scan selection",
 )
 assert_test(
     plain_voice_quality["score"] > polished_voice_quality["score"]
@@ -1497,14 +1566,33 @@ segment_loop = decide_next_action(
             "compression_accepted": True,
             "semantic_safe": True,
             "external_proxy": {"reasons": ["segment_ai_fraction_high", "segment_human_fraction_low"]},
+            "ownership_gate": {"active": True, "passed": False, "ownership_score": 0.0, "ownership_change_count": 0},
         }
     }],
     has_positive_boundaries=False,
     tried_actions=set(),
 )
 assert_test(
-    segment_loop.action == CandidateAction.REPAIR_AUTHORSHIP_WINDOWS,
-    "V3 loop routes segment footprint failures to authorship window repair",
+    segment_loop.action == CandidateAction.CLAIM_OWNERSHIP_REPAIR,
+    "V3 loop routes segment footprint failures with no owned trace to claim ownership repair first",
+)
+segment_authorship_loop = decide_next_action(
+    [{
+        "trace": {
+            "validation": {"passed": True, "failures": []},
+            "compression": {"status": "in_band"},
+            "compression_accepted": True,
+            "semantic_safe": True,
+            "external_proxy": {"reasons": ["segment_ai_fraction_high", "segment_human_fraction_low"]},
+            "ownership_gate": {"active": True, "passed": True, "ownership_score": 6.0, "ownership_change_count": 1},
+        }
+    }],
+    has_positive_boundaries=False,
+    tried_actions={CandidateAction.CLAIM_OWNERSHIP_REPAIR},
+)
+assert_test(
+    segment_authorship_loop.action == CandidateAction.REPAIR_AUTHORSHIP_WINDOWS,
+    "V3 loop falls through to authorship window repair after ownership repair has already been tried",
 )
 no_movement_decision = decide_next_action(
     [{
@@ -1875,6 +1963,30 @@ assert_test(
     and scores[0]["score"] > scores[1]["score"],
     "V3 portfolio review selection preserves valid material AI improvement even when target gate remains partial",
 )
+ownership_blocked_candidate = {
+    **review_material_scanner_candidate,
+    "trace": {
+        **review_material_scanner_candidate["trace"],
+        "ownership_gate": {"active": True, "passed": False, "ownership_score": 0.0, "ownership_change_count": 0},
+    },
+}
+ownership_repaired_candidate = {
+    **review_smaller_detector_candidate,
+    "trace": {
+        **review_smaller_detector_candidate["trace"],
+        "ownership_gate": {"active": True, "passed": True, "ownership_score": 7.5, "ownership_change_count": 2},
+    },
+}
+ownership_selected_idx, ownership_scores = select_portfolio_candidate(
+    [ownership_blocked_candidate, ownership_repaired_candidate],
+    family="clean_texture_boundary",
+)
+assert_test(
+    ownership_selected_idx == 1
+    and "ownership_gate_failed" in ownership_scores[0]["reasons"]
+    and "ownership_gate_passed" in ownership_scores[1]["reasons"],
+    "V3 portfolio selector treats ownership as an executable gate when human fraction remains low",
+)
 
 seven_unit_candidate = "\n\n".join([
     "Alpha paragraph.",
@@ -2006,12 +2118,21 @@ assert_test(
     "V3 text-integrity guard flags merged-word corruption",
 )
 integrity_joined_token = v3_pipeline._text_integrity(
-    "When students start cutting hair, the theory becomes very real.",
-    "When students start cutting hair, the theory becomevery real.",
+    "Introduction Inclusive learning still needs structure.",
+    "IntroductionInclusive learning still needs structure.",
 )
 assert_test(
     not integrity_joined_token["passed"] and "merged_source_token" in integrity_joined_token["failures"],
-    "V3 text-integrity guard flags source-token boundary joins",
+    "V3 text-integrity guard still flags long source-token boundary joins",
+)
+integrity_single_compound = v3_pipeline._text_integrity(
+    "Students learn in work places and online communities.",
+    "Students learn in workplaces and online communities.",
+)
+assert_test(
+    integrity_single_compound["passed"]
+    and "merged_source_token" in integrity_single_compound["warnings"],
+    "V3 text-integrity guard treats a single normal compound-like merge as a repairable warning, not hard corruption",
 )
 
 with tempfile.TemporaryDirectory() as tmpdir:
@@ -2191,18 +2312,20 @@ topk_template = build_paragraph_portfolio_topk_prompt(
 assert_test(
     "word_count_guide" in reconstruction_template.prompt
     and "execution_contract" in reconstruction_template.prompt
+    and "ownership_contract" in reconstruction_template.prompt
     and "source_structure_contract" in reconstruction_template.prompt
     and "required_protected_anchors" in reconstruction_template.prompt
     and "out_of_scope_protected_anchors" in reconstruction_template.prompt
     and "source_structure_contract" in topk_template.prompt
     and "current_replacements" in topk_template.prompt
     and "topk_repair_contract" in topk_template.prompt
+    and "ownership_contract" in topk_template.prompt
     and "predictable_spans" in topk_template.prompt
     and "locality_limits" in topk_template.prompt
     and "changed_word_estimate" in topk_template.prompt
     and "Education is changing quickly" in topk_template.prompt
     and "Return JSON only" in topk_template.prompt,
-    "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted stage contracts, scoped anchors, and structure contracts",
+    "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted ownership, scoped anchors, and structure contracts",
 )
 shape_group = TargetGroup(
     group_id="tg_shape",
@@ -3038,6 +3161,24 @@ try:
             and stopped_summary["candidate_loop_trace"][0]["reason"] == "stop_before_unbounded_recovery_revision"
             and len(stopped_summary["candidate_trace"]) == 1,
             "V3 problem-inventory loop stops before unbounded whole-document recovery revision",
+        )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stopped_generic_recovery = run_rewrite_pipeline_v3(
+            detect_json=report_for(broad_source, ai=70.0),
+            output_dir=tmpdir,
+            replay_candidate_records=[{
+                "text": broad_candidate,
+                "report": report_for(broad_candidate, ai=60.0),
+            }],
+            required_ai_drop=20.0,
+            max_runtime_seconds=60,
+        )
+        stopped_generic_summary = stopped_generic_recovery["result"].summary
+        assert_test(
+            not recovery_called["value"]
+            and stopped_generic_summary["candidate_loop_trace"][0]["reason"] == "stop_before_unbounded_recovery_revision"
+            and len(stopped_generic_summary["candidate_trace"]) == 1,
+            "V3 generic loop also stops before unbounded whole-document recovery revision",
         )
 finally:
     v3_pipeline._next_planned_problem_strategy = original_next_planned_problem_strategy

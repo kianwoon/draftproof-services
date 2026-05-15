@@ -188,6 +188,78 @@ def span_rows(spans: list[str]) -> list[dict[str, str]]:
     ]
 
 
+def ownership_contract_for_group(group: Any, *, compact: bool = False) -> dict[str, Any]:
+    """Build a source-grounded authorship contract without inferring content from keywords."""
+
+    source_text = _group_source_text(group)
+    before_context = _text(group.get("before_context") if isinstance(group, dict) else getattr(group, "before_context", ""))
+    after_context = _text(group.get("after_context") if isinstance(group, dict) else getattr(group, "after_context", ""))
+    soft_anchors = _group_anchor_texts(group, "soft_guidance_anchors")
+    protected_anchors = _group_anchor_texts(group, "protected_anchors")
+    targets = _group_targets(group)
+    dominant_driver_keys = unique_text([
+        driver.get("key")
+        for target in targets
+        for driver in target.get("dominant_drivers") or []
+        if isinstance(driver, dict)
+    ], limit=4)
+    required_movement_keys = unique_text([
+        key
+        for target in targets
+        for key, value in (target.get("required_movement") or {}).items()
+        if value
+    ], limit=4)
+    trace_sources = ["source_text"]
+    if before_context:
+        trace_sources.append("before_context")
+    if after_context:
+        trace_sources.append("after_context")
+    if soft_anchors:
+        trace_sources.append("soft_guidance_anchors")
+    if protected_anchors:
+        trace_sources.append("protected_anchors")
+
+    payload: dict[str, Any] = {
+        "golden_rule": "Do not just change the point of view. Add clear author trace, specific context, and real judgment so the writing feels owned, not generated.",
+        "required_elements": ["author_trace", "specific_context", "real_judgment"],
+        "viewpoint_policy": {
+            "default": "Preserve the source viewpoint. Do not convert third-person writing into first-person unless the source or nearby context already supports author experience, action, observation, or decision.",
+            "first_person": "When first-person is already supported, connect claims to the writer's observed process, decision, or judgment without inventing events.",
+            "third_person": "When third-person is appropriate, make the reasoning specific to this document's context rather than a generic essay claim.",
+        },
+        "available_trace_sources": trace_sources,
+        "specific_context_terms": unique_text([*soft_anchors, *protected_anchors], limit=6 if not compact else 3),
+        "judgment_inputs": {
+            "operation": _group_operation(group),
+            "dominant_driver_keys": dominant_driver_keys,
+            "required_movement_keys": required_movement_keys,
+        },
+        "required_move": "CLAIM_OWNERSHIP_REPAIR",
+        "forbidden_moves": [
+            "point-of-view swap without added ownership",
+            "fake personal experience",
+            "unsupported anecdote",
+            "generic moral conclusion",
+            "abstract academic smoothing",
+            "new facts, sources, names, dates, numbers, or examples",
+        ],
+        "validator_note": "A candidate should be rejected when viewpoint changes but author_trace, specific_context, and real_judgment do not improve.",
+    }
+    if compact:
+        compact_payload = {
+            "rule": "No POV-only change; add trace/context/judgment.",
+            "elements": ["trace", "context", "judgment"],
+            "trace_sources": trace_sources[:3],
+            "move": "CLAIM_OWNERSHIP_REPAIR",
+            "forbidden": ["POV_only", "fake_experience"],
+        }
+        context_terms = unique_text([*soft_anchors, *protected_anchors], limit=3)
+        if context_terms:
+            compact_payload["specific_context_terms"] = context_terms
+        return compact_payload
+    return payload
+
+
 def problem_tokens_from_spans(
     spans: list[str],
     *,
@@ -348,6 +420,7 @@ def group_action_contract(
         ),
         "topk_repair_contract": topk_contract,
         "allowed_rewrite_moves": _allowed_moves_for_group(group),
+        "ownership_contract": ownership_contract_for_group(group, compact=compact),
     }
 
 
@@ -392,12 +465,12 @@ def profile_action_contracts(
 def _allowed_moves_for_group(group: Any) -> list[str]:
     operation = _group_operation(group)
     if operation == "unit_preserving_prune_bridge":
-        return ["DELETE_EMPTY_PHRASE", "BRIDGE_NEARBY_MEANING", "CLAUSE_ROUTE_CHANGE"]
+        return ["DELETE_EMPTY_PHRASE", "BRIDGE_NEARBY_MEANING", "CLAUSE_ROUTE_CHANGE", "CLAIM_OWNERSHIP_REPAIR"]
     if operation == "citation_preserving_window_repair":
-        return ["CLAIM_FRAMING_REPAIR", "CLAUSE_ROUTE_CHANGE", "CONCRETE_SOURCE_WORDING"]
+        return ["CLAIM_FRAMING_REPAIR", "CLAUSE_ROUTE_CHANGE", "CONCRETE_SOURCE_WORDING", "CLAIM_OWNERSHIP_REPAIR"]
     if operation == "paragraph_preserving_broad_reconstruction":
-        return ["BREAK_SURVEY_TEMPLATE", "BROAD_CLAIM_NARROWING", "CAUSE_EFFECT_OWNERSHIP", "TOPK_SPAN_REPATH"]
-    return ["CLAUSE_ROUTE_CHANGE", "CONCRETE_SOURCE_WORDING", "TOPK_SPAN_REPATH"]
+        return ["BREAK_SURVEY_TEMPLATE", "BROAD_CLAIM_NARROWING", "CAUSE_EFFECT_OWNERSHIP", "CLAIM_OWNERSHIP_REPAIR", "TOPK_SPAN_REPATH"]
+    return ["CLAUSE_ROUTE_CHANGE", "CONCRETE_SOURCE_WORDING", "CLAIM_OWNERSHIP_REPAIR", "TOPK_SPAN_REPATH"]
 
 
 def _group_targets(group: Any) -> tuple[dict[str, Any], ...]:
@@ -414,6 +487,15 @@ def _group_operation(group: Any) -> str:
 
 def _group_source_text(group: Any) -> str:
     return _text(group.get("source_text") if isinstance(group, dict) else getattr(group, "source_text", ""))
+
+
+def _group_anchor_texts(group: Any, attr: str) -> list[str]:
+    rows = group.get(attr) if isinstance(group, dict) else getattr(group, attr, ())
+    return unique_text([
+        row.get("text")
+        for row in rows or []
+        if isinstance(row, dict)
+    ])
 
 
 def _group_sentence_ids(group: Any) -> list[str]:

@@ -24,6 +24,7 @@ class CandidateIssue(str, Enum):
     INSUFFICIENT_SPAN_MOVEMENT = "insufficient_span_movement"
     WRITING_QUALITY_COLLAPSE = "writing_quality_collapse"
     SEGMENT_AI_FOOTPRINT = "segment_ai_footprint"
+    OWNERSHIP_MISSING = "ownership_missing"
     PROXY_NOT_ACCEPTED = "proxy_not_accepted"
     NO_DETECTOR_MOVEMENT = "no_detector_movement"
     NO_TARGET_MOVEMENT = "no_target_movement"
@@ -39,6 +40,7 @@ class CandidateAction(str, Enum):
     CONTRAST_BOUNDARY = "contrast_boundary"
     PLAIN_REASONING = "plain_reasoning"
     REPAIR_AUTHORSHIP_WINDOWS = "repair_authorship_windows"
+    CLAIM_OWNERSHIP_REPAIR = "claim_ownership_repair"
     SCANNER_CONTROLLED_SPAN_REPAIR = "scanner_controlled_span_repair"
     REPAIR_TARGETED = "repair_targeted"
     TARGET_EXECUTOR = "target_executor"
@@ -115,6 +117,9 @@ def issues_from_trace(trace: dict[str, Any]) -> tuple[CandidateIssue, ...]:
     text_integrity = trace.get("text_integrity") if isinstance(trace.get("text_integrity"), dict) else {}
     if text_integrity and not bool(text_integrity.get("passed")):
         issues.append(CandidateIssue.TEXT_CORRUPTED)
+    ownership_gate = trace.get("ownership_gate") if isinstance(trace.get("ownership_gate"), dict) else {}
+    if bool(ownership_gate.get("active")) and not bool(ownership_gate.get("passed")):
+        issues.append(CandidateIssue.OWNERSHIP_MISSING)
     outcome = str(trace.get("candidate_outcome") or "")
     if outcome.startswith("generation_failed"):
         issues.append(CandidateIssue.GENERATION_FAILED)
@@ -297,6 +302,13 @@ def decide_next_action(
         issues = issues_from_trace(item["trace"])
         if CandidateIssue.NO_DETECTOR_MOVEMENT in issues or CandidateIssue.NO_TARGET_MOVEMENT in issues:
             continue
+        if CandidateIssue.OWNERSHIP_MISSING in issues and CandidateAction.CLAIM_OWNERSHIP_REPAIR not in tried_actions:
+            return LoopDecision(
+                action=CandidateAction.CLAIM_OWNERSHIP_REPAIR,
+                source_index=index,
+                issues=issues,
+                reason="claim_ownership_repair_after_human_fraction_failure",
+            )
         if CandidateIssue.SEGMENT_AI_FOOTPRINT in issues and CandidateAction.REPAIR_AUTHORSHIP_WINDOWS not in tried_actions:
             if (
                 bool(item["trace"].get("assisted_footprint_executor_available"))

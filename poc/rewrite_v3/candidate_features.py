@@ -29,6 +29,10 @@ class CandidateFeatures:
     footprint_risk_drop: float
     target_risk_drop: float
     target_gate_passed: bool
+    ownership_gate_active: bool = False
+    ownership_gate_passed: bool = True
+    ownership_score: float = 0.0
+    ownership_change_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -43,6 +47,7 @@ def features_from_trace(trace: dict[str, Any]) -> CandidateFeatures:
     segment_gate = metrics.get("segment_authorship_gate") if isinstance(metrics.get("segment_authorship_gate"), dict) else {}
     footprint_delta = trace.get("footprint_delta") if isinstance(trace.get("footprint_delta"), dict) else {}
     target_movement = trace.get("target_movement") if isinstance(trace.get("target_movement"), dict) else {}
+    ownership_gate = trace.get("ownership_gate") if isinstance(trace.get("ownership_gate"), dict) else {}
     return CandidateFeatures(
         validation_passed=bool(validation.get("passed")),
         compression_accepted=bool(trace.get("compression_accepted")),
@@ -61,4 +66,8 @@ def features_from_trace(trace: dict[str, Any]) -> CandidateFeatures:
         footprint_risk_drop=_float(footprint_delta.get("risk_drop")),
         target_risk_drop=_float(target_movement.get("risk_drop")),
         target_gate_passed=bool(trace.get("target_gate_passed")),
+        ownership_gate_active=bool(ownership_gate.get("active")),
+        ownership_gate_passed=bool(ownership_gate.get("passed")),
+        ownership_score=_float(ownership_gate.get("ownership_score")),
+        ownership_change_count=int(ownership_gate.get("ownership_change_count") or 0),
     )

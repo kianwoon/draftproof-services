@@ -144,6 +144,7 @@ def build_plain_reasoning_broad_prose_prompt(
             "Represent the source document inventory; do not collapse the document into a summary.",
             "Use rewrite_target_profile_summary as scanner-derived repair guidance.",
             "Use scanner_action_contracts for exact target operations and predictable spans when present.",
+            "Use scanner_action_contracts.ownership_contract when present: do not just change point of view; add source-supported author trace, specific context, and real judgment.",
             "Use direct language and human judgment lines where the source supports them.",
             "Avoid textbook openings, balanced report phrasing, and polished summary transitions.",
             "Do not add unsupported facts, numbers, names, examples, headings, bullets, labels, or markdown.",
