@@ -868,6 +868,8 @@ def build_paragraph_portfolio_topk_prompt(
             "Patch only topk_repair_contract.predictable_spans_in_source and their local wording path.",
             "When predictable_span_rows are present, report modified_span_ids using those exact ids.",
             "Do not guess changed span counts; count a span only when changed_spans.source_span exactly equals or fully contains one predictable_span_rows.text item.",
+            "Do not return a changed_spans row where before and after are identical.",
+            "If no predictable span can be changed without breaking meaning, omit that replacement row.",
             "Use raw_predictable_spans and rejected_predictable_spans only as diagnostics; do not count them as repaired spans.",
             "Modify at least topk_repair_contract.required_modified_spans phrase spans when span_source is scanner_exact.",
             "Use only clause movement, deletion of empty phrasing, list breaking, or concrete source-supported wording.",
@@ -880,7 +882,7 @@ def build_paragraph_portfolio_topk_prompt(
                     "group_id": "tg001",
                     "replacement_text": "patched replacement paragraph only",
                     "changed_spans": [
-                        {"span_id": "ps001", "before": "old local phrase", "after": "new local phrase", "operation": "TOPK_SPAN_REPATH"}
+                        {"span_id": "ps001", "source_span": "scanner phrase span", "before": "old local phrase", "after": "new local phrase", "operation": "TOPK_SPAN_REPATH"}
                     ],
                     "modified_span_ids": ["ps001"],
                     "predictable_spans_modified_count": 0,

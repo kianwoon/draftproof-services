@@ -23,6 +23,7 @@ from .prompt_templates.paragraph_portfolio import (
     parse_paragraph_portfolio_plan,
     validate_paragraph_portfolio_plan,
 )
+from .prompt_contract import topk_repair_contract_for_group
 from .target_executor import (
     TargetGroup,
     apply_target_replacements,
@@ -113,7 +114,7 @@ def parse_replacements_with_diagnostics(
     raw: str,
     *,
     preview_chars: int = 1200,
-) -> tuple[list[dict[str, str]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     text = _strip_json_fences(raw)
     diagnostics: dict[str, Any] = {
         "raw_chars": len(str(raw or "")),
@@ -139,7 +140,7 @@ def parse_replacements_with_diagnostics(
     if not isinstance(rows, list):
         diagnostics["parse_status"] = "missing_replacements"
         return [], diagnostics
-    replacements: list[dict[str, str]] = []
+    replacements: list[dict[str, Any]] = []
     skipped = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -150,7 +151,16 @@ def parse_replacements_with_diagnostics(
         if not group_id or not replacement:
             skipped += 1
             continue
-        replacements.append({"group_id": group_id, "replacement_text": replacement})
+        parsed_row: dict[str, Any] = {"group_id": group_id, "replacement_text": replacement}
+        for key in (
+            "changed_spans",
+            "modified_span_ids",
+            "predictable_spans_modified_count",
+            "changed_word_estimate",
+        ):
+            if key in row:
+                parsed_row[key] = row.get(key)
+        replacements.append(parsed_row)
     diagnostics["replacement_count"] = len(replacements)
     diagnostics["skipped_rows"] = skipped
     if not replacements:
@@ -161,10 +171,10 @@ def parse_replacements_with_diagnostics(
 def validate_replacement_structure(
     *,
     target_groups: list[TargetGroup],
-    replacements: list[dict[str, str]],
-) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    replacements: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     groups_by_id = {group.group_id: group for group in target_groups}
-    valid: list[dict[str, str]] = []
+    valid: list[dict[str, Any]] = []
     statuses: list[dict[str, Any]] = []
     for row in replacements:
         group_id = str(row.get("group_id") or "")
@@ -186,6 +196,119 @@ def validate_replacement_structure(
             "replacement_structure_contract": structural_shape_contract(replacement_text),
         })
         if not failures:
+            valid.append(row)
+    return valid, statuses
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def validate_topk_replacement_effect(
+    *,
+    target_groups: list[TargetGroup],
+    current_replacements: list[dict[str, Any]],
+    replacements: list[dict[str, Any]],
+    predictability_briefs: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    groups_by_id = {group.group_id: group for group in target_groups}
+    current_by_id = {
+        str(row.get("group_id") or ""): str(row.get("replacement_text") or "")
+        for row in current_replacements
+        if isinstance(row, dict) and row.get("group_id")
+    }
+    valid: list[dict[str, Any]] = []
+    statuses: list[dict[str, Any]] = []
+    for row in replacements:
+        group_id = str(row.get("group_id") or "")
+        replacement_text = str(row.get("replacement_text") or "")
+        current_text = current_by_id.get(group_id, "")
+        group = groups_by_id.get(group_id)
+        failures: list[str] = []
+        if group is None:
+            failures.append("unknown_group")
+        if not current_text:
+            failures.append("missing_current_replacement")
+        if current_text and replacement_text == current_text:
+            failures.append("no_material_change")
+
+        changed_rows = [item for item in row.get("changed_spans") or [] if isinstance(item, dict)]
+        if not changed_rows:
+            failures.append("missing_changed_spans")
+
+        contract = (
+            topk_repair_contract_for_group(
+                group=group,
+                replacement_text=current_text,
+                predictability_briefs=predictability_briefs,
+            )
+            if group is not None
+            else {}
+        )
+        span_rows = {
+            str(item.get("id") or ""): str(item.get("text") or "")
+            for item in contract.get("predictable_span_rows") or []
+            if isinstance(item, dict) and item.get("id") and item.get("text")
+        }
+        actual_modified_ids: list[str] = []
+        effect_failures: list[str] = []
+        for changed in changed_rows:
+            span_id = str(changed.get("span_id") or "")
+            before = str(changed.get("before") or "").strip()
+            after = str(changed.get("after") or "").strip()
+            source_span = str(changed.get("source_span") or before).strip()
+            expected_span = span_rows.get(span_id)
+            if not span_id or span_id not in span_rows:
+                effect_failures.append("unknown_span_id")
+                continue
+            if not before or not after or before == after:
+                effect_failures.append("no_effect_span_patch")
+                continue
+            if current_text and before not in current_text:
+                effect_failures.append("reported_before_not_in_current")
+                continue
+            if replacement_text and after not in replacement_text:
+                effect_failures.append("reported_after_not_in_output")
+                continue
+            if expected_span and expected_span not in source_span and expected_span not in before:
+                effect_failures.append("invalid_span_compliance")
+                continue
+            if span_id not in actual_modified_ids:
+                actual_modified_ids.append(span_id)
+
+        required_count = max(1, int(contract.get("required_modified_spans") or 1))
+        modified_count = len(actual_modified_ids)
+        if modified_count < required_count:
+            failures.append("insufficient_span_movement")
+        failures.extend(effect_failures)
+
+        declared_count = _int_or_none(row.get("predictable_spans_modified_count"))
+        if declared_count is not None and declared_count != modified_count:
+            failures.append("self_report_mismatch")
+        changed_word_estimate = _int_or_none(row.get("changed_word_estimate"))
+        if changed_word_estimate == 0 and modified_count == 0:
+            failures.append("zero_change_candidate")
+
+        status = {
+            "group_id": group_id,
+            "passed": not failures,
+            "failures": list(dict.fromkeys(failures)),
+            "required_modified_spans": required_count,
+            "declared_predictable_spans_modified_count": declared_count,
+            "actual_predictable_spans_modified_count": modified_count,
+            "actual_modified_span_ids": actual_modified_ids,
+        }
+        statuses.append(status)
+        if status["passed"]:
             valid.append(row)
     return valid, statuses
 
@@ -571,6 +694,14 @@ def generate_paragraph_portfolio_candidate(
                 )
                 topk_diagnostics["structure_status"] = topk_structure_status
                 topk_diagnostics["structure_valid_count"] = len(batch_topk_replacements)
+                batch_topk_replacements, topk_effect_status = validate_topk_replacement_effect(
+                    target_groups=batch,
+                    current_replacements=batch_replacements,
+                    replacements=batch_topk_replacements,
+                    predictability_briefs=list(getattr(scan_contract, "predictability_briefs", ()) or ()),
+                )
+                topk_diagnostics["effect_status"] = topk_effect_status
+                topk_diagnostics["effect_valid_count"] = len(batch_topk_replacements)
             except Exception as exc:
                 topk_error = str(exc)
                 batch_topk_replacements = []

@@ -44,6 +44,7 @@ from rewrite_v3.paragraph_portfolio_executor import (
     paragraph_portfolio_config,
     parse_replacements_with_diagnostics,
     validate_replacement_structure,
+    validate_topk_replacement_effect,
 )
 from rewrite_v3.pipeline import run_rewrite_pipeline_v3
 from rewrite_v3.portfolio import select_portfolio_candidate
@@ -2113,6 +2114,90 @@ assert_test(
     and "block_count_changed" in invalid_shape_status[0]["failures"],
     "V3 paragraph portfolio executor filters candidates that change source block structure",
 )
+topk_noop_source = (
+    "Because of this, the education system needs to evolve. "
+    "Schools should still teach core knowledge, but they must also teach digital literacy, critical thinking, communication, creativity, and ethical use of technology. "
+    "Assessment should include not only final answers, but also the learning process: drafts, reflection, discussion, feedback, and improvement."
+)
+topk_current = (
+    "The education system has to change. "
+    "Schools should still cover core subjects, but they also need to teach digital literacy, critical thinking, communication, creativity, and ethical technology use. "
+    "Assessment should look at the learning process, including drafts, reflection, discussion, feedback, and improvement, not just final answers."
+)
+topk_effective = (
+    "The education system has to change. "
+    "Schools should still cover core subjects, but digital literacy now has to sit beside critical thinking, communication, creativity, and ethical technology use. "
+    "Assessment should look at the learning process, including drafts, reflection, discussion, feedback, and improvement, not just final answers."
+)
+topk_noop_group = TargetGroup(
+    group_id="tg_topk_noop",
+    unit_id="p007",
+    operation="paragraph_preserving_broad_reconstruction",
+    start_index=0,
+    end_index=len(topk_noop_source),
+    source_text=topk_noop_source,
+    before_context="",
+    after_context="",
+    targets=(),
+    word_count_guide={
+        "source_words": word_count(topk_noop_source),
+        "preferred_words": word_count(topk_noop_source),
+    },
+)
+topk_noop_briefs = [{
+    "paragraph_id": "p007",
+    "target_sentence": topk_current,
+    "predictable_token_spans": [
+        "literacy,",
+        "thinking, communication, creativity, and",
+    ],
+}]
+topk_noop_rows, topk_noop_status = validate_topk_replacement_effect(
+    target_groups=[topk_noop_group],
+    current_replacements=[{"group_id": "tg_topk_noop", "replacement_text": topk_current}],
+    replacements=[{
+        "group_id": "tg_topk_noop",
+        "replacement_text": topk_current,
+        "changed_spans": [{
+            "span_id": "ps001",
+            "before": "to teach digital literacy",
+            "after": "to teach digital literacy",
+            "operation": "TOPK_SPAN_REPATH",
+        }],
+        "modified_span_ids": ["ps001"],
+        "predictable_spans_modified_count": 1,
+        "changed_word_estimate": 0,
+    }],
+    predictability_briefs=topk_noop_briefs,
+)
+topk_valid_rows, topk_valid_status = validate_topk_replacement_effect(
+    target_groups=[topk_noop_group],
+    current_replacements=[{"group_id": "tg_topk_noop", "replacement_text": topk_current}],
+    replacements=[{
+        "group_id": "tg_topk_noop",
+        "replacement_text": topk_effective,
+        "changed_spans": [{
+            "span_id": "ps001",
+            "source_span": "to teach digital literacy",
+            "before": "they also need to teach digital literacy",
+            "after": "digital literacy now has to sit",
+            "operation": "TOPK_SPAN_REPATH",
+        }],
+        "modified_span_ids": ["ps001"],
+        "predictable_spans_modified_count": 1,
+        "changed_word_estimate": 7,
+    }],
+    predictability_briefs=topk_noop_briefs,
+)
+assert_test(
+    not topk_noop_rows
+    and "no_material_change" in topk_noop_status[0]["failures"]
+    and "no_effect_span_patch" in topk_noop_status[0]["failures"]
+    and "self_report_mismatch" in topk_noop_status[0]["failures"]
+    and topk_valid_rows
+    and topk_valid_status[0]["actual_modified_span_ids"] == ["ps001"],
+    "V3 paragraph portfolio Top-k gate rejects fake no-effect span repairs and accepts real span movement",
+)
 assert_test(
     "operator_used" not in reconstruction_template.prompt
     and "new_claims_added" not in reconstruction_template.prompt
@@ -2259,7 +2344,17 @@ try:
                 return FakePromptTemplateResponse(json.dumps({
                     "replacements": [{
                         "group_id": "tg001",
-                        "replacement_text": "Education is changing quickly because students meet information through phones, websites, classmates, and teachers. Schools still matter, but the old classroom model does not explain the whole picture."
+                        "replacement_text": "Education is changing quickly because students meet information through phones, websites, classmates, and teachers. Schools still matter, but the old classroom model does not explain the whole picture.",
+                        "changed_spans": [{
+                            "span_id": "ps001",
+                            "source_span": "Education is changing quickly",
+                            "before": "students now meet information",
+                            "after": "students meet information through phones",
+                            "operation": "TOPK_SPAN_REPATH",
+                        }],
+                        "modified_span_ids": ["ps001"],
+                        "predictable_spans_modified_count": 1,
+                        "changed_word_estimate": 3,
                     }]
                 }))
             return FakePromptTemplateResponse(json.dumps({
