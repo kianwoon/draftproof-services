@@ -36,6 +36,7 @@ import {
   formatPlainScore,
   getOriginalDetectScan,
   getRewrittenDetectScan,
+  hasRewriteComparisonData,
   mergeScanSummary,
   getScanDocumentContext,
   getScanTransformationSignals,
@@ -462,7 +463,8 @@ export default function Report() {
   const hasRewriteResult = hasCompletedRewrite && Boolean(currentRewrite?.id);
   const hasRewriteSignalComparison = Boolean(
     hasRewriteResult &&
-    (rewrittenTransformation || rewrittenTransformationSummary)
+    hasRewriteComparisonData(rewriteResultReport) &&
+    (rewrittenTransformation || rewrittenTransformationSummary || rewrittenAiScore != null)
   );
   const sealAuthorshipRating = hasRewriteSignalComparison && rewrittenAuthorshipRating
     ? rewrittenAuthorshipRating

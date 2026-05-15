@@ -813,6 +813,19 @@ function isRewriteOriginalPreserved(rewriteReport) {
   );
 }
 
+function hasRewriteComparisonData(rewriteReport) {
+  if (!rewriteReport || isRewriteOriginalPreserved(rewriteReport)) return false;
+  const summary = getRewritePayloadSummary(rewriteReport);
+  const rewrittenScan = getRewrittenDetectScan(rewriteReport);
+  const detectScores = summary.detect_scores || {};
+  return Boolean(
+    hasObjectData(rewrittenScan) ||
+    detectScores.rewritten_ai != null ||
+    detectScores.rewritten_ai_authorship != null ||
+    summary.final_risk != null
+  );
+}
+
 function getRewrittenDetectScan(rewriteReport) {
   if (isRewriteOriginalPreserved(rewriteReport)) {
     return getOriginalDetectScan(rewriteReport);
@@ -1201,6 +1214,7 @@ export {
   formatPlainScore,
   getOriginalDetectScan,
   getRewrittenDetectScan,
+  hasRewriteComparisonData,
   mergeScanSummary,
   getScanDocumentContext,
   getScanTransformationSignals,
