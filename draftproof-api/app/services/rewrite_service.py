@@ -17,6 +17,8 @@ _STALE_THRESHOLD = timedelta(minutes=REWRITE_STALE_THRESHOLD_MINUTES)
 _PROCESSING_HEARTBEAT_STALE_THRESHOLD = timedelta(minutes=5)
 _ACTIVE_REWRITE_STATUSES = ("pending", "processing", "retrying")
 _STALE_RECOVERY_STATUSES = ("pending", "retrying")
+_V4_REWRITE_PIPELINE_VERSION = "rewrite_v4_normalized_repair"
+_ORIGINAL_PRESERVED_OUTCOME = "original_preserved"
 _REPHRASABLE_TYPES = {
     "high_predictability",
     "medium_predictability",
@@ -71,6 +73,69 @@ async def _fetch_scan_report_json(scan_id: str) -> dict | None:
     except Exception as exc:
         logger.warning("Failed to preflight rewrite findings for scan %s: %s", scan_id, exc)
         return None
+
+
+async def _fetch_rewrite_report_json(scan_id: str) -> dict | None:
+    from app.services.report_service import _r2, _fetch_report_json_sync
+
+    if not _r2:
+        return None
+
+    try:
+        return await asyncio.to_thread(
+            _fetch_report_json_sync,
+            f"reports/{scan_id}/rewrite/rewrite.json",
+        )
+    except Exception as exc:
+        logger.warning("Failed to fetch rewrite JSON for scan %s: %s", scan_id, exc)
+        return None
+
+
+def _completed_rewrite_report_is_reusable(report_json: dict | None) -> bool:
+    """Return whether an existing completed rewrite is safe to reuse.
+
+    V2/V3 artifacts are left untouched. For V4, require the comparison-shaped
+    result that the report page needs; early V4 artifacts could complete while
+    preserving the original or omitting rewritten comparison scores.
+    """
+    if not isinstance(report_json, dict):
+        return True
+
+    summary = report_json.get("summary")
+    if not isinstance(summary, dict):
+        return True
+
+    if summary.get("rewrite_pipeline_version") != _V4_REWRITE_PIPELINE_VERSION:
+        return True
+
+    outcome = summary.get("outcome") or report_json.get("status")
+    if outcome == _ORIGINAL_PRESERVED_OUTCOME or summary.get("no_text_change") is True:
+        return False
+
+    detect_scores = summary.get("detect_scores")
+    if not isinstance(detect_scores, dict):
+        return False
+
+    has_original_score = (
+        detect_scores.get("original_ai") is not None
+        or detect_scores.get("original_ai_score") is not None
+    )
+    has_rewritten_score = (
+        detect_scores.get("rewritten_ai") is not None
+        or detect_scores.get("rewritten_ai_score") is not None
+    )
+    if not has_original_score or not has_rewritten_score:
+        return False
+
+    if summary.get("detect_scan_rewritten") is False:
+        return False
+
+    return True
+
+
+async def _completed_rewrite_job_is_reusable(scan_id: str) -> bool:
+    report_json = await _fetch_rewrite_report_json(scan_id)
+    return _completed_rewrite_report_is_reusable(report_json)
 
 
 async def _release_active_reservation(session, job_id: uuid.UUID) -> None:
@@ -196,8 +261,14 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         )
         completed_job = completed.scalar_one_or_none()
         if completed_job:
-            await session.commit()
-            return _rewrite_to_dict(completed_job)
+            if await _completed_rewrite_job_is_reusable(scan_id):
+                await session.commit()
+                return _rewrite_to_dict(completed_job)
+            logger.info(
+                "Completed rewrite %s for scan %s is stale for V4 comparison; creating a new job",
+                completed_job.id,
+                scan_id,
+            )
 
         report_json = await _fetch_scan_report_json(scan_id)
         if report_json is not None and not _has_rewriteable_findings(report_json):
@@ -321,18 +392,7 @@ async def get_rewrite_report(rewrite_id: str, user_id: str) -> dict | None:
     if not job_info or job_info["status"] != "completed":
         return None
 
-    from app.services.report_service import _r2, _fetch_report_json_sync
-    if not _r2:
-        return None
-
-    scan_id = job_info["scan_id"]
-    r2_key = f"reports/{scan_id}/rewrite/rewrite.json"
-    try:
-        data = await asyncio.to_thread(_fetch_report_json_sync, r2_key)
-        return data
-    except Exception as e:
-        logger.warning("Failed to fetch rewrite JSON from R2: %s", e)
-        return None
+    return await _fetch_rewrite_report_json(job_info["scan_id"])
 
 
 async def regenerate_rewrite_report_assets(rewrite_id: str, user_id: str) -> dict | None:
