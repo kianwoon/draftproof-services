@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..prompt_contract import phrase_level_spans, span_rows
-from ..target_executor import TargetGroup
+from ..target_executor import TargetGroup, required_protected_anchors_for_source
 
 
 TEMPLATE_ID = "paragraph_portfolio.v1"
@@ -355,6 +355,16 @@ def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, A
         group_id = str(group.get("group_id") or "")
         group_ids.add(group_id)
         plan = plans.get(group_id, {})
+        protected_anchors = list(group.get("protected_anchors") or [])
+        required_protected_anchors = list(required_protected_anchors_for_source(
+            str(group.get("source_text") or ""),
+            protected_anchors,
+        ))
+        required_anchor_text = {str(anchor.get("text") or "") for anchor in required_protected_anchors}
+        out_of_scope_protected_anchors = [
+            anchor for anchor in protected_anchors
+            if str(anchor.get("text") or "") and str(anchor.get("text") or "") not in required_anchor_text
+        ]
         compact_groups.append({
             "group_id": group_id,
             "unit_id": group.get("unit_id"),
@@ -364,7 +374,9 @@ def _reconstruction_context(context: dict[str, Any], planner_output: dict[str, A
             "after_context": _limit_text(group.get("after_context"), before_after_limit),
             "execution_contract": _execution_contract(group, plan),
             "required_movement": group.get("required_movement") or {},
-            "protected_anchors": _compact_anchors(list(group.get("protected_anchors") or []), limit=4),
+            "protected_anchors": _compact_anchors(protected_anchors, limit=4),
+            "required_protected_anchors": _compact_anchors(required_protected_anchors, limit=4),
+            "out_of_scope_protected_anchors": _compact_anchors(out_of_scope_protected_anchors, limit=4),
             "soft_guidance_anchors": _compact_anchors(list(group.get("soft_guidance_anchors") or []), limit=5),
             "word_count_guide": group.get("word_count_guide") or {},
             "target_ids": list(group.get("target_ids") or [])[:3],
@@ -759,7 +771,8 @@ def build_paragraph_portfolio_reconstruction_prompt(
             "Return one replacement for every target group.",
             "Rewrite only the source_text for each target group.",
             "Preserve hard anchors exactly.",
-            "If protected_anchors exist, copy each protected_anchors.text exactly as provided, including punctuation and quote style.",
+            "Copy each required_protected_anchors.text exactly as provided, including punctuation and quote style.",
+            "Do not force out_of_scope_protected_anchors into replacement_text; they are shown only for diagnostics and are not part of this target source_text.",
             "Use soft anchors as coverage hints, not exact strings.",
             "Preserve factual meaning and paragraph role.",
             "Do not add unsupported facts, sources, names, dates, numbers, headings, bullets, markdown, labels, or commentary.",

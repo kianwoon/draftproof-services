@@ -78,6 +78,7 @@ from .target_executor import (
     batch_target_groups,
     build_target_executor_prompt,
     group_rewrite_targets,
+    missing_required_protected_anchors,
     parse_target_replacements,
     target_execution_trace,
 )
@@ -1010,14 +1011,9 @@ def _next_planned_problem_strategy(
 
 
 def _missing_protected_anchors(text: str, group: Any) -> list[str]:
-    missing: list[str] = []
-    for anchor in getattr(group, "protected_anchors", ()) or ():
-        if not isinstance(anchor, dict):
-            continue
-        anchor_text = str(anchor.get("text") or "")
-        if anchor_text and anchor_text not in text:
-            missing.append(anchor_text)
-    return missing
+    if hasattr(group, "protected_anchors"):
+        return missing_required_protected_anchors(text, group)
+    return []
 
 
 def _merge_replacements(

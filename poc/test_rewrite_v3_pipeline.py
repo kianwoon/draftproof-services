@@ -975,6 +975,36 @@ assert_test(
     "required phrase" not in missing_anchor_applied and not missing_anchor_status[0]["applied"],
     "V3 target executor blocks replacements that drop hard protected anchors",
 )
+out_of_scope_anchor_group = TargetGroup(
+    group_id="tg_out_of_scope_anchor",
+    unit_id="p_out_of_scope_anchor",
+    operation="paragraph_preserving_broad_reconstruction",
+    start_index=0,
+    end_index=len("This paragraph mentions shortcut culture and 1991 only."),
+    source_text="This paragraph mentions shortcut culture and 1991 only.",
+    before_context="",
+    after_context="",
+    targets=(),
+    protected_anchors=(
+        {"text": "(CESE, 2017)", "kind": "citation", "blocking": True},
+        {"text": "shortcut culture", "kind": "quote", "blocking": True},
+        {"text": "1", "kind": "number", "blocking": True},
+    ),
+    word_count_guide={"source_words": 8, "preferred_words": 8},
+)
+out_of_scope_applied, out_of_scope_status = apply_target_replacements(
+    original_text="This paragraph mentions shortcut culture and 1991 only.",
+    target_groups=[out_of_scope_anchor_group],
+    replacements=[{
+        "group_id": "tg_out_of_scope_anchor",
+        "replacement_text": "This paragraph keeps shortcut culture while changing the local wording around 1991.",
+    }],
+)
+assert_test(
+    out_of_scope_status[0]["applied"]
+    and "(CESE, 2017)" not in out_of_scope_applied,
+    "V3 target executor ignores protected anchors that are outside the target source text",
+)
 scanner_loop_report = {
     "rewrite_edit_briefs": predictability_briefs_fixture,
     "scan_intelligence": {
@@ -1970,6 +2000,8 @@ topk_template = build_paragraph_portfolio_topk_prompt(
 assert_test(
     "word_count_guide" in reconstruction_template.prompt
     and "execution_contract" in reconstruction_template.prompt
+    and "required_protected_anchors" in reconstruction_template.prompt
+    and "out_of_scope_protected_anchors" in reconstruction_template.prompt
     and "current_replacements" in topk_template.prompt
     and "topk_repair_contract" in topk_template.prompt
     and "predictable_spans" in topk_template.prompt
@@ -1977,7 +2009,7 @@ assert_test(
     and "changed_word_estimate" in topk_template.prompt
     and "Education is changing quickly" in topk_template.prompt
     and "Return JSON only" in topk_template.prompt,
-    "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted stage contracts",
+    "V3 paragraph portfolio reconstruction and Top-k prompts expose scanner-targeted stage contracts and scoped anchors",
 )
 assert_test(
     "operator_used" not in reconstruction_template.prompt

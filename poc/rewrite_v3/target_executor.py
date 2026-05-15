@@ -82,9 +82,45 @@ def _anchor_compare_text(text: str) -> str:
 def _anchor_present(text: str, anchor_text: str) -> bool:
     if not anchor_text:
         return True
-    if anchor_text in text:
-        return True
-    return _anchor_compare_text(anchor_text) in _anchor_compare_text(text)
+    normalized_text = _anchor_compare_text(text)
+    normalized_anchor = _anchor_compare_text(anchor_text)
+    if normalized_anchor.isdigit():
+        search_from = 0
+        while True:
+            start = normalized_text.find(normalized_anchor, search_from)
+            if start < 0:
+                return False
+            end = start + len(normalized_anchor)
+            before = normalized_text[start - 1] if start > 0 else ""
+            after = normalized_text[end] if end < len(normalized_text) else ""
+            if not before.isdigit() and not after.isdigit():
+                return True
+            search_from = start + 1
+    return normalized_anchor in normalized_text
+
+
+def required_protected_anchors_for_source(source_text: str, protected_anchors: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+    required: list[dict[str, Any]] = []
+    for anchor in protected_anchors or ():
+        if not isinstance(anchor, dict):
+            continue
+        anchor_text = str(anchor.get("text") or "").strip()
+        if anchor_text and _anchor_present(source_text, anchor_text):
+            required.append(anchor)
+    return tuple(required)
+
+
+def required_protected_anchors_for_group(group: TargetGroup) -> tuple[dict[str, Any], ...]:
+    return required_protected_anchors_for_source(group.source_text, group.protected_anchors)
+
+
+def missing_required_protected_anchors(text: str, group: TargetGroup) -> list[str]:
+    missing: list[str] = []
+    for anchor in required_protected_anchors_for_group(group):
+        anchor_text = str(anchor.get("text") or "").strip()
+        if anchor_text and not _anchor_present(text, anchor_text):
+            missing.append(anchor_text)
+    return missing
 
 
 def _span_from_target(target: dict[str, Any]) -> tuple[int | None, int | None, bool]:
@@ -400,11 +436,7 @@ def apply_target_replacements(
         if not replacement:
             statuses.append(TargetApplyStatus(group.group_id, False, "none", "missing_replacement"))
             continue
-        missing_anchors = [
-            str(anchor.get("text") or "").strip()
-            for anchor in group.protected_anchors
-            if str(anchor.get("text") or "").strip() and not _anchor_present(replacement, str(anchor.get("text") or "").strip())
-        ]
+        missing_anchors = missing_required_protected_anchors(replacement, group)
         if missing_anchors:
             statuses.append(TargetApplyStatus(group.group_id, False, "none", "protected_anchor_missing"))
             continue
