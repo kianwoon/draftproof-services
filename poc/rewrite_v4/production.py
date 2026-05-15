@@ -130,6 +130,7 @@ def run_rewrite_pipeline_v4(
     original_scores = v4_summary.get("original_scores") if isinstance(v4_summary.get("original_scores"), dict) else {}
     final_scores = v4_summary.get("final_scores") if isinstance(v4_summary.get("final_scores"), dict) else {}
     deltas = v4_summary.get("deltas") if isinstance(v4_summary.get("deltas"), dict) else {}
+    detect_scores = _detect_scores(original_report, final_report, original_scores, final_scores)
     summary = {
         "rewrite_pipeline_version": "rewrite_v4_normalized_repair",
         "rewrite_engine_mode": "v4_fast_production",
@@ -165,6 +166,11 @@ def run_rewrite_pipeline_v4(
             "final": final_scores,
             "deltas": deltas,
         },
+        "detect_scores": detect_scores,
+        "original_risk": detect_scores.get("original_ai"),
+        "final_risk": detect_scores.get("rewritten_ai"),
+        "converged": bool(final_goal.get("goal_met")),
+        "convergence_reason": public_status,
         "candidate_generation_status": {
             "generated_count": _generated_candidate_count(payload),
             "accepted_count": len(accepted),
@@ -239,3 +245,93 @@ def _generated_candidate_count(payload: dict[str, Any]) -> int:
                 if isinstance(result, dict):
                     count += 1
     return count
+
+
+def _detect_scores(
+    original_report: dict[str, Any],
+    final_report: dict[str, Any],
+    original_scores: dict[str, Any],
+    final_scores: dict[str, Any],
+) -> dict[str, Any]:
+    original_ai = _ai_score(original_report, original_scores.get("ai"))
+    rewritten_ai = _ai_score(final_report, final_scores.get("ai"))
+    original_contribution = _contribution_scores(original_report)
+    rewritten_contribution = _contribution_scores(final_report)
+    return {
+        "original_ai": original_ai,
+        "rewritten_ai": rewritten_ai,
+        "original_ai_authorship": original_ai,
+        "rewritten_ai_authorship": rewritten_ai,
+        "original_human_contribution": original_contribution.get("human_contribution"),
+        "rewritten_human_contribution": rewritten_contribution.get("human_contribution"),
+        "original_ai_transformation": original_contribution.get("ai_transformation"),
+        "rewritten_ai_transformation": rewritten_contribution.get("ai_transformation"),
+        "original_grounding_quality_risk": original_contribution.get("grounding_quality_risk"),
+        "rewritten_grounding_quality_risk": rewritten_contribution.get("grounding_quality_risk"),
+        "human_shift_score": _score_delta(original_ai, rewritten_ai),
+        "original_findings": _count_findings(original_report.get("findings")),
+        "rewritten_findings": _count_findings(final_report.get("findings")),
+    }
+
+
+def _ai_score(report: dict[str, Any], fallback: Any = None) -> float | None:
+    badge = report.get("ai_risk_badge") if isinstance(report, dict) else {}
+    value = report.get("ai_score") if isinstance(report, dict) else None
+    if not isinstance(value, (int, float)) and isinstance(badge, dict):
+        value = badge.get("ai_likelihood_score")
+    if not isinstance(value, (int, float)):
+        value = fallback
+    return round(float(value), 3) if isinstance(value, (int, float)) else None
+
+
+def _contribution_scores(report: dict[str, Any]) -> dict[str, float | None]:
+    intelligence = report.get("scan_intelligence") if isinstance(report, dict) else {}
+    transformation = intelligence.get("transformation") if isinstance(intelligence, dict) else {}
+    contribution = transformation.get("contribution") if isinstance(transformation, dict) else {}
+    layers = report.get("integrity_layers") if isinstance(report, dict) else {}
+    layer_rows = layers.get("layers") if isinstance(layers, dict) else {}
+    human_layer = layer_rows.get("human_contribution_signal") if isinstance(layer_rows, dict) else {}
+    ai_layer = layer_rows.get("ai_transformation_risk") if isinstance(layer_rows, dict) else {}
+    badge = report.get("ai_risk_badge") if isinstance(report, dict) else {}
+    writing_components = badge.get("writing_components") if isinstance(badge, dict) else {}
+
+    human = _first_number(
+        contribution.get("human_contribution_ratio") if isinstance(contribution, dict) else None,
+        contribution.get("human_contribution") if isinstance(contribution, dict) else None,
+        contribution.get("human_ratio") if isinstance(contribution, dict) else None,
+        human_layer.get("score") if isinstance(human_layer, dict) else None,
+    )
+    ai = _first_number(
+        contribution.get("ai_transformation_ratio") if isinstance(contribution, dict) else None,
+        contribution.get("ai_transformation") if isinstance(contribution, dict) else None,
+        contribution.get("transformation_ratio") if isinstance(contribution, dict) else None,
+        ai_layer.get("score") if isinstance(ai_layer, dict) else None,
+    )
+    grounding = _first_number(
+        writing_components.get("grounding_risk") if isinstance(writing_components, dict) else None,
+        writing_components.get("source_grounding_risk") if isinstance(writing_components, dict) else None,
+    )
+    return {
+        "human_contribution": human,
+        "ai_transformation": ai,
+        "grounding_quality_risk": grounding,
+    }
+
+
+def _first_number(*values: Any) -> float | None:
+    for value in values:
+        if isinstance(value, (int, float)):
+            return round(float(value), 3)
+    return None
+
+
+def _score_delta(before: float | None, after: float | None) -> float | None:
+    if before is None or after is None:
+        return None
+    return round(float(before) - float(after), 3)
+
+
+def _count_findings(findings: Any) -> int | None:
+    if not isinstance(findings, dict):
+        return None
+    return sum(len(rows) for rows in findings.values() if isinstance(rows, list))
