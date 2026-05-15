@@ -1912,6 +1912,32 @@ with tempfile.TemporaryDirectory() as tmpdir:
         "V3 document rhythm rejects paragraph count collapse",
     )
 
+replay_report_with_input = report_for(broad_candidate, ai=42.0)
+replay_report_with_input["input_text"] = broad_candidate
+replay_report_with_input["predictability_cache"] = {
+    "enabled": True,
+    "hits": 2,
+    "misses": 1,
+}
+with tempfile.TemporaryDirectory() as tmpdir:
+    result = run_rewrite_pipeline_v3(
+        detect_json=report_for(broad_source, ai=70.0),
+        output_dir=tmpdir,
+        replay_candidate_records=[{
+            "text": broad_candidate,
+            "report": replay_report_with_input,
+        }],
+        required_ai_drop=20.0,
+    )
+    freshness = result["result"].summary["candidate_trace"][0]["scan_freshness"]
+    assert_test(
+        freshness["candidate_text_hash"] == freshness["report_input_text_hash"]
+        and freshness["input_text_matches_candidate"]
+        and freshness["scan_reused_supplied_report"]
+        and freshness["predictability_cache"]["hits"] == 2,
+        "V3 candidate trace exposes scan freshness hashes and predictability cache metadata",
+    )
+
 boundary_prompt = build_boundary_adapter_prompt(
     original_text=eight_unit_source,
     failed_candidates=[seven_unit_candidate],

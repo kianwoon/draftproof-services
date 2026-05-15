@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -100,6 +101,25 @@ def _scan_report(text: str) -> dict[str, Any]:
     payload = report_to_dict(builder.build())
     payload["input_text"] = text
     return payload
+
+
+def _text_hash(text: Any) -> str:
+    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+
+
+def _predictability_cache_info(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    candidates = [
+        report.get("predictability_cache"),
+        ((report.get("predictability") or {}).get("predictability_cache") if isinstance(report.get("predictability"), dict) else None),
+        (((report.get("scan_intelligence") or {}).get("predictability") or {}).get("predictability_cache") if isinstance(report.get("scan_intelligence"), dict) else None),
+        ((((report.get("scan_intelligence") or {}).get("document") or {}).get("predictability") or {}).get("predictability_cache") if isinstance(report.get("scan_intelligence"), dict) else None),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            return dict(candidate)
+    return {}
 
 
 def _topk(report: dict | None) -> float | None:
@@ -2123,11 +2143,23 @@ def run_rewrite_pipeline_v3(
         integrity_result = _text_integrity(original_text, text)
         should_scan_candidate = bool(text)
         scanned_report = report
+        scan_input_hash = _text_hash(text)
         if should_scan_candidate and scanned_report is None:
             progress(78, f"Scanning V3 {mode} candidate")
             scanned_report = _scan_report(text)
         elif scanned_report is None:
             scanned_report = original_report
+        report_input_text = str((scanned_report or {}).get("input_text") or "")
+        report_input_hash = _text_hash(report_input_text)
+        scan_freshness = {
+            "candidate_text_hash": scan_input_hash,
+            "report_input_text_hash": report_input_hash,
+            "input_text_present": bool(report_input_text),
+            "input_text_matches_candidate": bool(report_input_text == str(text or "")),
+            "scan_reused_supplied_report": bool(report is not None),
+            "predictability_sentence_cache_enabled": os.environ.get("DRAFTPROOF_PREDICTABILITY_SENTENCE_CACHE", "1").lower() not in {"0", "false", "no", "off"},
+            "predictability_cache": _predictability_cache_info(scanned_report),
+        }
         candidate_footprint = _ai_footprint_profile(scanned_report)
         footprint_delta = _footprint_delta(original_footprint, candidate_footprint)
         candidate_target_profile = _rewrite_target_profile(scanned_report)
@@ -2218,6 +2250,7 @@ def run_rewrite_pipeline_v3(
                 "candidate_ai": _badge_ai(scanned_report),
                 "candidate_wq": _badge_wq(scanned_report),
                 "candidate_topk": _topk(scanned_report),
+                "scan_freshness": scan_freshness,
                 "authorship_window_profile": _authorship_window_profile(scanned_report),
                 "footprint_before": original_footprint,
                 "footprint_after": candidate_footprint,
