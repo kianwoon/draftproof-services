@@ -54,3 +54,61 @@ class CandidateVariant:
             "text": self.text,
             "word_count": self.word_count,
         }
+
+
+@dataclass(frozen=True)
+class ClusterRepairUnit:
+    cluster_id: str
+    start_sentence: int
+    end_sentence: int
+    start_char: int
+    end_char: int
+    text: str
+    before_context: str
+    after_context: str
+    sentence_count: int
+    word_count: int
+    risk_score: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def group_id(self) -> str:
+        return self.cluster_id
+
+    @property
+    def unit_id(self) -> str:
+        return self.cluster_id
+
+    @property
+    def source_text(self) -> str:
+        return self.text
+
+    @property
+    def operation(self) -> str:
+        return "bounded_cluster_patch"
+
+    @property
+    def targets(self) -> tuple[dict[str, Any], ...]:
+        return ({
+            "target_id": self.cluster_id,
+            "scope_level": "sentence_cluster",
+            "dominant_drivers": [
+                {"key": "unsafe_cluster_density", "score": self.risk_score},
+            ],
+        },)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cluster_id": self.cluster_id,
+            "start_sentence": self.start_sentence,
+            "end_sentence": self.end_sentence,
+            "start_char": self.start_char,
+            "end_char": self.end_char,
+            "text": self.text,
+            "before_context": self.before_context,
+            "after_context": self.after_context,
+            "sentence_count": self.sentence_count,
+            "word_count": self.word_count,
+            "risk_score": self.risk_score,
+            "metadata": self.metadata,
+        }

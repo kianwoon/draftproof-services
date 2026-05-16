@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,19 @@ from rewrite_v3.scanner_contract import build_scan_contract
 from rewrite_v3.scanner_controlled_executor import scanner_controlled_metrics, scanner_controlled_rank
 from rewrite_v3.target_executor import apply_target_replacements, group_rewrite_targets
 
+from .cluster_patch import apply_cluster_variant, build_cluster_repair_units, generate_cluster_variants
 from .generator import generate_variants
-from .models import CandidateVariant, RepairBrief
+from .models import CandidateVariant, ClusterRepairUnit, RepairBrief
 from .normalizer import deterministic_repair_brief, enrichment_repair_brief, llm_repair_brief, scanner_evidence_for_group, tutor_repair_brief
 from .validation import source_grounding_integrity, strategy_compliance_integrity
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:
@@ -363,6 +373,296 @@ def run_v4_fast_rewrite(
     )
 
 
+def run_v4_cluster_patch_experiment(
+    *,
+    input_text: str,
+    output_dir: str | Path,
+    max_clusters: int = 4,
+    variant_count: int = 2,
+    api_key: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    extra_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Experiment with bounded patches over scanner unsafe clusters."""
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    current_text = str(input_text or "")
+    baseline_report = _scan_report(current_text)
+    baseline_goal = evaluate_rewrite_goal(
+        original_text=current_text,
+        candidate_text=current_text,
+        original_report=baseline_report,
+        candidate_report=baseline_report,
+    ).to_dict()
+    baseline_metrics = _metrics(input_text=current_text, report=baseline_report, goal=baseline_goal)
+    baseline = _score_summary(baseline_report, baseline_metrics)
+    baseline["unsafe_cluster_count"] = _unsafe_cluster_count(baseline_goal)
+    baseline["unsafe_word_ratio"] = _unsafe_word_ratio(baseline_goal, baseline)
+
+    units = build_cluster_repair_units(
+        text=current_text,
+        report=baseline_report,
+        goal=baseline_goal,
+        limit=max_clusters,
+    )
+    gateway = LLMGateway(LLMConfig(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        max_tokens=8000,
+        temperature=0.25,
+        top_p=0.85,
+        timeout=180,
+        extra_body=extra_body,
+    ))
+    rows: list[dict[str, Any]] = []
+    for unit in units:
+        variants, diagnostics, prompt, completion = generate_cluster_variants(
+            unit=unit,
+            gateway=gateway,
+            variant_count=variant_count,
+        )
+        stem = f"{unit.cluster_id}"
+        (out_dir / f"{stem}_cluster_prompt.json.txt").write_text(prompt)
+        (out_dir / f"{stem}_cluster_completion.json.txt").write_text(completion)
+        for variant in variants:
+            row = _score_cluster_variant(
+                original_text=current_text,
+                baseline_report=baseline_report,
+                baseline_goal=baseline_goal,
+                baseline=baseline,
+                unit=unit,
+                variant=variant,
+                output_dir=out_dir,
+                stem=stem,
+            )
+            row["generator_diagnostics"] = diagnostics
+            rows.append(row)
+
+    ranked = sorted(rows, key=_cluster_candidate_sort_key, reverse=True)
+    best = next((row for row in ranked if _is_safe_cluster_positive(row)), None)
+    combo_ranked = _rank_cluster_combinations(
+        original_text=current_text,
+        baseline_report=baseline_report,
+        baseline=baseline,
+        units=units,
+        rows=rows,
+        output_dir=out_dir,
+    )
+    best_combo = combo_ranked[0] if combo_ranked else None
+    payload = {
+        "baseline": baseline,
+        "cluster_units": [unit.to_dict() for unit in units],
+        "results": rows,
+        "summary_ranked": [_compact_cluster_row(row) for row in ranked],
+        "best_safe_candidate": _compact_cluster_row(best) if best else None,
+        "combo_ranked": [_compact_cluster_combo_row(row) for row in combo_ranked],
+        "best_combo_candidate": _compact_cluster_combo_row(best_combo) if best_combo else None,
+    }
+    final_row = best_combo or best
+    if final_row:
+        payload["rewritten_document"] = final_row.get("candidate_text", "")
+        payload["final_scores"] = (final_row.get("scores") or {})
+    (out_dir / "v4_cluster_patch_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    if final_row and final_row.get("candidate_text"):
+        (out_dir / "v4_cluster_rewritten_document.txt").write_text(str(final_row.get("candidate_text") or ""))
+    return payload
+
+
+def _score_cluster_variant(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_goal: dict[str, Any],
+    baseline: dict[str, Any],
+    unit: ClusterRepairUnit,
+    variant: CandidateVariant,
+    output_dir: Path,
+    stem: str,
+) -> dict[str, Any]:
+    candidate_text, apply_status = apply_cluster_variant(original_text, unit, variant.text)
+    source_grounding = source_grounding_integrity(unit.text, variant.text)
+    if not apply_status.get("applied"):
+        return _rejected_cluster_row(
+            unit=unit,
+            variant=variant,
+            baseline=baseline,
+            reason=str(apply_status.get("reason") or "cluster_apply_failed"),
+            apply_status=apply_status,
+            source_grounding=source_grounding,
+        )
+    if not source_grounding.get("passed"):
+        return _rejected_cluster_row(
+            unit=unit,
+            variant=variant,
+            baseline=baseline,
+            reason="source_grounding_failed",
+            apply_status=apply_status,
+            source_grounding=source_grounding,
+            candidate_text=candidate_text,
+        )
+    candidate_report = _scan_report(candidate_text)
+    candidate_goal = evaluate_rewrite_goal(
+        original_text=original_text,
+        candidate_text=candidate_text,
+        original_report=baseline_report,
+        candidate_report=candidate_report,
+    ).to_dict()
+    candidate_metrics = _metrics(input_text=original_text, report=candidate_report, goal=candidate_goal)
+    scores = _score_summary(candidate_report, candidate_metrics)
+    scores["unsafe_cluster_count"] = _unsafe_cluster_count(candidate_goal)
+    scores["unsafe_word_ratio"] = _unsafe_word_ratio(candidate_goal, scores)
+    scores["ai_delta"] = round(_num(baseline.get("ai")) - _num(scores.get("ai")), 3)
+    scores["topk_delta"] = round(_num(baseline.get("topk")) - _num(scores.get("topk")), 3)
+    scores["external_delta"] = round(_num(baseline.get("external")) - _num(scores.get("external")), 3)
+    scores["rank_delta"] = round(_num(baseline.get("rank")) - _num(scores.get("rank")), 3)
+    scores["unsafe_cluster_delta"] = int(baseline.get("unsafe_cluster_count") or 0) - int(scores.get("unsafe_cluster_count") or 0)
+    scores["unsafe_word_ratio_delta"] = round(_num(baseline.get("unsafe_word_ratio")) - _num(scores.get("unsafe_word_ratio")), 3)
+    safe_name = f"{stem}_{variant.variant_id}"
+    (output_dir / f"{safe_name}.txt").write_text(candidate_text)
+    (output_dir / f"{safe_name}_scan.json").write_text(json.dumps(candidate_report, ensure_ascii=False, indent=2))
+    return {
+        "cluster_id": unit.cluster_id,
+        "variant_id": variant.variant_id,
+        "word_count": variant.word_count,
+        "text": variant.text,
+        "apply_status": apply_status,
+        "source_grounding": source_grounding,
+        "scores": scores,
+        "candidate_text": candidate_text,
+        "candidate_report": candidate_report,
+        "candidate_goal": candidate_goal,
+        "goal": {
+            "status": candidate_goal.get("status"),
+            "goal_met": candidate_goal.get("goal_met"),
+            "reason": candidate_goal.get("reason"),
+        },
+    }
+
+
+def _rejected_cluster_row(
+    *,
+    unit: ClusterRepairUnit,
+    variant: CandidateVariant,
+    baseline: dict[str, Any],
+    reason: str,
+    apply_status: dict[str, Any],
+    source_grounding: dict[str, Any],
+    candidate_text: str | None = None,
+) -> dict[str, Any]:
+    scores = {
+        **baseline,
+        "ai_delta": 0.0,
+        "topk_delta": 0.0,
+        "external_delta": 0.0,
+        "rank_delta": 0.0,
+        "unsafe_cluster_delta": 0,
+        "unsafe_word_ratio_delta": 0.0,
+    }
+    row: dict[str, Any] = {
+        "cluster_id": unit.cluster_id,
+        "variant_id": variant.variant_id,
+        "word_count": variant.word_count,
+        "text": variant.text,
+        "apply_status": apply_status,
+        "source_grounding": source_grounding,
+        "scores": scores,
+        "goal": {
+            "status": "rejected_candidate",
+            "goal_met": False,
+            "reason": reason,
+        },
+    }
+    if candidate_text is not None:
+        row["candidate_text"] = candidate_text
+    return row
+
+
+def _rank_cluster_combinations(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline: dict[str, Any],
+    units: list[ClusterRepairUnit],
+    rows: list[dict[str, Any]],
+    output_dir: Path,
+) -> list[dict[str, Any]]:
+    unit_by_id = {unit.cluster_id: unit for unit in units}
+    eligible = [
+        row for row in rows
+        if ((row.get("apply_status") or {}).get("applied"))
+        and ((row.get("source_grounding") or {}).get("passed"))
+        and row.get("cluster_id") in unit_by_id
+    ]
+    if not eligible:
+        return []
+    max_size = min(
+        len(eligible),
+        _int_env("DRAFTPROOF_REWRITE_V4_CLUSTER_COMBO_MAX_SIZE", 4, minimum=1, maximum=6),
+    )
+    combo_rows: list[dict[str, Any]] = []
+    for size in range(1, max_size + 1):
+        for combo in combinations(eligible, size):
+            cluster_ids = [str(row.get("cluster_id") or "") for row in combo]
+            if len(set(cluster_ids)) != len(cluster_ids):
+                continue
+            candidate_text = original_text
+            apply_statuses: list[dict[str, Any]] = []
+            for row in sorted(combo, key=lambda item: unit_by_id[str(item.get("cluster_id"))].start_char, reverse=True):
+                unit = unit_by_id[str(row.get("cluster_id"))]
+                candidate_text, status = apply_cluster_variant(candidate_text, unit, str(row.get("text") or ""))
+                apply_statuses.append(status)
+                if not status.get("applied"):
+                    break
+            if not all(status.get("applied") for status in apply_statuses):
+                continue
+            candidate_report = _scan_report(candidate_text)
+            candidate_goal = evaluate_rewrite_goal(
+                original_text=original_text,
+                candidate_text=candidate_text,
+                original_report=baseline_report,
+                candidate_report=candidate_report,
+            ).to_dict()
+            candidate_metrics = _metrics(input_text=original_text, report=candidate_report, goal=candidate_goal)
+            scores = _score_summary(candidate_report, candidate_metrics)
+            scores["unsafe_cluster_count"] = _unsafe_cluster_count(candidate_goal)
+            scores["unsafe_word_ratio"] = _unsafe_word_ratio(candidate_goal, scores)
+            scores["ai_delta"] = round(_num(baseline.get("ai")) - _num(scores.get("ai")), 3)
+            scores["topk_delta"] = round(_num(baseline.get("topk")) - _num(scores.get("topk")), 3)
+            scores["external_delta"] = round(_num(baseline.get("external")) - _num(scores.get("external")), 3)
+            scores["rank_delta"] = round(_num(baseline.get("rank")) - _num(scores.get("rank")), 3)
+            scores["unsafe_cluster_delta"] = int(baseline.get("unsafe_cluster_count") or 0) - int(scores.get("unsafe_cluster_count") or 0)
+            scores["unsafe_word_ratio_delta"] = round(_num(baseline.get("unsafe_word_ratio")) - _num(scores.get("unsafe_word_ratio")), 3)
+            combo_id = "_".join(f"{row.get('cluster_id')}-{row.get('variant_id')}" for row in combo)
+            safe_name = f"combo_{len(combo_rows) + 1:03d}"
+            (output_dir / f"{safe_name}_scan.json").write_text(json.dumps(candidate_report, ensure_ascii=False, indent=2))
+            combo_rows.append({
+                "combo_id": combo_id,
+                "patches": [
+                    {
+                        "cluster_id": row.get("cluster_id"),
+                        "variant_id": row.get("variant_id"),
+                        "text": row.get("text"),
+                    }
+                    for row in combo
+                ],
+                "apply_statuses": apply_statuses,
+                "scores": scores,
+                "candidate_text": candidate_text,
+                "candidate_report": candidate_report,
+                "candidate_goal": candidate_goal,
+                "goal": {
+                    "status": candidate_goal.get("status"),
+                    "goal_met": candidate_goal.get("goal_met"),
+                    "reason": candidate_goal.get("reason"),
+                },
+            })
+    combo_rows.sort(key=_cluster_combo_sort_key, reverse=True)
+    return combo_rows
+
+
 def _score_variant(
     *,
     input_text: str,
@@ -668,6 +968,58 @@ def _compact_result_row(row: dict[str, Any], brief: RepairBrief) -> dict[str, An
     }
 
 
+def _compact_cluster_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    scores = row.get("scores") or {}
+    return {
+        "cluster_id": row.get("cluster_id"),
+        "variant_id": row.get("variant_id"),
+        "word_count": row.get("word_count"),
+        "ai_delta": scores.get("ai_delta"),
+        "topk_delta": scores.get("topk_delta"),
+        "external_delta": scores.get("external_delta"),
+        "rank_delta": scores.get("rank_delta"),
+        "unsafe_cluster_delta": scores.get("unsafe_cluster_delta"),
+        "unsafe_word_ratio_delta": scores.get("unsafe_word_ratio_delta"),
+        "ai": scores.get("ai"),
+        "topk": scores.get("topk"),
+        "external": scores.get("external"),
+        "rank": scores.get("rank"),
+        "unsafe_cluster_count": scores.get("unsafe_cluster_count"),
+        "unsafe_word_ratio": scores.get("unsafe_word_ratio"),
+        "goal": row.get("goal"),
+        "text": row.get("text"),
+    }
+
+
+def _compact_cluster_combo_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    scores = row.get("scores") or {}
+    return {
+        "combo_id": row.get("combo_id"),
+        "patches": [
+            {"cluster_id": patch.get("cluster_id"), "variant_id": patch.get("variant_id")}
+            for patch in row.get("patches") or []
+            if isinstance(patch, dict)
+        ],
+        "ai_delta": scores.get("ai_delta"),
+        "topk_delta": scores.get("topk_delta"),
+        "external_delta": scores.get("external_delta"),
+        "rank_delta": scores.get("rank_delta"),
+        "unsafe_cluster_delta": scores.get("unsafe_cluster_delta"),
+        "unsafe_word_ratio_delta": scores.get("unsafe_word_ratio_delta"),
+        "ai": scores.get("ai"),
+        "topk": scores.get("topk"),
+        "external": scores.get("external"),
+        "rank": scores.get("rank"),
+        "unsafe_cluster_count": scores.get("unsafe_cluster_count"),
+        "unsafe_word_ratio": scores.get("unsafe_word_ratio"),
+        "goal": row.get("goal"),
+    }
+
+
 def _best_safe(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     for row in rows:
         if _is_safe_positive(row):
@@ -695,6 +1047,26 @@ def _is_safe_positive(row: dict[str, Any]) -> bool:
     )
 
 
+def _is_safe_cluster_positive(row: dict[str, Any]) -> bool:
+    scores = row.get("scores") or {}
+    if not ((row.get("apply_status") or {}).get("applied")):
+        return False
+    if not ((row.get("source_grounding") or {}).get("passed")):
+        return False
+    external_delta = _num(scores.get("external_delta"))
+    rank_delta = _num(scores.get("rank_delta"))
+    ai_delta = _num(scores.get("ai_delta"))
+    cluster_delta = _num(scores.get("unsafe_cluster_delta"))
+    unsafe_ratio_delta = _num(scores.get("unsafe_word_ratio_delta"))
+    topk_delta = _num(scores.get("topk_delta"))
+    return (
+        external_delta >= 0.0
+        and rank_delta >= 0.0
+        and (ai_delta > 0.0 or topk_delta > 0.0)
+        and (cluster_delta > 0.0 or unsafe_ratio_delta >= 1.0)
+    )
+
+
 def _candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float]:
     return (
         _num(row.get("ai_delta")),
@@ -702,6 +1074,45 @@ def _candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float
         _num(row.get("rank_delta")),
         _num(row.get("topk_delta")),
     )
+
+
+def _cluster_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    scores = row.get("scores") or {}
+    return (
+        _num(scores.get("unsafe_cluster_delta")),
+        _num(scores.get("unsafe_word_ratio_delta")),
+        _num(scores.get("external_delta")),
+        _num(scores.get("rank_delta")),
+        _num(scores.get("ai_delta")),
+    )
+
+
+def _cluster_combo_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float]:
+    scores = row.get("scores") or {}
+    return (
+        _num(scores.get("external_delta")),
+        _num(scores.get("rank_delta")),
+        _num(scores.get("unsafe_word_ratio_delta")),
+        _num(scores.get("topk_delta")),
+        _num(scores.get("ai_delta")),
+        _num(scores.get("unsafe_cluster_delta")),
+    )
+
+
+def _unsafe_cluster_count(goal: dict[str, Any]) -> int:
+    density = goal.get("eligible_span_density_gate") if isinstance(goal.get("eligible_span_density_gate"), dict) else {}
+    try:
+        return int(density.get("unsafe_cluster_count") or 0)
+    except Exception:
+        return 0
+
+
+def _unsafe_word_ratio(goal: dict[str, Any], fallback: dict[str, Any] | None = None) -> float:
+    density = goal.get("eligible_span_density_gate") if isinstance(goal.get("eligible_span_density_gate"), dict) else {}
+    value = density.get("unsafe_eligible_word_ratio")
+    if value is None and fallback:
+        value = fallback.get("unsafe_word_ratio")
+    return _num(value)
 
 
 def _num(value: Any) -> float:

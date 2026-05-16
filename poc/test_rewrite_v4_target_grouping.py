@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 from llm.gateway import LLMGateway, LLMResponse
 from rewrite_v3.target_executor import group_rewrite_targets
+from rewrite_v4.cluster_patch import apply_cluster_variant, build_cluster_repair_units, build_cluster_generator_prompt
 from rewrite_v4.generator import build_generator_prompt, generate_variants
+from rewrite_v4.models import ClusterRepairUnit
 from rewrite_v4.normalizer import _merge_strategy_defaults, deterministic_repair_brief
 from rewrite_v4.validation import parse_generator_variants, strategy_compliance_integrity
 
@@ -436,3 +438,118 @@ def test_v4_generator_focuses_long_multiblock_unit_and_appends_locked_suffix(mon
     assert diagnostics["generation_scope"]["mode"] == "focused_editable_prefix"
     assert len(variants) == 1
     assert variants[0].text == edited + suffix
+
+
+def test_v4_cluster_units_use_sentence_map_offsets_exactly():
+    text = "First sentence. Second sentence has the issue. Third sentence continues it. Fourth is context."
+    report = {
+        "sentence_map": {
+            "s001": {"start_char": 0, "end_char": 15, "text": "First sentence.", "paragraph_id": "p001"},
+            "s002": {"start_char": 16, "end_char": 46, "text": "Second sentence has the issue.", "paragraph_id": "p001"},
+            "s003": {"start_char": 47, "end_char": 75, "text": "Third sentence continues it.", "paragraph_id": "p001"},
+            "s004": {"start_char": 76, "end_char": 94, "text": "Fourth is context.", "paragraph_id": "p001"},
+        }
+    }
+    goal = {
+        "eligible_span_density_gate": {
+            "top_unsafe_clusters": [
+                {
+                    "start_sentence": 1,
+                    "end_sentence": 2,
+                    "sentence_count": 2,
+                    "word_count": 8,
+                    "risk_score": 9.5,
+                }
+            ]
+        }
+    }
+
+    units = build_cluster_repair_units(text=text, report=report, goal=goal, limit=1)
+
+    assert len(units) == 1
+    assert units[0].text == "Second sentence has the issue. Third sentence continues it."
+    assert units[0].start_char == 16
+    assert units[0].end_char == 75
+    assert units[0].metadata["sentence_ids"] == ["s002", "s003"]
+
+
+def test_v4_cluster_units_relocate_sentence_text_when_offsets_drift():
+    text = "Curly “quote” shifts offsets. Target sentence starts here. Another target follows."
+    report = {
+        "sentence_map": {
+            "s001": {"start_char": 0, "end_char": 29, "text": "Curly “quote” shifts offsets.", "paragraph_id": "p001"},
+            "s002": {"start_char": 24, "end_char": 52, "text": "Target sentence starts here.", "paragraph_id": "p001"},
+            "s003": {"start_char": 53, "end_char": 76, "text": "Another target follows.", "paragraph_id": "p001"},
+        }
+    }
+    goal = {
+        "eligible_span_density_gate": {
+            "top_unsafe_clusters": [
+                {
+                    "start_sentence": 1,
+                    "end_sentence": 2,
+                    "sentence_count": 2,
+                    "word_count": 7,
+                    "risk_score": 7.0,
+                }
+            ]
+        }
+    }
+
+    units = build_cluster_repair_units(text=text, report=report, goal=goal, limit=1)
+
+    assert len(units) == 1
+    assert units[0].text == "Target sentence starts here. Another target follows."
+    assert text[units[0].start_char:units[0].end_char] == units[0].text
+
+
+def test_v4_cluster_apply_rejects_stale_offsets():
+    unit = ClusterRepairUnit(
+        cluster_id="cluster_001",
+        start_sentence=1,
+        end_sentence=1,
+        start_char=6,
+        end_char=19,
+        text="target slice.",
+        before_context="Intro ",
+        after_context=" Outro.",
+        sentence_count=1,
+        word_count=2,
+        risk_score=4.0,
+    )
+
+    candidate, status = apply_cluster_variant(
+        "Intro stale slice. Outro.",
+        unit,
+        "replacement slice.",
+    )
+
+    assert candidate == "Intro stale slice. Outro."
+    assert not status["applied"]
+    assert status["reason"] == "cluster_slice_mismatch"
+
+
+def test_v4_cluster_prompt_is_bounded_and_schema_small():
+    unit = ClusterRepairUnit(
+        cluster_id="cluster_001",
+        start_sentence=4,
+        end_sentence=6,
+        start_char=10,
+        end_char=80,
+        text="At the beginning, he was quiet. With guidance, he became more confident.",
+        before_context="",
+        after_context=" Later he joined class independently.",
+        sentence_count=2,
+        word_count=12,
+        risk_score=8.5,
+        metadata={"generic_hits": 0, "transition_count": 0},
+    )
+
+    prompt = build_cluster_generator_prompt(unit=unit, variant_count=2)
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "bounded_cluster_texture_repair"
+    assert payload["repair_unit"]["cluster_text"] == unit.text
+    assert "full paragraph rewrite" in payload["forbidden"]
+    assert len(payload["output_schema"]["variants"]) == 2
+    assert set(payload["output_schema"]["variants"][0].keys()) == {"variant_id", "text"}
