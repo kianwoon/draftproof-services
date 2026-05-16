@@ -111,7 +111,7 @@ def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_cou
         },
         "repair_tasks": list(repair_brief.repair_tasks),
         "constraints": [
-            *repair_brief.constraints,
+            *_structure_aware_constraints(repair_brief.constraints, structure),
             "If tutor feedback asks for specificity, use only source wording already present; narrow or connect existing claims instead of adding examples.",
             "Preserve the paragraph's central claims and scope; do not turn a broad overview into a single example or narrower topic.",
             "Every original sentence's central claim must still be represented in the replacement.",
@@ -131,12 +131,12 @@ def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_cou
             "Follow target_voice_profile; do not upgrade the paragraph into a scholarly or professional article voice.",
         ],
         "avoid": [
-            *repair_brief.avoid,
+            *_structure_aware_avoid(repair_brief.avoid, structure),
             "new facts",
             "new examples",
             "personal stories",
             "slang",
-            "headings",
+            "new headings" if structure.get("has_heading_like_first_line") else "headings",
             "bullets",
             "markdown",
             "HTML",
@@ -254,6 +254,30 @@ def _structure_contract(source_text: str) -> dict[str, Any]:
         "first_nonempty_line": first,
         "preserve_line_breaks": len(nonempty) > 1,
     }
+
+
+def _structure_aware_constraints(items: tuple[str, ...] | list[str], structure: dict[str, Any]) -> list[str]:
+    preserve_blocks = int(structure.get("nonempty_line_count") or 1) > 1
+    cleaned: list[str] = []
+    for item in items or ():
+        text = str(item or "").strip()
+        if preserve_blocks and text == "Keep one paragraph.":
+            continue
+        if text:
+            cleaned.append(text)
+    return cleaned
+
+
+def _structure_aware_avoid(items: tuple[str, ...] | list[str], structure: dict[str, Any]) -> list[str]:
+    has_source_heading = bool(structure.get("has_heading_like_first_line"))
+    cleaned: list[str] = []
+    for item in items or ():
+        text = str(item or "").strip()
+        if has_source_heading and text == "headings":
+            text = "new headings"
+        if text:
+            cleaned.append(text)
+    return cleaned
 
 
 def _structure_instruction(structure: dict[str, Any]) -> str:

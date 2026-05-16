@@ -54,14 +54,6 @@ class TargetApplyStatus:
         return asdict(self)
 
 
-def _number(value: Any, default: float = 0.0) -> float:
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    return default
-
-
 def _word_count(text: str) -> int:
     return len(str(text or "").split())
 
@@ -140,6 +132,11 @@ def _span_from_target(target: dict[str, Any]) -> tuple[int | None, int | None, b
     return start_i, end_i, bool(integrity.get("passed"))
 
 
+def _span_in_bounds(span: tuple[int | None, int | None, bool], text_length: int) -> bool:
+    start, end, _ = span
+    return start is not None and end is not None and 0 <= start < end <= text_length
+
+
 def _target_sort_key(target: dict[str, Any]) -> tuple[int, str]:
     start, _, _ = _span_from_target(target)
     return (start if start is not None else 10**12, str(target.get("target_id") or ""))
@@ -176,6 +173,30 @@ def _paragraph_spans(text: str) -> dict[str, tuple[int, int]]:
         index += 1
         spans[f"p{index:03d}"] = (block_start, position)
     return spans
+
+
+def _snap_span_to_paragraph_boundaries(
+    start: int,
+    end: int,
+    paragraph_spans: dict[str, tuple[int, int]],
+) -> tuple[int, int]:
+    intersecting = [
+        (span_start, span_end)
+        for span_start, span_end in sorted(paragraph_spans.values())
+        if not (span_end <= start or span_start >= end)
+    ]
+    if not intersecting:
+        return start, end
+    return intersecting[0][0], intersecting[-1][1]
+
+
+def _target_uses_chunk_scope(target: dict[str, Any]) -> bool:
+    operations = target.get("operation_candidates") if isinstance(target.get("operation_candidates"), list) else []
+    return (
+        str(target.get("scope_level") or "") == "chunk"
+        or str(target.get("recommended_operation") or "") == "chunk_reconstruction"
+        or "chunk_reconstruction" in {str(item) for item in operations}
+    )
 
 
 def _target_operation(targets: list[dict[str, Any]]) -> str:
@@ -216,16 +237,18 @@ def _dedupe_soft_guidance_anchors(targets: list[dict[str, Any]]) -> tuple[dict[s
     return tuple(anchors)
 
 
+def _anchors_present_in_source(anchors: tuple[dict[str, Any], ...], source_text: str) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        anchor for anchor in anchors
+        if _anchor_present(source_text, str(anchor.get("text") or "").strip())
+    )
+
+
 def _combined_word_guide(targets: list[dict[str, Any]], source_text: str) -> dict[str, Any]:
-    source_words = 0
-    preferred_words = 0
-    for target in targets:
-        guide = target.get("word_count_guide") if isinstance(target.get("word_count_guide"), dict) else {}
-        source_words += int(_number(guide.get("source_words"), _word_count(str(target.get("source_text") or ""))))
-        preferred_words += int(_number(guide.get("preferred_words"), _word_count(str(target.get("source_text") or ""))))
+    actual_words = _word_count(source_text)
     return {
-        "source_words": source_words or _word_count(source_text),
-        "preferred_words": preferred_words or _word_count(source_text),
+        "source_words": actual_words,
+        "preferred_words": actual_words,
     }
 
 
@@ -264,15 +287,26 @@ def group_rewrite_targets(
     groups: list[TargetGroup] = []
     for index, (unit_id, rows) in enumerate(buckets.items(), start=1):
         spans = [_span_from_target(target) for target in rows]
-        valid_spans = [(start, end) for start, end, passed in spans if passed and start is not None and end is not None and 0 <= start < end <= len(text)]
+        bounded_spans = [(start, end, passed) for start, end, passed in spans if _span_in_bounds((start, end, passed), len(text))]
+        valid_spans = [(start, end) for start, end, passed in bounded_spans if passed]
         paragraph_id = str(rows[0].get("paragraph_id") or "")
         paragraph_span = paragraph_spans.get(paragraph_id)
-        if paragraph_span is not None:
+        uses_chunk_scope = any(_target_uses_chunk_scope(target) for target in rows)
+        if uses_chunk_scope and bounded_spans:
+            raw_start = min(start for start, _, _ in bounded_spans)
+            raw_end = max(end for _, end, _ in bounded_spans)
+            start_i, end_i = _snap_span_to_paragraph_boundaries(raw_start, raw_end, paragraph_spans)
+            source = text[start_i:end_i].strip()
+        elif paragraph_span is not None:
             start_i, end_i = paragraph_span
             source = text[start_i:end_i].strip()
         elif valid_spans:
             start_i = min(start for start, _ in valid_spans)
             end_i = max(end for _, end in valid_spans)
+            source = text[start_i:end_i].strip()
+        elif bounded_spans:
+            start_i = min(start for start, _, _ in bounded_spans)
+            end_i = max(end for _, end, _ in bounded_spans)
             source = text[start_i:end_i].strip()
         else:
             start_i = None
@@ -282,6 +316,8 @@ def group_rewrite_targets(
             continue
         before = text[max(0, (start_i or 0) - context_chars):(start_i or 0)] if start_i is not None else ""
         after = text[(end_i or 0):min(len(text), (end_i or 0) + context_chars)] if end_i is not None else ""
+        protected_anchors = _anchors_present_in_source(_dedupe_anchors(rows), source)
+        soft_guidance_anchors = _anchors_present_in_source(_dedupe_soft_guidance_anchors(rows), source)
         groups.append(TargetGroup(
             group_id=f"tg{index:03d}",
             unit_id=str(unit_id),
@@ -292,8 +328,8 @@ def group_rewrite_targets(
             before_context=before,
             after_context=after,
             targets=tuple(rows),
-            protected_anchors=_dedupe_anchors(rows),
-            soft_guidance_anchors=_dedupe_soft_guidance_anchors(rows),
+            protected_anchors=protected_anchors,
+            soft_guidance_anchors=soft_guidance_anchors,
             word_count_guide=_combined_word_guide(rows, source),
         ))
         if len(groups) >= max(1, int(max_groups or 1)):
