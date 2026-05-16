@@ -48,6 +48,8 @@ def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> 
 def _production_config() -> dict[str, Any]:
     return {
         "include_llm_normalizer": _bool_env("DRAFTPROOF_REWRITE_V4_INCLUDE_LLM_NORMALIZER", False),
+        "include_tutor_normalizer": _bool_env("DRAFTPROOF_REWRITE_V4_INCLUDE_TUTOR_NORMALIZER", True),
+        "include_enrichment_normalizer": _bool_env("DRAFTPROOF_REWRITE_V4_INCLUDE_ENRICHMENT_NORMALIZER", False),
         "variant_count": _int_env("DRAFTPROOF_REWRITE_V4_VARIANTS", 2, minimum=1, maximum=4),
         "max_rounds": _int_env("DRAFTPROOF_REWRITE_V4_MAX_ROUNDS", 2, minimum=1, maximum=4),
         "groups_per_round": _int_env("DRAFTPROOF_REWRITE_V4_GROUPS_PER_ROUND", 3, minimum=1, maximum=8),
@@ -95,6 +97,8 @@ def run_rewrite_pipeline_v4(
         input_text=original_text,
         output_dir=out_dir,
         include_llm_normalizer=bool(config["include_llm_normalizer"]),
+        include_tutor_normalizer=bool(config["include_tutor_normalizer"]),
+        include_enrichment_normalizer=bool(config["include_enrichment_normalizer"]),
         variant_count=int(config["variant_count"]),
         max_rounds=int(config["max_rounds"]),
         groups_per_round=int(config["groups_per_round"]),
@@ -115,9 +119,12 @@ def run_rewrite_pipeline_v4(
         candidate_report=final_report,
     ).to_dict()
     accepted = payload.get("accepted") if isinstance(payload.get("accepted"), list) else []
+    enriched_accepted = any(bool(row.get("external_review_required")) for row in accepted if isinstance(row, dict))
     no_text_change = final_text.strip() == original_text.strip()
     if no_text_change:
         public_status = RewriteGoalStatus.ORIGINAL_PRESERVED.value
+    elif enriched_accepted:
+        public_status = "rewrite_candidate_generated_needs_external_review"
     elif final_goal.get("goal_met"):
         public_status = RewriteGoalStatus.AI_MITIGATED.value
     elif accepted:

@@ -21,7 +21,8 @@ from rewrite_v3.target_executor import apply_target_replacements, group_rewrite_
 
 from .generator import generate_variants
 from .models import CandidateVariant, RepairBrief
-from .normalizer import deterministic_repair_brief, llm_repair_brief, scanner_evidence_for_group
+from .normalizer import deterministic_repair_brief, enrichment_repair_brief, llm_repair_brief, scanner_evidence_for_group, tutor_repair_brief
+from .validation import source_grounding_integrity
 
 
 def run_v4_experiment(
@@ -30,6 +31,8 @@ def run_v4_experiment(
     output_dir: str | Path,
     unit_ids: set[str] | None = None,
     include_llm_normalizer: bool = True,
+    include_tutor_normalizer: bool = False,
+    include_enrichment_normalizer: bool = False,
     variant_count: int = 3,
     api_key: str | None = None,
     model: str | None = None,
@@ -65,6 +68,10 @@ def run_v4_experiment(
         briefs: list[RepairBrief] = [deterministic_repair_brief(group)]
         if include_llm_normalizer:
             briefs.append(llm_repair_brief(group, gateway))
+        if include_tutor_normalizer:
+            briefs.append(tutor_repair_brief(group, gateway))
+        if include_enrichment_normalizer:
+            briefs.append(enrichment_repair_brief(group, gateway))
         for brief in briefs:
             variants, generator_diagnostics, prompt, completion = generate_variants(
                 group=group,
@@ -81,6 +88,7 @@ def run_v4_experiment(
                     baseline_report=baseline_report,
                     baseline=baseline,
                     group=group,
+                    repair_brief=brief,
                     variant=variant,
                     output_dir=out_dir,
                     stem=stem,
@@ -116,6 +124,8 @@ def run_v4_iterative_rewrite(
     output_dir: str | Path,
     unit_ids: set[str] | None = None,
     include_llm_normalizer: bool = True,
+    include_tutor_normalizer: bool = False,
+    include_enrichment_normalizer: bool = False,
     variant_count: int = 3,
     max_rounds: int = 3,
     groups_per_round: int | None = None,
@@ -179,6 +189,10 @@ def run_v4_iterative_rewrite(
             briefs: list[RepairBrief] = [deterministic_repair_brief(group)]
             if include_llm_normalizer:
                 briefs.append(llm_repair_brief(group, gateway))
+            if include_tutor_normalizer:
+                briefs.append(tutor_repair_brief(group, gateway))
+            if include_enrichment_normalizer:
+                briefs.append(enrichment_repair_brief(group, gateway))
             for brief in briefs:
                 variants, generator_diagnostics, prompt, completion = generate_variants(
                     group=group,
@@ -196,6 +210,7 @@ def run_v4_iterative_rewrite(
                         current_report=current_report,
                         current_baseline=current_baseline,
                         group=group,
+                        repair_brief=brief,
                         variant=variant,
                         output_dir=out_dir,
                         stem=stem,
@@ -274,6 +289,8 @@ def run_v4_iterative_rewrite(
         "rounds": rounds,
         "config": {
             "include_llm_normalizer": include_llm_normalizer,
+            "include_tutor_normalizer": include_tutor_normalizer,
+            "include_enrichment_normalizer": include_enrichment_normalizer,
             "variant_count": variant_count,
             "max_rounds": max_rounds,
             "groups_per_round": groups_per_round,
@@ -305,6 +322,8 @@ def run_v4_fast_rewrite(
         output_dir=output_dir,
         unit_ids=unit_ids,
         include_llm_normalizer=False,
+        include_tutor_normalizer=True,
+        include_enrichment_normalizer=False,
         variant_count=2,
         max_rounds=2,
         groups_per_round=3,
@@ -323,6 +342,7 @@ def _score_variant(
     baseline_report: dict[str, Any],
     baseline: dict[str, Any],
     group: Any,
+    repair_brief: RepairBrief,
     variant: CandidateVariant,
     output_dir: Path,
     stem: str,
@@ -332,6 +352,17 @@ def _score_variant(
         target_groups=[group],
         replacements=[{"group_id": group.group_id, "replacement_text": variant.text}],
     )
+    source_grounding = source_grounding_integrity(group.source_text, variant.text, repair_mode=repair_brief.repair_mode)
+    if not source_grounding.get("passed"):
+        return _rejected_variant_row(
+            group=group,
+            variant=variant,
+            apply_status=apply_status,
+            baseline=baseline,
+            reason="source_grounding_failed",
+            source_grounding=source_grounding,
+            repair_brief=repair_brief,
+        )
     candidate_report = _scan_report(candidate_text)
     candidate_goal = evaluate_rewrite_goal(
         original_text=input_text,
@@ -348,8 +379,11 @@ def _score_variant(
         "unit_id": group.unit_id,
         "group_id": group.group_id,
         "variant_id": variant.variant_id,
+        "repair_mode": repair_brief.repair_mode,
+        "external_review_required": bool(source_grounding.get("external_review_required")),
         "word_count": variant.word_count,
         "text": variant.text,
+        "source_grounding": source_grounding,
         "apply_status": apply_status,
         "scores": {
             **scores,
@@ -373,6 +407,7 @@ def _score_variant_against_current(
     current_report: dict[str, Any],
     current_baseline: dict[str, Any],
     group: Any,
+    repair_brief: RepairBrief,
     variant: CandidateVariant,
     output_dir: Path,
     stem: str,
@@ -382,6 +417,18 @@ def _score_variant_against_current(
         target_groups=[group],
         replacements=[{"group_id": group.group_id, "replacement_text": variant.text}],
     )
+    source_grounding = source_grounding_integrity(group.source_text, variant.text, repair_mode=repair_brief.repair_mode)
+    if not source_grounding.get("passed"):
+        return _rejected_variant_row(
+            group=group,
+            variant=variant,
+            apply_status=apply_status,
+            baseline=current_baseline,
+            reason="source_grounding_failed",
+            source_grounding=source_grounding,
+            candidate_text=candidate_text,
+            repair_brief=repair_brief,
+        )
     candidate_report = _scan_report(candidate_text)
     candidate_goal = evaluate_rewrite_goal(
         original_text=original_text,
@@ -398,8 +445,11 @@ def _score_variant_against_current(
         "unit_id": group.unit_id,
         "group_id": group.group_id,
         "variant_id": variant.variant_id,
+        "repair_mode": repair_brief.repair_mode,
+        "external_review_required": bool(source_grounding.get("external_review_required")),
         "word_count": variant.word_count,
         "text": variant.text,
+        "source_grounding": source_grounding,
         "apply_status": apply_status,
         "scores": {
             **scores,
@@ -417,6 +467,48 @@ def _score_variant_against_current(
             "reason": candidate_goal.get("reason"),
         },
     }
+
+
+def _rejected_variant_row(
+    *,
+    group: Any,
+    variant: CandidateVariant,
+    apply_status: dict[str, Any],
+    baseline: dict[str, Any],
+    reason: str,
+    source_grounding: dict[str, Any],
+    repair_brief: RepairBrief,
+    candidate_text: str | None = None,
+) -> dict[str, Any]:
+    scores = {
+        **baseline,
+        "ai_delta": 0.0,
+        "topk_delta": 0.0,
+        "external_delta": 0.0,
+        "rank_delta": 0.0,
+    }
+    row = {
+        "unit_id": group.unit_id,
+        "group_id": group.group_id,
+        "variant_id": variant.variant_id,
+        "repair_mode": repair_brief.repair_mode,
+        "external_review_required": bool(source_grounding.get("external_review_required")),
+        "word_count": variant.word_count,
+        "text": variant.text,
+        "apply_status": apply_status,
+        "source_grounding": source_grounding,
+        "scores": scores,
+        "goal": {
+            "status": "rejected_candidate",
+            "goal_met": False,
+            "reason": reason,
+        },
+    }
+    if candidate_text is not None:
+        row["candidate_text"] = candidate_text
+        row["candidate_report"] = {}
+        row["candidate_goal"] = row["goal"]
+    return row
 
 
 def _rank_groups_for_v4(groups: list[Any]) -> list[Any]:
@@ -472,6 +564,8 @@ def _rank_results(experiments: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "group_id": result.get("group_id"),
                 "normalizer": normalizer,
                 "variant_id": result.get("variant_id"),
+                "repair_mode": result.get("repair_mode"),
+                "external_review_required": bool(result.get("external_review_required")),
                 "word_count": result.get("word_count"),
                 "ai_delta": scores.get("ai_delta"),
                 "topk_delta": scores.get("topk_delta"),
@@ -502,6 +596,8 @@ def _compact_result_row(row: dict[str, Any], brief: RepairBrief) -> dict[str, An
         "group_id": row.get("group_id"),
         "normalizer": brief.normalizer,
         "variant_id": row.get("variant_id"),
+        "repair_mode": row.get("repair_mode") or brief.repair_mode,
+        "external_review_required": bool(row.get("external_review_required")),
         "word_count": row.get("word_count"),
         "ai_delta": scores.get("ai_delta"),
         "topk_delta": scores.get("topk_delta"),
