@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from llm.gateway import LLMGateway, LLMResponse
 from rewrite_v3.target_executor import group_rewrite_targets
 from rewrite_v4.cluster_patch import apply_cluster_variant, build_cluster_repair_units, build_cluster_generator_prompt
+from rewrite_v4.experiment import _add_goal_driver_snapshot, _add_score_deltas, _is_safe_residual_positive
 from rewrite_v4.generator import build_generator_prompt, generate_variants
 from rewrite_v4.models import ClusterRepairUnit
 from rewrite_v4.normalizer import _merge_strategy_defaults, deterministic_repair_brief
@@ -553,3 +554,87 @@ def test_v4_cluster_prompt_is_bounded_and_schema_small():
     assert "full paragraph rewrite" in payload["forbidden"]
     assert len(payload["output_schema"]["variants"]) == 2
     assert set(payload["output_schema"]["variants"][0].keys()) == {"variant_id", "text"}
+
+
+def test_v4_residual_cluster_prompt_targets_remaining_pocket():
+    unit = ClusterRepairUnit(
+        cluster_id="cluster_001",
+        start_sentence=10,
+        end_sentence=10,
+        start_char=100,
+        end_char=180,
+        text="To me, the purpose of education is reflected in the Chinese saying and it is more important to teach students how to think.",
+        before_context="",
+        after_context="",
+        sentence_count=1,
+        word_count=22,
+        risk_score=5.1,
+        metadata={"generic_hits": 1, "transition_count": 0},
+    )
+
+    prompt = build_cluster_generator_prompt(unit=unit, variant_count=1, mode="residual_cluster_splitter")
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "residual_cluster_splitter"
+    assert any("smallest route change" in item for item in payload["repair_goal"])
+    assert any("split one over-complete sentence" in item for item in payload["allowed_moves"])
+    assert any("Prefer reducing predictable common phrasing" in item for item in payload["constraints"])
+
+
+def test_v4_residual_acceptance_uses_blocker_deltas():
+    row = {
+        "apply_statuses": [{"applied": True}],
+        "scores": {
+            "external_delta": -0.05,
+            "rank_delta": -0.2,
+            "topk_calibrated_risk_delta": 1.2,
+            "qualifying_text_ai_density_delta": 0.0,
+            "unsafe_cluster_delta": 0,
+            "unsafe_word_ratio_delta": 0.0,
+            "external_ai_flag_risk_delta": 0.0,
+        },
+    }
+
+    assert _is_safe_residual_positive(row)
+
+
+def test_v4_goal_driver_snapshot_and_deltas():
+    baseline = {}
+    candidate = {}
+    baseline_goal = {
+        "ai_footprint_gate": {
+            "after": {
+                "authorship_footprint": {
+                    "ai_authorship": 40.0,
+                    "topk_calibrated_risk": 50.0,
+                },
+                "semantic_footprint": {
+                    "qualifying_text_ai_density": 45.0,
+                },
+                "external_ai_flag_risk": 36.0,
+            }
+        }
+    }
+    candidate_goal = {
+        "ai_footprint_gate": {
+            "after": {
+                "authorship_footprint": {
+                    "ai_authorship": 39.0,
+                    "topk_calibrated_risk": 47.5,
+                },
+                "semantic_footprint": {
+                    "qualifying_text_ai_density": 41.0,
+                },
+                "external_ai_flag_risk": 35.5,
+            }
+        }
+    }
+
+    _add_goal_driver_snapshot(baseline, baseline_goal)
+    _add_goal_driver_snapshot(candidate, candidate_goal)
+    _add_score_deltas(candidate, baseline)
+
+    assert candidate["topk_calibrated_risk_delta"] == 2.5
+    assert candidate["qualifying_text_ai_density_delta"] == 4.0
+    assert candidate["ai_authorship_delta"] == 1.0
+    assert candidate["external_ai_flag_risk_delta"] == 0.5

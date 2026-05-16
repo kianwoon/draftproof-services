@@ -87,10 +87,12 @@ def build_cluster_generator_prompt(
     *,
     unit: ClusterRepairUnit,
     variant_count: int = 2,
+    mode: str = "bounded_cluster_texture_repair",
 ) -> str:
     variants = max(1, min(3, int(variant_count or 1)))
+    residual = str(mode or "").strip() == "residual_cluster_splitter"
     payload = {
-        "task": "bounded_cluster_texture_repair",
+        "task": "residual_cluster_splitter" if residual else "bounded_cluster_texture_repair",
         "cluster_id": unit.cluster_id,
         "repair_unit": {
             "cluster_text": unit.text,
@@ -105,12 +107,21 @@ def build_cluster_generator_prompt(
             },
         },
         "repair_goal": [
-            "Repair the route across these adjacent sentences.",
-            "Break repeated openings, overly tidy cause-effect movement, and generic summary rhythm.",
+            (
+                "Treat this as a remaining residual pocket after earlier safe repairs; make the smallest route change that weakens predictable wording."
+                if residual else
+                "Repair the route across these adjacent sentences."
+            ),
+            (
+                "Target common-word chains, generic summary phrasing, and one-sentence over-completion without adding new content."
+                if residual else
+                "Break repeated openings, overly tidy cause-effect movement, and generic summary rhythm."
+            ),
             "Keep the same facts, people, sequence, citations, and source viewpoint.",
             "Return only a replacement for cluster_text, not the full document.",
         ],
         "allowed_moves": [
+            "split one over-complete sentence into two natural sentences when meaning is preserved" if residual else "",
             "combine two adjacent sentences when the same claim is repeated",
             "move a short reason closer to the claim it explains",
             "replace a formulaic transition with source-near wording",
@@ -137,6 +148,8 @@ def build_cluster_generator_prompt(
             "Keep one contiguous prose cluster.",
             "Preserve protected citation-like strings exactly if present.",
             "Do not polish every sentence into the same rhythm.",
+            "Prefer reducing predictable common phrasing over making the prose smoother." if residual else "",
+            "Do not convert an already specific sentence into a broader summary." if residual else "",
             f"Return exactly {variants} {'variant' if variants == 1 else 'variants'}.",
             "Return exactly the allowed keys for each variant: variant_id, text.",
         ],
@@ -147,6 +160,8 @@ def build_cluster_generator_prompt(
             ]
         },
     }
+    payload["allowed_moves"] = [item for item in payload["allowed_moves"] if item]
+    payload["constraints"] = [item for item in payload["constraints"] if item]
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -155,8 +170,9 @@ def generate_cluster_variants(
     unit: ClusterRepairUnit,
     gateway: LLMGateway,
     variant_count: int = 2,
+    mode: str = "bounded_cluster_texture_repair",
 ) -> tuple[list[CandidateVariant], dict[str, Any], str, str]:
-    prompt = build_cluster_generator_prompt(unit=unit, variant_count=variant_count)
+    prompt = build_cluster_generator_prompt(unit=unit, variant_count=variant_count, mode=mode)
     response_format = _variants_response_format(max(1, min(3, int(variant_count or 1))))
     structured_options = structured_json_request_options(getattr(gateway, "model", None), response_format)
     provider = _merge_provider_options(getattr(gateway, "provider", None), structured_options.get("provider"))
