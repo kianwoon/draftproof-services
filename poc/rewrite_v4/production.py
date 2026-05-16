@@ -138,6 +138,8 @@ def run_rewrite_pipeline_v4(
     final_scores = v4_summary.get("final_scores") if isinstance(v4_summary.get("final_scores"), dict) else {}
     deltas = v4_summary.get("deltas") if isinstance(v4_summary.get("deltas"), dict) else {}
     detect_scores = _detect_scores(original_report, final_report, original_scores, final_scores)
+    original_scan_compact = _compact_scan_for_rewrite_report(original_report)
+    final_scan_compact = _compact_scan_for_rewrite_report(final_report)
     summary = {
         "rewrite_pipeline_version": "rewrite_v4_normalized_repair",
         "rewrite_engine_mode": "v4_fast_production",
@@ -183,17 +185,18 @@ def run_rewrite_pipeline_v4(
             "accepted_count": len(accepted),
             "reason": "v4_normalized_repair",
         },
-        "candidate_trace": accepted,
-        "candidate_loop_trace": payload.get("rounds") if isinstance(payload.get("rounds"), list) else [],
-        "selected_candidate": accepted[-1] if accepted else None,
+        "candidate_trace": _compact_candidate_trace(accepted),
+        "candidate_loop_trace": _compact_candidate_loop_trace(payload.get("rounds")),
+        "selected_candidate": _compact_candidate_trace([accepted[-1]])[0] if accepted else None,
         "stage_timings": [{
             "stage": "rewrite_v4_normalized_repair",
             "seconds": round(elapsed, 3),
             "selected": bool(accepted),
             "stop_reason": public_status,
         }],
-        "detect_scan_original": original_report,
-        "detect_scan_rewritten": final_report,
+        "detect_scan_original_saved": original_scan_compact,
+        "detect_scan_original": original_scan_compact,
+        "detect_scan_rewritten": final_scan_compact,
         "final_text": final_text,
         "no_text_change": no_text_change,
         "no_text_change_reason": "v4_no_safe_candidate" if no_text_change else "",
@@ -238,6 +241,175 @@ def _load_final_scan(output_dir: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _compact_scan_for_rewrite_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Keep only scan fields required by rewrite comparison UI/reporting.
+
+    Full scan reports include token-level scanner internals and can be many MB.
+    The rewrite result endpoint has a report-size cap, so V4 stores a compact
+    comparison scan in rewrite.json and keeps heavyweight traces out of R2 JSON.
+    """
+    if not isinstance(report, dict):
+        return {}
+    badge = report.get("ai_risk_badge") if isinstance(report.get("ai_risk_badge"), dict) else {}
+    intelligence = report.get("scan_intelligence") if isinstance(report.get("scan_intelligence"), dict) else {}
+    compact_intelligence: dict[str, Any] = {}
+    if isinstance(intelligence.get("transformation"), dict):
+        compact_intelligence["transformation"] = intelligence.get("transformation")
+    if isinstance(intelligence.get("document"), dict):
+        document = intelligence.get("document") or {}
+        compact_intelligence["document"] = {
+            "document_shape": document.get("document_shape"),
+            "word_count": document.get("word_count"),
+            "sentence_count": document.get("sentence_count"),
+            "paragraph_count": document.get("paragraph_count"),
+        }
+    return {
+        "ai_score": _ai_score(report),
+        "writing_score": report.get("writing_score") or badge.get("writing_quality_score"),
+        "finding_count": report.get("finding_count") or _count_findings(report.get("findings")),
+        "findings": _compact_findings(report.get("findings")),
+        "ai_risk_badge": badge,
+        "integrity_layers": report.get("integrity_layers") if isinstance(report.get("integrity_layers"), dict) else {},
+        "scan_intelligence": compact_intelligence,
+        "document_context": report.get("document_context") if isinstance(report.get("document_context"), dict) else {},
+    }
+
+
+def _compact_findings(findings: Any, *, max_per_tier: int = 40) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(findings, dict):
+        return {}
+    compact: dict[str, list[dict[str, Any]]] = {}
+    for tier, rows in findings.items():
+        if not isinstance(rows, list):
+            continue
+        compact[str(tier)] = [
+            {
+                "finding_id": row.get("finding_id"),
+                "sentence_id": row.get("sentence_id"),
+                "title": row.get("title"),
+                "scanner": row.get("scanner"),
+                "category": row.get("category"),
+                "signal_category": row.get("signal_category"),
+                "score": row.get("score"),
+                "actionability": row.get("actionability"),
+                "recommendation": row.get("recommendation"),
+                "detail": _truncate_text(row.get("detail"), 260),
+                "evidence": _compact_evidence(row.get("evidence")),
+            }
+            for row in rows[:max_per_tier]
+            if isinstance(row, dict)
+        ]
+    return compact
+
+
+def _compact_evidence(evidence: Any) -> Any:
+    if not isinstance(evidence, dict):
+        return _truncate_text(evidence, 220) if evidence else evidence
+    return {
+        "summary": _truncate_text(evidence.get("summary"), 220),
+        "sentence": _truncate_text(evidence.get("sentence"), 260),
+        "metrics": evidence.get("metrics") if isinstance(evidence.get("metrics"), dict) else None,
+    }
+
+
+def _compact_candidate_trace(rows: Any) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    compact_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        compact_rows.append({
+            "unit_id": row.get("unit_id"),
+            "group_id": row.get("group_id"),
+            "normalizer": row.get("normalizer"),
+            "variant_id": row.get("variant_id"),
+            "repair_mode": row.get("repair_mode"),
+            "external_review_required": bool(row.get("external_review_required")),
+            "word_count": row.get("word_count"),
+            "ai_delta": row.get("ai_delta"),
+            "topk_delta": row.get("topk_delta"),
+            "external_delta": row.get("external_delta"),
+            "rank_delta": row.get("rank_delta"),
+            "ai": row.get("ai"),
+            "topk": row.get("topk"),
+            "external": row.get("external"),
+            "rank": row.get("rank"),
+            "round": row.get("round"),
+            "text": _truncate_text(row.get("text"), 900),
+            "scores_after": row.get("scores_after") if isinstance(row.get("scores_after"), dict) else None,
+        })
+    return compact_rows
+
+
+def _compact_candidate_loop_trace(rounds: Any) -> list[dict[str, Any]]:
+    if not isinstance(rounds, list):
+        return []
+    compact_rounds: list[dict[str, Any]] = []
+    for round_row in rounds:
+        if not isinstance(round_row, dict):
+            continue
+        candidates = []
+        for block in (round_row.get("candidates") or [])[:12]:
+            if not isinstance(block, dict):
+                continue
+            repair_brief = block.get("repair_brief") if isinstance(block.get("repair_brief"), dict) else {}
+            candidates.append({
+                "unit_id": block.get("unit_id"),
+                "group_id": block.get("group_id"),
+                "normalizer": repair_brief.get("normalizer"),
+                "repair_mode": repair_brief.get("repair_mode"),
+                "generator_status": (block.get("generator_diagnostics") or {}).get("status")
+                if isinstance(block.get("generator_diagnostics"), dict)
+                else None,
+                "result_summaries": [
+                    _compact_result_summary(result)
+                    for result in (block.get("results") or [])[:4]
+                    if isinstance(result, dict)
+                ],
+            })
+        compact_rounds.append({
+            "round": round_row.get("round"),
+            "baseline": round_row.get("baseline") if isinstance(round_row.get("baseline"), dict) else None,
+            "target_count": round_row.get("target_count"),
+            "groups_per_round": round_row.get("groups_per_round"),
+            "stop_reason": round_row.get("stop_reason"),
+            "accepted": _compact_candidate_trace([round_row.get("accepted")])[0]
+            if isinstance(round_row.get("accepted"), dict)
+            else None,
+            "candidates": candidates,
+        })
+    return compact_rounds
+
+
+def _compact_result_summary(result: dict[str, Any]) -> dict[str, Any]:
+    scores = result.get("scores") if isinstance(result.get("scores"), dict) else {}
+    goal = result.get("goal") if isinstance(result.get("goal"), dict) else {}
+    source_grounding = result.get("source_grounding") if isinstance(result.get("source_grounding"), dict) else {}
+    return {
+        "variant_id": result.get("variant_id"),
+        "repair_mode": result.get("repair_mode"),
+        "external_review_required": bool(result.get("external_review_required")),
+        "word_count": result.get("word_count"),
+        "ai_delta": scores.get("ai_delta"),
+        "topk_delta": scores.get("topk_delta"),
+        "external_delta": scores.get("external_delta"),
+        "rank_delta": scores.get("rank_delta"),
+        "goal_reason": goal.get("reason"),
+        "source_grounding_passed": source_grounding.get("passed") if source_grounding else None,
+        "text": _truncate_text(result.get("text"), 700),
+    }
+
+
+def _truncate_text(value: Any, max_chars: int) -> Any:
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "..."
 
 
 def _generated_candidate_count(payload: dict[str, Any]) -> int:

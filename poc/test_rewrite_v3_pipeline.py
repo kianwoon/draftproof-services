@@ -101,7 +101,9 @@ from rewrite_v3.unit_preserving_prune_bridge import (
 from rewrite_v4.generator import build_generator_prompt
 from rewrite_v4.models import RepairBrief
 from rewrite_v4.experiment import run_v4_fast_rewrite, run_v4_iterative_rewrite
+from rewrite_v4.production import _compact_candidate_loop_trace, _compact_scan_for_rewrite_report
 from rewrite_v4.validation import parse_generator_variants, sanitize_repair_brief
+from worker.app.tasks import _bounded_json_debug_log
 
 
 def assert_test(condition: bool, message: str) -> None:
@@ -3910,6 +3912,55 @@ assert_test(
 assert_test(
     callable(run_v4_fast_rewrite),
     "V4 exposes a production-shaped fast rewrite loop",
+)
+
+compact_scan = _compact_scan_for_rewrite_report({
+    "ai_score": 42.0,
+    "finding_count": 2,
+    "findings": {"high": [{"finding_id": "f1", "detail": "x" * 1000, "evidence": {"sentence": "y" * 1000}}]},
+    "ai_risk_badge": {"ai_likelihood_score": 42.0},
+    "scan_intelligence": {
+        "transformation": {"core_signals": ["a"]},
+        "document": {"word_count": 100, "segments": [{"text": "z" * 1000}]},
+        "large_unused_field": "drop me",
+    },
+    "predictability": {"sentences": [{"tokens": ["huge"] * 1000}]},
+})
+compact_loop = _compact_candidate_loop_trace([{
+    "round": 1,
+    "candidates": [{
+        "unit_id": "p001",
+        "repair_brief": {"normalizer": "tutor_v0", "repair_mode": "source_preserving_repair"},
+        "results": [{
+            "variant_id": "v1",
+            "candidate_report": {"huge": "drop"},
+            "candidate_text": "drop",
+            "scores": {"ai_delta": 1.0},
+            "text": "a" * 2000,
+        }],
+    }],
+}])
+assert_test(
+    "predictability" not in compact_scan
+    and "segments" not in compact_scan["scan_intelligence"]["document"]
+    and "candidate_report" not in compact_loop[0]["candidates"][0]["result_summaries"][0]
+    and len(compact_loop[0]["candidates"][0]["result_summaries"][0]["text"]) < 760,
+    "V4 production report compaction removes heavyweight scan and candidate payloads",
+)
+bounded_debug_log = _bounded_json_debug_log(
+    {
+        "debug_export_version": "test",
+        "rewrite_id": "rw_test",
+        "scan_id": "scan_test",
+        "input_scan": {"findings": [{"detail": "x" * 2000} for _ in range(300)]},
+        "rewrite_summary": {"candidate_loop_trace": [{"candidate_report": {"blob": "y" * 2000}} for _ in range(300)]},
+    },
+    max_bytes=4096,
+)
+assert_test(
+    len(bounded_debug_log.encode("utf-8")) <= 4096
+    and '"debug_truncated": true' in bounded_debug_log,
+    "Worker rewrite debug log is bounded before upload",
 )
 
 print("Rewrite V3 pipeline tests passed.")

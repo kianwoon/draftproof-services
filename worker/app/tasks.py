@@ -40,6 +40,22 @@ logger = logging.getLogger(__name__)
 
 REWRITE_DEBUG_EXPORT_VERSION = "rewrite_controller_debug_passthrough_v3"
 
+
+def _bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+MAX_REWRITE_DEBUG_LOG_BYTES = _bounded_int_env(
+    "DRAFTPROOF_REWRITE_DEBUG_LOG_MAX_BYTES",
+    1_000_000,
+    minimum=100_000,
+    maximum=5_000_000,
+)
+
 NON_BILLABLE_REWRITE_OUTCOMES = {
     "clean",
     "mitigation_failed_no_safe_candidate",
@@ -416,6 +432,56 @@ def _truncate_debug_value(value, limit: int = 320):
         text = " ".join(value.split())
         return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
     return value
+
+
+def _bounded_json_debug_log(log_data: dict, *, max_bytes: int = MAX_REWRITE_DEBUG_LOG_BYTES) -> str:
+    text = json.dumps(log_data, indent=2, ensure_ascii=False, default=str)
+    if len(text.encode("utf-8")) <= max_bytes:
+        return text
+    slim = {
+        "debug_export_version": log_data.get("debug_export_version"),
+        "debug_export_source": log_data.get("debug_export_source"),
+        "runtime_code_sha": log_data.get("runtime_code_sha"),
+        "runtime_code_fingerprint": log_data.get("runtime_code_fingerprint"),
+        "rewrite_id": log_data.get("rewrite_id"),
+        "scan_id": log_data.get("scan_id"),
+        "status": log_data.get("status"),
+        "elapsed": log_data.get("elapsed"),
+        "pipeline_status": log_data.get("pipeline_status"),
+        "pipeline_elapsed": log_data.get("pipeline_elapsed"),
+        "debug_truncated": True,
+        "debug_truncation_reason": f"debug log exceeded {max_bytes} bytes",
+        "input_scan": _compact_debug_mapping(log_data.get("input_scan"), max_items=12),
+        "rewrite_summary": _compact_debug_mapping(log_data.get("rewrite_summary"), max_items=48),
+        "loop_history_count": len(log_data.get("loop_history") or []) if isinstance(log_data.get("loop_history"), list) else None,
+        "sentence_comparison_count": log_data.get("sentence_comparison_count"),
+        "sentence_comparison_changes": log_data.get("sentence_comparison_changes"),
+    }
+    text = json.dumps(slim, indent=2, ensure_ascii=False, default=str)
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[: max_bytes - 80].decode("utf-8", errors="ignore").rstrip() + "\n... truncated\n"
+
+
+def _compact_debug_mapping(value, *, max_items: int = 20):
+    if not isinstance(value, dict):
+        return _truncate_debug_value(value, 500)
+    compact = {}
+    for index, (key, item) in enumerate(value.items()):
+        if index >= max_items:
+            compact["omitted_keys"] = len(value) - max_items
+            break
+        compact[key] = _compact_debug_value(item)
+    return compact
+
+
+def _compact_debug_value(value):
+    if isinstance(value, dict):
+        return _compact_debug_mapping(value, max_items=12)
+    if isinstance(value, list):
+        return [_compact_debug_value(item) for item in value[:8]] + ([{"omitted": len(value) - 8}] if len(value) > 8 else [])
+    return _truncate_debug_value(value, 500)
 
 
 def _compact_debug_list(items, limit: int = 10):
@@ -1049,7 +1115,7 @@ def _build_rewrite_debug_log(
             "rewrite_compiler",
         }
     ] if isinstance(summary, dict) else []
-    return json.dumps(log_data, indent=2, ensure_ascii=False, default=str)
+    return _bounded_json_debug_log(log_data)
 
 
 def _serialize_effective_rewrite_plan(plan) -> dict:
