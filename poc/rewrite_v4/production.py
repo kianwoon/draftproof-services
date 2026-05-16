@@ -359,6 +359,7 @@ def _compact_candidate_loop_trace(rounds: Any) -> list[dict[str, Any]]:
             candidates.append({
                 "unit_id": block.get("unit_id"),
                 "group_id": block.get("group_id"),
+                "batch": block.get("batch"),
                 "normalizer": repair_brief.get("normalizer"),
                 "repair_mode": repair_brief.get("repair_mode"),
                 "generator_status": (block.get("generator_diagnostics") or {}).get("status")
@@ -374,6 +375,9 @@ def _compact_candidate_loop_trace(rounds: Any) -> list[dict[str, Any]]:
             "round": round_row.get("round"),
             "baseline": round_row.get("baseline") if isinstance(round_row.get("baseline"), dict) else None,
             "target_count": round_row.get("target_count"),
+            "primary_target_count": round_row.get("primary_target_count"),
+            "fallback_target_count": round_row.get("fallback_target_count"),
+            "fallback_reason": round_row.get("fallback_reason"),
             "groups_per_round": round_row.get("groups_per_round"),
             "stop_reason": round_row.get("stop_reason"),
             "accepted": _compact_candidate_trace([round_row.get("accepted")])[0]

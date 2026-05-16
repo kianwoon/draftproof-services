@@ -9,6 +9,7 @@ scanner -> normalizer -> repair brief -> generator -> validator/rescan -> select
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,14 @@ from .generator import generate_variants
 from .models import CandidateVariant, RepairBrief
 from .normalizer import deterministic_repair_brief, enrichment_repair_brief, llm_repair_brief, scanner_evidence_for_group, tutor_repair_brief
 from .validation import source_grounding_integrity
+
+
+def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def run_v4_experiment(
@@ -171,74 +180,92 @@ def run_v4_iterative_rewrite(
             group for group in groups
             if str(group.unit_id or group.group_id) not in {str(row.get("unit_id")) for row in accepted}
         ]
-        groups = _rank_groups_for_v4(groups)[:max(1, int(groups_per_round))] if groups_per_round else groups
+        ranked_groups = _rank_groups_for_v4(groups)
+        if groups_per_round:
+            primary_count = max(1, int(groups_per_round))
+            primary_groups = ranked_groups[:primary_count]
+            fallback_groups = ranked_groups[primary_count:]
+        else:
+            primary_groups = ranked_groups
+            fallback_groups = []
         round_log: dict[str, Any] = {
             "round": round_index,
             "baseline": current_baseline,
-            "target_count": len(groups),
+            "target_count": len(ranked_groups),
+            "primary_target_count": len(primary_groups),
+            "fallback_target_count": len(fallback_groups),
             "groups_per_round": groups_per_round,
             "candidates": [],
         }
-        if not groups:
+        if not ranked_groups:
             round_log["stop_reason"] = "no_target_groups"
             rounds.append(round_log)
             break
 
         best: dict[str, Any] | None = None
-        for group in groups:
-            briefs: list[RepairBrief] = [deterministic_repair_brief(group)]
-            if include_llm_normalizer:
-                briefs.append(llm_repair_brief(group, gateway))
-            if include_tutor_normalizer:
-                briefs.append(tutor_repair_brief(group, gateway))
-            if include_enrichment_normalizer:
-                briefs.append(enrichment_repair_brief(group, gateway))
-            for brief in briefs:
-                variants, generator_diagnostics, prompt, completion = generate_variants(
-                    group=group,
-                    repair_brief=brief,
-                    gateway=gateway,
-                    variant_count=variant_count,
-                )
-                stem = f"round{round_index}_{group.unit_id}_{brief.normalizer}"
-                (out_dir / f"{stem}_generator_prompt.json.txt").write_text(prompt)
-                (out_dir / f"{stem}_generator_completion.json.txt").write_text(completion)
-                result_rows = [
-                    _score_variant_against_current(
-                        original_text=input_text,
-                        current_text=current_text,
-                        current_report=current_report,
-                        current_baseline=current_baseline,
+        for batch_label, batch_groups in (
+            ("primary", primary_groups),
+            ("fallback_after_no_safe_primary_candidate", fallback_groups),
+        ):
+            if best is not None or not batch_groups:
+                continue
+            if batch_label != "primary":
+                round_log["fallback_reason"] = batch_label
+            for group in batch_groups:
+                briefs: list[RepairBrief] = [deterministic_repair_brief(group)]
+                if include_llm_normalizer:
+                    briefs.append(llm_repair_brief(group, gateway))
+                if include_tutor_normalizer:
+                    briefs.append(tutor_repair_brief(group, gateway))
+                if include_enrichment_normalizer:
+                    briefs.append(enrichment_repair_brief(group, gateway))
+                for brief in briefs:
+                    variants, generator_diagnostics, prompt, completion = generate_variants(
                         group=group,
                         repair_brief=brief,
-                        variant=variant,
-                        output_dir=out_dir,
-                        stem=stem,
+                        gateway=gateway,
+                        variant_count=variant_count,
                     )
-                    for variant in variants
-                ]
-                candidate_block = {
-                    "unit_id": group.unit_id,
-                    "group_id": group.group_id,
-                    "repair_brief": brief.to_dict(),
-                    "generator_diagnostics": generator_diagnostics,
-                    "results": result_rows,
-                }
-                round_log["candidates"].append(candidate_block)
-                for row in result_rows:
-                    compact = _compact_result_row(row, brief)
-                    if not _is_safe_positive(compact):
-                        continue
-                    if best is None or _candidate_sort_key(compact) > _candidate_sort_key(best):
-                        best = {
-                            **compact,
-                            "candidate_text": row.get("candidate_text"),
-                            "candidate_report": row.get("candidate_report"),
-                            "candidate_goal": row.get("candidate_goal"),
-                        }
+                    stem = f"round{round_index}_{group.unit_id}_{brief.normalizer}"
+                    (out_dir / f"{stem}_generator_prompt.json.txt").write_text(prompt)
+                    (out_dir / f"{stem}_generator_completion.json.txt").write_text(completion)
+                    result_rows = [
+                        _score_variant_against_current(
+                            original_text=input_text,
+                            current_text=current_text,
+                            current_report=current_report,
+                            current_baseline=current_baseline,
+                            group=group,
+                            repair_brief=brief,
+                            variant=variant,
+                            output_dir=out_dir,
+                            stem=stem,
+                        )
+                        for variant in variants
+                    ]
+                    candidate_block = {
+                        "unit_id": group.unit_id,
+                        "group_id": group.group_id,
+                        "batch": batch_label,
+                        "repair_brief": brief.to_dict(),
+                        "generator_diagnostics": generator_diagnostics,
+                        "results": result_rows,
+                    }
+                    round_log["candidates"].append(candidate_block)
+                    for row in result_rows:
+                        compact = _compact_result_row(row, brief)
+                        if not _is_safe_positive(compact):
+                            continue
+                        if best is None or _candidate_sort_key(compact) > _candidate_sort_key(best):
+                            best = {
+                                **compact,
+                                "candidate_text": row.get("candidate_text"),
+                                "candidate_report": row.get("candidate_report"),
+                                "candidate_goal": row.get("candidate_goal"),
+                            }
 
         if best is None:
-            round_log["stop_reason"] = "no_safe_positive_candidate"
+            round_log["stop_reason"] = "no_safe_positive_candidate_after_ranked_targets"
             rounds.append(round_log)
             break
 
@@ -620,10 +647,21 @@ def _best_safe(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _is_safe_positive(row: dict[str, Any]) -> bool:
+    rank_delta = _num(row.get("rank_delta"))
+    rank_tolerance = _float_env("DRAFTPROOF_REWRITE_V4_RANK_REGRESSION_TOLERANCE", 0.25, minimum=0.0, maximum=2.0)
+    topk_delta = _num(row.get("topk_delta"))
+    external_delta = _num(row.get("external_delta"))
+    ai_delta = _num(row.get("ai_delta"))
     return (
-        _num(row.get("ai_delta")) > 0.0
-        and _num(row.get("external_delta")) >= 0.0
-        and _num(row.get("rank_delta")) > 0.0
+        ai_delta > 0.0
+        and external_delta >= 0.0
+        and (
+            rank_delta > 0.0
+            or (
+                rank_delta >= -rank_tolerance
+                and topk_delta >= 0.0
+            )
+        )
         and int(row.get("rejected_normalizer_task_count") or 0) == 0
     )
 

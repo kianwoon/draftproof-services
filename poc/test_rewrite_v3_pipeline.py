@@ -3885,6 +3885,17 @@ assert_test(
     and valid_variant_diag["rejected"][0]["reason"] == "word_count_contract_failed",
     "V4 generator parser accepts exact schema variants and rejects word-count failures",
 )
+quote_repaired_variants, quote_repaired_diag = parse_generator_variants(
+    '{\n  "variants": [\n    {\n      "variant_id": "v1",\n      "text": "In the "Hairdressing Certificate III" course, students learn practical skills."\n    }\n  ]\n}',
+    min_words=5,
+    max_words=20,
+)
+assert_test(
+    quote_repaired_diag["status"] == "ok"
+    and quote_repaired_diag.get("first_parse_status") == "json_parse_failed"
+    and quote_repaired_variants[0].text == 'In the "Hairdressing Certificate III" course, students learn practical skills.',
+    "V4 generator parser locally repairs unescaped quote characters in schema-shaped variant JSON",
+)
 
 sample_group_for_v4 = group_rewrite_targets(
     original_text=broad_source,
@@ -3904,6 +3915,35 @@ assert_test(
     and "AI likelihood" not in v4_prompt
     and "detector" not in v4_prompt.casefold(),
     "V4 generator prompt uses normalized editorial tasks without raw detector language",
+)
+section_group_for_v4 = TargetGroup(
+    group_id="tg001",
+    unit_id="p001",
+    operation="paragraph_preserving_broad_reconstruction",
+    start_index=0,
+    end_index=120,
+    source_text="Introduction\nThe Hairdressing Certificate III course shows why inclusive design matters.\nThis report explains the issue.",
+    before_context="",
+    after_context="",
+    targets=(),
+)
+section_prompt = build_generator_prompt(
+    group=section_group_for_v4,
+    repair_brief=RepairBrief(
+        normalizer="deterministic_v0",
+        paragraph_role="opening/background framing",
+        repair_tasks=("Let the existing course anchor carry the opening.",),
+        constraints=("Preserve meaning.",),
+        avoid=("generic opening",),
+    ),
+    variant_count=1,
+)
+assert_test(
+    '"unit_kind": "section"' in section_prompt
+    and '"route_hint"' in section_prompt
+    and "Preserve the same section structure" in section_prompt
+    and "becoming-increasingly-important" in section_prompt,
+    "V4 generator prompt preserves multi-line section structure and gives opening route guidance",
 )
 assert_test(
     callable(run_v4_iterative_rewrite),

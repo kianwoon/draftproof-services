@@ -162,7 +162,16 @@ def sanitize_repair_brief(
 def parse_generator_variants(raw: str, *, min_words: int, max_words: int) -> tuple[list[CandidateVariant], dict[str, Any]]:
     payload, diagnostics = parse_json_object(raw, required_keys={"variants"})
     if payload is None:
-        return [], diagnostics
+        if diagnostics.get("status") != "json_parse_failed":
+            return [], diagnostics
+        payload = _recover_variants_payload_from_schema_lines(raw)
+        if payload is None:
+            return [], diagnostics
+        diagnostics = {
+            **diagnostics,
+            "status": "ok_after_local_json_repair",
+            "first_parse_status": "json_parse_failed",
+        }
     rows = payload.get("variants")
     if not isinstance(rows, list):
         return [], {**diagnostics, "status": "schema_failed", "reason": "variants_not_array"}
@@ -210,6 +219,54 @@ def parse_generator_variants(raw: str, *, min_words: int, max_words: int) -> tup
         "variant_count": len(variants),
         "rejected": rejected,
     }
+
+
+def _recover_variants_payload_from_schema_lines(raw: str) -> dict[str, Any] | None:
+    variants: list[dict[str, Any]] = []
+    current: dict[str, Any] = {}
+    for line in str(raw or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith('"variant_id"'):
+            value = _decode_schema_string_value(stripped)
+            if value:
+                current["variant_id"] = value
+        elif stripped.startswith('"text"'):
+            value = _decode_schema_string_value(stripped)
+            if value:
+                current["text"] = value
+        if set(current.keys()) == {"variant_id", "text"}:
+            variants.append(current)
+            current = {}
+    return {"variants": variants} if variants else None
+
+
+def _decode_schema_string_value(line: str) -> str:
+    colon = line.find(":")
+    if colon < 0:
+        return ""
+    value = line[colon + 1:].strip()
+    if value.endswith(","):
+        value = value[:-1].rstrip()
+    if len(value) < 2 or value[0] != '"' or value[-1] != '"':
+        return ""
+    inner = value[1:-1]
+    escaped: list[str] = []
+    slash_count = 0
+    for char in inner:
+        if char == "\\":
+            escaped.append(char)
+            slash_count += 1
+            continue
+        if char == '"' and slash_count % 2 == 0:
+            escaped.append('\\"')
+        else:
+            escaped.append(char)
+        slash_count = 0
+    try:
+        decoded = json.loads('"' + "".join(escaped) + '"')
+    except json.JSONDecodeError:
+        return ""
+    return str(decoded)
 
 
 def source_grounding_integrity(source_text: str, replacement_text: str, *, repair_mode: str = "source_preserving_repair") -> dict[str, Any]:

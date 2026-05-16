@@ -21,6 +21,13 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def scanner_evidence_for_group(group: Any) -> dict[str, Any]:
     drivers: dict[str, dict[str, Any]] = {}
     sentence_ids: set[str] = set()
@@ -56,7 +63,11 @@ def scanner_evidence_for_group(group: Any) -> dict[str, Any]:
 def deterministic_repair_brief(group: Any) -> RepairBrief:
     evidence = scanner_evidence_for_group(group)
     keys = {str(row.get("key") or "") for row in evidence.get("dominant_drivers") or []}
+    role = _paragraph_role(group)
     tasks: list[str] = []
+    if role == "opening/background framing":
+        tasks.append("Let an existing concrete course, unit, or workplace anchor carry the opening before broad background claims.")
+        tasks.append("Make the concrete anchor the subject of the opening route rather than keeping a generic importance-of statement.")
     if "predictability_score" in keys:
         tasks.append("Vary the sentence route slightly so the paragraph does not move in an overly neat sequence.")
     if "unsafe_word_share" in keys:
@@ -69,7 +80,7 @@ def deterministic_repair_brief(group: Any) -> RepairBrief:
         tasks.append("Keep the paragraph close to the original length and role.")
     return sanitize_repair_brief(
         normalizer="deterministic_v0",
-        paragraph_role=_paragraph_role(group),
+        paragraph_role=role,
         repair_tasks=tasks,
         constraints=[
             "Preserve meaning.",
@@ -78,11 +89,13 @@ def deterministic_repair_brief(group: Any) -> RepairBrief:
             "Keep one paragraph.",
             "Use a clear simple tone.",
             "Do not make it casual.",
+            "Preserve the writer's student voice; do not globally polish grammar or upgrade the register.",
         ],
         avoid=[
             "polished abstract summary",
             "word-by-word synonym swap",
             "overly casual phrasing",
+            "professional copyediting voice",
         ],
     )
 
@@ -116,7 +129,11 @@ def llm_repair_brief(group: Any, gateway: LLMGateway) -> RepairBrief:
         top_p=0.8,
         max_tokens=_int_env("DRAFTPROOF_REWRITE_V4_NORMALIZER_MAX_TOKENS", 3000, minimum=600, maximum=8000),
     )
-    data, diagnostics = parse_json_object(response.content)
+    data, diagnostics = _parse_or_repair_json_object(
+        response=response,
+        gateway=gateway,
+        response_schema=payload["response_schema"],
+    )
     if data is None:
         return sanitize_repair_brief(
             normalizer="llm_v0",
@@ -193,7 +210,11 @@ def tutor_repair_brief(group: Any, gateway: LLMGateway) -> RepairBrief:
         top_p=0.8,
         max_tokens=_int_env("DRAFTPROOF_REWRITE_V4_NORMALIZER_MAX_TOKENS", 3000, minimum=600, maximum=8000),
     )
-    data, diagnostics = parse_json_object(response.content)
+    data, diagnostics = _parse_or_repair_json_object(
+        response=response,
+        gateway=gateway,
+        response_schema=payload["response_schema"],
+    )
     if data is None:
         return sanitize_repair_brief(
             normalizer="tutor_v0",
@@ -269,7 +290,11 @@ def enrichment_repair_brief(group: Any, gateway: LLMGateway) -> RepairBrief:
         top_p=0.8,
         max_tokens=_int_env("DRAFTPROOF_REWRITE_V4_NORMALIZER_MAX_TOKENS", 3000, minimum=600, maximum=8000),
     )
-    data, diagnostics = parse_json_object(response.content)
+    data, diagnostics = _parse_or_repair_json_object(
+        response=response,
+        gateway=gateway,
+        response_schema=payload["response_schema"],
+    )
     if data is None:
         return sanitize_repair_brief(
             normalizer="enrichment_v0",
@@ -297,6 +322,55 @@ def enrichment_repair_brief(group: Any, gateway: LLMGateway) -> RepairBrief:
 def _paragraph_role(group: Any) -> str:
     unit_id = str(getattr(group, "unit_id", "") or "")
     return "opening/background framing" if unit_id == "p001" else "body paragraph"
+
+
+def _parse_or_repair_json_object(
+    *,
+    response: Any,
+    gateway: LLMGateway,
+    response_schema: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    data, diagnostics = parse_json_object(response.content)
+    if data is not None or diagnostics.get("status") != "json_parse_failed":
+        return data, diagnostics
+    if not _bool_env("DRAFTPROOF_REWRITE_V4_REPAIR_MALFORMED_JSON", True):
+        return data, diagnostics
+    repair_payload = {
+        "task": "repair_malformed_normalizer_json",
+        "invalid_completion": str(response.content or ""),
+        "rules": [
+            "Do not add new analysis.",
+            "Only convert the invalid completion into valid JSON.",
+            "Escape straight double quote characters inside string values.",
+            "Return only the fields requested by response_schema.",
+        ],
+        "response_schema": response_schema,
+    }
+    repair_response = gateway.chat(
+        "Return valid JSON only.\n" + json.dumps(repair_payload, ensure_ascii=False, indent=2),
+        system="Return only valid JSON.",
+        response_format={"type": "json_object"},
+        temperature=0.0,
+        top_p=0.5,
+        max_tokens=_int_env("DRAFTPROOF_REWRITE_V4_JSON_REPAIR_MAX_TOKENS", 6000, minimum=800, maximum=12000),
+    )
+    repaired, repair_diagnostics = parse_json_object(repair_response.content)
+    if repaired is not None:
+        return repaired, {
+            **repair_diagnostics,
+            "status": "ok_after_json_repair",
+            "first_parse": diagnostics,
+            "repair_model": repair_response.model,
+            "repair_provider": repair_response.raw.get("provider"),
+        }
+    return None, {
+        **diagnostics,
+        "repair_attempt": {
+            **repair_diagnostics,
+            "model": repair_response.model,
+            "provider": repair_response.raw.get("provider"),
+        },
+    }
 
 
 def _number(value: Any) -> float:
