@@ -798,7 +798,13 @@ function getRewritePayloadSummary(rewriteReport) {
 
 function getOriginalDetectScan(rewriteReport) {
   const summary = getRewritePayloadSummary(rewriteReport);
-  return summary.detect_scan_original_saved || rewriteReport?.detect_scan_original_saved || null;
+  return (
+    summary.detect_scan_original_saved ||
+    summary.detect_scan_original ||
+    rewriteReport?.detect_scan_original_saved ||
+    rewriteReport?.detect_scan_original ||
+    null
+  );
 }
 
 function isRewriteOriginalPreserved(rewriteReport) {
@@ -814,23 +820,27 @@ function isRewriteOriginalPreserved(rewriteReport) {
 }
 
 function hasRewriteComparisonData(rewriteReport) {
-  if (!rewriteReport || isRewriteOriginalPreserved(rewriteReport)) return false;
+  if (!rewriteReport) return false;
   const summary = getRewritePayloadSummary(rewriteReport);
   const rewrittenScan = getRewrittenDetectScan(rewriteReport);
+  const originalScan = getOriginalDetectScan(rewriteReport);
   const detectScores = summary.detect_scores || {};
   return Boolean(
+    hasObjectData(originalScan) ||
     hasObjectData(rewrittenScan) ||
     detectScores.rewritten_ai != null ||
     detectScores.rewritten_ai_authorship != null ||
+    detectScores.original_ai != null ||
+    detectScores.original_ai_authorship != null ||
     summary.final_risk != null
   );
 }
 
 function getRewrittenDetectScan(rewriteReport) {
-  if (isRewriteOriginalPreserved(rewriteReport)) {
-    return getOriginalDetectScan(rewriteReport);
-  }
   const summary = getRewritePayloadSummary(rewriteReport);
+  if (isRewriteOriginalPreserved(rewriteReport)) {
+    return summary.detect_scan_rewritten || getOriginalDetectScan(rewriteReport);
+  }
   return summary.detect_scan_rewritten || rewriteReport?.detect_scan_rewritten || null;
 }
 
