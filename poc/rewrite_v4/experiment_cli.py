@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .experiment import run_v4_experiment, run_v4_fast_rewrite, run_v4_iterative_rewrite
+from .experiment import run_v4_budget_lane_experiment, run_v4_experiment, run_v4_fast_rewrite, run_v4_iterative_rewrite, run_v4_layered_rewrite
 
 
 def main() -> None:
@@ -20,6 +20,9 @@ def main() -> None:
     parser.add_argument("--variants", type=int, default=3, help="Variants per repair brief.")
     parser.add_argument("--iterative", action="store_true", help="Apply safe candidates iteratively and output a rewritten document.")
     parser.add_argument("--fast", action="store_true", help="Run production-shaped fast iterative mode.")
+    parser.add_argument("--budget-lanes", action="store_true", help="Run Layer 3 budget-lane optimizer.")
+    parser.add_argument("--layered", action="store_true", help="Run full V4 sequence with Layer 3 after normalized repair.")
+    parser.add_argument("--max-clusters", type=int, default=6, help="Maximum cluster units for cluster/layer experiments.")
     parser.add_argument("--max-rounds", type=int, default=3, help="Maximum iterative rewrite rounds.")
     parser.add_argument("--groups-per-round", type=int, default=None, help="Limit target groups tested per iterative round.")
     parser.add_argument("--stop-after-accepted", type=int, default=None, help="Stop after this many accepted iterative edits.")
@@ -36,6 +39,48 @@ def main() -> None:
         print(json.dumps({
             "summary": result.get("summary"),
             "accepted": result.get("accepted"),
+            "config": result.get("config"),
+            "rewritten_document_path": str(Path(args.out) / "v4_rewritten_document.txt"),
+            "output_dir": args.out,
+        }, ensure_ascii=False, indent=2))
+    elif args.budget_lanes:
+        result = run_v4_budget_lane_experiment(
+            input_text=text,
+            output_dir=args.out,
+            max_rounds=args.max_rounds,
+            max_clusters=args.max_clusters,
+            variant_count=args.variants,
+        )
+        print(json.dumps({
+            "original_scores": result.get("original_scores"),
+            "final_scores": result.get("final_scores"),
+            "accepted": result.get("accepted"),
+            "goal": result.get("goal"),
+            "rewritten_document_path": str(Path(args.out) / "v4_budget_lane_rewritten_document.txt"),
+            "output_dir": args.out,
+        }, ensure_ascii=False, indent=2))
+    elif args.layered:
+        result = run_v4_layered_rewrite(
+            input_text=text,
+            output_dir=args.out,
+            unit_ids=set(args.unit_id) if args.unit_id else None,
+            include_llm_normalizer=not args.no_llm_normalizer,
+            include_tutor_normalizer=args.tutor_normalizer,
+            include_enrichment_normalizer=args.enrichment_normalizer,
+            variant_count=args.variants,
+            max_rounds=args.max_rounds,
+            groups_per_round=args.groups_per_round,
+            stop_after_accepted=args.stop_after_accepted,
+            strong_ai_delta=args.strong_ai_delta,
+            layer3_enabled=True,
+            layer3_max_rounds=args.max_rounds,
+            layer3_max_clusters=args.max_clusters,
+            layer3_variant_count=args.variants,
+        )
+        print(json.dumps({
+            "summary": result.get("summary"),
+            "accepted": result.get("accepted"),
+            "layers": result.get("layers"),
             "config": result.get("config"),
             "rewritten_document_path": str(Path(args.out) / "v4_rewritten_document.txt"),
             "output_dir": args.out,

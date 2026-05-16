@@ -19,7 +19,7 @@ from report.render_rewrite import render_rewrite_report
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal
 from rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
 
-from .experiment import run_v4_iterative_rewrite
+from .experiment import run_v4_iterative_rewrite, run_v4_layered_rewrite
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -56,6 +56,10 @@ def _production_config() -> dict[str, Any]:
         "stop_after_accepted": _int_env("DRAFTPROOF_REWRITE_V4_STOP_AFTER_ACCEPTED", 2, minimum=1, maximum=8),
         "strong_ai_delta": _float_env("DRAFTPROOF_REWRITE_V4_STRONG_AI_DELTA", 10.0, minimum=0.0, maximum=100.0),
         "required_ai_drop": _float_env("DRAFTPROOF_REWRITE_V4_REQUIRED_AI_DROP", 5.0, minimum=0.0, maximum=100.0),
+        "layer3_enabled": _bool_env("DRAFTPROOF_REWRITE_V4_LAYER3_ENABLED", True),
+        "layer3_max_rounds": _int_env("DRAFTPROOF_REWRITE_V4_LAYER3_MAX_ROUNDS", 2, minimum=1, maximum=4),
+        "layer3_max_clusters": _int_env("DRAFTPROOF_REWRITE_V4_LAYER3_MAX_CLUSTERS", 4, minimum=1, maximum=8),
+        "layer3_variant_count": _int_env("DRAFTPROOF_REWRITE_V4_LAYER3_VARIANTS", 2, minimum=1, maximum=3),
     }
 
 
@@ -93,22 +97,44 @@ def run_rewrite_pipeline_v4(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     progress(66, "Running V4 repair candidates")
-    payload = run_v4_iterative_rewrite(
-        input_text=original_text,
-        output_dir=out_dir,
-        include_llm_normalizer=bool(config["include_llm_normalizer"]),
-        include_tutor_normalizer=bool(config["include_tutor_normalizer"]),
-        include_enrichment_normalizer=bool(config["include_enrichment_normalizer"]),
-        variant_count=int(config["variant_count"]),
-        max_rounds=int(config["max_rounds"]),
-        groups_per_round=int(config["groups_per_round"]),
-        stop_after_accepted=int(config["stop_after_accepted"]),
-        strong_ai_delta=float(config["strong_ai_delta"]),
-        api_key=api_key,
-        model=model,
-        base_url=base_url,
-        extra_body=_v4_extra_body(),
-    )
+    if bool(config["layer3_enabled"]):
+        payload = run_v4_layered_rewrite(
+            input_text=original_text,
+            output_dir=out_dir,
+            include_llm_normalizer=bool(config["include_llm_normalizer"]),
+            include_tutor_normalizer=bool(config["include_tutor_normalizer"]),
+            include_enrichment_normalizer=bool(config["include_enrichment_normalizer"]),
+            variant_count=int(config["variant_count"]),
+            max_rounds=int(config["max_rounds"]),
+            groups_per_round=int(config["groups_per_round"]),
+            stop_after_accepted=int(config["stop_after_accepted"]),
+            strong_ai_delta=float(config["strong_ai_delta"]),
+            layer3_enabled=bool(config["layer3_enabled"]),
+            layer3_max_rounds=int(config["layer3_max_rounds"]),
+            layer3_max_clusters=int(config["layer3_max_clusters"]),
+            layer3_variant_count=int(config["layer3_variant_count"]),
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            extra_body=_v4_extra_body(),
+        )
+    else:
+        payload = run_v4_iterative_rewrite(
+            input_text=original_text,
+            output_dir=out_dir,
+            include_llm_normalizer=bool(config["include_llm_normalizer"]),
+            include_tutor_normalizer=bool(config["include_tutor_normalizer"]),
+            include_enrichment_normalizer=bool(config["include_enrichment_normalizer"]),
+            variant_count=int(config["variant_count"]),
+            max_rounds=int(config["max_rounds"]),
+            groups_per_round=int(config["groups_per_round"]),
+            stop_after_accepted=int(config["stop_after_accepted"]),
+            strong_ai_delta=float(config["strong_ai_delta"]),
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            extra_body=_v4_extra_body(),
+        )
     final_text = str(payload.get("rewritten_document") or original_text)
     original_report = detect_json
     final_report = _load_final_scan(out_dir) or original_report
@@ -140,9 +166,11 @@ def run_rewrite_pipeline_v4(
     detect_scores = _detect_scores(original_report, final_report, original_scores, final_scores)
     original_scan_compact = _compact_scan_for_rewrite_report(original_report)
     final_scan_compact = _compact_scan_for_rewrite_report(final_report)
+    pipeline_version = "rewrite_v4_layered_repair" if bool(config["layer3_enabled"]) else "rewrite_v4_normalized_repair"
+    engine_mode = "v4_layered_production" if bool(config["layer3_enabled"]) else "v4_fast_production"
     summary = {
-        "rewrite_pipeline_version": "rewrite_v4_normalized_repair",
-        "rewrite_engine_mode": "v4_fast_production",
+        "rewrite_pipeline_version": pipeline_version,
+        "rewrite_engine_mode": engine_mode,
         "outcome": public_status,
         "public_status": public_status,
         "public_candidate_warning": (
@@ -183,13 +211,14 @@ def run_rewrite_pipeline_v4(
         "candidate_generation_status": {
             "generated_count": _generated_candidate_count(payload),
             "accepted_count": len(accepted),
-            "reason": "v4_normalized_repair",
+            "reason": pipeline_version,
         },
         "candidate_trace": _compact_candidate_trace(accepted),
         "candidate_loop_trace": _compact_candidate_loop_trace(payload.get("rounds")),
         "selected_candidate": _compact_candidate_trace([accepted[-1]])[0] if accepted else None,
+        "rewrite_layers": payload.get("layers") if isinstance(payload.get("layers"), dict) else {},
         "stage_timings": [{
-            "stage": "rewrite_v4_normalized_repair",
+            "stage": pipeline_version,
             "seconds": round(elapsed, 3),
             "selected": bool(accepted),
             "stop_reason": public_status,
