@@ -19,6 +19,7 @@ class RepairBrief:
     source_examples: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     repair_assignment: str = ""
     coverage_hint: str = "paragraph"
+    mitigation_strategy: dict[str, Any] = field(default_factory=dict)
     rejected_tasks: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     parse_diagnostics: dict[str, Any] = field(default_factory=dict)
 
@@ -32,6 +33,7 @@ class RepairBrief:
             "source_examples": list(self.source_examples),
             "repair_assignment": self.repair_assignment,
             "coverage_hint": self.coverage_hint,
+            "mitigation_strategy": self.mitigation_strategy,
             "repair_tasks": list(self.repair_tasks),
             "constraints": list(self.constraints),
             "avoid": list(self.avoid),

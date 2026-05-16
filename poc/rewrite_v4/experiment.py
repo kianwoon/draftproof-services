@@ -23,7 +23,7 @@ from rewrite_v3.target_executor import apply_target_replacements, group_rewrite_
 from .generator import generate_variants
 from .models import CandidateVariant, RepairBrief
 from .normalizer import deterministic_repair_brief, enrichment_repair_brief, llm_repair_brief, scanner_evidence_for_group, tutor_repair_brief
-from .validation import source_grounding_integrity
+from .validation import source_grounding_integrity, strategy_compliance_integrity
 
 
 def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:
@@ -71,7 +71,7 @@ def run_v4_experiment(
     if unit_ids:
         groups = [group for group in groups if str(group.unit_id) in unit_ids]
 
-    gateway = LLMGateway(LLMConfig(api_key=api_key, model=model, base_url=base_url, max_tokens=6000, temperature=0.25, top_p=0.85, timeout=180, extra_body=extra_body))
+    gateway = LLMGateway(LLMConfig(api_key=api_key, model=model, base_url=base_url, max_tokens=8000, temperature=0.25, top_p=0.85, timeout=180, extra_body=extra_body))
     experiments: list[dict[str, Any]] = []
     for group in groups:
         briefs: list[RepairBrief] = [deterministic_repair_brief(group)]
@@ -160,7 +160,7 @@ def run_v4_iterative_rewrite(
     original_metrics = _metrics(input_text=input_text, report=original_report, goal=original_goal)
     original_baseline = _score_summary(original_report, original_metrics)
 
-    gateway = LLMGateway(LLMConfig(api_key=api_key, model=model, base_url=base_url, max_tokens=6000, temperature=0.25, top_p=0.85, timeout=180, extra_body=extra_body))
+    gateway = LLMGateway(LLMConfig(api_key=api_key, model=model, base_url=base_url, max_tokens=8000, temperature=0.25, top_p=0.85, timeout=180, extra_body=extra_body))
     accepted: list[dict[str, Any]] = []
     rounds: list[dict[str, Any]] = []
     current_report = original_report
@@ -390,6 +390,18 @@ def _score_variant(
             source_grounding=source_grounding,
             repair_brief=repair_brief,
         )
+    strategy_compliance = strategy_compliance_integrity(variant.text, repair_brief.mitigation_strategy)
+    if not strategy_compliance.get("passed"):
+        return _rejected_variant_row(
+            group=group,
+            variant=variant,
+            apply_status=apply_status,
+            baseline=baseline,
+            reason="strategy_compliance_failed",
+            source_grounding=source_grounding,
+            strategy_compliance=strategy_compliance,
+            repair_brief=repair_brief,
+        )
     candidate_report = _scan_report(candidate_text)
     candidate_goal = evaluate_rewrite_goal(
         original_text=input_text,
@@ -411,6 +423,7 @@ def _score_variant(
         "word_count": variant.word_count,
         "text": variant.text,
         "source_grounding": source_grounding,
+        "strategy_compliance": strategy_compliance,
         "apply_status": apply_status,
         "scores": {
             **scores,
@@ -456,6 +469,19 @@ def _score_variant_against_current(
             candidate_text=candidate_text,
             repair_brief=repair_brief,
         )
+    strategy_compliance = strategy_compliance_integrity(variant.text, repair_brief.mitigation_strategy)
+    if not strategy_compliance.get("passed"):
+        return _rejected_variant_row(
+            group=group,
+            variant=variant,
+            apply_status=apply_status,
+            baseline=current_baseline,
+            reason="strategy_compliance_failed",
+            source_grounding=source_grounding,
+            strategy_compliance=strategy_compliance,
+            candidate_text=candidate_text,
+            repair_brief=repair_brief,
+        )
     candidate_report = _scan_report(candidate_text)
     candidate_goal = evaluate_rewrite_goal(
         original_text=original_text,
@@ -477,6 +503,7 @@ def _score_variant_against_current(
         "word_count": variant.word_count,
         "text": variant.text,
         "source_grounding": source_grounding,
+        "strategy_compliance": strategy_compliance,
         "apply_status": apply_status,
         "scores": {
             **scores,
@@ -504,6 +531,7 @@ def _rejected_variant_row(
     baseline: dict[str, Any],
     reason: str,
     source_grounding: dict[str, Any],
+    strategy_compliance: dict[str, Any] | None = None,
     repair_brief: RepairBrief,
     candidate_text: str | None = None,
 ) -> dict[str, Any]:
@@ -524,6 +552,7 @@ def _rejected_variant_row(
         "text": variant.text,
         "apply_status": apply_status,
         "source_grounding": source_grounding,
+        "strategy_compliance": strategy_compliance or {"passed": True, "failures": []},
         "scores": scores,
         "goal": {
             "status": "rejected_candidate",

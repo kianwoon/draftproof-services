@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 from llm.gateway import LLMGateway
+from rewrite_v2.structured_output import structured_json_request_options
 from rewrite_v3.document_units import word_count
 
 from .models import CandidateVariant, RepairBrief
@@ -89,10 +90,12 @@ def default_voice_profile() -> dict[str, Any]:
 
 def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_count: int = 3) -> str:
     source_text = str(getattr(group, "source_text", "") or "")
-    min_words, max_words = word_bounds(source_text)
-    source_words = max(1, word_count(source_text))
-    structure = _structure_contract(source_text)
+    scope = _candidate_generation_scope(source_text, repair_brief)
+    prompt_unit = scope["editable_text"]
+    source_words = max(1, word_count(prompt_unit))
+    structure = _structure_contract(prompt_unit)
     unit_label = "section" if structure["nonempty_line_count"] > 1 else "paragraph"
+    effective_variant_count = _effective_variant_count(variant_count, repair_brief.mitigation_strategy)
     payload = {
         "task": "editorial_repair_candidate_generation",
         "repair_mode": repair_brief.repair_mode,
@@ -101,7 +104,15 @@ def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_cou
         "structure_contract": structure,
         "route_hint": _route_hint(repair_brief.paragraph_role),
         "target_voice_profile": default_voice_profile(),
-        "original_unit": source_text,
+        "generation_scope": {
+            "mode": scope["mode"],
+            "return_text_for": "editable_unit_only" if scope["locked_suffix"] else "full_unit",
+            "locked_suffix_context": scope["locked_suffix"][:700],
+        },
+        "original_unit": prompt_unit,
+        "mitigation_strategy": repair_brief.mitigation_strategy,
+        "route_plan": _route_plan(repair_brief.mitigation_strategy),
+        "rewrite_sequence": _strategy_steps(repair_brief.mitigation_strategy),
         "tutor_feedback": {
             "diagnosis": repair_brief.tutor_diagnosis,
             "student_explanation": repair_brief.student_explanation,
@@ -112,13 +123,21 @@ def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_cou
         "repair_tasks": list(repair_brief.repair_tasks),
         "constraints": [
             *_structure_aware_constraints(repair_brief.constraints, structure),
+            *_strategy_controller_constraints(repair_brief.mitigation_strategy),
+            "Execute route_plan.better_route as the paragraph route; do not merely polish the old route.",
+            "Use route_plan.current_route to understand what needs to change, then apply route_plan.route_moves.",
+            "Route moves are moves, not copies: if you move a source claim earlier, remove the old repeated occurrence.",
+            "Do not repeat the same course, unit, difficulty, or benefit claim in two places.",
+            "Every route_plan.route_must_preserve item must remain represented unless it is absent from original_unit and locked_suffix_context.",
+            "Avoid route_plan.route_forbidden patterns.",
             "If tutor feedback asks for specificity, use only source wording already present; narrow or connect existing claims instead of adding examples.",
             "Preserve the paragraph's central claims and scope; do not turn a broad overview into a single example or narrower topic.",
             "Every original sentence's central claim must still be represented in the replacement.",
             "Do not merge sentences in a way that drops a source claim, list item group, or qualifying detail.",
             "Source-near specificity means tighter wording and clearer links among existing ideas, not new content.",
             f"Stay near the original length of about {source_words} words; do not compress into a summary or expand with new material.",
-            f"Return exactly {max(1, int(variant_count))} variants.",
+            *_generation_scope_constraints(scope),
+            f"Return exactly {effective_variant_count} {'variant' if effective_variant_count == 1 else 'variants'}.",
             _structure_instruction(structure),
             "Do not globally grammar-polish the writing. Preserve the writer's undergraduate/student voice unless a wording problem blocks meaning.",
             "Keep existing concrete anchors prominent, especially course names, unit codes, workplace context, and first-person professional-practice context already present in the source.",
@@ -126,6 +145,8 @@ def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_cou
             "If you move a concrete anchor into the opening, make that anchor the grammatical subject of the sentence. Do not keep a generic 'the importance of...' or 'this is particularly noticeable...' route as the main frame.",
             "When repairing a broad opening, avoid the becoming-increasingly-important/clear/obvious frame; use the existing course or unit to show why the topic matters.",
             "When using an anchor-first opening, still represent the original broad field claim and the original AI/information-era claim; connect them to the anchor instead of deleting them.",
+            "For abstract_to_source_anchor, do not write that the topic is important, increasingly important, or matters. Write what the source anchor shows or exposes.",
+            "For claim_bridge_repair, do not use a broad different-from-traditional-methods bridge by itself. Tie the bridge to a practical skill problem already in the unit.",
             "Prefer small route and linkage changes over replacing the paragraph with smoother academic phrasing.",
             "JSON safety: preserve curly quotation marks from the source where possible. If you use straight double quotes inside text values, they must be escaped as JSON.",
             "Follow target_voice_profile; do not upgrade the paragraph into a scholarly or professional article voice.",
@@ -145,11 +166,14 @@ def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_cou
             "professional copyediting voice",
             "generic importance-of opening",
             "becoming increasingly important opening",
+            "important because opening",
+            "different from traditional methods bridge",
+            "this course shows why opening",
         ],
         "output_schema": {
             "variants": [
                 {"variant_id": f"v{index}", "text": "..."}
-                for index in range(1, max(1, int(variant_count)) + 1)
+                for index in range(1, effective_variant_count + 1)
             ]
         },
     }
@@ -172,6 +196,8 @@ def build_generator_prompt(*, group: Any, repair_brief: RepairBrief, variant_cou
         payload["constraints"].append(
             "Do not introduce nouns, named entities, fields, mechanisms, dates, numbers, or examples that are absent from the original paragraph."
         )
+    if scope.get("mode") == "focused_editable_prefix":
+        payload = _compact_focused_payload(payload)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -182,39 +208,64 @@ def generate_variants(
     gateway: LLMGateway,
     variant_count: int = 3,
 ) -> tuple[list[CandidateVariant], dict[str, Any], str, str]:
+    source_text = str(getattr(group, "source_text", "") or "")
+    scope = _candidate_generation_scope(source_text, repair_brief)
     prompt = build_generator_prompt(group=group, repair_brief=repair_brief, variant_count=variant_count)
+    effective_variant_count = _effective_variant_count(variant_count, repair_brief.mitigation_strategy)
+    structured_options = structured_json_request_options(
+        getattr(gateway, "model", None),
+        _variants_response_format(effective_variant_count),
+    )
+    structured_provider = _merge_provider_options(
+        getattr(gateway, "provider", None),
+        structured_options.get("provider"),
+    )
+    max_tokens = _int_env("DRAFTPROOF_REWRITE_V4_GENERATOR_MAX_TOKENS", 8000, minimum=800, maximum=16000)
     response = gateway.chat(
         prompt,
         system="Return only valid JSON with a variants array.",
-        response_format={"type": "json_object"},
+        response_format=structured_options.get("response_format") or {"type": "json_object"},
+        provider=structured_provider,
         temperature=0.35,
         top_p=0.85,
-        max_tokens=_int_env("DRAFTPROOF_REWRITE_V4_GENERATOR_MAX_TOKENS", 6000, minimum=800, maximum=12000),
+        max_tokens=max_tokens,
     )
-    min_words, max_words = word_bounds(str(getattr(group, "source_text", "") or ""))
-    variants, diagnostics = parse_generator_variants(response.content, min_words=min_words, max_words=max_words)
+    min_words, max_words = word_bounds(scope["editable_text"])
+    raw_completion = response.raw_content or response.content
+    parsed_variants, diagnostics = parse_generator_variants(
+        raw_completion,
+        min_words=min_words,
+        max_words=max_words,
+        source_text=scope["editable_text"],
+    )
+    variants = _assemble_generation_scope_variants(parsed_variants, scope)
     if (
         not variants
         and diagnostics.get("status") == "json_parse_failed"
         and _bool_env("DRAFTPROOF_REWRITE_V4_REPAIR_MALFORMED_JSON", True)
     ):
         repair_prompt = _json_repair_prompt(
-            raw_completion=response.content,
-            variant_count=variant_count,
+            raw_completion=raw_completion,
+            variant_count=effective_variant_count,
         )
+        repair_max_tokens = _int_env("DRAFTPROOF_REWRITE_V4_JSON_REPAIR_MAX_TOKENS", 8000, minimum=800, maximum=16000)
         repair_response = gateway.chat(
             repair_prompt,
             system="Return only valid JSON with a variants array.",
-            response_format={"type": "json_object"},
+            response_format=structured_options.get("response_format") or {"type": "json_object"},
+            provider=structured_provider,
             temperature=0.0,
             top_p=0.5,
-            max_tokens=_int_env("DRAFTPROOF_REWRITE_V4_JSON_REPAIR_MAX_TOKENS", 6000, minimum=800, maximum=12000),
+            max_tokens=repair_max_tokens,
         )
-        repaired_variants, repair_diagnostics = parse_generator_variants(
-            repair_response.content,
+        repair_raw_completion = repair_response.raw_content or repair_response.content
+        repaired_parsed_variants, repair_diagnostics = parse_generator_variants(
+            repair_raw_completion,
             min_words=min_words,
             max_words=max_words,
+            source_text=scope["editable_text"],
         )
+        repaired_variants = _assemble_generation_scope_variants(repaired_parsed_variants, scope)
         if repaired_variants:
             return repaired_variants, {
                 **repair_diagnostics,
@@ -226,7 +277,15 @@ def generate_variants(
                 "model": response.model,
                 "provider": response.raw.get("provider"),
                 "usage": response.usage,
-            }, prompt, response.content
+                "finish_reason": response.finish_reason,
+                "native_finish_reason": response.native_finish_reason,
+                "max_tokens": max_tokens,
+                "structured_output_mode": structured_options.get("structured_output_mode"),
+                "generation_scope": _scope_diagnostics(scope),
+                "repair_finish_reason": repair_response.finish_reason,
+                "repair_native_finish_reason": repair_response.native_finish_reason,
+                "repair_max_tokens": repair_max_tokens,
+            }, prompt, raw_completion
         diagnostics = {
             **diagnostics,
             "repair_attempt": {
@@ -241,7 +300,249 @@ def generate_variants(
         "model": response.model,
         "provider": response.raw.get("provider"),
         "usage": response.usage,
-    }, prompt, response.content
+        "finish_reason": response.finish_reason,
+        "native_finish_reason": response.native_finish_reason,
+        "max_tokens": max_tokens,
+        "structured_output_mode": structured_options.get("structured_output_mode"),
+        "generation_scope": _scope_diagnostics(scope),
+    }, prompt, raw_completion
+
+
+def _candidate_generation_scope(source_text: str, repair_brief: RepairBrief) -> dict[str, str]:
+    text = str(source_text or "")
+    threshold = _int_env("DRAFTPROOF_REWRITE_V4_FOCUSED_PREFIX_WORD_THRESHOLD", 320, minimum=120, maximum=900)
+    if word_count(text) < threshold:
+        return {"mode": "full_unit", "editable_text": text, "locked_suffix": ""}
+    structure = _structure_contract(text)
+    if int(structure.get("nonempty_line_count") or 1) <= 1:
+        return {"mode": "full_unit", "editable_text": text, "locked_suffix": ""}
+    boundary = _first_blank_line_boundary(text)
+    if boundary <= 0:
+        return {"mode": "full_unit", "editable_text": text, "locked_suffix": ""}
+    editable = text[:boundary].rstrip()
+    suffix = text[boundary:]
+    if word_count(editable) < 40 or word_count(suffix) < 40:
+        return {"mode": "full_unit", "editable_text": text, "locked_suffix": ""}
+    return {
+        "mode": "focused_editable_prefix",
+        "editable_text": editable,
+        "locked_suffix": suffix,
+    }
+
+
+def _first_blank_line_boundary(text: str) -> int:
+    offset = 0
+    previous_line_ending = 0
+    for line in str(text or "").splitlines(keepends=True):
+        if not line.strip():
+            return max(0, offset - previous_line_ending)
+        if line.endswith("\r\n"):
+            previous_line_ending = 2
+        elif line.endswith("\n") or line.endswith("\r"):
+            previous_line_ending = 1
+        else:
+            previous_line_ending = 0
+        offset += len(line)
+    return -1
+
+
+def _generation_scope_constraints(scope: dict[str, str]) -> list[str]:
+    if not scope.get("locked_suffix"):
+        return []
+    return [
+        "Return only a replacement for original_unit, not the locked suffix.",
+        "Do not include locked_suffix_context in the returned text; the system will append that unchanged after validation.",
+        "Use locked_suffix_context only to keep the transition natural.",
+    ]
+
+
+def _assemble_generation_scope_variants(variants: list[CandidateVariant], scope: dict[str, str]) -> list[CandidateVariant]:
+    suffix = scope.get("locked_suffix") or ""
+    if not suffix:
+        return variants
+    assembled: list[CandidateVariant] = []
+    for variant in variants:
+        text = variant.text.rstrip() + suffix
+        assembled.append(CandidateVariant(
+            variant_id=variant.variant_id,
+            text=text,
+            word_count=word_count(text),
+        ))
+    return assembled
+
+
+def _scope_diagnostics(scope: dict[str, str]) -> dict[str, Any]:
+    return {
+        "mode": scope.get("mode"),
+        "editable_words": word_count(scope.get("editable_text") or ""),
+        "locked_suffix_words": word_count(scope.get("locked_suffix") or ""),
+    }
+
+
+def _compact_focused_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    strategy = payload.get("mitigation_strategy") if isinstance(payload.get("mitigation_strategy"), dict) else {}
+    steps = _compact_strategy_steps(payload.get("rewrite_sequence"))
+    compact_strategy = {
+        key: strategy.get(key)
+        for key in ("scope", "strategy_id", "primary_problem", "rewrite_depth", "candidate_count_hint")
+        if strategy.get(key)
+    }
+    for key in ("required_moves", "forbidden_moves", "must_preserve_claims", "success_checks"):
+        rows = strategy.get(key)
+        if isinstance(rows, list) and rows:
+            compact_strategy[key] = rows[:4]
+    route_plan = _route_plan(strategy)
+    if steps:
+        compact_strategy["strategy_steps"] = steps
+
+    constraints = _unique_strings([
+        "Return only the replacement text for original_unit; do not include locked_suffix_context.",
+        "The system appends locked_suffix_context unchanged after validation.",
+        "Execute route_plan.better_route as the route; do not keep the old current_route order unless a claim would otherwise be lost.",
+        "Apply route_plan.route_moves using only original_unit and locked_suffix_context material.",
+        "Route moves are moves, not copies: if a claim is moved earlier, remove its old repeated occurrence.",
+        "Do not repeat the same course, unit, difficulty, or benefit claim in two places.",
+        "Every route_plan.route_must_preserve item must remain represented.",
+        "Avoid route_plan.route_forbidden patterns.",
+        "Preserve meaning, citations, anchors, paragraph role, and source viewpoint.",
+        "Do not add new facts, examples, names, dates, numbers, headings, bullets, markdown, HTML, or commentary.",
+        "Keep the same line-break structure inside original_unit.",
+        "Keep close to the original_unit length; do not compress into a summary.",
+        "Follow mitigation_strategy and rewrite_sequence; skip only a step whose target is absent.",
+        "Preserve the writer's undergraduate/student voice; do not upgrade into a professional article voice.",
+        *[str(item) for item in payload.get("constraints") or [] if str(item).strip()][:8],
+    ], limit=14)
+    avoid = _unique_strings([
+        *[str(item) for item in payload.get("avoid") or [] if str(item).strip()],
+        "notes",
+        "comments",
+        "debug text",
+    ], limit=14)
+    tutor_feedback = payload.get("tutor_feedback") if isinstance(payload.get("tutor_feedback"), dict) else {}
+    compact_feedback = {
+        "diagnosis": tutor_feedback.get("diagnosis", ""),
+        "repair_assignment": tutor_feedback.get("repair_assignment", ""),
+    }
+    return {
+        "task": payload.get("task"),
+        "repair_mode": payload.get("repair_mode"),
+        "paragraph_role": payload.get("paragraph_role"),
+        "unit_kind": payload.get("unit_kind"),
+        "generation_scope": payload.get("generation_scope"),
+        "target_voice_profile": {
+            "education_level": (payload.get("target_voice_profile") or {}).get("education_level"),
+            "voice_register": (payload.get("target_voice_profile") or {}).get("voice_register"),
+            "tone": (payload.get("target_voice_profile") or {}).get("tone"),
+        },
+        "original_unit": payload.get("original_unit"),
+        "mitigation_strategy": compact_strategy,
+        "route_plan": route_plan,
+        "rewrite_sequence": steps,
+        "tutor_feedback": compact_feedback,
+        "repair_tasks": [str(item) for item in payload.get("repair_tasks") or [] if str(item).strip()][:3],
+        "constraints": constraints,
+        "avoid": avoid,
+        "output_schema": payload.get("output_schema"),
+    }
+
+
+def _compact_strategy_steps(value: Any) -> list[dict[str, Any]]:
+    steps = value if isinstance(value, list) else []
+    cleaned: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        op = str(step.get("op") or "")
+        if op in {"reaction_reason_link", "list_to_process_repair"}:
+            continue
+        cleaned.append({
+            "op": op,
+            "target": str(step.get("target") or ""),
+            "instruction": str(step.get("instruction") or ""),
+            "must_preserve": [str(item) for item in step.get("must_preserve") or [] if str(item).strip()][:3],
+            "avoid": [str(item) for item in step.get("avoid") or [] if str(item).strip()][:3],
+        })
+        if len(cleaned) >= 3:
+            break
+    return cleaned
+
+
+def _route_plan(strategy: dict[str, Any]) -> dict[str, list[str]]:
+    if not isinstance(strategy, dict):
+        return {}
+    keys = ("current_route", "better_route", "route_moves", "route_must_preserve", "route_forbidden")
+    plan: dict[str, list[str]] = {}
+    for key in keys:
+        rows = strategy.get(key)
+        if not isinstance(rows, list):
+            continue
+        cleaned = [str(item).strip() for item in rows if str(item).strip()][:6]
+        if cleaned:
+            plan[key] = cleaned
+    return plan
+
+
+def _unique_strings(items: list[str], *, limit: int) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = " ".join(str(item or "").split())
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        rows.append(text)
+        seen.add(key)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _variants_response_format(variant_count: int) -> dict[str, Any]:
+    variant_schema = {
+        "type": "object",
+        "properties": {
+            "variant_id": {
+                "type": "string",
+                "description": "Variant id matching the requested variant slot, such as v1.",
+            },
+            "text": {
+                "type": "string",
+                "description": "Replacement unit text only, with no notes or commentary.",
+            },
+        },
+        "required": ["variant_id", "text"],
+        "additionalProperties": False,
+    }
+    count = max(1, int(variant_count or 1))
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "rewrite_v4_variants",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "variants": {
+                        "type": "array",
+                        "items": variant_schema,
+                        "minItems": count,
+                        "maxItems": count,
+                    },
+                },
+                "required": ["variants"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _merge_provider_options(base: Any, override: Any) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    if isinstance(base, dict):
+        merged.update(base)
+    if isinstance(override, dict):
+        merged.update(override)
+    return merged or None
 
 
 def _structure_contract(source_text: str) -> dict[str, Any]:
@@ -254,6 +555,53 @@ def _structure_contract(source_text: str) -> dict[str, Any]:
         "first_nonempty_line": first,
         "preserve_line_breaks": len(nonempty) > 1,
     }
+
+
+def _effective_variant_count(variant_count: int, strategy: dict[str, Any]) -> int:
+    requested = max(1, int(variant_count))
+    if not isinstance(strategy, dict):
+        return requested
+    try:
+        hinted = int(str(strategy.get("candidate_count_hint") or "").strip())
+    except ValueError:
+        return requested
+    return max(1, min(requested, hinted))
+
+
+def _strategy_controller_constraints(strategy: dict[str, Any]) -> list[str]:
+    if not isinstance(strategy, dict) or not strategy:
+        return []
+    return [
+            "Follow mitigation_strategy as the repair controller; do not treat repair_tasks as independent unrelated edits.",
+            "Apply rewrite_sequence in order where the target text exists; skip a step only if its target is absent.",
+            "For each rewrite_sequence step, preserve its must_preserve items and avoid its avoid items.",
+            "Reject your own draft mentally if a rewrite_sequence step deletes a source claim or source block.",
+        ]
+
+
+def _strategy_steps(strategy: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(strategy, dict):
+        return []
+    steps = strategy.get("strategy_steps")
+    if not isinstance(steps, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for item in steps[:5]:
+        if not isinstance(item, dict):
+            continue
+        op = str(item.get("op") or "").strip()
+        target = str(item.get("target") or "").strip()
+        instruction = str(item.get("instruction") or "").strip()
+        if not op or not target or not instruction:
+            continue
+        cleaned.append({
+            "op": op,
+            "target": target,
+            "instruction": instruction,
+            "must_preserve": [str(row).strip() for row in item.get("must_preserve") or [] if str(row).strip()][:4],
+            "avoid": [str(row).strip() for row in item.get("avoid") or [] if str(row).strip()][:4],
+        })
+    return cleaned
 
 
 def _structure_aware_constraints(items: tuple[str, ...] | list[str], structure: dict[str, Any]) -> list[str]:

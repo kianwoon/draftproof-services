@@ -32,7 +32,6 @@ DISALLOWED_TASK_TERMS = {
 }
 
 RAW_DETECTOR_TERMS = {
-    "ai",
     "detector",
     "scanner",
     "likelihood",
@@ -86,6 +85,7 @@ def sanitize_repair_brief(
     source_examples: Any = None,
     repair_assignment: Any = "",
     coverage_hint: Any = "paragraph",
+    mitigation_strategy: Any = None,
     parse_diagnostics: dict[str, Any] | None = None,
 ) -> RepairBrief:
     rejected: list[dict[str, Any]] = []
@@ -138,6 +138,65 @@ def sanitize_repair_brief(
                 break
         return tuple(examples)
 
+    def clean_strategy(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        allowed_scalars = {
+            "scope",
+            "strategy_id",
+            "primary_problem",
+            "rewrite_depth",
+            "candidate_count_hint",
+        }
+        allowed_lists = {
+            "target_zones",
+            "current_route",
+            "better_route",
+            "route_moves",
+            "route_must_preserve",
+            "route_forbidden",
+            "required_moves",
+            "forbidden_moves",
+            "must_preserve_claims",
+            "success_checks",
+        }
+        strategy: dict[str, Any] = {}
+        for key in allowed_scalars:
+            if key not in value:
+                continue
+            text = clean_text(value.get(key), field=f"mitigation_strategy.{key}", max_chars=160)
+            if text:
+                strategy[key] = text
+        for key in allowed_lists:
+            if key not in value:
+                continue
+            rows = clean_list(value.get(key), max_items=8, field=f"mitigation_strategy.{key}")
+            if rows:
+                strategy[key] = list(rows)
+        steps: list[dict[str, Any]] = []
+        raw_steps = value.get("strategy_steps")
+        if isinstance(raw_steps, list):
+            for index, item in enumerate(raw_steps, start=1):
+                if not isinstance(item, dict):
+                    rejected.append({"field": "mitigation_strategy.strategy_steps", "index": index, "reason": "step_not_object"})
+                    continue
+                step = {
+                    "op": clean_text(item.get("op"), field="mitigation_strategy.strategy_steps.op", max_chars=80),
+                    "target": clean_text(item.get("target"), field="mitigation_strategy.strategy_steps.target", max_chars=120),
+                    "instruction": clean_text(item.get("instruction"), field="mitigation_strategy.strategy_steps.instruction", max_chars=240),
+                    "must_preserve": list(clean_list(item.get("must_preserve"), max_items=4, field="mitigation_strategy.strategy_steps.must_preserve")),
+                    "avoid": list(clean_list(item.get("avoid"), max_items=4, field="mitigation_strategy.strategy_steps.avoid")),
+                }
+                if not step["op"] or not step["target"] or not step["instruction"]:
+                    rejected.append({"field": "mitigation_strategy.strategy_steps", "index": index, "reason": "step_incomplete"})
+                    continue
+                steps.append(step)
+                if len(steps) >= 5:
+                    break
+        if steps:
+            strategy["strategy_steps"] = steps
+        return strategy
+
     safe_tasks = clean_list(repair_tasks, max_items=5, field="repair_tasks", reject_task_terms=True)
     safe_constraints = clean_list(constraints, max_items=8, field="constraints")
     safe_avoid = clean_list(avoid, max_items=10, field="avoid")
@@ -151,6 +210,7 @@ def sanitize_repair_brief(
         source_examples=clean_examples(source_examples),
         repair_assignment=clean_text(repair_assignment, field="repair_assignment", max_chars=420),
         coverage_hint=clean_text(coverage_hint, field="coverage_hint", max_chars=80) or "paragraph",
+        mitigation_strategy=clean_strategy(mitigation_strategy),
         repair_tasks=safe_tasks,
         constraints=safe_constraints,
         avoid=safe_avoid,
@@ -159,7 +219,13 @@ def sanitize_repair_brief(
     )
 
 
-def parse_generator_variants(raw: str, *, min_words: int, max_words: int) -> tuple[list[CandidateVariant], dict[str, Any]]:
+def parse_generator_variants(
+    raw: str,
+    *,
+    min_words: int,
+    max_words: int,
+    source_text: str = "",
+) -> tuple[list[CandidateVariant], dict[str, Any]]:
     payload, diagnostics = parse_json_object(raw, required_keys={"variants"})
     if payload is None:
         if diagnostics.get("status") != "json_parse_failed":
@@ -179,6 +245,8 @@ def parse_generator_variants(raw: str, *, min_words: int, max_words: int) -> tup
     variants: list[CandidateVariant] = []
     rejected: list[dict[str, Any]] = []
     allowed_keys = {"variant_id", "text"}
+    source_structure = _block_structure(source_text)
+    allow_multi_block = source_structure["block_count"] > 1
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             rejected.append({"index": index, "reason": "variant_not_object"})
@@ -196,9 +264,20 @@ def parse_generator_variants(raw: str, *, min_words: int, max_words: int) -> tup
         if not text_integrity.get("passed"):
             rejected.append({"index": index, "variant_id": variant_id, "reason": "text_integrity_failed", "text_integrity": text_integrity})
             continue
-        if "\n\n" in text:
-            rejected.append({"index": index, "variant_id": variant_id, "reason": "paragraph_split"})
-            continue
+        text_structure = _block_structure(text)
+        if text_structure["block_count"] > 1:
+            if not allow_multi_block:
+                rejected.append({"index": index, "variant_id": variant_id, "reason": "paragraph_split"})
+                continue
+            if text_structure["block_count"] != source_structure["block_count"]:
+                rejected.append({
+                    "index": index,
+                    "variant_id": variant_id,
+                    "reason": "block_count_contract_failed",
+                    "block_count": text_structure["block_count"],
+                    "source_block_count": source_structure["block_count"],
+                })
+                continue
         word_count = len(text.split())
         if word_count < min_words or word_count > max_words:
             rejected.append({
@@ -218,6 +297,34 @@ def parse_generator_variants(raw: str, *, min_words: int, max_words: int) -> tup
         "status": status,
         "variant_count": len(variants),
         "rejected": rejected,
+        "source_structure": source_structure,
+    }
+
+
+def _block_structure(text: str) -> dict[str, Any]:
+    lines = str(text or "").splitlines()
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    blank_line_boundary_count = 0
+    previous_nonempty = False
+    for line in lines:
+        if line.strip():
+            current.append(line)
+            previous_nonempty = True
+            continue
+        if current:
+            blocks.append(current)
+            current = []
+        if previous_nonempty:
+            blank_line_boundary_count += 1
+        previous_nonempty = False
+    if current:
+        blocks.append(current)
+    nonempty_line_count = sum(1 for line in lines if line.strip())
+    return {
+        "block_count": max(1, len(blocks)),
+        "blank_line_boundary_count": blank_line_boundary_count,
+        "nonempty_line_count": max(1, nonempty_line_count),
     }
 
 
@@ -326,6 +433,178 @@ def source_grounding_integrity(source_text: str, replacement_text: str, *, repai
         "semantic_similarity": round(float(drift.similarity), 3),
         "semantic_similarity_threshold": threshold,
         "sentence_claim_coverage": claim_coverage,
+    }
+
+
+def strategy_compliance_integrity(replacement_text: str, strategy: dict[str, Any]) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    redundancy = repeated_sentence_claim_integrity(replacement_text)
+    if not redundancy.get("passed"):
+        failures.extend(redundancy.get("failures") or [])
+    if not isinstance(strategy, dict) or not strategy:
+        return {"passed": not failures, "failures": failures, "redundancy": redundancy}
+    candidate = _strategy_phrase_normalize(replacement_text)
+
+    forbidden_routes: list[str] = []
+    for item in strategy.get("forbidden_moves") or []:
+        forbidden_routes.extend(_forbidden_route_markers(str(item or "")))
+    for item in strategy.get("route_forbidden") or []:
+        forbidden_routes.extend(_forbidden_route_markers(str(item or "")))
+    for step in strategy.get("strategy_steps") or []:
+        if not isinstance(step, dict):
+            continue
+        for item in step.get("avoid") or []:
+            forbidden_routes.extend(_forbidden_route_markers(str(item or "")))
+
+    seen: set[str] = set()
+    for marker in forbidden_routes:
+        normalized = _strategy_phrase_normalize(marker)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        if normalized in candidate:
+            failures.append({
+                "reason": "strategy_forbidden_route_present",
+                "forbidden_route": marker,
+            })
+
+    for step in strategy.get("strategy_steps") or []:
+        if not isinstance(step, dict):
+            continue
+        op = str(step.get("op") or "")
+        must_preserve = [str(item or "").strip() for item in step.get("must_preserve") or [] if str(item or "").strip()]
+        if op == "reaction_reason_link":
+            missing = [
+                item for item in must_preserve
+                if not _loose_phrase_present(candidate, item)
+            ]
+            missing_limit = max(1, len(must_preserve) // 2)
+            if len(missing) > missing_limit:
+                failures.append({
+                    "reason": "strategy_reaction_reason_claim_missing",
+                    "missing": missing,
+                })
+    route_missing = [
+        item for item in strategy.get("route_must_preserve") or []
+        if str(item or "").strip() and not _loose_phrase_present(candidate, str(item))
+    ]
+    if len(route_missing) > max(1, len(strategy.get("route_must_preserve") or []) // 2):
+        failures.append({
+            "reason": "route_preserve_claim_missing",
+            "missing": route_missing[:4],
+        })
+
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "redundancy": redundancy,
+    }
+
+
+def repeated_sentence_claim_integrity(replacement_text: str) -> dict[str, Any]:
+    sentences = [
+        sentence for sentence in _sentences(replacement_text)
+        if len(sentence.split()) >= _float_env("DRAFTPROOF_REWRITE_V4_REDUNDANT_SENTENCE_MIN_WORDS", 9, minimum=5, maximum=30)
+    ]
+    threshold = _float_env("DRAFTPROOF_REWRITE_V4_REDUNDANT_SENTENCE_THRESHOLD", 0.68, minimum=0.55, maximum=0.95)
+    overlap_threshold = _float_env("DRAFTPROOF_REWRITE_V4_REDUNDANT_SENTENCE_OVERLAP_THRESHOLD", 0.55, minimum=0.35, maximum=0.9)
+    fallback_similarity = _float_env("DRAFTPROOF_REWRITE_V4_REDUNDANT_SENTENCE_FALLBACK_SIMILARITY", 0.5, minimum=0.35, maximum=0.9)
+    failures: list[dict[str, Any]] = []
+    for left_index, left in enumerate(sentences):
+        left_terms = _claim_terms(left)
+        if len(left_terms) < 4:
+            continue
+        for right_index, right in enumerate(sentences[left_index + 1:], start=left_index + 2):
+            right_terms = _claim_terms(right)
+            if len(right_terms) < 4:
+                continue
+            shared = left_terms & right_terms
+            if len(shared) < max(3, min(len(left_terms), len(right_terms)) // 3):
+                continue
+            similarity = float(_keyword_cosine(left, right))
+            shared_ratio = len(shared) / max(1, min(len(left_terms), len(right_terms)))
+            if similarity >= threshold or (similarity >= fallback_similarity and shared_ratio >= overlap_threshold):
+                failures.append({
+                    "reason": "redundant_sentence_claim",
+                    "left_sentence_index": left_index + 1,
+                    "right_sentence_index": right_index,
+                    "similarity": round(similarity, 3),
+                    "shared_term_ratio": round(shared_ratio, 3),
+                    "left_excerpt": left[:180],
+                    "right_excerpt": right[:180],
+                })
+    return {
+        "passed": not failures,
+        "threshold": threshold,
+        "failures": failures[:4],
+    }
+
+
+def _forbidden_route_markers(text: str) -> list[str]:
+    source = _strategy_phrase_normalize(text)
+    if not source:
+        return []
+    route_suffixes = (
+        " route",
+        " bridge",
+        " opening",
+        " frame",
+    )
+    for suffix in route_suffixes:
+        if source.endswith(suffix):
+            source = source[: -len(suffix)].strip()
+            break
+    if " as a standalone" in source:
+        source = source.split(" as a standalone", 1)[0].strip()
+    if " without " in source:
+        source = source.split(" without ", 1)[0].strip()
+    if " by itself" in source:
+        source = source.split(" by itself", 1)[0].strip()
+    if len(source.split()) < 2:
+        return []
+    return [source]
+
+
+def _loose_phrase_present(candidate: str, phrase: str) -> bool:
+    normalized = _strategy_phrase_normalize(phrase)
+    if not normalized:
+        return True
+    if normalized in candidate:
+        return True
+    if _best_sentence_similarity(candidate, normalized) >= _float_env(
+        "DRAFTPROOF_REWRITE_V4_PRESERVE_PHRASE_SEMANTIC_THRESHOLD",
+        0.32,
+        minimum=0.2,
+        maximum=0.8,
+    ):
+        return True
+    tokens = [token for token in normalized.split() if len(token) >= 4]
+    if not tokens:
+        return True
+    hits = sum(1 for token in tokens if token in candidate)
+    return hits >= max(1, len(tokens) - 1)
+
+
+def _best_sentence_similarity(text: str, phrase: str) -> float:
+    sentences = _sentences(text)
+    if not sentences:
+        return 0.0
+    return max((float(_keyword_cosine(phrase, sentence)) for sentence in sentences), default=0.0)
+
+
+def _strategy_phrase_normalize(value: Any) -> str:
+    text = str(value or "").casefold()
+    for char in "-_/":
+        text = text.replace(char, " ")
+    return " ".join(text.split())
+
+
+def _claim_terms(text: str) -> set[str]:
+    normalized = _strategy_phrase_normalize(text)
+    return {
+        token.strip(".,;:!?()[]{}\"'“”‘’")
+        for token in normalized.split()
+        if len(token.strip(".,;:!?()[]{}\"'“”‘’")) >= 4
     }
 
 
