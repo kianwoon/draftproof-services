@@ -85,6 +85,7 @@ def run_rewrite_pipeline_v5(
     model: str | None = None,
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
+    checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     started = time.time()
 
@@ -98,6 +99,46 @@ def run_rewrite_pipeline_v5(
     runtime_budget_seconds = _v5_runtime_budget_seconds(original_text, config)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    pipeline_version = "rewrite_v5_residual_cluster_comb"
+
+    def emit_checkpoint(checkpoint: dict[str, Any]) -> None:
+        if checkpoint_callback is None:
+            return
+        checkpoint_text = str(checkpoint.get("rewritten_document") or "")
+        if not checkpoint_text.strip() or checkpoint_text.strip() == original_text.strip():
+            return
+        checkpoint_scores = checkpoint.get("scores") if isinstance(checkpoint.get("scores"), dict) else {}
+        baseline_scores = checkpoint.get("baseline_scores") if isinstance(checkpoint.get("baseline_scores"), dict) else {}
+        checkpoint_summary = {
+            "rewrite_pipeline_version": pipeline_version,
+            "rewrite_engine_mode": "v5_residual_cluster_comb_production",
+            "outcome": "rewrite_candidate_generated_needs_external_review",
+            "public_status": "rewrite_candidate_generated_needs_external_review",
+            "partial_rewrite_preserved": True,
+            "partial_rewrite_preservation_reason": "accepted_checkpoint_saved_before_pipeline_completion",
+            "checkpoint_recovery_available": True,
+            "checkpoint": _compact_v5_checkpoint(checkpoint),
+            "v5_scores": {
+                "original": baseline_scores,
+                "final": checkpoint_scores,
+                "deltas": _score_deltas(baseline_scores, checkpoint_scores),
+            },
+            "candidate_generation_status": {
+                "accepted_count": int(checkpoint.get("sequence") or 1),
+                "reason": "accepted_checkpoint",
+            },
+            "selected_candidate": checkpoint.get("accepted"),
+            "final_text": checkpoint_text,
+            "no_text_change": False,
+        }
+        checkpoint_callback({
+            "status": "rewrite_candidate_generated_needs_external_review",
+            "checkpoint_schema_version": "rewrite_v5_uploaded_checkpoint.v1",
+            "original_text": original_text,
+            "final_text": checkpoint_text,
+            "summary": checkpoint_summary,
+            "checkpoint": checkpoint,
+        })
 
     progress(66, "Running V5 residual cluster comb")
     payload = run_v5_residual_cluster_comb_experiment(
@@ -115,6 +156,7 @@ def run_rewrite_pipeline_v5(
         cleanup_variant_count=int(config["cleanup_variant_count"]),
         final_risky_window_cleanup_rounds=int(config["final_risky_window_cleanup_rounds"]),
         progress_callback=progress,
+        accepted_checkpoint_callback=emit_checkpoint,
         max_seconds=runtime_budget_seconds,
     )
 
@@ -175,7 +217,6 @@ def run_rewrite_pipeline_v5(
     detect_scores = _detect_scores(original_report, final_report, original_scores, final_scores)
     original_scan_compact = _compact_scan_for_rewrite_report(original_report)
     final_scan_compact = _compact_scan_for_rewrite_report(final_report)
-    pipeline_version = "rewrite_v5_residual_cluster_comb"
     summary = {
         "rewrite_pipeline_version": pipeline_version,
         "rewrite_engine_mode": "v5_residual_cluster_comb_production",
@@ -357,6 +398,24 @@ def _compact_v5_candidate_trace(rows: list[Any]) -> list[dict[str, Any]]:
     return compact
 
 
+def _compact_v5_checkpoint(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(checkpoint, dict):
+        return {}
+    return {
+        "schema_version": checkpoint.get("schema_version"),
+        "stage": checkpoint.get("stage"),
+        "sequence": checkpoint.get("sequence"),
+        "phase": checkpoint.get("phase"),
+        "round": checkpoint.get("round"),
+        "reason": checkpoint.get("reason"),
+        "created_at_epoch": checkpoint.get("created_at_epoch"),
+        "scores": checkpoint.get("scores") if isinstance(checkpoint.get("scores"), dict) else {},
+        "goal": checkpoint.get("goal") if isinstance(checkpoint.get("goal"), dict) else {},
+        "accepted": checkpoint.get("accepted") if isinstance(checkpoint.get("accepted"), dict) else {},
+        "rewritten_word_count": word_count(str(checkpoint.get("rewritten_document") or "")),
+    }
+
+
 def _compact_v5_generator_diagnostics(diagnostics: Any) -> dict[str, Any] | None:
     if not isinstance(diagnostics, dict):
         return None
@@ -441,6 +500,7 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "eligible_span_density_gate": payload.get("eligible_span_density_gate"),
         "runtime_budget": payload.get("runtime_budget") if isinstance(payload.get("runtime_budget"), dict) else None,
         "phase_order": payload.get("phase_order") if isinstance(payload.get("phase_order"), dict) else None,
+        "accepted_checkpoints": payload.get("accepted_checkpoints") if isinstance(payload.get("accepted_checkpoints"), list) else [],
         "goal": payload.get("goal"),
         "accepted_rounds": sum(1 for row in all_rounds if isinstance(row, dict) and row.get("accepted")),
         "rounds": _compact_v5_rounds(rounds),

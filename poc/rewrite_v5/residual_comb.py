@@ -119,6 +119,7 @@ def run_v5_residual_cluster_comb_experiment(
     cleanup_variant_count: int | None = None,
     final_risky_window_cleanup_rounds: int | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     max_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Iteratively treat the strongest residual cluster and rescan."""
@@ -141,6 +142,26 @@ def run_v5_residual_cluster_comb_experiment(
     current_goal = baseline_goal
     current_scores = baseline_scores
     global_best_candidate: dict[str, Any] | None = None
+    accepted_checkpoints: list[dict[str, Any]] = []
+
+    def record_accepted_checkpoint(event: dict[str, Any]) -> None:
+        checkpoint = _accepted_checkpoint_payload(
+            event=event,
+            sequence=len(accepted_checkpoints) + 1,
+            stage="v5_residual_cluster_comb",
+            baseline_scores=baseline_scores,
+            output_dir=out_dir,
+        )
+        accepted_checkpoints.append(_compact_accepted_checkpoint(checkpoint))
+        if accepted_checkpoint_callback is None:
+            return
+        try:
+            accepted_checkpoint_callback(checkpoint)
+        except Exception as exc:
+            accepted_checkpoints[-1]["callback_error"] = {
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
     gateway = LLMGateway(LLMConfig(
         api_key=api_key,
         model=model,
@@ -211,6 +232,7 @@ def run_v5_residual_cluster_comb_experiment(
             route_plan_enabled=bool(phase_order["unsafe_cluster_route_planning"]),
             progress_callback=progress_callback,
             progress_percent=68,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
         )
@@ -408,6 +430,15 @@ def run_v5_residual_cluster_comb_experiment(
         ).to_dict()
         current_scores = accepted.get("scores") if isinstance(accepted.get("scores"), dict) else _score_summary(original_text, current_report, current_goal)
         (out_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
+        record_accepted_checkpoint({
+            "phase": "residual_cluster_comb",
+            "round": round_index,
+            "reason": "accepted_incremental_movement",
+            "accepted": accepted,
+            "rewritten_document": current_text,
+            "scores": current_scores,
+            "goal": current_goal,
+        })
         _emit_progress(
             progress_callback,
             min(75, _residual_progress_percent(round_index, max_rounds=max_rounds) + 2),
@@ -447,6 +478,7 @@ def run_v5_residual_cluster_comb_experiment(
             variant_count=cleanup_variants,
             progress_callback=progress_callback,
             progress_percent=76,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
         )
@@ -481,6 +513,7 @@ def run_v5_residual_cluster_comb_experiment(
             route_plan_enabled=True,
             progress_callback=progress_callback,
             progress_percent=77,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
         )
@@ -509,6 +542,7 @@ def run_v5_residual_cluster_comb_experiment(
             variant_count=cleanup_variants,
             progress_callback=progress_callback,
             progress_percent=78,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
         )
@@ -527,6 +561,15 @@ def run_v5_residual_cluster_comb_experiment(
             baseline_report=baseline_report,
         )
         (out_dir / "after_global_best_fallback.txt").write_text(current_text)
+        record_accepted_checkpoint({
+            "phase": "global_best_fallback",
+            "round": None,
+            "reason": "best_full_document_candidate_superseded_phase_accepted_result",
+            "accepted": global_best_candidate,
+            "rewritten_document": current_text,
+            "scores": current_scores,
+            "goal": current_goal,
+        })
         global_best_fallback = {
             "applied": True,
             "reason": "best_full_document_candidate_superseded_phase_accepted_result",
@@ -544,6 +587,7 @@ def run_v5_residual_cluster_comb_experiment(
         "unsafe_cluster_cleanup_rounds": unsafe_cluster_rounds,
         "final_risky_window_cleanup_rounds": final_risky_window_rounds,
         "phase_order": phase_order,
+        "accepted_checkpoints": accepted_checkpoints,
         "global_best_fallback": global_best_fallback,
         "final_scores": current_scores,
         "eligible_span_density_gate": density_gate,
@@ -564,6 +608,56 @@ def _cleanup_round_limit(value: int | None, *, env_name: str, default: int) -> i
     if value is not None:
         return max(0, min(12, int(value or 0)))
     return _int_env(env_name, default, minimum=0, maximum=12)
+
+
+def _accepted_checkpoint_payload(
+    *,
+    event: dict[str, Any],
+    sequence: int,
+    stage: str,
+    baseline_scores: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    accepted = event.get("accepted") if isinstance(event.get("accepted"), dict) else {}
+    rewritten_document = str(event.get("rewritten_document") or accepted.get("candidate_text") or "")
+    checkpoint = {
+        "schema_version": "rewrite_v5_accepted_checkpoint.v1",
+        "stage": stage,
+        "sequence": max(1, int(sequence or 1)),
+        "phase": event.get("phase"),
+        "round": event.get("round"),
+        "reason": event.get("reason"),
+        "created_at_epoch": round(time.time(), 3),
+        "baseline_scores": baseline_scores,
+        "scores": event.get("scores") if isinstance(event.get("scores"), dict) else accepted.get("scores"),
+        "goal": event.get("goal") if isinstance(event.get("goal"), dict) else accepted.get("candidate_goal"),
+        "accepted": _compact_residual_row(accepted),
+        "rewritten_document": rewritten_document,
+    }
+    checkpoint_dir = output_dir / "accepted_checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    safe_phase = str(checkpoint.get("phase") or "accepted").replace("/", "_")
+    filename = f"checkpoint_{checkpoint['sequence']:03d}_{safe_phase}.json"
+    (checkpoint_dir / filename).write_text(json.dumps(checkpoint, ensure_ascii=False, indent=2))
+    (checkpoint_dir / "latest_checkpoint.json").write_text(json.dumps(checkpoint, ensure_ascii=False, indent=2))
+    (checkpoint_dir / "latest_rewritten.txt").write_text(rewritten_document)
+    return checkpoint
+
+
+def _compact_accepted_checkpoint(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": checkpoint.get("schema_version"),
+        "stage": checkpoint.get("stage"),
+        "sequence": checkpoint.get("sequence"),
+        "phase": checkpoint.get("phase"),
+        "round": checkpoint.get("round"),
+        "reason": checkpoint.get("reason"),
+        "created_at_epoch": checkpoint.get("created_at_epoch"),
+        "scores": checkpoint.get("scores"),
+        "goal": checkpoint.get("goal"),
+        "accepted": checkpoint.get("accepted"),
+        "rewritten_word_count": word_count(str(checkpoint.get("rewritten_document") or "")),
+    }
 
 
 def _should_start_with_unsafe_cluster_cleanup(
@@ -1270,7 +1364,7 @@ def _generate_loose_variants_from_builder(
     variant_count: int,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     variants = max(1, min(5, int(variant_count or 1)))
-    if variants <= 1 or not _bool_env("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", False):
+    if variants <= 1 or not _bool_env("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", True):
         prompt = prompt_builder(variants)
         return _generate_loose_variants(
             prompt=prompt,
@@ -2041,6 +2135,7 @@ def _run_risky_window_cleanup_pass(
     variant_count: int,
     progress_callback: Callable[[int, str], None] | None = None,
     progress_percent: int = 76,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     started_at: float | None = None,
     max_seconds: float | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
@@ -2134,6 +2229,16 @@ def _run_risky_window_cleanup_pass(
             baseline_report=baseline_report,
         )
         (output_dir / f"after_round_{cleanup_index:02d}.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "risky_window_cleanup",
+                "round": cleanup_index,
+                "reason": "accepted_risky_window_movement",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
         _emit_progress(progress_callback, progress_percent, f"Accepted V5 risky window cleanup {cleanup_index}")
     return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 
@@ -2156,6 +2261,7 @@ def _run_unsafe_cluster_cleanup_pass(
     route_plan_enabled: bool = True,
     progress_callback: Callable[[int, str], None] | None = None,
     progress_percent: int = 77,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     started_at: float | None = None,
     max_seconds: float | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
@@ -2279,6 +2385,16 @@ def _run_unsafe_cluster_cleanup_pass(
             baseline_report=baseline_report,
         )
         (output_dir / f"after_round_{cleanup_index:02d}.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "unsafe_cluster_cleanup",
+                "round": cleanup_index,
+                "reason": "accepted_unsafe_cluster_movement",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
         _emit_progress(progress_callback, progress_percent, f"Accepted V5 unsafe cluster cleanup {cleanup_index}")
     return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 

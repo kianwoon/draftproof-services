@@ -1450,7 +1450,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
 )
 def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
     """Run the rewrite pipeline on a completed scan's results."""
-    from .storage import upload_rewrite_files, _client as _r2_client
+    from .storage import upload_rewrite_checkpoint, upload_rewrite_files, _client as _r2_client
     from .config import settings as worker_settings
     import tempfile
 
@@ -1477,6 +1477,67 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         "billable": False,
         "reason": "rewrite_not_completed",
     }
+    scan_job = None
+    last_rewrite_checkpoint: dict = {}
+
+    def checkpoint_markdown(checkpoint_json: dict) -> str:
+        summary = checkpoint_json.get("summary") if isinstance(checkpoint_json.get("summary"), dict) else {}
+        final_text = str(checkpoint_json.get("final_text") or "")
+        scores = ((summary.get("v5_scores") or {}).get("deltas") or {}) if isinstance(summary.get("v5_scores"), dict) else {}
+        return "\n\n".join([
+            "# Rewrite checkpoint",
+            f"Status: {checkpoint_json.get('status') or 'rewrite_candidate_generated_needs_external_review'}",
+            f"AI delta: {scores.get('ai_delta', '-')}",
+            "This is the latest scanner-accepted rewrite saved before the full pipeline completed.",
+            "## Rewritten content",
+            final_text,
+        ])
+
+    def persist_rewrite_checkpoint(checkpoint_json: dict) -> None:
+        nonlocal last_rewrite_checkpoint
+        if not isinstance(checkpoint_json, dict):
+            return
+        rewritten_text = str(checkpoint_json.get("final_text") or "")
+        if not rewritten_text.strip():
+            return
+        last_rewrite_checkpoint = checkpoint_json
+        upload_rewrite_checkpoint(
+            scan_id,
+            checkpoint_json,
+            rewritten_text,
+            checkpoint_markdown(checkpoint_json),
+        )
+
+    def complete_from_rewrite_checkpoint(reason: str) -> dict | None:
+        nonlocal billing_decision
+        if not last_rewrite_checkpoint:
+            return None
+        checkpoint_json = dict(last_rewrite_checkpoint)
+        checkpoint_json["checkpoint_recovery_reason"] = reason
+        rewritten_text = str(checkpoint_json.get("final_text") or "")
+        upload_rewrite_checkpoint(
+            scan_id,
+            checkpoint_json,
+            rewritten_text,
+            checkpoint_markdown(checkpoint_json),
+        )
+        billing_decision = _rewrite_billing_decision(
+            {"status": checkpoint_json.get("status")},
+            checkpoint_json,
+        )
+        user_id = scan_job.get("user_id", "") if scan_job else ""
+        if user_id and billing_decision.get("billable"):
+            capture_rewrite_credits(str(user_id), rewrite_id)
+        else:
+            release_rewrite_credits(rewrite_id)
+        update_rewrite_status(
+            rewrite_id,
+            "completed",
+            progress_percent=100,
+            progress_message="Rewrite complete from saved checkpoint",
+        )
+        publish_progress("completed", 100, "Rewrite complete from saved checkpoint")
+        return {"status": "completed", "checkpoint_recovered": True, "reason": reason}
 
     try:
         rewrite_job = claim_rewrite_job(rewrite_id)
@@ -1690,6 +1751,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         model=v5_rewrite_model,
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
+                        checkpoint_callback=persist_rewrite_checkpoint,
                     )
                 elif pipeline_choice == "v4":
                     from rewrite_v4 import run_rewrite_pipeline_v4
@@ -1845,6 +1907,9 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         return {"status": "completed"}
 
     except SoftTimeLimitExceeded:
+        recovered = complete_from_rewrite_checkpoint("soft_time_limit_exceeded_after_accepted_candidate")
+        if recovered:
+            return recovered
         timeout_minutes = max(1, settings.REWRITE_SOFT_TIME_LIMIT_SECONDS // 60)
         update_rewrite_status(
             rewrite_id,
@@ -1865,6 +1930,9 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         publish_progress("canceled", None, "Rewrite canceled", "Rewrite canceled by user")
         return {"status": "canceled"}
     except Exception as e:
+        recovered = complete_from_rewrite_checkpoint("exception_after_accepted_candidate")
+        if recovered:
+            return recovered
         if self.request.retries < self.max_retries:
             update_rewrite_status(
                 rewrite_id,

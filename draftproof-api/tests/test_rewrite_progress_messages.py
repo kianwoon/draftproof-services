@@ -110,3 +110,32 @@ def test_completed_non_v4_rewrite_reuse_contract_is_unchanged():
         )
         is True
     )
+
+
+def test_saved_rewrite_checkpoint_with_changed_text_is_delivered_content():
+    assert (
+        rewrite_service._rewrite_report_has_delivered_content(
+            {
+                "status": "rewrite_candidate_generated_needs_external_review",
+                "original_text": "Original text.",
+                "final_text": "Changed rewritten text.",
+                "summary": {
+                    "partial_rewrite_preserved": True,
+                },
+            }
+        )
+        is True
+    )
+
+
+def test_saved_rewrite_checkpoint_without_text_change_is_not_delivered_content():
+    assert (
+        rewrite_service._rewrite_report_has_delivered_content(
+            {
+                "status": "rewrite_candidate_generated_needs_external_review",
+                "original_text": "Same text.",
+                "final_text": "Same text.",
+            }
+        )
+        is False
+    )

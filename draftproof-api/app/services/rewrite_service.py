@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from app.config import REWRITE_STALE_THRESHOLD_MINUTES
-from app.models.db import async_session, RewriteJob, ScanJob, CreditAccount, CreditReservation
+from app.models.db import async_session, RewriteJob, ScanJob, CreditAccount, CreditReservation, UsageEvent
 from app.services.scan_service import _rewrite_cost
 from app.services import progress_stream
 
@@ -91,6 +91,23 @@ async def _fetch_rewrite_report_json(scan_id: str) -> dict | None:
         return None
 
 
+def _rewrite_report_has_delivered_content(report_json: dict | None) -> bool:
+    if not isinstance(report_json, dict):
+        return False
+    status = str(report_json.get("status") or "").strip()
+    summary = report_json.get("summary") if isinstance(report_json.get("summary"), dict) else {}
+    outcome = str(summary.get("outcome") or summary.get("public_status") or "").strip()
+    final_text = " ".join(str(report_json.get("final_text") or summary.get("final_text") or "").split())
+    original_text = " ".join(str(report_json.get("original_text") or "").split())
+    if not final_text:
+        return False
+    if original_text and final_text == original_text:
+        return False
+    if status in {"rewrite_candidate_generated_needs_external_review", "ai_mitigated"}:
+        return True
+    return outcome in {"rewrite_candidate_generated_needs_external_review", "ai_mitigated"}
+
+
 def _completed_rewrite_report_is_reusable(report_json: dict | None) -> bool:
     """Return whether an existing completed rewrite is safe to reuse.
 
@@ -159,6 +176,35 @@ async def _release_active_reservation(session, job_id: uuid.UUID) -> None:
     reservation.status = "released"
 
 
+async def _capture_active_rewrite_reservation(session, job_id: uuid.UUID) -> None:
+    reservation_result = await session.execute(
+        select(CreditReservation).where(
+            CreditReservation.job_type == "rewrite",
+            CreditReservation.job_id == job_id,
+            CreditReservation.status == "active",
+        ).with_for_update()
+    )
+    reservation = reservation_result.scalar_one_or_none()
+    if not reservation:
+        return
+
+    acct_result = await session.execute(
+        select(CreditAccount).where(CreditAccount.id == reservation.credit_account_id).with_for_update()
+    )
+    acct = acct_result.scalar_one_or_none()
+    if acct:
+        acct.balance_tokens = max(0, acct.balance_tokens - reservation.tokens_reserved)
+        acct.reserved_tokens = max(0, acct.reserved_tokens - reservation.tokens_reserved)
+    reservation.status = "captured"
+    session.add(UsageEvent(
+        user_id=reservation.user_id,
+        credit_account_id=reservation.credit_account_id,
+        event_type="rewrite",
+        tokens_charged=reservation.tokens_reserved,
+        job_id=job_id,
+    ))
+
+
 def _redis_stream_event_time(event_id: str) -> datetime | None:
     """Parse a Redis stream ID into UTC time."""
     try:
@@ -193,6 +239,16 @@ async def _processing_rewrite_is_stale(job: RewriteJob, *, now: datetime | None 
 
 
 async def _mark_rewrite_interrupted(session, job: RewriteJob) -> None:
+    saved_report = await _fetch_rewrite_report_json(str(job.scan_id))
+    if _rewrite_report_has_delivered_content(saved_report):
+        job.status = "completed"
+        job.error = None
+        job.progress_percent = 100
+        job.progress_message = "Rewrite recovered from saved checkpoint"
+        job.completed_at = datetime.now(timezone.utc)
+        await _capture_active_rewrite_reservation(session, job.id)
+        return
+
     job.status = "failed"
     job.error = "Rewrite interrupted during worker restart"
     job.progress_message = "Rewrite worker restarted. Please retry."

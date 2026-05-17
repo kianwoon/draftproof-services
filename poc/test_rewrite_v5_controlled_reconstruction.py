@@ -828,8 +828,9 @@ def test_v5_parallel_variant_fanout_uses_one_variant_prompts(monkeypatch):
     assert json.loads(completion_log)["parallel_variant_generation"] is True
 
 
-def test_v5_parallel_variant_fanout_defaults_to_serial(monkeypatch):
+def test_v5_parallel_variant_fanout_defaults_to_parallel(monkeypatch):
     monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", raising=False)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_LLM_FANOUT", "2")
     calls: list[dict] = []
 
     def prompt_builder(count: int) -> str:
@@ -852,6 +853,7 @@ def test_v5_parallel_variant_fanout_defaults_to_serial(monkeypatch):
         def chat(self, prompt: str, **kwargs):
             payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
             calls.append(payload)
+            assert len(payload["output_schema"]["variants"]) == 1
             return _FakeV5LLMResponse(json.dumps({
                 "variants": [
                     {
@@ -867,10 +869,10 @@ def test_v5_parallel_variant_fanout_defaults_to_serial(monkeypatch):
         variant_count=3,
     )
 
-    assert len(calls) == 1
-    assert len(calls[0]["output_schema"]["variants"]) == 3
-    assert len(variants) == 1
-    assert "parallel_variant_generation" not in diagnostics
+    assert len(calls) == 3
+    assert len(variants) == 3
+    assert diagnostics["parallel_variant_generation"] is True
+    assert diagnostics["parallel_worker_limit"] == 2
 
 
 def test_v5_parallel_variant_fanout_can_be_disabled(monkeypatch):
@@ -1353,10 +1355,27 @@ def test_v5_apply_integrity_gate_allows_preexisting_document_artifacts_only():
 
 
 def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch):
+    emitted_checkpoints: list[dict] = []
+
     def fake_residual_comb(**kwargs):
         assert kwargs["max_rounds"] == 6
         assert kwargs["variant_count"] == 5
         assert kwargs["retune_variant_count"] == 5
+        callback = kwargs.get("accepted_checkpoint_callback")
+        assert callback is not None
+        callback({
+            "schema_version": "rewrite_v5_accepted_checkpoint.v1",
+            "stage": "v5_residual_cluster_comb",
+            "sequence": 1,
+            "phase": "unsafe_cluster_cleanup",
+            "round": 1,
+            "reason": "accepted_unsafe_cluster_movement",
+            "baseline_scores": {"ai": 40.0},
+            "scores": {"ai": 34.0},
+            "goal": {"goal_met": False},
+            "accepted": {"section_id": "density_cluster_001", "variant_id": "v1"},
+            "rewritten_document": "This is the rewritten document.",
+        })
         return {
             "stage": "v5_residual_cluster_comb",
             "baseline_scores": {
@@ -1422,6 +1441,7 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
         },
         output_dir=str(tmp_path),
         model="deepseek/deepseek-v3.2",
+        checkpoint_callback=emitted_checkpoints.append,
     )
 
     summary = json.loads(Path(result["json_path"]).read_text())
@@ -1435,6 +1455,10 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     assert summary["final_text"] == "This is the rewritten document."
     layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
     assert layer["phase_order"]["unsafe_cluster_first"] is True
+    assert emitted_checkpoints
+    assert emitted_checkpoints[0]["status"] == "rewrite_candidate_generated_needs_external_review"
+    assert emitted_checkpoints[0]["final_text"] == "This is the rewritten document."
+    assert emitted_checkpoints[0]["summary"]["checkpoint_recovery_available"] is True
 
 
 def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_path, monkeypatch):
