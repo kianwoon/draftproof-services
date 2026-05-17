@@ -8,6 +8,7 @@ scan. It is intentionally isolated from production.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
@@ -533,13 +534,16 @@ def generate_residual_cluster_variants(
     variant_count: int = 3,
     route_plan: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
-    prompt = build_residual_cluster_prompt(
-        section=section,
-        local_goal=local_goal or {},
+    return _generate_loose_variants_from_builder(
+        prompt_builder=lambda count: build_residual_cluster_prompt(
+            section=section,
+            local_goal=local_goal or {},
+            variant_count=count,
+            route_plan=route_plan,
+        ),
+        gateway=gateway,
         variant_count=variant_count,
-        route_plan=route_plan,
     )
-    return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
 
 
 def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal: dict[str, Any] | None = None) -> str:
@@ -853,14 +857,17 @@ def generate_residual_cluster_retunes(
     variant_count: int = 4,
     route_plan: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
-    prompt = build_residual_cluster_retune_prompt(
-        section=section,
-        current_best_text=current_best_text,
-        local_goal=local_goal,
+    return _generate_loose_variants_from_builder(
+        prompt_builder=lambda count: build_residual_cluster_retune_prompt(
+            section=section,
+            current_best_text=current_best_text,
+            local_goal=local_goal,
+            variant_count=count,
+            route_plan=route_plan,
+        ),
+        gateway=gateway,
         variant_count=variant_count,
-        route_plan=route_plan,
     )
-    return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
 
 
 def build_risky_window_cleanup_prompt(
@@ -1016,13 +1023,16 @@ def generate_risky_window_cleanup_variants(
     variant_count: int = 5,
     route_plan: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
-    prompt = build_risky_window_cleanup_prompt(
-        section=section,
-        current_scores=current_scores,
+    return _generate_loose_variants_from_builder(
+        prompt_builder=lambda count: build_risky_window_cleanup_prompt(
+            section=section,
+            current_scores=current_scores,
+            variant_count=count,
+            route_plan=route_plan,
+        ),
+        gateway=gateway,
         variant_count=variant_count,
-        route_plan=route_plan,
     )
-    return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
 
 
 def generate_unsafe_cluster_cleanup_variants(
@@ -1033,13 +1043,232 @@ def generate_unsafe_cluster_cleanup_variants(
     variant_count: int = 5,
     route_plan: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
-    prompt = build_unsafe_cluster_cleanup_prompt(
-        section=section,
-        density_cluster=density_cluster,
+    return _generate_loose_variants_from_builder(
+        prompt_builder=lambda count: build_unsafe_cluster_cleanup_prompt(
+            section=section,
+            density_cluster=density_cluster,
+            variant_count=count,
+            route_plan=route_plan,
+        ),
+        gateway=gateway,
         variant_count=variant_count,
-        route_plan=route_plan,
     )
-    return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
+
+
+def _generate_loose_variants_from_builder(
+    *,
+    prompt_builder: Any,
+    gateway: LLMGateway,
+    variant_count: int,
+) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
+    variants = max(1, min(5, int(variant_count or 1)))
+    if variants <= 1 or not _bool_env("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", True):
+        prompt = prompt_builder(variants)
+        return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variants)
+    fanout = _int_env("DRAFTPROOF_REWRITE_V5_LLM_FANOUT", 3, minimum=1, maximum=5)
+    if fanout <= 1:
+        prompt = prompt_builder(variants)
+        return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variants)
+    return _generate_parallel_loose_variants(
+        prompt_builder=prompt_builder,
+        gateway=gateway,
+        variant_count=variants,
+        worker_limit=min(variants, fanout),
+    )
+
+
+def _generate_parallel_loose_variants(
+    *,
+    prompt_builder: Any,
+    gateway: LLMGateway,
+    variant_count: int,
+    worker_limit: int,
+) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
+    base_prompt = prompt_builder(1)
+    base_max_tokens = _int_env(
+        "DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_MAX_TOKENS",
+        8000,
+        minimum=1000,
+        maximum=12000,
+    )
+    prompts = [
+        _parallel_lane_prompt(base_prompt, lane_index=index, lane_count=variant_count)
+        for index in range(1, variant_count + 1)
+    ]
+
+    def run_lane(index: int, prompt: str) -> dict[str, Any]:
+        try:
+            parsed, diagnostics, sent_prompt, raw = _generate_loose_variants(
+                prompt=prompt,
+                gateway=gateway,
+                variant_count=1,
+                max_tokens=_parallel_single_variant_max_tokens(prompt, base_max_tokens),
+            )
+            return {
+                "index": index,
+                "status": "ok",
+                "variants": parsed,
+                "diagnostics": diagnostics,
+                "prompt": sent_prompt,
+                "completion": raw,
+            }
+        except Exception as exc:  # Keep one bad lane from wasting other valid candidates.
+            return {
+                "index": index,
+                "status": "exception",
+                "variants": [],
+                "diagnostics": {
+                    "status": "exception",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+                "prompt": prompt,
+                "completion": "",
+            }
+
+    lane_results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=max(1, int(worker_limit))) as executor:
+        futures = {
+            executor.submit(run_lane, index, prompt): index
+            for index, prompt in enumerate(prompts, start=1)
+        }
+        for future in as_completed(futures):
+            lane_results.append(future.result())
+    lane_results.sort(key=lambda row: int(row.get("index") or 0))
+
+    merged_variants: list[RecompositionVariant] = []
+    rejected: list[dict[str, Any]] = []
+    for lane in lane_results:
+        index = int(lane.get("index") or 0)
+        lane_variants = lane.get("variants") if isinstance(lane.get("variants"), list) else []
+        if not lane_variants:
+            rejected.append({
+                "index": index,
+                "reason": "lane_no_valid_variant",
+                "diagnostics": lane.get("diagnostics"),
+            })
+            continue
+        variant = lane_variants[0]
+        merged_variants.append(RecompositionVariant(
+            variant_id=f"v{index}",
+            text=variant.text,
+            word_count=variant.word_count,
+        ))
+
+    prompt_log = json.dumps({
+        "parallel_variant_generation": True,
+        "requested_variant_count": variant_count,
+        "worker_limit": worker_limit,
+        "prompts": [
+            {"index": row.get("index"), "prompt": row.get("prompt")}
+            for row in lane_results
+        ],
+    }, ensure_ascii=False, indent=2)
+    completion_log = json.dumps({
+        "parallel_variant_generation": True,
+        "requested_variant_count": variant_count,
+        "worker_limit": worker_limit,
+        "completions": [
+            {
+                "index": row.get("index"),
+                "status": row.get("status"),
+                "diagnostics": row.get("diagnostics"),
+                "completion": row.get("completion"),
+            }
+            for row in lane_results
+        ],
+    }, ensure_ascii=False, indent=2)
+    lane_diagnostics = [
+        {
+            "index": row.get("index"),
+            "status": row.get("status"),
+            "diagnostics": _compact_parallel_lane_diagnostics(row.get("diagnostics")),
+        }
+        for row in lane_results
+    ]
+    return merged_variants, {
+        "status": "ok" if merged_variants else "schema_failed",
+        "parallel_variant_generation": True,
+        "requested_variant_count": variant_count,
+        "variant_count": len(merged_variants),
+        "parallel_call_count": len(lane_results),
+        "parallel_worker_limit": worker_limit,
+        "rejected": rejected,
+        "lanes": lane_diagnostics,
+    }, prompt_log, completion_log
+
+
+def _parallel_lane_prompt(prompt: str, *, lane_index: int, lane_count: int) -> str:
+    prefix = "Return valid JSON only.\n"
+    if not prompt.startswith(prefix):
+        return prompt
+    try:
+        payload = json.loads(prompt[len(prefix):])
+    except json.JSONDecodeError:
+        return prompt
+    if not isinstance(payload, dict):
+        return prompt
+    payload["parallel_generation_lane"] = {
+        "lane": lane_index,
+        "total_lanes": lane_count,
+        "instruction": (
+            "Produce one independent replacement candidate for this lane. "
+            "Do not mention the lane or add commentary."
+        ),
+    }
+    return prefix + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _parallel_single_variant_max_tokens(prompt: str, base_max_tokens: int) -> int:
+    configured = os.environ.get("DRAFTPROOF_REWRITE_V5_PARALLEL_MAX_TOKENS")
+    if configured:
+        return _int_env("DRAFTPROOF_REWRITE_V5_PARALLEL_MAX_TOKENS", 2600, minimum=800, maximum=12000)
+    source_words = _max_prompt_word_count_hint(prompt)
+    if source_words:
+        return max(1000, min(base_max_tokens, int(source_words * 8) + 900))
+    return max(1000, min(base_max_tokens, 3000))
+
+
+def _max_prompt_word_count_hint(prompt: str) -> int:
+    prefix = "Return valid JSON only.\n"
+    if not prompt.startswith(prefix):
+        return 0
+    try:
+        payload = json.loads(prompt[len(prefix):])
+    except json.JSONDecodeError:
+        return 0
+    values: list[int] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"source_word_count", "word_count", "preferred_min_words", "preferred_max_words"}:
+                    try:
+                        number = int(item)
+                    except (TypeError, ValueError):
+                        number = 0
+                    if 0 < number < 10000:
+                        values.append(number)
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    collect(payload)
+    return max(values) if values else 0
+
+
+def _compact_parallel_lane_diagnostics(value: Any) -> dict[str, Any]:
+    diagnostics = value if isinstance(value, dict) else {}
+    return {
+        "status": diagnostics.get("status"),
+        "reason": diagnostics.get("reason"),
+        "variant_count": diagnostics.get("variant_count"),
+        "finish_reason": diagnostics.get("finish_reason"),
+        "native_finish_reason": diagnostics.get("native_finish_reason"),
+        "structured_output_mode": diagnostics.get("structured_output_mode"),
+        "error_type": diagnostics.get("error_type"),
+    }
 
 
 def _generate_loose_variants(
@@ -1047,6 +1276,7 @@ def _generate_loose_variants(
     prompt: str,
     gateway: LLMGateway,
     variant_count: int,
+    max_tokens: int | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     variants = max(1, min(5, int(variant_count or 1)))
     structured = structured_json_request_options(getattr(gateway, "model", None), _variants_response_format(variants))
@@ -1058,7 +1288,7 @@ def _generate_loose_variants(
         provider=provider,
         temperature=_float_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_TEMPERATURE", 0.35, minimum=0.0, maximum=1.0),
         top_p=_float_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_TOP_P", 0.9, minimum=0.1, maximum=1.0),
-        max_tokens=_int_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_MAX_TOKENS", 8000, minimum=1000, maximum=12000),
+        max_tokens=max_tokens if max_tokens is not None else _int_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_MAX_TOKENS", 8000, minimum=1000, maximum=12000),
     )
     raw = response.raw_content or response.content
     parsed, diagnostics = _parse_loose_variants(raw)
@@ -2687,6 +2917,18 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         value = default
     return max(minimum, min(maximum, value))
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:

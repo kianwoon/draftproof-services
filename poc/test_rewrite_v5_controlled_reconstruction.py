@@ -25,9 +25,11 @@ from rewrite_v5.residual_comb import (
     generate_residual_cluster_seed_variants,
     _expand_to_local_text_boundaries,
     _full_document_candidate_beats_scores,
+    _generate_loose_variants_from_builder,
     _has_risky_window_cleanup_movement,
     _has_unsafe_cluster_cleanup_movement,
     _has_full_document_fallback_movement,
+    _parallel_single_variant_max_tokens,
     _parse_route_plan,
     _section_apply_boundary_integrity,
     _text_integrity_regression,
@@ -75,6 +77,35 @@ def _sample_route_plan() -> dict:
         "length_target": "same_length",
         "reason_this_should_move_score": "Event-first route should reduce the broad summary pattern.",
     }
+
+
+class _FakeV5LLMResponse:
+    def __init__(self, content: str, *, model: str = "fake/model") -> None:
+        self.content = content
+        self.model = model
+        self.usage = {"total_tokens": 12}
+        self.raw = {
+            "provider": "fake-provider",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "native_finish_reason": "stop",
+                    "message": {"content": content},
+                }
+            ],
+        }
+
+    @property
+    def raw_content(self) -> str:
+        return self.content
+
+    @property
+    def finish_reason(self) -> str:
+        return "stop"
+
+    @property
+    def native_finish_reason(self) -> str:
+        return "stop"
 
 
 def test_v5_sections_group_heading_with_following_paragraphs():
@@ -734,6 +765,116 @@ def test_v5_unsafe_cluster_cleanup_prompt_can_use_route_plan_brief():
     assert payload["coverage_guidance"]["requirements"]
     assert any("Follow execution_brief.replacement_route" in item for item in payload["method"])
     assert payload["length_guidance"]["preferred_max_words"] == round(section.word_count * 1.10)
+
+
+def test_v5_parallel_variant_fanout_uses_one_variant_prompts(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", "true")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_LLM_FANOUT", "2")
+    calls: list[dict] = []
+
+    def prompt_builder(count: int) -> str:
+        payload = {
+            "task": "test_parallel_generation",
+            "source_word_count": 70,
+            "output_schema": {
+                "variants": [
+                    {"variant_id": f"v{index}", "text": "..."}
+                    for index in range(1, count + 1)
+                ]
+            },
+        }
+        return "Return valid JSON only.\n" + json.dumps(payload)
+
+    class FakeGateway:
+        model = "deepseek/deepseek-v3.2"
+        provider = None
+
+        def chat(self, prompt: str, **kwargs):
+            payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+            calls.append({"prompt": payload, "kwargs": kwargs})
+            lane = payload["parallel_generation_lane"]["lane"]
+            assert len(payload["output_schema"]["variants"]) == 1
+            return _FakeV5LLMResponse(json.dumps({
+                "variants": [
+                    {
+                        "variant_id": "v1",
+                        "text": (
+                            f"This replacement keeps the source claim and changes "
+                            f"the sentence route for lane {lane}."
+                        ),
+                    }
+                ]
+            }))
+
+    variants, diagnostics, prompt_log, completion_log = _generate_loose_variants_from_builder(
+        prompt_builder=prompt_builder,
+        gateway=FakeGateway(),
+        variant_count=3,
+    )
+
+    assert [variant.variant_id for variant in variants] == ["v1", "v2", "v3"]
+    assert diagnostics["parallel_variant_generation"] is True
+    assert diagnostics["parallel_call_count"] == 3
+    assert diagnostics["parallel_worker_limit"] == 2
+    assert len(calls) == 3
+    assert all(call["kwargs"]["max_tokens"] == 1460 for call in calls)
+    assert json.loads(prompt_log)["parallel_variant_generation"] is True
+    assert json.loads(completion_log)["parallel_variant_generation"] is True
+
+
+def test_v5_parallel_variant_fanout_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", "false")
+    calls: list[dict] = []
+
+    def prompt_builder(count: int) -> str:
+        payload = {
+            "task": "test_serial_generation",
+            "source_word_count": 70,
+            "output_schema": {
+                "variants": [
+                    {"variant_id": f"v{index}", "text": "..."}
+                    for index in range(1, count + 1)
+                ]
+            },
+        }
+        return "Return valid JSON only.\n" + json.dumps(payload)
+
+    class FakeGateway:
+        model = "deepseek/deepseek-v3.2"
+        provider = None
+
+        def chat(self, prompt: str, **kwargs):
+            payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+            calls.append(payload)
+            return _FakeV5LLMResponse(json.dumps({
+                "variants": [
+                    {
+                        "variant_id": "v1",
+                        "text": "This serial replacement keeps the same source claim and route.",
+                    }
+                ]
+            }))
+
+    variants, diagnostics, _, _ = _generate_loose_variants_from_builder(
+        prompt_builder=prompt_builder,
+        gateway=FakeGateway(),
+        variant_count=3,
+    )
+
+    assert len(calls) == 1
+    assert len(calls[0]["output_schema"]["variants"]) == 3
+    assert len(variants) == 1
+    assert "parallel_variant_generation" not in diagnostics
+
+
+def test_v5_parallel_single_variant_token_cap_scales_with_source_words():
+    prompt = "Return valid JSON only.\n" + json.dumps({
+        "cluster": {"source_word_count": 315},
+        "length_guidance": {"preferred_max_words": 360},
+    })
+
+    assert _parallel_single_variant_max_tokens(prompt, 8000) == 3780
+    assert _parallel_single_variant_max_tokens(prompt, 2500) == 2500
 
 
 def test_v5_compact_rounds_keep_cleanup_observability_without_raw_payloads():
