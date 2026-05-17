@@ -1457,6 +1457,24 @@ def _score_residual_variant(
     output_dir: Path,
     label: str,
 ) -> dict[str, Any]:
+    boundary_integrity = _section_apply_boundary_integrity(current_text, section)
+    if not boundary_integrity.get("passed"):
+        return {
+            "section_id": section.section_id,
+            "variant_id": variant.variant_id,
+            "label": label,
+            "text": variant.text,
+            "word_count": variant.word_count,
+            "apply_status": {
+                "applied": False,
+                "reason": "unsafe_section_apply_boundary",
+                "boundary_integrity": boundary_integrity,
+            },
+            "scores": current_scores,
+            "incremental": {},
+            "local_scores": {},
+            "local_goal": {},
+        }
     candidate_text, apply_status = apply_section_variant(current_text, section, variant.text)
     if not apply_status.get("applied"):
         return {
@@ -1466,6 +1484,29 @@ def _score_residual_variant(
             "text": variant.text,
             "word_count": variant.word_count,
             "apply_status": apply_status,
+            "scores": current_scores,
+            "incremental": {},
+            "local_scores": {},
+            "local_goal": {},
+        }
+    source_integrity = minimal_replacement_text_integrity(current_text)
+    candidate_integrity = minimal_replacement_text_integrity(candidate_text)
+    integrity_regression = _text_integrity_regression(source_integrity, candidate_integrity)
+    if not integrity_regression.get("passed"):
+        return {
+            "section_id": section.section_id,
+            "variant_id": variant.variant_id,
+            "label": label,
+            "text": variant.text,
+            "word_count": variant.word_count,
+            "apply_status": {
+                **apply_status,
+                "applied": False,
+                "reason": "candidate_text_integrity_regressed_after_apply",
+                "source_integrity": source_integrity,
+                "candidate_integrity": candidate_integrity,
+                "integrity_regression": integrity_regression,
+            },
             "scores": current_scores,
             "incremental": {},
             "local_scores": {},
@@ -1844,6 +1885,9 @@ def _has_risky_window_cleanup_movement(row: dict[str, Any]) -> bool:
     return (
         _number(incremental.get("risky_window_count_delta")) > 0
         and _number(incremental.get("rank_delta")) > 0
+        and _number(incremental.get("unsafe_cluster_count_delta")) >= 0
+        and _number(incremental.get("topk_calibrated_risk_delta")) >= 0
+        and _number(incremental.get("ai_delta")) >= 0
     )
 
 
@@ -1852,6 +1896,9 @@ def _has_unsafe_cluster_cleanup_movement(row: dict[str, Any]) -> bool:
     return (
         _number(incremental.get("unsafe_cluster_count_delta")) > 0
         and _number(incremental.get("rank_delta")) > 0
+        and _number(incremental.get("risky_window_count_delta")) >= 0
+        and _number(incremental.get("topk_calibrated_risk_delta")) >= 0
+        and _number(incremental.get("ai_delta")) >= 0
     )
 
 
@@ -1944,7 +1991,7 @@ def _select_risky_window_section(
     for ordinal, row in enumerate(windows if isinstance(windows, list) else [], start=1):
         if not isinstance(row, dict):
             continue
-        section = _section_from_window_row(current_text, row, ordinal=ordinal)
+        section = _section_from_window_row(current_text, current_report, row, ordinal=ordinal)
         if section is None:
             continue
         signature = (
@@ -1984,18 +2031,28 @@ def _select_density_cluster_section(
     return None
 
 
-def _section_from_window_row(current_text: str, row: dict[str, Any], *, ordinal: int) -> SectionUnit | None:
-    start = _optional_int(row.get("start_index"))
-    end = _optional_int(row.get("end_index"))
-    source_text = str(row.get("source_text") or "").strip()
-    if start is None or end is None or start < 0 or end <= start or end > len(current_text):
-        if not source_text:
-            return None
-        located = current_text.find(source_text)
-        if located < 0:
-            return None
-        start = located
-        end = located + len(source_text)
+def _section_from_window_row(
+    current_text: str,
+    current_report: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    ordinal: int,
+) -> SectionUnit | None:
+    sentence_bounds = _sentence_id_bounds(current_report, row.get("sentence_ids"))
+    if sentence_bounds is not None:
+        start, end = sentence_bounds
+    else:
+        start = _optional_int(row.get("start_index"))
+        end = _optional_int(row.get("end_index"))
+        source_text = str(row.get("source_text") or "").strip()
+        if start is None or end is None or start < 0 or end <= start or end > len(current_text):
+            if not source_text:
+                return None
+            located = current_text.find(source_text)
+            if located < 0:
+                return None
+            start = located
+            end = located + len(source_text)
     start, end = _expand_to_local_text_boundaries(current_text, start, end)
     text = current_text[start:end]
     if not text.strip():
@@ -2082,6 +2139,29 @@ def _sentence_rows_by_index(report: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _sentence_id_bounds(report: dict[str, Any], sentence_ids: Any) -> tuple[int, int] | None:
+    ids = [str(item) for item in sentence_ids if str(item or "")] if isinstance(sentence_ids, list) else []
+    if not ids:
+        return None
+    sentence_map = report.get("sentence_map") if isinstance(report, dict) else {}
+    if not isinstance(sentence_map, dict):
+        return None
+    rows: list[dict[str, Any]] = []
+    for sentence_id in ids:
+        row = sentence_map.get(sentence_id)
+        if not isinstance(row, dict):
+            return None
+        start = _optional_int(row.get("start_char"))
+        end = _optional_int(row.get("end_char"))
+        if start is None or end is None or end <= start:
+            return None
+        rows.append({"start_char": start, "end_char": end})
+    return (
+        min(int(row["start_char"]) for row in rows),
+        max(int(row["end_char"]) for row in rows),
+    )
+
+
 def _compact_density_gate(density: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "safe",
@@ -2113,7 +2193,130 @@ def _expand_to_local_text_boundaries(text: str, start: int, end: int) -> tuple[i
         right += 1
     while right < len(source) and source[right] in ".,;:!?":
         right += 1
+    left = _expand_left_to_sentence_boundary(source, left)
+    right = _expand_right_to_sentence_boundary(source, right)
     return left, right
+
+
+def _expand_left_to_sentence_boundary(source: str, left: int) -> int:
+    if left <= 0:
+        return 0
+    index = max(0, min(len(source), left))
+    while index > 0:
+        prev = source[index - 1]
+        if prev in ".!?":
+            break
+        if prev == "\n" and index >= 2 and source[index - 2] == "\n":
+            break
+        index -= 1
+    while index < len(source) and source[index].isspace():
+        index += 1
+    return index
+
+
+def _expand_right_to_sentence_boundary(source: str, right: int) -> int:
+    if right >= len(source):
+        return len(source)
+    index = max(0, min(len(source), right))
+    if _is_clean_right_boundary(source, index):
+        return index
+    while index < len(source):
+        ch = source[index]
+        index += 1
+        if ch in ".!?":
+            while index < len(source) and source[index] in "\"'”’)]}":
+                index += 1
+            break
+        if ch == "\n" and index < len(source) and source[index] == "\n":
+            break
+    return index
+
+
+def _section_apply_boundary_integrity(source: str, section: SectionUnit) -> dict[str, Any]:
+    text = str(source or "")
+    start = int(section.start_char)
+    end = int(section.end_char)
+    failures: list[str] = []
+    if start < 0 or end <= start or end > len(text):
+        failures.append("invalid_section_offsets")
+    else:
+        if not _is_clean_left_boundary(text, start):
+            failures.append("left_boundary_inside_sentence")
+        if not _is_clean_right_boundary(text, end):
+            failures.append("right_boundary_inside_sentence")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "start_char": start,
+        "end_char": end,
+    }
+
+
+def _text_integrity_regression(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    before_metrics = before.get("metrics") if isinstance(before, dict) else {}
+    after_metrics = after.get("metrics") if isinstance(after, dict) else {}
+    metric_keys = (
+        "format_count",
+        "control_count",
+        "emoji_like_count",
+        "embedded_word_period_count",
+        "sentence_punctuation_spacing_count",
+        "nested_parenthetical_count",
+        "repeated_markup_run_count",
+    )
+    regressions: list[str] = []
+    for key in metric_keys:
+        if _number(after_metrics.get(key)) > _number(before_metrics.get(key)):
+            regressions.append(key)
+    before_failures = set(before.get("failures") or []) if isinstance(before, dict) else set()
+    after_failures = set(after.get("failures") or []) if isinstance(after, dict) else set()
+    new_failures = sorted(str(item) for item in after_failures - before_failures)
+    return {
+        "passed": not regressions and not new_failures,
+        "metric_regressions": regressions,
+        "new_failures": new_failures,
+    }
+
+
+def _is_clean_left_boundary(source: str, start: int) -> bool:
+    if start <= 0:
+        return True
+    if start >= len(source):
+        return True
+    previous_index = _previous_non_space_index(source, start)
+    if previous_index is None:
+        return True
+    return source[previous_index] in ".!?\n"
+
+
+def _is_clean_right_boundary(source: str, end: int) -> bool:
+    if end >= len(source):
+        return True
+    previous_index = _previous_non_space_index(source, end)
+    if previous_index is None:
+        return True
+    if source[previous_index] in ".!?":
+        return True
+    next_index = _next_non_space_index(source, end)
+    return next_index is None or source[next_index] == "\n"
+
+
+def _previous_non_space_index(source: str, end: int) -> int | None:
+    index = min(len(source), max(0, end)) - 1
+    while index >= 0:
+        if not source[index].isspace():
+            return index
+        index -= 1
+    return None
+
+
+def _next_non_space_index(source: str, start: int) -> int | None:
+    index = max(0, min(len(source), start))
+    while index < len(source):
+        if not source[index].isspace():
+            return index
+        index += 1
+    return None
 
 
 def _local_unsafe_previews(local_goal: dict[str, Any]) -> list[str]:

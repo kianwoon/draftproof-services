@@ -29,9 +29,12 @@ from rewrite_v5.residual_comb import (
     _has_unsafe_cluster_cleanup_movement,
     _has_full_document_fallback_movement,
     _parse_route_plan,
+    _section_apply_boundary_integrity,
+    _text_integrity_regression,
     _has_incremental_movement,
     _residual_candidate_sort_key,
 )
+from rewrite_v5.models import SectionUnit
 
 
 def _sample_route_plan() -> dict:
@@ -787,22 +790,66 @@ def test_v5_compact_rounds_keep_cleanup_observability_without_raw_payloads():
 
 def test_v5_tail_cleanup_acceptance_is_scanner_owned():
     risky_window_drop = {
-        "incremental": {"risky_window_count_delta": 1.0, "rank_delta": 0.5},
+        "incremental": {
+            "risky_window_count_delta": 1.0,
+            "rank_delta": 0.5,
+            "unsafe_cluster_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
     }
     risky_window_no_drop = {
-        "incremental": {"risky_window_count_delta": 0.0, "rank_delta": 5.0},
+        "incremental": {
+            "risky_window_count_delta": 0.0,
+            "rank_delta": 5.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
+    }
+    risky_window_cluster_regression = {
+        "incremental": {
+            "risky_window_count_delta": 1.0,
+            "rank_delta": 1.0,
+            "unsafe_cluster_count_delta": -1.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
     }
     cluster_drop = {
-        "incremental": {"unsafe_cluster_count_delta": 1.0, "rank_delta": 0.4},
+        "incremental": {
+            "unsafe_cluster_count_delta": 1.0,
+            "rank_delta": 0.4,
+            "risky_window_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
     }
     cluster_rank_regression = {
-        "incremental": {"unsafe_cluster_count_delta": 1.0, "rank_delta": -0.5},
+        "incremental": {
+            "unsafe_cluster_count_delta": 1.0,
+            "rank_delta": -0.5,
+            "risky_window_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
+    }
+    cluster_risky_window_regression = {
+        "incremental": {
+            "unsafe_cluster_count_delta": 1.0,
+            "rank_delta": 0.5,
+            "risky_window_count_delta": -1.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
     }
 
     assert _has_risky_window_cleanup_movement(risky_window_drop)
     assert not _has_risky_window_cleanup_movement(risky_window_no_drop)
+    assert not _has_risky_window_cleanup_movement(risky_window_cluster_regression)
     assert _has_unsafe_cluster_cleanup_movement(cluster_drop)
     assert not _has_unsafe_cluster_cleanup_movement(cluster_rank_regression)
+    assert not _has_unsafe_cluster_cleanup_movement(cluster_risky_window_regression)
 
 
 def test_v5_global_best_fallback_keeps_better_full_document_candidate():
@@ -896,8 +943,58 @@ def test_v5_tail_cleanup_expands_mid_word_scanner_boundaries():
 
     expanded_start, expanded_end = _expand_to_local_text_boundaries(text, cut_start, cut_end)
 
-    assert text[expanded_start:expanded_end].startswith("more people.")
-    assert text[expanded_start:expanded_end].endswith("The")
+    assert text[expanded_start:expanded_end] == text
+
+
+def test_v5_tail_cleanup_expands_mid_sentence_risky_window_boundaries():
+    text = (
+        "The Civil Rights Movement was an important period that aimed to end racial segregation "
+        "and improve equality for African Americans.\n\n"
+        "Despite its success, the United States also faces many serious issues. "
+        "Critics argue that the benefits of economic growth are not equally shared among all people."
+    )
+    cut_start = text.index("equality")
+    cut_end = text.index("equally shared")
+
+    expanded_start, expanded_end = _expand_to_local_text_boundaries(text, cut_start, cut_end)
+    expanded = text[expanded_start:expanded_end]
+
+    assert expanded.startswith("The Civil Rights Movement")
+    assert expanded.endswith("equally shared among all people.")
+
+
+def test_v5_tail_cleanup_rejects_mid_sentence_apply_boundaries():
+    text = "The first sentence is stable. The second sentence should stay whole."
+    section = SectionUnit(
+        section_id="w001",
+        heading="Risky window cleanup",
+        text="sentence should stay",
+        start_char=text.index("sentence should"),
+        end_char=text.index(" whole"),
+        paragraph_count=1,
+        word_count=3,
+        metadata={},
+    )
+
+    integrity = _section_apply_boundary_integrity(text, section)
+
+    assert not integrity["passed"]
+    assert "left_boundary_inside_sentence" in integrity["failures"]
+    assert "right_boundary_inside_sentence" in integrity["failures"]
+
+
+def test_v5_apply_integrity_gate_allows_preexisting_document_artifacts_only():
+    before = minimal_replacement_text_integrity("The source already has this issue.This sentence continues.")
+    same_after = minimal_replacement_text_integrity("The source already has this issue.This sentence continues.")
+    worse_after = minimal_replacement_text_integrity(
+        "The source already has this issue.This sentence continues. A new issue appears.Another sentence."
+    )
+
+    assert not before["passed"]
+    assert _text_integrity_regression(before, same_after)["passed"]
+    regression = _text_integrity_regression(before, worse_after)
+    assert not regression["passed"]
+    assert "sentence_punctuation_spacing_count" in regression["metric_regressions"]
 
 
 def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch):
