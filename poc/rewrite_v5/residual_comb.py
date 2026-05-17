@@ -392,7 +392,16 @@ def run_v5_residual_cluster_comb_experiment(
         )
 
     unsafe_cluster_rounds: list[dict[str, Any]] = []
-    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
+    if current_text.strip() == original_text.strip() and _full_document_candidate_beats_scores(global_best_candidate, current_scores):
+        unsafe_cluster_rounds.append({
+            "round": 1,
+            "phase": "unsafe_cluster_cleanup",
+            "status": "stopped",
+            "reason": "partial_candidate_ready_for_external_review",
+            "selected": _compact_residual_row(global_best_candidate),
+            "current_scores": current_scores,
+        })
+    elif not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
         unsafe_cluster_cleanup_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
         default=12,
@@ -429,7 +438,16 @@ def run_v5_residual_cluster_comb_experiment(
         )
 
     final_risky_window_rounds: list[dict[str, Any]] = []
-    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
+    if current_text.strip() == original_text.strip() and _full_document_candidate_beats_scores(global_best_candidate, current_scores):
+        final_risky_window_rounds.append({
+            "round": 1,
+            "phase": "final_risky_window_cleanup",
+            "status": "stopped",
+            "reason": "partial_candidate_ready_for_external_review",
+            "selected": _compact_residual_row(global_best_candidate),
+            "current_scores": current_scores,
+        })
+    elif not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
         final_risky_window_cleanup_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
         default=2,
@@ -2247,7 +2265,9 @@ def _best_full_document_candidate(rows: list[dict[str, Any] | None]) -> dict[str
     return max(eligible, key=_full_document_candidate_sort_key)
 
 
-def _full_document_candidate_beats_scores(row: dict[str, Any], current_scores: dict[str, Any]) -> bool:
+def _full_document_candidate_beats_scores(row: dict[str, Any] | None, current_scores: dict[str, Any]) -> bool:
+    if not isinstance(row, dict):
+        return False
     if not _has_full_document_fallback_movement(row):
         return False
     current_row = {
@@ -2261,15 +2281,15 @@ def _full_document_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     return (
         _number(scores.get("ai_delta")),
-        _number(scores.get("rank_delta")),
-        _number(scores.get("topk_calibrated_risk_delta")),
-        _number(scores.get("topk_delta")),
         _number(scores.get("external_ai_flag_risk_delta")),
         _number(scores.get("external_delta")),
-        _number(scores.get("qualifying_text_ai_density_delta")),
-        _number(scores.get("unsafe_cluster_count_delta")),
         _number(scores.get("risky_window_count_delta")),
+        _number(scores.get("unsafe_cluster_count_delta")),
+        _number(scores.get("topk_calibrated_risk_delta")),
+        _number(scores.get("topk_delta")),
+        _number(scores.get("qualifying_text_ai_density_delta")),
         _number(scores.get("unsafe_word_ratio_delta")),
+        _number(scores.get("rank_delta")),
     )
 
 
@@ -2278,8 +2298,6 @@ def _has_full_document_fallback_movement(row: dict[str, Any]) -> bool:
         return False
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     if _number(scores.get("ai_delta")) < 0:
-        return False
-    if _number(scores.get("rank_delta")) < 0:
         return False
     if _number(scores.get("topk_calibrated_risk_delta")) < 0:
         return False
@@ -2293,7 +2311,6 @@ def _has_full_document_fallback_movement(row: dict[str, Any]) -> bool:
         _number(scores.get(key)) > 0
         for key in (
             "ai_delta",
-            "rank_delta",
             "topk_calibrated_risk_delta",
             "topk_delta",
             "external_ai_flag_risk_delta",

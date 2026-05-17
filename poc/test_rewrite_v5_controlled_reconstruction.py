@@ -1143,6 +1143,51 @@ def test_v5_global_best_fallback_rejects_density_regression():
     assert not _has_full_document_fallback_movement(candidate)
 
 
+def test_v5_global_best_fallback_keeps_partial_ai_and_window_movement_despite_rank_regression():
+    current_scores = {
+        "ai_delta": 0.0,
+        "rank_delta": 0.0,
+        "topk_calibrated_risk_delta": 0.0,
+        "topk_delta": 0.0,
+        "external_ai_flag_risk_delta": 0.0,
+        "external_delta": 0.0,
+        "risky_window_count_delta": 0.0,
+        "unsafe_cluster_count_delta": 0.0,
+    }
+    partial_candidate = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai_delta": 1.57,
+            "rank_delta": -2.836,
+            "topk_calibrated_risk_delta": 0.0,
+            "topk_delta": 0.0,
+            "external_ai_flag_risk_delta": 2.693,
+            "external_delta": 12.394,
+            "risky_window_count_delta": 1.0,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+    }
+    lower_ai_candidate = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai_delta": 0.41,
+            "rank_delta": -0.039,
+            "topk_calibrated_risk_delta": 0.027,
+            "topk_delta": 0.01,
+            "external_ai_flag_risk_delta": 1.0,
+            "external_delta": 0.464,
+            "risky_window_count_delta": 0.0,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+    }
+
+    best = _best_full_document_candidate([lower_ai_candidate, partial_candidate])
+
+    assert _has_full_document_fallback_movement(partial_candidate)
+    assert _full_document_candidate_beats_scores(partial_candidate, current_scores)
+    assert best is partial_candidate
+
+
 def test_v5_tail_cleanup_rejects_spliced_word_period_artifacts():
     integrity = minimal_replacement_text_integrity(
         "Teachers need to support students to become their own teachers.tie, 2009)."
