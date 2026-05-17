@@ -78,6 +78,16 @@ def budget_lanes_for_unit(unit_word_count: int, *, risk_score: float = 0.0) -> l
                 instruction="Use a wider edit budget only for unresolved high-value targets.",
             )
         )
+        lanes.append(
+            BudgetLane(
+                lane_id="clearance",
+                changed_source_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_CLEARANCE_CHANGED_MAX", 0.75, minimum=0.05, maximum=0.90),
+                growth_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_CLEARANCE_GROW_MAX", 0.35, minimum=0.0, maximum=0.90),
+                shrink_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_CLEARANCE_SHRINK_MAX", 0.45, minimum=0.0, maximum=0.90),
+                operation_families=("cluster_clearance", "route_rebuild", "delete_repath", "source_grounded_bump"),
+                instruction="Clear the active scanner blocker, even if that requires a larger source-grounded route rebuild.",
+            )
+        )
     return lanes
 
 
@@ -122,8 +132,15 @@ def budget_profile_passes(profile: dict[str, Any], lane: BudgetLane) -> bool:
     )
 
 
-def build_budget_lane_prompt(*, unit: ClusterRepairUnit, lane: BudgetLane, variant_count: int = 2) -> str:
+def build_budget_lane_prompt(
+    *,
+    unit: ClusterRepairUnit,
+    lane: BudgetLane,
+    variant_count: int = 2,
+    blocker_contract: dict[str, Any] | None = None,
+) -> str:
     variants = max(1, min(3, int(variant_count or 1)))
+    blocker = blocker_contract if isinstance(blocker_contract, dict) else {}
     payload = {
         "task": "budget_lane_route_optimizer",
         "cluster_id": unit.cluster_id,
@@ -135,8 +152,10 @@ def build_budget_lane_prompt(*, unit: ClusterRepairUnit, lane: BudgetLane, varia
             "sentence_count": unit.sentence_count,
             "word_count": unit.word_count,
             "risk_score": unit.risk_score,
+            "target_sentence_metrics": unit.metadata.get("target_sentence_metrics") or [],
         },
         "budget_lane": lane.to_dict(),
+        "active_blocker": blocker,
         "operation_space": [
             "replace words",
             "bump in words",
@@ -145,17 +164,21 @@ def build_budget_lane_prompt(*, unit: ClusterRepairUnit, lane: BudgetLane, varia
         ],
         "repair_goal": [
             lane.instruction,
+            "The active_blocker is a hard priority. A candidate that improves secondary scores but does not move the active blocker should be treated as a failed candidate.",
             "Reduce predictable token route and generic AI-style movement by changing the claim path, not by broad synonym swapping.",
             "Keep the same facts, sequence, citations, and source viewpoint.",
             "Return only replacements for cluster_text, not the full document.",
         ],
         "route_repair_rules": [
+            "Silently identify the current route and a better route before writing; do not output the route labels.",
             "Keep ordinary source words when they are already clear and concrete.",
             "Do not replace simple domain terms, people, roles, actions, or outcomes just to sound different.",
             "Preserve concrete setup sentences unless they contain the route problem.",
             "Focus route changes on interpretive, generic, or summary-like claim sentences.",
             "For route and aggressive lanes, first change how the claim is connected or sequenced; only then adjust local wording needed for grammar.",
+            "For the clearance lane, rebuild the risky sentence route enough to change the scanner-facing pattern while preserving the facts and using concrete wording already present in cluster_text or nearby context.",
             "Remove or flatten formulaic proof-framing when it appears, but do not turn the sentence into a polished abstract summary.",
+            "If cluster_text crosses a blank line, preserve the same blank-line boundary in the replacement.",
             "A good candidate should still look source-near when compared word by word.",
         ],
         "constraints": [
@@ -198,8 +221,14 @@ def generate_budget_lane_variants(
     lane: BudgetLane,
     gateway: LLMGateway,
     variant_count: int = 2,
+    blocker_contract: dict[str, Any] | None = None,
 ) -> tuple[list[CandidateVariant], dict[str, Any], str, str]:
-    prompt = build_budget_lane_prompt(unit=unit, lane=lane, variant_count=variant_count)
+    prompt = build_budget_lane_prompt(
+        unit=unit,
+        lane=lane,
+        variant_count=variant_count,
+        blocker_contract=blocker_contract,
+    )
     response_format = _variants_response_format(max(1, min(3, int(variant_count or 1))))
     structured_options = structured_json_request_options(getattr(gateway, "model", None), response_format)
     provider = _merge_provider_options(getattr(gateway, "provider", None), structured_options.get("provider"))
@@ -232,6 +261,7 @@ def generate_budget_lane_variants(
         "max_tokens": max_tokens,
         "structured_output_mode": structured_options.get("structured_output_mode"),
         "budget_lane": lane.to_dict(),
+        "active_blocker": blocker_contract if isinstance(blocker_contract, dict) else {},
     }, prompt, raw_completion
 
 

@@ -1326,6 +1326,11 @@ decision = decide_candidate(
     target_ai_score=49.62,
 )
 assert_test(goal.status == RewriteGoalStatus.AI_MITIGATED, "V2 strict goal contract recognizes safe candidates")
+assert_test(
+    goal.turnitin_like_gate.get("active") is False
+    and goal.turnitin_like_target_met is True,
+    "V2 rewrite goal contract no longer gates success on Turnitin-like scoring",
+)
 assert_test(decision.lane == CandidateLane.GOAL_MET, "V2 candidate decision selects only strict goal-met candidates as success")
 
 review_decision = decide_candidate(

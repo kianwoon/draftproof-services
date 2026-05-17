@@ -103,7 +103,7 @@ from rewrite_v4.models import RepairBrief
 from rewrite_v4.experiment import run_v4_fast_rewrite, run_v4_iterative_rewrite
 from rewrite_v4.production import _compact_candidate_loop_trace, _compact_scan_for_rewrite_report
 from rewrite_v4.validation import parse_generator_variants, sanitize_repair_brief
-from worker.app.tasks import _bounded_json_debug_log
+from worker.app.tasks import _bounded_json_debug_log, _bounded_rewrite_json_payload
 
 
 def assert_test(condition: bool, message: str) -> None:
@@ -4001,6 +4001,31 @@ assert_test(
     len(bounded_debug_log.encode("utf-8")) <= 4096
     and '"debug_truncated": true' in bounded_debug_log,
     "Worker rewrite debug log is bounded before upload",
+)
+bounded_rewrite_json = _bounded_rewrite_json_payload(
+    {
+        "status": "rewrite_candidate_generated_needs_external_review",
+        "elapsed": 1.0,
+        "original_text": "source",
+        "final_text": "final",
+        "converged": False,
+        "convergence_reason": "external_review",
+        "passes": 0,
+        "summary": {
+            "public_status": "rewrite_candidate_generated_needs_external_review",
+            "v4_scores": {"final": {"ai": 38.0}},
+            "detect_scan_rewritten": {"findings": [{"detail": "x" * 2000} for _ in range(200)]},
+            "rewrite_layers": {"full_trace": [{"candidate_report": "y" * 2000} for _ in range(200)]},
+        },
+        "sentence_comparison": [{"original": "a" * 2000, "rewritten": "b" * 2000} for _ in range(200)],
+    },
+    max_bytes=12000,
+)
+assert_test(
+    bounded_rewrite_json.get("rewrite_json_truncated") is True
+    and "rewrite_layers" not in bounded_rewrite_json["summary"]
+    and len(json.dumps(bounded_rewrite_json, ensure_ascii=False, default=str).encode("utf-8")) <= 12000,
+    "Worker rewrite.json payload is slimmed before upload when it exceeds the cap",
 )
 
 print("Rewrite V3 pipeline tests passed.")

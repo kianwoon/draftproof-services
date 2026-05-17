@@ -1650,15 +1650,17 @@ def _candidate_rows_from_replay(
                 },
             }
         candidate_text = str(record.get("text") or original_text)
-        if isinstance(record.get("ai_footprint_gate"), dict) and isinstance(record.get("turnitin_like_ai_gate"), dict):
+        if isinstance(record.get("ai_footprint_gate"), dict):
             density_gate = record.get("eligible_span_density_gate") if isinstance(record.get("eligible_span_density_gate"), dict) else {}
             strict_safe = bool(record["ai_footprint_gate"].get("safe_band"))
-            turnitin_target = bool(
-                record["turnitin_like_ai_gate"].get("target_met")
-                or record["turnitin_like_ai_gate"].get("safe_band")
+            turnitin_gate = (
+                record.get("turnitin_like_ai_gate")
+                if isinstance(record.get("turnitin_like_ai_gate"), dict)
+                else {"active": False, "reason": "disabled_scanner_only_goal_contract", "target_met": True, "safe_band": True}
             )
+            turnitin_target = True
             density_safe = bool(density_gate.get("safe"))
-            detector_safe = bool(strict_safe and turnitin_target and density_safe)
+            detector_safe = bool(strict_safe and density_safe)
             goal = RewriteGoalEvaluation(
                 status=RewriteGoalStatus.AI_MITIGATED if detector_safe else RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE,
                 goal_met=detector_safe,
@@ -1668,7 +1670,7 @@ def _candidate_rows_from_replay(
                 eligible_span_density_safe=density_safe,
                 reason="replay_candidate_goal_met" if detector_safe else "replay_candidate_failed_strict_goal",
                 ai_footprint_gate=record["ai_footprint_gate"],
-                turnitin_like_gate=record["turnitin_like_ai_gate"],
+                turnitin_like_gate=turnitin_gate,
                 eligible_span_density_gate=density_gate,
             )
         elif "report" in record:

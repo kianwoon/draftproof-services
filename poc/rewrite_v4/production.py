@@ -216,7 +216,7 @@ def run_rewrite_pipeline_v4(
         "candidate_trace": _compact_candidate_trace(accepted),
         "candidate_loop_trace": _compact_candidate_loop_trace(payload.get("rounds")),
         "selected_candidate": _compact_candidate_trace([accepted[-1]])[0] if accepted else None,
-        "rewrite_layers": payload.get("layers") if isinstance(payload.get("layers"), dict) else {},
+        "rewrite_layers": _compact_rewrite_layers(payload.get("layers")),
         "stage_timings": [{
             "stage": pipeline_version,
             "seconds": round(elapsed, 3),
@@ -434,6 +434,45 @@ def _compact_result_summary(result: dict[str, Any]) -> dict[str, Any]:
         "source_grounding_passed": source_grounding.get("passed") if source_grounding else None,
         "text": _truncate_text(result.get("text"), 700),
     }
+
+
+def _compact_rewrite_layers(layers: Any) -> dict[str, Any]:
+    if not isinstance(layers, dict):
+        return {}
+    return {
+        str(key): _compact_payload_value(value, depth=0)
+        for key, value in layers.items()
+    }
+
+
+def _compact_payload_value(value: Any, *, depth: int, max_depth: int = 3) -> Any:
+    if depth >= max_depth:
+        return _truncate_text(value, 320) if isinstance(value, str) else _shape_summary(value)
+    if isinstance(value, dict):
+        compact: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 16:
+                compact["omitted_keys"] = len(value) - 16
+                break
+            compact[str(key)] = _compact_payload_value(item, depth=depth + 1, max_depth=max_depth)
+        return compact
+    if isinstance(value, list):
+        compact_items = [
+            _compact_payload_value(item, depth=depth + 1, max_depth=max_depth)
+            for item in value[:12]
+        ]
+        if len(value) > 12:
+            compact_items.append({"omitted_items": len(value) - 12})
+        return compact_items
+    return _truncate_text(value, 500) if isinstance(value, str) else value
+
+
+def _shape_summary(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {"type": "dict", "keys": list(value.keys())[:12], "omitted_keys": max(0, len(value) - 12)}
+    if isinstance(value, list):
+        return {"type": "list", "length": len(value)}
+    return value
 
 
 def _truncate_text(value: Any, max_chars: int) -> Any:

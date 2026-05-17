@@ -56,6 +56,13 @@ MAX_REWRITE_DEBUG_LOG_BYTES = _bounded_int_env(
     maximum=5_000_000,
 )
 
+MAX_REWRITE_JSON_BYTES = _bounded_int_env(
+    "DRAFTPROOF_REWRITE_JSON_MAX_BYTES",
+    1_500_000,
+    minimum=250_000,
+    maximum=5_000_000,
+)
+
 NON_BILLABLE_REWRITE_OUTCOMES = {
     "clean",
     "mitigation_failed_no_safe_candidate",
@@ -462,6 +469,117 @@ def _bounded_json_debug_log(log_data: dict, *, max_bytes: int = MAX_REWRITE_DEBU
     if len(encoded) <= max_bytes:
         return text
     return encoded[: max_bytes - 80].decode("utf-8", errors="ignore").rstrip() + "\n... truncated\n"
+
+
+def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE_JSON_BYTES) -> dict:
+    encoded = json.dumps(payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return payload
+
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    compact_summary_keys = (
+        "rewrite_pipeline_version",
+        "rewrite_engine_mode",
+        "outcome",
+        "public_status",
+        "public_candidate_warning",
+        "best_candidate_external_review_required",
+        "rewrite_goal_status",
+        "strict_goal_status",
+        "reference_ai",
+        "required_ai_drop",
+        "target_ai_score",
+        "rewrite_effective_config",
+        "v4_scores",
+        "detect_scores",
+        "original_risk",
+        "final_risk",
+        "converged",
+        "convergence_reason",
+        "candidate_generation_status",
+        "candidate_trace",
+        "candidate_loop_trace",
+        "selected_candidate",
+        "stage_timings",
+        "detect_scan_original_saved",
+        "detect_scan_original",
+        "detect_scan_rewritten",
+        "no_text_change",
+        "rollback_applied",
+        "baseline_rescan_delta",
+        "saved_user_visible_scores",
+        "original_scores",
+        "attempted_scores",
+        "final_scores",
+    )
+    compact_summary = {
+        key: _compact_debug_value(summary.get(key))
+        for key in compact_summary_keys
+        if key in summary
+    }
+    compact_payload = {
+        "status": payload.get("status"),
+        "elapsed": payload.get("elapsed"),
+        "original_text": payload.get("original_text"),
+        "final_text": payload.get("final_text"),
+        "converged": payload.get("converged"),
+        "convergence_reason": payload.get("convergence_reason"),
+        "passes": payload.get("passes"),
+        "summary": compact_summary,
+        "sentence_comparison": (
+            payload.get("sentence_comparison")[:200]
+            if isinstance(payload.get("sentence_comparison"), list)
+            else payload.get("sentence_comparison")
+        ),
+        "effective_rewrite_plan": _compact_debug_value(payload.get("effective_rewrite_plan")),
+        "billing_decision": payload.get("billing_decision"),
+        "rewrite_json_truncated": True,
+        "rewrite_json_truncation_reason": f"rewrite.json exceeded {max_bytes} bytes before upload",
+    }
+    encoded = json.dumps(compact_payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return compact_payload
+
+    compact_payload["sentence_comparison"] = _sentence_comparison_debug_preview(
+        payload.get("sentence_comparison") if isinstance(payload.get("sentence_comparison"), list) else []
+    )
+    encoded = json.dumps(compact_payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return compact_payload
+
+    compact_payload["original_text"] = _truncate_debug_value(payload.get("original_text"), 4000)
+    compact_payload["final_text"] = _truncate_debug_value(payload.get("final_text"), 4000)
+    encoded = json.dumps(compact_payload, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return compact_payload
+
+    return {
+        "status": payload.get("status"),
+        "elapsed": payload.get("elapsed"),
+        "original_text": _truncate_debug_value(payload.get("original_text"), 1000),
+        "final_text": _truncate_debug_value(payload.get("final_text"), 1000),
+        "converged": payload.get("converged"),
+        "convergence_reason": payload.get("convergence_reason"),
+        "passes": payload.get("passes"),
+        "summary": {
+            key: compact_summary.get(key)
+            for key in (
+                "public_status",
+                "rewrite_goal_status",
+                "v4_scores",
+                "detect_scores",
+                "detect_scan_original",
+                "detect_scan_rewritten",
+            )
+            if key in compact_summary
+        },
+        "sentence_comparison": _sentence_comparison_debug_preview(
+            payload.get("sentence_comparison") if isinstance(payload.get("sentence_comparison"), list) else []
+        ),
+        "billing_decision": payload.get("billing_decision"),
+        "rewrite_json_truncated": True,
+        "rewrite_json_truncation_reason": f"rewrite.json exceeded {max_bytes} bytes before upload",
+    }
 
 
 def _compact_debug_mapping(value, *, max_items: int = 20):
@@ -1660,6 +1778,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             }
             billing_decision = _rewrite_billing_decision(result, rewrite_json)
             rewrite_json["billing_decision"] = billing_decision
+            rewrite_json = _bounded_rewrite_json_payload(rewrite_json)
 
             debug_log = _build_rewrite_debug_log(
                 rewrite_id=rewrite_id,

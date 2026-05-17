@@ -10,8 +10,6 @@ from typing import Any
 
 from rewrite_controller.eligible_span_density import build_eligible_span_density_contract
 from rewrite_pipeline_core.gates.ai_footprint import _ai_footprint_gate_status
-from rewrite_pipeline_core.scoring.profiles import _turnitin_like_ai_gate_status
-
 from .external_calibration import (
     calibration_policy_to_dict,
     load_external_calibration_labels,
@@ -56,6 +54,15 @@ def _float_env(name: str, default: float) -> float:
 
 def _num(value: Any, default: float = 0.0) -> float:
     return float(value) if isinstance(value, (int, float)) else float(default)
+
+
+def _disabled_turnitin_like_gate_status() -> dict[str, Any]:
+    return {
+        "active": False,
+        "reason": "disabled_scanner_only_goal_contract",
+        "target_met": True,
+        "safe_band": True,
+    }
 
 
 def _sentences(text: str) -> list[str]:
@@ -343,13 +350,7 @@ def evaluate_rewrite_goal(
         weighted_severity_delta=severity_delta,
         critical_high_delta=critical_high_delta,
     )
-    turnitin = _turnitin_like_ai_gate_status(
-        original_report,
-        candidate_report,
-        review_burden_delta=review_delta,
-        weighted_severity_delta=severity_delta,
-        critical_high_delta=critical_high_delta,
-    )
+    turnitin = _disabled_turnitin_like_gate_status()
     density = build_eligible_span_density_contract(candidate_text, candidate_report)
     external_proxy = _external_detector_proxy_status(
         candidate_text=candidate_text,
@@ -361,7 +362,7 @@ def evaluate_rewrite_goal(
     turnitin_target = bool(turnitin.get("target_met") or turnitin.get("safe_band"))
     density_safe = bool(density.get("safe"))
     external_safe = bool(external_proxy.get("safe"))
-    detector_safe = bool(strict_safe and turnitin_target and density_safe and external_safe)
+    detector_safe = bool(strict_safe and density_safe and external_safe)
     if no_text_change:
         status = RewriteGoalStatus.ORIGINAL_PRESERVED
         reason = "no_safe_rewrite_applied"

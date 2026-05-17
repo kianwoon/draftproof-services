@@ -382,13 +382,15 @@ def source_grounding_integrity(source_text: str, replacement_text: str, *, repai
     failures: list[dict[str, Any]] = []
     mode = str(repair_mode or "source_preserving_repair")
     enriched = mode == "controlled_enrichment_repair"
+    route_rebuild = mode == "source_near_route_rebuild"
+    relaxed_source_near = enriched or route_rebuild
 
     threshold_name = (
         "DRAFTPROOF_REWRITE_V4_ENRICHED_SOURCE_SIMILARITY_THRESHOLD"
-        if enriched
+        if relaxed_source_near
         else "DRAFTPROOF_REWRITE_V4_SOURCE_SIMILARITY_THRESHOLD"
     )
-    threshold = _float_env(threshold_name, 0.62 if enriched else 0.75, minimum=0.5, maximum=0.95)
+    threshold = _float_env(threshold_name, 0.62 if relaxed_source_near else 0.75, minimum=0.5, maximum=0.95)
     drift = check_semantic_drift(source, replacement, threshold=threshold)
     if not drift.accepted:
         failures.extend(
@@ -609,10 +611,11 @@ def _claim_terms(text: str) -> set[str]:
 
 
 def sentence_claim_coverage(source_text: str, replacement_text: str, *, repair_mode: str = "source_preserving_repair") -> dict[str, Any]:
-    enriched = str(repair_mode or "") == "controlled_enrichment_repair"
+    mode = str(repair_mode or "")
+    relaxed_source_near = mode in {"controlled_enrichment_repair", "source_near_route_rebuild"}
     threshold = _float_env(
-        "DRAFTPROOF_REWRITE_V4_ENRICHED_SENTENCE_CLAIM_THRESHOLD" if enriched else "DRAFTPROOF_REWRITE_V4_SENTENCE_CLAIM_THRESHOLD",
-        0.22 if enriched else 0.3,
+        "DRAFTPROOF_REWRITE_V4_ENRICHED_SENTENCE_CLAIM_THRESHOLD" if relaxed_source_near else "DRAFTPROOF_REWRITE_V4_SENTENCE_CLAIM_THRESHOLD",
+        0.22 if relaxed_source_near else 0.3,
         minimum=0.1,
         maximum=0.8,
     )

@@ -40,12 +40,17 @@ def build_cluster_repair_units(
 ) -> list[ClusterRepairUnit]:
     density = goal.get("eligible_span_density_gate") if isinstance(goal.get("eligible_span_density_gate"), dict) else {}
     clusters = [cluster for cluster in density.get("top_unsafe_clusters") or [] if isinstance(cluster, dict)]
+    sentence_targets = [
+        row for row in density.get("top_sentence_targets") or []
+        if isinstance(row, dict)
+    ]
     sentence_rows = _sentence_rows(report)
     units: list[ClusterRepairUnit] = []
     for index, cluster in enumerate(clusters[:max(1, int(limit or 1))], start=1):
         unit = _cluster_unit_from_sentence_rows(
             text=str(text or ""),
             cluster=cluster,
+            sentence_targets=sentence_targets,
             sentence_rows=sentence_rows,
             cluster_id=f"cluster_{index:03d}",
             context_chars=context_chars,
@@ -260,6 +265,7 @@ def _cluster_unit_from_sentence_rows(
     *,
     text: str,
     cluster: dict[str, Any],
+    sentence_targets: list[dict[str, Any]],
     sentence_rows: list[dict[str, Any]],
     cluster_id: str,
     context_chars: int,
@@ -283,6 +289,22 @@ def _cluster_unit_from_sentence_rows(
     cluster_text = text[start_char:end_char]
     if not cluster_text.strip():
         return None
+    target_rows = [
+        {
+            "sentence_index": row.get("sentence_index"),
+            "sentence_id": row.get("sentence_id"),
+            "word_count": row.get("word_count"),
+            "top10_ratio": row.get("top10_ratio"),
+            "top50_ratio": row.get("top50_ratio"),
+            "predictability_risk": row.get("predictability_risk"),
+            "risk_score": row.get("risk_score"),
+            "generic_hits": row.get("generic_hits"),
+            "preview": str(row.get("preview") or "")[:260],
+        }
+        for row in sentence_targets
+        if isinstance(row.get("sentence_index"), int)
+        and start <= int(row.get("sentence_index")) <= end
+    ]
     return ClusterRepairUnit(
         cluster_id=cluster_id,
         start_sentence=start,
@@ -298,6 +320,7 @@ def _cluster_unit_from_sentence_rows(
         metadata={
             "gate_cluster": cluster,
             "sentence_ids": [row.get("sentence_id") for row in sentence_rows[start:end + 1]],
+            "target_sentence_metrics": target_rows,
             "generic_hits": cluster.get("generic_hits"),
             "transition_count": cluster.get("transition_count"),
         },

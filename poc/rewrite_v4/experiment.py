@@ -850,6 +850,8 @@ def run_v4_budget_lane_experiment(
             "cluster_units": [unit.to_dict() for unit in units],
             "lanes": [],
         }
+        active_blocker = _active_layer3_blocker(current_goal, current_scores)
+        round_log["active_blocker"] = active_blocker
         if not units:
             round_log["stop_reason"] = "no_cluster_units"
             rounds.append(round_log)
@@ -858,12 +860,15 @@ def run_v4_budget_lane_experiment(
         best: dict[str, Any] | None = None
         material_best: dict[str, Any] | None = None
         fallback_best: dict[str, Any] | None = None
+        blocker_best: dict[str, Any] | None = None
+        all_rows: list[dict[str, Any]] = []
         for lane in _ordered_budget_lanes(units):
             lane_rows: list[dict[str, Any]] = []
             lane_log = {
                 "lane": lane.to_dict(),
                 "results": lane_rows,
                 "accepted": None,
+                "blocker_accepted": None,
                 "material_accepted": None,
                 "safe_fallback": None,
             }
@@ -876,6 +881,7 @@ def run_v4_budget_lane_experiment(
                     lane=lane,
                     gateway=gateway,
                     variant_count=variant_count,
+                    blocker_contract=active_blocker,
                 )
                 stem = f"round{round_index}_{lane.lane_id}_{unit.cluster_id}"
                 (round_dir / f"{stem}_prompt.json.txt").write_text(prompt)
@@ -894,26 +900,55 @@ def run_v4_budget_lane_experiment(
                     )
                     row["generator_diagnostics"] = diagnostics
                     lane_rows.append(row)
+                    all_rows.append(row)
             ranked = sorted(lane_rows, key=_budget_lane_candidate_sort_key, reverse=True)
             lane_log["results"] = [_compact_budget_lane_row(row) for row in ranked]
+            lane_blocker_best = next((row for row in ranked if _is_blocker_budget_lane_positive(row, active_blocker)), None)
             lane_safe_best = next((row for row in ranked if _is_safe_budget_lane_positive(row)), None)
             lane_material_best = next((row for row in ranked if _is_material_budget_lane_positive(row)), None)
+            lane_log["blocker_accepted"] = _compact_budget_lane_row(lane_blocker_best)
             lane_log["safe_fallback"] = _compact_budget_lane_row(lane_safe_best)
             lane_log["material_accepted"] = _compact_budget_lane_row(lane_material_best)
+            if lane_blocker_best is not None:
+                blocker_best = _better_budget_lane_row(blocker_best, lane_blocker_best)
             if lane_safe_best is not None:
                 fallback_best = _better_budget_lane_row(fallback_best, lane_safe_best)
             if lane_material_best is not None:
                 material_best = _better_budget_lane_row(material_best, lane_material_best)
-            lane_log["accepted"] = _compact_budget_lane_row(lane_material_best)
+            lane_log["accepted"] = _compact_budget_lane_row(lane_blocker_best or lane_material_best)
 
         rounds.append(round_log)
-        best = material_best
+        pack_ranked = _rank_budget_lane_patch_packs(
+            original_text=current_text,
+            baseline_report=current_report,
+            baseline=current_scores,
+            units=units,
+            rows=all_rows,
+            output_dir=round_dir,
+            active_blocker=active_blocker,
+        )
+        round_log["pack_ranked"] = [_compact_budget_lane_pack_row(row) for row in pack_ranked]
+        pack_best = next((row for row in pack_ranked if _is_blocker_budget_lane_positive(row, active_blocker)), None)
+        round_log["pack_best_accepted"] = _compact_budget_lane_pack_row(pack_best)
+
+        best = pack_best or (blocker_best if active_blocker.get("active") else material_best)
+        if best is None and not active_blocker.get("active"):
+            best = material_best
         round_log["material_best_accepted"] = _compact_budget_lane_row(best)
-        if best is None and fallback_best is not None and _bool_env("DRAFTPROOF_REWRITE_V4_LAYER3_ACCEPT_WEAK_FALLBACK", True):
+        if (
+            best is None
+            and fallback_best is not None
+            and not active_blocker.get("active")
+            and _bool_env("DRAFTPROOF_REWRITE_V4_LAYER3_ACCEPT_WEAK_FALLBACK", True)
+        ):
             best = fallback_best
             round_log["weak_fallback_accepted"] = _compact_budget_lane_row(best)
         if best is None:
-            round_log["stop_reason"] = "no_safe_budget_lane_candidate"
+            round_log["stop_reason"] = (
+                "no_blocker_clearing_budget_lane_candidate"
+                if active_blocker.get("active")
+                else "no_safe_budget_lane_candidate"
+            )
             break
 
         current_text = str(best.get("candidate_text") or current_text)
@@ -1054,7 +1089,7 @@ def _score_budget_lane_variant(
 ) -> dict[str, Any]:
     candidate_text, apply_status = apply_cluster_variant(original_text, unit, variant.text)
     edit_profile = edit_budget_profile(unit.text, variant.text)
-    source_grounding = source_grounding_integrity(unit.text, variant.text)
+    source_grounding = source_grounding_integrity(unit.text, variant.text, repair_mode=_budget_lane_repair_mode(lane))
     if not apply_status.get("applied"):
         row = _rejected_cluster_row(
             unit=unit,
@@ -1128,6 +1163,137 @@ def _score_budget_lane_variant(
             "reason": candidate_goal.get("reason"),
         },
     }
+
+
+def _rank_budget_lane_patch_packs(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline: dict[str, Any],
+    units: list[ClusterRepairUnit],
+    rows: list[dict[str, Any]],
+    output_dir: Path,
+    active_blocker: dict[str, Any],
+) -> list[dict[str, Any]]:
+    unit_by_id = {unit.cluster_id: unit for unit in units}
+    eligible: list[dict[str, Any]] = []
+    for row in rows:
+        if not ((row.get("apply_status") or {}).get("applied")):
+            continue
+        if not ((row.get("source_grounding") or {}).get("passed")):
+            continue
+        if row.get("cluster_id") not in unit_by_id:
+            continue
+        if row.get("budget_lane") and row.get("edit_budget_profile"):
+            lane_data = row.get("budget_lane") or {}
+            lane = BudgetLane(
+                lane_id=str(lane_data.get("lane_id") or "unknown"),
+                changed_source_ratio_max=_num(lane_data.get("changed_source_ratio_max")),
+                growth_ratio_max=_num(lane_data.get("growth_ratio_max")),
+                shrink_ratio_max=_num(lane_data.get("shrink_ratio_max")),
+                operation_families=tuple(lane_data.get("operation_families") or ()),
+                instruction=str(lane_data.get("instruction") or ""),
+            )
+            if not budget_profile_passes(row.get("edit_budget_profile") or {}, lane):
+                continue
+        eligible.append(row)
+    if not eligible:
+        return []
+
+    sort_key = lambda row: _blocker_budget_lane_candidate_sort_key(row, active_blocker)
+    per_cluster: dict[str, list[dict[str, Any]]] = {}
+    for row in sorted(eligible, key=sort_key, reverse=True):
+        cluster_id = str(row.get("cluster_id") or "")
+        if not cluster_id:
+            continue
+        per_cluster.setdefault(cluster_id, [])
+        if len(per_cluster[cluster_id]) < _int_env("DRAFTPROOF_REWRITE_V4_LAYER3_PACK_VARIANTS_PER_CLUSTER", 2, minimum=1, maximum=5):
+            per_cluster[cluster_id].append(row)
+
+    selected_rows = [row for rows_for_cluster in per_cluster.values() for row in rows_for_cluster]
+    selected_rows = sorted(selected_rows, key=sort_key, reverse=True)[
+        :_int_env("DRAFTPROOF_REWRITE_V4_LAYER3_PACK_CANDIDATE_LIMIT", 10, minimum=1, maximum=30)
+    ]
+    max_size = min(
+        len({row.get("cluster_id") for row in selected_rows}),
+        _int_env("DRAFTPROOF_REWRITE_V4_LAYER3_PACK_MAX_SIZE", 4, minimum=2, maximum=8),
+    )
+    if max_size < 2:
+        return []
+    max_evals = _int_env("DRAFTPROOF_REWRITE_V4_LAYER3_PACK_EVAL_LIMIT", 50, minimum=1, maximum=500)
+    pack_rows: list[dict[str, Any]] = []
+    for size in range(2, max_size + 1):
+        for combo in combinations(selected_rows, size):
+            if len(pack_rows) >= max_evals:
+                pack_rows.sort(key=sort_key, reverse=True)
+                return pack_rows
+            cluster_ids = [str(row.get("cluster_id") or "") for row in combo]
+            if len(set(cluster_ids)) != len(cluster_ids):
+                continue
+            candidate_text = original_text
+            apply_statuses: list[dict[str, Any]] = []
+            for row in sorted(combo, key=lambda item: unit_by_id[str(item.get("cluster_id"))].start_char, reverse=True):
+                unit = unit_by_id[str(row.get("cluster_id"))]
+                candidate_text, status = apply_cluster_variant(candidate_text, unit, str(row.get("text") or ""))
+                apply_statuses.append(status)
+                if not status.get("applied"):
+                    break
+            if not all(status.get("applied") for status in apply_statuses):
+                continue
+            candidate_report = _scan_report(candidate_text)
+            goal_eval = evaluate_rewrite_goal(
+                original_text=original_text,
+                candidate_text=candidate_text,
+                original_report=baseline_report,
+                candidate_report=candidate_report,
+            )
+            candidate_goal = goal_eval.to_dict() if hasattr(goal_eval, "to_dict") else dict(goal_eval or {})
+            candidate_metrics = _metrics(input_text=original_text, report=candidate_report, goal=candidate_goal)
+            scores = _score_summary(candidate_report, candidate_metrics)
+            scores["unsafe_cluster_count"] = _unsafe_cluster_count(candidate_goal)
+            scores["unsafe_word_ratio"] = _unsafe_word_ratio(candidate_goal, scores)
+            _add_goal_driver_snapshot(scores, candidate_goal)
+            _add_score_deltas(scores, baseline)
+            pack_id = "_".join(f"{row.get('cluster_id')}-{row.get('variant_id')}" for row in combo)
+            safe_name = f"pack_{len(pack_rows) + 1:03d}"
+            (output_dir / f"{safe_name}_scan.json").write_text(json.dumps(candidate_report, ensure_ascii=False, indent=2))
+            pack_rows.append({
+                "combo_id": pack_id,
+                "cluster_id": "cluster_pack",
+                "variant_id": safe_name,
+                "budget_lane": {"lane_id": "clearance_pack"},
+                "edit_budget_profile": {"changed_source_ratio": 0.0, "growth_ratio": 0.0, "shrink_ratio": 0.0},
+                "apply_status": {"applied": True, "pack_size": size},
+                "source_grounding": {"passed": True, "repair_mode": "cluster_clearance_pack"},
+                "patches": [
+                    {
+                        "cluster_id": row.get("cluster_id"),
+                        "variant_id": row.get("variant_id"),
+                        "budget_lane": (row.get("budget_lane") or {}).get("lane_id") if isinstance(row.get("budget_lane"), dict) else None,
+                        "text": row.get("text"),
+                    }
+                    for row in combo
+                ],
+                "apply_statuses": apply_statuses,
+                "scores": scores,
+                "candidate_text": candidate_text,
+                "candidate_report": candidate_report,
+                "candidate_goal": candidate_goal,
+                "goal": {
+                    "status": candidate_goal.get("status"),
+                    "goal_met": candidate_goal.get("goal_met"),
+                    "reason": candidate_goal.get("reason"),
+                },
+                "active_blocker": active_blocker,
+            })
+    pack_rows.sort(key=sort_key, reverse=True)
+    return pack_rows
+
+
+def _budget_lane_repair_mode(lane: BudgetLane) -> str:
+    if lane.lane_id in {"route", "aggressive", "clearance"}:
+        return "source_near_route_rebuild"
+    return "source_preserving_repair"
 
 
 def _rejected_cluster_row(
@@ -1637,9 +1803,52 @@ def _compact_cluster_combo_row(row: dict[str, Any] | None) -> dict[str, Any] | N
     }
 
 
+def _compact_budget_lane_pack_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    scores = row.get("scores") or {}
+    return {
+        "combo_id": row.get("combo_id"),
+        "patch_count": len(row.get("patches") or []),
+        "patches": [
+            {
+                "cluster_id": patch.get("cluster_id"),
+                "variant_id": patch.get("variant_id"),
+                "budget_lane": patch.get("budget_lane"),
+            }
+            for patch in row.get("patches") or []
+            if isinstance(patch, dict)
+        ],
+        "ai_delta": scores.get("ai_delta"),
+        "topk_delta": scores.get("topk_delta"),
+        "external_delta": scores.get("external_delta"),
+        "rank_delta": scores.get("rank_delta"),
+        "risky_window_delta": scores.get("risky_window_delta"),
+        "unsafe_cluster_delta": scores.get("unsafe_cluster_delta"),
+        "unsafe_word_ratio_delta": scores.get("unsafe_word_ratio_delta"),
+        "topk_calibrated_risk_delta": scores.get("topk_calibrated_risk_delta"),
+        "qualifying_text_ai_density_delta": scores.get("qualifying_text_ai_density_delta"),
+        "ai_authorship_delta": scores.get("ai_authorship_delta"),
+        "external_ai_flag_risk_delta": scores.get("external_ai_flag_risk_delta"),
+        "ai": scores.get("ai"),
+        "topk": scores.get("topk"),
+        "external": scores.get("external"),
+        "rank": scores.get("rank"),
+        "unsafe_cluster_count": scores.get("unsafe_cluster_count"),
+        "unsafe_word_ratio": scores.get("unsafe_word_ratio"),
+        "topk_calibrated_risk": scores.get("topk_calibrated_risk"),
+        "qualifying_text_ai_density": scores.get("qualifying_text_ai_density"),
+        "ai_authorship": scores.get("ai_authorship"),
+        "external_ai_flag_risk": scores.get("external_ai_flag_risk"),
+        "goal": row.get("goal"),
+    }
+
+
 def _compact_budget_lane_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return None
+    if row.get("patches"):
+        return _compact_budget_lane_pack_row(row)
     compact = _compact_cluster_row(row) or {}
     compact["budget_lane"] = (row.get("budget_lane") or {}).get("lane_id")
     compact["edit_budget_profile"] = row.get("edit_budget_profile")
@@ -1750,6 +1959,27 @@ def _is_safe_budget_lane_positive(row: dict[str, Any]) -> bool:
     )
 
 
+def _is_blocker_budget_lane_positive(row: dict[str, Any], blocker: dict[str, Any] | None) -> bool:
+    if not isinstance(blocker, dict) or not blocker.get("active"):
+        return _is_material_budget_lane_positive(row)
+    if not _is_safe_budget_lane_positive(row):
+        return False
+    scores = row.get("scores") or {}
+    primary = str(blocker.get("primary") or "")
+    if primary == "unsafe_cluster_count":
+        return _num(scores.get("unsafe_cluster_delta")) > 0.0
+    if primary == "unsafe_eligible_word_ratio":
+        minimum_delta = _num(blocker.get("minimum_delta")) if blocker.get("minimum_delta") is not None else 1.0
+        return _num(scores.get("unsafe_word_ratio_delta")) >= minimum_delta
+    if primary == "topk_calibrated_risk":
+        minimum_delta = _num(blocker.get("minimum_delta")) if blocker.get("minimum_delta") is not None else 2.0
+        return _num(scores.get("topk_calibrated_risk_delta")) >= minimum_delta
+    if primary == "external_ai_flag_risk":
+        minimum_delta = _num(blocker.get("minimum_delta")) if blocker.get("minimum_delta") is not None else 1.0
+        return _num(scores.get("external_ai_flag_risk_delta")) >= minimum_delta
+    return _is_material_budget_lane_positive(row)
+
+
 def _is_material_budget_lane_positive(row: dict[str, Any]) -> bool:
     if not _is_safe_budget_lane_positive(row):
         return False
@@ -1784,6 +2014,72 @@ def _better_budget_lane_row(current: dict[str, Any] | None, candidate: dict[str,
     if current is None:
         return candidate
     return max([current, candidate], key=_budget_lane_candidate_sort_key)
+
+
+def _active_layer3_blocker(goal: dict[str, Any], scores: dict[str, Any]) -> dict[str, Any]:
+    density = goal.get("eligible_span_density_gate") if isinstance(goal.get("eligible_span_density_gate"), dict) else {}
+    density_thresholds = density.get("thresholds") if isinstance(density.get("thresholds"), dict) else {}
+    unsafe_cluster_count = _num(scores.get("unsafe_cluster_count"))
+    max_cluster_count = (
+        _num(density_thresholds.get("max_unsafe_cluster_count"))
+        if density_thresholds.get("max_unsafe_cluster_count") is not None
+        else 4.0
+    )
+    if unsafe_cluster_count > max_cluster_count:
+        return {
+            "active": True,
+            "primary": "unsafe_cluster_count",
+            "current": unsafe_cluster_count,
+            "target_max": max_cluster_count,
+            "required_delta_to_safe": max(0.0, unsafe_cluster_count - max_cluster_count),
+            "acceptance_rule": "candidate must reduce unsafe_cluster_count on full-document rescan",
+        }
+
+    unsafe_ratio = _num(scores.get("unsafe_word_ratio"))
+    max_ratio = (
+        _num(density_thresholds.get("max_unsafe_eligible_word_ratio"))
+        if density_thresholds.get("max_unsafe_eligible_word_ratio") is not None
+        else 35.0
+    )
+    if unsafe_ratio > max_ratio:
+        return {
+            "active": True,
+            "primary": "unsafe_eligible_word_ratio",
+            "current": unsafe_ratio,
+            "target_max": max_ratio,
+            "minimum_delta": min(2.0, max(0.5, unsafe_ratio - max_ratio)),
+            "acceptance_rule": "candidate must reduce unsafe eligible word ratio on full-document rescan",
+        }
+
+    gate = goal.get("ai_footprint_gate") if isinstance(goal.get("ai_footprint_gate"), dict) else {}
+    after = gate.get("after") if isinstance(gate.get("after"), dict) else {}
+    authorship = after.get("authorship_footprint") if isinstance(after.get("authorship_footprint"), dict) else {}
+    thresholds = gate.get("thresholds") if isinstance(gate.get("thresholds"), dict) else {}
+    topk = _num(scores.get("topk_calibrated_risk") or authorship.get("topk_calibrated_risk"))
+    topk_delta = _num(thresholds.get("topk_calibrated_risk")) if thresholds.get("topk_calibrated_risk") is not None else 2.0
+    if topk > 35.0:
+        return {
+            "active": True,
+            "primary": "topk_calibrated_risk",
+            "current": topk,
+            "target_max": 35.0,
+            "minimum_delta": topk_delta,
+            "acceptance_rule": "candidate must reduce calibrated top-k risk on full-document rescan",
+        }
+
+    external = _num(scores.get("external_ai_flag_risk"))
+    external_delta = _num(thresholds.get("external_ai_flag_risk")) if thresholds.get("external_ai_flag_risk") is not None else 1.5
+    if external > 35.0:
+        return {
+            "active": True,
+            "primary": "external_ai_flag_risk",
+            "current": external,
+            "target_max": 35.0,
+            "minimum_delta": external_delta,
+            "acceptance_rule": "candidate must reduce external AI flag risk on full-document rescan",
+        }
+
+    return {"active": False, "primary": "", "acceptance_rule": "material positive movement"}
 
 
 def _candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float]:
@@ -1836,13 +2132,61 @@ def _residual_combo_sort_key(row: dict[str, Any]) -> tuple[float, float, float, 
     return _residual_candidate_sort_key(row)
 
 
+def _blocker_budget_lane_candidate_sort_key(row: dict[str, Any], blocker: dict[str, Any] | None) -> tuple[float, ...]:
+    if not isinstance(blocker, dict) or not blocker.get("active"):
+        return _budget_lane_candidate_sort_key(row)
+    scores = row.get("scores") or {}
+    primary = str(blocker.get("primary") or "")
+    if primary == "unsafe_cluster_count":
+        return (
+            _num(scores.get("unsafe_cluster_delta")),
+            _num(scores.get("unsafe_word_ratio_delta")),
+            _num(scores.get("topk_calibrated_risk_delta")),
+            _num(scores.get("external_ai_flag_risk_delta")),
+            _num(scores.get("rank_delta")),
+            _num(scores.get("external_delta")),
+            _num(scores.get("ai_delta")),
+        )
+    if primary == "unsafe_eligible_word_ratio":
+        return (
+            _num(scores.get("unsafe_word_ratio_delta")),
+            _num(scores.get("unsafe_cluster_delta")),
+            _num(scores.get("topk_calibrated_risk_delta")),
+            _num(scores.get("external_ai_flag_risk_delta")),
+            _num(scores.get("rank_delta")),
+            _num(scores.get("external_delta")),
+            _num(scores.get("ai_delta")),
+        )
+    if primary == "topk_calibrated_risk":
+        return (
+            _num(scores.get("topk_calibrated_risk_delta")),
+            _num(scores.get("unsafe_cluster_delta")),
+            _num(scores.get("unsafe_word_ratio_delta")),
+            _num(scores.get("external_ai_flag_risk_delta")),
+            _num(scores.get("rank_delta")),
+            _num(scores.get("external_delta")),
+            _num(scores.get("ai_delta")),
+        )
+    if primary == "external_ai_flag_risk":
+        return (
+            _num(scores.get("external_ai_flag_risk_delta")),
+            _num(scores.get("unsafe_cluster_delta")),
+            _num(scores.get("unsafe_word_ratio_delta")),
+            _num(scores.get("topk_calibrated_risk_delta")),
+            _num(scores.get("rank_delta")),
+            _num(scores.get("external_delta")),
+            _num(scores.get("ai_delta")),
+        )
+    return _budget_lane_candidate_sort_key(row)
+
+
 def _budget_lane_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float, float, float]:
     return _residual_candidate_sort_key(row)
 
 
 def _ordered_budget_lanes(units: list[ClusterRepairUnit]) -> list[BudgetLane]:
     lanes_by_id: dict[str, BudgetLane] = {}
-    order = ("conservative", "route", "aggressive")
+    order = ("conservative", "route", "aggressive", "clearance")
     for unit in units:
         for lane in budget_lanes_for_unit(unit.word_count, risk_score=unit.risk_score):
             lanes_by_id.setdefault(lane.lane_id, lane)
