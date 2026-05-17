@@ -1062,7 +1062,7 @@ def _generate_loose_variants_from_builder(
     variant_count: int,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     variants = max(1, min(5, int(variant_count or 1)))
-    if variants <= 1 or not _bool_env("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", True):
+    if variants <= 1 or not _bool_env("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", False):
         prompt = prompt_builder(variants)
         return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variants)
     fanout = _int_env("DRAFTPROOF_REWRITE_V5_LLM_FANOUT", 3, minimum=1, maximum=5)

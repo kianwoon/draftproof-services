@@ -822,6 +822,51 @@ def test_v5_parallel_variant_fanout_uses_one_variant_prompts(monkeypatch):
     assert json.loads(completion_log)["parallel_variant_generation"] is True
 
 
+def test_v5_parallel_variant_fanout_defaults_to_serial(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", raising=False)
+    calls: list[dict] = []
+
+    def prompt_builder(count: int) -> str:
+        payload = {
+            "task": "test_serial_generation",
+            "source_word_count": 70,
+            "output_schema": {
+                "variants": [
+                    {"variant_id": f"v{index}", "text": "..."}
+                    for index in range(1, count + 1)
+                ]
+            },
+        }
+        return "Return valid JSON only.\n" + json.dumps(payload)
+
+    class FakeGateway:
+        model = "deepseek/deepseek-v3.2"
+        provider = None
+
+        def chat(self, prompt: str, **kwargs):
+            payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+            calls.append(payload)
+            return _FakeV5LLMResponse(json.dumps({
+                "variants": [
+                    {
+                        "variant_id": "v1",
+                        "text": "This serial replacement keeps the same source claim and route.",
+                    }
+                ]
+            }))
+
+    variants, diagnostics, _, _ = _generate_loose_variants_from_builder(
+        prompt_builder=prompt_builder,
+        gateway=FakeGateway(),
+        variant_count=3,
+    )
+
+    assert len(calls) == 1
+    assert len(calls[0]["output_schema"]["variants"]) == 3
+    assert len(variants) == 1
+    assert "parallel_variant_generation" not in diagnostics
+
+
 def test_v5_parallel_variant_fanout_can_be_disabled(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", "false")
     calls: list[dict] = []
