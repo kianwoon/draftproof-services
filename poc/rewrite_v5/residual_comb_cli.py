@@ -63,10 +63,13 @@ def main() -> None:
             else []
         )
         all_rounds = rounds + risky_window_cleanup_rounds + unsafe_cluster_cleanup_rounds + final_risky_window_cleanup_rounds
+        global_best_fallback = result.get("global_best_fallback") if isinstance(result.get("global_best_fallback"), dict) else {}
         rows.append({
             "input": str(input_path),
             "output_dir": str(output_dir),
             "accepted_rounds": sum(1 for row in all_rounds if isinstance(row, dict) and row.get("accepted")),
+            "global_best_fallback_applied": bool(global_best_fallback.get("applied")),
+            "global_best_fallback_reason": global_best_fallback.get("reason"),
             "accepted_core_rounds": sum(1 for row in rounds if isinstance(row, dict) and row.get("accepted")),
             "accepted_risky_window_cleanup_rounds": sum(1 for row in risky_window_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
             "accepted_unsafe_cluster_cleanup_rounds": sum(1 for row in unsafe_cluster_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),

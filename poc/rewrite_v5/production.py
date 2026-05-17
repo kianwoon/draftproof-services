@@ -140,6 +140,9 @@ def run_rewrite_pipeline_v5(
         for row in all_rounds
         if isinstance(row, dict) and isinstance(row.get("accepted"), dict)
     ]
+    global_best_fallback = payload.get("global_best_fallback") if isinstance(payload.get("global_best_fallback"), dict) else {}
+    if global_best_fallback.get("applied") and isinstance(global_best_fallback.get("selected"), dict):
+        accepted.append(global_best_fallback["selected"])
     no_text_change = final_text.strip() == original_text.strip()
     if no_text_change:
         public_status = RewriteGoalStatus.ORIGINAL_PRESERVED.value
@@ -361,4 +364,5 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "risky_window_cleanup_rounds": _compact_v5_rounds(risky_window_cleanup_rounds),
         "unsafe_cluster_cleanup_rounds": _compact_v5_rounds(unsafe_cluster_cleanup_rounds),
         "final_risky_window_cleanup_rounds": _compact_v5_rounds(final_risky_window_cleanup_rounds),
+        "global_best_fallback": payload.get("global_best_fallback"),
     }

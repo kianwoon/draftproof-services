@@ -68,6 +68,7 @@ def run_v5_residual_cluster_comb_experiment(
     current_report = baseline_report
     current_goal = baseline_goal
     current_scores = baseline_scores
+    global_best_candidate: dict[str, Any] | None = None
     gateway = LLMGateway(LLMConfig(
         api_key=api_key,
         model=model,
@@ -184,6 +185,7 @@ def run_v5_residual_cluster_comb_experiment(
                 for variant in retuned
             ]
         all_rows = rows + retuned_rows
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *all_rows])
         best = _best_residual_candidate(all_rows)
         accepted = best if best and _has_incremental_movement(best) else None
         round_payload = {
@@ -226,6 +228,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal,
             current_scores,
             risky_window_rounds,
+            global_best_candidate,
         ) = _run_risky_window_cleanup_pass(
             original_text=original_text,
             baseline_report=baseline_report,
@@ -236,6 +239,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_scores=current_scores,
             gateway=gateway,
             output_dir=out_dir / "risky_window_cleanup",
+            global_best_candidate=global_best_candidate,
             max_rounds=_cleanup_round_limit(
                 risky_window_cleanup_rounds,
                 env_name="DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS",
@@ -256,6 +260,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal,
             current_scores,
             unsafe_cluster_rounds,
+            global_best_candidate,
         ) = _run_unsafe_cluster_cleanup_pass(
             original_text=original_text,
             baseline_report=baseline_report,
@@ -266,6 +271,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_scores=current_scores,
             gateway=gateway,
             output_dir=out_dir / "unsafe_cluster_cleanup",
+            global_best_candidate=global_best_candidate,
             max_rounds=_cleanup_round_limit(
                 unsafe_cluster_cleanup_rounds,
                 env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
@@ -286,6 +292,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal,
             current_scores,
             final_risky_window_rounds,
+            global_best_candidate,
         ) = _run_risky_window_cleanup_pass(
             original_text=original_text,
             baseline_report=baseline_report,
@@ -296,6 +303,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_scores=current_scores,
             gateway=gateway,
             output_dir=out_dir / "final_risky_window_cleanup",
+            global_best_candidate=global_best_candidate,
             max_rounds=_cleanup_round_limit(
                 final_risky_window_cleanup_rounds,
                 env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
@@ -303,6 +311,28 @@ def run_v5_residual_cluster_comb_experiment(
             ),
             variant_count=cleanup_variants,
         )
+
+    global_best_fallback = {
+        "applied": False,
+        "reason": "phase_accepted_result_remained_best",
+        "selected": _compact_residual_row(global_best_candidate),
+        "previous_final_scores": current_scores,
+    }
+    if global_best_candidate and _full_document_candidate_beats_scores(global_best_candidate, current_scores):
+        previous_scores = current_scores
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=global_best_candidate,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (out_dir / "after_global_best_fallback.txt").write_text(current_text)
+        global_best_fallback = {
+            "applied": True,
+            "reason": "best_full_document_candidate_superseded_phase_accepted_result",
+            "selected": _compact_residual_row(global_best_candidate),
+            "previous_final_scores": previous_scores,
+            "final_scores": current_scores,
+        }
 
     density_gate = build_eligible_span_density_contract(current_text, current_report)
     payload = {
@@ -312,6 +342,7 @@ def run_v5_residual_cluster_comb_experiment(
         "risky_window_cleanup_rounds": risky_window_rounds,
         "unsafe_cluster_cleanup_rounds": unsafe_cluster_rounds,
         "final_risky_window_cleanup_rounds": final_risky_window_rounds,
+        "global_best_fallback": global_best_fallback,
         "final_scores": current_scores,
         "eligible_span_density_gate": density_gate,
         "goal": {
@@ -1176,9 +1207,10 @@ def _run_risky_window_cleanup_pass(
     current_scores: dict[str, Any],
     gateway: LLMGateway,
     output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
     max_rounds: int,
     variant_count: int,
-) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
     skipped: set[tuple[Any, ...]] = set()
@@ -1212,6 +1244,7 @@ def _run_risky_window_cleanup_pass(
             )
             for variant in variants
         ]
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *rows])
         selected = _best_risky_window_cleanup_candidate(rows)
         accepted = selected if selected and _has_risky_window_cleanup_movement(selected) else None
         round_payload = {
@@ -1237,7 +1270,7 @@ def _run_risky_window_cleanup_pass(
             baseline_report=baseline_report,
         )
         (output_dir / f"after_round_{cleanup_index:02d}.txt").write_text(current_text)
-    return current_text, current_report, current_goal, current_scores, rounds
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 
 
 def _run_unsafe_cluster_cleanup_pass(
@@ -1251,9 +1284,10 @@ def _run_unsafe_cluster_cleanup_pass(
     current_scores: dict[str, Any],
     gateway: LLMGateway,
     output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
     max_rounds: int,
     variant_count: int,
-) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
     skipped: set[tuple[Any, ...]] = set()
@@ -1303,6 +1337,7 @@ def _run_unsafe_cluster_cleanup_pass(
             )
             for variant in variants
         ]
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *rows])
         selected = _best_unsafe_cluster_cleanup_candidate(rows)
         accepted = selected if selected and _has_unsafe_cluster_cleanup_movement(selected) else None
         round_payload = {
@@ -1330,7 +1365,7 @@ def _run_unsafe_cluster_cleanup_pass(
             baseline_report=baseline_report,
         )
         (output_dir / f"after_round_{cleanup_index:02d}.txt").write_text(current_text)
-    return current_text, current_report, current_goal, current_scores, rounds
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 
 
 def _accepted_state(
@@ -1363,6 +1398,68 @@ def _best_unsafe_cluster_cleanup_candidate(rows: list[dict[str, Any]]) -> dict[s
     if not eligible:
         return None
     return max(eligible, key=_unsafe_cluster_cleanup_sort_key)
+
+
+def _best_full_document_candidate(rows: list[dict[str, Any] | None]) -> dict[str, Any] | None:
+    eligible = [row for row in rows if isinstance(row, dict) and _has_full_document_fallback_movement(row)]
+    if not eligible:
+        return None
+    return max(eligible, key=_full_document_candidate_sort_key)
+
+
+def _full_document_candidate_beats_scores(row: dict[str, Any], current_scores: dict[str, Any]) -> bool:
+    if not _has_full_document_fallback_movement(row):
+        return False
+    current_row = {
+        "apply_status": {"applied": True},
+        "scores": current_scores,
+    }
+    return _full_document_candidate_sort_key(row) > _full_document_candidate_sort_key(current_row)
+
+
+def _full_document_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    return (
+        _number(scores.get("ai_delta")),
+        _number(scores.get("rank_delta")),
+        _number(scores.get("topk_calibrated_risk_delta")),
+        _number(scores.get("topk_delta")),
+        _number(scores.get("external_ai_flag_risk_delta")),
+        _number(scores.get("external_delta")),
+        _number(scores.get("qualifying_text_ai_density_delta")),
+        _number(scores.get("unsafe_cluster_count_delta")),
+        _number(scores.get("risky_window_count_delta")),
+        _number(scores.get("unsafe_word_ratio_delta")),
+    )
+
+
+def _has_full_document_fallback_movement(row: dict[str, Any]) -> bool:
+    if not (row.get("apply_status") or {}).get("applied"):
+        return False
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    if _number(scores.get("ai_delta")) < 0:
+        return False
+    if _number(scores.get("rank_delta")) < 0:
+        return False
+    if _number(scores.get("topk_calibrated_risk_delta")) < 0:
+        return False
+    if _number(scores.get("external_ai_flag_risk_delta")) < 0:
+        return False
+    return any(
+        _number(scores.get(key)) > 0
+        for key in (
+            "ai_delta",
+            "rank_delta",
+            "topk_calibrated_risk_delta",
+            "topk_delta",
+            "external_ai_flag_risk_delta",
+            "external_delta",
+            "qualifying_text_ai_density_delta",
+            "unsafe_cluster_count_delta",
+            "risky_window_count_delta",
+            "unsafe_word_ratio_delta",
+        )
+    )
 
 
 def _risky_window_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:

@@ -21,10 +21,13 @@ from rewrite_v5.residual_comb import (
     build_residual_cluster_retune_prompt,
     build_route_blueprint,
     build_unsafe_cluster_cleanup_prompt,
+    _best_full_document_candidate,
     generate_residual_cluster_seed_variants,
     _expand_to_local_text_boundaries,
+    _full_document_candidate_beats_scores,
     _has_risky_window_cleanup_movement,
     _has_unsafe_cluster_cleanup_movement,
+    _has_full_document_fallback_movement,
     _parse_route_plan,
     _has_incremental_movement,
     _residual_candidate_sort_key,
@@ -605,6 +608,48 @@ def test_v5_tail_cleanup_acceptance_is_scanner_owned():
     assert not _has_unsafe_cluster_cleanup_movement(cluster_rank_regression)
 
 
+def test_v5_global_best_fallback_keeps_better_full_document_candidate():
+    current_scores = {
+        "ai_delta": 0.83,
+        "rank_delta": 2.131,
+        "topk_calibrated_risk_delta": 1.037,
+        "topk_delta": 0.38,
+        "external_ai_flag_risk_delta": 2.904,
+    }
+    phase_accepted = {
+        "apply_status": {"applied": True},
+        "scores": current_scores,
+    }
+    stage_skipped_but_better = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai_delta": 3.15,
+            "rank_delta": 2.982,
+            "topk_calibrated_risk_delta": 2.21,
+            "topk_delta": 0.81,
+            "external_ai_flag_risk_delta": 3.967,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+    }
+    narrow_counter_only = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai_delta": -0.09,
+            "rank_delta": 2.3,
+            "topk_calibrated_risk_delta": 1.9,
+            "external_ai_flag_risk_delta": 2.5,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+    }
+
+    best = _best_full_document_candidate([phase_accepted, stage_skipped_but_better, narrow_counter_only])
+
+    assert not _has_full_document_fallback_movement(narrow_counter_only)
+    assert best is stage_skipped_but_better
+    assert _full_document_candidate_beats_scores(stage_skipped_but_better, current_scores)
+    assert not _full_document_candidate_beats_scores(phase_accepted, current_scores)
+
+
 def test_v5_tail_cleanup_rejects_spliced_word_period_artifacts():
     integrity = minimal_replacement_text_integrity(
         "Teachers need to support students to become their own teachers.tie, 2009)."
@@ -716,6 +761,72 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     assert summary["candidate_generation_status"]["accepted_count"] == 1
     assert summary["v5_scores"]["deltas"]["ai_delta"] == 6.0
     assert summary["final_text"] == "This is the rewritten document."
+
+
+def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_path, monkeypatch):
+    def fake_residual_comb(**kwargs):
+        return {
+            "stage": "v5_residual_cluster_comb",
+            "baseline_scores": {"ai": 55.0, "rank": 140.0},
+            "final_scores": {"ai": 51.0, "rank": 135.0},
+            "goal": {
+                "status": "mitigation_failed_no_safe_candidate",
+                "goal_met": False,
+                "reason": "candidate_failed_strict_detector_safe_goal",
+            },
+            "rounds": [],
+            "risky_window_cleanup_rounds": [],
+            "unsafe_cluster_cleanup_rounds": [],
+            "final_risky_window_cleanup_rounds": [],
+            "eligible_span_density_gate": {},
+            "global_best_fallback": {
+                "applied": True,
+                "reason": "best_full_document_candidate_superseded_phase_accepted_result",
+                "selected": {
+                    "section_id": "density_cluster_004",
+                    "variant_id": "v3",
+                    "label": "density_v3",
+                    "word_count": 72,
+                    "scores": {"ai_delta": 4.0, "rank_delta": 5.0},
+                    "text": "fallback candidate",
+                },
+            },
+            "rewritten_document": "This is the fallback-selected document.",
+        }
+
+    monkeypatch.setattr(v5_production, "run_v5_residual_cluster_comb_experiment", fake_residual_comb)
+    monkeypatch.setattr(v5_production, "_scan_report", lambda text: {
+        "input_text": text,
+        "ai_score": 51.0,
+        "ai_risk_badge": {"ai_likelihood_score": 51.0},
+        "findings": {},
+    })
+    monkeypatch.setattr(v5_production, "evaluate_rewrite_goal", lambda **_: SimpleNamespace(
+        to_dict=lambda: {
+            "status": "mitigation_failed_no_safe_candidate",
+            "goal_met": False,
+            "reason": "candidate_failed_strict_detector_safe_goal",
+        }
+    ))
+    monkeypatch.setattr(v5_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+
+    result = v5_production.run_rewrite_pipeline_v5(
+        detect_json={
+            "input_text": "This is the original document.",
+            "ai_score": 55.0,
+            "ai_risk_badge": {"ai_likelihood_score": 55.0},
+            "findings": {},
+        },
+        output_dir=str(tmp_path),
+        model="deepseek/deepseek-v3.2",
+    )
+
+    summary = json.loads(Path(result["json_path"]).read_text())
+    layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
+    assert result["status"] == "rewrite_candidate_generated_needs_external_review"
+    assert summary["candidate_generation_status"]["accepted_count"] == 1
+    assert summary["selected_candidate"]["section_id"] == "density_cluster_004"
+    assert layer["global_best_fallback"]["applied"] is True
 
 
 def test_v5_route_blueprint_moves_generic_opener_after_concrete_event():
