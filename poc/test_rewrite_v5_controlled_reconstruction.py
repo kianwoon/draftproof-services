@@ -34,6 +34,46 @@ from rewrite_v5.residual_comb import (
 )
 
 
+def _sample_route_plan() -> dict:
+    return {
+        "content_profile": "narrative_or_case_reflection",
+        "cluster_role": "evidence_or_example",
+        "dominant_failure_pattern": "event_summary",
+        "route_strategy": "event_first_rebuild",
+        "profile_reason": "The cluster follows an event and its visible outcome.",
+        "failed_route": "The current route summarizes the result too quickly.",
+        "replacement_route": "Start from the event, then show the visible outcome.",
+        "source_block_plan": [
+            {
+                "block_id": "b01",
+                "current_job": "Summarize result.",
+                "rewrite_job": "Start from the event and end with the visible outcome.",
+                "must_preserve": ["The thank-you card made the result visible."],
+            }
+        ],
+        "target_sentence_jobs": [
+            {
+                "sentence_id": "s001",
+                "source_preview": "The service changed the student's confidence.",
+                "current_weakness": "Broad result opener.",
+                "rewrite_job": "Show service before result.",
+                "avoid_copying": ["The service changed"],
+            }
+        ],
+        "must_change": ["Move the broad result after the visible event."],
+        "must_preserve": [
+            {
+                "source_quote": "The thank-you card made the result visible.",
+                "preserve_as": "visible outcome",
+            }
+        ],
+        "sentence_plan": ["Open with the service.", "End with the thank-you card outcome."],
+        "avoid_phrases": ["The service changed"],
+        "length_target": "same_length",
+        "reason_this_should_move_score": "Event-first route should reduce the broad summary pattern.",
+    }
+
+
 def test_v5_sections_group_heading_with_following_paragraphs():
     text = (
         "Introduction\n"
@@ -422,43 +462,7 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
         "metadata": {},
     })()
     section = _section_from_cluster(cluster)
-    route_plan = {
-        "content_profile": "narrative_or_case_reflection",
-        "cluster_role": "evidence_or_example",
-        "dominant_failure_pattern": "event_summary",
-        "route_strategy": "event_first_rebuild",
-        "profile_reason": "The cluster follows a service result and visible outcome.",
-        "failed_route": "The current route starts with a broad result.",
-        "replacement_route": "Start from the service, then use the thank-you card as visible evidence.",
-        "source_block_plan": [
-            {
-                "block_id": "b01",
-                "current_job": "Summarize result.",
-                "rewrite_job": "Start from service and end with thank-you card.",
-                "must_preserve": ["The thank-you card made the result visible."],
-            }
-        ],
-        "target_sentence_jobs": [
-            {
-                "sentence_id": "s001",
-                "source_preview": "The service changed the student's confidence.",
-                "current_weakness": "Broad result opener.",
-                "rewrite_job": "Show service before result.",
-                "avoid_copying": ["The service changed"],
-            }
-        ],
-        "must_change": ["Move the broad result after the visible event."],
-        "must_preserve": [
-            {
-                "source_quote": "The thank-you card made the result visible.",
-                "preserve_as": "visible outcome",
-            }
-        ],
-        "sentence_plan": ["Open with the service.", "End with the thank-you card outcome."],
-        "avoid_phrases": ["The service changed"],
-        "length_target": "same_length",
-        "reason_this_should_move_score": "Event-first route should reduce the broad summary pattern.",
-    }
+    route_plan = _sample_route_plan()
 
     prompt = build_residual_cluster_prompt(
         section=section,
@@ -650,6 +654,30 @@ def test_v5_risky_window_cleanup_prompt_targets_whole_window_without_detector_la
     assert "authorship" not in lowered
 
 
+def test_v5_risky_window_cleanup_prompt_can_use_route_plan_brief():
+    section = build_section_units(
+        "The service changed the student's confidence. "
+        "The thank-you card made the result visible.",
+        {},
+    )[0]
+    route_plan = _sample_route_plan()
+
+    prompt = build_risky_window_cleanup_prompt(
+        section=section,
+        current_scores={"risky_window_count": 2, "unsafe_cluster_count": 7},
+        variant_count=1,
+        route_plan=route_plan,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "residual_route_window_cleanup"
+    assert payload["execution_brief"] == route_plan
+    assert payload["source_blocks"]
+    assert payload["coverage_guidance"]["requirements"]
+    assert any("Follow execution_brief.replacement_route" in item for item in payload["method"])
+    assert payload["length_guidance"]["preferred_max_words"] == round(section.word_count * 1.10)
+
+
 def test_v5_unsafe_cluster_cleanup_prompt_is_local_and_source_near():
     section = build_section_units(
         "The client gave him a card after the event. "
@@ -678,6 +706,88 @@ def test_v5_unsafe_cluster_cleanup_prompt_is_local_and_source_near():
     lowered = prompt.casefold()
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
+
+
+def test_v5_unsafe_cluster_cleanup_prompt_can_use_route_plan_brief():
+    section = build_section_units(
+        "The service changed the student's confidence. "
+        "The thank-you card made the result visible.",
+        {},
+    )[0]
+    route_plan = _sample_route_plan()
+
+    prompt = build_unsafe_cluster_cleanup_prompt(
+        section=section,
+        density_cluster={
+            "sentence_count": 2,
+            "word_count": section.word_count,
+            "preview": "The service changed the student's confidence.",
+            "generic_hits": 0,
+            "transition_count": 0,
+        },
+        variant_count=1,
+        route_plan=route_plan,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "single_density_cluster_cleanup"
+    assert payload["execution_brief"] == route_plan
+    assert payload["source_blocks"]
+    assert payload["coverage_guidance"]["requirements"]
+    assert any("Follow execution_brief.replacement_route" in item for item in payload["method"])
+    assert payload["length_guidance"]["preferred_max_words"] == round(section.word_count * 1.10)
+
+
+def test_v5_compact_rounds_keep_cleanup_observability_without_raw_payloads():
+    rounds = [
+        {
+            "round": 1,
+            "phase": "unsafe_cluster_cleanup",
+            "status": "skipped",
+            "reason": "no_unsafe_cluster_movement",
+            "density_gate": {
+                "safe": False,
+                "unsafe_cluster_count": 10,
+                "top_unsafe_clusters": [{"preview": "large raw payload should be dropped"}],
+            },
+            "generator_diagnostics": {
+                "route_plan": {
+                    "status": "ok",
+                    "content_profile": "broad_explanatory_report",
+                    "cluster_role": "mixed_section",
+                    "dominant_failure_pattern": "category_dump",
+                    "route_strategy": "group_and_bridge",
+                    "source_block_plan_count": 3,
+                    "target_sentence_job_count": 5,
+                    "length_target": "same_length",
+                },
+                "llm_generation": {
+                    "status": "ok",
+                    "valid_variant_count": 5,
+                    "variant_count": 5,
+                    "structured_output_mode": "json_schema",
+                },
+            },
+            "selected": {
+                "section_id": "density_cluster_001",
+                "variant_id": "v1",
+                "label": "density_v1",
+                "word_count": 80,
+                "scores": {"ai_delta": 1.0, "rank_delta": 2.0},
+                "incremental": {"unsafe_cluster_count_delta": 0.0, "rank_delta": 2.0},
+                "local_scores": {"unsafe_cluster_count": 1, "topk_delta": 4.0},
+                "text": "candidate",
+            },
+        }
+    ]
+
+    compact = v5_production._compact_v5_rounds(rounds)
+
+    assert compact[0]["phase"] == "unsafe_cluster_cleanup"
+    assert compact[0]["density_gate"]["unsafe_cluster_count"] == 10
+    assert "top_unsafe_clusters" not in compact[0]["density_gate"]
+    assert compact[0]["generator_diagnostics"]["route_plan"]["content_profile"] == "broad_explanatory_report"
+    assert compact[0]["selected"]["incremental"]["rank_delta"] == 2.0
 
 
 def test_v5_tail_cleanup_acceptance_is_scanner_owned():
@@ -740,6 +850,21 @@ def test_v5_global_best_fallback_keeps_better_full_document_candidate():
     assert best is stage_skipped_but_better
     assert _full_document_candidate_beats_scores(stage_skipped_but_better, current_scores)
     assert not _full_document_candidate_beats_scores(phase_accepted, current_scores)
+
+
+def test_v5_global_best_fallback_rejects_density_regression():
+    candidate = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai_delta": 2.0,
+            "rank_delta": 1.0,
+            "topk_calibrated_risk_delta": 0.5,
+            "external_ai_flag_risk_delta": 1.0,
+            "unsafe_cluster_count_delta": -1.0,
+        },
+    }
+
+    assert not _has_full_document_fallback_movement(candidate)
 
 
 def test_v5_tail_cleanup_rejects_spliced_word_period_artifacts():

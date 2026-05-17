@@ -20,7 +20,7 @@ from rewrite_v4.production import (
     _truncate_text,
 )
 
-from .residual_comb import run_v5_residual_cluster_comb_experiment
+from .residual_comb import _compact_density_gate, run_v5_residual_cluster_comb_experiment
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -308,9 +308,42 @@ def _compact_v5_candidate_trace(rows: list[Any]) -> list[dict[str, Any]]:
             "unsafe_cluster_count_delta": scores.get("unsafe_cluster_count_delta") or incremental.get("unsafe_cluster_count_delta"),
             "local_unsafe_cluster_count": local.get("unsafe_cluster_count"),
             "local_topk_delta": local.get("topk_delta"),
+            "incremental": incremental or None,
             "text": _truncate_text(row.get("text"), 900),
             "scores_after": scores,
         })
+    return compact
+
+
+def _compact_v5_generator_diagnostics(diagnostics: Any) -> dict[str, Any] | None:
+    if not isinstance(diagnostics, dict):
+        return None
+    route_plan = diagnostics.get("route_plan") if isinstance(diagnostics.get("route_plan"), dict) else {}
+    llm_generation = diagnostics.get("llm_generation") if isinstance(diagnostics.get("llm_generation"), dict) else diagnostics
+    compact: dict[str, Any] = {
+        "route_plan": {
+            "status": route_plan.get("status"),
+            "reason": route_plan.get("reason"),
+            "content_profile": route_plan.get("content_profile"),
+            "cluster_role": route_plan.get("cluster_role"),
+            "dominant_failure_pattern": route_plan.get("dominant_failure_pattern"),
+            "route_strategy": route_plan.get("route_strategy"),
+            "source_block_plan_count": route_plan.get("source_block_plan_count"),
+            "target_sentence_job_count": route_plan.get("target_sentence_job_count"),
+            "length_target": route_plan.get("length_target"),
+            "finish_reason": route_plan.get("finish_reason"),
+            "native_finish_reason": route_plan.get("native_finish_reason"),
+        } if route_plan else None,
+        "llm_generation": {
+            "status": llm_generation.get("status"),
+            "reason": llm_generation.get("reason"),
+            "valid_variant_count": llm_generation.get("valid_variant_count"),
+            "variant_count": llm_generation.get("variant_count"),
+            "finish_reason": llm_generation.get("finish_reason"),
+            "native_finish_reason": llm_generation.get("native_finish_reason"),
+            "structured_output_mode": llm_generation.get("structured_output_mode"),
+        } if isinstance(llm_generation, dict) else None,
+    }
     return compact
 
 
@@ -321,9 +354,14 @@ def _compact_v5_rounds(rounds: list[Any]) -> list[dict[str, Any]]:
             continue
         compact.append({
             "round": row.get("round"),
+            "phase": row.get("phase"),
             "status": row.get("status"),
             "reason": row.get("reason"),
             "current_scores": row.get("current_scores") if isinstance(row.get("current_scores"), dict) else None,
+            "density_gate": _compact_density_gate(row.get("density_gate"))
+            if isinstance(row.get("density_gate"), dict)
+            else None,
+            "generator_diagnostics": _compact_v5_generator_diagnostics(row.get("generator_diagnostics")),
             "accepted": _compact_v5_candidate_trace([row.get("accepted")])[0]
             if isinstance(row.get("accepted"), dict)
             else None,

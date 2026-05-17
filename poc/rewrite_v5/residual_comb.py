@@ -874,7 +874,13 @@ def generate_residual_cluster_retunes(
     return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
 
 
-def build_risky_window_cleanup_prompt(*, section: SectionUnit, current_scores: dict[str, Any] | None = None, variant_count: int = 5) -> str:
+def build_risky_window_cleanup_prompt(
+    *,
+    section: SectionUnit,
+    current_scores: dict[str, Any] | None = None,
+    variant_count: int = 5,
+    route_plan: dict[str, Any] | None = None,
+) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     source_words = max(1, int(section.word_count or word_count(section.text)))
     payload = {
@@ -927,10 +933,25 @@ def build_risky_window_cleanup_prompt(*, section: SectionUnit, current_scores: d
             "risky_window_count": current_scores.get("risky_window_count"),
             "unsafe_cluster_count": current_scores.get("unsafe_cluster_count"),
         }
+    if route_plan:
+        payload.update({
+            "goal": "Rewrite only this window by executing the planned failed-route to replacement-route brief.",
+            "execution_brief": route_plan,
+            "source_blocks": _source_blocks(section.text),
+            "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=route_plan),
+            "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=route_plan),
+            "method": _custom_route_writer_method(),
+        })
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def build_unsafe_cluster_cleanup_prompt(*, section: SectionUnit, density_cluster: dict[str, Any], variant_count: int = 5) -> str:
+def build_unsafe_cluster_cleanup_prompt(
+    *,
+    section: SectionUnit,
+    density_cluster: dict[str, Any],
+    variant_count: int = 5,
+    route_plan: dict[str, Any] | None = None,
+) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     source_words = max(1, int(section.word_count or word_count(section.text)))
     payload = {
@@ -986,6 +1007,15 @@ def build_unsafe_cluster_cleanup_prompt(*, section: SectionUnit, density_cluster
             ]
         },
     }
+    if route_plan:
+        payload.update({
+            "goal": "Rewrite only this local cluster by executing the planned failed-route to replacement-route brief.",
+            "execution_brief": route_plan,
+            "source_blocks": _source_blocks(section.text),
+            "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=route_plan),
+            "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=route_plan),
+            "method": _custom_route_writer_method(),
+        })
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -995,11 +1025,13 @@ def generate_risky_window_cleanup_variants(
     current_scores: dict[str, Any],
     gateway: LLMGateway,
     variant_count: int = 5,
+    route_plan: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     prompt = build_risky_window_cleanup_prompt(
         section=section,
         current_scores=current_scores,
         variant_count=variant_count,
+        route_plan=route_plan,
     )
     return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
 
@@ -1010,11 +1042,13 @@ def generate_unsafe_cluster_cleanup_variants(
     density_cluster: dict[str, Any],
     gateway: LLMGateway,
     variant_count: int = 5,
+    route_plan: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     prompt = build_unsafe_cluster_cleanup_prompt(
         section=section,
         density_cluster=density_cluster,
         variant_count=variant_count,
+        route_plan=route_plan,
     )
     return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
 
@@ -1521,12 +1555,24 @@ def _run_risky_window_cleanup_pass(
         section, signature = target
         round_dir = output_dir / f"round_{cleanup_index:02d}"
         round_dir.mkdir(parents=True, exist_ok=True)
-        variants, diagnostics, prompt, completion = generate_risky_window_cleanup_variants(
+        route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
+            section=section,
+            local_goal=_local_goal(section.text, section.text),
+            gateway=gateway,
+        )
+        (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
+        (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
+        variants, llm_diagnostics, prompt, completion = generate_risky_window_cleanup_variants(
             section=section,
             current_scores=current_scores,
             gateway=gateway,
             variant_count=variant_count,
+            route_plan=route_plan,
         )
+        diagnostics = {
+            "route_plan": route_plan_diagnostics,
+            "llm_generation": llm_diagnostics,
+        }
         (round_dir / "prompt.json.txt").write_text(prompt)
         (round_dir / "completion.json.txt").write_text(completion)
         rows = [
@@ -1614,12 +1660,24 @@ def _run_unsafe_cluster_cleanup_pass(
         section, density_cluster, signature = target
         round_dir = output_dir / f"round_{cleanup_index:02d}"
         round_dir.mkdir(parents=True, exist_ok=True)
-        variants, diagnostics, prompt, completion = generate_unsafe_cluster_cleanup_variants(
+        route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
+            section=section,
+            local_goal=_local_goal(section.text, section.text),
+            gateway=gateway,
+        )
+        (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
+        (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
+        variants, llm_diagnostics, prompt, completion = generate_unsafe_cluster_cleanup_variants(
             section=section,
             density_cluster=density_cluster,
             gateway=gateway,
             variant_count=variant_count,
+            route_plan=route_plan,
         )
+        diagnostics = {
+            "route_plan": route_plan_diagnostics,
+            "llm_generation": llm_diagnostics,
+        }
         (round_dir / "prompt.json.txt").write_text(prompt)
         (round_dir / "completion.json.txt").write_text(completion)
         rows = [
@@ -1743,6 +1801,10 @@ def _has_full_document_fallback_movement(row: dict[str, Any]) -> bool:
     if _number(scores.get("topk_calibrated_risk_delta")) < 0:
         return False
     if _number(scores.get("external_ai_flag_risk_delta")) < 0:
+        return False
+    if _number(scores.get("unsafe_cluster_count_delta")) < 0:
+        return False
+    if _number(scores.get("risky_window_count_delta")) < 0:
         return False
     return any(
         _number(scores.get(key)) > 0
