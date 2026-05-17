@@ -249,42 +249,8 @@ def build_residual_cluster_prompt(
                 before_context=_section_before_context(section),
             ),
         },
-        "custom_route_plan": plan,
-        "fallback_route_blueprint": build_route_blueprint(section=section, local_goal=local_goal or {}),
-        "length_guidance": {
-            "source_words": section.word_count,
-            "preferred_min_words": max(section.word_count + 10, round(section.word_count * 1.12)),
-            "preferred_max_words": round(section.word_count * 1.35),
-            "purpose": "use enough words to rebuild the route; do not compress the cluster",
-        },
+        "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=plan),
         "remaining_problem_sentences": _local_unsafe_previews(local_goal or {}),
-        "method": [
-            "Rewrite this cluster as a concrete route window, not as phrase repair.",
-            "If custom_route_plan is present, follow custom_route_plan.better_route in order.",
-            "If custom_route_plan is absent, follow fallback_route_blueprint.steps in order.",
-            "Use custom_route_plan.sentence_jobs when present; otherwise use fallback_route_blueprint.sentence_jobs.",
-            "Each sentence job should carry a full source beat or bridge, not a compressed summary.",
-            "Follow length_guidance as writing guidance; fuller source-grounded wording is preferred over compression.",
-            "Do not copy custom_route_plan labels, fallback_route_blueprint labels, or step names into the replacement.",
-            "Change the route of remaining_problem_sentences most strongly.",
-            "Do not keep an avoid_openers item as the opening sentence.",
-            "Add substance by unpacking the existing event, activity, and outcome named in the custom plan.",
-            "Preserve each source-supported beat unless two adjacent beats are naturally merged.",
-            "Stay source-near: keep simple source words when they already work.",
-            "Use cluster.source_phrase_anchors where they fit naturally.",
-            "Avoid exact copying of custom_route_plan.phrases_to_repath where alternatives are provided.",
-            "Avoid custom_route_plan.plain_style_bans when present.",
-            "Do not upgrade simple source wording into formal education-theory labels.",
-            "Keep the same people, event, activity, outcome, and point of view.",
-            "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
-            "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
-            "If the source uses I or my, keep that teacher viewpoint instead of replacing it with a detached narrator.",
-            "Do not invent new names, dates, places, dialogue, weather, objects, clients, classmates, or side events.",
-            "Do not replace the source scenario with a different scene.",
-            "Do not return a fragment; the replacement must cover the whole source cluster.",
-            "Do not write a plan, label, explanation of the method, or bullet list.",
-            "Avoid abstract summary language. Make the movement happen through the event.",
-        ],
         "output_schema": {
             "variants": [
                 {"variant_id": f"v{index}", "text": "..."}
@@ -292,6 +258,13 @@ def build_residual_cluster_prompt(
             ]
         },
     }
+    if plan:
+        payload["execution_brief"] = plan
+        payload["method"] = _custom_route_writer_method()
+    else:
+        payload["custom_route_plan"] = None
+        payload["fallback_route_blueprint"] = build_route_blueprint(section=section, local_goal=local_goal or {})
+        payload["method"] = _fallback_route_writer_method()
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -321,42 +294,10 @@ def build_residual_cluster_retune_prompt(
             ),
             "current_best_text": current_best_text,
         },
-        "custom_route_plan": plan,
-        "fallback_route_blueprint": build_route_blueprint(section=section, local_goal=local_goal or {}),
-        "length_guidance": {
-            "source_words": section.word_count,
-            "preferred_min_words": max(section.word_count + 10, round(section.word_count * 1.12)),
-            "preferred_max_words": round(section.word_count * 1.35),
-            "purpose": "use enough words to rebuild the route; do not compress the cluster",
-        },
+        "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=plan),
         "remaining_problem_sentences": focus,
         "retune_focus": _retune_focus_from_goal(local_goal or {}),
         "candidate_non_source_terms_to_reduce": _non_source_terms(section.text, current_best_text),
-        "method": [
-            "Rewrite the whole cluster again, but focus on the remaining problem sentence route.",
-            "If custom_route_plan is present, follow custom_route_plan.better_route in order.",
-            "If custom_route_plan is absent, follow fallback_route_blueprint.steps in order.",
-            "Use custom_route_plan.sentence_jobs when present; otherwise use fallback_route_blueprint.sentence_jobs.",
-            "Each sentence job should carry a full source beat or bridge, not a compressed summary.",
-            "Follow length_guidance as writing guidance; fuller source-grounded wording is preferred over compression.",
-            "Do not copy custom_route_plan labels, fallback_route_blueprint labels, or step names into the replacement.",
-            "Break any packed sentence into clearer event movement if needed.",
-            "Preserve each source_event_beats item unless two adjacent beats are naturally merged.",
-            "Stay source-near: keep simple source words when they already work.",
-            "Use cluster.source_phrase_anchors where they fit naturally.",
-            "Avoid exact copying of custom_route_plan.phrases_to_repath where alternatives are provided.",
-            "Avoid custom_route_plan.plain_style_bans when present.",
-            "Reduce candidate_non_source_terms_to_reduce by replacing them with source wording where possible.",
-            "Do not upgrade simple source wording into formal education-theory labels.",
-            "If the source uses I or my, keep that teacher viewpoint instead of replacing it with a detached narrator.",
-            "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
-            "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
-            "Use concrete classroom, action, or event wording from the same source scenario instead of summary wording.",
-            "Do not invent new names, dates, places, dialogue, weather, objects, clients, classmates, or side events.",
-            "Do not replace the source scenario with a different scene.",
-            "Do not return a fragment; the replacement must cover the whole source cluster.",
-            "Do not write a plan, label, explanation of the method, or bullet list.",
-        ],
         "output_schema": {
             "variants": [
                 {"variant_id": f"v{index}", "text": "..."}
@@ -364,6 +305,13 @@ def build_residual_cluster_retune_prompt(
             ]
         },
     }
+    if plan:
+        payload["execution_brief"] = plan
+        payload["method"] = _custom_route_retune_method()
+    else:
+        payload["custom_route_plan"] = None
+        payload["fallback_route_blueprint"] = build_route_blueprint(section=section, local_goal=local_goal or {})
+        payload["method"] = _fallback_route_retune_method()
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -407,30 +355,40 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
         },
         "planning_rules": [
             "Act as a prompt planner, not the final writer.",
-            "Derive a cluster-specific route plan from the source text and scanner findings.",
+            "Derive a cluster-specific executable brief from the source text and scanner findings.",
             "Do not mention scores, scanner names, authorship labels, or risk labels in the plan fields.",
-            "Every better_route step must be supported by source text.",
+            "Describe failed_route as the current sentence movement problem in plain editorial language.",
+            "Describe replacement_route as the new route the writer should follow, using source-supported events and claims.",
+            "Make must_change concrete enough that the writer can execute it without seeing fallback rules.",
+            "Make must_preserve exact source anchors: each source_quote must be copied verbatim from cluster.source_text.",
+            "Do not put summaries in must_preserve.source_quote; never write phrases like 'the fact that' unless those words are in cluster.source_text.",
+            "Use must_preserve.preserve_as only as a short meaning label for the exact source quote.",
+            "If a preservation item cannot be copied exactly from cluster.source_text, omit it.",
+            "Make sentence_plan an ordered set of sentence jobs, not labels to copy into the answer.",
+            "Use avoid_phrases only for source phrases or polished substitutes that would keep the same weak pattern.",
+            "Choose length_target from same_length, slight_expand, or expand.",
+            "Use same_length when route can change without added bridging, slight_expand when one bridge is needed, and expand only when compression is the main weakness.",
+            "Explain reason_this_should_move_score as a plain cause-effect expectation about route movement, not a score promise.",
             "Do not add facts, examples, people, places, dates, dialogue, or outside knowledge.",
-            "Convert broad summary movement into concrete sentence jobs using source events.",
-            "Preserve cluster.referential_continuity in the better route.",
+            "Preserve cluster.referential_continuity in the replacement route.",
             "If a pronoun is linked to a name in before_context, plan for natural name/pronoun continuity and do not tell the writer to explain the reference parenthetically.",
             "Use plain editorial task language that a writer can execute.",
         ],
         "output_schema": {
             "route_plan": {
-                "current_route": [
-                    {"source_quote": "...", "function": "...", "weakness": "..."},
+                "failed_route": "...",
+                "replacement_route": "...",
+                "must_change": ["..."],
+                "must_preserve": [
+                    {
+                        "source_quote": "exact substring copied from cluster.source_text",
+                        "preserve_as": "short meaning label",
+                    }
                 ],
-                "better_route": [
-                    {"job_id": "j1", "job": "...", "source_quotes": ["..."], "avoid_copying": ["..."]},
-                ],
-                "sentence_jobs": ["..."],
-                "phrases_to_repath": [
-                    {"source": "...", "plain_direction": "..."},
-                ],
-                "plain_style_bans": ["..."],
-                "opening_strategy": "...",
-                "length_strategy": "...",
+                "sentence_plan": ["..."],
+                "avoid_phrases": ["..."],
+                "length_target": "same_length | slight_expand | expand",
+                "reason_this_should_move_score": "...",
             }
         },
     }
@@ -466,6 +424,124 @@ def generate_residual_cluster_route_plan(
         "native_finish_reason": response.native_finish_reason,
         "structured_output_mode": structured.get("structured_output_mode"),
     }, prompt, raw
+
+
+def _length_guidance_for_route_plan(*, section: SectionUnit, route_plan: dict[str, Any] | None) -> dict[str, Any]:
+    source_words = max(1, int(section.word_count or word_count(section.text)))
+    if not route_plan:
+        return {
+            "source_words": source_words,
+            "preferred_min_words": max(source_words + 10, round(source_words * 1.12)),
+            "preferred_max_words": round(source_words * 1.35),
+            "purpose": "use enough words to rebuild the route; do not compress the cluster",
+        }
+    target = _length_target(route_plan.get("length_target"))
+    if target == "same_length":
+        return {
+            "source_words": source_words,
+            "preferred_min_words": round(source_words * 0.90),
+            "preferred_max_words": round(source_words * 1.10),
+            "purpose": "execute the route change at roughly source length",
+        }
+    if target == "slight_expand":
+        return {
+            "source_words": source_words,
+            "preferred_min_words": max(source_words, round(source_words * 1.00)),
+            "preferred_max_words": round(source_words * 1.20),
+            "purpose": "add only the bridge needed by the executable route",
+        }
+    return {
+        "source_words": source_words,
+        "preferred_min_words": max(source_words + 10, round(source_words * 1.12)),
+        "preferred_max_words": round(source_words * 1.35),
+        "purpose": "use enough words to rebuild the route; do not compress the cluster",
+    }
+
+
+def _custom_route_writer_method() -> list[str]:
+    return [
+        "Follow execution_brief.replacement_route while rewriting the whole cluster.",
+        "Satisfy every execution_brief.must_change item.",
+        "Preserve every execution_brief.must_preserve.source_quote; use preserve_as only as the meaning hint.",
+        "Follow execution_brief.sentence_plan in order, but do not copy plan labels into the replacement.",
+        "Avoid execution_brief.avoid_phrases unless the phrase is a required source term.",
+        "Use length_guidance; do not compress the cluster into a summary.",
+        "Change remaining_problem_sentences most strongly.",
+        "Keep the same people, event, activity, outcome, point of view, and referential continuity.",
+        "Use simple source-near wording where it works.",
+        "Do not invent new names, dates, places, dialogue, objects, clients, classmates, or side events.",
+        "Do not replace the source scenario with a different scene.",
+        "Do not return a fragment; the replacement must cover the whole source cluster.",
+        "Do not write a plan, label, explanation of the method, or bullet list.",
+    ]
+
+
+def _custom_route_retune_method() -> list[str]:
+    return [
+        "Follow execution_brief.replacement_route while rewriting the whole cluster again.",
+        "Satisfy every execution_brief.must_change item while focusing on remaining_problem_sentences.",
+        "Preserve every execution_brief.must_preserve.source_quote; use preserve_as only as the meaning hint.",
+        "Follow execution_brief.sentence_plan in order, but do not copy plan labels into the replacement.",
+        "Avoid execution_brief.avoid_phrases unless the phrase is a required source term.",
+        "Use retune_focus and candidate_non_source_terms_to_reduce only to clean the current best wording.",
+        "Use length_guidance; do not compress the cluster into a summary.",
+        "Keep the same people, event, activity, outcome, point of view, and referential continuity.",
+        "Do not invent new names, dates, places, dialogue, objects, clients, classmates, or side events.",
+        "Do not replace the source scenario with a different scene.",
+        "Do not return a fragment; the replacement must cover the whole source cluster.",
+        "Do not write a plan, label, explanation of the method, or bullet list.",
+    ]
+
+
+def _fallback_route_writer_method() -> list[str]:
+    return [
+        "Rewrite this cluster as a concrete route window, not as phrase repair.",
+        "Follow fallback_route_blueprint.steps in order.",
+        "Use fallback_route_blueprint.sentence_jobs.",
+        "Each sentence job should carry a full source beat or bridge, not a compressed summary.",
+        "Follow length_guidance as writing guidance; fuller source-grounded wording is preferred over compression.",
+        "Do not copy fallback_route_blueprint labels or step names into the replacement.",
+        "Change the route of remaining_problem_sentences most strongly.",
+        "Do not keep an avoid_openers item as the opening sentence.",
+        "Preserve each source-supported beat unless two adjacent beats are naturally merged.",
+        "Stay source-near: keep simple source words when they already work.",
+        "Use cluster.source_phrase_anchors where they fit naturally.",
+        "Do not upgrade simple source wording into formal education-theory labels.",
+        "Keep the same people, event, activity, outcome, and point of view.",
+        "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
+        "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
+        "If the source uses I or my, keep that teacher viewpoint instead of replacing it with a detached narrator.",
+        "Do not invent new names, dates, places, dialogue, weather, objects, clients, classmates, or side events.",
+        "Do not replace the source scenario with a different scene.",
+        "Do not return a fragment; the replacement must cover the whole source cluster.",
+        "Do not write a plan, label, explanation of the method, or bullet list.",
+        "Avoid abstract summary language. Make the movement happen through the event.",
+    ]
+
+
+def _fallback_route_retune_method() -> list[str]:
+    return [
+        "Rewrite the whole cluster again, but focus on the remaining problem sentence route.",
+        "Follow fallback_route_blueprint.steps in order.",
+        "Use fallback_route_blueprint.sentence_jobs.",
+        "Each sentence job should carry a full source beat or bridge, not a compressed summary.",
+        "Follow length_guidance as writing guidance; fuller source-grounded wording is preferred over compression.",
+        "Do not copy fallback_route_blueprint labels or step names into the replacement.",
+        "Break any packed sentence into clearer event movement if needed.",
+        "Preserve each source_event_beats item unless two adjacent beats are naturally merged.",
+        "Stay source-near: keep simple source words when they already work.",
+        "Use cluster.source_phrase_anchors where they fit naturally.",
+        "Reduce candidate_non_source_terms_to_reduce by replacing them with source wording where possible.",
+        "Do not upgrade simple source wording into formal education-theory labels.",
+        "If the source uses I or my, keep that teacher viewpoint instead of replacing it with a detached narrator.",
+        "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
+        "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
+        "Use concrete classroom, action, or event wording from the same source scenario instead of summary wording.",
+        "Do not invent new names, dates, places, dialogue, weather, objects, clients, classmates, or side events.",
+        "Do not replace the source scenario with a different scene.",
+        "Do not return a fragment; the replacement must cover the whole source cluster.",
+        "Do not write a plan, label, explanation of the method, or bullet list.",
+    ]
 
 
 def generate_residual_cluster_seed_variants(
@@ -558,28 +634,31 @@ def _parse_route_plan(raw: str, *, source_text: str) -> tuple[dict[str, Any] | N
         return None, {
             **diagnostics,
             "status": "schema_failed",
-            "reason": "route_plan_has_no_supported_better_route",
+            "reason": "route_plan_has_no_executable_brief",
             "route_plan_keys": sorted(plan.keys()),
+            "dropped_must_preserve_count": _must_preserve_input_count(plan.get("must_preserve")) - len(sanitized.get("must_preserve") or []),
         }
     return sanitized, {
         **diagnostics,
         "status": "ok",
-        "better_route_count": len(sanitized.get("better_route") or []),
-        "phrase_repath_count": len(sanitized.get("phrases_to_repath") or []),
-        "sentence_job_count": len(sanitized.get("sentence_jobs") or []),
+        "must_change_count": len(sanitized.get("must_change") or []),
+        "must_preserve_count": len(sanitized.get("must_preserve") or []),
+        "sentence_plan_count": len(sanitized.get("sentence_plan") or []),
+        "length_target": sanitized.get("length_target"),
     }
 
 
 def _sanitize_route_plan(plan: dict[str, Any], *, source_text: str) -> dict[str, Any]:
     source = str(source_text or "")
     return {
-        "current_route": _sanitize_current_route(plan.get("current_route"), source_text=source),
-        "better_route": _sanitize_better_route(plan.get("better_route"), source_text=source),
-        "sentence_jobs": _string_list(plan.get("sentence_jobs"), limit=8),
-        "phrases_to_repath": _sanitize_phrase_repaths(plan.get("phrases_to_repath"), source_text=source),
-        "plain_style_bans": _string_list(plan.get("plain_style_bans"), limit=12),
-        "opening_strategy": _short_string(plan.get("opening_strategy"), limit=220),
-        "length_strategy": _short_string(plan.get("length_strategy"), limit=220),
+        "failed_route": _short_string(plan.get("failed_route"), limit=320),
+        "replacement_route": _short_string(plan.get("replacement_route"), limit=360),
+        "must_change": _string_list(plan.get("must_change"), limit=8),
+        "must_preserve": _sanitize_must_preserve(plan.get("must_preserve"), source_text=source, limit=10),
+        "sentence_plan": _string_list(plan.get("sentence_plan"), limit=8),
+        "avoid_phrases": _supported_or_short_list(plan.get("avoid_phrases"), source_text=source, limit=12),
+        "length_target": _length_target(plan.get("length_target")),
+        "reason_this_should_move_score": _short_string(plan.get("reason_this_should_move_score"), limit=320),
     }
 
 
@@ -643,7 +722,21 @@ def _sanitize_phrase_repaths(value: Any, *, source_text: str) -> list[dict[str, 
 
 
 def _route_plan_valid(plan: Any) -> bool:
-    return isinstance(plan, dict) and bool(plan.get("better_route"))
+    return (
+        isinstance(plan, dict)
+        and bool(plan.get("replacement_route"))
+        and bool(plan.get("must_change"))
+        and bool(plan.get("must_preserve"))
+        and bool(plan.get("sentence_plan"))
+        and _length_target(plan.get("length_target")) in {"same_length", "slight_expand", "expand"}
+    )
+
+
+def _length_target(value: Any) -> str:
+    target = _short_string(value, limit=40)
+    if target in {"same_length", "slight_expand", "expand"}:
+        return target
+    return "slight_expand"
 
 
 def _route_plan_response_format() -> dict[str, Any]:
@@ -658,84 +751,55 @@ def _route_plan_response_format() -> dict[str, Any]:
                     "route_plan": {
                         "type": "object",
                         "properties": {
-                            "current_route": {
-                                "type": "array",
-                                "minItems": 1,
-                                "maxItems": 8,
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "source_quote": {"type": "string"},
-                                        "function": {"type": "string"},
-                                        "weakness": {"type": "string"},
-                                    },
-                                    "required": ["source_quote", "function", "weakness"],
-                                    "additionalProperties": False,
-                                },
-                            },
-                            "better_route": {
-                                "type": "array",
-                                "minItems": 1,
-                                "maxItems": 8,
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "job_id": {"type": "string"},
-                                        "job": {"type": "string"},
-                                        "source_quotes": {
-                                            "type": "array",
-                                            "minItems": 1,
-                                            "maxItems": 3,
-                                            "items": {"type": "string"},
-                                        },
-                                        "avoid_copying": {
-                                            "type": "array",
-                                            "minItems": 0,
-                                            "maxItems": 4,
-                                            "items": {"type": "string"},
-                                        },
-                                    },
-                                    "required": ["job_id", "job", "source_quotes", "avoid_copying"],
-                                    "additionalProperties": False,
-                                },
-                            },
-                            "sentence_jobs": {
+                            "failed_route": {"type": "string"},
+                            "replacement_route": {"type": "string"},
+                            "must_change": {
                                 "type": "array",
                                 "minItems": 1,
                                 "maxItems": 8,
                                 "items": {"type": "string"},
                             },
-                            "phrases_to_repath": {
+                            "must_preserve": {
                                 "type": "array",
-                                "minItems": 0,
+                                "minItems": 1,
                                 "maxItems": 10,
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "source": {"type": "string"},
-                                        "plain_direction": {"type": "string"},
+                                        "source_quote": {"type": "string"},
+                                        "preserve_as": {"type": "string"},
                                     },
-                                    "required": ["source", "plain_direction"],
+                                    "required": ["source_quote", "preserve_as"],
                                     "additionalProperties": False,
                                 },
                             },
-                            "plain_style_bans": {
+                            "sentence_plan": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "items": {"type": "string"},
+                            },
+                            "avoid_phrases": {
                                 "type": "array",
                                 "minItems": 0,
                                 "maxItems": 12,
                                 "items": {"type": "string"},
                             },
-                            "opening_strategy": {"type": "string"},
-                            "length_strategy": {"type": "string"},
+                            "length_target": {
+                                "type": "string",
+                                "enum": ["same_length", "slight_expand", "expand"],
+                            },
+                            "reason_this_should_move_score": {"type": "string"},
                         },
                         "required": [
-                            "current_route",
-                            "better_route",
-                            "sentence_jobs",
-                            "phrases_to_repath",
-                            "plain_style_bans",
-                            "opening_strategy",
-                            "length_strategy",
+                            "failed_route",
+                            "replacement_route",
+                            "must_change",
+                            "must_preserve",
+                            "sentence_plan",
+                            "avoid_phrases",
+                            "length_target",
+                            "reason_this_should_move_score",
                         ],
                         "additionalProperties": False,
                     }
@@ -1045,6 +1109,27 @@ def _supported_or_short_list(value: Any, *, source_text: str, limit: int) -> lis
         if len(items) >= limit:
             break
     return items
+
+
+def _sanitize_must_preserve(value: Any, *, source_text: str, limit: int) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for row in _raw_list(value):
+        if not isinstance(row, dict):
+            continue
+        quote = _supported_quote(row.get("source_quote"), source_text)
+        preserve_as = _short_string(row.get("preserve_as"), limit=180)
+        if not quote or not preserve_as:
+            continue
+        item = {"source_quote": quote, "preserve_as": preserve_as}
+        if item not in rows:
+            rows.append(item)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _must_preserve_input_count(value: Any) -> int:
+    return len(_raw_list(value))
 
 
 def _short_string(value: Any, *, limit: int) -> str:

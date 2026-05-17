@@ -238,6 +238,16 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
     assert payload["cluster"]["referential_continuity"]["opening_subject"] == "The"
     assert payload["scanner_local_findings"]["top_sentence_targets"][0]["sentence_id"] == "s001"
     assert "route_plan" in payload["output_schema"]
+    assert set(payload["output_schema"]["route_plan"].keys()) == {
+        "failed_route",
+        "replacement_route",
+        "must_change",
+        "must_preserve",
+        "sentence_plan",
+        "avoid_phrases",
+        "length_target",
+        "reason_this_should_move_score",
+    }
     lowered = prompt.casefold()
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
@@ -246,28 +256,29 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
 def test_v5_residual_route_plan_parser_requires_source_supported_steps():
     raw = json.dumps({
         "route_plan": {
-            "current_route": [
+            "failed_route": "The current route starts with broad interpretation before showing the event.",
+            "replacement_route": "Start from the service moment, then show how the thank-you card made the result visible.",
+            "must_change": [
+                "Move the interpretation after the service and thank-you card.",
+                "Replace the broad opening with event movement.",
+            ],
+            "must_preserve": [
                 {
                     "source_quote": "The service changed the student's confidence.",
-                    "function": "opens with broad interpretation",
-                    "weakness": "too compressed",
-                }
-            ],
-            "better_route": [
+                    "preserve_as": "service impact on confidence",
+                },
                 {
-                    "job_id": "j1",
-                    "job": "start from the service moment before interpreting confidence",
-                    "source_quotes": ["The service changed the student's confidence."],
-                    "avoid_copying": ["The service changed"],
-                }
+                    "source_quote": "The thank-you card made the result visible.",
+                    "preserve_as": "visible outcome",
+                },
             ],
-            "sentence_jobs": ["Start from the service moment."],
-            "phrases_to_repath": [
-                {"source": "The service changed", "plain_direction": "start with the concrete service action"},
+            "sentence_plan": [
+                "Open with the service moment.",
+                "Use the thank-you card to make the result visible.",
             ],
-            "plain_style_bans": ["demonstrates"],
-            "opening_strategy": "open with the event",
-            "length_strategy": "stay close to source length",
+            "avoid_phrases": ["The service changed"],
+            "length_target": "same_length",
+            "reason_this_should_move_score": "The route should move because it replaces a broad claim with event-first evidence.",
         }
     })
 
@@ -281,10 +292,89 @@ def test_v5_residual_route_plan_parser_requires_source_supported_steps():
     )
 
     assert diagnostics["status"] == "ok"
-    assert parsed["better_route"][0]["source_quotes"] == ["The service changed the student's confidence."]
-    assert parsed["phrases_to_repath"][0]["source"] == "The service changed"
+    assert parsed["replacement_route"].startswith("Start from the service moment")
+    assert parsed["must_preserve"][0]["source_quote"] == "The service changed the student's confidence."
+    assert parsed["avoid_phrases"][0] == "The service changed"
+    assert parsed["length_target"] == "same_length"
     assert unsupported is None
     assert unsupported_diagnostics["status"] == "schema_failed"
+    assert unsupported_diagnostics["dropped_must_preserve_count"] == 2
+
+
+def test_v5_residual_route_plan_rejects_summarized_preserve_anchors():
+    raw = json.dumps({
+        "route_plan": {
+            "failed_route": "The current route starts with broad interpretation before showing the event.",
+            "replacement_route": "Start from the service moment, then show the thank-you card as evidence.",
+            "must_change": ["Move the interpretation after the visible event."],
+            "must_preserve": [
+                {
+                    "source_quote": "The fact that this was a learning experience for Johnny.",
+                    "preserve_as": "learning experience",
+                }
+            ],
+            "sentence_plan": ["Open with the service moment."],
+            "avoid_phrases": ["The service changed"],
+            "length_target": "same_length",
+            "reason_this_should_move_score": "The route should move because it replaces summary with evidence.",
+        }
+    })
+
+    parsed, diagnostics = _parse_route_plan(
+        raw,
+        source_text="The service changed the student's confidence. The thank-you card made the result visible.",
+    )
+
+    assert parsed is None
+    assert diagnostics["status"] == "schema_failed"
+    assert diagnostics["dropped_must_preserve_count"] == 1
+
+
+def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
+    cluster = type("Cluster", (), {
+        "cluster_id": "cluster_004",
+        "text": (
+            "The service changed the student's confidence. "
+            "The thank-you card made the result visible."
+        ),
+        "start_char": 5,
+        "end_char": 90,
+        "risk_score": 10.0,
+        "sentence_count": 2,
+        "metadata": {},
+    })()
+    section = _section_from_cluster(cluster)
+    route_plan = {
+        "failed_route": "The current route starts with a broad result.",
+        "replacement_route": "Start from the service, then use the thank-you card as visible evidence.",
+        "must_change": ["Move the broad result after the visible event."],
+        "must_preserve": [
+            {
+                "source_quote": "The thank-you card made the result visible.",
+                "preserve_as": "visible outcome",
+            }
+        ],
+        "sentence_plan": ["Open with the service.", "End with the thank-you card outcome."],
+        "avoid_phrases": ["The service changed"],
+        "length_target": "same_length",
+        "reason_this_should_move_score": "Event-first route should reduce the broad summary pattern.",
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=1,
+        route_plan=route_plan,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["execution_brief"] == route_plan
+    assert "fallback_route_blueprint" not in payload
+    assert "custom_route_plan" not in payload
+    assert payload["length_guidance"]["preferred_max_words"] == round(section.word_count * 1.10)
+    lowered = prompt.casefold()
+    assert "follow execution_brief.replacement_route" in lowered
+    assert "fallback_route_blueprint" not in lowered
 
 
 def test_v5_residual_candidate_sort_prefers_cleared_local_cluster():
