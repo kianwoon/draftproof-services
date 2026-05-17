@@ -211,7 +211,7 @@ def test_v5_residual_cluster_prompt_uses_compact_repair_task():
     assert "bypass" not in lowered
     assert "current_route" not in lowered
     assert "do not invent new names" in lowered
-    assert "teacher viewpoint" in lowered
+    assert "source viewpoint" in lowered
     assert "source-near" in lowered
 
 
@@ -552,7 +552,7 @@ def test_v5_residual_acceptance_preserves_directional_local_improvement():
     assert not _has_incremental_movement(local_worse)
 
 
-def test_v5_residual_seed_generator_builds_source_gated_role_route():
+def test_v5_residual_seed_generator_stays_disabled_for_content_agnostic_output():
     cluster = type("Cluster", (), {
         "cluster_id": "cluster_001",
         "text": (
@@ -575,12 +575,7 @@ def test_v5_residual_seed_generator_builds_source_gated_role_route():
 
     variants = generate_residual_cluster_seed_variants(section=section)
 
-    assert len(variants) == 1
-    assert variants[0].variant_id == "route_seed_1"
-    assert "At the beginning" not in variants[0].text
-    assert "required a support worker to accompany" not in variants[0].text
-    assert "hair salon manager" in variants[0].text
-    assert "I had to understand that starting point" in variants[0].text
+    assert variants == []
 
 
 def test_v5_residual_seed_generator_skips_unmatched_clusters():

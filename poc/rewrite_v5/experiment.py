@@ -407,7 +407,7 @@ def build_recomposer_prompt(*, section: SectionUnit, fact_map: FactMap, variant_
             "education_level": "bachelor_degree",
             "voice": "plain undergraduate essay with source-specific reflection where already present",
             "tone": "clear, serious, natural, not scholarly-polished",
-            "allowed_texture": "minor ordinary student phrasing is acceptable when meaning stays clear",
+            "allowed_texture": "minor ordinary writer phrasing is acceptable when meaning stays clear",
             "forbidden_texture": "slang, fake errors, advanced journal style, decorative wording",
         },
         "fact_map": fact_map.to_dict(),

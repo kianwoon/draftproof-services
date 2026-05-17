@@ -187,7 +187,7 @@ def build_cluster_mass_prompt(
             "Every variant must stay within target_word_count.min and target_word_count.max.",
             "If a draft is under target_word_count.min, keep more source detail instead of stopping early.",
             "Preserve all citations exactly.",
-            "Preserve protected terms, names, labels, course codes, and condition names exactly.",
+            "Preserve protected terms, names, labels, source codes, and condition names exactly.",
             "Do not add new facts, examples, names, dates, numbers, citations, or outside knowledge.",
             "Do not import facts from surrounding paragraphs or context.",
             "Do not add headings, bullets, markdown, HTML, labels, or commentary.",

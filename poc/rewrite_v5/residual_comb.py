@@ -37,14 +37,14 @@ from .models import RecompositionVariant, SectionUnit
 
 _ROUTE_PLAN_CONTENT_PROFILES = {
     "reflective_practice_academic": {
-        "use_when": "The cluster is built around a course, classroom, workplace, student, client, practice event, or author reflection.",
+        "use_when": "The cluster is built around learning, work, practice, an observed case, a concrete event, or author reflection.",
         "planning_focus": "Turn broad reflection into event or process movement: context -> difficulty -> action/choice -> observed result -> limited judgment.",
         "avoid": "Do not convert the writer into a detached encyclopedia voice.",
     },
     "broad_explanatory_report": {
         "use_when": "The cluster explains a country, institution, topic, history, culture, economy, technology, or other broad subject for a report-style essay.",
         "planning_focus": "Replace category dumping with grouped topic progression: topic frame -> grouped facts -> contrast or limit -> bridge to next topic.",
-        "avoid": "Do not add personal experience, force reflective teacher/student language, or upgrade simple report wording into encyclopedia-style phrasing.",
+        "avoid": "Do not add personal experience, force unsupported role-specific language, or upgrade simple report wording into encyclopedia-style phrasing.",
     },
     "argumentative_explanatory_essay": {
         "use_when": "The cluster makes a claim, gives reasons, weighs concerns, or argues for a position.",
@@ -744,10 +744,10 @@ def _custom_route_writer_method() -> list[str]:
         "Avoid execution_brief.avoid_phrases unless the phrase is a required source term.",
         "Use length_guidance; do not compress the cluster into a summary.",
         "Change remaining_problem_sentences most strongly.",
-        "Keep the same people, event, activity, outcome, point of view, and referential continuity.",
+        "Keep the same source subjects, actions, evidence, outcome, point of view, and referential continuity.",
         "Use simple source-near wording where it works.",
-        "Do not invent new names, dates, places, dialogue, objects, clients, classmates, or side events.",
-        "Do not replace the source scenario with a different scene.",
+        "Do not invent new names, dates, places, dialogue, objects, relationships, or side events.",
+        "Do not replace the source context with a different scene.",
         "Do not return a fragment; the replacement must cover the whole source cluster.",
         "Do not write a plan, label, explanation of the method, or bullet list.",
     ]
@@ -768,9 +768,9 @@ def _custom_route_retune_method() -> list[str]:
         "Avoid execution_brief.avoid_phrases unless the phrase is a required source term.",
         "Use retune_focus and candidate_non_source_terms_to_reduce only to clean the current best wording.",
         "Use length_guidance; do not compress the cluster into a summary.",
-        "Keep the same people, event, activity, outcome, point of view, and referential continuity.",
-        "Do not invent new names, dates, places, dialogue, objects, clients, classmates, or side events.",
-        "Do not replace the source scenario with a different scene.",
+        "Keep the same source subjects, actions, evidence, outcome, point of view, and referential continuity.",
+        "Do not invent new names, dates, places, dialogue, objects, relationships, or side events.",
+        "Do not replace the source context with a different scene.",
         "Do not return a fragment; the replacement must cover the whole source cluster.",
         "Do not write a plan, label, explanation of the method, or bullet list.",
     ]
@@ -789,13 +789,13 @@ def _fallback_route_writer_method() -> list[str]:
         "Preserve each source-supported beat unless two adjacent beats are naturally merged.",
         "Stay source-near: keep simple source words when they already work.",
         "Use cluster.source_phrase_anchors where they fit naturally.",
-        "Do not upgrade simple source wording into formal education-theory labels.",
-        "Keep the same people, event, activity, outcome, and point of view.",
+        "Do not upgrade simple source wording into formal domain-theory labels.",
+        "Keep the same source subjects, actions, evidence, outcome, and point of view.",
         "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
         "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
-        "If the source uses I or my, keep that teacher viewpoint instead of replacing it with a detached narrator.",
-        "Do not invent new names, dates, places, dialogue, weather, objects, clients, classmates, or side events.",
-        "Do not replace the source scenario with a different scene.",
+        "If the source uses I or my, keep that source viewpoint instead of replacing it with a detached narrator.",
+        "Do not invent new names, dates, places, dialogue, weather, objects, relationships, or side events.",
+        "Do not replace the source context with a different scene.",
         "Do not return a fragment; the replacement must cover the whole source cluster.",
         "Do not write a plan, label, explanation of the method, or bullet list.",
         "Avoid abstract summary language. Make the movement happen through the event.",
@@ -815,13 +815,13 @@ def _fallback_route_retune_method() -> list[str]:
         "Stay source-near: keep simple source words when they already work.",
         "Use cluster.source_phrase_anchors where they fit naturally.",
         "Reduce candidate_non_source_terms_to_reduce by replacing them with source wording where possible.",
-        "Do not upgrade simple source wording into formal education-theory labels.",
-        "If the source uses I or my, keep that teacher viewpoint instead of replacing it with a detached narrator.",
+        "Do not upgrade simple source wording into formal domain-theory labels.",
+        "If the source uses I or my, keep that source viewpoint instead of replacing it with a detached narrator.",
         "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
         "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
-        "Use concrete classroom, action, or event wording from the same source scenario instead of summary wording.",
-        "Do not invent new names, dates, places, dialogue, weather, objects, clients, classmates, or side events.",
-        "Do not replace the source scenario with a different scene.",
+        "Use concrete source action, process, or event wording from the same source context instead of summary wording.",
+        "Do not invent new names, dates, places, dialogue, weather, objects, relationships, or side events.",
+        "Do not replace the source context with a different scene.",
         "Do not return a fragment; the replacement must cover the whole source cluster.",
         "Do not write a plan, label, explanation of the method, or bullet list.",
     ]
@@ -832,27 +832,16 @@ def generate_residual_cluster_seed_variants(
     section: SectionUnit,
     local_goal: dict[str, Any] | None = None,
 ) -> list[RecompositionVariant]:
-    """Generate scanner-scored route seeds before asking the model.
+    """Reserved deterministic seed hook.
 
-    These are not accepted directly. They enter the same local and full-document
-    scoring path as LLM candidates, so a bad seed is only a measured miss.
+    V5 must not ship content-specific route rewrites from prior experiments.
+    Scanner/planner output should drive custom prompts; deterministic seeds stay
+    disabled unless a future implementation is data-derived and content-agnostic.
     """
 
+    del section
     del local_goal
-    texts = _student_support_role_progression_seed_texts(section.text)
-    variants: list[RecompositionVariant] = []
-    seen: set[str] = set()
-    for index, text in enumerate(texts, start=1):
-        normalized = " ".join(str(text or "").split())
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        variants.append(RecompositionVariant(
-            variant_id=f"route_seed_{index}",
-            text=normalized,
-            word_count=word_count(normalized),
-        ))
-    return variants
+    return []
 
 
 def generate_residual_cluster_retunes(
@@ -2311,7 +2300,7 @@ def build_route_blueprint(*, section: SectionUnit, local_goal: dict[str, Any] | 
                 "step_id": f"step_{len(steps) + 1:02d}",
                 "source_beat_index": beat_index,
                 "source_beat": beats[beat_index],
-                "instruction": "Add one bridge sentence explaining why this starting point shaped the next teaching action.",
+                "instruction": "Add one bridge sentence explaining why this starting point shaped the next source action or claim.",
             })
     avoid_openers = [beats[index] for index in range(0, start_index)]
     avoid_openers.extend(preview for preview in problem_previews if preview)
@@ -2353,7 +2342,7 @@ def _sentence_jobs_for_blueprint(*, beats: list[str], start_index: int) -> list[
     if start_index == 0:
         jobs.append("Sentence 1: restate the starting situation using simple source-near wording.")
         if len(beats) >= 4:
-            jobs.append("Sentence 2: explain why this starting point shaped the teacher's next action.")
+            jobs.append("Sentence 2: explain why this starting point shaped the next source action or claim.")
         for index, beat in enumerate(beats[1:], start=2):
             if index == len(beats):
                 jobs.append("Final sentence: make the outcome visible in plain wording.")
@@ -2369,92 +2358,6 @@ def _sentence_jobs_for_blueprint(*, beats: list[str], start_index: int) -> list[
     for _ in beats[:start_index]:
         jobs.append("Final sentence: fold the skipped broad source opener into the meaning after the event.")
     return jobs
-
-
-def _student_support_role_progression_seed_texts(text: str) -> list[str]:
-    """Source-gated route seed for learner support -> role -> outcome clusters."""
-
-    source = str(text or "")
-    folded = source.casefold()
-    required_terms = (
-        "support worker",
-        "interacted",
-        "past learning",
-        "role-playing",
-        "group project",
-        "positive feedback",
-    )
-    if any(term not in folded for term in required_terms):
-        return []
-
-    pronouns = _dominant_learner_pronouns(source)
-    course_word = "course" if "course" in folded else "class"
-    role_label = _role_label_from_source(source)
-    task_label = _task_label_from_role(role_label)
-    outcome_tail = "received positive feedback from them afterward"
-    if "teammates" in folded:
-        outcome_tail = "received positive feedback from them afterward"
-    elif "client" in folded:
-        outcome_tail = "received positive feedback afterward"
-
-    student_ref = "the student"
-    subject = pronouns["subject"]
-    obj = pronouns["object"]
-    poss = pronouns["possessive"]
-    return [
-        (
-            f"When {student_ref} first joined the {course_word}, {subject} came to class with a support worker "
-            f"and barely interacted with the group. I had to understand that starting point before expecting {obj} "
-            f"to participate. Casual conversation gave me a better picture of {poss} past learning experiences. "
-            f"After that, patient guidance and role-play moved the confidence work onto {task_label} {subject} "
-            f"could actually handle. The group project gave {obj} a specific role rather than a general instruction "
-            f"to join in. As the {role_label}, {subject} had to guide the task and communicate with teammates. "
-            f"{subject.capitalize()} managed that responsibility successfully, led the group, and {outcome_tail}."
-        )
-    ]
-
-
-def _dominant_learner_pronouns(text: str) -> dict[str, str]:
-    tokens = [token.strip(" \t\r\n.,:;!?()[]{}\"'“”‘’").casefold() for token in str(text or "").split()]
-    counts = {key: tokens.count(key) for key in ("he", "she", "they")}
-    if counts.get("she", 0) > counts.get("he", 0) and counts.get("she", 0) >= counts.get("they", 0):
-        return {"subject": "she", "object": "her", "possessive": "her"}
-    if counts.get("they", 0) > counts.get("he", 0):
-        return {"subject": "they", "object": "them", "possessive": "their"}
-    return {"subject": "he", "object": "him", "possessive": "his"}
-
-
-def _role_label_from_source(text: str) -> str:
-    tokens = [
-        token.strip(" \t\r\n.,:;!?()[]{}\"'“”‘’")
-        for token in str(text or "").split()
-        if token.strip(" \t\r\n.,:;!?()[]{}\"'“”‘’")
-    ]
-    for index, token in enumerate(tokens):
-        if token.casefold() != "manager":
-            continue
-        start = max(0, index - 2)
-        phrase_tokens = tokens[start:index + 1]
-        if phrase_tokens:
-            return " ".join(phrase_tokens)
-    anchors = _source_phrase_anchors(text)
-    for anchor in anchors:
-        lowered = anchor.casefold()
-        if "manager" in lowered and len(anchor.split()) <= 5:
-            return anchor
-    folded = str(text or "").casefold()
-    if "manager" in folded:
-        return "manager"
-    return "specific role"
-
-
-def _task_label_from_role(role_label: str) -> str:
-    lowered = str(role_label or "").casefold()
-    if "salon" in lowered:
-        return "a salon task"
-    if "manager" in lowered:
-        return "a group task"
-    return "a concrete group task"
 
 
 def _local_goal(original_text: str, candidate_text: str) -> dict[str, Any]:
