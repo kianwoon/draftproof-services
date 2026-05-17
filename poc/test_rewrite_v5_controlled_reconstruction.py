@@ -29,13 +29,16 @@ from rewrite_v5.residual_comb import (
     _has_risky_window_cleanup_movement,
     _has_unsafe_cluster_cleanup_movement,
     _has_full_document_fallback_movement,
+    _ordered_density_cluster_rows,
     _parallel_single_variant_max_tokens,
     _parse_route_plan,
     _runtime_budget_exhausted,
     _runtime_budget_stop_record,
     _section_apply_boundary_integrity,
     _serial_variant_max_tokens,
+    _should_start_with_unsafe_cluster_cleanup,
     _text_integrity_regression,
+    _would_discard_structural_progress,
     _has_incremental_movement,
     _residual_candidate_sort_key,
 )
@@ -1077,11 +1080,27 @@ def test_v5_tail_cleanup_acceptance_is_scanner_owned():
             "ai_delta": 0.0,
         },
     }
+    cluster_local_directional = {
+        "incremental": {
+            "unsafe_cluster_count_delta": 0.0,
+            "rank_delta": 0.5,
+            "risky_window_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.1,
+        },
+        "local_scores": {
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 12.0,
+            "topk_delta": 3.0,
+            "rank_delta": 2.0,
+        },
+    }
 
     assert _has_risky_window_cleanup_movement(risky_window_drop)
     assert not _has_risky_window_cleanup_movement(risky_window_no_drop)
     assert not _has_risky_window_cleanup_movement(risky_window_cluster_regression)
     assert _has_unsafe_cluster_cleanup_movement(cluster_drop)
+    assert _has_unsafe_cluster_cleanup_movement(cluster_local_directional)
     assert not _has_unsafe_cluster_cleanup_movement(cluster_rank_regression)
     assert not _has_unsafe_cluster_cleanup_movement(cluster_risky_window_regression)
 
@@ -1141,6 +1160,63 @@ def test_v5_global_best_fallback_rejects_density_regression():
     }
 
     assert not _has_full_document_fallback_movement(candidate)
+
+
+def test_v5_phase_order_starts_with_unsafe_cluster_cleanup_when_density_is_unsafe():
+    assert _should_start_with_unsafe_cluster_cleanup(
+        density_gate={"safe": False},
+        unsafe_cluster_cleanup_rounds=12,
+    )
+    assert not _should_start_with_unsafe_cluster_cleanup(
+        density_gate={"safe": True},
+        unsafe_cluster_cleanup_rounds=12,
+    )
+    assert not _should_start_with_unsafe_cluster_cleanup(
+        density_gate={"safe": False},
+        unsafe_cluster_cleanup_rounds=0,
+    )
+
+
+def test_v5_budget_order_prefers_clearable_unsafe_clusters_without_content_rules():
+    clusters = [
+        {"word_count": 268, "sentence_count": 18, "risk_score": 96.48},
+        {"word_count": 129, "sentence_count": 8, "risk_score": 43.072},
+        {"word_count": 24, "sentence_count": 2, "risk_score": 8.972},
+    ]
+
+    scanner_order = _ordered_density_cluster_rows(clusters, selection_mode="scanner")
+    clearable_order = _ordered_density_cluster_rows(clusters, selection_mode="clearable")
+
+    assert [row[0] for row in scanner_order] == [1, 2, 3]
+    assert [row[0] for row in clearable_order] == [3, 2, 1]
+
+
+def test_v5_global_best_fallback_does_not_discard_accepted_structural_progress():
+    current_scores = {
+        "ai_delta": 0.37,
+        "rank_delta": 0.932,
+        "unsafe_cluster_count_delta": 1.0,
+        "risky_window_count_delta": 0.0,
+        "topk_calibrated_risk_delta": 0.0,
+        "topk_delta": 0.0,
+    }
+    ai_only_candidate_scores = {
+        "ai_delta": 1.56,
+        "rank_delta": -0.805,
+        "unsafe_cluster_count_delta": 0.0,
+        "risky_window_count_delta": 1.0,
+        "topk_calibrated_risk_delta": 0.0,
+        "topk_delta": 0.0,
+    }
+
+    assert _would_discard_structural_progress(ai_only_candidate_scores, current_scores)
+    assert not _full_document_candidate_beats_scores(
+        {
+            "apply_status": {"applied": True},
+            "scores": ai_only_candidate_scores,
+        },
+        current_scores,
+    )
 
 
 def test_v5_global_best_fallback_keeps_partial_ai_and_window_movement_despite_rank_regression():
@@ -1314,6 +1390,10 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
                     "candidates": [{"variant_id": "v1"}],
                 }
             ],
+            "phase_order": {
+                "unsafe_cluster_first": True,
+                "reason": "eligible_span_density_unsafe",
+            },
             "rewritten_document": "This is the rewritten document.",
         }
 
@@ -1349,8 +1429,12 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     assert summary["rewrite_pipeline_version"] == "rewrite_v5_residual_cluster_comb"
     assert summary["rewrite_engine_mode"] == "v5_residual_cluster_comb_production"
     assert summary["candidate_generation_status"]["accepted_count"] == 1
+    assert summary["partial_rewrite_preserved"] is True
+    assert summary["partial_rewrite_preservation_reason"] == "safe_progress_kept_despite_strict_goal_miss"
     assert summary["v5_scores"]["deltas"]["ai_delta"] == 6.0
     assert summary["final_text"] == "This is the rewritten document."
+    layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
+    assert layer["phase_order"]["unsafe_cluster_first"] is True
 
 
 def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_path, monkeypatch):
@@ -1369,6 +1453,7 @@ def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_pat
             "unsafe_cluster_cleanup_rounds": [],
             "final_risky_window_cleanup_rounds": [],
             "eligible_span_density_gate": {},
+            "phase_order": {"unsafe_cluster_first": False, "reason": "default_route_then_cleanup"},
             "global_best_fallback": {
                 "applied": True,
                 "reason": "best_full_document_candidate_superseded_phase_accepted_result",
@@ -1417,6 +1502,7 @@ def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_pat
     assert summary["candidate_generation_status"]["accepted_count"] == 1
     assert summary["selected_candidate"]["section_id"] == "density_cluster_004"
     assert layer["global_best_fallback"]["applied"] is True
+    assert layer["phase_order"]["reason"] == "default_route_then_cleanup"
 
 
 def test_v5_route_blueprint_moves_generic_opener_after_concrete_event():

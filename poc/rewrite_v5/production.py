@@ -161,6 +161,12 @@ def run_rewrite_pipeline_v5(
         public_status = "rewrite_candidate_generated_needs_external_review"
     else:
         public_status = "no_safe_rewrite_applied"
+    partial_rewrite_preserved = (
+        public_status == "rewrite_candidate_generated_needs_external_review"
+        and not no_text_change
+        and bool(accepted)
+        and not bool(final_goal.get("goal_met"))
+    )
 
     elapsed = time.time() - started
     original_scores = payload.get("baseline_scores") if isinstance(payload.get("baseline_scores"), dict) else {}
@@ -175,6 +181,12 @@ def run_rewrite_pipeline_v5(
         "rewrite_engine_mode": "v5_residual_cluster_comb_production",
         "outcome": public_status,
         "public_status": public_status,
+        "partial_rewrite_preserved": partial_rewrite_preserved,
+        "partial_rewrite_preservation_reason": (
+            "safe_progress_kept_despite_strict_goal_miss"
+            if partial_rewrite_preserved
+            else ""
+        ),
         "public_candidate_warning": (
             "best_candidate_requires_external_review"
             if public_status == "rewrite_candidate_generated_needs_external_review"
@@ -428,6 +440,7 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "final_scores": payload.get("final_scores"),
         "eligible_span_density_gate": payload.get("eligible_span_density_gate"),
         "runtime_budget": payload.get("runtime_budget") if isinstance(payload.get("runtime_budget"), dict) else None,
+        "phase_order": payload.get("phase_order") if isinstance(payload.get("phase_order"), dict) else None,
         "goal": payload.get("goal"),
         "accepted_rounds": sum(1 for row in all_rounds if isinstance(row, dict) and row.get("accepted")),
         "rounds": _compact_v5_rounds(rounds),

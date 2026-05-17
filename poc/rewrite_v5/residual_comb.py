@@ -152,8 +152,78 @@ def run_v5_residual_cluster_comb_experiment(
         extra_body=extra_body,
     ))
 
+    cleanup_variants = cleanup_variant_count if cleanup_variant_count is not None else variant_count
+    risky_window_limit = _cleanup_round_limit(
+        risky_window_cleanup_rounds,
+        env_name="DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS",
+        default=2,
+    )
+    unsafe_cluster_limit = _cleanup_round_limit(
+        unsafe_cluster_cleanup_rounds,
+        env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
+        default=12,
+    )
+    final_risky_window_limit = _cleanup_round_limit(
+        final_risky_window_cleanup_rounds,
+        env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
+        default=2,
+    )
+    baseline_density_gate = build_eligible_span_density_contract(current_text, current_report)
+    unsafe_cluster_first = _should_start_with_unsafe_cluster_cleanup(
+        density_gate=baseline_density_gate,
+        unsafe_cluster_cleanup_rounds=unsafe_cluster_limit,
+    )
+    phase_order = {
+        "unsafe_cluster_first": unsafe_cluster_first,
+        "reason": "eligible_span_density_unsafe" if unsafe_cluster_first else "default_route_then_cleanup",
+        "unsafe_cluster_selection_mode": "clearable" if unsafe_cluster_first and budget_seconds is not None else "scanner",
+        "unsafe_cluster_route_planning": not (unsafe_cluster_first and budget_seconds is not None),
+        "initial_density_gate": _compact_density_gate(baseline_density_gate),
+    }
+
     rounds: list[dict[str, Any]] = []
-    for round_index in range(1, max(1, int(max_rounds or 1)) + 1):
+    risky_window_rounds: list[dict[str, Any]] = []
+    unsafe_cluster_rounds: list[dict[str, Any]] = []
+    final_risky_window_rounds: list[dict[str, Any]] = []
+    if unsafe_cluster_first and not _runtime_budget_exhausted(started_at, budget_seconds):
+        _emit_progress(progress_callback, 67, "Cleaning V5 unsafe clusters first")
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            unsafe_cluster_rounds,
+            global_best_candidate,
+        ) = _run_unsafe_cluster_cleanup_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "unsafe_cluster_cleanup",
+            global_best_candidate=global_best_candidate,
+            max_rounds=unsafe_cluster_limit,
+            variant_count=cleanup_variants,
+            selection_mode=str(phase_order["unsafe_cluster_selection_mode"]),
+            route_plan_enabled=bool(phase_order["unsafe_cluster_route_planning"]),
+            progress_callback=progress_callback,
+            progress_percent=68,
+            started_at=started_at,
+            max_seconds=budget_seconds,
+        )
+
+    core_round_limit = 0 if unsafe_cluster_first else max(1, int(max_rounds or 1))
+    if core_round_limit <= 0:
+        rounds.append({
+            "round": 1,
+            "status": "skipped",
+            "reason": "unsafe_cluster_first_budget_mode",
+            "current_scores": current_scores,
+        })
+    for round_index in range(1, core_round_limit + 1):
         if _runtime_budget_exhausted(started_at, budget_seconds):
             rounds.append(_runtime_budget_stop_record(
                 phase="residual_cluster_comb",
@@ -353,13 +423,7 @@ def run_v5_residual_cluster_comb_experiment(
             ))
             break
 
-    cleanup_variants = cleanup_variant_count if cleanup_variant_count is not None else variant_count
-    risky_window_rounds: list[dict[str, Any]] = []
-    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
-        risky_window_cleanup_rounds,
-        env_name="DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS",
-        default=2,
-    ) > 0:
+    if not _runtime_budget_exhausted(started_at, budget_seconds) and risky_window_limit > 0:
         _emit_progress(progress_callback, 76, "Cleaning V5 risky windows")
         (
             current_text,
@@ -379,11 +443,7 @@ def run_v5_residual_cluster_comb_experiment(
             gateway=gateway,
             output_dir=out_dir / "risky_window_cleanup",
             global_best_candidate=global_best_candidate,
-            max_rounds=_cleanup_round_limit(
-                risky_window_cleanup_rounds,
-                env_name="DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS",
-                default=2,
-            ),
+            max_rounds=risky_window_limit,
             variant_count=cleanup_variants,
             progress_callback=progress_callback,
             progress_percent=76,
@@ -391,12 +451,11 @@ def run_v5_residual_cluster_comb_experiment(
             max_seconds=budget_seconds,
         )
 
-    unsafe_cluster_rounds: list[dict[str, Any]] = []
-    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
-        unsafe_cluster_cleanup_rounds,
-        env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
-        default=12,
-    ) > 0:
+    if (
+        not unsafe_cluster_first
+        and not _runtime_budget_exhausted(started_at, budget_seconds)
+        and unsafe_cluster_limit > 0
+    ):
         _emit_progress(progress_callback, 77, "Cleaning V5 unsafe clusters")
         (
             current_text,
@@ -416,24 +475,17 @@ def run_v5_residual_cluster_comb_experiment(
             gateway=gateway,
             output_dir=out_dir / "unsafe_cluster_cleanup",
             global_best_candidate=global_best_candidate,
-            max_rounds=_cleanup_round_limit(
-                unsafe_cluster_cleanup_rounds,
-                env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
-                default=12,
-            ),
+            max_rounds=unsafe_cluster_limit,
             variant_count=cleanup_variants,
+            selection_mode="scanner",
+            route_plan_enabled=True,
             progress_callback=progress_callback,
             progress_percent=77,
             started_at=started_at,
             max_seconds=budget_seconds,
         )
 
-    final_risky_window_rounds: list[dict[str, Any]] = []
-    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
-        final_risky_window_cleanup_rounds,
-        env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
-        default=2,
-    ) > 0:
+    if not _runtime_budget_exhausted(started_at, budget_seconds) and final_risky_window_limit > 0:
         _emit_progress(progress_callback, 78, "Final V5 risky window cleanup")
         (
             current_text,
@@ -453,11 +505,7 @@ def run_v5_residual_cluster_comb_experiment(
             gateway=gateway,
             output_dir=out_dir / "final_risky_window_cleanup",
             global_best_candidate=global_best_candidate,
-            max_rounds=_cleanup_round_limit(
-                final_risky_window_cleanup_rounds,
-                env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
-                default=2,
-            ),
+            max_rounds=final_risky_window_limit,
             variant_count=cleanup_variants,
             progress_callback=progress_callback,
             progress_percent=78,
@@ -495,6 +543,7 @@ def run_v5_residual_cluster_comb_experiment(
         "risky_window_cleanup_rounds": risky_window_rounds,
         "unsafe_cluster_cleanup_rounds": unsafe_cluster_rounds,
         "final_risky_window_cleanup_rounds": final_risky_window_rounds,
+        "phase_order": phase_order,
         "global_best_fallback": global_best_fallback,
         "final_scores": current_scores,
         "eligible_span_density_gate": density_gate,
@@ -515,6 +564,18 @@ def _cleanup_round_limit(value: int | None, *, env_name: str, default: int) -> i
     if value is not None:
         return max(0, min(12, int(value or 0)))
     return _int_env(env_name, default, minimum=0, maximum=12)
+
+
+def _should_start_with_unsafe_cluster_cleanup(
+    *,
+    density_gate: dict[str, Any],
+    unsafe_cluster_cleanup_rounds: int,
+) -> bool:
+    if int(unsafe_cluster_cleanup_rounds or 0) <= 0:
+        return False
+    if not isinstance(density_gate, dict):
+        return False
+    return density_gate.get("safe") is False
 
 
 def _runtime_budget_seconds(value: float | None) -> float | None:
@@ -2091,6 +2152,8 @@ def _run_unsafe_cluster_cleanup_pass(
     global_best_candidate: dict[str, Any] | None,
     max_rounds: int,
     variant_count: int,
+    selection_mode: str = "scanner",
+    route_plan_enabled: bool = True,
     progress_callback: Callable[[int, str], None] | None = None,
     progress_percent: int = 77,
     started_at: float | None = None,
@@ -2120,7 +2183,13 @@ def _run_unsafe_cluster_cleanup_pass(
                 "density_gate": _compact_density_gate(density),
             })
             break
-        target = _select_density_cluster_section(current_text, current_report, density, skipped=skipped)
+        target = _select_density_cluster_section(
+            current_text,
+            current_report,
+            density,
+            skipped=skipped,
+            selection_mode=selection_mode,
+        )
         if target is None:
             rounds.append({
                 "round": cleanup_index,
@@ -2133,11 +2202,17 @@ def _run_unsafe_cluster_cleanup_pass(
         section, density_cluster, signature = target
         round_dir = output_dir / f"round_{cleanup_index:02d}"
         round_dir.mkdir(parents=True, exist_ok=True)
-        route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
-            section=section,
-            local_goal=_local_goal(section.text, section.text),
-            gateway=gateway,
-        )
+        if route_plan_enabled:
+            route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
+                section=section,
+                local_goal=_local_goal(section.text, section.text),
+                gateway=gateway,
+            )
+        else:
+            route_plan = None
+            route_plan_diagnostics = {"status": "skipped", "reason": "budget_clearable_unsafe_cluster_cleanup"}
+            route_plan_prompt = ""
+            route_plan_completion = ""
         (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
         (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
         if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
@@ -2252,11 +2327,27 @@ def _full_document_candidate_beats_scores(row: dict[str, Any] | None, current_sc
         return False
     if not _has_full_document_fallback_movement(row):
         return False
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    if _would_discard_structural_progress(scores, current_scores):
+        return False
     current_row = {
         "apply_status": {"applied": True},
         "scores": current_scores,
     }
     return _full_document_candidate_sort_key(row) > _full_document_candidate_sort_key(current_row)
+
+
+def _would_discard_structural_progress(candidate_scores: dict[str, Any], current_scores: dict[str, Any]) -> bool:
+    for key in (
+        "unsafe_cluster_count_delta",
+        "risky_window_count_delta",
+        "topk_calibrated_risk_delta",
+        "topk_delta",
+    ):
+        current_value = _number(current_scores.get(key))
+        if current_value > 0 and _number(candidate_scores.get(key)) < current_value:
+            return True
+    return False
 
 
 def _full_document_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
@@ -2345,10 +2436,14 @@ def _has_risky_window_cleanup_movement(row: dict[str, Any]) -> bool:
 
 def _has_unsafe_cluster_cleanup_movement(row: dict[str, Any]) -> bool:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    local = row.get("local_scores") if isinstance(row.get("local_scores"), dict) else {}
+    has_cluster_count_drop = _number(incremental.get("unsafe_cluster_count_delta")) > 0
+    has_local_cluster_movement = _local_cluster_directionally_improved(local)
     return (
-        _number(incremental.get("unsafe_cluster_count_delta")) > 0
-        and _number(incremental.get("rank_delta")) > 0
+        (has_cluster_count_drop or has_local_cluster_movement)
+        and _number(incremental.get("rank_delta")) >= 0
         and _number(incremental.get("risky_window_count_delta")) >= 0
+        and _number(incremental.get("unsafe_cluster_count_delta")) >= 0
         and _number(incremental.get("topk_calibrated_risk_delta")) >= 0
         and _number(incremental.get("ai_delta")) >= 0
     )
@@ -2464,11 +2559,13 @@ def _select_density_cluster_section(
     density: dict[str, Any],
     *,
     skipped: set[tuple[Any, ...]],
+    selection_mode: str = "scanner",
 ) -> tuple[SectionUnit, dict[str, Any], tuple[Any, ...]] | None:
     clusters = density.get("top_unsafe_clusters") if isinstance(density, dict) else []
-    for ordinal, cluster in enumerate(clusters if isinstance(clusters, list) else [], start=1):
-        if not isinstance(cluster, dict):
-            continue
+    for ordinal, cluster in _ordered_density_cluster_rows(
+        clusters if isinstance(clusters, list) else [],
+        selection_mode=selection_mode,
+    ):
         section = _section_from_density_cluster(current_text, current_report, cluster, ordinal=ordinal)
         if section is None:
             continue
@@ -2481,6 +2578,32 @@ def _select_density_cluster_section(
             continue
         return section, cluster, signature
     return None
+
+
+def _ordered_density_cluster_rows(
+    clusters: list[Any],
+    *,
+    selection_mode: str = "scanner",
+) -> list[tuple[int, dict[str, Any]]]:
+    rows = [
+        (ordinal, cluster)
+        for ordinal, cluster in enumerate(clusters, start=1)
+        if isinstance(cluster, dict)
+    ]
+    if selection_mode != "clearable":
+        return rows
+    return sorted(rows, key=lambda item: _clearable_density_cluster_sort_key(item[1], original_ordinal=item[0]))
+
+
+def _clearable_density_cluster_sort_key(cluster: dict[str, Any], *, original_ordinal: int) -> tuple[float, ...]:
+    word_count_value = max(1.0, _number(cluster.get("word_count")))
+    sentence_count = max(1.0, _number(cluster.get("sentence_count")))
+    return (
+        word_count_value,
+        sentence_count,
+        -_number(cluster.get("risk_score")),
+        float(original_ordinal),
+    )
 
 
 def _section_from_window_row(
