@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import rewrite_v5.production as v5_production
+from rewrite_v3.text_integrity import minimal_replacement_text_integrity
 from rewrite_v5.cluster_mass import build_cluster_mass_prompt
 from rewrite_v5.experiment import (
     _is_safe_candidate,
@@ -14,11 +15,16 @@ from rewrite_v5.experiment import (
     fact_map_integrity,
 )
 from rewrite_v5.residual_comb import (
+    build_risky_window_cleanup_prompt,
     build_residual_cluster_prompt,
     build_residual_cluster_route_plan_prompt,
     build_residual_cluster_retune_prompt,
     build_route_blueprint,
+    build_unsafe_cluster_cleanup_prompt,
     generate_residual_cluster_seed_variants,
+    _expand_to_local_text_boundaries,
+    _has_risky_window_cleanup_movement,
+    _has_unsafe_cluster_cleanup_movement,
     _parse_route_plan,
     _has_incremental_movement,
     _residual_candidate_sort_key,
@@ -522,6 +528,117 @@ def test_v5_residual_prompt_preserves_pronoun_subject_continuity():
     assert "do not generalize" in continuity["instruction"]
     assert "do not explain the reference parenthetically" in continuity["instruction"]
     assert any("referring to" in item for item in payload["method"])
+
+
+def test_v5_risky_window_cleanup_prompt_targets_whole_window_without_detector_language():
+    section = build_section_units(
+        "Johnny built confidence through role playing. "
+        "The proverb should connect to that practical outcome.",
+        {},
+    )[0]
+
+    prompt = build_risky_window_cleanup_prompt(
+        section=section,
+        current_scores={"risky_window_count": 2, "unsafe_cluster_count": 7},
+        variant_count=3,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "residual_route_window_cleanup"
+    assert payload["window"]["source_window"] == section.text
+    assert payload["length_guidance"]["preferred_min_words"] <= section.word_count
+    assert len(payload["output_schema"]["variants"]) == 3
+    assert any("Replace the full source_window only" in item for item in payload["required_moves"])
+    lowered = prompt.casefold()
+    assert "ai detector" not in lowered
+    assert "bypass" not in lowered
+    assert "authorship" not in lowered
+
+
+def test_v5_unsafe_cluster_cleanup_prompt_is_local_and_source_near():
+    section = build_section_units(
+        "The client gave him a card after the event. "
+        "That made the learning visible.",
+        {},
+    )[0]
+
+    prompt = build_unsafe_cluster_cleanup_prompt(
+        section=section,
+        density_cluster={
+            "sentence_count": 2,
+            "word_count": section.word_count,
+            "preview": "The client gave him a card after the event.",
+            "generic_hits": 0,
+            "transition_count": 0,
+        },
+        variant_count=2,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "single_density_cluster_cleanup"
+    assert payload["cluster"]["source_cluster"] == section.text
+    assert payload["editorial_findings"]["preview"].startswith("The client")
+    assert payload["length_guidance"]["preferred_max_words"] >= section.word_count
+    assert len(payload["output_schema"]["variants"]) == 2
+    lowered = prompt.casefold()
+    assert "ai detector" not in lowered
+    assert "bypass" not in lowered
+
+
+def test_v5_tail_cleanup_acceptance_is_scanner_owned():
+    risky_window_drop = {
+        "incremental": {"risky_window_count_delta": 1.0, "rank_delta": 0.5},
+    }
+    risky_window_no_drop = {
+        "incremental": {"risky_window_count_delta": 0.0, "rank_delta": 5.0},
+    }
+    cluster_drop = {
+        "incremental": {"unsafe_cluster_count_delta": 1.0, "rank_delta": 0.4},
+    }
+    cluster_rank_regression = {
+        "incremental": {"unsafe_cluster_count_delta": 1.0, "rank_delta": -0.5},
+    }
+
+    assert _has_risky_window_cleanup_movement(risky_window_drop)
+    assert not _has_risky_window_cleanup_movement(risky_window_no_drop)
+    assert _has_unsafe_cluster_cleanup_movement(cluster_drop)
+    assert not _has_unsafe_cluster_cleanup_movement(cluster_rank_regression)
+
+
+def test_v5_tail_cleanup_rejects_spliced_word_period_artifacts():
+    integrity = minimal_replacement_text_integrity(
+        "Teachers need to support students to become their own teachers.tie, 2009)."
+    )
+    duplicate = minimal_replacement_text_integrity("The result was tied to assessment.assessment.")
+    ordinary = minimal_replacement_text_integrity("The result was tied to assessment.")
+    missing_space = minimal_replacement_text_integrity("The result was tied to assessment (Hattie, 2009).assessment.")
+    nested_parenthetical = minimal_replacement_text_integrity(
+        "Teachers support students to become their own teachers (Through role playing, "
+        "Johnny improved (Hattie, 2009)."
+    )
+
+    assert not integrity["passed"]
+    assert "embedded_sentence_punctuation_word_artifact" in integrity["failures"]
+    assert not duplicate["passed"]
+    assert "embedded_sentence_punctuation_word_artifact" in duplicate["failures"]
+    assert not missing_space["passed"]
+    assert "sentence_punctuation_spacing_artifact" in missing_space["failures"]
+    assert not nested_parenthetical["passed"]
+    assert "nested_parenthetical_artifact" in nested_parenthetical["failures"]
+    assert ordinary["passed"]
+
+
+def test_v5_tail_cleanup_expands_mid_word_scanner_boundaries():
+    text = "Students can share skills to help more people. The proverb follows."
+    start = text.index("help")
+    end = text.index("The")
+    cut_start = start + len("help mo")
+    cut_end = end + len("Th")
+
+    expanded_start, expanded_end = _expand_to_local_text_boundaries(text, cut_start, cut_end)
+
+    assert text[expanded_start:expanded_end].startswith("more people.")
+    assert text[expanded_start:expanded_end].endswith("The")
 
 
 def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch):

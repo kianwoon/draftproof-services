@@ -83,6 +83,11 @@ def minimal_replacement_text_integrity(text: str) -> dict[str, Any]:
     format_count = 0
     control_count = 0
     angle_count = 0
+    embedded_word_period_count = 0
+    sentence_punctuation_spacing_count = 0
+    nested_parenthetical_count = 0
+    max_parenthetical_span = 0
+    parenthetical_start_stack: list[int] = []
     max_non_language_run = 0
     non_language_run = 0
     repeated_markup_runs: list[dict[str, Any]] = []
@@ -122,6 +127,17 @@ def minimal_replacement_text_integrity(text: str) -> dict[str, Any]:
             control_count += 1
         if char in "<>":
             angle_count += 1
+        if char == "." and _period_embeds_word_fragment(value, index):
+            embedded_word_period_count += 1
+        if char in ".?!" and _sentence_punctuation_missing_space(value, index):
+            sentence_punctuation_spacing_count += 1
+        if char == "(":
+            if parenthetical_start_stack:
+                nested_parenthetical_count += 1
+            parenthetical_start_stack.append(index)
+        elif char == ")" and parenthetical_start_stack:
+            start_index = parenthetical_start_stack.pop()
+            max_parenthetical_span = max(max_parenthetical_span, index - start_index + 1)
         if char == current_repeat_char:
             current_repeat_len += 1
         else:
@@ -142,6 +158,14 @@ def minimal_replacement_text_integrity(text: str) -> dict[str, Any]:
         failures.append("unicode_symbol_burst")
     if angle_count:
         failures.append("markup_angle_bracket_artifact")
+    if embedded_word_period_count:
+        failures.append("embedded_sentence_punctuation_word_artifact")
+    if sentence_punctuation_spacing_count:
+        failures.append("sentence_punctuation_spacing_artifact")
+    if nested_parenthetical_count:
+        failures.append("nested_parenthetical_artifact")
+    if max_parenthetical_span > 160:
+        failures.append("overlong_parenthetical_artifact")
     if repeated_markup_runs:
         failures.append("repeated_markup_punctuation_artifact")
     if max_non_language_run > 12:
@@ -156,8 +180,42 @@ def minimal_replacement_text_integrity(text: str) -> dict[str, Any]:
             "format_count": format_count,
             "control_count": control_count,
             "angle_count": angle_count,
+            "embedded_word_period_count": embedded_word_period_count,
+            "sentence_punctuation_spacing_count": sentence_punctuation_spacing_count,
+            "nested_parenthetical_count": nested_parenthetical_count,
+            "max_parenthetical_span": max_parenthetical_span,
             "max_non_language_run": max_non_language_run,
             "repeated_markup_run_count": len(repeated_markup_runs),
         },
         "repeated_markup_runs": repeated_markup_runs[:4],
     }
+
+
+def _period_embeds_word_fragment(value: str, index: int) -> bool:
+    if index <= 0 or index >= len(value) - 1:
+        return False
+    before_char = value[index - 1]
+    after_char = value[index + 1]
+    if not before_char.isalpha() or not after_char.isalpha() or not after_char.islower():
+        return False
+    before_start = index - 1
+    while before_start >= 0 and value[before_start].isalpha():
+        before_start -= 1
+    after_end = index + 1
+    while after_end < len(value) and value[after_end].isalpha():
+        after_end += 1
+    before_word = value[before_start + 1:index]
+    after_word = value[index + 1:after_end]
+    return len(before_word) >= 3 and len(after_word) >= 3
+
+
+def _sentence_punctuation_missing_space(value: str, index: int) -> bool:
+    if index >= len(value) - 1:
+        return False
+    next_char = value[index + 1]
+    if not next_char.isalpha():
+        return False
+    previous_char = value[index - 1] if index > 0 else ""
+    if previous_char.isdigit():
+        return False
+    return next_char.isupper() or not previous_char.isalpha()

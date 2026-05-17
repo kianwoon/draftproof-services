@@ -18,6 +18,10 @@ def main() -> None:
     parser.add_argument("--max-rounds", type=int, default=5, help="Maximum residual cluster rounds")
     parser.add_argument("--variants", type=int, default=3, help="Initial variants per cluster")
     parser.add_argument("--retune-variants", type=int, default=4, help="Retune variants for near-miss clusters")
+    parser.add_argument("--risky-window-cleanup-rounds", type=int, default=None, help="Post-pass risky window cleanup rounds")
+    parser.add_argument("--unsafe-cluster-cleanup-rounds", type=int, default=None, help="Post-pass unsafe cluster cleanup rounds")
+    parser.add_argument("--final-risky-window-cleanup-rounds", type=int, default=None, help="Final risky window cleanup rounds after unsafe cluster cleanup")
+    parser.add_argument("--cleanup-variants", type=int, default=None, help="Variants for post-pass cleanup rounds")
     args = parser.parse_args()
 
     root = Path(args.out)
@@ -35,14 +39,38 @@ def main() -> None:
             model=os.environ.get("DRAFTPROOF_REWRITE_V5_MODEL")
             or os.environ.get("DRAFTPROOF_REWRITE_V4_MODEL")
             or os.environ.get("LLM_MODEL"),
+            risky_window_cleanup_rounds=args.risky_window_cleanup_rounds,
+            unsafe_cluster_cleanup_rounds=args.unsafe_cluster_cleanup_rounds,
+            cleanup_variant_count=args.cleanup_variants,
+            final_risky_window_cleanup_rounds=args.final_risky_window_cleanup_rounds,
         )
         baseline = result.get("baseline_scores") if isinstance(result.get("baseline_scores"), dict) else {}
         final = result.get("final_scores") if isinstance(result.get("final_scores"), dict) else {}
         rounds = result.get("rounds") if isinstance(result.get("rounds"), list) else []
+        risky_window_cleanup_rounds = (
+            result.get("risky_window_cleanup_rounds")
+            if isinstance(result.get("risky_window_cleanup_rounds"), list)
+            else []
+        )
+        unsafe_cluster_cleanup_rounds = (
+            result.get("unsafe_cluster_cleanup_rounds")
+            if isinstance(result.get("unsafe_cluster_cleanup_rounds"), list)
+            else []
+        )
+        final_risky_window_cleanup_rounds = (
+            result.get("final_risky_window_cleanup_rounds")
+            if isinstance(result.get("final_risky_window_cleanup_rounds"), list)
+            else []
+        )
+        all_rounds = rounds + risky_window_cleanup_rounds + unsafe_cluster_cleanup_rounds + final_risky_window_cleanup_rounds
         rows.append({
             "input": str(input_path),
             "output_dir": str(output_dir),
-            "accepted_rounds": sum(1 for row in rounds if isinstance(row, dict) and row.get("accepted")),
+            "accepted_rounds": sum(1 for row in all_rounds if isinstance(row, dict) and row.get("accepted")),
+            "accepted_core_rounds": sum(1 for row in rounds if isinstance(row, dict) and row.get("accepted")),
+            "accepted_risky_window_cleanup_rounds": sum(1 for row in risky_window_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
+            "accepted_unsafe_cluster_cleanup_rounds": sum(1 for row in unsafe_cluster_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
+            "accepted_final_risky_window_cleanup_rounds": sum(1 for row in final_risky_window_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
             "scores_before": _score_brief(baseline),
             "scores_after": _score_brief(final),
             "deltas": {
@@ -60,6 +88,10 @@ def main() -> None:
             "max_rounds": args.max_rounds,
             "variants": args.variants,
             "retune_variants": args.retune_variants,
+            "risky_window_cleanup_rounds": args.risky_window_cleanup_rounds,
+            "unsafe_cluster_cleanup_rounds": args.unsafe_cluster_cleanup_rounds,
+            "final_risky_window_cleanup_rounds": args.final_risky_window_cleanup_rounds,
+            "cleanup_variants": args.cleanup_variants,
             "model": os.environ.get("DRAFTPROOF_REWRITE_V5_MODEL")
             or os.environ.get("DRAFTPROOF_REWRITE_V4_MODEL")
             or os.environ.get("LLM_MODEL"),

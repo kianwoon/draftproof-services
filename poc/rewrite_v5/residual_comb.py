@@ -19,6 +19,7 @@ from rewrite_v2.structured_output import structured_json_request_options
 from rewrite_v3.document_units import word_count
 from rewrite_v3.pipeline import _scan_report
 from rewrite_v3.text_integrity import minimal_replacement_text_integrity
+from rewrite_controller.eligible_span_density import build_eligible_span_density_contract
 from rewrite_v4.cluster_patch import build_cluster_repair_units
 from rewrite_v4.validation import parse_json_object
 
@@ -45,6 +46,10 @@ def run_v5_residual_cluster_comb_experiment(
     model: str | None = None,
     base_url: str | None = None,
     extra_body: dict[str, Any] | None = None,
+    risky_window_cleanup_rounds: int | None = None,
+    unsafe_cluster_cleanup_rounds: int | None = None,
+    cleanup_variant_count: int | None = None,
+    final_risky_window_cleanup_rounds: int | None = None,
 ) -> dict[str, Any]:
     """Iteratively treat the strongest residual cluster and rescan."""
 
@@ -208,11 +213,107 @@ def run_v5_residual_cluster_comb_experiment(
         current_scores = accepted.get("scores") if isinstance(accepted.get("scores"), dict) else _score_summary(original_text, current_report, current_goal)
         (out_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
 
+    cleanup_variants = cleanup_variant_count if cleanup_variant_count is not None else variant_count
+    risky_window_rounds: list[dict[str, Any]] = []
+    if _cleanup_round_limit(
+        risky_window_cleanup_rounds,
+        env_name="DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS",
+        default=2,
+    ) > 0:
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            risky_window_rounds,
+        ) = _run_risky_window_cleanup_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "risky_window_cleanup",
+            max_rounds=_cleanup_round_limit(
+                risky_window_cleanup_rounds,
+                env_name="DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS",
+                default=2,
+            ),
+            variant_count=cleanup_variants,
+        )
+
+    unsafe_cluster_rounds: list[dict[str, Any]] = []
+    if _cleanup_round_limit(
+        unsafe_cluster_cleanup_rounds,
+        env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
+        default=12,
+    ) > 0:
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            unsafe_cluster_rounds,
+        ) = _run_unsafe_cluster_cleanup_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "unsafe_cluster_cleanup",
+            max_rounds=_cleanup_round_limit(
+                unsafe_cluster_cleanup_rounds,
+                env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
+                default=12,
+            ),
+            variant_count=cleanup_variants,
+        )
+
+    final_risky_window_rounds: list[dict[str, Any]] = []
+    if _cleanup_round_limit(
+        final_risky_window_cleanup_rounds,
+        env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
+        default=2,
+    ) > 0:
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            final_risky_window_rounds,
+        ) = _run_risky_window_cleanup_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "final_risky_window_cleanup",
+            max_rounds=_cleanup_round_limit(
+                final_risky_window_cleanup_rounds,
+                env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
+                default=2,
+            ),
+            variant_count=cleanup_variants,
+        )
+
+    density_gate = build_eligible_span_density_contract(current_text, current_report)
     payload = {
         "stage": "v5_residual_cluster_comb",
         "baseline_scores": baseline_scores,
         "rounds": rounds,
+        "risky_window_cleanup_rounds": risky_window_rounds,
+        "unsafe_cluster_cleanup_rounds": unsafe_cluster_rounds,
+        "final_risky_window_cleanup_rounds": final_risky_window_rounds,
         "final_scores": current_scores,
+        "eligible_span_density_gate": density_gate,
         "goal": {
             "status": current_goal.get("status"),
             "goal_met": current_goal.get("goal_met"),
@@ -223,6 +324,12 @@ def run_v5_residual_cluster_comb_experiment(
     (out_dir / "v5_residual_comb_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
     (out_dir / "v5_residual_comb_rewritten_document.txt").write_text(current_text)
     return payload
+
+
+def _cleanup_round_limit(value: int | None, *, env_name: str, default: int) -> int:
+    if value is not None:
+        return max(0, min(12, int(value or 0)))
+    return _int_env(env_name, default, minimum=0, maximum=12)
 
 
 def build_residual_cluster_prompt(
@@ -591,6 +698,151 @@ def generate_residual_cluster_retunes(
     return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
 
 
+def build_risky_window_cleanup_prompt(*, section: SectionUnit, current_scores: dict[str, Any] | None = None, variant_count: int = 5) -> str:
+    variants = max(1, min(5, int(variant_count or 1)))
+    source_words = max(1, int(section.word_count or word_count(section.text)))
+    payload = {
+        "task": "residual_route_window_cleanup",
+        "goal": "Rewrite only this window so the route feels naturally edited instead of mechanically conclusive.",
+        "window": {
+            "section_id": section.section_id,
+            "source_window": section.text,
+            "before_context": _section_before_context(section),
+            "after_context": _section_after_context(section),
+            "source_word_count": source_words,
+            "source_event_beats": _source_event_beats(section.text),
+            "source_phrase_anchors": _source_phrase_anchors(section.text),
+            "referential_continuity": _referential_continuity(
+                section.text,
+                before_context=_section_before_context(section),
+            ),
+        },
+        "editorial_findings": [
+            "The selected window still reads too much like a neat route summary.",
+            "Change the order or bridge between source beats instead of replacing isolated words.",
+            "Make the interpretation follow concrete source actions, outcomes, citations, or quoted material already in the window.",
+        ],
+        "required_moves": [
+            "Replace the full source_window only.",
+            "Start from a concrete source beat when the window currently opens with a broad conclusion.",
+            "Keep citations, quoted material, names, and assessment references already present in source_window.",
+            "Use plain bachelor-level wording; do not polish the window into a generic academic conclusion.",
+        ],
+        "length_guidance": {
+            "source_words": source_words,
+            "preferred_min_words": max(8, round(source_words * 0.80)),
+            "preferred_max_words": max(12, round(source_words * 1.20)),
+        },
+        "constraints": [
+            "Do not add new facts, examples, names, dates, citations, dialogue, headings, bullets, markdown, HTML, or commentary.",
+            "Do not change the source viewpoint.",
+            "Do not return the whole document.",
+            "Do not write a plan or explanation.",
+        ],
+        "output_schema": {
+            "variants": [
+                {"variant_id": f"v{index}", "text": "..."}
+                for index in range(1, variants + 1)
+            ]
+        },
+    }
+    if current_scores:
+        payload["current_state"] = {
+            "risky_window_count": current_scores.get("risky_window_count"),
+            "unsafe_cluster_count": current_scores.get("unsafe_cluster_count"),
+        }
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def build_unsafe_cluster_cleanup_prompt(*, section: SectionUnit, density_cluster: dict[str, Any], variant_count: int = 5) -> str:
+    variants = max(1, min(5, int(variant_count or 1)))
+    source_words = max(1, int(section.word_count or word_count(section.text)))
+    payload = {
+        "task": "single_density_cluster_cleanup",
+        "goal": "Rewrite only this local cluster so it keeps the same meaning but stops reading as a predictable sentence unit.",
+        "cluster": {
+            "section_id": section.section_id,
+            "source_cluster": section.text,
+            "before_context": _section_before_context(section),
+            "after_context": _section_after_context(section),
+            "source_word_count": source_words,
+            "source_event_beats": _source_event_beats(section.text),
+            "source_phrase_anchors": _source_phrase_anchors(section.text),
+            "referential_continuity": _referential_continuity(
+                section.text,
+                before_context=_section_before_context(section),
+            ),
+        },
+        "editorial_findings": {
+            "sentence_count": density_cluster.get("sentence_count"),
+            "word_count": density_cluster.get("word_count"),
+            "preview": density_cluster.get("preview"),
+            "broad_generic_pressure": bool(density_cluster.get("generic_hits")),
+            "transition_pressure": bool(density_cluster.get("transition_count")),
+        },
+        "repair_moves": [
+            "Change the local route, not just one synonym.",
+            "Tie any broad claim back to concrete words already in source_cluster or nearby context.",
+            "Keep the wording plain and source-near.",
+            "If the cluster contains an obvious splice or duplicate word, repair it cleanly while preserving meaning.",
+        ],
+        "must_preserve": [
+            "same factual meaning",
+            "same source viewpoint",
+            "citations already present in source_cluster",
+            "direct quoted text already present in source_cluster",
+        ],
+        "length_guidance": {
+            "source_words": source_words,
+            "preferred_min_words": max(8, round(source_words * 0.80)),
+            "preferred_max_words": max(12, round(source_words * 1.25)),
+        },
+        "constraints": [
+            "Do not add new facts, examples, names, dates, citations, dialogue, headings, bullets, markdown, HTML, or commentary.",
+            "Do not make the writing casual or slangy.",
+            "Do not return the whole document.",
+            "Do not write a plan or explanation.",
+        ],
+        "output_schema": {
+            "variants": [
+                {"variant_id": f"v{index}", "text": "..."}
+                for index in range(1, variants + 1)
+            ]
+        },
+    }
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def generate_risky_window_cleanup_variants(
+    *,
+    section: SectionUnit,
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    variant_count: int = 5,
+) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
+    prompt = build_risky_window_cleanup_prompt(
+        section=section,
+        current_scores=current_scores,
+        variant_count=variant_count,
+    )
+    return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
+
+
+def generate_unsafe_cluster_cleanup_variants(
+    *,
+    section: SectionUnit,
+    density_cluster: dict[str, Any],
+    gateway: LLMGateway,
+    variant_count: int = 5,
+) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
+    prompt = build_unsafe_cluster_cleanup_prompt(
+        section=section,
+        density_cluster=density_cluster,
+        variant_count=variant_count,
+    )
+    return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
+
+
 def _generate_loose_variants(
     *,
     prompt: str,
@@ -913,6 +1165,249 @@ def _score_residual_variant(
     }
 
 
+def _run_risky_window_cleanup_pass(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    max_rounds: int,
+    variant_count: int,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    skipped: set[tuple[Any, ...]] = set()
+    for cleanup_index in range(1, max(0, int(max_rounds or 0)) + 1):
+        target = _select_risky_window_section(current_text, current_report, skipped=skipped)
+        if target is None:
+            rounds.append({"round": cleanup_index, "phase": "risky_window_cleanup", "status": "stopped", "reason": "no_risky_window_target"})
+            break
+        section, signature = target
+        round_dir = output_dir / f"round_{cleanup_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        variants, diagnostics, prompt, completion = generate_risky_window_cleanup_variants(
+            section=section,
+            current_scores=current_scores,
+            gateway=gateway,
+            variant_count=variant_count,
+        )
+        (round_dir / "prompt.json.txt").write_text(prompt)
+        (round_dir / "completion.json.txt").write_text(completion)
+        rows = [
+            _score_residual_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                section=section,
+                variant=variant,
+                output_dir=round_dir,
+                label=f"window_{variant.variant_id}",
+            )
+            for variant in variants
+        ]
+        selected = _best_risky_window_cleanup_candidate(rows)
+        accepted = selected if selected and _has_risky_window_cleanup_movement(selected) else None
+        round_payload = {
+            "round": cleanup_index,
+            "phase": "risky_window_cleanup",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_risky_window_movement" if accepted else "no_risky_window_movement",
+            "section": section.to_dict(),
+            "generator_diagnostics": diagnostics,
+            "current_scores": current_scores,
+            "candidates": [_compact_residual_row(row) for row in rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(round_payload)
+        (round_dir / "round_result.json").write_text(json.dumps(round_payload, ensure_ascii=False, indent=2))
+        if not accepted:
+            skipped.add(signature)
+            continue
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / f"after_round_{cleanup_index:02d}.txt").write_text(current_text)
+    return current_text, current_report, current_goal, current_scores, rounds
+
+
+def _run_unsafe_cluster_cleanup_pass(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    max_rounds: int,
+    variant_count: int,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    skipped: set[tuple[Any, ...]] = set()
+    for cleanup_index in range(1, max(0, int(max_rounds or 0)) + 1):
+        density = build_eligible_span_density_contract(current_text, current_report)
+        if density.get("safe"):
+            rounds.append({
+                "round": cleanup_index,
+                "phase": "unsafe_cluster_cleanup",
+                "status": "stopped",
+                "reason": "eligible_span_density_safe",
+                "density_gate": _compact_density_gate(density),
+            })
+            break
+        target = _select_density_cluster_section(current_text, current_report, density, skipped=skipped)
+        if target is None:
+            rounds.append({
+                "round": cleanup_index,
+                "phase": "unsafe_cluster_cleanup",
+                "status": "stopped",
+                "reason": "no_density_cluster_target",
+                "density_gate": _compact_density_gate(density),
+            })
+            break
+        section, density_cluster, signature = target
+        round_dir = output_dir / f"round_{cleanup_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        variants, diagnostics, prompt, completion = generate_unsafe_cluster_cleanup_variants(
+            section=section,
+            density_cluster=density_cluster,
+            gateway=gateway,
+            variant_count=variant_count,
+        )
+        (round_dir / "prompt.json.txt").write_text(prompt)
+        (round_dir / "completion.json.txt").write_text(completion)
+        rows = [
+            _score_residual_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                section=section,
+                variant=variant,
+                output_dir=round_dir,
+                label=f"density_{variant.variant_id}",
+            )
+            for variant in variants
+        ]
+        selected = _best_unsafe_cluster_cleanup_candidate(rows)
+        accepted = selected if selected and _has_unsafe_cluster_cleanup_movement(selected) else None
+        round_payload = {
+            "round": cleanup_index,
+            "phase": "unsafe_cluster_cleanup",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_unsafe_cluster_movement" if accepted else "no_unsafe_cluster_movement",
+            "section": section.to_dict(),
+            "density_cluster": density_cluster,
+            "density_gate": _compact_density_gate(density),
+            "generator_diagnostics": diagnostics,
+            "current_scores": current_scores,
+            "candidates": [_compact_residual_row(row) for row in rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(round_payload)
+        (round_dir / "round_result.json").write_text(json.dumps(round_payload, ensure_ascii=False, indent=2))
+        if not accepted:
+            skipped.add(signature)
+            continue
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / f"after_round_{cleanup_index:02d}.txt").write_text(current_text)
+    return current_text, current_report, current_goal, current_scores, rounds
+
+
+def _accepted_state(
+    *,
+    accepted: dict[str, Any],
+    original_text: str,
+    baseline_report: dict[str, Any],
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    text = str(accepted.get("candidate_text") or "")
+    report = accepted.get("candidate_report") if isinstance(accepted.get("candidate_report"), dict) else _scan_report(text)
+    goal = accepted.get("candidate_goal") if isinstance(accepted.get("candidate_goal"), dict) else evaluate_rewrite_goal(
+        original_text=original_text,
+        candidate_text=text,
+        original_report=baseline_report,
+        candidate_report=report,
+    ).to_dict()
+    scores = accepted.get("scores") if isinstance(accepted.get("scores"), dict) else _score_summary(original_text, report, goal)
+    return text, report, goal, scores
+
+
+def _best_risky_window_cleanup_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    eligible = [row for row in rows if (row.get("apply_status") or {}).get("applied")]
+    if not eligible:
+        return None
+    return max(eligible, key=_risky_window_cleanup_sort_key)
+
+
+def _best_unsafe_cluster_cleanup_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    eligible = [row for row in rows if (row.get("apply_status") or {}).get("applied")]
+    if not eligible:
+        return None
+    return max(eligible, key=_unsafe_cluster_cleanup_sort_key)
+
+
+def _risky_window_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    return (
+        _number(incremental.get("risky_window_count_delta")),
+        _number(incremental.get("rank_delta")),
+        _number(incremental.get("unsafe_cluster_count_delta")),
+        _number(incremental.get("external_delta")),
+        _number(incremental.get("topk_delta")),
+        _number(incremental.get("ai_delta")),
+        _number(scores.get("rank_delta")),
+    )
+
+
+def _unsafe_cluster_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    return (
+        _number(incremental.get("unsafe_cluster_count_delta")),
+        _number(incremental.get("rank_delta")),
+        _number(incremental.get("external_delta")),
+        _number(incremental.get("topk_delta")),
+        _number(incremental.get("ai_delta")),
+        _number(scores.get("rank_delta")),
+    )
+
+
+def _has_risky_window_cleanup_movement(row: dict[str, Any]) -> bool:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    return (
+        _number(incremental.get("risky_window_count_delta")) > 0
+        and _number(incremental.get("rank_delta")) > 0
+    )
+
+
+def _has_unsafe_cluster_cleanup_movement(row: dict[str, Any]) -> bool:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    return (
+        _number(incremental.get("unsafe_cluster_count_delta")) > 0
+        and _number(incremental.get("rank_delta")) > 0
+    )
+
+
 def _best_residual_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     eligible = [row for row in rows if (row.get("apply_status") or {}).get("applied")]
     if not eligible:
@@ -989,6 +1484,189 @@ def _incremental_deltas(scores: dict[str, Any], current_scores: dict[str, Any]) 
         if key in scores and key in current_scores:
             result[f"{key}_delta"] = round(_number(current_scores.get(key)) - _number(scores.get(key)), 3)
     return result
+
+
+def _select_risky_window_section(
+    current_text: str,
+    current_report: dict[str, Any],
+    *,
+    skipped: set[tuple[Any, ...]],
+) -> tuple[SectionUnit, tuple[Any, ...]] | None:
+    footprint = current_report.get("ai_footprint_profile") if isinstance(current_report, dict) else {}
+    windows = footprint.get("top_risky_windows") if isinstance(footprint, dict) else []
+    for ordinal, row in enumerate(windows if isinstance(windows, list) else [], start=1):
+        if not isinstance(row, dict):
+            continue
+        section = _section_from_window_row(current_text, row, ordinal=ordinal)
+        if section is None:
+            continue
+        signature = (
+            row.get("window_id"),
+            section.start_char,
+            section.end_char,
+            _short_string(section.text, limit=120),
+        )
+        if signature in skipped:
+            continue
+        return section, signature
+    return None
+
+
+def _select_density_cluster_section(
+    current_text: str,
+    current_report: dict[str, Any],
+    density: dict[str, Any],
+    *,
+    skipped: set[tuple[Any, ...]],
+) -> tuple[SectionUnit, dict[str, Any], tuple[Any, ...]] | None:
+    clusters = density.get("top_unsafe_clusters") if isinstance(density, dict) else []
+    for ordinal, cluster in enumerate(clusters if isinstance(clusters, list) else [], start=1):
+        if not isinstance(cluster, dict):
+            continue
+        section = _section_from_density_cluster(current_text, current_report, cluster, ordinal=ordinal)
+        if section is None:
+            continue
+        signature = (
+            cluster.get("start_sentence"),
+            cluster.get("end_sentence"),
+            _short_string(str(cluster.get("preview") or section.text), limit=120),
+        )
+        if signature in skipped:
+            continue
+        return section, cluster, signature
+    return None
+
+
+def _section_from_window_row(current_text: str, row: dict[str, Any], *, ordinal: int) -> SectionUnit | None:
+    start = _optional_int(row.get("start_index"))
+    end = _optional_int(row.get("end_index"))
+    source_text = str(row.get("source_text") or "").strip()
+    if start is None or end is None or start < 0 or end <= start or end > len(current_text):
+        if not source_text:
+            return None
+        located = current_text.find(source_text)
+        if located < 0:
+            return None
+        start = located
+        end = located + len(source_text)
+    start, end = _expand_to_local_text_boundaries(current_text, start, end)
+    text = current_text[start:end]
+    if not text.strip():
+        return None
+    return SectionUnit(
+        section_id=str(row.get("window_id") or f"risk_window_{ordinal:03d}"),
+        heading="Risky window cleanup",
+        text=text,
+        start_char=start,
+        end_char=end,
+        paragraph_count=max(1, text.count("\n\n") + 1),
+        word_count=word_count(text),
+        metadata={
+            "before_context": current_text[max(0, start - 420):start],
+            "after_context": current_text[end:min(len(current_text), end + 420)],
+            "source_metadata": {"risky_window": row},
+        },
+    )
+
+
+def _section_from_density_cluster(
+    current_text: str,
+    current_report: dict[str, Any],
+    cluster: dict[str, Any],
+    *,
+    ordinal: int,
+) -> SectionUnit | None:
+    rows = _sentence_rows_by_index(current_report)
+    if not rows:
+        return None
+    start_index = _optional_int(cluster.get("start_sentence"))
+    end_index = _optional_int(cluster.get("end_sentence"))
+    if start_index is None:
+        return None
+    if end_index is None:
+        end_index = start_index
+    selected = [row for row in rows if start_index <= int(row.get("sentence_index") or 0) <= end_index]
+    if not selected:
+        return None
+    start = min(int(row.get("start_char") or 0) for row in selected)
+    end = max(int(row.get("end_char") or 0) for row in selected)
+    if start < 0 or end <= start or end > len(current_text):
+        return None
+    start, end = _expand_to_local_text_boundaries(current_text, start, end)
+    text = current_text[start:end]
+    if not text.strip():
+        return None
+    return SectionUnit(
+        section_id=f"density_cluster_{ordinal:03d}",
+        heading="Density cluster cleanup",
+        text=text,
+        start_char=start,
+        end_char=end,
+        paragraph_count=max(1, text.count("\n\n") + 1),
+        word_count=word_count(text),
+        metadata={
+            "before_context": current_text[max(0, start - 420):start],
+            "after_context": current_text[end:min(len(current_text), end + 420)],
+            "source_metadata": {"density_cluster": cluster},
+        },
+    )
+
+
+def _sentence_rows_by_index(report: dict[str, Any]) -> list[dict[str, Any]]:
+    sentence_map = report.get("sentence_map") if isinstance(report, dict) else {}
+    rows: list[dict[str, Any]] = []
+    if not isinstance(sentence_map, dict):
+        return rows
+    ordered = sorted(
+        [row for row in sentence_map.values() if isinstance(row, dict)],
+        key=lambda item: (_optional_int(item.get("start_char")) or 0, _optional_int(item.get("end_char")) or 0),
+    )
+    for index, row in enumerate(ordered):
+        start = _optional_int(row.get("start_char"))
+        end = _optional_int(row.get("end_char"))
+        if start is None or end is None:
+            continue
+        rows.append({
+            **row,
+            "sentence_index": index,
+            "start_char": start,
+            "end_char": end,
+        })
+    return rows
+
+
+def _compact_density_gate(density: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "safe",
+        "unsafe_sentence_count",
+        "unsafe_word_count",
+        "unsafe_eligible_word_ratio",
+        "longest_unsafe_span_words",
+        "unsafe_cluster_count",
+        "thresholds",
+        "recommended_actions",
+    )
+    return {key: density.get(key) for key in keys}
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _expand_to_local_text_boundaries(text: str, start: int, end: int) -> tuple[int, int]:
+    source = str(text or "")
+    left = max(0, min(len(source), int(start)))
+    right = max(left, min(len(source), int(end)))
+    while left > 0 and left < len(source) and source[left - 1].isalnum() and source[left].isalnum():
+        left -= 1
+    while right > 0 and right < len(source) and source[right - 1].isalnum() and source[right].isalnum():
+        right += 1
+    while right < len(source) and source[right] in ".,;:!?":
+        right += 1
+    return left, right
 
 
 def _local_unsafe_previews(local_goal: dict[str, Any]) -> list[str]:

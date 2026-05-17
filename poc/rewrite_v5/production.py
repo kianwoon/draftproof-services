@@ -51,6 +51,10 @@ def _production_config() -> dict[str, Any]:
         "max_rounds": _int_env("DRAFTPROOF_REWRITE_V5_MAX_ROUNDS", 6, minimum=1, maximum=10),
         "variant_count": _int_env("DRAFTPROOF_REWRITE_V5_VARIANTS", 5, minimum=1, maximum=5),
         "retune_variant_count": _int_env("DRAFTPROOF_REWRITE_V5_RETUNE_VARIANTS", 5, minimum=1, maximum=5),
+        "risky_window_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS", 2, minimum=0, maximum=12),
+        "unsafe_cluster_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS", 12, minimum=0, maximum=12),
+        "final_risky_window_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS", 2, minimum=0, maximum=12),
+        "cleanup_variant_count": _int_env("DRAFTPROOF_REWRITE_V5_CLEANUP_VARIANTS", 5, minimum=1, maximum=5),
         "required_ai_drop": _float_env("DRAFTPROOF_REWRITE_V5_REQUIRED_AI_DROP", 5.0, minimum=0.0, maximum=100.0),
     }
 
@@ -99,6 +103,10 @@ def run_rewrite_pipeline_v5(
         model=model,
         base_url=base_url,
         extra_body=_v5_extra_body(),
+        risky_window_cleanup_rounds=int(config["risky_window_cleanup_rounds"]),
+        unsafe_cluster_cleanup_rounds=int(config["unsafe_cluster_cleanup_rounds"]),
+        cleanup_variant_count=int(config["cleanup_variant_count"]),
+        final_risky_window_cleanup_rounds=int(config["final_risky_window_cleanup_rounds"]),
     )
 
     final_text = str(payload.get("rewritten_document") or original_text)
@@ -111,9 +119,25 @@ def run_rewrite_pipeline_v5(
         candidate_report=final_report,
     ).to_dict()
     rounds = payload.get("rounds") if isinstance(payload.get("rounds"), list) else []
+    risky_window_cleanup_rounds = (
+        payload.get("risky_window_cleanup_rounds")
+        if isinstance(payload.get("risky_window_cleanup_rounds"), list)
+        else []
+    )
+    unsafe_cluster_cleanup_rounds = (
+        payload.get("unsafe_cluster_cleanup_rounds")
+        if isinstance(payload.get("unsafe_cluster_cleanup_rounds"), list)
+        else []
+    )
+    final_risky_window_cleanup_rounds = (
+        payload.get("final_risky_window_cleanup_rounds")
+        if isinstance(payload.get("final_risky_window_cleanup_rounds"), list)
+        else []
+    )
+    all_rounds = rounds + risky_window_cleanup_rounds + unsafe_cluster_cleanup_rounds + final_risky_window_cleanup_rounds
     accepted = [
         row.get("accepted")
-        for row in rounds
+        for row in all_rounds
         if isinstance(row, dict) and isinstance(row.get("accepted"), dict)
     ]
     no_text_change = final_text.strip() == original_text.strip()
@@ -175,12 +199,12 @@ def run_rewrite_pipeline_v5(
         "converged": bool(final_goal.get("goal_met")),
         "convergence_reason": public_status,
         "candidate_generation_status": {
-            "generated_count": _generated_candidate_count(rounds),
+            "generated_count": _generated_candidate_count(all_rounds),
             "accepted_count": len(accepted),
             "reason": pipeline_version,
         },
         "candidate_trace": _compact_v5_candidate_trace(accepted),
-        "candidate_loop_trace": _compact_v5_rounds(rounds),
+        "candidate_loop_trace": _compact_v5_rounds(all_rounds),
         "selected_candidate": _compact_v5_candidate_trace([accepted[-1]])[0] if accepted else None,
         "rewrite_layers": {"v5_residual_cluster_comb": _compact_v5_payload(payload)},
         "stage_timings": [{
@@ -310,11 +334,31 @@ def _compact_v5_rounds(rounds: list[Any]) -> list[dict[str, Any]]:
 
 def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
     rounds = payload.get("rounds") if isinstance(payload.get("rounds"), list) else []
+    risky_window_cleanup_rounds = (
+        payload.get("risky_window_cleanup_rounds")
+        if isinstance(payload.get("risky_window_cleanup_rounds"), list)
+        else []
+    )
+    unsafe_cluster_cleanup_rounds = (
+        payload.get("unsafe_cluster_cleanup_rounds")
+        if isinstance(payload.get("unsafe_cluster_cleanup_rounds"), list)
+        else []
+    )
+    final_risky_window_cleanup_rounds = (
+        payload.get("final_risky_window_cleanup_rounds")
+        if isinstance(payload.get("final_risky_window_cleanup_rounds"), list)
+        else []
+    )
+    all_rounds = rounds + risky_window_cleanup_rounds + unsafe_cluster_cleanup_rounds + final_risky_window_cleanup_rounds
     return {
         "stage": payload.get("stage"),
         "baseline_scores": payload.get("baseline_scores"),
         "final_scores": payload.get("final_scores"),
+        "eligible_span_density_gate": payload.get("eligible_span_density_gate"),
         "goal": payload.get("goal"),
-        "accepted_rounds": sum(1 for row in rounds if isinstance(row, dict) and row.get("accepted")),
+        "accepted_rounds": sum(1 for row in all_rounds if isinstance(row, dict) and row.get("accepted")),
         "rounds": _compact_v5_rounds(rounds),
+        "risky_window_cleanup_rounds": _compact_v5_rounds(risky_window_cleanup_rounds),
+        "unsafe_cluster_cleanup_rounds": _compact_v5_rounds(unsafe_cluster_cleanup_rounds),
+        "final_risky_window_cleanup_rounds": _compact_v5_rounds(final_risky_window_cleanup_rounds),
     }
