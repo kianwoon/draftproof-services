@@ -1,4 +1,28 @@
-from app.tasks import _rewrite_billing_decision
+from types import SimpleNamespace
+
+from app.tasks import _rewrite_billing_decision, _selected_rewrite_pipeline
+
+
+def test_rewrite_pipeline_selection_prefers_v5_when_enabled():
+    settings = SimpleNamespace(
+        DRAFTPROOF_REWRITE_V5_ENABLED=True,
+        DRAFTPROOF_REWRITE_V4_ENABLED=True,
+        DRAFTPROOF_REWRITE_V3_ENABLED=True,
+        DRAFTPROOF_REWRITE_V2_ENABLED=True,
+    )
+
+    assert _selected_rewrite_pipeline(settings) == "v5"
+
+
+def test_rewrite_pipeline_selection_falls_back_to_v4_when_v5_disabled():
+    settings = SimpleNamespace(
+        DRAFTPROOF_REWRITE_V5_ENABLED=False,
+        DRAFTPROOF_REWRITE_V4_ENABLED=True,
+        DRAFTPROOF_REWRITE_V3_ENABLED=True,
+        DRAFTPROOF_REWRITE_V2_ENABLED=True,
+    )
+
+    assert _selected_rewrite_pipeline(settings) == "v4"
 
 
 def test_rewrite_billing_captures_changed_rewritten_content():

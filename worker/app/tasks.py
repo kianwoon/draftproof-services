@@ -74,6 +74,20 @@ NON_BILLABLE_REWRITE_OUTCOMES = {
 }
 
 
+def _selected_rewrite_pipeline(settings_obj) -> str:
+    """Return the first enabled rewrite pipeline in production priority order."""
+
+    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V5_ENABLED", False):
+        return "v5"
+    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V4_ENABLED", False):
+        return "v4"
+    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V3_ENABLED", False):
+        return "v3"
+    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V2_ENABLED", False):
+        return "v2"
+    return "legacy"
+
+
 def _runtime_code_fingerprint() -> dict:
     """Return non-secret evidence of the worker code actually imported."""
     fingerprint = {
@@ -1661,7 +1675,23 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 )
                 if isinstance(rewrite_model, str) and rewrite_model.strip().lower() in {"0", "false", "no", "off"}:
                     rewrite_model = settings.DRAFTPROOF_GENERATOR_MODEL or settings.LLM_MODEL or None
-                if settings.DRAFTPROOF_REWRITE_V4_ENABLED:
+                pipeline_choice = _selected_rewrite_pipeline(settings)
+                if pipeline_choice == "v5":
+                    from rewrite_v5 import run_rewrite_pipeline_v5
+                    v5_rewrite_model = (
+                        settings.DRAFTPROOF_REWRITE_V5_MODEL
+                        or settings.DRAFTPROOF_REWRITE_V4_MODEL
+                        or rewrite_model
+                    )
+                    result = run_rewrite_pipeline_v5(
+                        detect_json=report_json,
+                        output_dir=tmpdir,
+                        api_key=llm_api_key or None,
+                        model=v5_rewrite_model,
+                        base_url=settings.LLM_BASE_URL or None,
+                        progress_callback=report_rewrite_progress,
+                    )
+                elif pipeline_choice == "v4":
                     from rewrite_v4 import run_rewrite_pipeline_v4
                     v4_rewrite_model = settings.DRAFTPROOF_REWRITE_V4_MODEL or rewrite_model
                     result = run_rewrite_pipeline_v4(
@@ -1672,7 +1702,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
                     )
-                elif settings.DRAFTPROOF_REWRITE_V3_ENABLED:
+                elif pipeline_choice == "v3":
                     from rewrite_v3 import run_rewrite_pipeline_v3
                     result = run_rewrite_pipeline_v3(
                         detect_json=report_json,
@@ -1682,7 +1712,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
                     )
-                elif settings.DRAFTPROOF_REWRITE_V2_ENABLED:
+                elif pipeline_choice == "v2":
                     from rewrite_v2 import run_rewrite_pipeline_v2
                     result = run_rewrite_pipeline_v2(
                         detect_json=report_json,

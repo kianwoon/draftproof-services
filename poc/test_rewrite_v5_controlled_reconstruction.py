@@ -1,5 +1,8 @@
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
+import rewrite_v5.production as v5_production
 from rewrite_v5.cluster_mass import build_cluster_mass_prompt
 from rewrite_v5.experiment import (
     _is_safe_candidate,
@@ -429,6 +432,83 @@ def test_v5_residual_prompt_preserves_pronoun_subject_continuity():
     assert "do not generalize" in continuity["instruction"]
     assert "do not explain the reference parenthetically" in continuity["instruction"]
     assert any("referring to" in item for item in payload["method"])
+
+
+def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch):
+    def fake_residual_comb(**kwargs):
+        assert kwargs["max_rounds"] == 6
+        assert kwargs["variant_count"] == 5
+        assert kwargs["retune_variant_count"] == 5
+        return {
+            "stage": "v5_residual_cluster_comb",
+            "baseline_scores": {
+                "ai": 40.0,
+                "topk": 84.0,
+                "external": 37.0,
+                "rank": 104.0,
+                "unsafe_cluster_count": 8,
+            },
+            "final_scores": {
+                "ai": 34.0,
+                "topk": 76.0,
+                "external": 29.0,
+                "rank": 82.0,
+                "unsafe_cluster_count": 4,
+            },
+            "goal": {"status": "mitigation_failed_no_safe_candidate", "goal_met": False},
+            "rounds": [
+                {
+                    "round": 1,
+                    "status": "accepted",
+                    "accepted": {
+                        "section_id": "route_001",
+                        "variant_id": "v1",
+                        "label": "initial_v1",
+                        "word_count": 20,
+                        "text": "Rewritten cluster text.",
+                        "scores": {"ai_delta": 6.0, "topk_delta": 8.0},
+                        "local_scores": {"unsafe_cluster_count": 0, "topk_delta": 20.0},
+                    },
+                    "candidates": [{"variant_id": "v1"}],
+                }
+            ],
+            "rewritten_document": "This is the rewritten document.",
+        }
+
+    monkeypatch.setattr(v5_production, "run_v5_residual_cluster_comb_experiment", fake_residual_comb)
+    monkeypatch.setattr(v5_production, "_scan_report", lambda text: {
+        "input_text": text,
+        "ai_score": 34.0,
+        "ai_risk_badge": {"ai_likelihood_score": 34.0},
+        "findings": {},
+    })
+    monkeypatch.setattr(v5_production, "evaluate_rewrite_goal", lambda **_: SimpleNamespace(
+        to_dict=lambda: {
+            "status": "mitigation_failed_no_safe_candidate",
+            "goal_met": False,
+            "reason": "candidate_failed_strict_detector_safe_goal",
+        }
+    ))
+    monkeypatch.setattr(v5_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+
+    result = v5_production.run_rewrite_pipeline_v5(
+        detect_json={
+            "input_text": "This is the original document.",
+            "ai_score": 40.0,
+            "ai_risk_badge": {"ai_likelihood_score": 40.0},
+            "findings": {},
+        },
+        output_dir=str(tmp_path),
+        model="deepseek/deepseek-v3.2",
+    )
+
+    summary = json.loads(Path(result["json_path"]).read_text())
+    assert result["status"] == "rewrite_candidate_generated_needs_external_review"
+    assert summary["rewrite_pipeline_version"] == "rewrite_v5_residual_cluster_comb"
+    assert summary["rewrite_engine_mode"] == "v5_residual_cluster_comb_production"
+    assert summary["candidate_generation_status"]["accepted_count"] == 1
+    assert summary["v5_scores"]["deltas"]["ai_delta"] == 6.0
+    assert summary["final_text"] == "This is the rewritten document."
 
 
 def test_v5_route_blueprint_moves_generic_opener_after_concrete_event():
