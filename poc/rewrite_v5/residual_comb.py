@@ -194,11 +194,22 @@ def run_v5_residual_cluster_comb_experiment(
         density_gate=baseline_density_gate,
         unsafe_cluster_cleanup_rounds=unsafe_cluster_limit,
     )
+    unsafe_cluster_probe_limit = _unsafe_cluster_probe_round_limit(unsafe_cluster_limit) if unsafe_cluster_first else 0
+    remaining_unsafe_cluster_limit = (
+        max(0, unsafe_cluster_limit - unsafe_cluster_probe_limit)
+        if unsafe_cluster_first
+        else unsafe_cluster_limit
+    )
+    core_round_limit = max(1, int(max_rounds or 1))
     phase_order = {
         "unsafe_cluster_first": unsafe_cluster_first,
         "reason": "eligible_span_density_unsafe" if unsafe_cluster_first else "default_route_then_cleanup",
         "unsafe_cluster_selection_mode": "clearable" if unsafe_cluster_first and budget_seconds is not None else "scanner",
-        "unsafe_cluster_route_planning": not (unsafe_cluster_first and budget_seconds is not None),
+        "unsafe_cluster_probe_rounds": unsafe_cluster_probe_limit,
+        "remaining_unsafe_cluster_rounds": remaining_unsafe_cluster_limit,
+        "core_route_rounds": core_round_limit,
+        "unsafe_cluster_probe_route_planning": not (unsafe_cluster_first and budget_seconds is not None),
+        "unsafe_cluster_cleanup_route_planning": True,
         "initial_density_gate": _compact_density_gate(baseline_density_gate),
     }
 
@@ -206,14 +217,14 @@ def run_v5_residual_cluster_comb_experiment(
     risky_window_rounds: list[dict[str, Any]] = []
     unsafe_cluster_rounds: list[dict[str, Any]] = []
     final_risky_window_rounds: list[dict[str, Any]] = []
-    if unsafe_cluster_first and not _runtime_budget_exhausted(started_at, budget_seconds):
-        _emit_progress(progress_callback, 67, "Cleaning V5 unsafe clusters first")
+    if unsafe_cluster_probe_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds):
+        _emit_progress(progress_callback, 67, "Probing V5 unsafe clusters")
         (
             current_text,
             current_report,
             current_goal,
             current_scores,
-            unsafe_cluster_rounds,
+            unsafe_cluster_probe_rounds,
             global_best_candidate,
         ) = _run_unsafe_cluster_cleanup_pass(
             original_text=original_text,
@@ -224,27 +235,20 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal=current_goal,
             current_scores=current_scores,
             gateway=gateway,
-            output_dir=out_dir / "unsafe_cluster_cleanup",
+            output_dir=out_dir / "unsafe_cluster_cleanup_probe",
             global_best_candidate=global_best_candidate,
-            max_rounds=unsafe_cluster_limit,
+            max_rounds=unsafe_cluster_probe_limit,
             variant_count=cleanup_variants,
             selection_mode=str(phase_order["unsafe_cluster_selection_mode"]),
-            route_plan_enabled=bool(phase_order["unsafe_cluster_route_planning"]),
+            route_plan_enabled=bool(phase_order["unsafe_cluster_probe_route_planning"]),
             progress_callback=progress_callback,
             progress_percent=68,
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
         )
+        unsafe_cluster_rounds.extend(unsafe_cluster_probe_rounds)
 
-    core_round_limit = 0 if unsafe_cluster_first else max(1, int(max_rounds or 1))
-    if core_round_limit <= 0:
-        rounds.append({
-            "round": 1,
-            "status": "skipped",
-            "reason": "unsafe_cluster_first_budget_mode",
-            "current_scores": current_scores,
-        })
     for round_index in range(1, core_round_limit + 1):
         if _runtime_budget_exhausted(started_at, budget_seconds):
             rounds.append(_runtime_budget_stop_record(
@@ -484,9 +488,8 @@ def run_v5_residual_cluster_comb_experiment(
         )
 
     if (
-        not unsafe_cluster_first
-        and not _runtime_budget_exhausted(started_at, budget_seconds)
-        and unsafe_cluster_limit > 0
+        not _runtime_budget_exhausted(started_at, budget_seconds)
+        and remaining_unsafe_cluster_limit > 0
     ):
         _emit_progress(progress_callback, 77, "Cleaning V5 unsafe clusters")
         (
@@ -507,7 +510,7 @@ def run_v5_residual_cluster_comb_experiment(
             gateway=gateway,
             output_dir=out_dir / "unsafe_cluster_cleanup",
             global_best_candidate=global_best_candidate,
-            max_rounds=unsafe_cluster_limit,
+            max_rounds=remaining_unsafe_cluster_limit,
             variant_count=cleanup_variants,
             selection_mode="scanner",
             route_plan_enabled=True,
@@ -670,6 +673,27 @@ def _should_start_with_unsafe_cluster_cleanup(
     if not isinstance(density_gate, dict):
         return False
     return density_gate.get("safe") is False
+
+
+def _unsafe_cluster_probe_round_limit(total_rounds: int) -> int:
+    total = max(0, min(12, int(total_rounds or 0)))
+    if total <= 0:
+        return 0
+    configured = os.environ.get("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_ROUNDS")
+    if configured is not None:
+        try:
+            return max(0, min(total, int(configured or 0)))
+        except (TypeError, ValueError):
+            pass
+    share = _float_env(
+        "DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_SHARE",
+        0.25,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    if share <= 0:
+        return 0
+    return max(1, min(total, round(total * share)))
 
 
 def _runtime_budget_seconds(value: float | None) -> float | None:
@@ -2558,6 +2582,8 @@ def _has_unsafe_cluster_cleanup_movement(row: dict[str, Any]) -> bool:
     return (
         (has_cluster_count_drop or has_local_cluster_movement)
         and _number(incremental.get("rank_delta")) >= 0
+        and _number(incremental.get("external_delta")) >= 0
+        and _number(incremental.get("external_ai_flag_risk_delta")) >= 0
         and _number(incremental.get("risky_window_count_delta")) >= 0
         and _number(incremental.get("unsafe_cluster_count_delta")) >= 0
         and _number(incremental.get("topk_calibrated_risk_delta")) >= 0

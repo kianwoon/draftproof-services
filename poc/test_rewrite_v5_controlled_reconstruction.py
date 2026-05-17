@@ -21,6 +21,7 @@ from rewrite_v5.residual_comb import (
     build_residual_cluster_retune_prompt,
     build_route_blueprint,
     build_unsafe_cluster_cleanup_prompt,
+    run_v5_residual_cluster_comb_experiment,
     _best_full_document_candidate,
     generate_residual_cluster_seed_variants,
     _expand_to_local_text_boundaries,
@@ -37,6 +38,7 @@ from rewrite_v5.residual_comb import (
     _section_apply_boundary_integrity,
     _serial_variant_max_tokens,
     _should_start_with_unsafe_cluster_cleanup,
+    _unsafe_cluster_probe_round_limit,
     _text_integrity_regression,
     _would_discard_structural_progress,
     _has_incremental_movement,
@@ -1082,10 +1084,21 @@ def test_v5_tail_cleanup_acceptance_is_scanner_owned():
             "ai_delta": 0.0,
         },
     }
+    cluster_external_regression = {
+        "incremental": {
+            "unsafe_cluster_count_delta": 1.0,
+            "rank_delta": 0.5,
+            "external_delta": -0.1,
+            "risky_window_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
+    }
     cluster_local_directional = {
         "incremental": {
             "unsafe_cluster_count_delta": 0.0,
             "rank_delta": 0.5,
+            "external_delta": 0.2,
             "risky_window_count_delta": 0.0,
             "topk_calibrated_risk_delta": 0.0,
             "ai_delta": 0.1,
@@ -1105,6 +1118,7 @@ def test_v5_tail_cleanup_acceptance_is_scanner_owned():
     assert _has_unsafe_cluster_cleanup_movement(cluster_local_directional)
     assert not _has_unsafe_cluster_cleanup_movement(cluster_rank_regression)
     assert not _has_unsafe_cluster_cleanup_movement(cluster_risky_window_regression)
+    assert not _has_unsafe_cluster_cleanup_movement(cluster_external_regression)
 
 
 def test_v5_global_best_fallback_keeps_better_full_document_candidate():
@@ -1177,6 +1191,166 @@ def test_v5_phase_order_starts_with_unsafe_cluster_cleanup_when_density_is_unsaf
         density_gate={"safe": False},
         unsafe_cluster_cleanup_rounds=0,
     )
+
+
+def test_v5_unsafe_cluster_first_uses_bounded_probe(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_ROUNDS", raising=False)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_SHARE", "0.25")
+
+    assert _unsafe_cluster_probe_round_limit(12) == 3
+    assert _unsafe_cluster_probe_round_limit(4) == 1
+
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_ROUNDS", "2")
+    assert _unsafe_cluster_probe_round_limit(12) == 2
+
+
+def test_v5_unsafe_cluster_probe_does_not_skip_core_route(tmp_path, monkeypatch):
+    module = v5_production.run_v5_residual_cluster_comb_experiment.__globals__
+    cleanup_calls: list[dict] = []
+    core_sections: list[str] = []
+
+    def fake_scan(text):
+        return {"input_text": text, "ai_score": 50.0, "findings": {}}
+
+    def fake_goal(**_kwargs):
+        return SimpleNamespace(to_dict=lambda: {"unsafe_cluster_count": 3})
+
+    def fake_score(_text, _report, _goal):
+        return {
+            "ai": 50.0,
+            "topk": 98.0,
+            "external": 60.0,
+            "rank": 120.0,
+            "risky_window_count": 4,
+            "unsafe_word_ratio": 70.0,
+            "unsafe_cluster_count": 3,
+            "topk_calibrated_risk": 96.0,
+            "qualifying_text_ai_density": 60.0,
+            "ai_authorship": 50.0,
+            "external_ai_flag_risk": 55.0,
+        }
+
+    def fake_cleanup_pass(**kwargs):
+        cleanup_calls.append({
+            "max_rounds": kwargs["max_rounds"],
+            "selection_mode": kwargs["selection_mode"],
+            "route_plan_enabled": kwargs["route_plan_enabled"],
+        })
+        return (
+            kwargs["current_text"],
+            kwargs["current_report"],
+            kwargs["current_goal"],
+            kwargs["current_scores"],
+            [{
+                "round": 1,
+                "phase": "unsafe_cluster_cleanup",
+                "status": "skipped",
+                "reason": "test_cleanup_probe",
+            }],
+            kwargs["global_best_candidate"],
+        )
+
+    def fake_cluster_units(**_kwargs):
+        return [{"id": "cluster-1", "text": "The cluster needs a route rewrite."}]
+
+    def fake_section_from_cluster(_cluster):
+        section = SectionUnit(
+            section_id="cluster-1",
+            heading="",
+            text="The cluster needs a route rewrite.",
+            start_char=0,
+            end_char=len("The cluster needs a route rewrite."),
+            paragraph_count=1,
+            word_count=6,
+            metadata={},
+        )
+        core_sections.append(section.section_id)
+        return section
+
+    def fake_seed_variants(**_kwargs):
+        return [SimpleNamespace(variant_id="seed1", text="The route rewrite worked.")]
+
+    def fake_score_variant(**_kwargs):
+        return {
+            "variant_id": "seed1",
+            "label": "seed_seed1",
+            "text": "The route rewrite worked.",
+            "candidate_text": "The route rewrite worked.",
+            "candidate_report": fake_scan("The route rewrite worked."),
+            "candidate_goal": {"unsafe_cluster_count": 2},
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 49.0,
+                "topk": 97.0,
+                "external": 59.0,
+                "rank": 118.0,
+                "risky_window_count": 4,
+                "unsafe_word_ratio": 65.0,
+                "unsafe_cluster_count": 2,
+                "topk_calibrated_risk": 95.0,
+                "qualifying_text_ai_density": 58.0,
+                "ai_authorship": 49.0,
+                "external_ai_flag_risk": 54.0,
+                "ai_delta": 1.0,
+                "topk_delta": 1.0,
+                "external_delta": 1.0,
+                "rank_delta": 2.0,
+                "unsafe_cluster_count_delta": 1.0,
+                "topk_calibrated_risk_delta": 1.0,
+            },
+            "local_scores": {
+                "unsafe_cluster_count": 0,
+                "unsafe_word_ratio": 0,
+                "unsafe_cluster_count_delta": 1.0,
+                "unsafe_word_ratio_delta": 5.0,
+                "topk_delta": 1.0,
+                "rank_delta": 2.0,
+            },
+            "incremental": {
+                "unsafe_cluster_count_delta": 1.0,
+                "rank_delta": 2.0,
+                "ai_delta": 1.0,
+                "topk_delta": 1.0,
+                "external_delta": 1.0,
+                "risky_window_count_delta": 0.0,
+                "topk_calibrated_risk_delta": 1.0,
+                "external_ai_flag_risk_delta": 1.0,
+            },
+        }
+
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_SHARE", "0.25")
+    monkeypatch.setitem(module, "_scan_report", fake_scan)
+    monkeypatch.setitem(module, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setitem(module, "_score_summary", fake_score)
+    monkeypatch.setitem(module, "build_eligible_span_density_contract", lambda *_args, **_kwargs: {"safe": False})
+    monkeypatch.setitem(module, "_run_unsafe_cluster_cleanup_pass", fake_cleanup_pass)
+    monkeypatch.setitem(module, "build_cluster_repair_units", fake_cluster_units)
+    monkeypatch.setitem(module, "_section_from_cluster", fake_section_from_cluster)
+    monkeypatch.setitem(module, "generate_residual_cluster_seed_variants", fake_seed_variants)
+    monkeypatch.setitem(module, "_score_residual_variant", fake_score_variant)
+
+    result = run_v5_residual_cluster_comb_experiment(
+        input_text="The cluster needs a route rewrite.",
+        output_dir=tmp_path,
+        max_rounds=1,
+        variant_count=1,
+        retune_variant_count=1,
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=4,
+        final_risky_window_cleanup_rounds=0,
+        max_seconds=60,
+        api_key="test-key",
+    )
+
+    assert result["phase_order"]["unsafe_cluster_first"] is True
+    assert result["phase_order"]["unsafe_cluster_probe_rounds"] == 1
+    assert result["phase_order"]["core_route_rounds"] == 1
+    assert result["rounds"][0]["status"] == "accepted"
+    assert core_sections == ["cluster-1"]
+    assert cleanup_calls == [
+        {"max_rounds": 1, "selection_mode": "clearable", "route_plan_enabled": False},
+        {"max_rounds": 3, "selection_mode": "scanner", "route_plan_enabled": True},
+    ]
 
 
 def test_v5_budget_order_prefers_clearable_unsafe_clusters_without_content_rules():
