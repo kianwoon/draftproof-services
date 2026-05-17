@@ -31,7 +31,10 @@ from rewrite_v5.residual_comb import (
     _has_full_document_fallback_movement,
     _parallel_single_variant_max_tokens,
     _parse_route_plan,
+    _runtime_budget_exhausted,
+    _runtime_budget_stop_record,
     _section_apply_boundary_integrity,
+    _serial_variant_max_tokens,
     _text_integrity_regression,
     _has_incremental_movement,
     _residual_candidate_sort_key,
@@ -920,6 +923,51 @@ def test_v5_parallel_single_variant_token_cap_scales_with_source_words():
 
     assert _parallel_single_variant_max_tokens(prompt, 8000) == 3780
     assert _parallel_single_variant_max_tokens(prompt, 2500) == 2500
+
+
+def test_v5_serial_variant_token_cap_scales_with_source_words(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SERIAL_MAX_TOKENS", raising=False)
+    prompt = "Return valid JSON only.\n" + json.dumps({
+        "cluster": {"source_word_count": 315},
+        "length_guidance": {"preferred_max_words": 360},
+    })
+
+    assert _serial_variant_max_tokens(prompt, 5) == 4950
+    assert _serial_variant_max_tokens(prompt, 2) == 2520
+
+
+def test_v5_runtime_budget_stop_record_marks_exhaustion():
+    started_at = 100.0
+
+    assert _runtime_budget_exhausted(started_at, 1.0)
+    record = _runtime_budget_stop_record(
+        phase="unsafe_cluster_cleanup",
+        round_index=3,
+        started_at=started_at,
+        max_seconds=1.0,
+        current_scores={"ai": 35.0},
+    )
+
+    assert record["status"] == "stopped"
+    assert record["reason"] == "runtime_budget_exhausted"
+    assert record["runtime_budget"]["enabled"] is True
+    assert record["current_scores"]["ai"] == 35.0
+
+
+def test_v5_production_runtime_budget_scales_with_input_length(monkeypatch):
+    monkeypatch.delenv("REWRITE_SOFT_TIME_LIMIT_SECONDS", raising=False)
+    config = {
+        "runtime_base_seconds": 120,
+        "runtime_seconds_per_100_words": 25.0,
+        "runtime_min_seconds": 180,
+        "runtime_max_seconds": 720,
+        "runtime_soft_limit_buffer_seconds": 120,
+    }
+    short_text = "word " * 100
+    long_text = "word " * 1500
+
+    assert v5_production._v5_runtime_budget_seconds(short_text, config) == 180
+    assert v5_production._v5_runtime_budget_seconds(long_text, config) == 495
 
 
 def test_v5_compact_rounds_keep_cleanup_observability_without_raw_payloads():

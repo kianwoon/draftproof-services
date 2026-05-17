@@ -12,7 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
-from typing import Any
+import time
+from typing import Any, Callable
 
 from llm.gateway import LLMConfig, LLMGateway
 from rewrite_v2.goal_contract import evaluate_rewrite_goal
@@ -117,9 +118,13 @@ def run_v5_residual_cluster_comb_experiment(
     unsafe_cluster_cleanup_rounds: int | None = None,
     cleanup_variant_count: int | None = None,
     final_risky_window_cleanup_rounds: int | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    max_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Iteratively treat the strongest residual cluster and rescan."""
 
+    started_at = time.monotonic()
+    budget_seconds = _runtime_budget_seconds(max_seconds)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     original_text = str(input_text or "")
@@ -149,6 +154,20 @@ def run_v5_residual_cluster_comb_experiment(
 
     rounds: list[dict[str, Any]] = []
     for round_index in range(1, max(1, int(max_rounds or 1)) + 1):
+        if _runtime_budget_exhausted(started_at, budget_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="residual_cluster_comb",
+                round_index=round_index,
+                started_at=started_at,
+                max_seconds=budget_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        _emit_progress(
+            progress_callback,
+            _residual_progress_percent(round_index, max_rounds=max_rounds),
+            f"V5 cluster route round {round_index}",
+        )
         round_dir = out_dir / f"round_{round_index:02d}"
         round_dir.mkdir(parents=True, exist_ok=True)
         cluster_units = build_cluster_repair_units(
@@ -190,6 +209,20 @@ def run_v5_residual_cluster_comb_experiment(
         route_plan: dict[str, Any] | None = None
         route_plan_diagnostics: dict[str, Any] | None = None
         if not seed_accepted:
+            if _runtime_budget_exhausted(started_at, budget_seconds):
+                rounds.append(_runtime_budget_stop_record(
+                    phase="residual_cluster_comb",
+                    round_index=round_index,
+                    started_at=started_at,
+                    max_seconds=budget_seconds,
+                    current_scores=current_scores,
+                ))
+                break
+            _emit_progress(
+                progress_callback,
+                _residual_progress_percent(round_index, max_rounds=max_rounds),
+                f"Planning V5 cluster route {round_index}",
+            )
             route_plan, route_plan_diagnostics, plan_prompt, plan_completion = generate_residual_cluster_route_plan(
                 section=section,
                 local_goal=local_source_goal,
@@ -197,36 +230,58 @@ def run_v5_residual_cluster_comb_experiment(
             )
             (round_dir / "route_plan_prompt.json.txt").write_text(plan_prompt)
             (round_dir / "route_plan_completion.json.txt").write_text(plan_completion)
-            variants, llm_diagnostics, prompt, completion = generate_residual_cluster_variants(
-                section=section,
-                local_goal=local_source_goal,
-                gateway=gateway,
-                variant_count=variant_count,
-                route_plan=route_plan,
-            )
-            diagnostics = {
-                **diagnostics,
-                "route_plan": route_plan_diagnostics,
-                "llm_generation": llm_diagnostics,
-            }
-            (round_dir / "cluster_prompt.json.txt").write_text(prompt)
-            (round_dir / "cluster_completion.json.txt").write_text(completion)
-            rows.extend([
-                _score_residual_variant(
-                    original_text=original_text,
-                    baseline_report=baseline_report,
-                    baseline_scores=baseline_scores,
-                    current_text=current_text,
-                    current_scores=current_scores,
-                    section=section,
-                    variant=variant,
-                    output_dir=round_dir,
-                    label=f"initial_{variant.variant_id}",
+            if _runtime_budget_exhausted(started_at, budget_seconds):
+                diagnostics = {
+                    **diagnostics,
+                    "route_plan": route_plan_diagnostics,
+                    "llm_generation": {"status": "skipped", "reason": "runtime_budget_exhausted_after_route_plan"},
+                }
+            else:
+                _emit_progress(
+                    progress_callback,
+                    min(75, _residual_progress_percent(round_index, max_rounds=max_rounds) + 1),
+                    f"Generating V5 cluster candidates {round_index}",
                 )
-                for variant in variants
-            ])
+                variants, llm_diagnostics, prompt, completion = generate_residual_cluster_variants(
+                    section=section,
+                    local_goal=local_source_goal,
+                    gateway=gateway,
+                    variant_count=variant_count,
+                    route_plan=route_plan,
+                )
+                diagnostics = {
+                    **diagnostics,
+                    "route_plan": route_plan_diagnostics,
+                    "llm_generation": llm_diagnostics,
+                }
+                (round_dir / "cluster_prompt.json.txt").write_text(prompt)
+                (round_dir / "cluster_completion.json.txt").write_text(completion)
+                rows.extend([
+                    _score_residual_variant(
+                        original_text=original_text,
+                        baseline_report=baseline_report,
+                        baseline_scores=baseline_scores,
+                        current_text=current_text,
+                        current_scores=current_scores,
+                        section=section,
+                        variant=variant,
+                        output_dir=round_dir,
+                        label=f"initial_{variant.variant_id}",
+                    )
+                    for variant in variants
+                ])
         best_initial = _best_residual_candidate(rows)
-        if not seed_accepted and best_initial and _needs_retune(best_initial):
+        if (
+            not seed_accepted
+            and best_initial
+            and _needs_retune(best_initial)
+            and not _runtime_budget_exhausted(started_at, budget_seconds)
+        ):
+            _emit_progress(
+                progress_callback,
+                min(75, _residual_progress_percent(round_index, max_rounds=max_rounds) + 2),
+                f"Retuning V5 cluster candidate {round_index}",
+            )
             retuned, retune_diagnostics, retune_prompt, retune_completion = generate_residual_cluster_retunes(
                 section=section,
                 current_best_text=str(best_initial.get("text") or ""),
@@ -251,6 +306,8 @@ def run_v5_residual_cluster_comb_experiment(
                 )
                 for variant in retuned
             ]
+        elif not seed_accepted and best_initial and _needs_retune(best_initial):
+            retune_diagnostics = {"status": "skipped", "reason": "runtime_budget_exhausted_before_retune"}
         all_rows = rows + retuned_rows
         global_best_candidate = _best_full_document_candidate([global_best_candidate, *all_rows])
         best = _best_residual_candidate(all_rows)
@@ -281,14 +338,29 @@ def run_v5_residual_cluster_comb_experiment(
         ).to_dict()
         current_scores = accepted.get("scores") if isinstance(accepted.get("scores"), dict) else _score_summary(original_text, current_report, current_goal)
         (out_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
+        _emit_progress(
+            progress_callback,
+            min(75, _residual_progress_percent(round_index, max_rounds=max_rounds) + 2),
+            f"Accepted V5 cluster round {round_index}",
+        )
+        if _runtime_budget_exhausted(started_at, budget_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="residual_cluster_comb",
+                round_index=round_index + 1,
+                started_at=started_at,
+                max_seconds=budget_seconds,
+                current_scores=current_scores,
+            ))
+            break
 
     cleanup_variants = cleanup_variant_count if cleanup_variant_count is not None else variant_count
     risky_window_rounds: list[dict[str, Any]] = []
-    if _cleanup_round_limit(
+    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
         risky_window_cleanup_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS",
         default=2,
     ) > 0:
+        _emit_progress(progress_callback, 76, "Cleaning V5 risky windows")
         (
             current_text,
             current_report,
@@ -313,14 +385,19 @@ def run_v5_residual_cluster_comb_experiment(
                 default=2,
             ),
             variant_count=cleanup_variants,
+            progress_callback=progress_callback,
+            progress_percent=76,
+            started_at=started_at,
+            max_seconds=budget_seconds,
         )
 
     unsafe_cluster_rounds: list[dict[str, Any]] = []
-    if _cleanup_round_limit(
+    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
         unsafe_cluster_cleanup_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
         default=12,
     ) > 0:
+        _emit_progress(progress_callback, 77, "Cleaning V5 unsafe clusters")
         (
             current_text,
             current_report,
@@ -345,14 +422,19 @@ def run_v5_residual_cluster_comb_experiment(
                 default=12,
             ),
             variant_count=cleanup_variants,
+            progress_callback=progress_callback,
+            progress_percent=77,
+            started_at=started_at,
+            max_seconds=budget_seconds,
         )
 
     final_risky_window_rounds: list[dict[str, Any]] = []
-    if _cleanup_round_limit(
+    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
         final_risky_window_cleanup_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
         default=2,
     ) > 0:
+        _emit_progress(progress_callback, 78, "Final V5 risky window cleanup")
         (
             current_text,
             current_report,
@@ -377,6 +459,10 @@ def run_v5_residual_cluster_comb_experiment(
                 default=2,
             ),
             variant_count=cleanup_variants,
+            progress_callback=progress_callback,
+            progress_percent=78,
+            started_at=started_at,
+            max_seconds=budget_seconds,
         )
 
     global_best_fallback = {
@@ -412,6 +498,7 @@ def run_v5_residual_cluster_comb_experiment(
         "global_best_fallback": global_best_fallback,
         "final_scores": current_scores,
         "eligible_span_density_gate": density_gate,
+        "runtime_budget": _runtime_budget_payload(started_at, budget_seconds),
         "goal": {
             "status": current_goal.get("status"),
             "goal_met": current_goal.get("goal_met"),
@@ -428,6 +515,66 @@ def _cleanup_round_limit(value: int | None, *, env_name: str, default: int) -> i
     if value is not None:
         return max(0, min(12, int(value or 0)))
     return _int_env(env_name, default, minimum=0, maximum=12)
+
+
+def _runtime_budget_seconds(value: float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds > 0 else None
+
+
+def _runtime_elapsed_seconds(started_at: float) -> float:
+    return max(0.0, time.monotonic() - float(started_at))
+
+
+def _runtime_budget_exhausted(started_at: float, max_seconds: float | None) -> bool:
+    return max_seconds is not None and _runtime_elapsed_seconds(started_at) >= float(max_seconds)
+
+
+def _runtime_budget_payload(started_at: float, max_seconds: float | None) -> dict[str, Any]:
+    elapsed = _runtime_elapsed_seconds(started_at)
+    remaining = None if max_seconds is None else max(0.0, float(max_seconds) - elapsed)
+    return {
+        "enabled": max_seconds is not None,
+        "max_seconds": round(float(max_seconds), 3) if max_seconds is not None else None,
+        "elapsed_seconds": round(elapsed, 3),
+        "remaining_seconds": round(remaining, 3) if remaining is not None else None,
+        "exhausted": max_seconds is not None and remaining == 0.0,
+    }
+
+
+def _runtime_budget_stop_record(
+    *,
+    phase: str,
+    round_index: int,
+    started_at: float,
+    max_seconds: float | None,
+    current_scores: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "round": round_index,
+        "phase": phase,
+        "status": "stopped",
+        "reason": "runtime_budget_exhausted",
+        "runtime_budget": _runtime_budget_payload(started_at, max_seconds),
+        "current_scores": current_scores,
+    }
+
+
+def _emit_progress(callback: Callable[[int, str], None] | None, percent: int, message: str) -> None:
+    if callback is None:
+        return
+    callback(max(0, min(99, int(percent))), str(message or ""))
+
+
+def _residual_progress_percent(round_index: int, *, max_rounds: int) -> int:
+    total = max(1, int(max_rounds or 1))
+    index = max(1, int(round_index or 1))
+    return max(67, min(75, 66 + round((min(index, total) / total) * 8)))
 
 
 def build_residual_cluster_prompt(
@@ -1064,11 +1211,21 @@ def _generate_loose_variants_from_builder(
     variants = max(1, min(5, int(variant_count or 1)))
     if variants <= 1 or not _bool_env("DRAFTPROOF_REWRITE_V5_PARALLEL_VARIANTS", False):
         prompt = prompt_builder(variants)
-        return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variants)
+        return _generate_loose_variants(
+            prompt=prompt,
+            gateway=gateway,
+            variant_count=variants,
+            max_tokens=_serial_variant_max_tokens(prompt, variants),
+        )
     fanout = _int_env("DRAFTPROOF_REWRITE_V5_LLM_FANOUT", 3, minimum=1, maximum=5)
     if fanout <= 1:
         prompt = prompt_builder(variants)
-        return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variants)
+        return _generate_loose_variants(
+            prompt=prompt,
+            gateway=gateway,
+            variant_count=variants,
+            max_tokens=_serial_variant_max_tokens(prompt, variants),
+        )
     return _generate_parallel_loose_variants(
         prompt_builder=prompt_builder,
         gateway=gateway,
@@ -1227,6 +1384,24 @@ def _parallel_single_variant_max_tokens(prompt: str, base_max_tokens: int) -> in
     if source_words:
         return max(1000, min(base_max_tokens, int(source_words * 8) + 900))
     return max(1000, min(base_max_tokens, 3000))
+
+
+def _serial_variant_max_tokens(prompt: str, variant_count: int) -> int:
+    configured = os.environ.get("DRAFTPROOF_REWRITE_V5_SERIAL_MAX_TOKENS")
+    if configured:
+        return _int_env("DRAFTPROOF_REWRITE_V5_SERIAL_MAX_TOKENS", 3600, minimum=1000, maximum=12000)
+    base_max_tokens = _int_env(
+        "DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_MAX_TOKENS",
+        8000,
+        minimum=1000,
+        maximum=12000,
+    )
+    source_words = _max_prompt_word_count_hint(prompt)
+    if source_words:
+        variants = max(1, min(5, int(variant_count or 1)))
+        estimated = int(source_words * variants * 2.25) + 900
+        return max(1200, min(base_max_tokens, estimated))
+    return max(1200, min(base_max_tokens, 3600))
 
 
 def _max_prompt_word_count_hint(prompt: str) -> int:
@@ -1803,11 +1978,25 @@ def _run_risky_window_cleanup_pass(
     global_best_candidate: dict[str, Any] | None,
     max_rounds: int,
     variant_count: int,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 76,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
     skipped: set[tuple[Any, ...]] = set()
     for cleanup_index in range(1, max(0, int(max_rounds or 0)) + 1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="risky_window_cleanup",
+                round_index=cleanup_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        _emit_progress(progress_callback, progress_percent, f"V5 risky window cleanup {cleanup_index}")
         target = _select_risky_window_section(current_text, current_report, skipped=skipped)
         if target is None:
             rounds.append({"round": cleanup_index, "phase": "risky_window_cleanup", "status": "stopped", "reason": "no_risky_window_target"})
@@ -1822,6 +2011,15 @@ def _run_risky_window_cleanup_pass(
         )
         (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
         (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="risky_window_cleanup",
+                round_index=cleanup_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
         variants, llm_diagnostics, prompt, completion = generate_risky_window_cleanup_variants(
             section=section,
             current_scores=current_scores,
@@ -1875,6 +2073,7 @@ def _run_risky_window_cleanup_pass(
             baseline_report=baseline_report,
         )
         (output_dir / f"after_round_{cleanup_index:02d}.txt").write_text(current_text)
+        _emit_progress(progress_callback, progress_percent, f"Accepted V5 risky window cleanup {cleanup_index}")
     return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 
 
@@ -1892,11 +2091,25 @@ def _run_unsafe_cluster_cleanup_pass(
     global_best_candidate: dict[str, Any] | None,
     max_rounds: int,
     variant_count: int,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 77,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
     skipped: set[tuple[Any, ...]] = set()
     for cleanup_index in range(1, max(0, int(max_rounds or 0)) + 1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="unsafe_cluster_cleanup",
+                round_index=cleanup_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        _emit_progress(progress_callback, progress_percent, f"V5 unsafe cluster cleanup {cleanup_index}")
         density = build_eligible_span_density_contract(current_text, current_report)
         if density.get("safe"):
             rounds.append({
@@ -1927,6 +2140,15 @@ def _run_unsafe_cluster_cleanup_pass(
         )
         (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
         (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="unsafe_cluster_cleanup",
+                round_index=cleanup_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
         variants, llm_diagnostics, prompt, completion = generate_unsafe_cluster_cleanup_variants(
             section=section,
             density_cluster=density_cluster,
@@ -1982,6 +2204,7 @@ def _run_unsafe_cluster_cleanup_pass(
             baseline_report=baseline_report,
         )
         (output_dir / f"after_round_{cleanup_index:02d}.txt").write_text(current_text)
+        _emit_progress(progress_callback, progress_percent, f"Accepted V5 unsafe cluster cleanup {cleanup_index}")
     return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 
 

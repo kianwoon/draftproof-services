@@ -13,6 +13,7 @@ from report.pdf import render_pdf
 from report.render_rewrite import render_rewrite_report
 from rewrite_v2.goal_contract import RewriteGoalStatus, evaluate_rewrite_goal
 from rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
+from rewrite_v3.document_units import word_count
 from rewrite_v3.pipeline import _scan_report
 from rewrite_v4.production import (
     _compact_scan_for_rewrite_report,
@@ -56,6 +57,11 @@ def _production_config() -> dict[str, Any]:
         "final_risky_window_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS", 2, minimum=0, maximum=12),
         "cleanup_variant_count": _int_env("DRAFTPROOF_REWRITE_V5_CLEANUP_VARIANTS", 5, minimum=1, maximum=5),
         "required_ai_drop": _float_env("DRAFTPROOF_REWRITE_V5_REQUIRED_AI_DROP", 5.0, minimum=0.0, maximum=100.0),
+        "runtime_base_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_BASE_SECONDS", 120, minimum=30, maximum=1200),
+        "runtime_seconds_per_100_words": _float_env("DRAFTPROOF_REWRITE_V5_RUNTIME_SECONDS_PER_100_WORDS", 25.0, minimum=0.0, maximum=300.0),
+        "runtime_min_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_MIN_SECONDS", 180, minimum=60, maximum=1800),
+        "runtime_max_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_MAX_SECONDS", 720, minimum=90, maximum=7200),
+        "runtime_soft_limit_buffer_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_SOFT_LIMIT_BUFFER_SECONDS", 120, minimum=30, maximum=1800),
     }
 
 
@@ -89,6 +95,7 @@ def run_rewrite_pipeline_v5(
     progress(62, "Starting V5 cluster rewrite")
     original_text = _extract_original_text(detect_json)
     config = _production_config()
+    runtime_budget_seconds = _v5_runtime_budget_seconds(original_text, config)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -107,6 +114,8 @@ def run_rewrite_pipeline_v5(
         unsafe_cluster_cleanup_rounds=int(config["unsafe_cluster_cleanup_rounds"]),
         cleanup_variant_count=int(config["cleanup_variant_count"]),
         final_risky_window_cleanup_rounds=int(config["final_risky_window_cleanup_rounds"]),
+        progress_callback=progress,
+        max_seconds=runtime_budget_seconds,
     )
 
     final_text = str(payload.get("rewritten_document") or original_text)
@@ -190,6 +199,7 @@ def run_rewrite_pipeline_v5(
             **config,
             "model": model,
             "base_url_configured": bool(base_url),
+            "runtime_budget_seconds": runtime_budget_seconds,
         },
         "v5_scores": {
             "original": original_scores,
@@ -280,6 +290,26 @@ def _score_deltas(original_scores: dict[str, Any], final_scores: dict[str, Any])
     return deltas
 
 
+def _v5_runtime_budget_seconds(original_text: str, config: dict[str, Any]) -> int:
+    words = max(1, word_count(str(original_text or "")))
+    estimated = float(config.get("runtime_base_seconds") or 0) + (
+        (words / 100.0) * float(config.get("runtime_seconds_per_100_words") or 0.0)
+    )
+    soft_limit = _int_env("REWRITE_SOFT_TIME_LIMIT_SECONDS", 900, minimum=180, maximum=7200)
+    soft_cap = max(
+        int(config.get("runtime_min_seconds") or 60),
+        soft_limit - int(config.get("runtime_soft_limit_buffer_seconds") or 120),
+    )
+    return max(
+        int(config.get("runtime_min_seconds") or 60),
+        min(
+            int(config.get("runtime_max_seconds") or 720),
+            soft_cap,
+            int(round(estimated)),
+        ),
+    )
+
+
 def _generated_candidate_count(rounds: list[Any]) -> int:
     count = 0
     for row in rounds:
@@ -358,6 +388,7 @@ def _compact_v5_rounds(rounds: list[Any]) -> list[dict[str, Any]]:
             "status": row.get("status"),
             "reason": row.get("reason"),
             "current_scores": row.get("current_scores") if isinstance(row.get("current_scores"), dict) else None,
+            "runtime_budget": row.get("runtime_budget") if isinstance(row.get("runtime_budget"), dict) else None,
             "density_gate": _compact_density_gate(row.get("density_gate"))
             if isinstance(row.get("density_gate"), dict)
             else None,
@@ -396,6 +427,7 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "baseline_scores": payload.get("baseline_scores"),
         "final_scores": payload.get("final_scores"),
         "eligible_span_density_gate": payload.get("eligible_span_density_gate"),
+        "runtime_budget": payload.get("runtime_budget") if isinstance(payload.get("runtime_budget"), dict) else None,
         "goal": payload.get("goal"),
         "accepted_rounds": sum(1 for row in all_rounds if isinstance(row, dict) and row.get("accepted")),
         "rounds": _compact_v5_rounds(rounds),
