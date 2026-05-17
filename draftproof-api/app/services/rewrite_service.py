@@ -180,16 +180,14 @@ async def _processing_rewrite_is_stale(job: RewriteJob, *, now: datetime | None 
 
     now = now or datetime.now(timezone.utc)
     age = now - job.created_at
-    if age > _STALE_THRESHOLD:
-        return True
 
     latest = await progress_stream.read_latest_rewrite_progress(str(job.id))
     if latest is None:
-        return False
+        return age > _STALE_THRESHOLD
 
     event_time = _redis_stream_event_time(latest[0])
     if event_time is None:
-        return False
+        return age > _STALE_THRESHOLD
 
     return now - event_time > _PROCESSING_HEARTBEAT_STALE_THRESHOLD
 
