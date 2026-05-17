@@ -553,6 +553,8 @@ def _section_from_cluster(unit: Any) -> SectionUnit:
             "risk_score": unit.risk_score,
             "sentence_count": unit.sentence_count,
             "source_metadata": unit.metadata,
+            "before_context": str(getattr(unit, "before_context", "") or ""),
+            "after_context": str(getattr(unit, "after_context", "") or ""),
         },
     )
 

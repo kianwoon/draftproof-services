@@ -114,15 +114,26 @@ def run_v5_residual_cluster_comb_experiment(
         retune_diagnostics: dict[str, Any] | None = None
         rows: list[dict[str, Any]] = list(seed_rows)
         retuned_rows: list[dict[str, Any]] = []
+        route_plan: dict[str, Any] | None = None
+        route_plan_diagnostics: dict[str, Any] | None = None
         if not seed_accepted:
+            route_plan, route_plan_diagnostics, plan_prompt, plan_completion = generate_residual_cluster_route_plan(
+                section=section,
+                local_goal=local_source_goal,
+                gateway=gateway,
+            )
+            (round_dir / "route_plan_prompt.json.txt").write_text(plan_prompt)
+            (round_dir / "route_plan_completion.json.txt").write_text(plan_completion)
             variants, llm_diagnostics, prompt, completion = generate_residual_cluster_variants(
                 section=section,
                 local_goal=local_source_goal,
                 gateway=gateway,
                 variant_count=variant_count,
+                route_plan=route_plan,
             )
             diagnostics = {
                 **diagnostics,
+                "route_plan": route_plan_diagnostics,
                 "llm_generation": llm_diagnostics,
             }
             (round_dir / "cluster_prompt.json.txt").write_text(prompt)
@@ -149,6 +160,7 @@ def run_v5_residual_cluster_comb_experiment(
                 local_goal=best_initial.get("local_goal") or {},
                 gateway=gateway,
                 variant_count=retune_variant_count,
+                route_plan=route_plan,
             )
             (round_dir / "retune_prompt.json.txt").write_text(retune_prompt)
             (round_dir / "retune_completion.json.txt").write_text(retune_completion)
@@ -213,18 +225,32 @@ def run_v5_residual_cluster_comb_experiment(
     return payload
 
 
-def build_residual_cluster_prompt(*, section: SectionUnit, local_goal: dict[str, Any] | None = None, variant_count: int = 3) -> str:
+def build_residual_cluster_prompt(
+    *,
+    section: SectionUnit,
+    local_goal: dict[str, Any] | None = None,
+    variant_count: int = 3,
+    route_plan: dict[str, Any] | None = None,
+) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
+    plan = route_plan if _route_plan_valid(route_plan) else None
     payload = {
         "task": "residual_cluster_route_bump",
         "cluster": {
             "section_id": section.section_id,
             "source_text": section.text,
+            "before_context": _section_before_context(section),
+            "after_context": _section_after_context(section),
             "source_word_count": section.word_count,
             "source_event_beats": _source_event_beats(section.text),
             "source_phrase_anchors": _source_phrase_anchors(section.text),
+            "referential_continuity": _referential_continuity(
+                section.text,
+                before_context=_section_before_context(section),
+            ),
         },
-        "route_blueprint": build_route_blueprint(section=section, local_goal=local_goal or {}),
+        "custom_route_plan": plan,
+        "fallback_route_blueprint": build_route_blueprint(section=section, local_goal=local_goal or {}),
         "length_guidance": {
             "source_words": section.word_count,
             "preferred_min_words": max(section.word_count + 10, round(section.word_count * 1.12)),
@@ -234,19 +260,24 @@ def build_residual_cluster_prompt(*, section: SectionUnit, local_goal: dict[str,
         "remaining_problem_sentences": _local_unsafe_previews(local_goal or {}),
         "method": [
             "Rewrite this cluster as a concrete route window, not as phrase repair.",
-            "Follow route_blueprint.steps in order.",
-            "Use route_blueprint.sentence_jobs as the sentence plan.",
+            "If custom_route_plan is present, follow custom_route_plan.better_route in order.",
+            "If custom_route_plan is absent, follow fallback_route_blueprint.steps in order.",
+            "Use custom_route_plan.sentence_jobs when present; otherwise use fallback_route_blueprint.sentence_jobs.",
             "Each sentence job should carry a full source beat or bridge, not a compressed summary.",
             "Follow length_guidance as writing guidance; fuller source-grounded wording is preferred over compression.",
-            "Do not copy route_blueprint labels or step names into the replacement.",
+            "Do not copy custom_route_plan labels, fallback_route_blueprint labels, or step names into the replacement.",
             "Change the route of remaining_problem_sentences most strongly.",
             "Do not keep an avoid_openers item as the opening sentence.",
-            "Add substance by unpacking the existing event, activity, and outcome named in route_blueprint.",
-            "Preserve each route_blueprint source beat unless two adjacent beats are naturally merged.",
+            "Add substance by unpacking the existing event, activity, and outcome named in the custom plan.",
+            "Preserve each source-supported beat unless two adjacent beats are naturally merged.",
             "Stay source-near: keep simple source words when they already work.",
             "Use cluster.source_phrase_anchors where they fit naturally.",
+            "Avoid exact copying of custom_route_plan.phrases_to_repath where alternatives are provided.",
+            "Avoid custom_route_plan.plain_style_bans when present.",
             "Do not upgrade simple source wording into formal education-theory labels.",
             "Keep the same people, event, activity, outcome, and point of view.",
+            "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
+            "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
             "If the source uses I or my, keep that teacher viewpoint instead of replacing it with a detached narrator.",
             "Do not invent new names, dates, places, dialogue, weather, objects, clients, classmates, or side events.",
             "Do not replace the source scenario with a different scene.",
@@ -270,19 +301,28 @@ def build_residual_cluster_retune_prompt(
     current_best_text: str,
     local_goal: dict[str, Any],
     variant_count: int = 4,
+    route_plan: dict[str, Any] | None = None,
 ) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     focus = _local_unsafe_previews(local_goal)
+    plan = route_plan if _route_plan_valid(route_plan) else None
     payload = {
         "task": "residual_cluster_retune",
         "cluster": {
             "section_id": section.section_id,
             "original_source_text": section.text,
+            "before_context": _section_before_context(section),
+            "after_context": _section_after_context(section),
             "source_event_beats": _source_event_beats(section.text),
             "source_phrase_anchors": _source_phrase_anchors(section.text),
+            "referential_continuity": _referential_continuity(
+                section.text,
+                before_context=_section_before_context(section),
+            ),
             "current_best_text": current_best_text,
         },
-        "route_blueprint": build_route_blueprint(section=section, local_goal=local_goal or {}),
+        "custom_route_plan": plan,
+        "fallback_route_blueprint": build_route_blueprint(section=section, local_goal=local_goal or {}),
         "length_guidance": {
             "source_words": section.word_count,
             "preferred_min_words": max(section.word_count + 10, round(section.word_count * 1.12)),
@@ -294,18 +334,23 @@ def build_residual_cluster_retune_prompt(
         "candidate_non_source_terms_to_reduce": _non_source_terms(section.text, current_best_text),
         "method": [
             "Rewrite the whole cluster again, but focus on the remaining problem sentence route.",
-            "Follow route_blueprint.steps in order.",
-            "Use route_blueprint.sentence_jobs as the sentence plan.",
+            "If custom_route_plan is present, follow custom_route_plan.better_route in order.",
+            "If custom_route_plan is absent, follow fallback_route_blueprint.steps in order.",
+            "Use custom_route_plan.sentence_jobs when present; otherwise use fallback_route_blueprint.sentence_jobs.",
             "Each sentence job should carry a full source beat or bridge, not a compressed summary.",
             "Follow length_guidance as writing guidance; fuller source-grounded wording is preferred over compression.",
-            "Do not copy route_blueprint labels or step names into the replacement.",
+            "Do not copy custom_route_plan labels, fallback_route_blueprint labels, or step names into the replacement.",
             "Break any packed sentence into clearer event movement if needed.",
             "Preserve each source_event_beats item unless two adjacent beats are naturally merged.",
             "Stay source-near: keep simple source words when they already work.",
             "Use cluster.source_phrase_anchors where they fit naturally.",
+            "Avoid exact copying of custom_route_plan.phrases_to_repath where alternatives are provided.",
+            "Avoid custom_route_plan.plain_style_bans when present.",
             "Reduce candidate_non_source_terms_to_reduce by replacing them with source wording where possible.",
             "Do not upgrade simple source wording into formal education-theory labels.",
             "If the source uses I or my, keep that teacher viewpoint instead of replacing it with a detached narrator.",
+            "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
+            "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
             "Use concrete classroom, action, or event wording from the same source scenario instead of summary wording.",
             "Do not invent new names, dates, places, dialogue, weather, objects, clients, classmates, or side events.",
             "Do not replace the source scenario with a different scene.",
@@ -328,9 +373,99 @@ def generate_residual_cluster_variants(
     local_goal: dict[str, Any] | None = None,
     gateway: LLMGateway,
     variant_count: int = 3,
+    route_plan: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
-    prompt = build_residual_cluster_prompt(section=section, local_goal=local_goal or {}, variant_count=variant_count)
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal=local_goal or {},
+        variant_count=variant_count,
+        route_plan=route_plan,
+    )
     return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
+
+
+def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal: dict[str, Any] | None = None) -> str:
+    payload = {
+        "task": "custom_cluster_route_plan",
+        "cluster": {
+            "section_id": section.section_id,
+            "source_text": section.text,
+            "before_context": _section_before_context(section),
+            "after_context": _section_after_context(section),
+            "source_word_count": section.word_count,
+            "source_event_beats": _source_event_beats(section.text),
+            "source_phrase_anchors": _source_phrase_anchors(section.text),
+            "referential_continuity": _referential_continuity(
+                section.text,
+                before_context=_section_before_context(section),
+            ),
+        },
+        "scanner_local_findings": {
+            "unsafe_previews": _local_unsafe_previews(local_goal or {}),
+            "top_sentence_targets": _local_top_sentence_targets(local_goal or {}),
+            "recommended_actions": _local_recommended_actions(local_goal or {}),
+        },
+        "planning_rules": [
+            "Act as a prompt planner, not the final writer.",
+            "Derive a cluster-specific route plan from the source text and scanner findings.",
+            "Do not mention scores, scanner names, authorship labels, or risk labels in the plan fields.",
+            "Every better_route step must be supported by source text.",
+            "Do not add facts, examples, people, places, dates, dialogue, or outside knowledge.",
+            "Convert broad summary movement into concrete sentence jobs using source events.",
+            "Preserve cluster.referential_continuity in the better route.",
+            "If a pronoun is linked to a name in before_context, plan for natural name/pronoun continuity and do not tell the writer to explain the reference parenthetically.",
+            "Use plain editorial task language that a writer can execute.",
+        ],
+        "output_schema": {
+            "route_plan": {
+                "current_route": [
+                    {"source_quote": "...", "function": "...", "weakness": "..."},
+                ],
+                "better_route": [
+                    {"job_id": "j1", "job": "...", "source_quotes": ["..."], "avoid_copying": ["..."]},
+                ],
+                "sentence_jobs": ["..."],
+                "phrases_to_repath": [
+                    {"source": "...", "plain_direction": "..."},
+                ],
+                "plain_style_bans": ["..."],
+                "opening_strategy": "...",
+                "length_strategy": "...",
+            }
+        },
+    }
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def generate_residual_cluster_route_plan(
+    *,
+    section: SectionUnit,
+    local_goal: dict[str, Any],
+    gateway: LLMGateway,
+) -> tuple[dict[str, Any] | None, dict[str, Any], str, str]:
+    prompt = build_residual_cluster_route_plan_prompt(section=section, local_goal=local_goal)
+    structured = structured_json_request_options(getattr(gateway, "model", None), _route_plan_response_format())
+    provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
+    response = gateway.chat(
+        prompt,
+        system="Return only valid JSON with a route_plan object.",
+        response_format=structured.get("response_format") or {"type": "json_object"},
+        provider=provider,
+        temperature=_float_env("DRAFTPROOF_REWRITE_V5_ROUTE_PLAN_TEMPERATURE", 0.12, minimum=0.0, maximum=0.8),
+        top_p=_float_env("DRAFTPROOF_REWRITE_V5_ROUTE_PLAN_TOP_P", 0.72, minimum=0.1, maximum=1.0),
+        max_tokens=_int_env("DRAFTPROOF_REWRITE_V5_ROUTE_PLAN_MAX_TOKENS", 2600, minimum=800, maximum=6000),
+    )
+    raw = response.raw_content or response.content
+    parsed, diagnostics = _parse_route_plan(raw, source_text=section.text)
+    return parsed, {
+        **diagnostics,
+        "model": response.model,
+        "provider": response.raw.get("provider"),
+        "usage": response.usage,
+        "finish_reason": response.finish_reason,
+        "native_finish_reason": response.native_finish_reason,
+        "structured_output_mode": structured.get("structured_output_mode"),
+    }, prompt, raw
 
 
 def generate_residual_cluster_seed_variants(
@@ -368,12 +503,14 @@ def generate_residual_cluster_retunes(
     local_goal: dict[str, Any],
     gateway: LLMGateway,
     variant_count: int = 4,
+    route_plan: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     prompt = build_residual_cluster_retune_prompt(
         section=section,
         current_best_text=current_best_text,
         local_goal=local_goal,
         variant_count=variant_count,
+        route_plan=route_plan,
     )
     return _generate_loose_variants(prompt=prompt, gateway=gateway, variant_count=variant_count)
 
@@ -407,6 +544,207 @@ def _generate_loose_variants(
         "native_finish_reason": response.native_finish_reason,
         "structured_output_mode": structured.get("structured_output_mode"),
     }, prompt, raw
+
+
+def _parse_route_plan(raw: str, *, source_text: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    payload, diagnostics = parse_json_object(raw, required_keys={"route_plan"})
+    if payload is None:
+        return None, diagnostics
+    plan = payload.get("route_plan")
+    if not isinstance(plan, dict):
+        return None, {**diagnostics, "status": "schema_failed", "reason": "route_plan_not_object"}
+    sanitized = _sanitize_route_plan(plan, source_text=source_text)
+    if not _route_plan_valid(sanitized):
+        return None, {
+            **diagnostics,
+            "status": "schema_failed",
+            "reason": "route_plan_has_no_supported_better_route",
+            "route_plan_keys": sorted(plan.keys()),
+        }
+    return sanitized, {
+        **diagnostics,
+        "status": "ok",
+        "better_route_count": len(sanitized.get("better_route") or []),
+        "phrase_repath_count": len(sanitized.get("phrases_to_repath") or []),
+        "sentence_job_count": len(sanitized.get("sentence_jobs") or []),
+    }
+
+
+def _sanitize_route_plan(plan: dict[str, Any], *, source_text: str) -> dict[str, Any]:
+    source = str(source_text or "")
+    return {
+        "current_route": _sanitize_current_route(plan.get("current_route"), source_text=source),
+        "better_route": _sanitize_better_route(plan.get("better_route"), source_text=source),
+        "sentence_jobs": _string_list(plan.get("sentence_jobs"), limit=8),
+        "phrases_to_repath": _sanitize_phrase_repaths(plan.get("phrases_to_repath"), source_text=source),
+        "plain_style_bans": _string_list(plan.get("plain_style_bans"), limit=12),
+        "opening_strategy": _short_string(plan.get("opening_strategy"), limit=220),
+        "length_strategy": _short_string(plan.get("length_strategy"), limit=220),
+    }
+
+
+def _sanitize_current_route(value: Any, *, source_text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in value if isinstance(value, list) else []:
+        if not isinstance(row, dict):
+            continue
+        quote = _supported_quote(row.get("source_quote"), source_text)
+        if not quote:
+            continue
+        rows.append({
+            "source_quote": quote,
+            "function": _short_string(row.get("function"), limit=160),
+            "weakness": _short_string(row.get("weakness"), limit=180),
+        })
+        if len(rows) >= 8:
+            break
+    return rows
+
+
+def _sanitize_better_route(value: Any, *, source_text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, row in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(row, dict):
+            continue
+        quotes = [
+            quote
+            for quote in (_supported_quote(item, source_text) for item in _raw_list(row.get("source_quotes")))
+            if quote
+        ]
+        if not quotes:
+            continue
+        job = _short_string(row.get("job"), limit=260)
+        if not job:
+            continue
+        rows.append({
+            "job_id": _short_string(row.get("job_id"), limit=24) or f"j{index}",
+            "job": job,
+            "source_quotes": quotes[:3],
+            "avoid_copying": _supported_or_short_list(row.get("avoid_copying"), source_text=source_text, limit=4),
+        })
+        if len(rows) >= 8:
+            break
+    return rows
+
+
+def _sanitize_phrase_repaths(value: Any, *, source_text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in value if isinstance(value, list) else []:
+        if not isinstance(row, dict):
+            continue
+        source = _supported_quote(row.get("source"), source_text)
+        direction = _short_string(row.get("plain_direction"), limit=220)
+        if not source or not direction:
+            continue
+        rows.append({"source": source, "plain_direction": direction})
+        if len(rows) >= 10:
+            break
+    return rows
+
+
+def _route_plan_valid(plan: Any) -> bool:
+    return isinstance(plan, dict) and bool(plan.get("better_route"))
+
+
+def _route_plan_response_format() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "rewrite_v5_cluster_route_plan",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "route_plan": {
+                        "type": "object",
+                        "properties": {
+                            "current_route": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "source_quote": {"type": "string"},
+                                        "function": {"type": "string"},
+                                        "weakness": {"type": "string"},
+                                    },
+                                    "required": ["source_quote", "function", "weakness"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "better_route": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "job_id": {"type": "string"},
+                                        "job": {"type": "string"},
+                                        "source_quotes": {
+                                            "type": "array",
+                                            "minItems": 1,
+                                            "maxItems": 3,
+                                            "items": {"type": "string"},
+                                        },
+                                        "avoid_copying": {
+                                            "type": "array",
+                                            "minItems": 0,
+                                            "maxItems": 4,
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                    "required": ["job_id", "job", "source_quotes", "avoid_copying"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "sentence_jobs": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "items": {"type": "string"},
+                            },
+                            "phrases_to_repath": {
+                                "type": "array",
+                                "minItems": 0,
+                                "maxItems": 10,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "source": {"type": "string"},
+                                        "plain_direction": {"type": "string"},
+                                    },
+                                    "required": ["source", "plain_direction"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "plain_style_bans": {
+                                "type": "array",
+                                "minItems": 0,
+                                "maxItems": 12,
+                                "items": {"type": "string"},
+                            },
+                            "opening_strategy": {"type": "string"},
+                            "length_strategy": {"type": "string"},
+                        },
+                        "required": [
+                            "current_route",
+                            "better_route",
+                            "sentence_jobs",
+                            "phrases_to_repath",
+                            "plain_style_bans",
+                            "opening_strategy",
+                            "length_strategy",
+                        ],
+                        "additionalProperties": False,
+                    }
+                },
+                "required": ["route_plan"],
+                "additionalProperties": False,
+            },
+        },
+    }
 
 
 def _parse_loose_variants(raw: str) -> tuple[list[RecompositionVariant], dict[str, Any]]:
@@ -604,6 +942,32 @@ def _local_unsafe_previews(local_goal: dict[str, Any]) -> list[str]:
     return previews
 
 
+def _local_top_sentence_targets(local_goal: dict[str, Any]) -> list[dict[str, Any]]:
+    gate = local_goal.get("eligible_span_density_gate") if isinstance(local_goal, dict) else {}
+    targets = gate.get("top_sentence_targets") if isinstance(gate, dict) else []
+    rows: list[dict[str, Any]] = []
+    for row in targets if isinstance(targets, list) else []:
+        if not isinstance(row, dict):
+            continue
+        preview = str(row.get("preview") or "").strip()
+        if not preview:
+            continue
+        rows.append({
+            "sentence_id": row.get("sentence_id"),
+            "preview": preview[:320],
+            "word_count": row.get("word_count"),
+            "generic_hits": row.get("generic_hits"),
+        })
+        if len(rows) >= 5:
+            break
+    return rows
+
+
+def _local_recommended_actions(local_goal: dict[str, Any]) -> list[str]:
+    gate = local_goal.get("eligible_span_density_gate") if isinstance(local_goal, dict) else {}
+    return _string_list(gate.get("recommended_actions") if isinstance(gate, dict) else [], limit=6)
+
+
 def _retune_focus_from_goal(local_goal: dict[str, Any]) -> list[str]:
     gate = local_goal.get("eligible_span_density_gate") if isinstance(local_goal, dict) else {}
     footprint = local_goal.get("ai_footprint_gate") if isinstance(local_goal, dict) else {}
@@ -651,6 +1015,50 @@ def _non_source_terms(source_text: str, candidate_text: str) -> list[str]:
 
 def _normalize_term(token: str) -> str:
     return str(token or "").strip(" \t\r\n.,:;!?()[]{}\"'“”‘’").casefold()
+
+
+def _raw_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if value is None:
+        return []
+    return [value]
+
+
+def _string_list(value: Any, *, limit: int) -> list[str]:
+    items: list[str] = []
+    for item in _raw_list(value):
+        text = _short_string(item, limit=260)
+        if text and text not in items:
+            items.append(text)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _supported_or_short_list(value: Any, *, source_text: str, limit: int) -> list[str]:
+    items: list[str] = []
+    for item in _raw_list(value):
+        text = _supported_quote(item, source_text) or _short_string(item, limit=160)
+        if text and text not in items:
+            items.append(text)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _short_string(value: Any, *, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return ""
+    return text[:limit]
+
+
+def _supported_quote(value: Any, source_text: str) -> str:
+    quote = _short_string(value, limit=260)
+    if not quote:
+        return ""
+    return quote if quote in source_text else ""
 
 
 def build_route_blueprint(*, section: SectionUnit, local_goal: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -841,6 +1249,70 @@ def _local_goal(original_text: str, candidate_text: str) -> dict[str, Any]:
 
 def _source_event_beats(text: str) -> list[str]:
     return [sentence for sentence in _sentences(text)[:10] if sentence.strip()]
+
+
+def _section_before_context(section: SectionUnit) -> str:
+    value = section.metadata.get("before_context") if isinstance(section.metadata, dict) else ""
+    return _short_string(value, limit=420)
+
+
+def _section_after_context(section: SectionUnit) -> str:
+    value = section.metadata.get("after_context") if isinstance(section.metadata, dict) else ""
+    return _short_string(value, limit=420)
+
+
+def _referential_continuity(text: str, *, before_context: str = "") -> dict[str, Any]:
+    sentences = _source_event_beats(text)
+    first_sentence = sentences[0] if sentences else ""
+    first_token = ""
+    for token in first_sentence.split():
+        cleaned = token.strip(" \t\r\n.,:;!?()[]{}\"'“”‘’")
+        if cleaned:
+            first_token = cleaned
+            break
+    personal_pronouns = {"he", "she", "they", "him", "her", "them"}
+    preserve_opening_subject = first_token.casefold() in personal_pronouns
+    named_refs = _named_references_from_text(before_context)
+    for sentence in sentences:
+        for token in sentence.split():
+            cleaned = token.strip(" \t\r\n.,:;!?()[]{}\"'“”‘’")
+            if not cleaned or not cleaned[:1].isupper() or cleaned == first_token:
+                continue
+            if cleaned not in named_refs:
+                named_refs.append(cleaned)
+            if len(named_refs) >= 6:
+                break
+        if len(named_refs) >= 6:
+            break
+    return {
+        "opening_subject": first_token,
+        "preserve_opening_subject": preserve_opening_subject,
+        "named_references_in_cluster": named_refs,
+        "preferred_reference": named_refs[0] if named_refs else "",
+        "instruction": (
+            "Use the same opening subject or an established named reference from context naturally; do not generalize the subject and do not explain the reference parenthetically."
+            if preserve_opening_subject else
+            "Keep source-supported names and pronouns consistent."
+        ),
+    }
+
+
+def _named_references_from_text(text: str) -> list[str]:
+    refs: list[str] = []
+    sentence_initials = {
+        sentence.split()[0].strip(" \t\r\n.,:;!?()[]{}\"'“”‘’")
+        for sentence in _source_event_beats(text)
+        if sentence.split()
+    }
+    for token in str(text or "").split():
+        cleaned = token.strip(" \t\r\n.,:;!?()[]{}\"'“”‘’")
+        if not cleaned or not cleaned[:1].isupper() or cleaned in sentence_initials:
+            continue
+        if cleaned not in refs:
+            refs.append(cleaned)
+        if len(refs) >= 6:
+            break
+    return refs
 
 
 def _compact_residual_row(row: dict[str, Any] | None) -> dict[str, Any] | None:

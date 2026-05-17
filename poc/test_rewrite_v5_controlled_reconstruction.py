@@ -12,9 +12,11 @@ from rewrite_v5.experiment import (
 )
 from rewrite_v5.residual_comb import (
     build_residual_cluster_prompt,
+    build_residual_cluster_route_plan_prompt,
     build_residual_cluster_retune_prompt,
     build_route_blueprint,
     generate_residual_cluster_seed_variants,
+    _parse_route_plan,
     _has_incremental_movement,
     _residual_candidate_sort_key,
 )
@@ -142,9 +144,11 @@ def test_v5_residual_cluster_prompt_uses_compact_repair_task():
     assert payload["cluster"]["section_id"] == "route_001"
     assert payload["cluster"]["source_event_beats"]
     assert payload["cluster"]["source_phrase_anchors"]
-    assert payload["route_blueprint"]["steps"]
+    assert payload["cluster"]["referential_continuity"]["preserve_opening_subject"] is False
+    assert payload["custom_route_plan"] is None
+    assert payload["fallback_route_blueprint"]["steps"]
     assert payload["length_guidance"]["preferred_min_words"] > section.word_count
-    assert payload["route_blueprint"]["sentence_jobs"]
+    assert payload["fallback_route_blueprint"]["sentence_jobs"]
     assert payload["remaining_problem_sentences"] == ["Johnny needed support in class."]
     assert len(payload["output_schema"]["variants"]) == 4
     assert all(set(row.keys()) == {"variant_id", "text"} for row in payload["output_schema"]["variants"])
@@ -152,7 +156,6 @@ def test_v5_residual_cluster_prompt_uses_compact_repair_task():
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
     assert "current_route" not in lowered
-    assert "better_route" not in lowered
     assert "do not invent new names" in lowered
     assert "teacher viewpoint" in lowered
     assert "source-near" in lowered
@@ -188,17 +191,97 @@ def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores(
     assert payload["task"] == "residual_cluster_retune"
     assert payload["cluster"]["source_event_beats"]
     assert payload["cluster"]["source_phrase_anchors"]
-    assert payload["route_blueprint"]["steps"]
+    assert payload["cluster"]["referential_continuity"]["opening_subject"] == "The"
+    assert payload["custom_route_plan"] is None
+    assert payload["fallback_route_blueprint"]["steps"]
     assert payload["length_guidance"]["preferred_min_words"] > section.word_count
     assert "retune_focus" in payload
     assert "candidate_non_source_terms_to_reduce" in payload
-    assert payload["route_blueprint"]["sentence_jobs"]
+    assert payload["fallback_route_blueprint"]["sentence_jobs"]
     assert payload["remaining_problem_sentences"] == ["The feedback changed his confidence."]
     assert len(payload["output_schema"]["variants"]) == 2
     lowered = prompt.casefold()
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
     assert "do not invent new names" in lowered
+
+
+def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
+    cluster = type("Cluster", (), {
+        "cluster_id": "cluster_002",
+        "text": "The service changed the student's confidence. The thank-you card made the result visible.",
+        "start_char": 5,
+        "end_char": 90,
+        "risk_score": 10.0,
+        "sentence_count": 2,
+        "metadata": {},
+    })()
+    section = _section_from_cluster(cluster)
+    goal = {
+        "eligible_span_density_gate": {
+            "top_unsafe_clusters": [{"preview": "The service changed the student's confidence."}],
+            "top_sentence_targets": [
+                {"sentence_id": "s001", "preview": "The service changed the student's confidence.", "word_count": 6},
+            ],
+            "recommended_actions": ["target_longest_unsafe_cluster"],
+        },
+    }
+
+    prompt = build_residual_cluster_route_plan_prompt(section=section, local_goal=goal)
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "custom_cluster_route_plan"
+    assert payload["cluster"]["source_event_beats"]
+    assert payload["cluster"]["referential_continuity"]["opening_subject"] == "The"
+    assert payload["scanner_local_findings"]["top_sentence_targets"][0]["sentence_id"] == "s001"
+    assert "route_plan" in payload["output_schema"]
+    lowered = prompt.casefold()
+    assert "ai detector" not in lowered
+    assert "bypass" not in lowered
+
+
+def test_v5_residual_route_plan_parser_requires_source_supported_steps():
+    raw = json.dumps({
+        "route_plan": {
+            "current_route": [
+                {
+                    "source_quote": "The service changed the student's confidence.",
+                    "function": "opens with broad interpretation",
+                    "weakness": "too compressed",
+                }
+            ],
+            "better_route": [
+                {
+                    "job_id": "j1",
+                    "job": "start from the service moment before interpreting confidence",
+                    "source_quotes": ["The service changed the student's confidence."],
+                    "avoid_copying": ["The service changed"],
+                }
+            ],
+            "sentence_jobs": ["Start from the service moment."],
+            "phrases_to_repath": [
+                {"source": "The service changed", "plain_direction": "start with the concrete service action"},
+            ],
+            "plain_style_bans": ["demonstrates"],
+            "opening_strategy": "open with the event",
+            "length_strategy": "stay close to source length",
+        }
+    })
+
+    parsed, diagnostics = _parse_route_plan(
+        raw,
+        source_text="The service changed the student's confidence. The thank-you card made the result visible.",
+    )
+    unsupported, unsupported_diagnostics = _parse_route_plan(
+        raw,
+        source_text="Nothing from the quoted source appears here.",
+    )
+
+    assert diagnostics["status"] == "ok"
+    assert parsed["better_route"][0]["source_quotes"] == ["The service changed the student's confidence."]
+    assert parsed["phrases_to_repath"][0]["source"] == "The service changed"
+    assert unsupported is None
+    assert unsupported_diagnostics["status"] == "schema_failed"
 
 
 def test_v5_residual_candidate_sort_prefers_cleared_local_cluster():
@@ -315,6 +398,37 @@ def test_v5_residual_seed_generator_skips_unmatched_clusters():
     section = _section_from_cluster(cluster)
 
     assert generate_residual_cluster_seed_variants(section=section) == []
+
+
+def test_v5_residual_prompt_preserves_pronoun_subject_continuity():
+    cluster = type("Cluster", (), {
+        "cluster_id": "cluster_003",
+        "text": (
+            "He is currently working part-time in the hospitality industry. "
+            "This example shows that inclusive education can build confidence."
+        ),
+        "start_char": 5,
+        "end_char": 120,
+        "risk_score": 9.0,
+        "sentence_count": 2,
+        "metadata": {},
+        "before_context": "After that, Johnny has become more confident.",
+        "after_context": "Through role-playing exercises, the class became more accepting.",
+    })()
+    section = _section_from_cluster(cluster)
+
+    prompt = build_residual_cluster_prompt(section=section, local_goal={}, variant_count=1)
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    continuity = payload["cluster"]["referential_continuity"]
+    assert payload["cluster"]["before_context"].startswith("After that, Johnny")
+    assert "Johnny" in continuity["named_references_in_cluster"]
+    assert continuity["opening_subject"] == "He"
+    assert continuity["preferred_reference"] == "Johnny"
+    assert continuity["preserve_opening_subject"] is True
+    assert "do not generalize" in continuity["instruction"]
+    assert "do not explain the reference parenthetically" in continuity["instruction"]
+    assert any("referring to" in item for item in payload["method"])
 
 
 def test_v5_route_blueprint_moves_generic_opener_after_concrete_event():
