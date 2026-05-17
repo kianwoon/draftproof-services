@@ -856,12 +856,16 @@ def run_v4_budget_lane_experiment(
             break
 
         best: dict[str, Any] | None = None
+        material_best: dict[str, Any] | None = None
+        fallback_best: dict[str, Any] | None = None
         for lane in _ordered_budget_lanes(units):
             lane_rows: list[dict[str, Any]] = []
             lane_log = {
                 "lane": lane.to_dict(),
                 "results": lane_rows,
                 "accepted": None,
+                "material_accepted": None,
+                "safe_fallback": None,
             }
             round_log["lanes"].append(lane_log)
             for unit in units:
@@ -892,12 +896,22 @@ def run_v4_budget_lane_experiment(
                     lane_rows.append(row)
             ranked = sorted(lane_rows, key=_budget_lane_candidate_sort_key, reverse=True)
             lane_log["results"] = [_compact_budget_lane_row(row) for row in ranked]
-            best = next((row for row in ranked if _is_safe_budget_lane_positive(row)), None)
-            lane_log["accepted"] = _compact_budget_lane_row(best)
-            if best is not None:
-                break
+            lane_safe_best = next((row for row in ranked if _is_safe_budget_lane_positive(row)), None)
+            lane_material_best = next((row for row in ranked if _is_material_budget_lane_positive(row)), None)
+            lane_log["safe_fallback"] = _compact_budget_lane_row(lane_safe_best)
+            lane_log["material_accepted"] = _compact_budget_lane_row(lane_material_best)
+            if lane_safe_best is not None:
+                fallback_best = _better_budget_lane_row(fallback_best, lane_safe_best)
+            if lane_material_best is not None:
+                material_best = _better_budget_lane_row(material_best, lane_material_best)
+            lane_log["accepted"] = _compact_budget_lane_row(lane_material_best)
 
         rounds.append(round_log)
+        best = material_best
+        round_log["material_best_accepted"] = _compact_budget_lane_row(best)
+        if best is None and fallback_best is not None and _bool_env("DRAFTPROOF_REWRITE_V4_LAYER3_ACCEPT_WEAK_FALLBACK", True):
+            best = fallback_best
+            round_log["weak_fallback_accepted"] = _compact_budget_lane_row(best)
         if best is None:
             round_log["stop_reason"] = "no_safe_budget_lane_candidate"
             break
@@ -1132,6 +1146,7 @@ def _rejected_cluster_row(
         "topk_delta": 0.0,
         "external_delta": 0.0,
         "rank_delta": 0.0,
+        "risky_window_delta": 0,
         "unsafe_cluster_delta": 0,
         "unsafe_word_ratio_delta": 0.0,
     }
@@ -1565,6 +1580,7 @@ def _compact_cluster_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "topk_delta": scores.get("topk_delta"),
         "external_delta": scores.get("external_delta"),
         "rank_delta": scores.get("rank_delta"),
+        "risky_window_delta": scores.get("risky_window_delta"),
         "unsafe_cluster_delta": scores.get("unsafe_cluster_delta"),
         "unsafe_word_ratio_delta": scores.get("unsafe_word_ratio_delta"),
         "topk_calibrated_risk_delta": scores.get("topk_calibrated_risk_delta"),
@@ -1734,6 +1750,42 @@ def _is_safe_budget_lane_positive(row: dict[str, Any]) -> bool:
     )
 
 
+def _is_material_budget_lane_positive(row: dict[str, Any]) -> bool:
+    if not _is_safe_budget_lane_positive(row):
+        return False
+    scores = row.get("scores") or {}
+    candidate_goal = row.get("candidate_goal") if isinstance(row.get("candidate_goal"), dict) else {}
+    gate = candidate_goal.get("ai_footprint_gate") if isinstance(candidate_goal.get("ai_footprint_gate"), dict) else {}
+    thresholds = gate.get("thresholds") if isinstance(gate.get("thresholds"), dict) else {}
+    return (
+        _num(scores.get("topk_calibrated_risk_delta")) >= _material_threshold(thresholds, "topk_calibrated_risk", 2.0)
+        or _num(scores.get("unsafe_word_ratio_delta")) >= _float_env("DRAFTPROOF_REWRITE_V4_LAYER3_MATERIAL_UNSAFE_WORD_DELTA", 2.0, minimum=0.0, maximum=25.0)
+        or _num(scores.get("external_ai_flag_risk_delta")) >= _material_threshold(thresholds, "external_ai_flag_risk", 1.0)
+        or _num(scores.get("ai_delta")) >= _material_threshold(thresholds, "ai_likelihood", 0.5)
+        or _num(scores.get("unsafe_cluster_delta")) > 0.0
+        or _num(scores.get("risky_window_delta")) > 0.0
+    )
+
+
+def _material_threshold(thresholds: dict[str, Any], key: str, default: float) -> float:
+    env_name = f"DRAFTPROOF_REWRITE_V4_LAYER3_MATERIAL_{key.upper()}_DELTA"
+    configured = os.environ.get(env_name)
+    if configured is not None:
+        return _float_env(env_name, default, minimum=0.0, maximum=100.0)
+    value = thresholds.get(key)
+    if value is None:
+        return default
+    return max(0.0, _num(value))
+
+
+def _better_budget_lane_row(current: dict[str, Any] | None, candidate: dict[str, Any] | None) -> dict[str, Any] | None:
+    if candidate is None:
+        return current
+    if current is None:
+        return candidate
+    return max([current, candidate], key=_budget_lane_candidate_sort_key)
+
+
 def _candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float]:
     return (
         _num(row.get("ai_delta")),
@@ -1766,11 +1818,12 @@ def _cluster_combo_sort_key(row: dict[str, Any]) -> tuple[float, float, float, f
     )
 
 
-def _residual_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float, float]:
+def _residual_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float, float, float]:
     scores = row.get("scores") or {}
     return (
         _num(scores.get("topk_calibrated_risk_delta")),
         _num(scores.get("qualifying_text_ai_density_delta")),
+        _num(scores.get("risky_window_delta")),
         _num(scores.get("unsafe_cluster_delta")),
         _num(scores.get("unsafe_word_ratio_delta")),
         _num(scores.get("external_ai_flag_risk_delta")),
@@ -1779,11 +1832,11 @@ def _residual_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, flo
     )
 
 
-def _residual_combo_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float, float]:
+def _residual_combo_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float, float, float]:
     return _residual_candidate_sort_key(row)
 
 
-def _budget_lane_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float, float]:
+def _budget_lane_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float, float, float]:
     return _residual_candidate_sort_key(row)
 
 
@@ -1809,6 +1862,7 @@ def _add_score_deltas(scores: dict[str, Any], baseline: dict[str, Any]) -> None:
     scores["topk_delta"] = round(_num(baseline.get("topk")) - _num(scores.get("topk")), 3)
     scores["external_delta"] = round(_num(baseline.get("external")) - _num(scores.get("external")), 3)
     scores["rank_delta"] = round(_num(baseline.get("rank")) - _num(scores.get("rank")), 3)
+    scores["risky_window_delta"] = int(baseline.get("risky_window_count") or 0) - int(scores.get("risky_window_count") or 0)
     scores["unsafe_cluster_delta"] = int(baseline.get("unsafe_cluster_count") or 0) - int(scores.get("unsafe_cluster_count") or 0)
     scores["unsafe_word_ratio_delta"] = round(_num(baseline.get("unsafe_word_ratio")) - _num(scores.get("unsafe_word_ratio")), 3)
     _add_blocker_deltas(scores, baseline)

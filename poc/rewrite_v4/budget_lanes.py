@@ -60,9 +60,9 @@ def budget_lanes_for_unit(unit_word_count: int, *, risk_score: float = 0.0) -> l
         ),
         BudgetLane(
             lane_id="route",
-            changed_source_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_ROUTE_CHANGED_MAX", 0.35, minimum=0.05, maximum=0.80),
+            changed_source_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_ROUTE_CHANGED_MAX", 0.40, minimum=0.05, maximum=0.80),
             growth_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_ROUTE_GROW_MAX", 0.20, minimum=0.0, maximum=0.80),
-            shrink_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_ROUTE_SHRINK_MAX", 0.20, minimum=0.0, maximum=0.80),
+            shrink_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_ROUTE_SHRINK_MAX", 0.25, minimum=0.0, maximum=0.80),
             operation_families=("replace_bump", "route_reorder", "delete_repath"),
             instruction="Repair the sentence route when small local edits do not move the score.",
         ),
@@ -71,9 +71,9 @@ def budget_lanes_for_unit(unit_word_count: int, *, risk_score: float = 0.0) -> l
         lanes.append(
             BudgetLane(
                 lane_id="aggressive",
-                changed_source_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_AGGRESSIVE_CHANGED_MAX", 0.45, minimum=0.05, maximum=0.80),
+                changed_source_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_AGGRESSIVE_CHANGED_MAX", 0.60, minimum=0.05, maximum=0.80),
                 growth_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_AGGRESSIVE_GROW_MAX", 0.20, minimum=0.0, maximum=0.80),
-                shrink_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_AGGRESSIVE_SHRINK_MAX", 0.20, minimum=0.0, maximum=0.80),
+                shrink_ratio_max=_float_env("DRAFTPROOF_REWRITE_V4_LAYER3_AGGRESSIVE_SHRINK_MAX", 0.25, minimum=0.0, maximum=0.80),
                 operation_families=("strong_replace", "strong_delete", "paragraph_route_rebuild"),
                 instruction="Use a wider edit budget only for unresolved high-value targets.",
             )
@@ -129,6 +129,7 @@ def build_budget_lane_prompt(*, unit: ClusterRepairUnit, lane: BudgetLane, varia
         "cluster_id": unit.cluster_id,
         "repair_unit": {
             "cluster_text": unit.text,
+            "source_sentences": _sentences(unit.text),
             "before_context": unit.before_context,
             "after_context": unit.after_context,
             "sentence_count": unit.sentence_count,
@@ -144,9 +145,18 @@ def build_budget_lane_prompt(*, unit: ClusterRepairUnit, lane: BudgetLane, varia
         ],
         "repair_goal": [
             lane.instruction,
-            "Reduce predictable token route and generic AI-style movement.",
+            "Reduce predictable token route and generic AI-style movement by changing the claim path, not by broad synonym swapping.",
             "Keep the same facts, sequence, citations, and source viewpoint.",
             "Return only replacements for cluster_text, not the full document.",
+        ],
+        "route_repair_rules": [
+            "Keep ordinary source words when they are already clear and concrete.",
+            "Do not replace simple domain terms, people, roles, actions, or outcomes just to sound different.",
+            "Preserve concrete setup sentences unless they contain the route problem.",
+            "Focus route changes on interpretive, generic, or summary-like claim sentences.",
+            "For route and aggressive lanes, first change how the claim is connected or sequenced; only then adjust local wording needed for grammar.",
+            "Remove or flatten formulaic proof-framing when it appears, but do not turn the sentence into a polished abstract summary.",
+            "A good candidate should still look source-near when compared word by word.",
         ],
         "constraints": [
             f"Keep changed_source_ratio at or below {lane.changed_source_ratio_max:.2f}.",
@@ -227,6 +237,22 @@ def generate_budget_lane_variants(
 
 def _words(text: str) -> list[str]:
     return str(text or "").replace("\n", " ").split()
+
+
+def _sentences(text: str) -> list[str]:
+    sentences: list[str] = []
+    current: list[str] = []
+    for char in str(text or ""):
+        current.append(char)
+        if char in ".?!":
+            sentence = "".join(current).strip()
+            current = []
+            if sentence:
+                sentences.append(sentence)
+    remainder = "".join(current).strip()
+    if remainder:
+        sentences.append(remainder)
+    return sentences
 
 
 def _num(value: Any) -> float:

@@ -4,6 +4,7 @@ from rewrite_v4.budget_lanes import (
     budget_profile_passes,
     edit_budget_profile,
 )
+from rewrite_v4.experiment import _is_material_budget_lane_positive, _is_safe_budget_lane_positive
 
 
 def test_v4_budget_profile_counts_changed_source_and_net_drift():
@@ -51,3 +52,68 @@ def test_v4_budget_profile_passes_lane_thresholds():
         {"changed_source_ratio": 0.31, "growth_ratio": 0.10, "shrink_ratio": 0.0},
         lane,
     )
+
+
+def test_v4_layer3_safe_positive_is_not_always_material():
+    row = _budget_lane_row({
+        "ai_delta": 0.06,
+        "topk_delta": 0.09,
+        "external_delta": 0.285,
+        "rank_delta": 0.035,
+        "topk_calibrated_risk_delta": 0.245,
+        "unsafe_word_ratio_delta": -0.184,
+        "external_ai_flag_risk_delta": 0.059,
+        "unsafe_cluster_delta": 0,
+        "risky_window_delta": 0,
+    })
+
+    assert _is_safe_budget_lane_positive(row)
+    assert not _is_material_budget_lane_positive(row)
+
+
+def test_v4_layer3_material_positive_uses_blocker_movement():
+    row = _budget_lane_row({
+        "ai_delta": 0.12,
+        "topk_delta": 0.2,
+        "external_delta": 0.3,
+        "rank_delta": 0.2,
+        "topk_calibrated_risk_delta": 2.1,
+        "unsafe_word_ratio_delta": 0.0,
+        "external_ai_flag_risk_delta": 0.0,
+        "unsafe_cluster_delta": 0,
+        "risky_window_delta": 0,
+    })
+
+    assert _is_safe_budget_lane_positive(row)
+    assert _is_material_budget_lane_positive(row)
+
+
+def _budget_lane_row(scores):
+    lane = BudgetLane(
+        lane_id="conservative",
+        changed_source_ratio_max=0.25,
+        growth_ratio_max=0.12,
+        shrink_ratio_max=0.12,
+        operation_families=("replace_only",),
+        instruction="test",
+    )
+    return {
+        "apply_status": {"applied": True},
+        "budget_lane": lane.to_dict(),
+        "edit_budget_profile": {
+            "changed_source_ratio": 0.1,
+            "growth_ratio": 0.0,
+            "shrink_ratio": 0.0,
+        },
+        "source_grounding": {"passed": True},
+        "scores": scores,
+        "candidate_goal": {
+            "ai_footprint_gate": {
+                "thresholds": {
+                    "topk_calibrated_risk": 2.0,
+                    "external_ai_flag_risk": 1.5,
+                    "ai_likelihood": 1.0,
+                }
+            }
+        },
+    }
