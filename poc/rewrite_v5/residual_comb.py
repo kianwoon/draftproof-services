@@ -392,16 +392,7 @@ def run_v5_residual_cluster_comb_experiment(
         )
 
     unsafe_cluster_rounds: list[dict[str, Any]] = []
-    if current_text.strip() == original_text.strip() and _full_document_candidate_beats_scores(global_best_candidate, current_scores):
-        unsafe_cluster_rounds.append({
-            "round": 1,
-            "phase": "unsafe_cluster_cleanup",
-            "status": "stopped",
-            "reason": "partial_candidate_ready_for_external_review",
-            "selected": _compact_residual_row(global_best_candidate),
-            "current_scores": current_scores,
-        })
-    elif not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
+    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
         unsafe_cluster_cleanup_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS",
         default=12,
@@ -438,16 +429,7 @@ def run_v5_residual_cluster_comb_experiment(
         )
 
     final_risky_window_rounds: list[dict[str, Any]] = []
-    if current_text.strip() == original_text.strip() and _full_document_candidate_beats_scores(global_best_candidate, current_scores):
-        final_risky_window_rounds.append({
-            "round": 1,
-            "phase": "final_risky_window_cleanup",
-            "status": "stopped",
-            "reason": "partial_candidate_ready_for_external_review",
-            "selected": _compact_residual_row(global_best_candidate),
-            "current_scores": current_scores,
-        })
-    elif not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
+    if not _runtime_budget_exhausted(started_at, budget_seconds) and _cleanup_round_limit(
         final_risky_window_cleanup_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
         default=2,
