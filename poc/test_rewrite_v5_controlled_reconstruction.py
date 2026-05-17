@@ -155,10 +155,12 @@ def test_v5_residual_cluster_prompt_uses_compact_repair_task():
     assert payload["task"] == "residual_cluster_route_bump"
     assert payload["cluster"]["section_id"] == "route_001"
     assert payload["cluster"]["source_event_beats"]
+    assert payload["cluster"]["source_blocks"]
     assert payload["cluster"]["source_phrase_anchors"]
     assert payload["cluster"]["referential_continuity"]["preserve_opening_subject"] is False
     assert payload["custom_route_plan"] is None
     assert payload["fallback_route_blueprint"]["steps"]
+    assert payload["coverage_guidance"]["requirements"]
     assert payload["length_guidance"]["preferred_min_words"] > section.word_count
     assert payload["fallback_route_blueprint"]["sentence_jobs"]
     assert payload["remaining_problem_sentences"] == ["Johnny needed support in class."]
@@ -202,6 +204,7 @@ def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores(
 
     assert payload["task"] == "residual_cluster_retune"
     assert payload["cluster"]["source_event_beats"]
+    assert payload["cluster"]["source_blocks"]
     assert payload["cluster"]["source_phrase_anchors"]
     assert payload["cluster"]["referential_continuity"]["opening_subject"] == "The"
     assert payload["custom_route_plan"] is None
@@ -242,14 +245,27 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
     prompt = build_residual_cluster_route_plan_prompt(section=section, local_goal=goal)
     payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
 
-    assert payload["task"] == "custom_cluster_route_plan"
+    assert payload["task"] == "profile_aware_cluster_route_plan"
     assert payload["cluster"]["source_event_beats"]
+    assert payload["cluster"]["source_blocks"]
     assert payload["cluster"]["referential_continuity"]["opening_subject"] == "The"
     assert payload["scanner_local_findings"]["top_sentence_targets"][0]["sentence_id"] == "s001"
+    assert "content_profile_rubrics" in payload
+    assert "broad_explanatory_report" in payload["content_profile_rubrics"]
+    assert "cluster_role_options" in payload
+    assert "failure_pattern_options" in payload
+    assert "route_strategy_options" in payload
     assert "route_plan" in payload["output_schema"]
     assert set(payload["output_schema"]["route_plan"].keys()) == {
+        "content_profile",
+        "cluster_role",
+        "dominant_failure_pattern",
+        "route_strategy",
+        "profile_reason",
         "failed_route",
         "replacement_route",
+        "source_block_plan",
+        "target_sentence_jobs",
         "must_change",
         "must_preserve",
         "sentence_plan",
@@ -265,8 +281,33 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
 def test_v5_residual_route_plan_parser_requires_source_supported_steps():
     raw = json.dumps({
         "route_plan": {
+            "content_profile": "narrative_or_case_reflection",
+            "cluster_role": "evidence_or_example",
+            "dominant_failure_pattern": "event_summary",
+            "route_strategy": "event_first_rebuild",
+            "profile_reason": "The cluster follows a service result and a thank-you card outcome.",
             "failed_route": "The current route starts with broad interpretation before showing the event.",
             "replacement_route": "Start from the service moment, then show how the thank-you card made the result visible.",
+            "source_block_plan": [
+                {
+                    "block_id": "b01",
+                    "current_job": "Summarize the service and thank-you card.",
+                    "rewrite_job": "Show the service first, then the thank-you card as visible outcome.",
+                    "must_preserve": [
+                        "The service changed the student's confidence.",
+                        "The thank-you card made the result visible.",
+                    ],
+                }
+            ],
+            "target_sentence_jobs": [
+                {
+                    "sentence_id": "s001",
+                    "source_preview": "The service changed the student's confidence.",
+                    "current_weakness": "Broad result before visible event.",
+                    "rewrite_job": "Move the service result after the visible thank-you card.",
+                    "avoid_copying": ["The service changed"],
+                }
+            ],
             "must_change": [
                 "Move the interpretation after the service and thank-you card.",
                 "Replace the broad opening with event movement.",
@@ -301,6 +342,12 @@ def test_v5_residual_route_plan_parser_requires_source_supported_steps():
     )
 
     assert diagnostics["status"] == "ok"
+    assert diagnostics["content_profile"] == "narrative_or_case_reflection"
+    assert diagnostics["dominant_failure_pattern"] == "event_summary"
+    assert diagnostics["route_strategy"] == "event_first_rebuild"
+    assert diagnostics["source_block_plan_count"] == 1
+    assert diagnostics["target_sentence_job_count"] == 1
+    assert parsed["cluster_role"] == "evidence_or_example"
     assert parsed["replacement_route"].startswith("Start from the service moment")
     assert parsed["must_preserve"][0]["source_quote"] == "The service changed the student's confidence."
     assert parsed["avoid_phrases"][0] == "The service changed"
@@ -313,8 +360,30 @@ def test_v5_residual_route_plan_parser_requires_source_supported_steps():
 def test_v5_residual_route_plan_rejects_summarized_preserve_anchors():
     raw = json.dumps({
         "route_plan": {
+            "content_profile": "narrative_or_case_reflection",
+            "cluster_role": "evidence_or_example",
+            "dominant_failure_pattern": "event_summary",
+            "route_strategy": "event_first_rebuild",
+            "profile_reason": "The cluster follows a service result and visible outcome.",
             "failed_route": "The current route starts with broad interpretation before showing the event.",
             "replacement_route": "Start from the service moment, then show the thank-you card as evidence.",
+            "source_block_plan": [
+                {
+                    "block_id": "b01",
+                    "current_job": "Summarize event.",
+                    "rewrite_job": "Show visible event before interpretation.",
+                    "must_preserve": ["The service changed the student's confidence."],
+                }
+            ],
+            "target_sentence_jobs": [
+                {
+                    "sentence_id": "s001",
+                    "source_preview": "The service changed the student's confidence.",
+                    "current_weakness": "Broad result first.",
+                    "rewrite_job": "Move result later.",
+                    "avoid_copying": ["The service changed"],
+                }
+            ],
             "must_change": ["Move the interpretation after the visible event."],
             "must_preserve": [
                 {
@@ -354,8 +423,30 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     })()
     section = _section_from_cluster(cluster)
     route_plan = {
+        "content_profile": "narrative_or_case_reflection",
+        "cluster_role": "evidence_or_example",
+        "dominant_failure_pattern": "event_summary",
+        "route_strategy": "event_first_rebuild",
+        "profile_reason": "The cluster follows a service result and visible outcome.",
         "failed_route": "The current route starts with a broad result.",
         "replacement_route": "Start from the service, then use the thank-you card as visible evidence.",
+        "source_block_plan": [
+            {
+                "block_id": "b01",
+                "current_job": "Summarize result.",
+                "rewrite_job": "Start from service and end with thank-you card.",
+                "must_preserve": ["The thank-you card made the result visible."],
+            }
+        ],
+        "target_sentence_jobs": [
+            {
+                "sentence_id": "s001",
+                "source_preview": "The service changed the student's confidence.",
+                "current_weakness": "Broad result opener.",
+                "rewrite_job": "Show service before result.",
+                "avoid_copying": ["The service changed"],
+            }
+        ],
         "must_change": ["Move the broad result after the visible event."],
         "must_preserve": [
             {
@@ -378,6 +469,7 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
 
     assert payload["execution_brief"] == route_plan
+    assert payload["coverage_guidance"]["requirements"]
     assert "fallback_route_blueprint" not in payload
     assert "custom_route_plan" not in payload
     assert payload["length_guidance"]["preferred_max_words"] == round(section.word_count * 1.10)
@@ -656,6 +748,7 @@ def test_v5_tail_cleanup_rejects_spliced_word_period_artifacts():
     )
     duplicate = minimal_replacement_text_integrity("The result was tied to assessment.assessment.")
     ordinary = minimal_replacement_text_integrity("The result was tied to assessment.")
+    abbreviation = minimal_replacement_text_integrity("The U.S. healthcare system is expensive.")
     missing_space = minimal_replacement_text_integrity("The result was tied to assessment (Hattie, 2009).assessment.")
     nested_parenthetical = minimal_replacement_text_integrity(
         "Teachers support students to become their own teachers (Through role playing, "
@@ -671,6 +764,7 @@ def test_v5_tail_cleanup_rejects_spliced_word_period_artifacts():
     assert not nested_parenthetical["passed"]
     assert "nested_parenthetical_artifact" in nested_parenthetical["failures"]
     assert ordinary["passed"]
+    assert abbreviation["passed"]
 
 
 def test_v5_tail_cleanup_expands_mid_word_scanner_boundaries():

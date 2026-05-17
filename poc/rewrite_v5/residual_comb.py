@@ -35,6 +35,72 @@ from .experiment import (
 from .models import RecompositionVariant, SectionUnit
 
 
+_ROUTE_PLAN_CONTENT_PROFILES = {
+    "reflective_practice_academic": {
+        "use_when": "The cluster is built around a course, classroom, workplace, student, client, practice event, or author reflection.",
+        "planning_focus": "Turn broad reflection into event or process movement: context -> difficulty -> action/choice -> observed result -> limited judgment.",
+        "avoid": "Do not convert the writer into a detached encyclopedia voice.",
+    },
+    "broad_explanatory_report": {
+        "use_when": "The cluster explains a country, institution, topic, history, culture, economy, technology, or other broad subject for a report-style essay.",
+        "planning_focus": "Replace category dumping with grouped topic progression: topic frame -> grouped facts -> contrast or limit -> bridge to next topic.",
+        "avoid": "Do not add personal experience, force reflective teacher/student language, or upgrade simple report wording into encyclopedia-style phrasing.",
+    },
+    "argumentative_explanatory_essay": {
+        "use_when": "The cluster makes a claim, gives reasons, weighs concerns, or argues for a position.",
+        "planning_focus": "Make the reasoning route explicit: claim -> reason -> evidence already present -> qualification -> narrower conclusion.",
+        "avoid": "Do not add new evidence or stronger certainty than the source supports.",
+    },
+    "technical_or_process_explanation": {
+        "use_when": "The cluster explains a method, mechanism, procedure, tool, system, or step-by-step process.",
+        "planning_focus": "Make the process route concrete: condition -> step or mechanism -> constraint -> consequence -> next step.",
+        "avoid": "Do not turn process wording into abstract commentary.",
+    },
+    "narrative_or_case_reflection": {
+        "use_when": "The cluster follows a person, event, case, incident, sequence, or change over time.",
+        "planning_focus": "Make the route follow the case: starting state -> turning point -> response -> outcome -> reflection.",
+        "avoid": "Do not replace the case with a generic moral summary.",
+    },
+    "mixed_or_unknown": {
+        "use_when": "The cluster mixes several modes or none of the specific profiles clearly fits.",
+        "planning_focus": "Choose the dominant paragraph job and rebuild only that route while preserving all source claims.",
+        "avoid": "Do not apply a specialist rubric that conflicts with the source.",
+    },
+}
+
+
+_ROUTE_PLAN_CLUSTER_ROLES = {
+    "background_context": "Introduces or frames a topic before later detail.",
+    "evidence_or_example": "Provides facts, examples, cases, citations, or observed material.",
+    "reasoning_or_analysis": "Connects claims, causes, consequences, or judgments.",
+    "process_or_method": "Explains how something works or how an action is performed.",
+    "contrast_or_problem": "Names a limitation, tension, challenge, or counterpoint.",
+    "conclusion_or_synthesis": "Pulls prior points together or states the final implication.",
+    "mixed_section": "Contains multiple paragraph jobs inside one cluster.",
+}
+
+
+_ROUTE_PLAN_FAILURE_PATTERNS = {
+    "category_dump": "The cluster stacks topic categories or facts without enough route hierarchy.",
+    "event_summary": "The cluster summarizes a case or event before showing the event movement.",
+    "claim_chain": "The cluster links claims but leaves reasoning, evidence, or qualification underdeveloped.",
+    "process_blur": "The cluster explains a method or process without clear condition, step, constraint, and consequence.",
+    "transition_stack": "The cluster relies on repeated transition openers instead of real relation changes.",
+    "conclusion_smoothing": "The cluster over-smooths the ending into a generic broad conclusion.",
+    "mixed": "The cluster contains more than one failure pattern.",
+}
+
+
+_ROUTE_PLAN_STRATEGIES = {
+    "group_and_bridge": "Group related source beats and add source-supported bridges between topic groups.",
+    "event_first_rebuild": "Move the event, case, or action before broad interpretation.",
+    "claim_reason_evidence": "Separate claim, reason, source evidence, and qualification.",
+    "mechanism_consequence": "Make the process route visible through mechanism, constraint, and consequence.",
+    "contrast_then_limit": "Use contrast to narrow a broad claim and limit the conclusion.",
+    "mixed_route_rebuild": "Use more than one route move while preserving every source block.",
+}
+
+
 def run_v5_residual_cluster_comb_experiment(
     *,
     input_text: str,
@@ -380,6 +446,8 @@ def build_residual_cluster_prompt(
             "before_context": _section_before_context(section),
             "after_context": _section_after_context(section),
             "source_word_count": section.word_count,
+            "source_block_count": section.paragraph_count,
+            "source_blocks": _source_blocks(section.text),
             "source_event_beats": _source_event_beats(section.text),
             "source_phrase_anchors": _source_phrase_anchors(section.text),
             "referential_continuity": _referential_continuity(
@@ -388,6 +456,7 @@ def build_residual_cluster_prompt(
             ),
         },
         "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=plan),
+        "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=plan),
         "remaining_problem_sentences": _local_unsafe_previews(local_goal or {}),
         "output_schema": {
             "variants": [
@@ -424,6 +493,8 @@ def build_residual_cluster_retune_prompt(
             "original_source_text": section.text,
             "before_context": _section_before_context(section),
             "after_context": _section_after_context(section),
+            "source_block_count": section.paragraph_count,
+            "source_blocks": _source_blocks(section.text),
             "source_event_beats": _source_event_beats(section.text),
             "source_phrase_anchors": _source_phrase_anchors(section.text),
             "referential_continuity": _referential_continuity(
@@ -433,6 +504,7 @@ def build_residual_cluster_retune_prompt(
             "current_best_text": current_best_text,
         },
         "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=plan),
+        "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=plan),
         "remaining_problem_sentences": focus,
         "retune_focus": _retune_focus_from_goal(local_goal or {}),
         "candidate_non_source_terms_to_reduce": _non_source_terms(section.text, current_best_text),
@@ -472,13 +544,15 @@ def generate_residual_cluster_variants(
 
 def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal: dict[str, Any] | None = None) -> str:
     payload = {
-        "task": "custom_cluster_route_plan",
+        "task": "profile_aware_cluster_route_plan",
         "cluster": {
             "section_id": section.section_id,
             "source_text": section.text,
             "before_context": _section_before_context(section),
             "after_context": _section_after_context(section),
             "source_word_count": section.word_count,
+            "source_block_count": section.paragraph_count,
+            "source_blocks": _source_blocks(section.text),
             "source_event_beats": _source_event_beats(section.text),
             "source_phrase_anchors": _source_phrase_anchors(section.text),
             "referential_continuity": _referential_continuity(
@@ -491,9 +565,20 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
             "top_sentence_targets": _local_top_sentence_targets(local_goal or {}),
             "recommended_actions": _local_recommended_actions(local_goal or {}),
         },
+        "content_profile_rubrics": _ROUTE_PLAN_CONTENT_PROFILES,
+        "cluster_role_options": _ROUTE_PLAN_CLUSTER_ROLES,
+        "failure_pattern_options": _ROUTE_PLAN_FAILURE_PATTERNS,
+        "route_strategy_options": _ROUTE_PLAN_STRATEGIES,
         "planning_rules": [
             "Act as a prompt planner, not the final writer.",
             "Derive a cluster-specific executable brief from the source text and scanner findings.",
+            "First choose content_profile and cluster_role from the supplied options.",
+            "Then choose dominant_failure_pattern and route_strategy from the supplied options.",
+            "Use the chosen content_profile rubric to design the route; do not use a reflective-practice route for broad report content.",
+            "Use the chosen cluster_role to decide what the cluster is supposed to do in the document.",
+            "When cluster.source_block_count is greater than 1, the replacement route must cover every source block instead of compressing the cluster into only the opening topic.",
+            "Make source_block_plan cover every cluster.source_blocks item.",
+            "Make target_sentence_jobs focus on scanner_local_findings.top_sentence_targets and give one executable rewrite job per target.",
             "Do not mention scores, scanner names, authorship labels, or risk labels in the plan fields.",
             "Describe failed_route as the current sentence movement problem in plain editorial language.",
             "Describe replacement_route as the new route the writer should follow, using source-supported events and claims.",
@@ -514,8 +599,30 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
         ],
         "output_schema": {
             "route_plan": {
+                "content_profile": "reflective_practice_academic | broad_explanatory_report | argumentative_explanatory_essay | technical_or_process_explanation | narrative_or_case_reflection | mixed_or_unknown",
+                "cluster_role": "background_context | evidence_or_example | reasoning_or_analysis | process_or_method | contrast_or_problem | conclusion_or_synthesis | mixed_section",
+                "dominant_failure_pattern": "category_dump | event_summary | claim_chain | process_blur | transition_stack | conclusion_smoothing | mixed",
+                "route_strategy": "group_and_bridge | event_first_rebuild | claim_reason_evidence | mechanism_consequence | contrast_then_limit | mixed_route_rebuild",
+                "profile_reason": "one sentence explaining why this profile fits the cluster",
                 "failed_route": "...",
                 "replacement_route": "...",
+                "source_block_plan": [
+                    {
+                        "block_id": "b01",
+                        "current_job": "what this source block does now",
+                        "rewrite_job": "what the writer must make this block do",
+                        "must_preserve": ["exact or source-near material from this block"]
+                    }
+                ],
+                "target_sentence_jobs": [
+                    {
+                        "sentence_id": "s001",
+                        "source_preview": "exact preview from scanner_local_findings.top_sentence_targets or source text",
+                        "current_weakness": "why this sentence route is weak",
+                        "rewrite_job": "specific instruction for this sentence's role",
+                        "avoid_copying": ["phrase to avoid keeping"]
+                    }
+                ],
                 "must_change": ["..."],
                 "must_preserve": [
                     {
@@ -596,8 +703,40 @@ def _length_guidance_for_route_plan(*, section: SectionUnit, route_plan: dict[st
     }
 
 
+def _coverage_guidance_for_route_plan(*, section: SectionUnit, route_plan: dict[str, Any] | None) -> dict[str, Any]:
+    profile = _content_profile((route_plan or {}).get("content_profile"))
+    role = _cluster_role((route_plan or {}).get("cluster_role"))
+    beats = _source_event_beats(section.text)
+    source_blocks = _source_blocks(section.text)
+    requirements = [
+        "Represent every source block and every central source beat in the replacement.",
+        "Do not drop later source material just because the opening topic has been repaired.",
+    ]
+    if profile == "broad_explanatory_report" or role == "mixed_section":
+        requirements.extend([
+            "Keep the report-style breadth: topic groups may be reorganized, but economics, public issues, institutions, or international-role material already present must not disappear.",
+            "Use grouping and bridges instead of compressing several source blocks into one summary paragraph.",
+        ])
+    elif profile == "reflective_practice_academic":
+        requirements.append("Keep the practice context, writer action or decision, observed response, and reflection if they appear in the source.")
+    elif profile == "technical_or_process_explanation":
+        requirements.append("Keep the condition, process step, constraint, and consequence if they appear in the source.")
+    return {
+        "source_block_count": max(1, int(section.paragraph_count or len(source_blocks) or 1)),
+        "source_sentence_count_visible_to_planner": len(beats),
+        "preserve_source_block_count_when_possible": int(section.paragraph_count or 1) > 1,
+        "requirements": requirements,
+    }
+
+
 def _custom_route_writer_method() -> list[str]:
     return [
+        "Use execution_brief.content_profile and execution_brief.cluster_role to choose the right kind of route movement.",
+        "Use execution_brief.dominant_failure_pattern and execution_brief.route_strategy to decide what must actually change.",
+        "Execute execution_brief.source_block_plan block by block; each block must keep its central source material.",
+        "Execute execution_brief.target_sentence_jobs for the risky sentences; do not leave those sentence routes unchanged.",
+        "Satisfy coverage_guidance before style changes; do not omit source blocks or central source beats.",
+        "When execution_brief.content_profile is broad_explanatory_report, keep source-level vocabulary and change grouping/bridges; do not upgrade factual wording into encyclopedia-style substitutes.",
         "Follow execution_brief.replacement_route while rewriting the whole cluster.",
         "Satisfy every execution_brief.must_change item.",
         "Preserve every execution_brief.must_preserve.source_quote; use preserve_as only as the meaning hint.",
@@ -616,6 +755,12 @@ def _custom_route_writer_method() -> list[str]:
 
 def _custom_route_retune_method() -> list[str]:
     return [
+        "Use execution_brief.content_profile and execution_brief.cluster_role to choose the right kind of route movement.",
+        "Use execution_brief.dominant_failure_pattern and execution_brief.route_strategy to decide what must actually change.",
+        "Execute execution_brief.source_block_plan block by block; each block must keep its central source material.",
+        "Execute execution_brief.target_sentence_jobs for the risky sentences; do not leave those sentence routes unchanged.",
+        "Satisfy coverage_guidance before style changes; do not omit source blocks or central source beats.",
+        "When execution_brief.content_profile is broad_explanatory_report, keep source-level vocabulary and change grouping/bridges; do not upgrade factual wording into encyclopedia-style substitutes.",
         "Follow execution_brief.replacement_route while rewriting the whole cluster again.",
         "Satisfy every execution_brief.must_change item while focusing on remaining_problem_sentences.",
         "Preserve every execution_brief.must_preserve.source_quote; use preserve_as only as the meaning hint.",
@@ -924,6 +1069,12 @@ def _parse_route_plan(raw: str, *, source_text: str) -> tuple[dict[str, Any] | N
     return sanitized, {
         **diagnostics,
         "status": "ok",
+        "content_profile": sanitized.get("content_profile"),
+        "cluster_role": sanitized.get("cluster_role"),
+        "dominant_failure_pattern": sanitized.get("dominant_failure_pattern"),
+        "route_strategy": sanitized.get("route_strategy"),
+        "source_block_plan_count": len(sanitized.get("source_block_plan") or []),
+        "target_sentence_job_count": len(sanitized.get("target_sentence_jobs") or []),
         "must_change_count": len(sanitized.get("must_change") or []),
         "must_preserve_count": len(sanitized.get("must_preserve") or []),
         "sentence_plan_count": len(sanitized.get("sentence_plan") or []),
@@ -934,10 +1085,17 @@ def _parse_route_plan(raw: str, *, source_text: str) -> tuple[dict[str, Any] | N
 def _sanitize_route_plan(plan: dict[str, Any], *, source_text: str) -> dict[str, Any]:
     source = str(source_text or "")
     return {
+        "content_profile": _content_profile(plan.get("content_profile")),
+        "cluster_role": _cluster_role(plan.get("cluster_role")),
+        "dominant_failure_pattern": _failure_pattern(plan.get("dominant_failure_pattern")),
+        "route_strategy": _route_strategy(plan.get("route_strategy")),
+        "profile_reason": _short_string(plan.get("profile_reason"), limit=220),
         "failed_route": _short_string(plan.get("failed_route"), limit=320),
         "replacement_route": _short_string(plan.get("replacement_route"), limit=360),
+        "source_block_plan": _sanitize_source_block_plan(plan.get("source_block_plan"), source_text=source, limit=8),
+        "target_sentence_jobs": _sanitize_target_sentence_jobs(plan.get("target_sentence_jobs"), source_text=source, limit=8),
         "must_change": _string_list(plan.get("must_change"), limit=8),
-        "must_preserve": _sanitize_must_preserve(plan.get("must_preserve"), source_text=source, limit=10),
+        "must_preserve": _sanitize_must_preserve(plan.get("must_preserve"), source_text=source, limit=16),
         "sentence_plan": _string_list(plan.get("sentence_plan"), limit=8),
         "avoid_phrases": _supported_or_short_list(plan.get("avoid_phrases"), source_text=source, limit=12),
         "length_target": _length_target(plan.get("length_target")),
@@ -1004,15 +1162,89 @@ def _sanitize_phrase_repaths(value: Any, *, source_text: str) -> list[dict[str, 
     return rows
 
 
+def _sanitize_source_block_plan(value: Any, *, source_text: str, limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, row in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(row, dict):
+            continue
+        rewrite_job = _short_string(row.get("rewrite_job"), limit=260)
+        if not rewrite_job:
+            continue
+        rows.append({
+            "block_id": _short_string(row.get("block_id"), limit=24) or f"b{index:02d}",
+            "current_job": _short_string(row.get("current_job"), limit=180),
+            "rewrite_job": rewrite_job,
+            "must_preserve": _supported_or_short_list(row.get("must_preserve"), source_text=source_text, limit=4),
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _sanitize_target_sentence_jobs(value: Any, *, source_text: str, limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, row in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(row, dict):
+            continue
+        source_preview = _supported_quote(row.get("source_preview"), source_text) or _short_string(row.get("source_preview"), limit=240)
+        rewrite_job = _short_string(row.get("rewrite_job"), limit=260)
+        if not source_preview or not rewrite_job:
+            continue
+        rows.append({
+            "sentence_id": _short_string(row.get("sentence_id"), limit=32) or f"s{index:03d}",
+            "source_preview": source_preview,
+            "current_weakness": _short_string(row.get("current_weakness"), limit=180),
+            "rewrite_job": rewrite_job,
+            "avoid_copying": _supported_or_short_list(row.get("avoid_copying"), source_text=source_text, limit=4),
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 def _route_plan_valid(plan: Any) -> bool:
     return (
         isinstance(plan, dict)
+        and _content_profile(plan.get("content_profile")) in set(_ROUTE_PLAN_CONTENT_PROFILES)
+        and _cluster_role(plan.get("cluster_role")) in set(_ROUTE_PLAN_CLUSTER_ROLES)
+        and _failure_pattern(plan.get("dominant_failure_pattern")) in set(_ROUTE_PLAN_FAILURE_PATTERNS)
+        and _route_strategy(plan.get("route_strategy")) in set(_ROUTE_PLAN_STRATEGIES)
+        and bool(plan.get("source_block_plan"))
+        and bool(plan.get("target_sentence_jobs"))
         and bool(plan.get("replacement_route"))
         and bool(plan.get("must_change"))
         and bool(plan.get("must_preserve"))
         and bool(plan.get("sentence_plan"))
         and _length_target(plan.get("length_target")) in {"same_length", "slight_expand", "expand"}
     )
+
+
+def _content_profile(value: Any) -> str:
+    profile = _short_string(value, limit=80)
+    if profile in _ROUTE_PLAN_CONTENT_PROFILES:
+        return profile
+    return "mixed_or_unknown"
+
+
+def _cluster_role(value: Any) -> str:
+    role = _short_string(value, limit=80)
+    if role in _ROUTE_PLAN_CLUSTER_ROLES:
+        return role
+    return "mixed_section"
+
+
+def _failure_pattern(value: Any) -> str:
+    pattern = _short_string(value, limit=80)
+    if pattern in _ROUTE_PLAN_FAILURE_PATTERNS:
+        return pattern
+    return "mixed"
+
+
+def _route_strategy(value: Any) -> str:
+    strategy = _short_string(value, limit=80)
+    if strategy in _ROUTE_PLAN_STRATEGIES:
+        return strategy
+    return "mixed_route_rebuild"
 
 
 def _length_target(value: Any) -> str:
@@ -1034,8 +1266,68 @@ def _route_plan_response_format() -> dict[str, Any]:
                     "route_plan": {
                         "type": "object",
                         "properties": {
+                            "content_profile": {
+                                "type": "string",
+                                "enum": list(_ROUTE_PLAN_CONTENT_PROFILES.keys()),
+                            },
+                            "cluster_role": {
+                                "type": "string",
+                                "enum": list(_ROUTE_PLAN_CLUSTER_ROLES.keys()),
+                            },
+                            "dominant_failure_pattern": {
+                                "type": "string",
+                                "enum": list(_ROUTE_PLAN_FAILURE_PATTERNS.keys()),
+                            },
+                            "route_strategy": {
+                                "type": "string",
+                                "enum": list(_ROUTE_PLAN_STRATEGIES.keys()),
+                            },
+                            "profile_reason": {"type": "string"},
                             "failed_route": {"type": "string"},
                             "replacement_route": {"type": "string"},
+                            "source_block_plan": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "block_id": {"type": "string"},
+                                        "current_job": {"type": "string"},
+                                        "rewrite_job": {"type": "string"},
+                                        "must_preserve": {
+                                            "type": "array",
+                                            "minItems": 0,
+                                            "maxItems": 4,
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                    "required": ["block_id", "current_job", "rewrite_job", "must_preserve"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "target_sentence_jobs": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "sentence_id": {"type": "string"},
+                                        "source_preview": {"type": "string"},
+                                        "current_weakness": {"type": "string"},
+                                        "rewrite_job": {"type": "string"},
+                                        "avoid_copying": {
+                                            "type": "array",
+                                            "minItems": 0,
+                                            "maxItems": 4,
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                    "required": ["sentence_id", "source_preview", "current_weakness", "rewrite_job", "avoid_copying"],
+                                    "additionalProperties": False,
+                                },
+                            },
                             "must_change": {
                                 "type": "array",
                                 "minItems": 1,
@@ -1045,7 +1337,7 @@ def _route_plan_response_format() -> dict[str, Any]:
                             "must_preserve": {
                                 "type": "array",
                                 "minItems": 1,
-                                "maxItems": 10,
+                                "maxItems": 16,
                                 "items": {
                                     "type": "object",
                                     "properties": {
@@ -1075,8 +1367,15 @@ def _route_plan_response_format() -> dict[str, Any]:
                             "reason_this_should_move_score": {"type": "string"},
                         },
                         "required": [
+                            "content_profile",
+                            "cluster_role",
+                            "dominant_failure_pattern",
+                            "route_strategy",
+                            "profile_reason",
                             "failed_route",
                             "replacement_route",
+                            "source_block_plan",
+                            "target_sentence_jobs",
                             "must_change",
                             "must_preserve",
                             "sentence_plan",
@@ -2107,8 +2406,24 @@ def _local_goal(original_text: str, candidate_text: str) -> dict[str, Any]:
     ).to_dict()
 
 
-def _source_event_beats(text: str) -> list[str]:
-    return [sentence for sentence in _sentences(text)[:10] if sentence.strip()]
+def _source_event_beats(text: str, *, limit: int = 18) -> list[str]:
+    return [sentence for sentence in _sentences(text)[:max(1, int(limit or 1))] if sentence.strip()]
+
+
+def _source_blocks(text: str, *, limit: int = 8) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for block in str(text or "").split("\n\n"):
+        cleaned = " ".join(block.split())
+        if not cleaned:
+            continue
+        blocks.append({
+            "block_id": f"b{len(blocks) + 1:02d}",
+            "word_count": word_count(cleaned),
+            "preview": _short_string(cleaned, limit=260),
+        })
+        if len(blocks) >= max(1, int(limit or 1)):
+            break
+    return blocks
 
 
 def _section_before_context(section: SectionUnit) -> str:

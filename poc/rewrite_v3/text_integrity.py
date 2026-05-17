@@ -218,4 +218,6 @@ def _sentence_punctuation_missing_space(value: str, index: int) -> bool:
     previous_char = value[index - 1] if index > 0 else ""
     if previous_char.isdigit():
         return False
+    if previous_char.isalpha() and next_char.isupper() and index + 2 < len(value) and value[index + 2] == ".":
+        return False
     return next_char.isupper() or not previous_char.isalpha()
