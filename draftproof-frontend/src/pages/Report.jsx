@@ -17,8 +17,6 @@ import {
   formatDate,
   signalLabel,
   signalDescription,
-  translatedSignal,
-  translatedGroup,
   transformationLabel,
   confidenceLabel,
   evidenceLabel,
@@ -27,10 +25,6 @@ import {
   clampPercent,
   buildTransformationSignals,
   transformationSignalFeatureMap,
-  sortTransformationSignalsForComparison,
-  buildPairedTransformationSignals,
-  groupTransformationSignals,
-  getTransformationSignalImprovement,
   buildTransformationSummary,
   deriveAuthorshipRatingFallback,
   deriveCalibratedAuthorshipRating,
@@ -502,9 +496,6 @@ export default function Report() {
   const sealAuthorshipDetail = hasRewriteSignalComparison
     ? rewrittenAuthorshipSealDetail
     : authorshipSealDetail;
-  const pairedTransformationSignals = hasRewriteSignalComparison
-    ? buildPairedTransformationSignals(transformationSignals, rewrittenTransformationSignals)
-    : null;
   const transformationOriginalScore = hasRewriteSignalComparison
     ? (rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk ?? originalComparisonAiScore)
     : originalComparisonAiScore;
@@ -659,22 +650,7 @@ export default function Report() {
     </div>
   );
 
-  const renderTransformationDetails = (variant, pattern, summary, signals, variantAiScore, pairedSignals = null, ratingBadge = null) => {
-    const comparisonSignals = pairedSignals
-      ? pairedSignals.map((pair) => ({
-        ...(pair[variant] || {
-          key: pair.key,
-          label: pair.label,
-          description: pair.description,
-          value: null,
-          isMissing: true,
-        }),
-        pairedLabel: pair.label,
-        pairedDescription: pair.description,
-      }))
-      : sortTransformationSignalsForComparison(signals);
-    const localizedComparisonSignals = comparisonSignals.map((signal) => translatedSignal(signal, t));
-
+  const renderTransformationDetails = (variant, pattern, summary, variantAiScore, ratingBadge = null) => {
     return (
       <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
         <div className="transformation-detail-head">
@@ -727,74 +703,6 @@ export default function Report() {
             </div>
           </div>
         )}
-        {comparisonSignals.length > 0 && (
-          <>
-            <div className="transformation-chart-head">
-              <span>{t('report.transformation.signalProfile')}</span>
-            </div>
-            <div className="transformation-bars">
-              {groupTransformationSignals(localizedComparisonSignals).map((group) => translatedGroup(group, t)).map((group) => (
-                <div className={`transformation-signal-group transformation-signal-group-${group.id}`} key={`${variant}-${group.id}`}>
-                  <div className="transformation-signal-group-head">
-                    <div>
-                      <h4>{group.label}</h4>
-                      {group.description && <p>{group.description}</p>}
-                    </div>
-                    <span>{t('report.transformation.signals', { count: group.signals.length })}</span>
-                  </div>
-                  {group.signals.map((signal) => {
-                    const baselineSignal = variant === 'rewritten'
-                      ? transformationSignals.find((item) => item.key === signal.key)
-                      : null;
-                    const improvement = signal.isMissing ? null : getTransformationSignalImprovement(signal, baselineSignal);
-                    const improvementCopy = improvement
-                      ? t('report.transformation.improvedFromTo', { from: improvement.from.toFixed(0), to: improvement.to.toFixed(0) })
-                      : '';
-                    const tooltip = [
-                      signal.pairedDescription || signal.description,
-                      signal.isMissing ? t('report.transformation.notPresent') : improvementCopy,
-                    ].filter(Boolean).join(' ');
-                    const valueLabel = signal.isMissing ? '—' : `${signal.value.toFixed(0)}%`;
-                    const barWidth = signal.isMissing ? 0 : signal.value;
-
-                    return (
-                      <div
-                        key={`${variant}-${signal.key}`}
-                        className={`transformation-bar-row${improvement ? ' is-improved' : ''}${signal.isMissing ? ' is-missing' : ''}`}
-                        data-tooltip={tooltip}
-                        tabIndex={0}
-                        aria-label={`${variant === 'rewritten' ? t('report.transformation.rewritten') : t('report.transformation.original')} ${signal.pairedLabel || signal.label}: ${valueLabel}. ${tooltip}`}
-                        title={tooltip}
-                      >
-                        <div className="transformation-bar-label">
-                          <span className="transformation-bar-name">{signal.pairedLabel || signal.label}</span>
-                          <span
-                            className={`transformation-improvement-slot${improvement ? ' is-visible' : ''}`}
-                            aria-label={improvement ? t('report.transformation.improvedFromTo', { from: improvement.from.toFixed(0), to: improvement.to.toFixed(0) }) : undefined}
-                            title={improvement ? t('report.transformation.improvedFromTo', { from: improvement.from.toFixed(0), to: improvement.to.toFixed(0) }) : undefined}
-                          >
-                            {improvement && (
-                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                                <path d="M3.2 6.1l1.8 1.8 3.8-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            )}
-                          </span>
-                          <strong>{valueLabel}</strong>
-                        </div>
-                        <div className="transformation-bar-track" aria-hidden="true">
-                          <div
-                            className={`transformation-bar-fill transformation-bar-${signal.key}`}
-                            style={{ width: `${barWidth}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
       </div>
     );
   };
@@ -842,11 +750,11 @@ export default function Report() {
       <div className="transformation-chart">
         {hasRewriteSignalComparison ? (
           <div className="transformation-comparison-grid">
-            {renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore, pairedTransformationSignals, originalColumnRatingBadge)}
-            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, rewrittenTransformationSignals, transformationRewrittenScore, pairedTransformationSignals, rewrittenColumnRatingBadge)}
+            {renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore, originalColumnRatingBadge)}
+            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, rewrittenColumnRatingBadge)}
           </div>
         ) : (
-          renderTransformationDetails('original', transformation, transformationSummary, transformationSignals, transformationOriginalScore)
+          renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)
         )}
         {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
           <div className="transformation-evidence">
