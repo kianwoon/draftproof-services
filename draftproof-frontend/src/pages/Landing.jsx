@@ -205,7 +205,7 @@ export default function Landing() {
 function SampleReportPreview() {
   const { t } = useTranslation();
   const sampleReportStats = t('landing.sampleStats', { returnObjects: true });
-  const sampleSignalGroups = t('landing.sampleSignalGroups', { returnObjects: true });
+  const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
 
   return (
     <article className="sample-report-preview" aria-label={t('landing.reportPreviewLabel')}>
@@ -243,26 +243,9 @@ function SampleReportPreview() {
         </div>
       </div>
 
-      <div className="sample-signal-profile">
-        <div className="sample-signal-title">{t('landing.signalProfile')}</div>
-        {sampleSignalGroups.map((group) => (
-          <div className={`sample-signal-group is-${group.tone}`} key={group.title}>
-            <div className="sample-signal-group-head">
-              <div>
-                <h4>{group.title}</h4>
-                <p>{group.description}</p>
-              </div>
-              <span>{t('landing.signals', { count: group.signals.length })}</span>
-            </div>
-            {group.signals.map((signal) => (
-              <SampleSignalBar
-                key={signal.label}
-                label={signal.label}
-                value={signal.value}
-                tone={group.tone}
-              />
-            ))}
-          </div>
+      <div className="sample-report-notes">
+        {sampleReportNotes.map((note) => (
+          <span key={note}>{note}</span>
         ))}
       </div>
     </article>
