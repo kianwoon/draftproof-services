@@ -127,7 +127,7 @@ function pct(value) {
   return `${(Number(value) * 100).toFixed(0)}%`;
 }
 
-function formatMetricPercent(value, digits = 1) {
+function formatMetricPercent(value, digits = 0) {
   if (value == null || Number.isNaN(Number(value))) return '—';
   const number = Number(value);
   const percent = Math.abs(number) <= 1 ? number * 100 : number;
@@ -742,7 +742,7 @@ function formatAuthorshipSealDetail({
   if (calibratedAuthorshipRisk != null) {
     return t('report.seal.calibratedRisk', { value: formatMetricPercent(calibratedAuthorshipRisk, 0) });
   }
-  return t('report.seal.rawSignal', { value: formatMetricPercent(fallbackScore, 1) });
+  return t('report.seal.rawSignal', { value: formatMetricPercent(fallbackScore, 0) });
 }
 
 function getAuthorshipTone(rating = {}) {

@@ -841,14 +841,8 @@ assert_true(
 )
 scan_markdown = render_markdown(scan_report)
 assert_true(
-    'class="dp-core-bars"' in scan_markdown and "Core Signals" in scan_markdown,
-    "PDF markdown includes the executive transformation signal chart",
-)
-assert_true(
-    "AI Authorship Signals" in scan_markdown
-    and "Human / Authenticity Signals" in scan_markdown
-    and "Quality &amp; Calibration Signals" in scan_markdown,
-    "PDF markdown groups core signals by reader-facing meaning",
+    'class="dp-core-bars"' not in scan_markdown and "Core Signals" not in scan_markdown,
+    "PDF markdown hides the executive transformation signal chart",
 )
 assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],

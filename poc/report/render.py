@@ -105,66 +105,6 @@ _SIGNAL_CHART_ORDER = [
     "surface_similarity",
 ]
 
-_SIGNAL_CHART_COLORS = {
-    "topk_calibrated_risk": "#e11d48",
-    "topk_pattern": "#be123c",
-    "ai_likelihood": "#c2410c",
-    "adjusted_ai_risk": "#c2410c",
-    "calibrated_ai_risk": "#c2410c",
-    "citation_grounding_risk": "#c2410c",
-    "human_anchor_score": "#16a34a",
-    "human_anchor_discount": "#16a34a",
-    "rewrite_smoothness": "#4f46e5",
-    "outline_to_text_expansion": "#4f46e5",
-    "discourse_regularity_risk": "#4f46e5",
-    "source_similarity": "#0891b2",
-    "surface_similarity": "#0891b2",
-    "paraphrase_transformation_risk": "#0891b2",
-    "semantic_uniformity_risk": "#7c3aed",
-    "section_style_variance": "#2563eb",
-    "signal_agreement_score": "#0f766e",
-    "calibration_confidence": "#0f766e",
-    "reporting_suppression": "#64748b",
-}
-
-_SIGNAL_CHART_GROUPS = [
-    (
-        "AI Authorship Signals",
-        {
-            "topk_calibrated_risk",
-            "topk_pattern_raw",
-            "topk_pattern",
-            "ai_likelihood",
-            "rewrite_smoothness",
-            "semantic_uniformity_risk",
-            "section_style_variance",
-            "outline_to_text_expansion",
-            "discourse_regularity_risk",
-        },
-    ),
-    (
-        "Human / Authenticity Signals",
-        {
-            "human_anchor_score",
-            "human_anchor_discount",
-        },
-    ),
-    (
-        "Quality & Calibration Signals",
-        {
-            "citation_grounding_risk",
-            "calibration_confidence",
-            "reporting_suppression",
-            "signal_agreement_score",
-            "adjusted_ai_risk",
-            "calibrated_ai_risk",
-            "source_similarity",
-            "surface_similarity",
-            "paraphrase_transformation_risk",
-        },
-    ),
-]
-
 # ── Layman labels for AI Likelihood components ──────────────────────────
 _AI_COMPONENT_LABELS = {
     "predictability": ("Predictability", "How predictable the word choices are — higher means the text reads like statistically common patterns"),
@@ -432,24 +372,6 @@ def _strongest_supporting_ai_shape_signal(features: dict | None) -> dict | None:
         if signal_score is not None and signal_score >= 50:
             return {"key": key, "label": label, "score": signal_score}
     return None
-
-
-def _group_signal_chart_rows(rows: list[dict]) -> list[dict]:
-    grouped = [
-        {"label": label, "rows": []}
-        for label, _ in _SIGNAL_CHART_GROUPS
-    ]
-    other = {"label": "Other Signals", "rows": []}
-    by_label = {group["label"]: group for group in grouped}
-    for row in rows:
-        key = row.get("key")
-        target = other
-        for label, keys in _SIGNAL_CHART_GROUPS:
-            if key in keys:
-                target = by_label[label]
-                break
-        target["rows"].append(row)
-    return [group for group in [*grouped, other] if group["rows"]]
 
 
 def _authorship_rating_from_calibrated_risk(
@@ -795,31 +717,7 @@ def _executive_signal_chart_html(
         '</div></div>',
         '</div>',
         '</div>',
-        '<h3 class="dp-core-heading">Core Signals</h3>',
-        '<div class="dp-core-bars">',
     ]
-
-    for group in _group_signal_chart_rows(rows):
-        html.append(f'<h4 class="dp-core-group-heading">{escape(group["label"])}</h4>')
-        for row in group["rows"]:
-            key = row["key"]
-            score = max(0, min(100, row.get("score") or 0))
-            color = _SIGNAL_CHART_COLORS.get(key, "#0f766e")
-            html.extend([
-                '<div class="dp-core-row">',
-                '<div class="dp-core-label">',
-                f'<span>{escape(row["label"])}</span>',
-                f'<strong>{score:.0f}%</strong>',
-                '</div>',
-                '<div class="dp-bar-track">',
-                f'<div class="dp-core-fill" style="width:{score:.0f}%;background:{color}"></div>',
-                '</div>',
-                '</div>',
-            ])
-
-    html.extend([
-        '</div>',
-    ])
     if evidence:
         html.extend([
             '<div class="dp-evidence-row">',

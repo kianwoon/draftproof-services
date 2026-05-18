@@ -352,28 +352,23 @@ img[src^="https://img.shields.io"] { height: 18px; }
     margin-top: 8pt;
 }
 
-.dp-ratio-row,
-.dp-core-row {
+.dp-ratio-row {
     display: block;
     margin-bottom: 7pt;
     break-inside: avoid;
 }
 
 .dp-ratio-row > span,
-.dp-ratio-row > strong,
-.dp-core-label span,
-.dp-core-label strong {
+.dp-ratio-row > strong {
     font-size: 7.8pt;
     font-weight: 800;
 }
 
-.dp-ratio-row > span,
-.dp-core-label span {
+.dp-ratio-row > span {
     color: #475569;
 }
 
-.dp-ratio-row > strong,
-.dp-core-label strong {
+.dp-ratio-row > strong {
     float: right;
     color: #0f172a;
 }
@@ -387,8 +382,7 @@ img[src^="https://img.shields.io"] { height: 18px; }
     background: #e8eef5;
 }
 
-.dp-ratio-fill,
-.dp-core-fill {
+.dp-ratio-fill {
     height: 100%;
     min-width: 2pt;
     border-radius: inherit;
@@ -396,30 +390,6 @@ img[src^="https://img.shields.io"] { height: 18px; }
 
 .dp-human { background: #16a34a; }
 .dp-ai { background: #c2410c; }
-
-.dp-core-heading {
-    margin: 8pt 13pt 7pt;
-    color: #0f172a;
-    font-size: 10pt;
-    font-weight: 800;
-}
-
-.dp-core-bars {
-    padding: 0 13pt 4pt;
-}
-
-.dp-core-group-heading {
-    margin: 7pt 0 4pt;
-    color: #334155;
-    font-size: 7.5pt;
-    font-weight: 800;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-}
-
-.dp-core-label {
-    min-height: 12pt;
-}
 
 .dp-evidence-row {
     margin: 8pt 13pt 0;

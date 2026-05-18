@@ -628,13 +628,13 @@ export default function Report() {
       )}
       {rawAuthorshipSignal != null && (
         <div className="report-stat">
-          <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(rawAuthorshipSignal, 2)}</span>
+          <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(rawAuthorshipSignal, 0)}</span>
           <span className="report-stat-label">{t('report.summary.rawAiSignal')}</span>
         </div>
       )}
       {writingScore != null && (
         <div className="report-stat">
-          <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 2)}</span>
+          <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 0)}</span>
           <span className="report-stat-label">{t('report.summary.writingScore')}</span>
         </div>
       )}
@@ -671,7 +671,7 @@ export default function Report() {
               </div>
             )}
           </div>
-          <em>{formatMetricPercent(variantAiScore, 1)}</em>
+          <em>{formatMetricPercent(variantAiScore, 0)}</em>
         </div>
         {summary && (
           <div className="transformation-ratio-summary">
@@ -809,11 +809,11 @@ export default function Report() {
         <em>{rewriteBandDetail}</em>
       </div>
       <div className="rewrite-summary-stat">
-        <span>{formatMetricPercent(rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk, 1)}</span>
+        <span>{formatMetricPercent(rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk, 0)}</span>
         <small>{t('report.rewrite.aiBefore')}</small>
       </div>
       <div className="rewrite-summary-stat">
-        <span>{formatMetricPercent(rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk, 1)}</span>
+        <span>{formatMetricPercent(rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk, 0)}</span>
         <small>{t('report.rewrite.aiAfter')}</small>
       </div>
       <div className="rewrite-summary-stat">
