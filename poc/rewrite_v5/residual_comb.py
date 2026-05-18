@@ -113,6 +113,7 @@ def run_v5_residual_cluster_comb_experiment(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    planner_model: str | None = None,
     provider: dict[str, Any] | None = None,
     extra_body: dict[str, Any] | None = None,
     risky_window_cleanup_rounds: int | None = None,
@@ -177,6 +178,14 @@ def run_v5_residual_cluster_comb_experiment(
         timeout=180,
         extra_body=extra_body,
     ))
+    planner_gateway = _planner_gateway(
+        fallback_gateway=gateway,
+        api_key=api_key,
+        model=planner_model,
+        base_url=base_url,
+        provider=provider,
+        extra_body=extra_body,
+    )
 
     cleanup_variants = cleanup_variant_count if cleanup_variant_count is not None else variant_count
     risky_window_limit = _cleanup_round_limit(
@@ -240,6 +249,8 @@ def run_v5_residual_cluster_comb_experiment(
         "direct_scanner_batch_policy": _direct_scanner_batch_policy(),
         "direct_scanner_route_planning": _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_ROUTE_PLANNING", True),
         "direct_scanner_selection_policy": "balanced_ai_topk",
+        "planner_model": getattr(planner_gateway, "model", None),
+        "writer_model": getattr(gateway, "model", None),
         "initial_density_gate": _compact_density_gate(baseline_density_gate),
     }
 
@@ -266,6 +277,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal=current_goal,
             current_scores=current_scores,
             gateway=gateway,
+            planner_gateway=planner_gateway,
             output_dir=out_dir / "direct_scanner_leapfrog",
             global_best_candidate=global_best_candidate,
             max_rounds=direct_scanner_limit,
@@ -308,6 +320,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal=current_goal,
             current_scores=current_scores,
             gateway=gateway,
+            planner_gateway=planner_gateway,
             output_dir=out_dir / "unsafe_cluster_cleanup_probe",
             global_best_candidate=global_best_candidate,
             max_rounds=unsafe_cluster_probe_limit,
@@ -404,7 +417,8 @@ def run_v5_residual_cluster_comb_experiment(
             route_plan, route_plan_diagnostics, plan_prompt, plan_completion = generate_residual_cluster_route_plan(
                 section=section,
                 local_goal=local_source_goal,
-                gateway=gateway,
+                planner_gateway=planner_gateway,
+                fallback_gateway=gateway,
             )
             (round_dir / "route_plan_prompt.json.txt").write_text(plan_prompt)
             (round_dir / "route_plan_completion.json.txt").write_text(plan_completion)
@@ -558,6 +572,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal=current_goal,
             current_scores=current_scores,
             gateway=gateway,
+            planner_gateway=planner_gateway,
             output_dir=out_dir / "risky_window_cleanup",
             global_best_candidate=global_best_candidate,
             max_rounds=risky_window_limit,
@@ -590,6 +605,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal=current_goal,
             current_scores=current_scores,
             gateway=gateway,
+            planner_gateway=planner_gateway,
             output_dir=out_dir / "unsafe_cluster_cleanup",
             global_best_candidate=global_best_candidate,
             max_rounds=remaining_unsafe_cluster_limit,
@@ -621,6 +637,7 @@ def run_v5_residual_cluster_comb_experiment(
             current_goal=current_goal,
             current_scores=current_scores,
             gateway=gateway,
+            planner_gateway=planner_gateway,
             output_dir=out_dir / "final_risky_window_cleanup",
             global_best_candidate=global_best_candidate,
             max_rounds=final_risky_window_limit,
@@ -787,6 +804,35 @@ def _runtime_budget_seconds(value: float | None) -> float | None:
     except (TypeError, ValueError):
         return None
     return seconds if seconds > 0 else None
+
+
+def _planner_gateway(
+    *,
+    fallback_gateway: LLMGateway,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+    provider: dict[str, Any] | None,
+    extra_body: dict[str, Any] | None,
+) -> LLMGateway:
+    requested_model = (
+        str(model or "").strip()
+        or str(os.environ.get("DRAFTPROOF_REWRITE_V5_PLANNER_MODEL") or "").strip()
+        or str(os.environ.get("DRAFTPROOF_REWRITE_V5_NORMALIZER_MODEL") or "").strip()
+    )
+    if not requested_model or requested_model == str(getattr(fallback_gateway, "model", "") or ""):
+        return fallback_gateway
+    return LLMGateway(LLMConfig(
+        api_key=api_key,
+        model=requested_model,
+        base_url=base_url,
+        max_tokens=_int_env("DRAFTPROOF_REWRITE_V5_ROUTE_PLAN_MAX_TOKENS", 2600, minimum=800, maximum=6000),
+        temperature=_float_env("DRAFTPROOF_REWRITE_V5_ROUTE_PLAN_TEMPERATURE", 0.12, minimum=0.0, maximum=0.8),
+        top_p=_float_env("DRAFTPROOF_REWRITE_V5_ROUTE_PLAN_TOP_P", 0.72, minimum=0.1, maximum=1.0),
+        provider=provider,
+        timeout=180,
+        extra_body=extra_body,
+    ))
 
 
 def _runtime_elapsed_seconds(started_at: float) -> float:
@@ -1057,6 +1103,44 @@ def generate_residual_cluster_route_plan(
     *,
     section: SectionUnit,
     local_goal: dict[str, Any],
+    gateway: LLMGateway | None = None,
+    planner_gateway: LLMGateway | None = None,
+    fallback_gateway: LLMGateway | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any], str, str]:
+    primary_gateway = planner_gateway or gateway
+    if primary_gateway is None:
+        raise ValueError("generate_residual_cluster_route_plan requires a planner gateway")
+    plan, diagnostics, prompt, raw = _generate_residual_cluster_route_plan_once(
+        section=section,
+        local_goal=local_goal,
+        gateway=primary_gateway,
+    )
+    diagnostics = {
+        **diagnostics,
+        "planner_model_requested": getattr(primary_gateway, "model", None),
+        "planner_fallback_used": False,
+    }
+    if _route_plan_valid(plan) or not _should_retry_route_plan_with_fallback(primary_gateway, fallback_gateway):
+        return plan, diagnostics, prompt, raw
+
+    fallback_plan, fallback_diagnostics, fallback_prompt, fallback_raw = _generate_residual_cluster_route_plan_once(
+        section=section,
+        local_goal=local_goal,
+        gateway=fallback_gateway,
+    )
+    fallback_diagnostics = {
+        **fallback_diagnostics,
+        "planner_model_requested": getattr(fallback_gateway, "model", None),
+        "planner_fallback_used": True,
+        "primary_planner_attempt": _compact_route_plan_attempt(diagnostics),
+    }
+    return fallback_plan, fallback_diagnostics, fallback_prompt, fallback_raw
+
+
+def _generate_residual_cluster_route_plan_once(
+    *,
+    section: SectionUnit,
+    local_goal: dict[str, Any],
     gateway: LLMGateway,
 ) -> tuple[dict[str, Any] | None, dict[str, Any], str, str]:
     prompt = build_residual_cluster_route_plan_prompt(section=section, local_goal=local_goal)
@@ -1082,6 +1166,33 @@ def generate_residual_cluster_route_plan(
         "native_finish_reason": response.native_finish_reason,
         "structured_output_mode": structured.get("structured_output_mode"),
     }, prompt, raw
+
+
+def _should_retry_route_plan_with_fallback(
+    primary_gateway: LLMGateway,
+    fallback_gateway: LLMGateway | None,
+) -> bool:
+    if fallback_gateway is None:
+        return False
+    if fallback_gateway is primary_gateway:
+        return False
+    return str(getattr(fallback_gateway, "model", "") or "") != str(getattr(primary_gateway, "model", "") or "")
+
+
+def _compact_route_plan_attempt(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    usage = diagnostics.get("usage") if isinstance(diagnostics.get("usage"), dict) else {}
+    return {
+        "status": diagnostics.get("status"),
+        "reason": diagnostics.get("reason"),
+        "model": diagnostics.get("model"),
+        "planner_model_requested": diagnostics.get("planner_model_requested"),
+        "provider": diagnostics.get("provider"),
+        "structured_output_mode": diagnostics.get("structured_output_mode"),
+        "finish_reason": diagnostics.get("finish_reason"),
+        "native_finish_reason": diagnostics.get("native_finish_reason"),
+        "total_tokens": usage.get("total_tokens"),
+        "cost": usage.get("cost"),
+    }
 
 
 def _length_guidance_for_route_plan(*, section: SectionUnit, route_plan: dict[str, Any] | None) -> dict[str, Any]:
@@ -2367,6 +2478,7 @@ def _run_direct_scanner_leapfrog_pass(
     current_goal: dict[str, Any],
     current_scores: dict[str, Any],
     gateway: LLMGateway,
+    planner_gateway: LLMGateway,
     output_dir: Path,
     global_best_candidate: dict[str, Any] | None,
     max_rounds: int,
@@ -2426,7 +2538,8 @@ def _run_direct_scanner_leapfrog_pass(
             route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
                 section=section,
                 local_goal=_local_goal(section.text, section.text),
-                gateway=gateway,
+                planner_gateway=planner_gateway,
+                fallback_gateway=gateway,
             )
         else:
             route_plan = None
@@ -2568,6 +2681,7 @@ def _run_risky_window_cleanup_pass(
     current_goal: dict[str, Any],
     current_scores: dict[str, Any],
     gateway: LLMGateway,
+    planner_gateway: LLMGateway,
     output_dir: Path,
     global_best_candidate: dict[str, Any] | None,
     max_rounds: int,
@@ -2602,7 +2716,8 @@ def _run_risky_window_cleanup_pass(
         route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
             section=section,
             local_goal=_local_goal(section.text, section.text),
-            gateway=gateway,
+            planner_gateway=planner_gateway,
+            fallback_gateway=gateway,
         )
         (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
         (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
@@ -2692,6 +2807,7 @@ def _run_unsafe_cluster_cleanup_pass(
     current_goal: dict[str, Any],
     current_scores: dict[str, Any],
     gateway: LLMGateway,
+    planner_gateway: LLMGateway,
     output_dir: Path,
     global_best_candidate: dict[str, Any] | None,
     max_rounds: int,
@@ -2751,7 +2867,8 @@ def _run_unsafe_cluster_cleanup_pass(
             route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
                 section=section,
                 local_goal=_local_goal(section.text, section.text),
-                gateway=gateway,
+                planner_gateway=planner_gateway,
+                fallback_gateway=gateway,
             )
         else:
             route_plan = None

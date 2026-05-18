@@ -22,6 +22,7 @@ from rewrite_v5.residual_comb import (
     build_residual_cluster_retune_prompt,
     build_route_blueprint,
     build_unsafe_cluster_cleanup_prompt,
+    generate_residual_cluster_route_plan,
     run_v5_residual_cluster_comb_experiment,
     _best_full_document_candidate,
     _best_balanced_ai_topk_candidate,
@@ -495,6 +496,52 @@ def test_v5_residual_route_plan_rejects_summarized_preserve_anchors():
     assert parsed is None
     assert diagnostics["status"] == "schema_failed"
     assert diagnostics["dropped_must_preserve_count"] == 1
+
+
+def test_v5_route_plan_uses_fallback_gateway_after_invalid_planner_output():
+    source = (
+        "The service changed the student's confidence. "
+        "The thank-you card made the result visible."
+    )
+    section = SectionUnit(
+        section_id="density_cluster_001",
+        heading="Density cluster",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=10,
+        metadata={},
+    )
+    calls: list[str] = []
+
+    class FakeGateway:
+        provider = None
+
+        def __init__(self, model: str, response: str) -> None:
+            self.model = model
+            self.response = response
+
+        def chat(self, *_args, **_kwargs):
+            calls.append(self.model)
+            return _FakeV5LLMResponse(self.response, model=self.model)
+
+    primary = FakeGateway("z-ai/glm-5.1", '{"route_plan": {"failed_route": "missing fields"}}')
+    fallback = FakeGateway("deepseek/deepseek-v3.2", json.dumps({"route_plan": _sample_route_plan()}))
+
+    plan, diagnostics, _prompt, _raw = generate_residual_cluster_route_plan(
+        section=section,
+        local_goal={},
+        planner_gateway=primary,
+        fallback_gateway=fallback,
+    )
+
+    assert calls == ["z-ai/glm-5.1", "deepseek/deepseek-v3.2"]
+    assert plan is not None
+    assert diagnostics["status"] == "ok"
+    assert diagnostics["planner_fallback_used"] is True
+    assert diagnostics["planner_model_requested"] == "deepseek/deepseek-v3.2"
+    assert diagnostics["primary_planner_attempt"]["planner_model_requested"] == "z-ai/glm-5.1"
 
 
 def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
@@ -1722,12 +1769,15 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     emitted_checkpoints: list[dict] = []
     provider_routing = {"sort": "throughput", "allow_fallbacks": True}
     monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PROVIDER_ROUTING_JSON", json.dumps(provider_routing))
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_PLANNER_MODEL", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_NORMALIZER_MODEL", raising=False)
 
     def fake_residual_comb(**kwargs):
         assert kwargs["max_rounds"] == 6
         assert kwargs["variant_count"] == 5
         assert kwargs["retune_variant_count"] == 5
         assert kwargs["provider"] == provider_routing
+        assert kwargs["planner_model"] == "z-ai/glm-5.1"
         callback = kwargs.get("accepted_checkpoint_callback")
         assert callback is not None
         callback({
@@ -1820,6 +1870,7 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     assert summary["partial_rewrite_preservation_reason"] == "safe_progress_kept_despite_strict_goal_miss"
     assert summary["v5_scores"]["deltas"]["ai_delta"] == 6.0
     assert summary["rewrite_effective_config"]["provider_routing"] == provider_routing
+    assert summary["rewrite_effective_config"]["planner_model"] == "z-ai/glm-5.1"
     assert summary["final_text"] == "This is the rewritten document."
     layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
     assert layer["phase_order"]["unsafe_cluster_first"] is True

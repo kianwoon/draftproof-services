@@ -76,6 +76,10 @@ def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> 
 
 def _production_config() -> dict[str, Any]:
     return {
+        "planner_model": _first_env(
+            "DRAFTPROOF_REWRITE_V5_PLANNER_MODEL",
+            "DRAFTPROOF_REWRITE_V5_NORMALIZER_MODEL",
+        ) or "z-ai/glm-5.1",
         "max_rounds": _int_env("DRAFTPROOF_REWRITE_V5_MAX_ROUNDS", 6, minimum=1, maximum=10),
         "variant_count": _int_env("DRAFTPROOF_REWRITE_V5_VARIANTS", 5, minimum=1, maximum=5),
         "retune_variant_count": _int_env("DRAFTPROOF_REWRITE_V5_RETUNE_VARIANTS", 5, minimum=1, maximum=5),
@@ -265,6 +269,7 @@ def run_rewrite_pipeline_v5(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        planner_model=str(config.get("planner_model") or "") or None,
         provider=provider_routing,
         extra_body=_v5_extra_body(),
         risky_window_cleanup_rounds=int(config["risky_window_cleanup_rounds"]),
