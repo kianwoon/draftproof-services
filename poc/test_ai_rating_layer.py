@@ -845,6 +845,13 @@ assert_true(
     "PDF markdown hides the executive transformation signal chart",
 )
 assert_true(
+    "Score `9%`" in scan_markdown
+    and "Score `54%`" in scan_markdown
+    and ">9%</span><span class=\"dp-summary-label\">Raw AI-Style Signal" in scan_markdown
+    and ">54%</span><span class=\"dp-summary-label\">Writing Score" in scan_markdown,
+    "PDF markdown rounds report-level AI and writing scores to zero decimal places",
+)
+assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],
     "legacy-friendly highlight segment alias mirrors scan intelligence segments",
 )

@@ -615,8 +615,8 @@ def _executive_signal_chart_html(
         ),
         _summary_stat_html("Total Findings", str(total)),
         _summary_stat_html("Authorship Rating", rating_label, color=rating_tone["color"]),
-        _summary_stat_html("Raw AI-Style Signal", f"{ai_score:.2f}%", color=tier_color),
-        _summary_stat_html("Writing Score", f"{writing_score:.2f}%", color="#4f46e5"),
+        _summary_stat_html("Raw AI-Style Signal", f"{ai_score:.0f}%", color=tier_color),
+        _summary_stat_html("Writing Score", f"{writing_score:.0f}%", color="#4f46e5"),
     ]
     severity_stats = [
         ("Critical", n_critical, "#b91c1c"),
@@ -692,7 +692,7 @@ def _executive_signal_chart_html(
         '<span>Original Scan</span>',
         f'<strong>{escape(transformation.get("label") or "Pattern analysis")}</strong>',
         '</div>',
-        f'<em>{ai_score:.1f}%</em>',
+        f'<em>{ai_score:.0f}%</em>',
         '</div>',
         '<div class="dp-ratio-card">',
         '<div class="dp-ratio-copy">',
@@ -1068,7 +1068,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
-        lines.append(f"![{_abt_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.2f}%`")
+        lines.append(f"![{_abt_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.0f}%`")
         if _rating_label:
             lines.append(f"**Authorship Rating:** {_rating_label}")
 
@@ -1080,7 +1080,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         if wq_tier_header:
             wq_lbl = _wq_labels.get(wq_tier_header, wq_tier_header)
             wq_clr = _wq_colors.get(wq_tier_header, "lightgrey")
-            lines.append(f"![{wq_lbl}](https://img.shields.io/badge/Quality-{wq_lbl}-{wq_clr}) &nbsp; Score `{wq_score_header:.2f}%`")
+            lines.append(f"![{wq_lbl}](https://img.shields.io/badge/Quality-{wq_lbl}-{wq_clr}) &nbsp; Score `{wq_score_header:.0f}%`")
     else:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
     lines.append("")

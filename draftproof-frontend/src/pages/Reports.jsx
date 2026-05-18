@@ -162,12 +162,12 @@ export default function Reports() {
                       </td>
                       <td className="td-score">
                         {scan.ai_score != null ? (
-                          <strong className={`score-value score-value-${tierTone}`}>{scan.ai_score.toFixed(1)}%</strong>
+                          <strong className={`score-value score-value-${tierTone}`}>{scan.ai_score.toFixed(0)}%</strong>
                         ) : '—'}
                       </td>
                       <td className="td-score">
                         {scan.writing_score != null ? (
-                          <strong className="score-value score-value-positive">{scan.writing_score.toFixed(1)}%</strong>
+                          <strong className="score-value score-value-positive">{scan.writing_score.toFixed(0)}%</strong>
                         ) : '—'}
                       </td>
                       <td className="td-findings">{scan.finding_count ?? '—'}</td>
