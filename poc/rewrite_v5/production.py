@@ -31,6 +31,33 @@ def _bool_env(name: str, default: bool) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _first_env(*names: str) -> str | None:
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+    return None
+
+
+def _list_env(*names: str) -> list[str]:
+    raw = _first_env(*names)
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _optional_bool_env(*names: str) -> bool | None:
+    raw = _first_env(*names)
+    if raw is None:
+        return None
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     try:
         value = int(os.environ.get(name, str(default)) or default)
@@ -81,6 +108,89 @@ def _v5_extra_body() -> dict[str, Any] | None:
     return extra or None
 
 
+def _v5_provider_routing() -> dict[str, Any] | None:
+    raw_json = _first_env(
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_ROUTING_JSON",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_ROUTING_JSON",
+        "OPENROUTER_PROVIDER_ROUTING_JSON",
+        "LLM_PROVIDER_ROUTING_JSON",
+    )
+    if raw_json:
+        parsed = json.loads(raw_json)
+        if not isinstance(parsed, dict):
+            raise ValueError("V5 provider routing JSON must be an object")
+        return parsed
+
+    provider: dict[str, Any] = {
+        "allow_fallbacks": True,
+        "sort": _first_env(
+            "DRAFTPROOF_REWRITE_V5_PROVIDER_SORT",
+            "DRAFTPROOF_OPENROUTER_PROVIDER_SORT",
+            "OPENROUTER_PROVIDER_SORT",
+        ) or "throughput",
+    }
+    allow_fallbacks = _optional_bool_env(
+        "DRAFTPROOF_REWRITE_V5_ALLOW_FALLBACKS",
+        "DRAFTPROOF_OPENROUTER_ALLOW_FALLBACKS",
+        "OPENROUTER_ALLOW_FALLBACKS",
+    )
+    if allow_fallbacks is not None:
+        provider["allow_fallbacks"] = allow_fallbacks
+
+    order = _list_env(
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_ORDER",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_ORDER",
+        "OPENROUTER_PROVIDER_ORDER",
+    )
+    only = _list_env(
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_ONLY",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_ONLY",
+        "OPENROUTER_PROVIDER_ONLY",
+    )
+    ignore = _list_env(
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_IGNORE",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_IGNORE",
+        "OPENROUTER_PROVIDER_IGNORE",
+    )
+    if order:
+        provider["order"] = order
+    if only:
+        provider["only"] = only
+    if ignore:
+        provider["ignore"] = ignore
+
+    data_collection = _first_env(
+        "DRAFTPROOF_REWRITE_V5_DATA_COLLECTION",
+        "DRAFTPROOF_OPENROUTER_DATA_COLLECTION",
+        "OPENROUTER_DATA_COLLECTION",
+    )
+    if data_collection:
+        provider["data_collection"] = data_collection
+
+    require_parameters = _optional_bool_env(
+        "DRAFTPROOF_REWRITE_V5_REQUIRE_PARAMETERS",
+        "DRAFTPROOF_OPENROUTER_REQUIRE_PARAMETERS",
+        "OPENROUTER_REQUIRE_PARAMETERS",
+    )
+    if require_parameters is not None:
+        provider["require_parameters"] = require_parameters
+    zdr = _optional_bool_env(
+        "DRAFTPROOF_REWRITE_V5_ZDR",
+        "DRAFTPROOF_OPENROUTER_ZDR",
+        "OPENROUTER_ZDR",
+    )
+    if zdr is not None:
+        provider["zdr"] = zdr
+    enforce_distillable_text = _optional_bool_env(
+        "DRAFTPROOF_REWRITE_V5_ENFORCE_DISTILLABLE_TEXT",
+        "DRAFTPROOF_OPENROUTER_ENFORCE_DISTILLABLE_TEXT",
+        "OPENROUTER_ENFORCE_DISTILLABLE_TEXT",
+    )
+    if enforce_distillable_text is not None:
+        provider["enforce_distillable_text"] = enforce_distillable_text
+    return provider
+
+
 def run_rewrite_pipeline_v5(
     *,
     detect_json: dict[str, Any],
@@ -100,6 +210,7 @@ def run_rewrite_pipeline_v5(
     progress(62, "Starting V5 cluster rewrite")
     original_text = _extract_original_text(detect_json)
     config = _production_config()
+    provider_routing = _v5_provider_routing()
     runtime_budget_seconds = _v5_runtime_budget_seconds(original_text, config)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -154,6 +265,7 @@ def run_rewrite_pipeline_v5(
         api_key=api_key,
         model=model,
         base_url=base_url,
+        provider=provider_routing,
         extra_body=_v5_extra_body(),
         risky_window_cleanup_rounds=int(config["risky_window_cleanup_rounds"]),
         unsafe_cluster_cleanup_rounds=int(config["unsafe_cluster_cleanup_rounds"]),
@@ -270,6 +382,7 @@ def run_rewrite_pipeline_v5(
             **config,
             "model": model,
             "base_url_configured": bool(base_url),
+            "provider_routing": provider_routing,
             "runtime_budget_seconds": runtime_budget_seconds,
         },
         "v5_scores": {

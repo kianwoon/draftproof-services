@@ -10,14 +10,17 @@ import os
 import time
 import json
 import logging
+import threading
 import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
 
 logger = logging.getLogger(__name__)
+_ORIGINAL_REQUESTS_POST = requests.post
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -48,6 +51,7 @@ class LLMConfig:
     timeout: int = 120
     site_url: Optional[str] = None       # OpenRouter optional headers
     site_name: Optional[str] = None
+    reuse_http_connections: bool = True
 
 
 @dataclass
@@ -242,6 +246,19 @@ def _bool_env(*names: str) -> bool | None:
     return None
 
 
+def _bool_env_default(name: str, default: bool) -> bool:
+    value = _bool_env(name)
+    return default if value is None else value
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 def _provider_from_env() -> dict[str, Any] | None:
     raw_json = _first_env(
         "DRAFTPROOF_OPENROUTER_PROVIDER_ROUTING_JSON",
@@ -383,6 +400,11 @@ class LLMGateway:
         self.timeout = cfg.timeout
         self.site_url = cfg.site_url or os.environ.get("LLM_SITE_URL")
         self.site_name = cfg.site_name or os.environ.get("LLM_SITE_NAME")
+        self.reuse_http_connections = cfg.reuse_http_connections and _bool_env_default(
+            "DRAFTPROOF_LLM_REUSE_HTTP_CONNECTIONS",
+            True,
+        )
+        self._session_local = threading.local()
 
         if not self.api_key:
             raise ValueError(
@@ -559,7 +581,7 @@ class LLMGateway:
         for attempt in range(1, self.max_retries + 1):
             try:
                 t0 = time.monotonic()
-                resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+                resp = self._post_json(url, headers=headers, payload=payload)
                 wall_s = time.monotonic() - t0
                 logger.info(f"LLM response: status={resp.status_code}, latency={wall_s:.1f}s, attempt={attempt}")
                 resp.raise_for_status()
@@ -584,6 +606,28 @@ class LLMGateway:
 
         # Should not reach here, but safety net
         raise RuntimeError(f"LLM call failed after {self.max_retries} attempts")
+
+    def _post_json(self, url: str, *, headers: dict[str, str], payload: dict[str, Any]) -> requests.Response:
+        if not self.reuse_http_connections or requests.post is not _ORIGINAL_REQUESTS_POST:
+            return requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+        session = self._thread_session()
+        return session.post(url, headers=headers, json=payload, timeout=self.timeout)
+
+    def _thread_session(self) -> requests.Session:
+        session = getattr(self._session_local, "session", None)
+        if session is not None:
+            return session
+        session = requests.Session()
+        pool_size = _int_env("DRAFTPROOF_LLM_HTTP_POOL_SIZE", 10, minimum=1, maximum=100)
+        adapter = HTTPAdapter(
+            pool_connections=pool_size,
+            pool_maxsize=pool_size,
+            pool_block=True,
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        self._session_local.session = session
+        return session
 
     @staticmethod
     def _normalize_quotes(text: str) -> str:

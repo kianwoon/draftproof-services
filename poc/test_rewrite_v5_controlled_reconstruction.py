@@ -26,6 +26,9 @@ from rewrite_v5.residual_comb import (
     _best_full_document_candidate,
     _best_balanced_ai_topk_candidate,
     _balanced_ai_topk_sort_value,
+    _direct_scanner_candidate_strong_enough,
+    _direct_scanner_batch_policy,
+    _should_continue_direct_scanner_batches,
     generate_residual_cluster_seed_variants,
     _expand_to_local_text_boundaries,
     _full_document_candidate_beats_scores,
@@ -615,6 +618,45 @@ def test_v5_balanced_ai_topk_selector_rejects_external_only_movement():
     assert _balanced_ai_topk_sort_value(balanced) > _balanced_ai_topk_sort_value(external_only)
 
 
+def test_v5_direct_scanner_adaptive_batch_policy_continues_only_for_weak_candidates(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_BATCH_POLICY", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_RUN_ALL_BATCHES", raising=False)
+    weak = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 0.5,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "external_delta": 2.0,
+        },
+    }
+    strong = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 1.2,
+            "topk_delta": 1.1,
+            "topk_calibrated_risk_delta": 2.8,
+            "external_delta": 4.0,
+        },
+    }
+
+    assert _direct_scanner_batch_policy() == "adaptive"
+    assert not _direct_scanner_candidate_strong_enough(weak)
+    assert _direct_scanner_candidate_strong_enough(strong)
+    assert _should_continue_direct_scanner_batches(
+        weak,
+        batch_policy="adaptive",
+        batch_index=1,
+        max_batches=2,
+    )
+    assert not _should_continue_direct_scanner_batches(
+        strong,
+        batch_policy="adaptive",
+        batch_index=1,
+        max_batches=2,
+    )
+
+
 def test_v5_residual_candidate_sort_prefers_cleared_local_cluster():
     uncleared = {
         "local_scores": {
@@ -1066,6 +1108,63 @@ def test_v5_production_runtime_budget_scales_with_input_length(monkeypatch):
 
     assert v5_production._v5_runtime_budget_seconds(short_text, config) == 180
     assert v5_production._v5_runtime_budget_seconds(long_text, config) == 495
+
+
+def test_v5_provider_routing_defaults_to_throughput(monkeypatch):
+    for name in (
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_ROUTING_JSON",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_ROUTING_JSON",
+        "OPENROUTER_PROVIDER_ROUTING_JSON",
+        "LLM_PROVIDER_ROUTING_JSON",
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_SORT",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_SORT",
+        "OPENROUTER_PROVIDER_SORT",
+        "DRAFTPROOF_REWRITE_V5_ALLOW_FALLBACKS",
+        "DRAFTPROOF_OPENROUTER_ALLOW_FALLBACKS",
+        "OPENROUTER_ALLOW_FALLBACKS",
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_ORDER",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_ORDER",
+        "OPENROUTER_PROVIDER_ORDER",
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_ONLY",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_ONLY",
+        "OPENROUTER_PROVIDER_ONLY",
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_IGNORE",
+        "DRAFTPROOF_OPENROUTER_PROVIDER_IGNORE",
+        "OPENROUTER_PROVIDER_IGNORE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert v5_production._v5_provider_routing() == {
+        "allow_fallbacks": True,
+        "sort": "throughput",
+    }
+
+
+def test_v5_provider_routing_honors_v5_env_overrides(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PROVIDER_SORT", "latency")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PROVIDER_ORDER", "friendli,together")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PROVIDER_IGNORE", "slow-provider")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_ALLOW_FALLBACKS", "false")
+
+    assert v5_production._v5_provider_routing() == {
+        "allow_fallbacks": False,
+        "sort": "latency",
+        "order": ["friendli", "together"],
+        "ignore": ["slow-provider"],
+    }
+
+
+def test_v5_provider_routing_accepts_json_override(monkeypatch):
+    monkeypatch.setenv(
+        "DRAFTPROOF_REWRITE_V5_PROVIDER_ROUTING_JSON",
+        json.dumps({"order": ["friendli"], "allow_fallbacks": False}),
+    )
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PROVIDER_SORT", "throughput")
+
+    assert v5_production._v5_provider_routing() == {
+        "order": ["friendli"],
+        "allow_fallbacks": False,
+    }
 
 
 def test_v5_compact_rounds_keep_cleanup_observability_without_raw_payloads():
@@ -1621,11 +1720,14 @@ def test_v5_apply_integrity_gate_allows_preexisting_document_artifacts_only():
 
 def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch):
     emitted_checkpoints: list[dict] = []
+    provider_routing = {"sort": "throughput", "allow_fallbacks": True}
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PROVIDER_ROUTING_JSON", json.dumps(provider_routing))
 
     def fake_residual_comb(**kwargs):
         assert kwargs["max_rounds"] == 6
         assert kwargs["variant_count"] == 5
         assert kwargs["retune_variant_count"] == 5
+        assert kwargs["provider"] == provider_routing
         callback = kwargs.get("accepted_checkpoint_callback")
         assert callback is not None
         callback({
@@ -1717,6 +1819,7 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     assert summary["partial_rewrite_preserved"] is True
     assert summary["partial_rewrite_preservation_reason"] == "safe_progress_kept_despite_strict_goal_miss"
     assert summary["v5_scores"]["deltas"]["ai_delta"] == 6.0
+    assert summary["rewrite_effective_config"]["provider_routing"] == provider_routing
     assert summary["final_text"] == "This is the rewritten document."
     layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
     assert layer["phase_order"]["unsafe_cluster_first"] is True

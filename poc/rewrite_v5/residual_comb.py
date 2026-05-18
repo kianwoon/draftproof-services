@@ -113,6 +113,7 @@ def run_v5_residual_cluster_comb_experiment(
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    provider: dict[str, Any] | None = None,
     extra_body: dict[str, Any] | None = None,
     risky_window_cleanup_rounds: int | None = None,
     unsafe_cluster_cleanup_rounds: int | None = None,
@@ -172,6 +173,7 @@ def run_v5_residual_cluster_comb_experiment(
         max_tokens=_int_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_MAX_TOKENS", 8000, minimum=1000, maximum=12000),
         temperature=_float_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_TEMPERATURE", 0.35, minimum=0.0, maximum=1.0),
         top_p=_float_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_TOP_P", 0.9, minimum=0.1, maximum=1.0),
+        provider=provider,
         timeout=180,
         extra_body=extra_body,
     ))
@@ -235,7 +237,8 @@ def run_v5_residual_cluster_comb_experiment(
         "direct_scanner_leapfrog_rounds": direct_scanner_limit,
         "direct_scanner_leapfrog_variants": direct_scanner_variants,
         "direct_scanner_leapfrog_batches": direct_scanner_batches,
-        "direct_scanner_run_all_batches": _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_RUN_ALL_BATCHES", True),
+        "direct_scanner_batch_policy": _direct_scanner_batch_policy(),
+        "direct_scanner_route_planning": _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_ROUTE_PLANNING", True),
         "direct_scanner_selection_policy": "balanced_ai_topk",
         "initial_density_gate": _compact_density_gate(baseline_density_gate),
     }
@@ -2418,11 +2421,21 @@ def _run_direct_scanner_leapfrog_pass(
         section, density_cluster, signature = target
         round_dir = output_dir / f"round_{round_index:02d}"
         round_dir.mkdir(parents=True, exist_ok=True)
-        route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
-            section=section,
-            local_goal=_local_goal(section.text, section.text),
-            gateway=gateway,
-        )
+        route_plan_enabled = _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_ROUTE_PLANNING", True)
+        if route_plan_enabled:
+            route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
+                section=section,
+                local_goal=_local_goal(section.text, section.text),
+                gateway=gateway,
+            )
+        else:
+            route_plan = None
+            route_plan_diagnostics = {
+                "status": "skipped",
+                "reason": "direct_scanner_route_planning_disabled",
+            }
+            route_plan_prompt = ""
+            route_plan_completion = ""
         (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
         (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
         if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
@@ -2439,7 +2452,7 @@ def _run_direct_scanner_leapfrog_pass(
         batch_diagnostics: list[dict[str, Any]] = []
         selected: dict[str, Any] | None = None
         accepted: dict[str, Any] | None = None
-        run_all_batches = _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_RUN_ALL_BATCHES", True)
+        batch_policy = _direct_scanner_batch_policy()
         for batch_index in range(1, max(1, int(max_batches or 1)) + 1):
             if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
                 batch_diagnostics.append({"batch_index": batch_index, "status": "skipped", "reason": "runtime_budget_exhausted"})
@@ -2483,8 +2496,20 @@ def _run_direct_scanner_leapfrog_pass(
                 "candidate_count": len(batch_rows),
                 "selected": _compact_residual_row(selected),
                 "accepted": bool(accepted),
+                "batch_policy": batch_policy,
+                "continue_reason": _direct_scanner_next_batch_reason(
+                    selected,
+                    batch_policy=batch_policy,
+                    batch_index=batch_index,
+                    max_batches=max_batches,
+                ),
             })
-            if accepted and not run_all_batches:
+            if not _should_continue_direct_scanner_batches(
+                selected,
+                batch_policy=batch_policy,
+                batch_index=batch_index,
+                max_batches=max_batches,
+            ):
                 break
 
         selected = selected or _best_balanced_ai_topk_candidate(rows)
@@ -2501,7 +2526,7 @@ def _run_direct_scanner_leapfrog_pass(
                 "route_plan": route_plan_diagnostics,
                 "batches": batch_diagnostics,
                 "selection_policy": "balanced_ai_topk",
-                "run_all_batches": run_all_batches,
+                "batch_policy": batch_policy,
             },
             "current_scores": current_scores,
             "candidates": [_compact_residual_row(row) for row in rows],
@@ -2997,6 +3022,88 @@ def _balanced_ai_topk_sort_value(row: dict[str, Any]) -> tuple[float, ...]:
         unsafe_cluster_delta,
         rank_delta,
     )
+
+
+def _direct_scanner_batch_policy() -> str:
+    value = os.environ.get("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_BATCH_POLICY")
+    if value is None:
+        legacy_run_all = os.environ.get("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_RUN_ALL_BATCHES")
+        if legacy_run_all is not None:
+            return "all" if _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_RUN_ALL_BATCHES") else "stop_on_accept"
+        return "adaptive"
+    normalized = value.strip().casefold()
+    if normalized in {"all", "adaptive", "stop_on_accept"}:
+        return normalized
+    return "adaptive"
+
+
+def _should_continue_direct_scanner_batches(
+    row: dict[str, Any] | None,
+    *,
+    batch_policy: str,
+    batch_index: int,
+    max_batches: int,
+) -> bool:
+    if int(batch_index or 0) >= max(1, int(max_batches or 1)):
+        return False
+    if batch_policy == "all":
+        return True
+    if batch_policy == "stop_on_accept":
+        return not _has_balanced_ai_topk_movement(row or {})
+    return not _direct_scanner_candidate_strong_enough(row)
+
+
+def _direct_scanner_next_batch_reason(
+    row: dict[str, Any] | None,
+    *,
+    batch_policy: str,
+    batch_index: int,
+    max_batches: int,
+) -> str:
+    if int(batch_index or 0) >= max(1, int(max_batches or 1)):
+        return "max_batches_reached"
+    if batch_policy == "all":
+        return "policy_all_batches"
+    if batch_policy == "stop_on_accept":
+        return "accepted_candidate_found" if _has_balanced_ai_topk_movement(row or {}) else "no_accepted_candidate"
+    return "strong_candidate_found" if _direct_scanner_candidate_strong_enough(row) else "candidate_not_strong_enough"
+
+
+def _direct_scanner_candidate_strong_enough(row: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict) or not _has_balanced_ai_topk_movement(row):
+        return False
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    ai_delta = _number(incremental.get("ai_delta"))
+    topk_delta = _number(incremental.get("topk_delta"))
+    topk_risk_delta = _number(incremental.get("topk_calibrated_risk_delta"))
+    external_delta = _number(incremental.get("external_delta"))
+    strong_ai = _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_STRONG_AI_DELTA",
+        1.0,
+        minimum=0.0,
+        maximum=20.0,
+    )
+    strong_topk = _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_STRONG_TOPK_DELTA",
+        1.0,
+        minimum=0.0,
+        maximum=20.0,
+    )
+    strong_topk_risk = _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_STRONG_TOPK_RISK_DELTA",
+        2.5,
+        minimum=0.0,
+        maximum=40.0,
+    )
+    strong_external = _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_STRONG_EXTERNAL_DELTA",
+        5.0,
+        minimum=0.0,
+        maximum=50.0,
+    )
+    if ai_delta >= strong_ai and (topk_delta >= strong_topk or topk_risk_delta >= strong_topk_risk):
+        return True
+    return ai_delta >= (strong_ai * 1.8) and external_delta >= strong_external
 
 
 def _has_risky_window_cleanup_movement(row: dict[str, Any]) -> bool:
