@@ -16,6 +16,7 @@ from rewrite_v5.experiment import (
 )
 from rewrite_v5.residual_comb import (
     build_risky_window_cleanup_prompt,
+    build_direct_scanner_leapfrog_prompt,
     build_residual_cluster_prompt,
     build_residual_cluster_route_plan_prompt,
     build_residual_cluster_retune_prompt,
@@ -23,11 +24,14 @@ from rewrite_v5.residual_comb import (
     build_unsafe_cluster_cleanup_prompt,
     run_v5_residual_cluster_comb_experiment,
     _best_full_document_candidate,
+    _best_balanced_ai_topk_candidate,
+    _balanced_ai_topk_sort_value,
     generate_residual_cluster_seed_variants,
     _expand_to_local_text_boundaries,
     _full_document_candidate_beats_scores,
     _generate_loose_variants_from_builder,
     _has_risky_window_cleanup_movement,
+    _has_balanced_ai_topk_movement,
     _has_unsafe_cluster_cleanup_movement,
     _has_full_document_fallback_movement,
     _ordered_density_cluster_rows,
@@ -522,6 +526,93 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     lowered = prompt.casefold()
     assert "follow execution_brief.replacement_route" in lowered
     assert "fallback_route_blueprint" not in lowered
+
+
+def test_v5_direct_scanner_leapfrog_prompt_uses_scanner_cluster_and_small_variants():
+    section = SectionUnit(
+        section_id="density_cluster_001",
+        heading="Density cluster cleanup",
+        text=(
+            "Students received knowledge from trusted sources, practiced it through homework, "
+            "and proved their learning through tests. That model still exists, but it no longer "
+            "fully reflects how young people learn today."
+        ),
+        start_char=0,
+        end_char=178,
+        paragraph_count=1,
+        word_count=27,
+        metadata={"before_context": "", "after_context": "Now, students are surrounded by information."},
+    )
+    route_plan = {
+        **_sample_route_plan(),
+        "content_profile": "broad_explanatory_report",
+        "cluster_role": "background_context",
+        "dominant_failure_pattern": "claim_chain",
+        "route_strategy": "group_and_bridge",
+        "must_preserve": [
+            {"source_quote": "Students received knowledge from trusted sources", "preserve_as": "old learning source"}
+        ],
+        "length_target": "same_length",
+    }
+    density_cluster = {
+        "start_sentence": 2,
+        "end_sentence": 3,
+        "sentence_count": 2,
+        "word_count": 27,
+        "preview": "Students received knowledge from trusted sources...",
+        "generic_hits": ["trusted sources"],
+        "transition_count": 1,
+    }
+
+    prompt = build_direct_scanner_leapfrog_prompt(
+        section=section,
+        density_cluster=density_cluster,
+        route_plan=route_plan,
+        variant_count=5,
+        batch_index=2,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "direct_scanner_cluster_leapfrog"
+    assert payload["scanner_focus"]["source"] == "eligible_span_density.top_unsafe_clusters"
+    assert payload["execution_brief"] == route_plan
+    assert payload["length_guidance"]["small_variant_allowed"] is True
+    assert payload["length_guidance"]["preferred_min_words"] < section.word_count
+    assert payload["retry_batch"]["batch_index"] == 2
+    assert len(payload["output_schema"]["variants"]) == 5
+    lowered = prompt.casefold()
+    assert "fake-human" in lowered
+    assert "return the whole document" in lowered
+
+
+def test_v5_balanced_ai_topk_selector_rejects_external_only_movement():
+    external_only = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 0.1,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "external_delta": 20.0,
+            "risky_window_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+        },
+    }
+    balanced = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 0.8,
+            "topk_delta": 1.1,
+            "topk_calibrated_risk_delta": 2.0,
+            "external_delta": 2.0,
+            "risky_window_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 1.0,
+        },
+    }
+
+    assert not _has_balanced_ai_topk_movement(external_only)
+    assert _has_balanced_ai_topk_movement(balanced)
+    assert _best_balanced_ai_topk_candidate([external_only, balanced]) is balanced
+    assert _balanced_ai_topk_sort_value(balanced) > _balanced_ai_topk_sort_value(external_only)
 
 
 def test_v5_residual_candidate_sort_prefers_cleared_local_cluster():

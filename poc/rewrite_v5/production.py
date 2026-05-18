@@ -52,6 +52,9 @@ def _production_config() -> dict[str, Any]:
         "max_rounds": _int_env("DRAFTPROOF_REWRITE_V5_MAX_ROUNDS", 6, minimum=1, maximum=10),
         "variant_count": _int_env("DRAFTPROOF_REWRITE_V5_VARIANTS", 5, minimum=1, maximum=5),
         "retune_variant_count": _int_env("DRAFTPROOF_REWRITE_V5_RETUNE_VARIANTS", 5, minimum=1, maximum=5),
+        "direct_scanner_leapfrog_rounds": _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS", 4, minimum=0, maximum=12),
+        "direct_scanner_leapfrog_variants": _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_VARIANTS", 5, minimum=1, maximum=5),
+        "direct_scanner_leapfrog_batches": _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_BATCHES", 2, minimum=1, maximum=3),
         "risky_window_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS", 2, minimum=0, maximum=12),
         "unsafe_cluster_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS", 12, minimum=0, maximum=12),
         "unsafe_cluster_probe_share": _float_env("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_SHARE", 0.25, minimum=0.0, maximum=1.0),
@@ -156,6 +159,9 @@ def run_rewrite_pipeline_v5(
         unsafe_cluster_cleanup_rounds=int(config["unsafe_cluster_cleanup_rounds"]),
         cleanup_variant_count=int(config["cleanup_variant_count"]),
         final_risky_window_cleanup_rounds=int(config["final_risky_window_cleanup_rounds"]),
+        direct_scanner_leapfrog_rounds=int(config["direct_scanner_leapfrog_rounds"]),
+        direct_scanner_leapfrog_variant_count=int(config["direct_scanner_leapfrog_variants"]),
+        direct_scanner_leapfrog_batches=int(config["direct_scanner_leapfrog_batches"]),
         progress_callback=progress,
         accepted_checkpoint_callback=emit_checkpoint,
         max_seconds=runtime_budget_seconds,
@@ -171,6 +177,11 @@ def run_rewrite_pipeline_v5(
         candidate_report=final_report,
     ).to_dict()
     rounds = payload.get("rounds") if isinstance(payload.get("rounds"), list) else []
+    direct_scanner_leapfrog_rounds = (
+        payload.get("direct_scanner_leapfrog_rounds")
+        if isinstance(payload.get("direct_scanner_leapfrog_rounds"), list)
+        else []
+    )
     risky_window_cleanup_rounds = (
         payload.get("risky_window_cleanup_rounds")
         if isinstance(payload.get("risky_window_cleanup_rounds"), list)
@@ -186,7 +197,13 @@ def run_rewrite_pipeline_v5(
         if isinstance(payload.get("final_risky_window_cleanup_rounds"), list)
         else []
     )
-    all_rounds = rounds + risky_window_cleanup_rounds + unsafe_cluster_cleanup_rounds + final_risky_window_cleanup_rounds
+    all_rounds = (
+        direct_scanner_leapfrog_rounds
+        + rounds
+        + risky_window_cleanup_rounds
+        + unsafe_cluster_cleanup_rounds
+        + final_risky_window_cleanup_rounds
+    )
     accepted = [
         row.get("accepted")
         for row in all_rounds
@@ -478,6 +495,11 @@ def _compact_v5_rounds(rounds: list[Any]) -> list[dict[str, Any]]:
 
 def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
     rounds = payload.get("rounds") if isinstance(payload.get("rounds"), list) else []
+    direct_scanner_leapfrog_rounds = (
+        payload.get("direct_scanner_leapfrog_rounds")
+        if isinstance(payload.get("direct_scanner_leapfrog_rounds"), list)
+        else []
+    )
     risky_window_cleanup_rounds = (
         payload.get("risky_window_cleanup_rounds")
         if isinstance(payload.get("risky_window_cleanup_rounds"), list)
@@ -493,7 +515,13 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("final_risky_window_cleanup_rounds"), list)
         else []
     )
-    all_rounds = rounds + risky_window_cleanup_rounds + unsafe_cluster_cleanup_rounds + final_risky_window_cleanup_rounds
+    all_rounds = (
+        direct_scanner_leapfrog_rounds
+        + rounds
+        + risky_window_cleanup_rounds
+        + unsafe_cluster_cleanup_rounds
+        + final_risky_window_cleanup_rounds
+    )
     return {
         "stage": payload.get("stage"),
         "baseline_scores": payload.get("baseline_scores"),
@@ -504,6 +532,7 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "accepted_checkpoints": payload.get("accepted_checkpoints") if isinstance(payload.get("accepted_checkpoints"), list) else [],
         "goal": payload.get("goal"),
         "accepted_rounds": sum(1 for row in all_rounds if isinstance(row, dict) and row.get("accepted")),
+        "direct_scanner_leapfrog_rounds": _compact_v5_rounds(direct_scanner_leapfrog_rounds),
         "rounds": _compact_v5_rounds(rounds),
         "risky_window_cleanup_rounds": _compact_v5_rounds(risky_window_cleanup_rounds),
         "unsafe_cluster_cleanup_rounds": _compact_v5_rounds(unsafe_cluster_cleanup_rounds),

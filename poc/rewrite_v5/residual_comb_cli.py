@@ -18,6 +18,9 @@ def main() -> None:
     parser.add_argument("--max-rounds", type=int, default=5, help="Maximum residual cluster rounds")
     parser.add_argument("--variants", type=int, default=3, help="Initial variants per cluster")
     parser.add_argument("--retune-variants", type=int, default=4, help="Retune variants for near-miss clusters")
+    parser.add_argument("--direct-scanner-leapfrog-rounds", type=int, default=None, help="Direct scanner-cluster leapfrog rounds")
+    parser.add_argument("--direct-scanner-leapfrog-variants", type=int, default=None, help="Variants for direct scanner-cluster leapfrog")
+    parser.add_argument("--direct-scanner-leapfrog-batches", type=int, default=None, help="Retry batches for direct scanner-cluster leapfrog")
     parser.add_argument("--risky-window-cleanup-rounds", type=int, default=None, help="Post-pass risky window cleanup rounds")
     parser.add_argument("--unsafe-cluster-cleanup-rounds", type=int, default=None, help="Post-pass unsafe cluster cleanup rounds")
     parser.add_argument("--final-risky-window-cleanup-rounds", type=int, default=None, help="Final risky window cleanup rounds after unsafe cluster cleanup")
@@ -39,6 +42,9 @@ def main() -> None:
             model=os.environ.get("DRAFTPROOF_REWRITE_V5_MODEL")
             or os.environ.get("DRAFTPROOF_REWRITE_V4_MODEL")
             or os.environ.get("LLM_MODEL"),
+            direct_scanner_leapfrog_rounds=args.direct_scanner_leapfrog_rounds,
+            direct_scanner_leapfrog_variant_count=args.direct_scanner_leapfrog_variants,
+            direct_scanner_leapfrog_batches=args.direct_scanner_leapfrog_batches,
             risky_window_cleanup_rounds=args.risky_window_cleanup_rounds,
             unsafe_cluster_cleanup_rounds=args.unsafe_cluster_cleanup_rounds,
             cleanup_variant_count=args.cleanup_variants,
@@ -46,6 +52,11 @@ def main() -> None:
         )
         baseline = result.get("baseline_scores") if isinstance(result.get("baseline_scores"), dict) else {}
         final = result.get("final_scores") if isinstance(result.get("final_scores"), dict) else {}
+        direct_scanner_leapfrog_rounds = (
+            result.get("direct_scanner_leapfrog_rounds")
+            if isinstance(result.get("direct_scanner_leapfrog_rounds"), list)
+            else []
+        )
         rounds = result.get("rounds") if isinstance(result.get("rounds"), list) else []
         risky_window_cleanup_rounds = (
             result.get("risky_window_cleanup_rounds")
@@ -62,7 +73,13 @@ def main() -> None:
             if isinstance(result.get("final_risky_window_cleanup_rounds"), list)
             else []
         )
-        all_rounds = rounds + risky_window_cleanup_rounds + unsafe_cluster_cleanup_rounds + final_risky_window_cleanup_rounds
+        all_rounds = (
+            direct_scanner_leapfrog_rounds
+            + rounds
+            + risky_window_cleanup_rounds
+            + unsafe_cluster_cleanup_rounds
+            + final_risky_window_cleanup_rounds
+        )
         global_best_fallback = result.get("global_best_fallback") if isinstance(result.get("global_best_fallback"), dict) else {}
         rows.append({
             "input": str(input_path),
@@ -70,6 +87,7 @@ def main() -> None:
             "accepted_rounds": sum(1 for row in all_rounds if isinstance(row, dict) and row.get("accepted")),
             "global_best_fallback_applied": bool(global_best_fallback.get("applied")),
             "global_best_fallback_reason": global_best_fallback.get("reason"),
+            "accepted_direct_scanner_leapfrog_rounds": sum(1 for row in direct_scanner_leapfrog_rounds if isinstance(row, dict) and row.get("accepted")),
             "accepted_core_rounds": sum(1 for row in rounds if isinstance(row, dict) and row.get("accepted")),
             "accepted_risky_window_cleanup_rounds": sum(1 for row in risky_window_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
             "accepted_unsafe_cluster_cleanup_rounds": sum(1 for row in unsafe_cluster_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
@@ -91,6 +109,9 @@ def main() -> None:
             "max_rounds": args.max_rounds,
             "variants": args.variants,
             "retune_variants": args.retune_variants,
+            "direct_scanner_leapfrog_rounds": args.direct_scanner_leapfrog_rounds,
+            "direct_scanner_leapfrog_variants": args.direct_scanner_leapfrog_variants,
+            "direct_scanner_leapfrog_batches": args.direct_scanner_leapfrog_batches,
             "risky_window_cleanup_rounds": args.risky_window_cleanup_rounds,
             "unsafe_cluster_cleanup_rounds": args.unsafe_cluster_cleanup_rounds,
             "final_risky_window_cleanup_rounds": args.final_risky_window_cleanup_rounds,

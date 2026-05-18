@@ -118,6 +118,9 @@ def run_v5_residual_cluster_comb_experiment(
     unsafe_cluster_cleanup_rounds: int | None = None,
     cleanup_variant_count: int | None = None,
     final_risky_window_cleanup_rounds: int | None = None,
+    direct_scanner_leapfrog_rounds: int | None = None,
+    direct_scanner_leapfrog_variant_count: int | None = None,
+    direct_scanner_leapfrog_batches: int | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     max_seconds: float | None = None,
@@ -189,6 +192,25 @@ def run_v5_residual_cluster_comb_experiment(
         env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
         default=2,
     )
+    direct_scanner_limit = _cleanup_round_limit(
+        direct_scanner_leapfrog_rounds,
+        env_name="DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS",
+        default=4,
+    )
+    direct_scanner_variants = (
+        max(1, min(5, int(direct_scanner_leapfrog_variant_count or variant_count or 1)))
+    )
+    direct_scanner_batches = max(
+        1,
+        min(
+            3,
+            int(
+                direct_scanner_leapfrog_batches
+                if direct_scanner_leapfrog_batches is not None
+                else _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_BATCHES", 2, minimum=1, maximum=3)
+            ),
+        ),
+    )
     baseline_density_gate = build_eligible_span_density_contract(current_text, current_report)
     unsafe_cluster_first = _should_start_with_unsafe_cluster_cleanup(
         density_gate=baseline_density_gate,
@@ -210,13 +232,61 @@ def run_v5_residual_cluster_comb_experiment(
         "core_route_rounds": core_round_limit,
         "unsafe_cluster_probe_route_planning": not (unsafe_cluster_first and budget_seconds is not None),
         "unsafe_cluster_cleanup_route_planning": True,
+        "direct_scanner_leapfrog_rounds": direct_scanner_limit,
+        "direct_scanner_leapfrog_variants": direct_scanner_variants,
+        "direct_scanner_leapfrog_batches": direct_scanner_batches,
+        "direct_scanner_run_all_batches": _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_RUN_ALL_BATCHES", True),
+        "direct_scanner_selection_policy": "balanced_ai_topk",
         "initial_density_gate": _compact_density_gate(baseline_density_gate),
     }
 
     rounds: list[dict[str, Any]] = []
+    direct_scanner_rounds: list[dict[str, Any]] = []
     risky_window_rounds: list[dict[str, Any]] = []
     unsafe_cluster_rounds: list[dict[str, Any]] = []
     final_risky_window_rounds: list[dict[str, Any]] = []
+    if direct_scanner_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds):
+        _emit_progress(progress_callback, 67, "Running V5 direct scanner-cluster leapfrog")
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            direct_scanner_rounds,
+            global_best_candidate,
+        ) = _run_direct_scanner_leapfrog_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "direct_scanner_leapfrog",
+            global_best_candidate=global_best_candidate,
+            max_rounds=direct_scanner_limit,
+            variant_count=direct_scanner_variants,
+            max_batches=direct_scanner_batches,
+            progress_callback=progress_callback,
+            progress_percent=68,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
+            started_at=started_at,
+            max_seconds=budget_seconds,
+        )
+
+    direct_scanner_accepted_count = sum(
+        1
+        for row in direct_scanner_rounds
+        if isinstance(row, dict) and isinstance(row.get("accepted"), dict)
+    )
+    skip_core_after_direct = (
+        direct_scanner_accepted_count > 0
+        and _bool_env("DRAFTPROOF_REWRITE_V5_SKIP_CORE_AFTER_DIRECT_SCANNER_ACCEPT", True)
+    )
+    phase_order["skip_core_after_direct_scanner_accept"] = skip_core_after_direct
+    phase_order["direct_scanner_accepted_rounds"] = direct_scanner_accepted_count
+
     if unsafe_cluster_probe_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds):
         _emit_progress(progress_callback, 67, "Probing V5 unsafe clusters")
         (
@@ -249,7 +319,16 @@ def run_v5_residual_cluster_comb_experiment(
         )
         unsafe_cluster_rounds.extend(unsafe_cluster_probe_rounds)
 
-    for round_index in range(1, core_round_limit + 1):
+    if skip_core_after_direct:
+        rounds.append({
+            "round": 0,
+            "phase": "residual_cluster_comb",
+            "status": "skipped",
+            "reason": "direct_scanner_leapfrog_accepted",
+            "current_scores": current_scores,
+        })
+
+    for round_index in range(1, 0 if skip_core_after_direct else core_round_limit + 1):
         if _runtime_budget_exhausted(started_at, budget_seconds):
             rounds.append(_runtime_budget_stop_record(
                 phase="residual_cluster_comb",
@@ -585,6 +664,7 @@ def run_v5_residual_cluster_comb_experiment(
     payload = {
         "stage": "v5_residual_cluster_comb",
         "baseline_scores": baseline_scores,
+        "direct_scanner_leapfrog_rounds": direct_scanner_rounds,
         "rounds": rounds,
         "risky_window_cleanup_rounds": risky_window_rounds,
         "unsafe_cluster_cleanup_rounds": unsafe_cluster_rounds,
@@ -1341,6 +1421,115 @@ def build_unsafe_cluster_cleanup_prompt(
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+def build_direct_scanner_leapfrog_prompt(
+    *,
+    section: SectionUnit,
+    density_cluster: dict[str, Any],
+    route_plan: dict[str, Any] | None = None,
+    variant_count: int = 5,
+    batch_index: int = 1,
+) -> str:
+    variants = max(1, min(5, int(variant_count or 1)))
+    source_words = max(1, int(section.word_count or word_count(section.text)))
+    min_words = max(8, round(source_words * _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_MIN_LENGTH_RATIO",
+        0.65,
+        minimum=0.35,
+        maximum=1.0,
+    )))
+    max_words = max(min_words + 1, round(source_words * _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_MAX_LENGTH_RATIO",
+        1.15,
+        minimum=0.75,
+        maximum=1.5,
+    )))
+    plan = route_plan if _route_plan_valid(route_plan) else None
+    payload: dict[str, Any] = {
+        "task": "direct_scanner_cluster_leapfrog",
+        "goal": "Rewrite only this scanner-selected cluster with a stronger route, then the validator will rescan the full document.",
+        "cluster": {
+            "section_id": section.section_id,
+            "source_cluster": section.text,
+            "before_context": _section_before_context(section),
+            "after_context": _section_after_context(section),
+            "source_word_count": source_words,
+            "source_block_count": section.paragraph_count,
+            "source_blocks": _source_blocks(section.text),
+            "source_event_beats": _source_event_beats(section.text),
+            "source_phrase_anchors": _source_phrase_anchors(section.text),
+            "referential_continuity": _referential_continuity(
+                section.text,
+                before_context=_section_before_context(section),
+            ),
+        },
+        "scanner_focus": {
+            "source": "eligible_span_density.top_unsafe_clusters",
+            "sentence_count": density_cluster.get("sentence_count"),
+            "word_count": density_cluster.get("word_count"),
+            "preview": density_cluster.get("preview"),
+            "generic_hit_count": len(density_cluster.get("generic_hits") or [])
+            if isinstance(density_cluster.get("generic_hits"), list)
+            else None,
+            "transition_count": density_cluster.get("transition_count"),
+        },
+        "length_guidance": {
+            "source_words": source_words,
+            "small_variant_allowed": True,
+            "preferred_min_words": min_words,
+            "preferred_max_words": max_words,
+            "purpose": (
+                "Use the shortest complete route that preserves the central source meaning. "
+                "Do not summarize, but group repeated material when the source repeats the same job."
+            ),
+        },
+        "target_texture": [
+            "plain bachelor-level report or essay wording",
+            "source-near concrete words",
+            "uneven but clear sentence route",
+            "no polished abstract summary",
+        ],
+        "selection_hint": [
+            "The validator will prefer candidates that move both document-level route pattern and predictable-span pressure.",
+            "Do not optimize by adding fake-human noise, slang, errors, or decorative detail.",
+            "Do not only improve smoothness; produce a genuinely different route through the same source material.",
+        ],
+        "method": [
+            "Follow execution_brief.replacement_route when execution_brief is present.",
+            "Satisfy execution_brief.must_change and target_sentence_jobs without copying plan labels.",
+            "Write a source-near replacement for the whole selected cluster, not a synonym patch.",
+            "Keep the central source facts, subjects, actions, outcomes, citations, quotations, and viewpoint.",
+            "Prefer concrete bridges already licensed by the selected cluster or its immediate context.",
+            "Remove repeated category-dump wording when it does not carry a distinct source fact.",
+            "Do not make every sentence the same length or the same polished shape.",
+        ],
+        "constraints": [
+            "Do not add new facts, examples, names, dates, citations, dialogue, headings, bullets, markdown, HTML, or commentary.",
+            "Do not make the writing casual or slangy.",
+            "Do not return the whole document.",
+            "Do not write a plan or explanation.",
+            "Return a complete replacement for source_cluster only.",
+        ],
+        "output_schema": {
+            "variants": [
+                {"variant_id": f"v{index}", "text": "..."}
+                for index in range(1, variants + 1)
+            ]
+        },
+    }
+    if plan:
+        payload["execution_brief"] = plan
+        payload["coverage_guidance"] = _coverage_guidance_for_route_plan(section=section, route_plan=plan)
+    else:
+        payload["execution_brief"] = None
+        payload["fallback_route_blueprint"] = build_route_blueprint(section=section, local_goal=_local_goal(section.text, section.text))
+    if int(batch_index or 1) > 1:
+        payload["retry_batch"] = {
+            "batch_index": int(batch_index),
+            "instruction": "Use a different sentence route from prior attempts. Do not repeat the same opener or ending shape.",
+        }
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
 def generate_risky_window_cleanup_variants(
     *,
     section: SectionUnit,
@@ -1375,6 +1564,28 @@ def generate_unsafe_cluster_cleanup_variants(
             density_cluster=density_cluster,
             variant_count=count,
             route_plan=route_plan,
+        ),
+        gateway=gateway,
+        variant_count=variant_count,
+    )
+
+
+def generate_direct_scanner_leapfrog_variants(
+    *,
+    section: SectionUnit,
+    density_cluster: dict[str, Any],
+    gateway: LLMGateway,
+    variant_count: int = 5,
+    route_plan: dict[str, Any] | None = None,
+    batch_index: int = 1,
+) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
+    return _generate_loose_variants_from_builder(
+        prompt_builder=lambda count: build_direct_scanner_leapfrog_prompt(
+            section=section,
+            density_cluster=density_cluster,
+            route_plan=route_plan,
+            variant_count=count,
+            batch_index=batch_index,
         ),
         gateway=gateway,
         variant_count=variant_count,
@@ -2143,6 +2354,185 @@ def _score_residual_variant(
     }
 
 
+def _run_direct_scanner_leapfrog_pass(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
+    max_rounds: int,
+    variant_count: int,
+    max_batches: int,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 68,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    skipped: set[tuple[Any, ...]] = set()
+    for round_index in range(1, max(0, int(max_rounds or 0)) + 1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="direct_scanner_leapfrog",
+                round_index=round_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        _emit_progress(progress_callback, progress_percent, f"V5 direct scanner leapfrog {round_index}")
+        density = build_eligible_span_density_contract(current_text, current_report)
+        if density.get("safe"):
+            rounds.append({
+                "round": round_index,
+                "phase": "direct_scanner_leapfrog",
+                "status": "stopped",
+                "reason": "eligible_span_density_safe",
+                "density_gate": _compact_density_gate(density),
+            })
+            break
+        target = _select_density_cluster_section(
+            current_text,
+            current_report,
+            density,
+            skipped=skipped,
+            selection_mode="scanner",
+        )
+        if target is None:
+            rounds.append({
+                "round": round_index,
+                "phase": "direct_scanner_leapfrog",
+                "status": "stopped",
+                "reason": "no_density_cluster_target",
+                "density_gate": _compact_density_gate(density),
+            })
+            break
+        section, density_cluster, signature = target
+        round_dir = output_dir / f"round_{round_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        route_plan, route_plan_diagnostics, route_plan_prompt, route_plan_completion = generate_residual_cluster_route_plan(
+            section=section,
+            local_goal=_local_goal(section.text, section.text),
+            gateway=gateway,
+        )
+        (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
+        (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="direct_scanner_leapfrog",
+                round_index=round_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+
+        rows: list[dict[str, Any]] = []
+        batch_diagnostics: list[dict[str, Any]] = []
+        selected: dict[str, Any] | None = None
+        accepted: dict[str, Any] | None = None
+        run_all_batches = _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_RUN_ALL_BATCHES", True)
+        for batch_index in range(1, max(1, int(max_batches or 1)) + 1):
+            if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+                batch_diagnostics.append({"batch_index": batch_index, "status": "skipped", "reason": "runtime_budget_exhausted"})
+                break
+            variants, llm_diagnostics, prompt, completion = generate_direct_scanner_leapfrog_variants(
+                section=section,
+                density_cluster=density_cluster,
+                gateway=gateway,
+                variant_count=variant_count,
+                route_plan=route_plan,
+                batch_index=batch_index,
+            )
+            batch_dir = round_dir / f"batch_{batch_index:02d}"
+            batch_dir.mkdir(parents=True, exist_ok=True)
+            (batch_dir / "prompt.json.txt").write_text(prompt)
+            (batch_dir / "completion.json.txt").write_text(completion)
+            batch_rows = [
+                _score_residual_variant(
+                    original_text=original_text,
+                    baseline_report=baseline_report,
+                    baseline_scores=baseline_scores,
+                    current_text=current_text,
+                    current_scores=current_scores,
+                    section=section,
+                    variant=variant,
+                    output_dir=batch_dir,
+                    label=f"direct_b{batch_index}_{variant.variant_id}",
+                )
+                for variant in variants
+            ]
+            for row in batch_rows:
+                row["selection_policy"] = "balanced_ai_topk"
+                row["direct_scanner_batch"] = batch_index
+            rows.extend(batch_rows)
+            global_best_candidate = _best_full_document_candidate([global_best_candidate, *batch_rows])
+            selected = _best_balanced_ai_topk_candidate(rows)
+            accepted = selected if selected and _has_balanced_ai_topk_movement(selected) else None
+            batch_diagnostics.append({
+                "batch_index": batch_index,
+                "llm_generation": llm_diagnostics,
+                "candidate_count": len(batch_rows),
+                "selected": _compact_residual_row(selected),
+                "accepted": bool(accepted),
+            })
+            if accepted and not run_all_batches:
+                break
+
+        selected = selected or _best_balanced_ai_topk_candidate(rows)
+        accepted = accepted or (selected if selected and _has_balanced_ai_topk_movement(selected) else None)
+        round_payload = {
+            "round": round_index,
+            "phase": "direct_scanner_leapfrog",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_balanced_ai_topk_movement" if accepted else "no_balanced_ai_topk_movement",
+            "section": section.to_dict(),
+            "density_cluster": density_cluster,
+            "density_gate": _compact_density_gate(density),
+            "generator_diagnostics": {
+                "route_plan": route_plan_diagnostics,
+                "batches": batch_diagnostics,
+                "selection_policy": "balanced_ai_topk",
+                "run_all_batches": run_all_batches,
+            },
+            "current_scores": current_scores,
+            "candidates": [_compact_residual_row(row) for row in rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(round_payload)
+        (round_dir / "round_result.json").write_text(json.dumps(round_payload, ensure_ascii=False, indent=2))
+        if not accepted:
+            skipped.add(signature)
+            continue
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "direct_scanner_leapfrog",
+                "round": round_index,
+                "reason": "accepted_balanced_ai_topk_movement",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
+        _emit_progress(progress_callback, progress_percent, f"Accepted V5 direct scanner leapfrog {round_index}")
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+
 def _run_risky_window_cleanup_pass(
     *,
     original_text: str,
@@ -2455,6 +2845,17 @@ def _best_unsafe_cluster_cleanup_candidate(rows: list[dict[str, Any]]) -> dict[s
     return max(eligible, key=_unsafe_cluster_cleanup_sort_key)
 
 
+def _best_balanced_ai_topk_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    eligible = [
+        row
+        for row in rows
+        if (row.get("apply_status") or {}).get("applied") and _has_balanced_ai_topk_movement(row)
+    ]
+    if not eligible:
+        return None
+    return max(eligible, key=_balanced_ai_topk_sort_value)
+
+
 def _best_full_document_candidate(rows: list[dict[str, Any] | None]) -> dict[str, Any] | None:
     eligible = [row for row in rows if isinstance(row, dict) and _has_full_document_fallback_movement(row)]
     if not eligible:
@@ -2563,6 +2964,41 @@ def _unsafe_cluster_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     )
 
 
+def _balanced_ai_topk_sort_value(row: dict[str, Any]) -> tuple[float, ...]:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    ai_delta = _number(incremental.get("ai_delta"))
+    topk_delta = _number(incremental.get("topk_delta"))
+    topk_risk_delta = _number(incremental.get("topk_calibrated_risk_delta"))
+    external_delta = _number(incremental.get("external_delta"))
+    risky_window_delta = _number(incremental.get("risky_window_count_delta"))
+    unsafe_word_delta = _number(incremental.get("unsafe_word_ratio_delta"))
+    unsafe_cluster_delta = _number(incremental.get("unsafe_cluster_count_delta"))
+    rank_delta = _number(incremental.get("rank_delta"))
+    balanced_bonus = min(max(ai_delta, 0.0), max(topk_delta, 0.0))
+    weighted = (
+        (ai_delta * 4.0)
+        + (topk_delta * 5.0)
+        + (topk_risk_delta * 1.7)
+        + (balanced_bonus * 2.0)
+        + (external_delta * 0.25)
+        + (risky_window_delta * 0.8)
+        + (unsafe_word_delta * 0.05)
+        + (unsafe_cluster_delta * 0.2)
+        + (rank_delta * 0.05)
+    )
+    return (
+        weighted,
+        ai_delta,
+        topk_delta,
+        topk_risk_delta,
+        external_delta,
+        risky_window_delta,
+        unsafe_word_delta,
+        unsafe_cluster_delta,
+        rank_delta,
+    )
+
+
 def _has_risky_window_cleanup_movement(row: dict[str, Any]) -> bool:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     return (
@@ -2571,6 +3007,53 @@ def _has_risky_window_cleanup_movement(row: dict[str, Any]) -> bool:
         and _number(incremental.get("unsafe_cluster_count_delta")) >= 0
         and _number(incremental.get("topk_calibrated_risk_delta")) >= 0
         and _number(incremental.get("ai_delta")) >= 0
+    )
+
+
+def _has_balanced_ai_topk_movement(row: dict[str, Any]) -> bool:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    ai_delta = _number(incremental.get("ai_delta"))
+    topk_delta = _number(incremental.get("topk_delta"))
+    topk_risk_delta = _number(incremental.get("topk_calibrated_risk_delta"))
+    external_delta = _number(incremental.get("external_delta"))
+    risky_window_delta = _number(incremental.get("risky_window_count_delta"))
+    unsafe_word_delta = _number(incremental.get("unsafe_word_ratio_delta"))
+    minimum_ai_delta = _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_MIN_AI_DELTA",
+        -0.15,
+        minimum=-5.0,
+        maximum=5.0,
+    )
+    minimum_topk_delta = _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_MIN_TOPK_DELTA",
+        -0.50,
+        minimum=-10.0,
+        maximum=10.0,
+    )
+    balanced_floor = _float_env(
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_BALANCED_FLOOR",
+        0.40,
+        minimum=0.0,
+        maximum=10.0,
+    )
+    if ai_delta < minimum_ai_delta:
+        return False
+    if topk_delta < minimum_topk_delta and ai_delta < 1.5:
+        return False
+    if ai_delta < 0 and topk_delta < 1.0:
+        return False
+    if ai_delta < balanced_floor and topk_delta < balanced_floor:
+        return False
+    return any(
+        value > 0
+        for value in (
+            ai_delta,
+            topk_delta,
+            topk_risk_delta,
+            external_delta,
+            risky_window_delta,
+            unsafe_word_delta,
+        )
     )
 
 
@@ -3387,6 +3870,8 @@ def _compact_residual_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "incremental": row.get("incremental"),
         "local_scores": row.get("local_scores"),
         "apply_status": row.get("apply_status"),
+        "selection_policy": row.get("selection_policy"),
+        "direct_scanner_batch": row.get("direct_scanner_batch"),
         "text": row.get("text"),
     }
 
