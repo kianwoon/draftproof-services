@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getRewriteStatus, getRewriteReport, getRewriteDownload, getDetectJson } from '../api/draftproofApi';
+import { getRewriteStatus, getRewriteReport, getRewriteDownload } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import { useAuth } from '../context/AuthContext';
 
@@ -94,19 +94,6 @@ export default function Rewrite() {
     } catch (err) {
       downloadWindow?.close();
       setError(err.response?.data?.detail || t('rewritePage.downloadFailed'));
-    }
-  };
-
-  const handleDownloadDetectJson = async () => {
-    try {
-      const { data } = await getDetectJson(rewriteId);
-      if (data.url) {
-        window.open(data.url, '_blank');
-      } else {
-        setError(t('rewritePage.detectJsonUnavailable'));
-      }
-    } catch (err) {
-      setError(err.response?.data?.detail || t('rewritePage.detectJsonFailed'));
     }
   };
 
@@ -310,15 +297,6 @@ export default function Rewrite() {
           <div className="report-downloads">
             <button type="button" className="btn btn-primary" onClick={() => handleDownload('pdf')}>
               {t('rewritePage.downloadPdf')}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={() => handleDownload('txt')}>
-              {t('rewritePage.downloadText')}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={handleDownloadDetectJson}>
-              {t('rewritePage.downloadDetectJson')}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={() => handleDownload('log')}>
-              {t('rewritePage.downloadDebugLog')}
             </button>
           </div>
         )}
