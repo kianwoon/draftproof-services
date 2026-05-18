@@ -38,6 +38,7 @@ export const resources = {
         pricing: 'Pricing',
         privacy: 'Privacy',
         security: 'Security',
+        supportEmail: 'support@draftproof.app',
         disclaimer: 'DraftProof provides writing integrity signals and review guidance. It does not determine misconduct, plagiarism, or AI authorship.',
       },
       seo: {
@@ -743,6 +744,7 @@ export const resources = {
         pricing: '价格',
         privacy: '隐私',
         security: '安全',
+        supportEmail: 'support@draftproof.app',
         disclaimer: 'DraftProof 提供写作完整性信号与审阅建议。它不判定不当行为、抄袭或 AI 作者身份。',
       },
       seo: {
