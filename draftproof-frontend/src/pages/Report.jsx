@@ -5,6 +5,10 @@ import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteRe
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
+import {
+  requestBrowserNotificationPermission,
+  showBrowserNotification,
+} from '../utils/browserNotifications';
 import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import {
   TIER_CONFIG,
@@ -77,6 +81,24 @@ export default function Report() {
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
   const rewriteTimerStartRef = useRef(null);
+  const watchedRewriteIdsRef = useRef(new Set());
+  const notifiedRewriteIdsRef = useRef(new Set());
+
+  const notifyRewriteCompleted = useCallback((job) => {
+    if (!job?.id || notifiedRewriteIdsRef.current.has(job.id)) return;
+    if (!watchedRewriteIdsRef.current.has(job.id)) return;
+
+    const shown = showBrowserNotification({
+      title: t('report.rewrite.notificationTitle'),
+      body: t('report.rewrite.notificationBody'),
+      tag: `draftproof-rewrite-${job.id}`,
+      url: `/rewrite/${job.id}`,
+    });
+
+    if (shown) {
+      notifiedRewriteIdsRef.current.add(job.id);
+    }
+  }, [t]);
 
   const showReviewOnlyRewriteNotice = useCallback((message) => {
     setRewriteJob(null);
@@ -93,6 +115,9 @@ export default function Report() {
 
   const syncRewriteJob = useCallback((job) => {
     const normalizedJob = normalizeRewriteJob(job, t);
+    if (normalizedJob?.id && isRewriteActive(normalizedJob.status)) {
+      watchedRewriteIdsRef.current.add(normalizedJob.id);
+    }
     setRewriteJob(normalizedJob);
     if (normalizedJob?.status && !['failed', 'canceled'].includes(normalizedJob.status)) {
       setRewriteError(null);
@@ -100,8 +125,9 @@ export default function Report() {
     if (normalizedJob?.status === 'completed') {
       setReport((prev) => prev ? { ...prev, rewrite: normalizedJob } : prev);
       setRewriteStartedHere(false);
+      notifyRewriteCompleted(normalizedJob);
     }
-  }, [t]);
+  }, [notifyRewriteCompleted, t]);
 
   const pollRewriteStatus = useCallback(async (rewriteId) => {
     try {
@@ -188,6 +214,7 @@ export default function Report() {
           setRewriteSseUnavailable(false);
           setRewriteJob(normalizeRewriteJob(data.rewrite, t));
           if (data.rewrite.id && isRewriteActive(data.rewrite.status)) {
+            watchedRewriteIdsRef.current.add(data.rewrite.id);
             connectRewriteEvents(data.rewrite.id);
           }
         }
@@ -511,6 +538,7 @@ export default function Report() {
     event?.preventDefault();
     event?.stopPropagation();
     if (rewriteLoading || hasRewriteResult) return;
+    requestBrowserNotificationPermission();
     setRewriteStartedHere(true);
     setRewriteLoading(true);
     setRewriteError(null);
@@ -519,11 +547,14 @@ export default function Report() {
       id: null,
       scan_id: id,
       status: 'pending',
-    progress_percent: 3,
+      progress_percent: 3,
       progress_message: t('report.rewrite.queuing'),
     });
     try {
       const { data } = await createRewrite(id);
+      if (data.id) {
+        watchedRewriteIdsRef.current.add(data.id);
+      }
       syncRewriteJob(data);
       if (data.id) {
         if (!connectRewriteEvents(data.id)) {
