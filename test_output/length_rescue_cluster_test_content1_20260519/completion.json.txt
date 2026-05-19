@@ -1,0 +1,24 @@
+{
+  "variants": [
+    {
+      "variant_id": "v1",
+      "text": "The United States is a complex and influential nation with remarkable strengths and significant challenges. Its economic power, technological innovation, cultural influence, and diversity have shaped the modern world in many ways. At the same time, issues such as inequality, political division, healthcare costs, and social tensions continue to affect American society."
+    },
+    {
+      "variant_id": "v2",
+      "text": "The United States is a complex and influential nation with both remarkable strengths and significant challenges. Its economic power, technological innovation, cultural influence, and diversity have shaped the modern world. At the same time, issues such as inequality, political division, healthcare costs, and social tensions continue to affect American society."
+    },
+    {
+      "variant_id": "v3",
+      "text": "The United States is a complex and influential nation with remarkable strengths and significant challenges. Its economic power, technological innovation, cultural influence, and diversity have shaped the modern world. At the same time, issues such as inequality, political division, healthcare costs, and social tensions continue to affect American society profoundly."
+    },
+    {
+      "variant_id": "v4",
+      "text": "The United States is a complex and influential nation with remarkable strengths and significant challenges. Its economic power, technological innovation, cultural influence, and diversity have shaped the modern world in many ways. At the same time, inequality, political division, healthcare costs, and social tensions continue to affect American society."
+    },
+    {
+      "variant_id": "v5",
+      "text": "The United States is a complex and influential nation with both remarkable strengths and significant challenges. Its economic power, technological innovation, cultural influence, and diversity have shaped the modern world in many ways. At the same time, inequality, political division, healthcare costs, and social tensions continue to affect American society."
+    }
+  ]
+}

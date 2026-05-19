@@ -1,0 +1,38 @@
+Return valid JSON only.
+{
+  "task": "length_rescue_without_route_loss",
+  "source_text": "In conclusion, the United States is a complex and influential country with both remarkable strengths and significant challenges. Its economic power, technological innovation, cultural influence, and diversity have shaped the modern world in many ways. At the same time, issues such as inequality, political division, healthcare costs, and social tensions continue to affect American society.",
+  "high_scoring_short_candidate": "The United States is a complex and influential nation with remarkable strengths and significant challenges. Its economic power, technological innovation, cultural influence, and diversity have shaped the modern world. At the same time, inequality, political division, healthcare costs, and social tensions continue to affect American society.",
+  "goal": "Expand the candidate only enough to keep document length above the 85 percent floor while preserving the same route and source facts. Do not create a new rewrite.",
+  "requirements": [
+    "Use only facts and concepts from source_text.",
+    "Keep the same route as high_scoring_short_candidate.",
+    "Return variants between 53 and 62 words.",
+    "Do not add generic final slogans.",
+    "Do not add new facts, examples, names, dates, citations, bullets, markdown, or commentary."
+  ],
+  "output_schema": {
+    "variants": [
+      {
+        "variant_id": "v1",
+        "text": "..."
+      },
+      {
+        "variant_id": "v2",
+        "text": "..."
+      },
+      {
+        "variant_id": "v3",
+        "text": "..."
+      },
+      {
+        "variant_id": "v4",
+        "text": "..."
+      },
+      {
+        "variant_id": "v5",
+        "text": "..."
+      }
+    ]
+  }
+}
