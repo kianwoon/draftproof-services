@@ -103,6 +103,150 @@ hr { border: none; border-top: 1px solid #ddd; margin: 12pt 0; }
 
 img[src^="https://img.shields.io"] { height: 18px; }
 
+.dp-rewrite-letterhead {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: -4pt 0 14pt;
+    padding: 9pt 0 11pt;
+    border-top: 2px solid #111827;
+    border-bottom: 1px solid #cbd5e1;
+}
+
+.dp-rewrite-letterhead strong {
+    display: block;
+    color: #0f172a;
+    font-size: 16pt;
+    letter-spacing: .02em;
+}
+
+.dp-rewrite-letterhead span,
+.dp-rewrite-letterhead em {
+    display: block;
+    color: #64748b;
+    font-size: 7pt;
+    font-style: normal;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+.dp-rewrite-outcome-panel {
+    position: relative;
+    margin: 10pt 0 16pt;
+    padding: 12pt;
+    border: 1px solid #cbd5e1;
+    border-radius: 8pt;
+    background: #f8fafc;
+    page-break-inside: avoid;
+}
+
+.dp-rewrite-stamp {
+    float: right;
+    width: 128pt;
+    margin: 0 0 9pt 12pt;
+    padding: 7pt;
+    border: 1.5px solid #475569;
+    border-radius: 8pt;
+    text-align: right;
+    background: #f1f5f9;
+    box-shadow: inset 0 0 0 3pt #e2e8f0;
+}
+
+.dp-rewrite-stamp span {
+    display: block;
+    color: #475569;
+    font-size: 6.5pt;
+    font-weight: 900;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+}
+
+.dp-rewrite-stamp strong {
+    display: block;
+    color: #1f2937;
+    font-size: 21pt;
+    line-height: 1;
+}
+
+.dp-rewrite-stamp em {
+    display: block;
+    color: #334155;
+    font-size: 8pt;
+    font-style: normal;
+    font-weight: 800;
+}
+
+.dp-rewrite-scan-summary span {
+    color: #475569;
+    font-size: 7pt;
+    font-weight: 900;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+.dp-rewrite-scan-summary h3 {
+    margin: 2pt 0 3pt;
+    color: #111827;
+    font-size: 13pt;
+}
+
+.dp-rewrite-scan-summary b {
+    color: #92400e;
+    font-size: 14pt;
+}
+
+.dp-rewrite-scan-summary p {
+    margin: 5pt 0 7pt;
+    color: #1f2937;
+    font-weight: 700;
+}
+
+.dp-outcome-chips span {
+    display: inline-block;
+    margin: 0 4pt 4pt 0;
+    padding: 3pt 5pt;
+    border-radius: 9pt;
+    background: #e2e8f0;
+    color: #1f2937;
+    font-size: 7pt;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.dp-outcome-bars {
+    clear: both;
+    margin-top: 8pt;
+}
+
+.dp-outcome-bars div {
+    display: flex;
+    justify-content: space-between;
+    color: #1f2937;
+    font-size: 8pt;
+    font-weight: 800;
+}
+
+.dp-outcome-bars em {
+    font-style: normal;
+}
+
+.dp-outcome-bar {
+    display: block;
+    height: 5pt;
+    margin: 2pt 0 5pt;
+    border-radius: 999pt;
+    background: #e2e8f0;
+    overflow: hidden;
+}
+
+.dp-outcome-bar b {
+    display: block;
+    height: 100%;
+    border-radius: 999pt;
+}
+
 .dp-executive-chart {
     margin: 4pt 0 12pt;
 }

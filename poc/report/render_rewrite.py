@@ -59,6 +59,127 @@ def _authorship_label(report: dict) -> str:
     )
 
 
+def _pct(value: Any) -> Optional[int]:
+    if not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if 0 <= number <= 1:
+        number *= 100
+    return int(round(max(0, min(100, number))))
+
+
+def _scan_contribution(scan: dict) -> dict:
+    intelligence = (scan or {}).get("scan_intelligence") or {}
+    transformation = intelligence.get("transformation") or {}
+    contribution = transformation.get("contribution") or {}
+    layers = ((scan or {}).get("integrity_layers") or {}).get("layers") or (
+        (intelligence.get("integrity_layers") or {}).get("layers") or {}
+    )
+    human_layer = layers.get("human_contribution_signal") or {}
+    ai_layer = layers.get("ai_transformation_risk") or {}
+    human = _pct(
+        contribution.get("human_contribution_ratio")
+        if contribution.get("human_contribution_ratio") is not None
+        else contribution.get("human_contribution")
+        if contribution.get("human_contribution") is not None
+        else contribution.get("human_ratio")
+        if contribution.get("human_ratio") is not None
+        else human_layer.get("score")
+    )
+    ai = _pct(
+        contribution.get("ai_transformation_ratio")
+        if contribution.get("ai_transformation_ratio") is not None
+        else contribution.get("ai_transformation")
+        if contribution.get("ai_transformation") is not None
+        else contribution.get("transformation_ratio")
+        if contribution.get("transformation_ratio") is not None
+        else ai_layer.get("score")
+    )
+    if human is None and ai is not None:
+        human = max(0, min(100, 100 - ai))
+    if ai is None and human is not None:
+        ai = max(0, min(100, 100 - human))
+    return {
+        "human": human,
+        "ai": ai,
+        "calibrated": _pct(
+            contribution.get("calibrated_ai_risk")
+            if contribution.get("calibrated_ai_risk") is not None
+            else contribution.get("adjusted_ai_risk")
+        ),
+        "human_anchor_discount": _pct(contribution.get("human_anchor_discount")),
+        "calibration_confidence": _pct(contribution.get("calibration_confidence")),
+        "reporting_suppression": _pct(contribution.get("reporting_suppression")),
+        "summary": contribution.get("summary") or "",
+    }
+
+
+def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) -> str:
+    contribution = _scan_contribution(rewritten_scan)
+    rating_label = _authorship_label(rewritten_scan) or result_label
+    rating = str(rating_label or "Review").strip().upper()
+    ai_score = _pct(_ai_score(rewritten_scan)) if rewritten_scan else None
+    calibrated = contribution.get("calibrated")
+    risk = calibrated if calibrated is not None else ai_score
+    risk_text = f"{risk}% calibrated risk" if risk is not None else "Calibrated risk unavailable"
+    scan_score = f"{ai_score}%" if ai_score is not None else "-"
+    human = contribution.get("human")
+    ai = contribution.get("ai")
+    summary_text = contribution.get("summary") or summary.get("outcome") or result_label
+    metric_chips = []
+    for label, value in (
+        ("Calibrated AI risk", calibrated),
+        ("Human anchor discount", contribution.get("human_anchor_discount")),
+        ("Calibration confidence", contribution.get("calibration_confidence")),
+        ("Reporting suppression", contribution.get("reporting_suppression")),
+    ):
+        if value is not None:
+            metric_chips.append(f"<span>{html.escape(label)} {value}%</span>")
+    bars = ""
+    if human is not None or ai is not None:
+        human_width = max(0, min(100, human or 0))
+        ai_width = max(0, min(100, ai or 0))
+        bars = f"""
+        <div class="dp-outcome-bars">
+          <div><strong>Human Contribution</strong><em>{human if human is not None else '-'}%</em></div>
+          <i class="dp-outcome-bar"><b class="dp-human" style="width:{human_width}%"></b></i>
+          <div><strong>AI Transformation</strong><em>{ai if ai is not None else '-'}%</em></div>
+          <i class="dp-outcome-bar"><b class="dp-ai" style="width:{ai_width}%"></b></i>
+        </div>
+        """
+    return f"""
+<div class="dp-rewrite-outcome-panel">
+  <div class="dp-rewrite-stamp">
+    <span>Rewritten Outcome</span>
+    <strong>{html.escape(rating)}</strong>
+    <em>{html.escape(risk_text)}</em>
+  </div>
+  <div class="dp-rewrite-scan-summary">
+    <span>Rewritten Scan</span>
+    <h3>{html.escape(_authorship_label(rewritten_scan) or result_label)}</h3>
+    <b>{html.escape(scan_score)}</b>
+    <p>{html.escape(str(summary_text))}</p>
+    <div class="dp-outcome-chips">{''.join(metric_chips)}</div>
+    {bars}
+  </div>
+</div>
+"""
+
+
+def _document_section(title: str, text: str) -> List[str]:
+    content = str(text or "").strip()
+    if not content:
+        return []
+    return [
+        f"## {title}",
+        "",
+        "```text",
+        content,
+        "```",
+        "",
+    ]
+
+
 def _signal_label(name: str) -> str:
     return str(name or "").replace("_", " ").title()
 
@@ -251,6 +372,8 @@ def render_rewrite_report(
     sentence_comparison: List[Dict[str, Any]],
     ai_findings: List[Dict[str, Any]],
     verbose: bool = False,
+    original_text: str = "",
+    final_text: str = "",
 ) -> str:
     """Render a standalone rewrite report as markdown.
 
@@ -268,6 +391,13 @@ def render_rewrite_report(
 
     # ── Header ──────────────────────────────────────────────────────
     lines.append("# DraftProof — Rewrite Report")
+    lines.append("")
+    lines.append(
+        '<div class="dp-rewrite-letterhead">'
+        '<div><strong>DraftProof</strong><span>Rewrite Delivery Report</span></div>'
+        f'<em>Generated {html.escape(ts)}</em>'
+        '</div>'
+    )
     lines.append("")
 
     # ── Executive Summary ───────────────────────────────────────────
@@ -558,6 +688,11 @@ def render_rewrite_report(
         )
         lines.append(f"**{result_label}**")
     lines.append("")
+
+    lines.append(_outcome_stamp_html(summary, result_label, new_scan))
+    lines.append("")
+    lines.extend(_document_section("Submitted Content", original_text))
+    lines.extend(_document_section("Rewritten Content", final_text))
 
     # ── User-facing action list ─────────────────────────────────────
     next_actions = _top_user_actions(mitigation)

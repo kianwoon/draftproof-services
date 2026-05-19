@@ -27,12 +27,14 @@ from .db import (
     update_job_status,
     capture_credits,
     get_rewrite_job,
+    get_rewrite_user_email,
     is_rewrite_canceled,
     claim_rewrite_job,
     update_rewrite_status,
     capture_rewrite_credits,
     release_rewrite_credits,
 )
+from .email_service import send_rewrite_completion_email
 from celery.signals import worker_process_init
 from celery.exceptions import SoftTimeLimitExceeded
 
@@ -1541,6 +1543,35 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             progress_message="Rewrite complete from saved checkpoint",
         )
         publish_progress("completed", 100, "Rewrite complete from saved checkpoint")
+        checkpoint_pdf_bytes = b""
+        try:
+            from report.render_rewrite import render_rewrite_report
+            from report.pdf import render_pdf
+
+            with tempfile.TemporaryDirectory() as checkpoint_tmpdir:
+                checkpoint_pdf_path = os.path.join(checkpoint_tmpdir, "rewrite.pdf")
+                checkpoint_md = render_rewrite_report(
+                    summary=checkpoint_json.get("summary") or {},
+                    sentence_comparison=checkpoint_json.get("sentence_comparison") or [],
+                    ai_findings=[],
+                    verbose=False,
+                    original_text=checkpoint_json.get("original_text") or "",
+                    final_text=rewritten_text,
+                )
+                render_pdf(checkpoint_md, checkpoint_pdf_path)
+                with open(checkpoint_pdf_path, "rb") as f:
+                    checkpoint_pdf_bytes = f.read()
+        except Exception:
+            logger.warning("Failed to build checkpoint rewrite completion PDF for %s", rewrite_id, exc_info=True)
+        recipient_email = get_rewrite_user_email(rewrite_id)
+        send_rewrite_completion_email(
+            recipient_email=recipient_email,
+            rewrite_id=rewrite_id,
+            scan_id=scan_id,
+            final_text=rewritten_text,
+            pdf_bytes=checkpoint_pdf_bytes,
+            settings=settings,
+        )
         return {"status": "completed", "checkpoint_recovered": True, "reason": reason}
 
     try:
@@ -1875,6 +1906,24 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             billing_decision = _rewrite_billing_decision(result, rewrite_json)
             rewrite_json["billing_decision"] = billing_decision
             rewrite_json = _bounded_rewrite_json_payload(rewrite_json)
+            try:
+                from report.render_rewrite import render_rewrite_report
+                from report.pdf import render_pdf
+
+                md_text = render_rewrite_report(
+                    summary=rewrite_json.get("summary") or {},
+                    sentence_comparison=rewrite_json.get("sentence_comparison") or [],
+                    ai_findings=[],
+                    verbose=False,
+                    original_text=rewrite_json.get("original_text") or "",
+                    final_text=rewrite_json.get("final_text") or "",
+                )
+                pdf_path = os.path.join(tmpdir, "rewrite.pdf")
+                render_pdf(md_text, pdf_path)
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+            except Exception:
+                _l.warning("Failed to regenerate rewrite delivery PDF; using pipeline PDF", exc_info=True)
 
             debug_log = _build_rewrite_debug_log(
                 rewrite_id=rewrite_id,
@@ -1908,6 +1957,15 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             progress_message="Rewrite complete",
         )
         publish_progress("completed", 100, "Rewrite complete")
+        recipient_email = get_rewrite_user_email(rewrite_id)
+        send_rewrite_completion_email(
+            recipient_email=recipient_email,
+            rewrite_id=rewrite_id,
+            scan_id=scan_id,
+            final_text=rewritten_text,
+            pdf_bytes=pdf_bytes,
+            settings=settings,
+        )
         return {"status": "completed"}
 
     except SoftTimeLimitExceeded:
@@ -1989,6 +2047,8 @@ def regenerate_rewrite_report_assets(self, rewrite_id: str, scan_id: str) -> dic
             sentence_comparison=rewrite_json.get("sentence_comparison") or [],
             ai_findings=rewrite_json.get("ai_findings") or [],
             verbose=False,
+            original_text=rewrite_json.get("original_text") or "",
+            final_text=rewrite_json.get("final_text") or "",
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             pdf_path = os.path.join(tmpdir, "rewrite.pdf")

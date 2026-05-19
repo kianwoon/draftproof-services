@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     DRAFTPROOF_REWRITE_V4_ENABLED: bool = True
     DRAFTPROOF_REWRITE_V2_ENABLED: bool = True
     DRAFTPROOF_REWRITE_V3_ENABLED: bool = False
+    REWRITE_COMPLETION_EMAIL_ENABLED: bool = False
+    EMAIL_PROVIDER: str = "cloudflare"
+    EMAIL_FROM_ADDRESS: str = "support@draftproof.app"
+    EMAIL_FROM_NAME: str = "DraftProof Support"
+    CLOUDFLARE_ACCOUNT_ID: str = ""
+    CLOUDFLARE_ACCOUNT_API_TOKEN: str = ""
+    CLOUDFLARE_EMAIL_SEND_ENDPOINT: str = ""
+    REWRITE_COMPLETION_EMAIL_MAX_CHARS: int = 50000
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

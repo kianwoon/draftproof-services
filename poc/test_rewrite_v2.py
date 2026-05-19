@@ -6731,12 +6731,19 @@ ai_first_report = render_rewrite_report(
     },
     sentence_comparison=[],
     ai_findings=[],
+    original_text="Submitted draft content.",
+    final_text="Rewritten draft content.",
 )
 assert_test("**AI Mitigated**" in ai_first_report, "AI-first report labels kept AI mitigation")
 assert_test(
     "Writing-quality or lower-severity changes are follow-up work" in ai_first_report,
     "AI-first report explains quality follow-up instead of rollback",
 )
+assert_test("Rewritten Outcome" in ai_first_report, "rewrite report includes outcome stamp")
+assert_test("## Submitted Content" in ai_first_report, "rewrite report includes submitted content section")
+assert_test("Submitted draft content." in ai_first_report, "rewrite report carries submitted content")
+assert_test("## Rewritten Content" in ai_first_report, "rewrite report includes rewritten content section")
+assert_test("Rewritten draft content." in ai_first_report, "rewrite report carries rewritten content")
 
 comparison_mp = SimpleNamespace(
     original_text="A one. B two. C three. D four.",

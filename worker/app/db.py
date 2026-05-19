@@ -138,6 +138,20 @@ def get_rewrite_job(job_id: str) -> Optional[dict]:
         return cur.fetchone()
 
 
+def get_rewrite_user_email(job_id: str) -> Optional[str]:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT users.email
+               FROM rewrite_jobs
+               JOIN users ON users.id = rewrite_jobs.user_id
+               WHERE rewrite_jobs.id = %s""",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        return row["email"] if row and row.get("email") else None
+
+
 def is_rewrite_canceled(job_id: str) -> bool:
     with get_conn() as conn:
         cur = conn.cursor()
