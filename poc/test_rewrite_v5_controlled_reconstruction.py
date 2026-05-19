@@ -51,6 +51,11 @@ from rewrite_v5.residual_comb import (
     _would_discard_structural_progress,
     _has_incremental_movement,
     _residual_candidate_sort_key,
+    _adaptive_initial_variant_count,
+    _adaptive_retune_variant_count,
+    _adaptive_writer_feedback,
+    _should_generate_adaptive_remainder,
+    _should_retune_residual_candidate,
 )
 from rewrite_v5.models import RecompositionVariant, SectionUnit
 
@@ -116,16 +121,17 @@ def _sample_route_plan() -> dict:
 
 
 class _FakeV5LLMResponse:
-    def __init__(self, content: str, *, model: str = "fake/model") -> None:
+    def __init__(self, content: str, *, model: str = "fake/model", finish_reason: str = "stop") -> None:
         self.content = content
         self.model = model
+        self._finish_reason = finish_reason
         self.usage = {"total_tokens": 12}
         self.raw = {
             "provider": "fake-provider",
             "choices": [
                 {
-                    "finish_reason": "stop",
-                    "native_finish_reason": "stop",
+                    "finish_reason": finish_reason,
+                    "native_finish_reason": finish_reason,
                     "message": {"content": content},
                 }
             ],
@@ -137,11 +143,11 @@ class _FakeV5LLMResponse:
 
     @property
     def finish_reason(self) -> str:
-        return "stop"
+        return self._finish_reason
 
     @property
     def native_finish_reason(self) -> str:
-        return "stop"
+        return self._finish_reason
 
 
 def test_v5_sections_group_heading_with_following_paragraphs():
@@ -596,6 +602,90 @@ def test_v5_route_plan_uses_fallback_gateway_after_invalid_planner_output():
     assert diagnostics["primary_planner_attempt"]["planner_model_requested"] == "z-ai/glm-5.1"
 
 
+def test_v5_route_plan_uses_scanner_derived_fallback_when_planners_fail():
+    source = (
+        "The United States includes people from many ethnic, cultural, and religious backgrounds. "
+        "This diversity has contributed to creativity and innovation in many fields. "
+        "It has also created challenges related to racism, discrimination, and social inequality."
+    )
+    section = SectionUnit(
+        section_id="route_001",
+        heading="Density cluster",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={},
+    )
+
+    class FailingGateway:
+        provider = None
+
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+        def chat(self, *_args, **_kwargs):
+            return _FakeV5LLMResponse('{"not_route_plan": true}', model=self.model)
+
+    plan, diagnostics, _prompt, _raw = generate_residual_cluster_route_plan(
+        section=section,
+        local_goal={},
+        planner_gateway=FailingGateway("z-ai/glm-5.1"),
+        fallback_gateway=FailingGateway("deepseek/deepseek-v3.2"),
+    )
+
+    assert plan is not None
+    assert diagnostics["status"] == "ok"
+    assert diagnostics["deterministic_fallback_used"] is True
+    assert diagnostics["route_plan_source"] == "scanner_derived_fallback"
+    assert plan["affected_unit_actions"]
+    assert plan["topk_route_diagnosis"]["primary_operator"] == "CLAUSE_ROUTE_CHANGE"
+
+
+def test_v5_route_plan_truncation_skips_second_planner_call():
+    source = (
+        "The paragraph gives a broad explanation of a topic. "
+        "It lists related points in a predictable order. "
+        "The next sentence repeats the same report-style movement."
+    )
+    section = SectionUnit(
+        section_id="route_001",
+        heading="Density cluster",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={},
+    )
+    calls: list[str] = []
+
+    class TruncatedGateway:
+        provider = None
+
+        def __init__(self, model: str, finish_reason: str = "length") -> None:
+            self.model = model
+            self.finish_reason = finish_reason
+
+        def chat(self, *_args, **_kwargs):
+            calls.append(self.model)
+            return _FakeV5LLMResponse('{"route_plan": {"failed_route": "cut off"', model=self.model, finish_reason=self.finish_reason)
+
+    plan, diagnostics, _prompt, _raw = generate_residual_cluster_route_plan(
+        section=section,
+        local_goal={},
+        planner_gateway=TruncatedGateway("z-ai/glm-5.1"),
+        fallback_gateway=TruncatedGateway("deepseek/deepseek-v3.2", finish_reason="stop"),
+    )
+
+    assert calls == ["z-ai/glm-5.1"]
+    assert plan is not None
+    assert diagnostics["deterministic_fallback_used"] is True
+    assert diagnostics["planner_fallback_used"] is False
+    assert diagnostics["failed_planner_finish_reason"] == "length"
+
+
 def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     cluster = type("Cluster", (), {
         "cluster_id": "cluster_004",
@@ -633,6 +723,68 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     lowered = prompt.casefold()
     assert "follow execution_brief.replacement_route" in lowered
     assert "fallback_route_blueprint" not in lowered
+
+
+def test_v5_residual_prompt_can_carry_score_feedback_for_adaptive_retry():
+    section = SectionUnit(
+        section_id="density_cluster_001",
+        heading="Density cluster",
+        text="The service changed the student's confidence. The thank-you card made the result visible.",
+        start_char=0,
+        end_char=83,
+        paragraph_count=1,
+        word_count=12,
+        metadata={},
+    )
+    feedback = {
+        "reason": "topk_route_not_moved",
+        "primary_metric": "topk_density",
+        "required_correction": "Break the predictable sentence path.",
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=2,
+        route_plan=_sample_route_plan(),
+        adaptive_feedback=feedback,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["score_feedback"] == feedback
+    assert any("did not move top-k" in rule for rule in payload["adaptive_retry_rules"])
+
+
+def test_v5_adaptive_writer_feedback_triggers_topk_route_retry(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_ADAPTIVE_WRITER", raising=False)
+    route_plan = {**_sample_route_plan(), "primary_metric": "topk_density"}
+    weak_row = {
+        "apply_status": {"applied": True},
+        "scores": {"rank_delta": 1.0, "topk_delta": 0.0, "unsafe_cluster_count_delta": 0.0},
+        "local_scores": {
+            "unsafe_cluster_count": 1,
+            "unsafe_word_ratio": 20.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "topk_delta": 0.0,
+            "rank_delta": 0.0,
+        },
+        "incremental": {
+            "ai_delta": 0.0,
+            "topk_delta": 0.0,
+            "external_delta": 0.0,
+            "rank_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+    }
+
+    feedback = _adaptive_writer_feedback([weak_row], route_plan=route_plan, selected=weak_row)
+
+    assert _adaptive_initial_variant_count(5, route_plan) == 2
+    assert _adaptive_retune_variant_count(5, route_plan) == 2
+    assert feedback["reason"] == "topk_route_not_moved"
+    assert _should_generate_adaptive_remainder(feedback, remaining_count=3, best_candidate=weak_row)
+    assert not _should_retune_residual_candidate(weak_row, route_plan=route_plan, adaptive_feedback=feedback)
 
 
 def test_v5_direct_scanner_leapfrog_prompt_uses_scanner_cluster_and_small_variants():

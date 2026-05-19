@@ -465,11 +465,19 @@ def run_v5_residual_cluster_comb_experiment(
                     min(75, _residual_progress_percent(round_index, max_rounds=max_rounds) + 1),
                     f"Generating V5 cluster candidates {round_index}",
                 )
+                requested_variant_count = max(1, min(5, int(variant_count or 1)))
+                initial_variant_count = _adaptive_initial_variant_count(requested_variant_count, route_plan)
+                diagnostics["adaptive_writer"] = {
+                    "enabled": _adaptive_writer_enabled(route_plan),
+                    "requested_variant_count": requested_variant_count,
+                    "initial_variant_count": initial_variant_count,
+                    "remaining_variant_count": max(0, requested_variant_count - initial_variant_count),
+                }
                 variants, llm_diagnostics, prompt, completion = generate_residual_cluster_variants(
                     section=section,
                     local_goal=local_source_goal,
                     gateway=gateway,
-                    variant_count=variant_count,
+                    variant_count=initial_variant_count,
                     route_plan=route_plan,
                 )
                 raise_if_canceled()
@@ -480,7 +488,7 @@ def run_v5_residual_cluster_comb_experiment(
                 }
                 (round_dir / "cluster_prompt.json.txt").write_text(prompt)
                 (round_dir / "cluster_completion.json.txt").write_text(completion)
-                rows.extend([
+                initial_rows = [
                     _score_residual_variant(
                         original_text=original_text,
                         baseline_report=baseline_report,
@@ -493,12 +501,82 @@ def run_v5_residual_cluster_comb_experiment(
                         label=f"initial_{variant.variant_id}",
                     )
                     for variant in variants
-                ])
+                ]
+                rows.extend(initial_rows)
+                best_probe = _best_residual_candidate(initial_rows)
+                feedback = _adaptive_writer_feedback(initial_rows, route_plan=route_plan, selected=best_probe)
+                diagnostics["adaptive_writer"] = {
+                    **(diagnostics.get("adaptive_writer") if isinstance(diagnostics.get("adaptive_writer"), dict) else {}),
+                    "initial_feedback": feedback,
+                }
+                remaining_variant_count = max(0, requested_variant_count - initial_variant_count)
+                if (
+                    _adaptive_writer_enabled(route_plan)
+                    and _should_generate_adaptive_remainder(
+                        feedback,
+                        remaining_count=remaining_variant_count,
+                        best_candidate=best_probe,
+                    )
+                    and not _runtime_budget_exhausted(started_at, budget_seconds)
+                ):
+                    adaptive_variants, adaptive_diagnostics, adaptive_prompt, adaptive_completion = generate_residual_cluster_variants(
+                        section=section,
+                        local_goal=local_source_goal,
+                        gateway=gateway,
+                        variant_count=remaining_variant_count,
+                        route_plan=route_plan,
+                        adaptive_feedback=feedback,
+                    )
+                    raise_if_canceled()
+                    (round_dir / "cluster_adaptive_prompt.json.txt").write_text(adaptive_prompt)
+                    (round_dir / "cluster_adaptive_completion.json.txt").write_text(adaptive_completion)
+                    adaptive_rows = [
+                        _score_residual_variant(
+                            original_text=original_text,
+                            baseline_report=baseline_report,
+                            baseline_scores=baseline_scores,
+                            current_text=current_text,
+                            current_scores=current_scores,
+                            section=section,
+                            variant=variant,
+                            output_dir=round_dir,
+                            label=f"adaptive_{variant.variant_id}",
+                        )
+                        for variant in adaptive_variants
+                    ]
+                    rows.extend(adaptive_rows)
+                    diagnostics["adaptive_writer"] = {
+                        **(diagnostics.get("adaptive_writer") if isinstance(diagnostics.get("adaptive_writer"), dict) else {}),
+                        "adaptive_retry": {
+                            "triggered": True,
+                            "variant_count": remaining_variant_count,
+                            "llm_generation": adaptive_diagnostics,
+                            "feedback_after_retry": _adaptive_writer_feedback(adaptive_rows, route_plan=route_plan),
+                        },
+                    }
+                elif _adaptive_writer_enabled(route_plan) and remaining_variant_count > 0:
+                    diagnostics["adaptive_writer"] = {
+                        **(diagnostics.get("adaptive_writer") if isinstance(diagnostics.get("adaptive_writer"), dict) else {}),
+                        "adaptive_retry": {
+                            "triggered": False,
+                            "reason": "early_incremental_movement_or_no_retry_needed",
+                        },
+                    }
         best_initial = _best_residual_candidate(rows)
+        adaptive_feedback = _adaptive_writer_feedback(rows, route_plan=route_plan, selected=best_initial) if rows else {}
+        if isinstance(diagnostics.get("adaptive_writer"), dict):
+            diagnostics["adaptive_writer"] = {
+                **diagnostics["adaptive_writer"],
+                "final_feedback": adaptive_feedback,
+            }
         if (
             not seed_accepted
             and best_initial
-            and _needs_retune(best_initial)
+            and _should_retune_residual_candidate(
+                best_initial,
+                route_plan=route_plan,
+                adaptive_feedback=adaptive_feedback,
+            )
             and not _runtime_budget_exhausted(started_at, budget_seconds)
         ):
             _emit_progress(
@@ -506,15 +584,22 @@ def run_v5_residual_cluster_comb_experiment(
                 min(75, _residual_progress_percent(round_index, max_rounds=max_rounds) + 2),
                 f"Retuning V5 cluster candidate {round_index}",
             )
+            effective_retune_variant_count = _adaptive_retune_variant_count(retune_variant_count, route_plan)
             retuned, retune_diagnostics, retune_prompt, retune_completion = generate_residual_cluster_retunes(
                 section=section,
                 current_best_text=str(best_initial.get("text") or ""),
                 local_goal=best_initial.get("local_goal") or {},
                 gateway=gateway,
-                variant_count=retune_variant_count,
+                variant_count=effective_retune_variant_count,
                 route_plan=route_plan,
             )
             raise_if_canceled()
+            retune_diagnostics = {
+                **(retune_diagnostics or {}),
+                "requested_variant_count": retune_variant_count,
+                "effective_variant_count": effective_retune_variant_count,
+                "adaptive_retune": _adaptive_writer_enabled(route_plan),
+            }
             (round_dir / "retune_prompt.json.txt").write_text(retune_prompt)
             (round_dir / "retune_completion.json.txt").write_text(retune_completion)
             retuned_rows = [
@@ -532,7 +617,15 @@ def run_v5_residual_cluster_comb_experiment(
                 for variant in retuned
             ]
         elif not seed_accepted and best_initial and _needs_retune(best_initial):
-            retune_diagnostics = {"status": "skipped", "reason": "runtime_budget_exhausted_before_retune"}
+            retune_diagnostics = {
+                "status": "skipped",
+                "reason": (
+                    "runtime_budget_exhausted_before_retune"
+                    if _runtime_budget_exhausted(started_at, budget_seconds)
+                    else "adaptive_retune_not_useful"
+                ),
+                "adaptive_feedback": adaptive_feedback,
+            }
         all_rows = rows + retuned_rows
         global_best_candidate = _best_full_document_candidate([global_best_candidate, *all_rows])
         best = _best_residual_candidate(all_rows)
@@ -932,6 +1025,7 @@ def build_residual_cluster_prompt(
     local_goal: dict[str, Any] | None = None,
     variant_count: int = 3,
     route_plan: dict[str, Any] | None = None,
+    adaptive_feedback: dict[str, Any] | None = None,
 ) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     plan = route_plan if _route_plan_valid(route_plan) else None
@@ -966,6 +1060,10 @@ def build_residual_cluster_prompt(
         payload["execution_brief"] = plan
         payload["writer_execution_card"] = _writer_execution_card(section=section, route_plan=plan)
         payload["writer_variant_plan"] = _writer_variant_plan(variant_count=variants, route_plan=plan)
+        feedback = adaptive_feedback if isinstance(adaptive_feedback, dict) else {}
+        if feedback:
+            payload["score_feedback"] = feedback
+            payload["adaptive_retry_rules"] = _adaptive_retry_rules(feedback)
         payload["method"] = _custom_route_writer_method()
     else:
         payload["custom_route_plan"] = None
@@ -1033,6 +1131,7 @@ def generate_residual_cluster_variants(
     gateway: LLMGateway,
     variant_count: int = 3,
     route_plan: dict[str, Any] | None = None,
+    adaptive_feedback: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     return _generate_loose_variants_from_builder(
         prompt_builder=lambda count: build_residual_cluster_prompt(
@@ -1040,6 +1139,7 @@ def generate_residual_cluster_variants(
             local_goal=local_goal or {},
             variant_count=count,
             route_plan=route_plan,
+            adaptive_feedback=adaptive_feedback,
         ),
         gateway=gateway,
         variant_count=variant_count,
@@ -1206,7 +1306,22 @@ def generate_residual_cluster_route_plan(
         "planner_model_requested": getattr(primary_gateway, "model", None),
         "planner_fallback_used": False,
     }
-    if _route_plan_valid(plan) or not _should_retry_route_plan_with_fallback(primary_gateway, fallback_gateway):
+    if _route_plan_valid(plan):
+        return plan, diagnostics, prompt, raw
+    if _route_plan_failure_is_truncation(diagnostics):
+        scanner_plan = _scanner_derived_route_plan(section=section, local_goal=local_goal)
+        if _route_plan_valid(scanner_plan):
+            return scanner_plan, _scanner_derived_route_plan_diagnostics(
+                diagnostics,
+                planner_fallback_used=False,
+            ), prompt, raw
+    if not _should_retry_route_plan_with_fallback(primary_gateway, fallback_gateway):
+        scanner_plan = _scanner_derived_route_plan(section=section, local_goal=local_goal)
+        if _route_plan_valid(scanner_plan):
+            return scanner_plan, _scanner_derived_route_plan_diagnostics(
+                diagnostics,
+                planner_fallback_used=False,
+            ), prompt, raw
         return plan, diagnostics, prompt, raw
 
     fallback_plan, fallback_diagnostics, fallback_prompt, fallback_raw = _generate_residual_cluster_route_plan_once(
@@ -1220,7 +1335,158 @@ def generate_residual_cluster_route_plan(
         "planner_fallback_used": True,
         "primary_planner_attempt": _compact_route_plan_attempt(diagnostics),
     }
+    if not _route_plan_valid(fallback_plan):
+        scanner_plan = _scanner_derived_route_plan(section=section, local_goal=local_goal)
+        if _route_plan_valid(scanner_plan):
+            return scanner_plan, _scanner_derived_route_plan_diagnostics(
+                fallback_diagnostics,
+                planner_fallback_used=True,
+            ), fallback_prompt, fallback_raw
     return fallback_plan, fallback_diagnostics, fallback_prompt, fallback_raw
+
+
+def _scanner_derived_route_plan(*, section: SectionUnit, local_goal: dict[str, Any]) -> dict[str, Any] | None:
+    source_text = str(section.text or "")
+    sentences = _sentences(source_text)
+    if not source_text.strip() or not sentences:
+        return None
+    affected_units = _affected_content_map(section=section, local_goal=local_goal)
+    target_units = [row for row in affected_units if row.get("is_scanner_target")] or affected_units[:3]
+    if not target_units:
+        target_units = [{
+            "unit_id": "u001",
+            "source_text": sentences[0],
+            "preserve_candidates": _source_phrase_anchors(sentences[0])[:5],
+        }]
+    source_blocks = _source_blocks(source_text)
+    anchors = _source_phrase_anchors(source_text)
+    preserve_quotes = anchors[:6] or sentences[:2]
+    must_preserve = [
+        {"source_quote": quote, "preserve_as": "source material"}
+        for quote in preserve_quotes
+        if quote in source_text
+    ][:6]
+    if not must_preserve:
+        must_preserve = [{"source_quote": sentences[0], "preserve_as": "opening source claim"}]
+    source_block_plan = []
+    for index, block in enumerate(source_blocks or [{"block_id": "b01", "text": source_text}], start=1):
+        block_text = str((block.get("text") or block.get("preview")) if isinstance(block, dict) else "")
+        block_anchor = next((quote for quote in preserve_quotes if quote in block_text), "")
+        source_block_plan.append({
+            "block_id": str(block.get("block_id") or f"b{index:02d}") if isinstance(block, dict) else f"b{index:02d}",
+            "current_job": "Carries source material in a predictable report route.",
+            "rewrite_job": "Keep this block's source material but change how the sentence route groups and bridges it.",
+            "must_preserve": [block_anchor] if block_anchor else [],
+        })
+        if len(source_block_plan) >= 8:
+            break
+    target_sentence_jobs = []
+    affected_unit_actions = []
+    for index, unit in enumerate(target_units[:5], start=1):
+        source_preview = str(unit.get("source_text") or unit.get("affected_text") or "").strip()
+        if not source_preview:
+            continue
+        preserve_candidates = [
+            item for item in unit.get("preserve_candidates", [])
+            if isinstance(item, str) and item in source_text
+        ]
+        if not preserve_candidates:
+            preserve_candidates = [source_preview] if source_preview in source_text else []
+        target_sentence_jobs.append({
+            "sentence_id": str(unit.get("unit_id") or f"u{index:03d}"),
+            "source_preview": source_preview,
+            "current_weakness": "The unit follows a predictable explanatory route.",
+            "rewrite_job": "Change the sentence route before preserving the same source claim.",
+            "avoid_copying": [],
+        })
+        affected_unit_actions.append({
+            "unit_id": str(unit.get("unit_id") or f"u{index:03d}"),
+            "affected_text": source_preview,
+            "problem_role": "This unit carries the route that needs the strongest movement.",
+            "required_action": "Re-route the unit from broad report phrasing into a source-specific sentence path.",
+            "operator_stack": ["CLAUSE_ROUTE_CHANGE", "LIST_RHYTHM_BREAK", "SENTENCE_WEIGHT_VARIATION"],
+            "must_preserve": preserve_candidates[:4],
+            "insufficient_edit": "Changing synonyms while keeping the same opener, list order, or broad claim path.",
+        })
+    if not target_sentence_jobs or not affected_unit_actions:
+        return None
+    first_unit = affected_unit_actions[0]
+    primary_metric = "topk_density" if _local_top_sentence_targets(local_goal) else "unsafe_cluster_count"
+    raw_plan = {
+        "content_profile": _scanner_derived_content_profile(source_text),
+        "primary_metric": primary_metric,
+        "cluster_role": "mixed_section" if len(source_blocks) > 1 else "reasoning_or_analysis",
+        "dominant_failure_pattern": "category_dump" if len(sentences) >= 4 else "claim_chain",
+        "route_strategy": "group_and_bridge",
+        "profile_reason": "Derived from source shape and scanner affected units after planner output failed validation.",
+        "failed_route": "The current cluster keeps too much predictable report movement across affected units.",
+        "replacement_route": "Start from the source subject, group related source beats, then bridge to the next claim without broad smoothing.",
+        "topk_route_diagnosis": {
+            "infected_unit_id": first_unit["unit_id"],
+            "current_route": "predictable report-style claim or list movement",
+            "predictable_path": first_unit["affected_text"],
+            "primary_operator": "CLAUSE_ROUTE_CHANGE",
+            "replacement_route": "source subject/action -> grouped source beat -> narrow bridge",
+            "insufficient_edit": "Synonym replacement that keeps the same sentence opener or list rhythm.",
+        },
+        "source_block_plan": source_block_plan,
+        "target_sentence_jobs": target_sentence_jobs,
+        "affected_unit_actions": affected_unit_actions,
+        "must_change": [
+            "Change the route of the affected units rather than smoothing the same wording.",
+            "Group related source beats before adding a narrow bridge.",
+        ],
+        "must_preserve": must_preserve,
+        "sentence_plan": [
+            "Open from the source subject or action.",
+            "Group the strongest source beats.",
+            "Use a narrow bridge to the next source claim.",
+        ],
+        "avoid_phrases": [],
+        "length_target": "same_length",
+        "reason_this_should_move_score": "The plan attacks the affected sentence route directly instead of asking for a broader paraphrase.",
+    }
+    sanitized = _sanitize_route_plan(raw_plan, source_text=source_text)
+    return sanitized if _route_plan_valid(sanitized) else None
+
+
+def _scanner_derived_route_plan_diagnostics(
+    failed_diagnostics: dict[str, Any],
+    *,
+    planner_fallback_used: bool,
+) -> dict[str, Any]:
+    return {
+        **failed_diagnostics,
+        "status": "ok",
+        "route_plan_source": "scanner_derived_fallback",
+        "deterministic_fallback_used": True,
+        "planner_fallback_used": planner_fallback_used,
+        "failed_planner_status": failed_diagnostics.get("status"),
+        "failed_planner_finish_reason": failed_diagnostics.get("finish_reason"),
+        "failed_planner_native_finish_reason": failed_diagnostics.get("native_finish_reason"),
+    }
+
+
+def _scanner_derived_content_profile(source_text: str) -> str:
+    lowered = source_text.casefold()
+    first_person = {" i ", " my ", " me ", " we ", " our "}
+    if any(token in f" {lowered} " for token in first_person):
+        return "reflective_practice_academic"
+    process_terms = {" step ", " method ", " process ", " technique ", " practice ", " procedure "}
+    if any(token in f" {lowered} " for token in process_terms):
+        return "technical_or_process_explanation"
+    argument_terms = {" because ", " therefore ", " concern ", " problem ", " should ", " however "}
+    if any(token in f" {lowered} " for token in argument_terms):
+        return "argumentative_explanatory_essay"
+    return "broad_explanatory_report"
+
+
+def _route_plan_failure_is_truncation(diagnostics: dict[str, Any]) -> bool:
+    finish_reason = str(diagnostics.get("finish_reason") or diagnostics.get("native_finish_reason") or "").lower()
+    if finish_reason == "length":
+        return True
+    error = str(diagnostics.get("error") or "").casefold()
+    return "unterminated string" in error or "expected" in error and str(diagnostics.get("raw_length") or "")
 
 
 def _generate_residual_cluster_route_plan_once(
@@ -1446,6 +1712,23 @@ def _writer_variant_plan(*, variant_count: int, route_plan: dict[str, Any] | Non
             "must_differ_from_other_variants": "Use a different opener, clause order, or sentence boundary from the other variants.",
         })
     return rows
+
+
+def _adaptive_retry_rules(feedback: dict[str, Any]) -> list[str]:
+    reason = str(feedback.get("reason") or "")
+    rules = [
+        "Treat score_feedback as the reason the previous candidate batch failed.",
+        "Do not repeat the rejected sentence route, opener pattern, or list rhythm.",
+        "Make the next variants visibly execute writer_execution_card.main_operator.",
+        "Preserve the same source facts and paragraph role; do not add outside examples.",
+    ]
+    if reason == "topk_route_not_moved":
+        rules.insert(1, "The previous batch did not move top-k; every next variant must change the affected sentence route before changing wording.")
+    elif reason == "unsafe_cluster_regressed":
+        rules.insert(1, "The previous best candidate increased unsafe clusters; reduce broad substitute phrasing and keep the route closer to source content.")
+    elif reason == "no_incremental_movement":
+        rules.insert(1, "The previous batch changed wording without useful score movement; use a different route shape, not a smoother paraphrase.")
+    return rules
 
 
 def _custom_route_writer_method() -> list[str]:
@@ -3730,6 +4013,159 @@ def _has_incremental_movement(row: dict[str, Any]) -> bool:
     return any(
         _number(incremental.get(key)) > 0
         for key in ("unsafe_cluster_count_delta", "rank_delta", "ai_delta", "topk_delta", "external_delta")
+    )
+
+
+def _adaptive_writer_enabled(route_plan: dict[str, Any] | None = None) -> bool:
+    return _route_plan_valid(route_plan) and _bool_env("DRAFTPROOF_REWRITE_V5_ADAPTIVE_WRITER", True)
+
+
+def _adaptive_initial_variant_count(requested_count: int, route_plan: dict[str, Any] | None = None) -> int:
+    requested = max(1, min(5, int(requested_count or 1)))
+    if not _adaptive_writer_enabled(route_plan) or requested <= 2:
+        return requested
+    configured = _int_env("DRAFTPROOF_REWRITE_V5_ADAPTIVE_INITIAL_VARIANTS", 2, minimum=1, maximum=5)
+    return max(1, min(requested, configured))
+
+
+def _adaptive_retune_variant_count(requested_count: int, route_plan: dict[str, Any] | None = None) -> int:
+    requested = max(1, min(5, int(requested_count or 1)))
+    if not _adaptive_writer_enabled(route_plan):
+        return requested
+    configured = _int_env("DRAFTPROOF_REWRITE_V5_ADAPTIVE_RETUNE_VARIANTS", 2, minimum=1, maximum=5)
+    return max(1, min(requested, configured))
+
+
+def _adaptive_writer_feedback(
+    rows: list[dict[str, Any]],
+    *,
+    route_plan: dict[str, Any] | None = None,
+    selected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    applied = [row for row in rows if (row.get("apply_status") or {}).get("applied")]
+    selected_row = selected or _best_residual_candidate(rows)
+    topk_movers = [row for row in applied if _row_has_topk_movement(row)]
+    cluster_movers = [row for row in applied if _row_has_cluster_movement(row)]
+    unsafe_regressions = [row for row in applied if _row_has_unsafe_cluster_regression(row)]
+    reason = "candidate_promising"
+    if not applied:
+        reason = "no_applied_candidates"
+    elif selected_row and _row_has_unsafe_cluster_regression(selected_row):
+        reason = "unsafe_cluster_regressed"
+    elif _primary_metric_from_plan(route_plan) == "topk_density" and not topk_movers:
+        reason = "topk_route_not_moved"
+    elif selected_row and not _has_incremental_movement(selected_row):
+        reason = "no_incremental_movement"
+    return {
+        "reason": reason,
+        "primary_metric": _primary_metric_from_plan(route_plan),
+        "candidate_count": len(rows),
+        "applied_count": len(applied),
+        "topk_movement_count": len(topk_movers),
+        "cluster_movement_count": len(cluster_movers),
+        "unsafe_cluster_regression_count": len(unsafe_regressions),
+        "selected": _compact_residual_row(selected_row),
+        "required_correction": _adaptive_required_correction(reason),
+    }
+
+
+def _adaptive_required_correction(reason: str) -> str:
+    if reason == "topk_route_not_moved":
+        return "Break the predictable sentence path with clause-route change before polishing wording."
+    if reason == "unsafe_cluster_regressed":
+        return "Stop broad replacement wording that increases unsafe clusters; keep source content and change only route."
+    if reason == "no_incremental_movement":
+        return "Use a different route shape instead of another surface paraphrase."
+    if reason == "no_applied_candidates":
+        return "Return complete replacement text that can be applied to the source cluster."
+    return "Continue the promising direction without adding broad filler."
+
+
+def _should_generate_adaptive_remainder(
+    feedback: dict[str, Any],
+    *,
+    remaining_count: int,
+    best_candidate: dict[str, Any] | None,
+) -> bool:
+    if remaining_count <= 0:
+        return False
+    if best_candidate and _has_incremental_movement(best_candidate):
+        return False
+    return str(feedback.get("reason") or "") in {
+        "topk_route_not_moved",
+        "unsafe_cluster_regressed",
+        "no_incremental_movement",
+        "no_applied_candidates",
+    }
+
+
+def _should_retune_residual_candidate(
+    row: dict[str, Any] | None,
+    *,
+    route_plan: dict[str, Any] | None = None,
+    adaptive_feedback: dict[str, Any] | None = None,
+) -> bool:
+    if not row or not _needs_retune(row):
+        return False
+    if not _adaptive_writer_enabled(route_plan):
+        return True
+    reason = str((adaptive_feedback or {}).get("reason") or "")
+    if reason in {"topk_route_not_moved", "unsafe_cluster_regressed", "no_incremental_movement"} and not _has_incremental_movement(row):
+        return False
+    return _row_has_topk_movement(row) or _row_has_cluster_movement(row) or _has_incremental_movement(row)
+
+
+def _primary_metric_from_plan(route_plan: dict[str, Any] | None) -> str:
+    if not isinstance(route_plan, dict):
+        return "mixed"
+    return _primary_metric(route_plan.get("primary_metric"))
+
+
+def _row_has_topk_movement(row: dict[str, Any]) -> bool:
+    local = row.get("local_scores") if isinstance(row.get("local_scores"), dict) else {}
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    return any(
+        _number(value) > 0
+        for value in (
+            local.get("topk_delta"),
+            local.get("topk_calibrated_risk_delta"),
+            incremental.get("topk_delta"),
+            incremental.get("topk_calibrated_risk_delta"),
+            scores.get("topk_delta"),
+            scores.get("topk_calibrated_risk_delta"),
+        )
+    )
+
+
+def _row_has_cluster_movement(row: dict[str, Any]) -> bool:
+    local = row.get("local_scores") if isinstance(row.get("local_scores"), dict) else {}
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    return any(
+        _number(value) > 0
+        for value in (
+            local.get("unsafe_cluster_count_delta"),
+            local.get("unsafe_word_ratio_delta"),
+            incremental.get("unsafe_cluster_count_delta"),
+            incremental.get("unsafe_word_ratio_delta"),
+            scores.get("unsafe_cluster_count_delta"),
+            scores.get("unsafe_word_ratio_delta"),
+        )
+    )
+
+
+def _row_has_unsafe_cluster_regression(row: dict[str, Any]) -> bool:
+    local = row.get("local_scores") if isinstance(row.get("local_scores"), dict) else {}
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    return any(
+        _number(value) < 0
+        for value in (
+            local.get("unsafe_cluster_count_delta"),
+            incremental.get("unsafe_cluster_count_delta"),
+            scores.get("unsafe_cluster_count_delta"),
+        )
     )
 
 
