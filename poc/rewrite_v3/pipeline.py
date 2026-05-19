@@ -2209,10 +2209,16 @@ def run_rewrite_pipeline_v3(
     max_runtime_seconds: int = 300,
     required_ai_drop: float = 5.0,
     full_rewrite_allowed: bool = True,
+    cancellation_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     started = time.time()
 
+    def raise_if_canceled() -> None:
+        if cancellation_check is not None:
+            cancellation_check()
+
     def progress(percent: int, message: str) -> None:
+        raise_if_canceled()
         if progress_callback:
             progress_callback(percent, message)
 

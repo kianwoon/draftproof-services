@@ -14,7 +14,7 @@ import threading
 import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -52,6 +52,7 @@ class LLMConfig:
     site_url: Optional[str] = None       # OpenRouter optional headers
     site_name: Optional[str] = None
     reuse_http_connections: bool = True
+    cancellation_check: Optional[Callable[[], None]] = None
 
 
 @dataclass
@@ -404,6 +405,7 @@ class LLMGateway:
             "DRAFTPROOF_LLM_REUSE_HTTP_CONNECTIONS",
             True,
         )
+        self.cancellation_check = cfg.cancellation_check
         self._session_local = threading.local()
 
         if not self.api_key:
@@ -578,14 +580,18 @@ class LLMGateway:
             sorted(self.extra_body.keys()) if self.extra_body is not None else [],
         )
 
+        self._raise_if_canceled()
         for attempt in range(1, self.max_retries + 1):
+            self._raise_if_canceled()
             try:
                 t0 = time.monotonic()
                 resp = self._post_json(url, headers=headers, payload=payload)
                 wall_s = time.monotonic() - t0
+                self._raise_if_canceled()
                 logger.info(f"LLM response: status={resp.status_code}, latency={wall_s:.1f}s, attempt={attempt}")
                 resp.raise_for_status()
                 data = resp.json()
+                self._raise_if_canceled()
 
                 content = self._extract_content(data)
                 usage = data.get("usage", {})
@@ -602,10 +608,23 @@ class LLMGateway:
 
                 backoff = min(2 ** attempt, 30)  # cap at 30s
                 logger.warning("LLM call failed (attempt %d/%d), retrying in %ds: %s", attempt, self.max_retries, backoff, exc)
-                time.sleep(backoff)
+                self._sleep_with_cancellation(backoff)
 
         # Should not reach here, but safety net
         raise RuntimeError(f"LLM call failed after {self.max_retries} attempts")
+
+    def _raise_if_canceled(self) -> None:
+        if self.cancellation_check is not None:
+            self.cancellation_check()
+
+    def _sleep_with_cancellation(self, seconds: float) -> None:
+        deadline = time.monotonic() + max(0.0, float(seconds or 0))
+        while True:
+            self._raise_if_canceled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.5, remaining))
 
     def _post_json(self, url: str, *, headers: dict[str, str], payload: dict[str, Any]) -> requests.Response:
         if not self.reuse_http_connections or requests.post is not _ORIGINAL_REQUESTS_POST:

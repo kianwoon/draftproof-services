@@ -181,7 +181,7 @@ def update_rewrite_status(
     error: str = None,
     progress_percent: int = None,
     progress_message: str = None,
-):
+) -> bool:
     def _fields(include_progress: bool = True):
         sets = ["status = %s"]
         vals = [status]
@@ -201,17 +201,19 @@ def update_rewrite_status(
     def _execute(include_progress: bool = True):
         sets, vals = _fields(include_progress)
         with get_conn() as conn:
-            conn.cursor().execute(
+            cur = conn.cursor()
+            cur.execute(
                 f"UPDATE rewrite_jobs SET {', '.join(sets)} WHERE id = %s AND status <> 'canceled'",
                 vals + [job_id],
             )
+            return cur.rowcount > 0
 
     try:
-        _execute()
+        return _execute()
     except psycopg2.errors.UndefinedColumn as exc:
         if "progress_" not in str(exc):
             raise
-        _execute(include_progress=False)
+        return _execute(include_progress=False)
 
 
 def release_rewrite_credits(job_id: str):

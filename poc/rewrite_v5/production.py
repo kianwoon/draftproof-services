@@ -204,10 +204,16 @@ def run_rewrite_pipeline_v5(
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    cancellation_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     started = time.time()
 
+    def raise_if_canceled() -> None:
+        if cancellation_check is not None:
+            cancellation_check()
+
     def progress(percent: int, message: str) -> None:
+        raise_if_canceled()
         if progress_callback:
             progress_callback(percent, message)
 
@@ -221,6 +227,7 @@ def run_rewrite_pipeline_v5(
     pipeline_version = "rewrite_v5_residual_cluster_comb"
 
     def emit_checkpoint(checkpoint: dict[str, Any]) -> None:
+        raise_if_canceled()
         if checkpoint_callback is None:
             return
         checkpoint_text = str(checkpoint.get("rewritten_document") or "")
@@ -282,11 +289,14 @@ def run_rewrite_pipeline_v5(
         progress_callback=progress,
         accepted_checkpoint_callback=emit_checkpoint,
         max_seconds=runtime_budget_seconds,
+        cancellation_check=raise_if_canceled,
     )
 
+    raise_if_canceled()
     final_text = str(payload.get("rewritten_document") or original_text)
     original_report = detect_json
     final_report = _scan_report(final_text) if final_text.strip() != original_text.strip() else original_report
+    raise_if_canceled()
     final_goal = evaluate_rewrite_goal(
         original_text=original_text,
         candidate_text=final_text,

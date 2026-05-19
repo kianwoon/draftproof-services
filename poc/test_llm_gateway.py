@@ -70,3 +70,30 @@ def test_llm_gateway_builds_openrouter_provider_routing_from_env(monkeypatch):
         "allow_fallbacks": True,
         "sort": "throughput",
     }
+
+
+def test_llm_gateway_checks_cancellation_before_request():
+    class Canceled(BaseException):
+        pass
+
+    def cancel():
+        raise Canceled()
+
+    gateway = LLMGateway(LLMConfig(
+        api_key="test",
+        base_url="https://openrouter.ai/api/v1",
+        model="test/model",
+        max_retries=1,
+        cancellation_check=cancel,
+    ))
+    fake_session = _FakeSession()
+    gateway._session_local.session = fake_session
+
+    try:
+        gateway.chat("cancel me")
+    except Canceled:
+        pass
+    else:
+        raise AssertionError("Expected cancellation to stop the LLM request")
+
+    assert fake_session.calls == []

@@ -123,8 +123,12 @@ def _runtime_code_fingerprint() -> dict:
     return fingerprint
 
 
-class RewriteCanceled(Exception):
-    """Raised inside a worker task when the user cancels a rewrite cooperatively."""
+class RewriteCanceled(BaseException):
+    """Raised inside a worker task when the user cancels a rewrite cooperatively.
+
+    This intentionally inherits from BaseException so broad pipeline-level
+    ``except Exception`` recovery blocks do not swallow a user cancellation.
+    """
 
 
 def _normalized_billable_text(value) -> str:
@@ -519,7 +523,6 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "candidate_trace",
         "candidate_loop_trace",
         "selected_candidate",
-        "rewrite_layers",
         "stage_timings",
         "detect_scan_original_saved",
         "detect_scan_original",
@@ -1531,17 +1534,22 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             {"status": checkpoint_json.get("status")},
             checkpoint_json,
         )
-        user_id = scan_job.get("user_id", "") if scan_job else ""
-        if user_id and billing_decision.get("billable"):
-            capture_rewrite_credits(str(user_id), rewrite_id)
-        else:
-            release_rewrite_credits(rewrite_id)
-        update_rewrite_status(
+        checkpoint_status_written = update_rewrite_status(
             rewrite_id,
             "completed",
             progress_percent=100,
             progress_message="Rewrite complete from saved checkpoint",
         )
+        if not checkpoint_status_written:
+            raise_if_canceled()
+            logger.warning("Rewrite %s checkpoint completion status was not written; skipping delivery email", rewrite_id)
+            return {"status": "skipped", "reason": "checkpoint_completion_status_not_written"}
+        raise_if_canceled()
+        user_id = scan_job.get("user_id", "") if scan_job else ""
+        if user_id and billing_decision.get("billable"):
+            capture_rewrite_credits(str(user_id), rewrite_id)
+        else:
+            release_rewrite_credits(rewrite_id)
         publish_progress("completed", 100, "Rewrite complete from saved checkpoint")
         checkpoint_pdf_bytes = b""
         try:
@@ -1787,6 +1795,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
                         checkpoint_callback=persist_rewrite_checkpoint,
+                        cancellation_check=raise_if_canceled,
                     )
                 elif pipeline_choice == "v4":
                     from rewrite_v4 import run_rewrite_pipeline_v4
@@ -1798,6 +1807,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         model=v4_rewrite_model,
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
+                        cancellation_check=raise_if_canceled,
                     )
                 elif pipeline_choice == "v3":
                     from rewrite_v3 import run_rewrite_pipeline_v3
@@ -1808,6 +1818,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         model=rewrite_model,
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
+                        cancellation_check=raise_if_canceled,
                     )
                 elif pipeline_choice == "v2":
                     from rewrite_v2 import run_rewrite_pipeline_v2
@@ -1818,6 +1829,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         model=rewrite_model,
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
+                        cancellation_check=raise_if_canceled,
                     )
                 else:
                     result = run_rewrite_pipeline(
@@ -1831,6 +1843,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         model=rewrite_model,
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
+                        cancellation_check=raise_if_canceled,
                     )
             finally:
                 heartbeat_stop.set()
@@ -1942,20 +1955,23 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             raise_if_canceled()
             upload_rewrite_files(scan_id, md_text, pdf_bytes, rewrite_json, rewritten_text, debug_log)
 
-        # 5. Capture credits
+        # 5. Mark complete, then capture credits and deliver results.
         raise_if_canceled()
-        user_id = scan_job.get("user_id", "") if scan_job else ""
-        if user_id and billing_decision.get("billable"):
-            capture_rewrite_credits(str(user_id), rewrite_id)
-        else:
-            release_rewrite_credits(rewrite_id)
-
-        update_rewrite_status(
+        completed_status_written = update_rewrite_status(
             rewrite_id,
             "completed",
             progress_percent=100,
             progress_message="Rewrite complete",
         )
+        if not completed_status_written:
+            raise_if_canceled()
+            logger.warning("Rewrite %s completion status was not written; skipping delivery email", rewrite_id)
+            return {"status": "skipped", "reason": "completion_status_not_written"}
+        user_id = scan_job.get("user_id", "") if scan_job else ""
+        if user_id and billing_decision.get("billable"):
+            capture_rewrite_credits(str(user_id), rewrite_id)
+        else:
+            release_rewrite_credits(rewrite_id)
         publish_progress("completed", 100, "Rewrite complete")
         recipient_email = get_rewrite_user_email(rewrite_id)
         send_rewrite_completion_email(

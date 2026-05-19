@@ -83,10 +83,16 @@ def run_rewrite_pipeline_v4(
     model: str | None = None,
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
+    cancellation_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     started = time.time()
 
+    def raise_if_canceled() -> None:
+        if cancellation_check is not None:
+            cancellation_check()
+
     def progress(percent: int, message: str) -> None:
+        raise_if_canceled()
         if progress_callback:
             progress_callback(percent, message)
 
@@ -135,9 +141,11 @@ def run_rewrite_pipeline_v4(
             base_url=base_url,
             extra_body=_v4_extra_body(),
         )
+    raise_if_canceled()
     final_text = str(payload.get("rewritten_document") or original_text)
     original_report = detect_json
     final_report = _load_final_scan(out_dir) or original_report
+    raise_if_canceled()
     final_goal = evaluate_rewrite_goal(
         original_text=original_text,
         candidate_text=final_text,

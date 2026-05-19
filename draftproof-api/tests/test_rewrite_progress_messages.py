@@ -112,6 +112,10 @@ def test_completed_non_v4_rewrite_reuse_contract_is_unchanged():
     )
 
 
+def test_canceled_rewrite_does_not_block_new_rewrite_job():
+    assert "canceled" not in rewrite_service._ACTIVE_REWRITE_STATUSES
+
+
 def test_saved_rewrite_checkpoint_with_changed_text_is_delivered_content():
     assert (
         rewrite_service._rewrite_report_has_delivered_content(

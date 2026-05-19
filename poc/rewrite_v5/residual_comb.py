@@ -126,15 +126,22 @@ def run_v5_residual_cluster_comb_experiment(
     progress_callback: Callable[[int, str], None] | None = None,
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     max_seconds: float | None = None,
+    cancellation_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Iteratively treat the strongest residual cluster and rescan."""
 
+    def raise_if_canceled() -> None:
+        if cancellation_check is not None:
+            cancellation_check()
+
+    raise_if_canceled()
     started_at = time.monotonic()
     budget_seconds = _runtime_budget_seconds(max_seconds)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     original_text = str(input_text or "")
     baseline_report = _scan_report(original_text)
+    raise_if_canceled()
     baseline_goal = evaluate_rewrite_goal(
         original_text=original_text,
         candidate_text=original_text,
@@ -150,6 +157,7 @@ def run_v5_residual_cluster_comb_experiment(
     accepted_checkpoints: list[dict[str, Any]] = []
 
     def record_accepted_checkpoint(event: dict[str, Any]) -> None:
+        raise_if_canceled()
         checkpoint = _accepted_checkpoint_payload(
             event=event,
             sequence=len(accepted_checkpoints) + 1,
@@ -177,6 +185,7 @@ def run_v5_residual_cluster_comb_experiment(
         provider=provider,
         timeout=180,
         extra_body=extra_body,
+        cancellation_check=raise_if_canceled,
     ))
     planner_gateway = _planner_gateway(
         fallback_gateway=gateway,
@@ -185,6 +194,7 @@ def run_v5_residual_cluster_comb_experiment(
         base_url=base_url,
         provider=provider,
         extra_body=extra_body,
+        cancellation_check=raise_if_canceled,
     )
 
     cleanup_variants = cleanup_variant_count if cleanup_variant_count is not None else variant_count
@@ -289,6 +299,7 @@ def run_v5_residual_cluster_comb_experiment(
             started_at=started_at,
             max_seconds=budget_seconds,
         )
+        raise_if_canceled()
 
     direct_scanner_accepted_count = sum(
         1
@@ -334,6 +345,7 @@ def run_v5_residual_cluster_comb_experiment(
             max_seconds=budget_seconds,
         )
         unsafe_cluster_rounds.extend(unsafe_cluster_probe_rounds)
+        raise_if_canceled()
 
     if skip_core_after_direct:
         rounds.append({
@@ -345,6 +357,7 @@ def run_v5_residual_cluster_comb_experiment(
         })
 
     for round_index in range(1, 0 if skip_core_after_direct else core_round_limit + 1):
+        raise_if_canceled()
         if _runtime_budget_exhausted(started_at, budget_seconds):
             rounds.append(_runtime_budget_stop_record(
                 phase="residual_cluster_comb",
@@ -420,6 +433,7 @@ def run_v5_residual_cluster_comb_experiment(
                 planner_gateway=planner_gateway,
                 fallback_gateway=gateway,
             )
+            raise_if_canceled()
             (round_dir / "route_plan_prompt.json.txt").write_text(plan_prompt)
             (round_dir / "route_plan_completion.json.txt").write_text(plan_completion)
             if _runtime_budget_exhausted(started_at, budget_seconds):
@@ -441,6 +455,7 @@ def run_v5_residual_cluster_comb_experiment(
                     variant_count=variant_count,
                     route_plan=route_plan,
                 )
+                raise_if_canceled()
                 diagnostics = {
                     **diagnostics,
                     "route_plan": route_plan_diagnostics,
@@ -482,6 +497,7 @@ def run_v5_residual_cluster_comb_experiment(
                 variant_count=retune_variant_count,
                 route_plan=route_plan,
             )
+            raise_if_canceled()
             (round_dir / "retune_prompt.json.txt").write_text(retune_prompt)
             (round_dir / "retune_completion.json.txt").write_text(retune_completion)
             retuned_rows = [
@@ -583,6 +599,7 @@ def run_v5_residual_cluster_comb_experiment(
             started_at=started_at,
             max_seconds=budget_seconds,
         )
+        raise_if_canceled()
 
     if (
         not _runtime_budget_exhausted(started_at, budget_seconds)
@@ -618,6 +635,7 @@ def run_v5_residual_cluster_comb_experiment(
             started_at=started_at,
             max_seconds=budget_seconds,
         )
+        raise_if_canceled()
 
     if not _runtime_budget_exhausted(started_at, budget_seconds) and final_risky_window_limit > 0:
         _emit_progress(progress_callback, 78, "Final V5 risky window cleanup")
@@ -648,6 +666,7 @@ def run_v5_residual_cluster_comb_experiment(
             started_at=started_at,
             max_seconds=budget_seconds,
         )
+        raise_if_canceled()
 
     global_best_fallback = {
         "applied": False,
@@ -814,6 +833,7 @@ def _planner_gateway(
     base_url: str | None,
     provider: dict[str, Any] | None,
     extra_body: dict[str, Any] | None,
+    cancellation_check: Callable[[], None] | None = None,
 ) -> LLMGateway:
     requested_model = (
         str(model or "").strip()
@@ -832,6 +852,7 @@ def _planner_gateway(
         provider=provider,
         timeout=180,
         extra_body=extra_body,
+        cancellation_check=cancellation_check,
     ))
 
 

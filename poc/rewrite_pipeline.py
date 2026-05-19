@@ -23,7 +23,7 @@ import math
 import statistics
 import requests
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -6543,6 +6543,7 @@ def run_rewrite_pipeline(
     verbose: bool = False,
     ai_only: bool = True,
     progress_callback=None,
+    cancellation_check: Callable[[], None] | None = None,
 ) -> dict:
     """Run the full rewrite pipeline from detect JSON or raw text.
 
@@ -6600,12 +6601,18 @@ def run_rewrite_pipeline(
         print("No findings to rewrite. Text is clean.")
         return {"status": "clean", "message": "No findings to rewrite"}
 
+    def raise_if_canceled() -> None:
+        if cancellation_check is not None:
+            cancellation_check()
+
     def report_progress(percent: int, message: str) -> None:
+        raise_if_canceled()
         if not progress_callback:
             return
         progress_callback(max(40, min(79, int(percent))), message)
 
     # ── Run rewrite ─────────────────────────────────────────────────
+    raise_if_canceled()
     print(f"Running rewrite pipeline...")
     print(f"  Input: {len(text)} chars, {len(ctx.detect_results)} scanner results")
     if ctx.rewrite_decision:
