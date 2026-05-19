@@ -21,7 +21,10 @@ from rewrite_v2.structured_output import structured_json_request_options
 from rewrite_v3.document_units import word_count
 from rewrite_v3.pipeline import _scan_report
 from rewrite_v3.text_integrity import minimal_replacement_text_integrity
-from rewrite_controller.eligible_span_density import build_preferred_eligible_span_density_contract
+from rewrite_controller.eligible_span_density import (
+    build_eligible_span_density_contract,
+    build_preferred_eligible_span_density_contract,
+)
 from rewrite_v4.cluster_patch import build_cluster_repair_units
 from rewrite_v4.validation import parse_json_object
 
@@ -148,6 +151,7 @@ def run_v5_residual_cluster_comb_experiment(
         original_report=baseline_report,
         candidate_report=baseline_report,
     ).to_dict()
+    baseline_goal = _with_v5_density_gate(original_text, baseline_report, baseline_goal)
     baseline_scores = _score_summary(original_text, baseline_report, baseline_goal)
     current_text = original_text
     current_report = baseline_report
@@ -216,7 +220,7 @@ def run_v5_residual_cluster_comb_experiment(
     direct_scanner_limit = _cleanup_round_limit(
         direct_scanner_leapfrog_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS",
-        default=4,
+        default=0,
     )
     direct_scanner_variants = (
         max(1, min(5, int(direct_scanner_leapfrog_variant_count or variant_count or 1)))
@@ -233,9 +237,12 @@ def run_v5_residual_cluster_comb_experiment(
         ),
     )
     baseline_density_gate = _density_gate_for_report(current_text, current_report)
-    unsafe_cluster_first = _should_start_with_unsafe_cluster_cleanup(
-        density_gate=baseline_density_gate,
-        unsafe_cluster_cleanup_rounds=unsafe_cluster_limit,
+    unsafe_cluster_first = (
+        _bool_env("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_BEFORE_CORE", False)
+        and _should_start_with_unsafe_cluster_cleanup(
+            density_gate=baseline_density_gate,
+            unsafe_cluster_cleanup_rounds=unsafe_cluster_limit,
+        )
     )
     unsafe_cluster_probe_limit = _unsafe_cluster_probe_round_limit(unsafe_cluster_limit) if unsafe_cluster_first else 0
     remaining_unsafe_cluster_limit = (
@@ -269,6 +276,7 @@ def run_v5_residual_cluster_comb_experiment(
     risky_window_rounds: list[dict[str, Any]] = []
     unsafe_cluster_rounds: list[dict[str, Any]] = []
     final_risky_window_rounds: list[dict[str, Any]] = []
+    skipped_core_signatures: set[tuple[Any, ...]] = set()
     if direct_scanner_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds):
         _emit_progress(progress_callback, 67, "Running V5 direct scanner-cluster leapfrog")
         (
@@ -378,13 +386,22 @@ def run_v5_residual_cluster_comb_experiment(
             text=current_text,
             report=current_report,
             goal=current_goal,
-            limit=1,
+            limit=max(1, core_round_limit),
             context_chars=220,
         )
-        if not cluster_units:
+        section: SectionUnit | None = None
+        section_signature: tuple[Any, ...] | None = None
+        for cluster_unit in cluster_units:
+            candidate_section = _section_from_cluster(cluster_unit)
+            candidate_signature = _core_section_signature(candidate_section)
+            if candidate_signature in skipped_core_signatures:
+                continue
+            section = candidate_section
+            section_signature = candidate_signature
+            break
+        if section is None:
             rounds.append({"round": round_index, "status": "stopped", "reason": "no_residual_cluster"})
             break
-        section = _section_from_cluster(cluster_units[0])
         local_source_goal = _local_goal(section.text, section.text)
         seed_variants = generate_residual_cluster_seed_variants(section=section, local_goal=local_source_goal)
         seed_rows = [
@@ -535,7 +552,9 @@ def run_v5_residual_cluster_comb_experiment(
         rounds.append(round_payload)
         (round_dir / "round_result.json").write_text(json.dumps(round_payload, ensure_ascii=False, indent=2))
         if not accepted:
-            break
+            if section_signature is not None:
+                skipped_core_signatures.add(section_signature)
+            continue
         current_text = str(accepted.get("candidate_text") or current_text)
         current_report = accepted.get("candidate_report") if isinstance(accepted.get("candidate_report"), dict) else _scan_report(current_text)
         current_goal = accepted.get("candidate_goal") if isinstance(accepted.get("candidate_goal"), dict) else evaluate_rewrite_goal(
@@ -544,6 +563,7 @@ def run_v5_residual_cluster_comb_experiment(
             original_report=baseline_report,
             candidate_report=current_report,
         ).to_dict()
+        current_goal = _with_v5_density_gate(current_text, current_report, current_goal)
         current_scores = accepted.get("scores") if isinstance(accepted.get("scores"), dict) else _score_summary(original_text, current_report, current_goal)
         (out_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
         record_accepted_checkpoint({
@@ -944,6 +964,8 @@ def build_residual_cluster_prompt(
     }
     if plan:
         payload["execution_brief"] = plan
+        payload["writer_execution_card"] = _writer_execution_card(section=section, route_plan=plan)
+        payload["writer_variant_plan"] = _writer_variant_plan(variant_count=variants, route_plan=plan)
         payload["method"] = _custom_route_writer_method()
     else:
         payload["custom_route_plan"] = None
@@ -994,6 +1016,8 @@ def build_residual_cluster_retune_prompt(
     }
     if plan:
         payload["execution_brief"] = plan
+        payload["writer_execution_card"] = _writer_execution_card(section=section, route_plan=plan)
+        payload["writer_variant_plan"] = _writer_variant_plan(variant_count=variants, route_plan=plan)
         payload["method"] = _custom_route_retune_method()
     else:
         payload["custom_route_plan"] = None
@@ -1023,8 +1047,9 @@ def generate_residual_cluster_variants(
 
 
 def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal: dict[str, Any] | None = None) -> str:
+    affected_content_map = _affected_content_map(section=section, local_goal=local_goal or {})
     payload = {
-        "task": "profile_aware_cluster_route_plan",
+        "task": "score_causal_cluster_route_plan",
         "cluster": {
             "section_id": section.section_id,
             "source_text": section.text,
@@ -1045,6 +1070,17 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
             "top_sentence_targets": _local_top_sentence_targets(local_goal or {}),
             "recommended_actions": _local_recommended_actions(local_goal or {}),
         },
+        "affected_content_map": affected_content_map,
+        "primary_metric_options": [
+            "topk_density",
+            "unsafe_cluster_count",
+            "risky_window_count",
+            "ai_likelihood",
+            "external_proxy",
+            "rank",
+            "mixed",
+        ],
+        "topk_operator_options": sorted(_TOPK_ROUTE_OPERATORS),
         "content_profile_rubrics": _ROUTE_PLAN_CONTENT_PROFILES,
         "cluster_role_options": _ROUTE_PLAN_CLUSTER_ROLES,
         "failure_pattern_options": _ROUTE_PLAN_FAILURE_PATTERNS,
@@ -1052,6 +1088,13 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
         "planning_rules": [
             "Act as a prompt planner, not the final writer.",
             "Derive a cluster-specific executable brief from the source text and scanner findings.",
+            "Use affected_content_map as the source of truth for which content units carry the problem.",
+            "Choose primary_metric from primary_metric_options and make the plan target that metric first.",
+            "Do not only summarize scanner findings; bind every planned action to an affected content unit.",
+            "When primary_metric is topk_density, diagnose the predictable sentence route in topk_route_diagnosis.",
+            "For topk_density, prefer route disruption over paraphrase: CLAUSE_ROUTE_CHANGE first, then LIST_RHYTHM_BREAK, ABSTRACT_TO_PRACTICAL_FRAME, GENERIC_TRANSITION_REMOVAL, SENTENCE_WEIGHT_VARIATION.",
+            "For each affected unit, provide operator_stack from topk_operator_options; the first operator must be the main action.",
+            "Do not use synonym replacement as a top-k action unless it is incidental to a route change.",
             "First choose content_profile and cluster_role from the supplied options.",
             "Then choose dominant_failure_pattern and route_strategy from the supplied options.",
             "Use the chosen content_profile rubric to design the route; do not use a reflective-practice route for broad report content.",
@@ -1059,6 +1102,8 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
             "When cluster.source_block_count is greater than 1, the replacement route must cover every source block instead of compressing the cluster into only the opening topic.",
             "Make source_block_plan cover every cluster.source_blocks item.",
             "Make target_sentence_jobs focus on scanner_local_findings.top_sentence_targets and give one executable rewrite job per target.",
+            "Make affected_unit_actions cover the affected_content_map rows where is_scanner_target is true.",
+            "Each affected_unit_actions row must explain what in that exact unit must change and what would be an insufficient surface edit.",
             "Do not mention scores, scanner names, authorship labels, or risk labels in the plan fields.",
             "Describe failed_route as the current sentence movement problem in plain editorial language.",
             "Describe replacement_route as the new route the writer should follow, using source-supported events and claims.",
@@ -1080,12 +1125,21 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
         "output_schema": {
             "route_plan": {
                 "content_profile": "reflective_practice_academic | broad_explanatory_report | argumentative_explanatory_essay | technical_or_process_explanation | narrative_or_case_reflection | mixed_or_unknown",
+                "primary_metric": "topk_density | unsafe_cluster_count | risky_window_count | ai_likelihood | external_proxy | rank | mixed",
                 "cluster_role": "background_context | evidence_or_example | reasoning_or_analysis | process_or_method | contrast_or_problem | conclusion_or_synthesis | mixed_section",
                 "dominant_failure_pattern": "category_dump | event_summary | claim_chain | process_blur | transition_stack | conclusion_smoothing | mixed",
                 "route_strategy": "group_and_bridge | event_first_rebuild | claim_reason_evidence | mechanism_consequence | contrast_then_limit | mixed_route_rebuild",
                 "profile_reason": "one sentence explaining why this profile fits the cluster",
                 "failed_route": "...",
                 "replacement_route": "...",
+                "topk_route_diagnosis": {
+                    "infected_unit_id": "u001",
+                    "current_route": "how the affected sentence currently travels",
+                    "predictable_path": "the expected word or phrase path that must be broken",
+                    "primary_operator": "CLAUSE_ROUTE_CHANGE | LIST_RHYTHM_BREAK | ABSTRACT_TO_PRACTICAL_FRAME | GENERIC_TRANSITION_REMOVAL | SENTENCE_WEIGHT_VARIATION",
+                    "replacement_route": "new sentence route, not a synonym swap",
+                    "insufficient_edit": "what would preserve the same top-k path"
+                },
                 "source_block_plan": [
                     {
                         "block_id": "b01",
@@ -1101,6 +1155,17 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
                         "current_weakness": "why this sentence route is weak",
                         "rewrite_job": "specific instruction for this sentence's role",
                         "avoid_copying": ["phrase to avoid keeping"]
+                    }
+                ],
+                "affected_unit_actions": [
+                    {
+                        "unit_id": "u001",
+                        "affected_text": "exact affected content unit text or exact supported preview",
+                        "problem_role": "what this content unit is doing that keeps the pattern",
+                        "required_action": "specific route/content action for this unit",
+                        "operator_stack": ["CLAUSE_ROUTE_CHANGE"],
+                        "must_preserve": ["source words or claims to keep from this unit"],
+                        "insufficient_edit": "what would be too superficial to count"
                     }
                 ],
                 "must_change": ["..."],
@@ -1274,10 +1339,126 @@ def _coverage_guidance_for_route_plan(*, section: SectionUnit, route_plan: dict[
     }
 
 
+def _writer_execution_card(*, section: SectionUnit, route_plan: dict[str, Any] | None) -> dict[str, Any]:
+    plan = route_plan if _route_plan_valid(route_plan) else {}
+    topk = plan.get("topk_route_diagnosis") if isinstance(plan.get("topk_route_diagnosis"), dict) else {}
+    actions = plan.get("affected_unit_actions") if isinstance(plan.get("affected_unit_actions"), list) else []
+    operator_stack: list[str] = []
+    for row in actions:
+        if not isinstance(row, dict):
+            continue
+        for operator in row.get("operator_stack") if isinstance(row.get("operator_stack"), list) else []:
+            normalized = _topk_route_operator(operator)
+            if normalized not in operator_stack:
+                operator_stack.append(normalized)
+    primary_operator = _topk_route_operator(topk.get("primary_operator"))
+    if primary_operator not in operator_stack:
+        operator_stack.insert(0, primary_operator)
+    do_not_do = _string_list(plan.get("avoid_phrases"), limit=6)
+    if topk.get("insufficient_edit"):
+        do_not_do.insert(0, str(topk.get("insufficient_edit")))
+    unit_actions = []
+    for row in actions[:5]:
+        if not isinstance(row, dict):
+            continue
+        unit_actions.append({
+            "unit_id": row.get("unit_id"),
+            "affected_text": row.get("affected_text"),
+            "required_action": row.get("required_action"),
+            "operator_stack": row.get("operator_stack") or [primary_operator],
+            "insufficient_edit": row.get("insufficient_edit"),
+        })
+    return {
+        "source_section_id": section.section_id,
+        "primary_metric": plan.get("primary_metric") or "mixed",
+        "main_operator": primary_operator,
+        "operator_stack": operator_stack[:5],
+        "operator_execution_notes": _operator_execution_notes(operator_stack[:5]),
+        "route_to_break": topk.get("predictable_path") or plan.get("failed_route"),
+        "route_to_write": topk.get("replacement_route") or plan.get("replacement_route"),
+        "do_not_do": do_not_do[:8],
+        "unit_actions": unit_actions,
+        "sentence_plan": _string_list(plan.get("sentence_plan"), limit=6),
+        "must_preserve": [
+            row.get("source_quote")
+            for row in plan.get("must_preserve", [])
+            if isinstance(row, dict) and row.get("source_quote")
+        ][:8],
+    }
+
+
+def _operator_execution_notes(operators: list[str]) -> list[dict[str, str]]:
+    notes = []
+    for operator in operators:
+        notes.append({
+            "operator": _topk_route_operator(operator),
+            "writer_action": _TOPK_ROUTE_OPERATOR_WRITER_ACTIONS.get(
+                _topk_route_operator(operator),
+                _TOPK_ROUTE_OPERATOR_WRITER_ACTIONS["CLAUSE_ROUTE_CHANGE"],
+            ),
+        })
+    return notes
+
+
+def _writer_variant_plan(*, variant_count: int, route_plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+    count = max(1, min(5, int(variant_count or 1)))
+    plan = route_plan if _route_plan_valid(route_plan) else {}
+    primary_operator = _topk_route_operator((plan.get("topk_route_diagnosis") or {}).get("primary_operator") if isinstance(plan.get("topk_route_diagnosis"), dict) else None)
+    operators = [primary_operator]
+    for row in plan.get("affected_unit_actions", []) if isinstance(plan.get("affected_unit_actions"), list) else []:
+        if not isinstance(row, dict):
+            continue
+        for item in row.get("operator_stack") if isinstance(row.get("operator_stack"), list) else []:
+            operator = _topk_route_operator(item)
+            if operator not in operators:
+                operators.append(operator)
+    fallback_shapes = [
+        {
+            "route_shape": "main_operator_direct",
+            "execution_rule": "Use the main operator directly and keep the replacement close to the source wording.",
+        },
+        {
+            "route_shape": "subject_or_clause_reanchor",
+            "execution_rule": "Change the sentence subject or opening clause before preserving the source claim.",
+        },
+        {
+            "route_shape": "bridge_then_example",
+            "execution_rule": "Build a clearer bridge from the affected unit to the source example or consequence.",
+        },
+        {
+            "route_shape": "sentence_boundary_shift",
+            "execution_rule": "Change one sentence boundary or sentence weight when it helps break the repeated route.",
+        },
+        {
+            "route_shape": "grouped_source_beats",
+            "execution_rule": "Group repeated source beats into a cleaner route while preserving distinct claims.",
+        },
+    ]
+    rows = []
+    for index in range(count):
+        operator = operators[index % len(operators)]
+        shape = fallback_shapes[index % len(fallback_shapes)]
+        rows.append({
+            "variant_id": f"v{index + 1}",
+            "main_operator": operator,
+            "route_shape": shape["route_shape"],
+            "execution_rule": shape["execution_rule"],
+            "must_differ_from_other_variants": "Use a different opener, clause order, or sentence boundary from the other variants.",
+        })
+    return rows
+
+
 def _custom_route_writer_method() -> list[str]:
     return [
+        "Treat writer_execution_card as the highest-priority execution summary; it is the compact version of execution_brief.",
+        "Follow writer_variant_plan so variants are genuinely different route executions, not near-duplicate paraphrases.",
         "Use execution_brief.content_profile and execution_brief.cluster_role to choose the right kind of route movement.",
+        "Use execution_brief.primary_metric to understand which scanner movement the rewrite is supposed to cause.",
+        "When execution_brief.primary_metric is topk_density, use execution_brief.topk_route_diagnosis to break the predictable next-word path.",
+        "For top-k work, the main edit must change sentence route; synonym swaps are insufficient.",
+        "For top-k work, directly execute writer_execution_card.route_to_write and avoid writer_execution_card.do_not_do.",
         "Use execution_brief.dominant_failure_pattern and execution_brief.route_strategy to decide what must actually change.",
+        "Execute every execution_brief.affected_unit_actions row using its operator_stack; if affected_text is only paraphrased, the rewrite is not enough.",
         "Execute execution_brief.source_block_plan block by block; each block must keep its central source material.",
         "Execute execution_brief.target_sentence_jobs for the risky sentences; do not leave those sentence routes unchanged.",
         "Satisfy coverage_guidance before style changes; do not omit source blocks or central source beats.",
@@ -1300,8 +1481,15 @@ def _custom_route_writer_method() -> list[str]:
 
 def _custom_route_retune_method() -> list[str]:
     return [
+        "Treat writer_execution_card as the highest-priority execution summary; it is the compact version of execution_brief.",
+        "Follow writer_variant_plan so variants are genuinely different route executions, not near-duplicate paraphrases.",
         "Use execution_brief.content_profile and execution_brief.cluster_role to choose the right kind of route movement.",
+        "Use execution_brief.primary_metric to understand which scanner movement the rewrite is supposed to cause.",
+        "When execution_brief.primary_metric is topk_density, use execution_brief.topk_route_diagnosis to break the predictable next-word path.",
+        "For top-k work, the main edit must change sentence route; synonym swaps are insufficient.",
+        "For top-k work, directly execute writer_execution_card.route_to_write and avoid writer_execution_card.do_not_do.",
         "Use execution_brief.dominant_failure_pattern and execution_brief.route_strategy to decide what must actually change.",
+        "Execute every execution_brief.affected_unit_actions row using its operator_stack; if affected_text is only paraphrased, the rewrite is not enough.",
         "Execute execution_brief.source_block_plan block by block; each block must keep its central source material.",
         "Execute execution_brief.target_sentence_jobs for the risky sentences; do not leave those sentence routes unchanged.",
         "Satisfy coverage_guidance before style changes; do not omit source blocks or central source beats.",
@@ -1377,16 +1565,27 @@ def generate_residual_cluster_seed_variants(
     section: SectionUnit,
     local_goal: dict[str, Any] | None = None,
 ) -> list[RecompositionVariant]:
-    """Reserved deterministic seed hook.
+    """Generate source-derived route seeds before asking the model.
 
-    V5 must not ship content-specific route rewrites from prior experiments.
-    Scanner/planner output should drive custom prompts; deterministic seeds stay
-    disabled unless a future implementation is data-derived and content-agnostic.
+    Seeds are intentionally generic: they are built from the current section's
+    sentence beats and go through the same scanner scoring gates as LLM output.
     """
 
-    del section
     del local_goal
-    return []
+    texts = _source_derived_route_seed_texts(section)
+    variants: list[RecompositionVariant] = []
+    seen: set[str] = set()
+    for index, text in enumerate(texts, start=1):
+        normalized = " ".join(str(text or "").split())
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        variants.append(RecompositionVariant(
+            variant_id=f"route_seed_{index}",
+            text=normalized,
+            word_count=word_count(normalized),
+        ))
+    return variants
 
 
 def generate_residual_cluster_retunes(
@@ -1474,6 +1673,8 @@ def build_risky_window_cleanup_prompt(
         payload.update({
             "goal": "Rewrite only this window by executing the planned failed-route to replacement-route brief.",
             "execution_brief": route_plan,
+            "writer_execution_card": _writer_execution_card(section=section, route_plan=route_plan),
+            "writer_variant_plan": _writer_variant_plan(variant_count=variants, route_plan=route_plan),
             "source_blocks": _source_blocks(section.text),
             "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=route_plan),
             "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=route_plan),
@@ -1548,6 +1749,8 @@ def build_unsafe_cluster_cleanup_prompt(
         payload.update({
             "goal": "Rewrite only this local cluster by executing the planned failed-route to replacement-route brief.",
             "execution_brief": route_plan,
+            "writer_execution_card": _writer_execution_card(section=section, route_plan=route_plan),
+            "writer_variant_plan": _writer_variant_plan(variant_count=variants, route_plan=route_plan),
             "source_blocks": _source_blocks(section.text),
             "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=route_plan),
             "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=route_plan),
@@ -1629,7 +1832,10 @@ def build_direct_scanner_leapfrog_prompt(
             "Do not only improve smoothness; produce a genuinely different route through the same source material.",
         ],
         "method": [
+            "Treat writer_execution_card as the highest-priority execution summary when it is present.",
+            "Follow writer_variant_plan so variants are genuinely different route executions, not near-duplicate paraphrases.",
             "Follow execution_brief.replacement_route when execution_brief is present.",
+            "For top-k work, directly execute writer_execution_card.route_to_write and avoid writer_execution_card.do_not_do.",
             "Satisfy execution_brief.must_change and target_sentence_jobs without copying plan labels.",
             "Write a source-near replacement for the whole selected cluster, not a synonym patch.",
             "Keep the central source facts, subjects, actions, outcomes, citations, quotations, and viewpoint.",
@@ -1653,6 +1859,8 @@ def build_direct_scanner_leapfrog_prompt(
     }
     if plan:
         payload["execution_brief"] = plan
+        payload["writer_execution_card"] = _writer_execution_card(section=section, route_plan=plan)
+        payload["writer_variant_plan"] = _writer_variant_plan(variant_count=variants, route_plan=plan)
         payload["coverage_guidance"] = _coverage_guidance_for_route_plan(section=section, route_plan=plan)
     else:
         payload["execution_brief"] = None
@@ -2039,14 +2247,17 @@ def _sanitize_route_plan(plan: dict[str, Any], *, source_text: str) -> dict[str,
     source = str(source_text or "")
     return {
         "content_profile": _content_profile(plan.get("content_profile")),
+        "primary_metric": _primary_metric(plan.get("primary_metric")),
         "cluster_role": _cluster_role(plan.get("cluster_role")),
         "dominant_failure_pattern": _failure_pattern(plan.get("dominant_failure_pattern")),
         "route_strategy": _route_strategy(plan.get("route_strategy")),
         "profile_reason": _short_string(plan.get("profile_reason"), limit=220),
         "failed_route": _short_string(plan.get("failed_route"), limit=320),
         "replacement_route": _short_string(plan.get("replacement_route"), limit=360),
+        "topk_route_diagnosis": _sanitize_topk_route_diagnosis(plan.get("topk_route_diagnosis")),
         "source_block_plan": _sanitize_source_block_plan(plan.get("source_block_plan"), source_text=source, limit=8),
         "target_sentence_jobs": _sanitize_target_sentence_jobs(plan.get("target_sentence_jobs"), source_text=source, limit=8),
+        "affected_unit_actions": _sanitize_affected_unit_actions(plan.get("affected_unit_actions"), source_text=source, limit=8),
         "must_change": _string_list(plan.get("must_change"), limit=8),
         "must_preserve": _sanitize_must_preserve(plan.get("must_preserve"), source_text=source, limit=16),
         "sentence_plan": _string_list(plan.get("sentence_plan"), limit=8),
@@ -2155,21 +2366,114 @@ def _sanitize_target_sentence_jobs(value: Any, *, source_text: str, limit: int) 
     return rows
 
 
+def _sanitize_affected_unit_actions(value: Any, *, source_text: str, limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, row in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(row, dict):
+            continue
+        affected_text = _supported_quote(row.get("affected_text"), source_text) or _short_string(row.get("affected_text"), limit=260)
+        required_action = _short_string(row.get("required_action"), limit=300)
+        insufficient_edit = _short_string(row.get("insufficient_edit"), limit=220)
+        if not affected_text or not required_action or not insufficient_edit:
+            continue
+        rows.append({
+            "unit_id": _short_string(row.get("unit_id"), limit=24) or f"u{index:03d}",
+            "affected_text": affected_text,
+            "problem_role": _short_string(row.get("problem_role"), limit=220),
+            "required_action": required_action,
+            "operator_stack": _operator_stack(row.get("operator_stack")),
+            "must_preserve": _supported_or_short_list(row.get("must_preserve"), source_text=source_text, limit=5),
+            "insufficient_edit": insufficient_edit,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _sanitize_topk_route_diagnosis(value: Any) -> dict[str, str]:
+    row = value if isinstance(value, dict) else {}
+    return {
+        "infected_unit_id": _short_string(row.get("infected_unit_id"), limit=24),
+        "current_route": _short_string(row.get("current_route"), limit=260),
+        "predictable_path": _short_string(row.get("predictable_path"), limit=260),
+        "primary_operator": _topk_route_operator(row.get("primary_operator")),
+        "replacement_route": _short_string(row.get("replacement_route"), limit=300),
+        "insufficient_edit": _short_string(row.get("insufficient_edit"), limit=220),
+    }
+
+
+def _topk_route_operator(value: Any) -> str:
+    operator = _short_string(value, limit=80)
+    if operator in _TOPK_ROUTE_OPERATORS:
+        return operator
+    return "CLAUSE_ROUTE_CHANGE"
+
+
+def _operator_stack(value: Any) -> list[str]:
+    operators: list[str] = []
+    for item in _raw_list(value):
+        operator = _topk_route_operator(item)
+        if operator and operator not in operators:
+            operators.append(operator)
+        if len(operators) >= 5:
+            break
+    return operators or ["CLAUSE_ROUTE_CHANGE"]
+
+
 def _route_plan_valid(plan: Any) -> bool:
     return (
         isinstance(plan, dict)
         and _content_profile(plan.get("content_profile")) in set(_ROUTE_PLAN_CONTENT_PROFILES)
+        and _primary_metric(plan.get("primary_metric")) in _PRIMARY_METRIC_OPTIONS
         and _cluster_role(plan.get("cluster_role")) in set(_ROUTE_PLAN_CLUSTER_ROLES)
         and _failure_pattern(plan.get("dominant_failure_pattern")) in set(_ROUTE_PLAN_FAILURE_PATTERNS)
         and _route_strategy(plan.get("route_strategy")) in set(_ROUTE_PLAN_STRATEGIES)
         and bool(plan.get("source_block_plan"))
         and bool(plan.get("target_sentence_jobs"))
+        and bool(plan.get("affected_unit_actions"))
+        and bool(plan.get("topk_route_diagnosis"))
         and bool(plan.get("replacement_route"))
         and bool(plan.get("must_change"))
         and bool(plan.get("must_preserve"))
         and bool(plan.get("sentence_plan"))
         and _length_target(plan.get("length_target")) in {"same_length", "slight_expand", "expand"}
     )
+
+
+_PRIMARY_METRIC_OPTIONS = {
+    "topk_density",
+    "unsafe_cluster_count",
+    "risky_window_count",
+    "ai_likelihood",
+    "external_proxy",
+    "rank",
+    "mixed",
+}
+
+
+_TOPK_ROUTE_OPERATORS = {
+    "CLAUSE_ROUTE_CHANGE",
+    "LIST_RHYTHM_BREAK",
+    "ABSTRACT_TO_PRACTICAL_FRAME",
+    "GENERIC_TRANSITION_REMOVAL",
+    "SENTENCE_WEIGHT_VARIATION",
+}
+
+
+_TOPK_ROUTE_OPERATOR_WRITER_ACTIONS = {
+    "CLAUSE_ROUTE_CHANGE": "Change the sentence starting logic and cause-effect path; do not keep the same opener with different words.",
+    "LIST_RHYTHM_BREAK": "Break a stacked list into grouped meaning or a practical contrast while preserving the listed source material.",
+    "ABSTRACT_TO_PRACTICAL_FRAME": "Replace abstract summary movement with a concrete source action, condition, decision, or consequence.",
+    "GENERIC_TRANSITION_REMOVAL": "Remove formulaic transition movement and make the source subject or action carry the bridge.",
+    "SENTENCE_WEIGHT_VARIATION": "Vary sentence weight by letting one short bridge or longer concrete sentence carry the route change.",
+}
+
+
+def _primary_metric(value: Any) -> str:
+    metric = _short_string(value, limit=80)
+    if metric in _PRIMARY_METRIC_OPTIONS:
+        return metric
+    return "mixed"
 
 
 def _content_profile(value: Any) -> str:
@@ -2223,6 +2527,10 @@ def _route_plan_response_format() -> dict[str, Any]:
                                 "type": "string",
                                 "enum": list(_ROUTE_PLAN_CONTENT_PROFILES.keys()),
                             },
+                            "primary_metric": {
+                                "type": "string",
+                                "enum": sorted(_PRIMARY_METRIC_OPTIONS),
+                            },
                             "cluster_role": {
                                 "type": "string",
                                 "enum": list(_ROUTE_PLAN_CLUSTER_ROLES.keys()),
@@ -2238,6 +2546,29 @@ def _route_plan_response_format() -> dict[str, Any]:
                             "profile_reason": {"type": "string"},
                             "failed_route": {"type": "string"},
                             "replacement_route": {"type": "string"},
+                            "topk_route_diagnosis": {
+                                "type": "object",
+                                "properties": {
+                                    "infected_unit_id": {"type": "string"},
+                                    "current_route": {"type": "string"},
+                                    "predictable_path": {"type": "string"},
+                                    "primary_operator": {
+                                        "type": "string",
+                                        "enum": sorted(_TOPK_ROUTE_OPERATORS),
+                                    },
+                                    "replacement_route": {"type": "string"},
+                                    "insufficient_edit": {"type": "string"},
+                                },
+                                "required": [
+                                    "infected_unit_id",
+                                    "current_route",
+                                    "predictable_path",
+                                    "primary_operator",
+                                    "replacement_route",
+                                    "insufficient_edit",
+                                ],
+                                "additionalProperties": False,
+                            },
                             "source_block_plan": {
                                 "type": "array",
                                 "minItems": 1,
@@ -2281,6 +2612,46 @@ def _route_plan_response_format() -> dict[str, Any]:
                                     "additionalProperties": False,
                                 },
                             },
+                            "affected_unit_actions": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 8,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "unit_id": {"type": "string"},
+                                        "affected_text": {"type": "string"},
+                                        "problem_role": {"type": "string"},
+                                        "required_action": {"type": "string"},
+                                        "operator_stack": {
+                                            "type": "array",
+                                            "minItems": 1,
+                                            "maxItems": 5,
+                                            "items": {
+                                                "type": "string",
+                                                "enum": sorted(_TOPK_ROUTE_OPERATORS),
+                                            },
+                                        },
+                                        "must_preserve": {
+                                            "type": "array",
+                                            "minItems": 0,
+                                            "maxItems": 5,
+                                            "items": {"type": "string"},
+                                        },
+                                        "insufficient_edit": {"type": "string"},
+                                    },
+                                    "required": [
+                                        "unit_id",
+                                        "affected_text",
+                                        "problem_role",
+                                        "required_action",
+                                        "operator_stack",
+                                        "must_preserve",
+                                        "insufficient_edit",
+                                    ],
+                                    "additionalProperties": False,
+                                },
+                            },
                             "must_change": {
                                 "type": "array",
                                 "minItems": 1,
@@ -2321,14 +2692,17 @@ def _route_plan_response_format() -> dict[str, Any]:
                         },
                         "required": [
                             "content_profile",
+                            "primary_metric",
                             "cluster_role",
                             "dominant_failure_pattern",
                             "route_strategy",
                             "profile_reason",
                             "failed_route",
                             "replacement_route",
+                            "topk_route_diagnosis",
                             "source_block_plan",
                             "target_sentence_jobs",
+                            "affected_unit_actions",
                             "must_change",
                             "must_preserve",
                             "sentence_plan",
@@ -2449,6 +2823,7 @@ def _score_residual_variant(
         original_report=baseline_report,
         candidate_report=candidate_report,
     ).to_dict()
+    candidate_goal = _with_v5_density_gate(candidate_text, candidate_report, candidate_goal)
     scores = _score_summary(original_text, candidate_report, candidate_goal)
     _add_deltas(scores, baseline_scores)
     local_before_report = _scan_report(section.text)
@@ -2458,6 +2833,7 @@ def _score_residual_variant(
         original_report=local_before_report,
         candidate_report=local_before_report,
     ).to_dict()
+    local_before_goal = _with_v5_density_gate(section.text, local_before_report, local_before_goal)
     local_before_scores = _score_summary(section.text, local_before_report, local_before_goal)
     local_after_report = _scan_report(variant.text)
     local_after_goal = evaluate_rewrite_goal(
@@ -2466,6 +2842,7 @@ def _score_residual_variant(
         original_report=local_before_report,
         candidate_report=local_after_report,
     ).to_dict()
+    local_after_goal = _with_v5_density_gate(variant.text, local_after_report, local_after_goal)
     local_after_scores = _score_summary(section.text, local_after_report, local_after_goal)
     _add_deltas(local_after_scores, local_before_scores)
     safe_name = label.replace("/", "_")
@@ -3248,7 +3625,6 @@ def _has_risky_window_cleanup_movement(row: dict[str, Any]) -> bool:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     return (
         _number(incremental.get("risky_window_count_delta")) > 0
-        and _number(incremental.get("rank_delta")) > 0
         and _number(incremental.get("unsafe_cluster_count_delta")) >= 0
         and _number(incremental.get("topk_calibrated_risk_delta")) >= 0
         and _number(incremental.get("ai_delta")) >= 0
@@ -3309,9 +3685,6 @@ def _has_unsafe_cluster_cleanup_movement(row: dict[str, Any]) -> bool:
     has_local_cluster_movement = _local_cluster_directionally_improved(local)
     return (
         (has_cluster_count_drop or has_local_cluster_movement)
-        and _number(incremental.get("rank_delta")) >= 0
-        and _number(incremental.get("external_delta")) >= 0
-        and _number(incremental.get("external_ai_flag_risk_delta")) >= 0
         and _number(incremental.get("risky_window_count_delta")) >= 0
         and _number(incremental.get("unsafe_cluster_count_delta")) >= 0
         and _number(incremental.get("topk_calibrated_risk_delta")) >= 0
@@ -3368,6 +3741,12 @@ def _local_cluster_cleared(local_scores: dict[str, Any]) -> bool:
 
 
 def _local_cluster_directionally_improved(local_scores: dict[str, Any]) -> bool:
+    if (
+        _number(local_scores.get("unsafe_cluster_count_delta")) > 0
+        and _number(local_scores.get("unsafe_word_ratio_delta")) >= 0
+        and _number(local_scores.get("rank_delta")) >= 0
+    ):
+        return True
     return (
         _number(local_scores.get("unsafe_cluster_count_delta")) >= 0
         and _number(local_scores.get("unsafe_word_ratio_delta")) > 0
@@ -3629,7 +4008,15 @@ def _compact_density_gate(density: dict[str, Any]) -> dict[str, Any]:
 
 
 def _density_gate_for_report(current_text: str, current_report: dict[str, Any]) -> dict[str, Any]:
-    return build_preferred_eligible_span_density_contract(current_text, current_report)
+    if _bool_env("DRAFTPROOF_REWRITE_V5_USE_REPAIR_UNITS_DENSITY", False):
+        return build_preferred_eligible_span_density_contract(current_text, current_report)
+    return build_eligible_span_density_contract(current_text, current_report)
+
+
+def _with_v5_density_gate(text: str, report: dict[str, Any], goal: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(goal or {})
+    enriched["eligible_span_density_gate"] = _density_gate_for_report(text, report)
+    return enriched
 
 
 def _optional_int(value: Any) -> int | None:
@@ -3814,6 +4201,57 @@ def _local_top_sentence_targets(local_goal: dict[str, Any]) -> list[dict[str, An
 def _local_recommended_actions(local_goal: dict[str, Any]) -> list[str]:
     gate = local_goal.get("eligible_span_density_gate") if isinstance(local_goal, dict) else {}
     return _string_list(gate.get("recommended_actions") if isinstance(gate, dict) else [], limit=6)
+
+
+def _affected_content_map(*, section: SectionUnit, local_goal: dict[str, Any]) -> list[dict[str, Any]]:
+    targets = _local_top_sentence_targets(local_goal)
+    target_previews = [str(row.get("preview") or "") for row in targets if isinstance(row, dict)]
+    rows: list[dict[str, Any]] = []
+    for index, sentence in enumerate(_sentences(section.text), start=1):
+        sentence_text = " ".join(str(sentence or "").split())
+        if not sentence_text:
+            continue
+        matched_targets = [
+            row for row in targets
+            if _text_units_overlap(sentence_text, str(row.get("preview") or ""))
+        ]
+        is_target = bool(matched_targets) or not target_previews
+        rows.append({
+            "unit_id": f"u{index:03d}",
+            "source_text": sentence_text,
+            "is_scanner_target": is_target,
+            "scanner_target_ids": [
+                str(row.get("sentence_id") or "")
+                for row in matched_targets
+                if str(row.get("sentence_id") or "").strip()
+            ],
+            "content_role_hint": _sentence_content_role_hint(index=index, total=len(_sentences(section.text))),
+            "planner_job": (
+                "diagnose the exact content movement in this unit and assign a required action"
+                if is_target
+                else "preserve unless needed for continuity with affected units"
+            ),
+            "preserve_candidates": _source_phrase_anchors(sentence_text)[:5],
+        })
+        if len(rows) >= 8:
+            break
+    return rows
+
+
+def _text_units_overlap(left: str, right: str) -> bool:
+    left_text = " ".join(str(left or "").split())
+    right_text = " ".join(str(right or "").split())
+    if not left_text or not right_text:
+        return False
+    return left_text in right_text or right_text in left_text
+
+
+def _sentence_content_role_hint(*, index: int, total: int) -> str:
+    if index <= 1:
+        return "opening_frame"
+    if index >= max(1, total):
+        return "closing_or_bridge"
+    return "middle_development"
 
 
 def _retune_focus_from_goal(local_goal: dict[str, Any]) -> list[str]:
@@ -4019,15 +4457,63 @@ def _sentence_jobs_for_blueprint(*, beats: list[str], start_index: int) -> list[
     return jobs
 
 
+def _source_derived_route_seed_texts(section: SectionUnit) -> list[str]:
+    beats = _source_event_beats(section.text, limit=8)
+    if len(beats) < 3:
+        return []
+    seeds: list[str] = []
+    bridge_seed = _starting_point_bridge_seed(beats)
+    if bridge_seed:
+        seeds.append(bridge_seed)
+    reordered_seed = _reordered_route_seed(section=section, beats=beats)
+    if reordered_seed:
+        seeds.append(reordered_seed)
+    return seeds
+
+
+def _starting_point_bridge_seed(beats: list[str]) -> str:
+    first = _clean_sentence(beats[0])
+    rest = [_clean_sentence(beat) for beat in beats[1:] if _clean_sentence(beat)]
+    if not first or len(rest) < 2:
+        return ""
+    bridge = "That starting point mattered before the next step."
+    return " ".join([first, bridge, *rest])
+
+
+def _reordered_route_seed(*, section: SectionUnit, beats: list[str]) -> str:
+    blueprint = build_route_blueprint(section=section, local_goal={})
+    start_index = int(blueprint.get("start_source_beat_index") or 0)
+    if start_index <= 0 or start_index >= len(beats):
+        return ""
+    ordered = beats[start_index:] + beats[:start_index]
+    cleaned = [_clean_sentence(beat) for beat in ordered if _clean_sentence(beat)]
+    if len(cleaned) < 3:
+        return ""
+    return " ".join(cleaned)
+
+
+def _clean_sentence(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _core_section_signature(section: SectionUnit) -> tuple[Any, ...]:
+    return (
+        section.start_char,
+        section.end_char,
+        _short_string(section.text, limit=120),
+    )
+
+
 def _local_goal(original_text: str, candidate_text: str) -> dict[str, Any]:
     original_report = _scan_report(original_text)
     candidate_report = original_report if original_text == candidate_text else _scan_report(candidate_text)
-    return evaluate_rewrite_goal(
+    goal = evaluate_rewrite_goal(
         original_text=original_text,
         candidate_text=candidate_text,
         original_report=original_report,
         candidate_report=candidate_report,
     ).to_dict()
+    return _with_v5_density_gate(candidate_text, candidate_report, goal)
 
 
 def _source_event_beats(text: str, *, limit: int = 18) -> list[str]:

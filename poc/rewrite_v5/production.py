@@ -83,7 +83,7 @@ def _production_config() -> dict[str, Any]:
         "max_rounds": _int_env("DRAFTPROOF_REWRITE_V5_MAX_ROUNDS", 6, minimum=1, maximum=10),
         "variant_count": _int_env("DRAFTPROOF_REWRITE_V5_VARIANTS", 5, minimum=1, maximum=5),
         "retune_variant_count": _int_env("DRAFTPROOF_REWRITE_V5_RETUNE_VARIANTS", 5, minimum=1, maximum=5),
-        "direct_scanner_leapfrog_rounds": _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS", 4, minimum=0, maximum=12),
+        "direct_scanner_leapfrog_rounds": _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS", 0, minimum=0, maximum=12),
         "direct_scanner_leapfrog_variants": _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_VARIANTS", 5, minimum=1, maximum=5),
         "direct_scanner_leapfrog_batches": _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_BATCHES", 2, minimum=1, maximum=3),
         "risky_window_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS", 2, minimum=0, maximum=12),
@@ -92,11 +92,11 @@ def _production_config() -> dict[str, Any]:
         "final_risky_window_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS", 2, minimum=0, maximum=12),
         "cleanup_variant_count": _int_env("DRAFTPROOF_REWRITE_V5_CLEANUP_VARIANTS", 5, minimum=1, maximum=5),
         "required_ai_drop": _float_env("DRAFTPROOF_REWRITE_V5_REQUIRED_AI_DROP", 5.0, minimum=0.0, maximum=100.0),
-        "runtime_base_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_BASE_SECONDS", 120, minimum=30, maximum=1200),
-        "runtime_seconds_per_100_words": _float_env("DRAFTPROOF_REWRITE_V5_RUNTIME_SECONDS_PER_100_WORDS", 25.0, minimum=0.0, maximum=300.0),
-        "runtime_min_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_MIN_SECONDS", 180, minimum=60, maximum=1800),
-        "runtime_max_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_MAX_SECONDS", 720, minimum=90, maximum=7200),
-        "runtime_soft_limit_buffer_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_SOFT_LIMIT_BUFFER_SECONDS", 120, minimum=30, maximum=1800),
+        "runtime_base_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_BASE_SECONDS", 900, minimum=30, maximum=2400),
+        "runtime_seconds_per_100_words": _float_env("DRAFTPROOF_REWRITE_V5_RUNTIME_SECONDS_PER_100_WORDS", 40.0, minimum=0.0, maximum=300.0),
+        "runtime_min_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_MIN_SECONDS", 900, minimum=60, maximum=2400),
+        "runtime_max_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_MAX_SECONDS", 1800, minimum=90, maximum=7200),
+        "runtime_soft_limit_buffer_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_SOFT_LIMIT_BUFFER_SECONDS", 60, minimum=30, maximum=1800),
     }
 
 
@@ -494,7 +494,7 @@ def _v5_runtime_budget_seconds(original_text: str, config: dict[str, Any]) -> in
     estimated = float(config.get("runtime_base_seconds") or 0) + (
         (words / 100.0) * float(config.get("runtime_seconds_per_100_words") or 0.0)
     )
-    soft_limit = _int_env("REWRITE_SOFT_TIME_LIMIT_SECONDS", 900, minimum=180, maximum=7200)
+    soft_limit = _int_env("REWRITE_SOFT_TIME_LIMIT_SECONDS", 1800, minimum=180, maximum=7200)
     soft_cap = max(
         int(config.get("runtime_min_seconds") or 60),
         soft_limit - int(config.get("runtime_soft_limit_buffer_seconds") or 120),

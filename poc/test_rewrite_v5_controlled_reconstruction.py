@@ -52,18 +52,27 @@ from rewrite_v5.residual_comb import (
     _has_incremental_movement,
     _residual_candidate_sort_key,
 )
-from rewrite_v5.models import SectionUnit
+from rewrite_v5.models import RecompositionVariant, SectionUnit
 
 
 def _sample_route_plan() -> dict:
     return {
         "content_profile": "narrative_or_case_reflection",
+        "primary_metric": "topk_density",
         "cluster_role": "evidence_or_example",
         "dominant_failure_pattern": "event_summary",
         "route_strategy": "event_first_rebuild",
         "profile_reason": "The cluster follows an event and its visible outcome.",
         "failed_route": "The current route summarizes the result too quickly.",
         "replacement_route": "Start from the event, then show the visible outcome.",
+        "topk_route_diagnosis": {
+            "infected_unit_id": "u001",
+            "current_route": "broad result opener",
+            "predictable_path": "service changed -> confidence",
+            "primary_operator": "CLAUSE_ROUTE_CHANGE",
+            "replacement_route": "event evidence -> visible result",
+            "insufficient_edit": "Only swapping changed with improved.",
+        },
         "source_block_plan": [
             {
                 "block_id": "b01",
@@ -79,6 +88,17 @@ def _sample_route_plan() -> dict:
                 "current_weakness": "Broad result opener.",
                 "rewrite_job": "Show service before result.",
                 "avoid_copying": ["The service changed"],
+            }
+        ],
+        "affected_unit_actions": [
+            {
+                "unit_id": "u001",
+                "affected_text": "The service changed the student's confidence.",
+                "problem_role": "The unit states the result before the evidence.",
+                "required_action": "Move the broad result after the visible event.",
+                "operator_stack": ["CLAUSE_ROUTE_CHANGE"],
+                "must_preserve": ["The service changed the student's confidence."],
+                "insufficient_edit": "Only replacing service or confidence with synonyms.",
             }
         ],
         "must_change": ["Move the broad result after the visible event."],
@@ -335,11 +355,16 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
     prompt = build_residual_cluster_route_plan_prompt(section=section, local_goal=goal)
     payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
 
-    assert payload["task"] == "profile_aware_cluster_route_plan"
+    assert payload["task"] == "score_causal_cluster_route_plan"
     assert payload["cluster"]["source_event_beats"]
     assert payload["cluster"]["source_blocks"]
     assert payload["cluster"]["referential_continuity"]["opening_subject"] == "The"
     assert payload["scanner_local_findings"]["top_sentence_targets"][0]["sentence_id"] == "s001"
+    assert payload["affected_content_map"][0]["unit_id"] == "u001"
+    assert payload["affected_content_map"][0]["is_scanner_target"] is True
+    assert "primary_metric_options" in payload
+    assert "topk_operator_options" in payload
+    assert "CLAUSE_ROUTE_CHANGE" in payload["topk_operator_options"]
     assert "content_profile_rubrics" in payload
     assert "broad_explanatory_report" in payload["content_profile_rubrics"]
     assert "cluster_role_options" in payload
@@ -348,14 +373,17 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
     assert "route_plan" in payload["output_schema"]
     assert set(payload["output_schema"]["route_plan"].keys()) == {
         "content_profile",
+        "primary_metric",
         "cluster_role",
         "dominant_failure_pattern",
         "route_strategy",
         "profile_reason",
         "failed_route",
         "replacement_route",
+        "topk_route_diagnosis",
         "source_block_plan",
         "target_sentence_jobs",
+        "affected_unit_actions",
         "must_change",
         "must_preserve",
         "sentence_plan",
@@ -372,12 +400,21 @@ def test_v5_residual_route_plan_parser_requires_source_supported_steps():
     raw = json.dumps({
         "route_plan": {
             "content_profile": "narrative_or_case_reflection",
+            "primary_metric": "topk_density",
             "cluster_role": "evidence_or_example",
             "dominant_failure_pattern": "event_summary",
             "route_strategy": "event_first_rebuild",
             "profile_reason": "The cluster follows a service result and a thank-you card outcome.",
             "failed_route": "The current route starts with broad interpretation before showing the event.",
             "replacement_route": "Start from the service moment, then show how the thank-you card made the result visible.",
+            "topk_route_diagnosis": {
+                "infected_unit_id": "u001",
+                "current_route": "broad interpretation before event evidence",
+                "predictable_path": "service changed -> confidence",
+                "primary_operator": "CLAUSE_ROUTE_CHANGE",
+                "replacement_route": "service moment -> thank-you card -> visible result",
+                "insufficient_edit": "Only changing changed to improved.",
+            },
             "source_block_plan": [
                 {
                     "block_id": "b01",
@@ -396,6 +433,17 @@ def test_v5_residual_route_plan_parser_requires_source_supported_steps():
                     "current_weakness": "Broad result before visible event.",
                     "rewrite_job": "Move the service result after the visible thank-you card.",
                     "avoid_copying": ["The service changed"],
+                }
+            ],
+            "affected_unit_actions": [
+                {
+                    "unit_id": "u001",
+                    "affected_text": "The service changed the student's confidence.",
+                    "problem_role": "The unit carries broad result wording before the evidence.",
+                    "required_action": "Move the result after the thank-you card evidence.",
+                    "operator_stack": ["CLAUSE_ROUTE_CHANGE"],
+                    "must_preserve": ["The service changed the student's confidence."],
+                    "insufficient_edit": "Changing only one noun while keeping the same route.",
                 }
             ],
             "must_change": [
@@ -438,6 +486,10 @@ def test_v5_residual_route_plan_parser_requires_source_supported_steps():
     assert diagnostics["source_block_plan_count"] == 1
     assert diagnostics["target_sentence_job_count"] == 1
     assert parsed["cluster_role"] == "evidence_or_example"
+    assert parsed["primary_metric"] == "topk_density"
+    assert parsed["topk_route_diagnosis"]["primary_operator"] == "CLAUSE_ROUTE_CHANGE"
+    assert parsed["affected_unit_actions"][0]["unit_id"] == "u001"
+    assert parsed["affected_unit_actions"][0]["operator_stack"] == ["CLAUSE_ROUTE_CHANGE"]
     assert parsed["replacement_route"].startswith("Start from the service moment")
     assert parsed["must_preserve"][0]["source_quote"] == "The service changed the student's confidence."
     assert parsed["avoid_phrases"][0] == "The service changed"
@@ -569,6 +621,11 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
 
     assert payload["execution_brief"] == route_plan
+    assert payload["writer_execution_card"]["main_operator"] == "CLAUSE_ROUTE_CHANGE"
+    assert payload["writer_execution_card"]["route_to_write"] == "event evidence -> visible result"
+    assert payload["writer_execution_card"]["unit_actions"][0]["required_action"]
+    assert payload["writer_variant_plan"][0]["variant_id"] == "v1"
+    assert payload["writer_variant_plan"][0]["main_operator"] == "CLAUSE_ROUTE_CHANGE"
     assert payload["coverage_guidance"]["requirements"]
     assert "fallback_route_blueprint" not in payload
     assert "custom_route_plan" not in payload
@@ -626,6 +683,10 @@ def test_v5_direct_scanner_leapfrog_prompt_uses_scanner_cluster_and_small_varian
     assert payload["task"] == "direct_scanner_cluster_leapfrog"
     assert payload["scanner_focus"]["source"] == "eligible_span_density.top_unsafe_clusters"
     assert payload["execution_brief"] == route_plan
+    assert payload["writer_execution_card"]["primary_metric"] == "topk_density"
+    assert payload["writer_execution_card"]["operator_execution_notes"][0]["operator"] == "CLAUSE_ROUTE_CHANGE"
+    assert len(payload["writer_variant_plan"]) == 5
+    assert payload["writer_variant_plan"][1]["route_shape"] != payload["writer_variant_plan"][0]["route_shape"]
     assert payload["length_guidance"]["small_variant_allowed"] is True
     assert payload["length_guidance"]["preferred_min_words"] < section.word_count
     assert payload["retry_batch"]["batch_index"] == 2
@@ -774,6 +835,26 @@ def test_v5_residual_acceptance_preserves_directional_local_improvement():
     assert not _has_incremental_movement(local_worse)
 
 
+def test_v5_residual_acceptance_keeps_local_cluster_count_drop_without_topk_delta():
+    cluster_count_drop = {
+        "local_scores": {
+            "unsafe_cluster_count": 1,
+            "unsafe_word_ratio": 47.0,
+            "unsafe_cluster_count_delta": 1.0,
+            "unsafe_word_ratio_delta": 25.0,
+            "topk_delta": 0.0,
+            "rank_delta": 10.0,
+        },
+        "incremental": {
+            "unsafe_cluster_count_delta": 1.0,
+            "rank_delta": 0.8,
+            "ai_delta": 0.0,
+        },
+    }
+
+    assert _has_incremental_movement(cluster_count_drop)
+
+
 def test_v5_residual_seed_generator_stays_disabled_for_content_agnostic_output():
     cluster = type("Cluster", (), {
         "cluster_id": "cluster_001",
@@ -797,7 +878,9 @@ def test_v5_residual_seed_generator_stays_disabled_for_content_agnostic_output()
 
     variants = generate_residual_cluster_seed_variants(section=section)
 
-    assert variants == []
+    assert variants
+    assert variants[0].variant_id == "route_seed_1"
+    assert "That starting point mattered before the next step." in variants[0].text
 
 
 def test_v5_residual_seed_generator_skips_unmatched_clusters():
@@ -846,6 +929,59 @@ def test_v5_residual_prompt_preserves_pronoun_subject_continuity():
     assert any("referring to" in item for item in payload["method"])
 
 
+def test_v5_risky_window_acceptance_prioritizes_window_removal_over_rank():
+    candidate = {
+        "incremental": {
+            "risky_window_count_delta": 1.0,
+            "rank_delta": -0.4,
+            "unsafe_cluster_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        }
+    }
+    topk_regression = {
+        "incremental": {
+            "risky_window_count_delta": 1.0,
+            "rank_delta": 4.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "topk_calibrated_risk_delta": -0.1,
+            "ai_delta": 0.0,
+        }
+    }
+
+    assert _has_risky_window_cleanup_movement(candidate)
+    assert not _has_risky_window_cleanup_movement(topk_regression)
+
+
+def test_v5_unsafe_cluster_acceptance_prioritizes_cluster_movement_over_rank_external():
+    cluster_drop = {
+        "incremental": {
+            "unsafe_cluster_count_delta": 1.0,
+            "rank_delta": -2.0,
+            "external_delta": -1.0,
+            "external_ai_flag_risk_delta": -1.0,
+            "risky_window_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
+        "local_scores": {},
+    }
+    ai_regression = {
+        "incremental": {
+            "unsafe_cluster_count_delta": 1.0,
+            "rank_delta": 4.0,
+            "external_delta": 4.0,
+            "risky_window_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": -0.1,
+        },
+        "local_scores": {},
+    }
+
+    assert _has_unsafe_cluster_cleanup_movement(cluster_drop)
+    assert not _has_unsafe_cluster_cleanup_movement(ai_regression)
+
+
 def test_v5_risky_window_cleanup_prompt_targets_whole_window_without_detector_language():
     section = build_section_units(
         "Johnny built confidence through role playing. "
@@ -889,6 +1025,8 @@ def test_v5_risky_window_cleanup_prompt_can_use_route_plan_brief():
 
     assert payload["task"] == "residual_route_window_cleanup"
     assert payload["execution_brief"] == route_plan
+    assert payload["writer_execution_card"]["main_operator"] == "CLAUSE_ROUTE_CHANGE"
+    assert payload["writer_variant_plan"][0]["execution_rule"]
     assert payload["source_blocks"]
     assert payload["coverage_guidance"]["requirements"]
     assert any("Follow execution_brief.replacement_route" in item for item in payload["method"])
@@ -949,6 +1087,8 @@ def test_v5_unsafe_cluster_cleanup_prompt_can_use_route_plan_brief():
 
     assert payload["task"] == "single_density_cluster_cleanup"
     assert payload["execution_brief"] == route_plan
+    assert payload["writer_execution_card"]["route_to_break"] == "service changed -> confidence"
+    assert payload["writer_variant_plan"][0]["must_differ_from_other_variants"]
     assert payload["source_blocks"]
     assert payload["coverage_guidance"]["requirements"]
     assert any("Follow execution_brief.replacement_route" in item for item in payload["method"])
@@ -1353,9 +1493,9 @@ def test_v5_tail_cleanup_acceptance_is_scanner_owned():
     assert not _has_risky_window_cleanup_movement(risky_window_cluster_regression)
     assert _has_unsafe_cluster_cleanup_movement(cluster_drop)
     assert _has_unsafe_cluster_cleanup_movement(cluster_local_directional)
-    assert not _has_unsafe_cluster_cleanup_movement(cluster_rank_regression)
+    assert _has_unsafe_cluster_cleanup_movement(cluster_rank_regression)
     assert not _has_unsafe_cluster_cleanup_movement(cluster_risky_window_regression)
-    assert not _has_unsafe_cluster_cleanup_movement(cluster_external_regression)
+    assert _has_unsafe_cluster_cleanup_movement(cluster_external_regression)
 
 
 def test_v5_global_best_fallback_keeps_better_full_document_candidate():
@@ -1441,7 +1581,7 @@ def test_v5_unsafe_cluster_first_uses_bounded_probe(monkeypatch):
     assert _unsafe_cluster_probe_round_limit(12) == 2
 
 
-def test_v5_unsafe_cluster_probe_does_not_skip_core_route(tmp_path, monkeypatch):
+def test_v5_core_route_runs_before_unsafe_cluster_probe_by_default(tmp_path, monkeypatch):
     module = v5_production.run_v5_residual_cluster_comb_experiment.__globals__
     cleanup_calls: list[dict] = []
     core_sections: list[str] = []
@@ -1559,7 +1699,7 @@ def test_v5_unsafe_cluster_probe_does_not_skip_core_route(tmp_path, monkeypatch)
     monkeypatch.setitem(module, "_scan_report", fake_scan)
     monkeypatch.setitem(module, "evaluate_rewrite_goal", fake_goal)
     monkeypatch.setitem(module, "_score_summary", fake_score)
-    monkeypatch.setitem(module, "build_preferred_eligible_span_density_contract", lambda *_args, **_kwargs: {"safe": False})
+    monkeypatch.setitem(module, "build_eligible_span_density_contract", lambda *_args, **_kwargs: {"safe": False})
     monkeypatch.setitem(module, "_run_unsafe_cluster_cleanup_pass", fake_cleanup_pass)
     monkeypatch.setitem(module, "build_cluster_repair_units", fake_cluster_units)
     monkeypatch.setitem(module, "_section_from_cluster", fake_section_from_cluster)
@@ -1579,15 +1719,239 @@ def test_v5_unsafe_cluster_probe_does_not_skip_core_route(tmp_path, monkeypatch)
         api_key="test-key",
     )
 
-    assert result["phase_order"]["unsafe_cluster_first"] is True
-    assert result["phase_order"]["unsafe_cluster_probe_rounds"] == 1
+    assert result["phase_order"]["unsafe_cluster_first"] is False
+    assert result["phase_order"]["unsafe_cluster_probe_rounds"] == 0
     assert result["phase_order"]["core_route_rounds"] == 1
     assert result["rounds"][0]["status"] == "accepted"
     assert core_sections == ["cluster-1"]
     assert cleanup_calls == [
-        {"max_rounds": 1, "selection_mode": "clearable", "route_plan_enabled": False},
-        {"max_rounds": 3, "selection_mode": "scanner", "route_plan_enabled": True},
+        {"max_rounds": 4, "selection_mode": "scanner", "route_plan_enabled": True},
     ]
+
+
+def test_v5_density_gate_defaults_to_legacy_contract_and_opt_in_preferred(monkeypatch):
+    module = v5_production.run_v5_residual_cluster_comb_experiment.__globals__
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_USE_REPAIR_UNITS_DENSITY", raising=False)
+    monkeypatch.setitem(
+        module,
+        "build_eligible_span_density_contract",
+        lambda _text, _report: {"source": "legacy_density", "unsafe_cluster_count": 14},
+    )
+    monkeypatch.setitem(
+        module,
+        "build_preferred_eligible_span_density_contract",
+        lambda _text, _report: {"source": "repair_units_density", "unsafe_cluster_count": 16},
+    )
+
+    default_gate = module["_density_gate_for_report"]("Some text.", {})
+    assert default_gate["source"] == "legacy_density"
+    assert default_gate["unsafe_cluster_count"] == 14
+
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_USE_REPAIR_UNITS_DENSITY", "true")
+    opt_in_gate = module["_density_gate_for_report"]("Some text.", {})
+    assert opt_in_gate["source"] == "repair_units_density"
+    assert opt_in_gate["unsafe_cluster_count"] == 16
+
+
+def test_v5_goal_density_enrichment_overrides_existing_goal_density(monkeypatch):
+    module = v5_production.run_v5_residual_cluster_comb_experiment.__globals__
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_USE_REPAIR_UNITS_DENSITY", raising=False)
+    monkeypatch.setitem(
+        module,
+        "build_eligible_span_density_contract",
+        lambda _text, _report: {"source": "legacy_density", "unsafe_cluster_count": 14},
+    )
+    monkeypatch.setitem(
+        module,
+        "build_preferred_eligible_span_density_contract",
+        lambda _text, _report: {"source": "repair_units_density", "unsafe_cluster_count": 16},
+    )
+
+    enriched = module["_with_v5_density_gate"](
+        "Some text.",
+        {},
+        {"eligible_span_density_gate": {"source": "stale_goal_density", "unsafe_cluster_count": 99}},
+    )
+
+    assert enriched["eligible_span_density_gate"]["source"] == "legacy_density"
+    assert enriched["eligible_span_density_gate"]["unsafe_cluster_count"] == 14
+
+
+def test_v5_core_round_skips_failed_cluster_and_continues_to_next_target(tmp_path, monkeypatch):
+    module = v5_production.run_v5_residual_cluster_comb_experiment.__globals__
+    attempted_sections: list[str] = []
+
+    original_text = "Bad cluster needs repair. Good cluster can improve."
+
+    def fake_scan(text):
+        return {"input_text": text, "ai_score": 50.0, "findings": {}}
+
+    def fake_goal(**_kwargs):
+        return SimpleNamespace(to_dict=lambda: {"eligible_span_density_gate": {"safe": False}})
+
+    def fake_score(_text, _report, _goal):
+        return {
+            "ai": 50.0,
+            "topk": 90.0,
+            "external": 45.0,
+            "rank": 100.0,
+            "risky_window_count": 2,
+            "unsafe_word_ratio": 40.0,
+            "unsafe_cluster_count": 2,
+            "topk_calibrated_risk": 90.0,
+            "qualifying_text_ai_density": 60.0,
+            "ai_authorship": 50.0,
+            "external_ai_flag_risk": 45.0,
+        }
+
+    def fake_cluster_units(**_kwargs):
+        return [
+            {"id": "bad", "text": "Bad cluster needs repair."},
+            {"id": "good", "text": "Good cluster can improve."},
+        ]
+
+    def fake_section_from_cluster(cluster):
+        text = cluster["text"]
+        start = original_text.index(text)
+        return SectionUnit(
+            section_id=cluster["id"],
+            heading="",
+            text=text,
+            start_char=start,
+            end_char=start + len(text),
+            paragraph_count=1,
+            word_count=len(text.split()),
+            metadata={},
+        )
+
+    def fake_seed_variants(section, **_kwargs):
+        attempted_sections.append(section.section_id)
+        return [RecompositionVariant(
+            variant_id=f"{section.section_id}_seed",
+            text=f"{section.text} revised",
+            word_count=len(section.text.split()) + 1,
+        )]
+
+    def fake_score_variant(*, section, variant, **_kwargs):
+        if section.section_id == "bad":
+            return {
+                "section_id": section.section_id,
+                "variant_id": variant.variant_id,
+                "label": "seed_bad",
+                "text": variant.text,
+                "candidate_text": original_text,
+                "candidate_report": fake_scan(original_text),
+                "candidate_goal": {"eligible_span_density_gate": {"safe": False}},
+                "apply_status": {"applied": True},
+                "scores": {"ai": 50.0, "topk": 90.0, "external": 45.0, "rank": 100.0},
+                "local_scores": {
+                    "unsafe_cluster_count": 1,
+                    "unsafe_word_ratio": 40.0,
+                    "unsafe_cluster_count_delta": 0.0,
+                    "unsafe_word_ratio_delta": 0.0,
+                    "topk_delta": 0.0,
+                    "rank_delta": 0.0,
+                },
+                "incremental": {
+                    "unsafe_cluster_count_delta": 0.0,
+                    "rank_delta": 0.0,
+                    "ai_delta": 0.0,
+                    "topk_delta": 0.0,
+                    "external_delta": 0.0,
+                    "risky_window_count_delta": 0.0,
+                    "topk_calibrated_risk_delta": 0.0,
+                    "external_ai_flag_risk_delta": 0.0,
+                },
+            }
+        return {
+            "section_id": section.section_id,
+            "variant_id": variant.variant_id,
+            "label": "seed_good",
+            "text": variant.text,
+            "candidate_text": original_text.replace(section.text, variant.text),
+            "candidate_report": fake_scan(original_text),
+            "candidate_goal": {"eligible_span_density_gate": {"safe": False}},
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 48.0,
+                "topk": 88.0,
+                "external": 43.0,
+                "rank": 95.0,
+                "unsafe_cluster_count": 1,
+            },
+            "local_scores": {
+                "unsafe_cluster_count": 0,
+                "unsafe_word_ratio": 0.0,
+                "unsafe_cluster_count_delta": 1.0,
+                "unsafe_word_ratio_delta": 40.0,
+                "topk_delta": 2.0,
+                "rank_delta": 5.0,
+            },
+            "incremental": {
+                "unsafe_cluster_count_delta": 1.0,
+                "rank_delta": 5.0,
+                "ai_delta": 2.0,
+                "topk_delta": 2.0,
+                "external_delta": 2.0,
+                "risky_window_count_delta": 0.0,
+                "topk_calibrated_risk_delta": 2.0,
+                "external_ai_flag_risk_delta": 2.0,
+            },
+        }
+
+    monkeypatch.setitem(module, "_scan_report", fake_scan)
+    monkeypatch.setitem(module, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setitem(module, "_score_summary", fake_score)
+    monkeypatch.setitem(module, "build_eligible_span_density_contract", lambda *_args, **_kwargs: {"safe": False})
+    monkeypatch.setitem(module, "build_cluster_repair_units", fake_cluster_units)
+    monkeypatch.setitem(module, "_section_from_cluster", fake_section_from_cluster)
+    monkeypatch.setitem(module, "generate_residual_cluster_seed_variants", fake_seed_variants)
+    monkeypatch.setitem(module, "generate_residual_cluster_route_plan", lambda **_kwargs: ({}, {}, "{}", "{}"))
+    monkeypatch.setitem(module, "generate_residual_cluster_variants", lambda **_kwargs: ([], {}, "{}", "{}"))
+    monkeypatch.setitem(module, "generate_residual_cluster_retunes", lambda **_kwargs: ([], {}, "{}", "{}"))
+    monkeypatch.setitem(module, "_score_residual_variant", fake_score_variant)
+
+    result = run_v5_residual_cluster_comb_experiment(
+        input_text=original_text,
+        output_dir=tmp_path,
+        max_rounds=2,
+        variant_count=1,
+        retune_variant_count=1,
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        max_seconds=60,
+        api_key="test-key",
+    )
+
+    assert attempted_sections == ["bad", "good"]
+    assert [row["section"]["section_id"] for row in result["rounds"]] == ["bad", "good"]
+    assert [row["reason"] for row in result["rounds"]] == [
+        "no_incremental_movement",
+        "accepted_incremental_movement",
+    ]
+
+
+def test_v5_production_defaults_protect_winning_phase_budget(monkeypatch):
+    for key in (
+        "DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS",
+        "DRAFTPROOF_REWRITE_V5_RUNTIME_BASE_SECONDS",
+        "DRAFTPROOF_REWRITE_V5_RUNTIME_SECONDS_PER_100_WORDS",
+        "DRAFTPROOF_REWRITE_V5_RUNTIME_MIN_SECONDS",
+        "DRAFTPROOF_REWRITE_V5_RUNTIME_MAX_SECONDS",
+        "DRAFTPROOF_REWRITE_V5_SOFT_LIMIT_BUFFER_SECONDS",
+        "REWRITE_SOFT_TIME_LIMIT_SECONDS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    config = v5_production._production_config()
+    benchmark_text = "word " * 1526
+
+    assert config["direct_scanner_leapfrog_rounds"] == 0
+    assert config["runtime_min_seconds"] >= 900
+    assert config["runtime_max_seconds"] >= 1800
+    assert v5_production._v5_runtime_budget_seconds(benchmark_text, config) >= 1400
 
 
 def test_v5_budget_order_prefers_clearable_unsafe_clusters_without_content_rules():
