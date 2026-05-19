@@ -19,6 +19,7 @@ from enum import Enum
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
 from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
+from detect.repair_units import build_repair_units_v2
 from detect.rewrite_targets import build_problem_inventory, build_rewrite_target_profile
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
 from detect.transformation import (
@@ -4003,6 +4004,14 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             segments,
             paragraph_rows,
         )
+        repair_units_v2 = build_repair_units_v2(
+            source_text=report.original_text or "",
+            segments=segments,
+            paragraph_rows=paragraph_rows,
+            blocker_radar=blocker_radar,
+            authorship_window_profile=authorship_window_profile,
+            rewrite_target_profile=rewrite_target_profile,
+        )
         human_contract = _human_contribution_contract(
             report.original_text or "",
             segments,
@@ -4048,6 +4057,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "ai_footprint_profile": ai_footprint_profile,
                 "rewrite_target_profile": rewrite_target_profile,
                 "problem_inventory": problem_inventory,
+                "repair_units_v2": repair_units_v2,
                 "preservation_inventory": preservation_inventory,
                 "anchor_metrics": rewrite_routing_signals.get("anchor_metrics") or {},
             },
@@ -4067,6 +4077,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "ai_footprint_profile": ai_footprint_profile,
             "rewrite_target_profile": rewrite_target_profile,
             "problem_inventory": problem_inventory,
+            "repair_units_v2": repair_units_v2,
             "calibration": {
                 "raw_ai_likelihood": _pct(features.get("ai_likelihood")),
                 "adjusted_ai_risk": _pct(features.get("adjusted_ai_risk")),
@@ -4147,6 +4158,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "rewrite_routing_signals": rewrite_routing_signals,
                 "authorship_window_profile": authorship_window_profile,
                 "blocker_radar": blocker_radar,
+                "repair_units_v2": repair_units_v2,
                 "target_segment_ids": [
                     segment["segment_id"]
                     for segment in segments
@@ -4461,6 +4473,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     result["ai_footprint_profile"] = scan_intelligence.get("ai_footprint_profile") or {}
     result["rewrite_target_profile"] = scan_intelligence.get("rewrite_target_profile") or {}
     result["problem_inventory"] = scan_intelligence.get("problem_inventory") or {}
+    result["repair_units_v2"] = scan_intelligence.get("repair_units_v2") or {}
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 

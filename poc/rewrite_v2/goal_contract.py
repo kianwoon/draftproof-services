@@ -8,7 +8,7 @@ import os
 import re
 from typing import Any
 
-from rewrite_controller.eligible_span_density import build_eligible_span_density_contract
+from rewrite_controller.eligible_span_density import build_preferred_eligible_span_density_contract
 from rewrite_pipeline_core.gates.ai_footprint import _ai_footprint_gate_status
 from .external_calibration import (
     calibration_policy_to_dict,
@@ -351,7 +351,7 @@ def evaluate_rewrite_goal(
         critical_high_delta=critical_high_delta,
     )
     turnitin = _disabled_turnitin_like_gate_status()
-    density = build_eligible_span_density_contract(candidate_text, candidate_report)
+    density = build_preferred_eligible_span_density_contract(candidate_text, candidate_report)
     external_proxy = _external_detector_proxy_status(
         candidate_text=candidate_text,
         ai_footprint_gate=footprint,

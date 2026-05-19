@@ -34,7 +34,9 @@ from .formula_gap_orchestrator import (
 )
 from .eligible_span_density import (
     build_eligible_span_density_contract,
+    build_preferred_eligible_span_density_contract,
     compare_eligible_span_density,
+    scanner_owned_eligible_span_density_gate,
 )
 from .segment_window_density import (
     SEGMENT_WINDOW_CONTROLLER_VERSION,
@@ -96,7 +98,9 @@ __all__ = [
     "formula_gap_plan",
     "formula_gap_portfolio_families",
     "build_eligible_span_density_contract",
+    "build_preferred_eligible_span_density_contract",
     "compare_eligible_span_density",
+    "scanner_owned_eligible_span_density_gate",
     "SEGMENT_WINDOW_CONTROLLER_VERSION",
     "assemble_segment_window_candidate",
     "build_segment_density_windows",

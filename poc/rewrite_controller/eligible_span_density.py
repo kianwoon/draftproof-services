@@ -11,6 +11,7 @@ turns scanner output plus text into a simple contract:
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -229,6 +230,54 @@ def build_eligible_span_density_contract(text: str, report_dict: dict | None) ->
         "external_detector_inputs": external_inputs,
         "recommended_actions": _recommended_actions(safe, needs_author_context, clusters),
     }
+
+
+def build_preferred_eligible_span_density_contract(text: str, report_dict: dict | None) -> dict[str, Any]:
+    """Return scanner-owned density when the report has a matching repair-unit contract."""
+
+    scanner_gate = scanner_owned_eligible_span_density_gate(text, report_dict)
+    if scanner_gate is not None:
+        return scanner_gate
+    return build_eligible_span_density_contract(text, report_dict)
+
+
+def scanner_owned_eligible_span_density_gate(text: str, report_dict: dict | None) -> dict[str, Any] | None:
+    repair_units = _repair_units_v2(report_dict)
+    if not repair_units:
+        return None
+    expected_hash = str(repair_units.get("source_text_hash") or "")
+    if expected_hash:
+        actual_hash = hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+        if actual_hash != expected_hash:
+            return None
+    gate = repair_units.get("eligible_span_density_gate")
+    if not isinstance(gate, dict):
+        return None
+    clusters = gate.get("top_unsafe_clusters")
+    if not isinstance(clusters, list):
+        return None
+    return dict(gate)
+
+
+def _repair_units_v2(report_dict: dict | None) -> dict[str, Any] | None:
+    if not isinstance(report_dict, dict):
+        return None
+    scan_intelligence = report_dict.get("scan_intelligence")
+    scan_intelligence = scan_intelligence if isinstance(scan_intelligence, dict) else {}
+    document = scan_intelligence.get("document")
+    document = document if isinstance(document, dict) else {}
+    mitigation_inputs = scan_intelligence.get("mitigation_inputs")
+    mitigation_inputs = mitigation_inputs if isinstance(mitigation_inputs, dict) else {}
+    candidates = (
+        report_dict.get("repair_units_v2"),
+        scan_intelligence.get("repair_units_v2"),
+        document.get("repair_units_v2"),
+        mitigation_inputs.get("repair_units_v2"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("schema_version") == "repair_units.v2":
+            return candidate
+    return None
 
 
 def _cluster_row(rows: list[dict[str, Any]]) -> dict[str, Any]:

@@ -21,7 +21,7 @@ from rewrite_v2.structured_output import structured_json_request_options
 from rewrite_v3.document_units import word_count
 from rewrite_v3.pipeline import _scan_report
 from rewrite_v3.text_integrity import minimal_replacement_text_integrity
-from rewrite_controller.eligible_span_density import build_eligible_span_density_contract
+from rewrite_controller.eligible_span_density import build_preferred_eligible_span_density_contract
 from rewrite_v4.cluster_patch import build_cluster_repair_units
 from rewrite_v4.validation import parse_json_object
 
@@ -232,7 +232,7 @@ def run_v5_residual_cluster_comb_experiment(
             ),
         ),
     )
-    baseline_density_gate = build_eligible_span_density_contract(current_text, current_report)
+    baseline_density_gate = _density_gate_for_report(current_text, current_report)
     unsafe_cluster_first = _should_start_with_unsafe_cluster_cleanup(
         density_gate=baseline_density_gate,
         unsafe_cluster_cleanup_rounds=unsafe_cluster_limit,
@@ -699,7 +699,7 @@ def run_v5_residual_cluster_comb_experiment(
             "final_scores": current_scores,
         }
 
-    density_gate = build_eligible_span_density_contract(current_text, current_report)
+    density_gate = _density_gate_for_report(current_text, current_report)
     payload = {
         "stage": "v5_residual_cluster_comb",
         "baseline_scores": baseline_scores,
@@ -2525,7 +2525,7 @@ def _run_direct_scanner_leapfrog_pass(
             ))
             break
         _emit_progress(progress_callback, progress_percent, f"V5 direct scanner leapfrog {round_index}")
-        density = build_eligible_span_density_contract(current_text, current_report)
+        density = _density_gate_for_report(current_text, current_report)
         if density.get("safe"):
             rounds.append({
                 "round": round_index,
@@ -2855,7 +2855,7 @@ def _run_unsafe_cluster_cleanup_pass(
             ))
             break
         _emit_progress(progress_callback, progress_percent, f"V5 unsafe cluster cleanup {cleanup_index}")
-        density = build_eligible_span_density_contract(current_text, current_report)
+        density = _density_gate_for_report(current_text, current_report)
         if density.get("safe"):
             rounds.append({
                 "round": cleanup_index,
@@ -3525,22 +3525,28 @@ def _section_from_density_cluster(
     *,
     ordinal: int,
 ) -> SectionUnit | None:
-    rows = _sentence_rows_by_index(current_report)
-    if not rows:
-        return None
     start_index = _optional_int(cluster.get("start_sentence"))
     end_index = _optional_int(cluster.get("end_sentence"))
-    if start_index is None:
-        return None
-    if end_index is None:
-        end_index = start_index
-    selected = [row for row in rows if start_index <= int(row.get("sentence_index") or 0) <= end_index]
-    if not selected:
-        return None
-    start = min(int(row.get("start_char") or 0) for row in selected)
-    end = max(int(row.get("end_char") or 0) for row in selected)
-    if start < 0 or end <= start or end > len(current_text):
-        return None
+    direct_start = _optional_int(cluster.get("start_char"))
+    direct_end = _optional_int(cluster.get("end_char"))
+    if direct_start is not None and direct_end is not None and 0 <= direct_start < direct_end <= len(current_text):
+        start = direct_start
+        end = direct_end
+    else:
+        rows = _sentence_rows_by_index(current_report)
+        if not rows:
+            return None
+        if start_index is None:
+            return None
+        if end_index is None:
+            end_index = start_index
+        selected = [row for row in rows if start_index <= int(row.get("sentence_index") or 0) <= end_index]
+        if not selected:
+            return None
+        start = min(int(row.get("start_char") or 0) for row in selected)
+        end = max(int(row.get("end_char") or 0) for row in selected)
+        if start < 0 or end <= start or end > len(current_text):
+            return None
     start, end = _expand_to_local_text_boundaries(current_text, start, end)
     text = current_text[start:end]
     if not text.strip():
@@ -3610,6 +3616,7 @@ def _sentence_id_bounds(report: dict[str, Any], sentence_ids: Any) -> tuple[int,
 def _compact_density_gate(density: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "safe",
+        "source",
         "unsafe_sentence_count",
         "unsafe_word_count",
         "unsafe_eligible_word_ratio",
@@ -3619,6 +3626,10 @@ def _compact_density_gate(density: dict[str, Any]) -> dict[str, Any]:
         "recommended_actions",
     )
     return {key: density.get(key) for key in keys}
+
+
+def _density_gate_for_report(current_text: str, current_report: dict[str, Any]) -> dict[str, Any]:
+    return build_preferred_eligible_span_density_contract(current_text, current_report)
 
 
 def _optional_int(value: Any) -> int | None:
