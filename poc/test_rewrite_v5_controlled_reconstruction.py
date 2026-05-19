@@ -286,7 +286,7 @@ def test_v5_residual_cluster_prompt_uses_compact_repair_task():
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
     assert "current_route" not in lowered
-    assert "do not invent new names" in lowered
+    assert "traceable to source content or nearby context" in lowered
     assert "source viewpoint" in lowered
     assert "source-near" in lowered
 
@@ -334,7 +334,7 @@ def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores(
     lowered = prompt.casefold()
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
-    assert "do not invent new names" in lowered
+    assert "traceable to source content or nearby context" in lowered
 
 
 def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
@@ -373,10 +373,17 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
     assert "CLAUSE_ROUTE_CHANGE" in payload["topk_operator_options"]
     assert "content_profile_rubrics" in payload
     assert "broad_explanatory_report" in payload["content_profile_rubrics"]
+    broad_rubric = payload["content_profile_rubrics"]["broad_explanatory_report"]
+    assert "source-supported specificity" in broad_rubric["planning_focus"]
+    assert "concrete framing or explanatory bridge" in broad_rubric["planning_focus"]
+    assert "personal experience" not in broad_rubric["avoid"]
     assert "cluster_role_options" in payload
     assert "failure_pattern_options" in payload
     assert "route_strategy_options" in payload
     assert "route_plan" in payload["output_schema"]
+    lowered = prompt.casefold()
+    assert "allow source-supported specificity" in lowered
+    assert "do not use a reflective-practice route for broad report content" not in lowered
     assert set(payload["output_schema"]["route_plan"].keys()) == {
         "content_profile",
         "primary_metric",
@@ -846,6 +853,8 @@ def test_v5_direct_scanner_leapfrog_prompt_uses_scanner_cluster_and_small_varian
     lowered = prompt.casefold()
     assert "fake-human" in lowered
     assert "return the whole document" in lowered
+    assert "source-supported specificity" in lowered
+    assert "do not upgrade factual wording into encyclopedia-style substitutes" not in lowered
 
 
 def test_v5_balanced_ai_topk_selector_rejects_external_only_movement():
