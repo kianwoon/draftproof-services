@@ -286,7 +286,8 @@ def test_v5_residual_cluster_prompt_uses_compact_repair_task():
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
     assert "current_route" not in lowered
-    assert "traceable to source content or nearby context" in lowered
+    assert "relevant to the source topic" in lowered
+    assert "unverifiable named facts" in lowered
     assert "source viewpoint" in lowered
     assert "source-near" in lowered
 
@@ -334,7 +335,8 @@ def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores(
     lowered = prompt.casefold()
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
-    assert "traceable to source content or nearby context" in lowered
+    assert "relevant to the source topic" in lowered
+    assert "unverifiable named facts" in lowered
 
 
 def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
