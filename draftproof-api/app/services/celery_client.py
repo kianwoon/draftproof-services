@@ -1,9 +1,17 @@
-"""Celery client — lets the API enqueue tasks on the same broker as the worker."""
+"""Celery client — lets the API enqueue and control tasks on the worker broker."""
 
+import logging
 import ssl
 
 from celery import Celery
-from app.config import CELERY_VISIBILITY_TIMEOUT_SECONDS, REDIS_URL
+from app.config import (
+    CELERY_VISIBILITY_TIMEOUT_SECONDS,
+    REDIS_URL,
+    REWRITE_CANCEL_TERMINATE,
+    REWRITE_CANCEL_TERMINATE_SIGNAL,
+)
+
+logger = logging.getLogger("celery_client")
 
 celery_app = Celery("draftproof-api", broker=REDIS_URL, backend=None)
 
@@ -33,3 +41,21 @@ celery_app.conf.update(
 scan_document = celery_app.signature("app.tasks.scan_document")
 run_rewrite = celery_app.signature("app.tasks.run_rewrite")
 regenerate_rewrite_report_assets = celery_app.signature("app.tasks.regenerate_rewrite_report_assets")
+
+
+def cancel_rewrite_task(task_id: str) -> bool:
+    """Revoke a rewrite task and optionally terminate its running worker child.
+
+    The rewrite job row is the source of truth. If a terminated late-ack task is
+    redelivered, the worker claim step will see ``canceled`` and exit.
+    """
+    try:
+        celery_app.control.revoke(
+            str(task_id),
+            terminate=REWRITE_CANCEL_TERMINATE,
+            signal=REWRITE_CANCEL_TERMINATE_SIGNAL,
+        )
+        return True
+    except Exception:
+        logger.warning("Failed to revoke rewrite task %s", task_id, exc_info=True)
+        return False

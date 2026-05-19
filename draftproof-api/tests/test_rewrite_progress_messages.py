@@ -1,4 +1,4 @@
-from app.services import report_service, rewrite_service
+from app.services import celery_client, report_service, rewrite_service
 
 
 def test_rewrite_status_normalizes_legacy_document_progress_message():
@@ -114,6 +114,31 @@ def test_completed_non_v4_rewrite_reuse_contract_is_unchanged():
 
 def test_canceled_rewrite_does_not_block_new_rewrite_job():
     assert "canceled" not in rewrite_service._ACTIVE_REWRITE_STATUSES
+
+
+def test_cancel_rewrite_task_revokes_and_terminates_worker_child(monkeypatch):
+    calls = []
+
+    def fake_revoke(task_id, *, terminate, signal):
+        calls.append({"task_id": task_id, "terminate": terminate, "signal": signal})
+
+    monkeypatch.setattr(celery_client.celery_app.control, "revoke", fake_revoke)
+
+    assert celery_client.cancel_rewrite_task("rewrite-123") is True
+    assert calls == [{
+        "task_id": "rewrite-123",
+        "terminate": celery_client.REWRITE_CANCEL_TERMINATE,
+        "signal": celery_client.REWRITE_CANCEL_TERMINATE_SIGNAL,
+    }]
+
+
+def test_cancel_rewrite_task_is_best_effort(monkeypatch):
+    def fake_revoke(task_id, *, terminate, signal):
+        raise RuntimeError("broker unavailable")
+
+    monkeypatch.setattr(celery_client.celery_app.control, "revoke", fake_revoke)
+
+    assert celery_client.cancel_rewrite_task("rewrite-123") is False
 
 
 def test_saved_rewrite_checkpoint_with_changed_text_is_delivered_content():

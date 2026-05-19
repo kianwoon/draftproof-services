@@ -386,6 +386,7 @@ async def cancel_rewrite(rewrite_id: str, user_id: str) -> dict | None:
     """Cancel an active rewrite and release its reserved credits."""
     rewrite_uuid = uuid.UUID(rewrite_id)
     uid = uuid.UUID(user_id)
+    should_revoke_task = False
     async with async_session() as session:
         result = await session.execute(
             select(RewriteJob)
@@ -404,8 +405,13 @@ async def cancel_rewrite(rewrite_id: str, user_id: str) -> dict | None:
             await _release_active_reservation(session, job.id)
             await session.commit()
             await session.refresh(job)
+            should_revoke_task = True
         else:
             await session.commit()
+
+    if should_revoke_task:
+        from app.services.celery_client import cancel_rewrite_task
+        await asyncio.to_thread(cancel_rewrite_task, rewrite_id)
 
     return await get_rewrite(rewrite_id, user_id)
 
