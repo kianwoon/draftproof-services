@@ -60,7 +60,7 @@ export default function Pricing() {
             <h2>{t('pricing.rewriteTitle')}</h2>
             <div className="pricing-amount">
               <span className="pricing-currency">$</span>
-              <span className="pricing-value">2.70</span>
+              <span className="pricing-value">4.50</span>
               <span className="pricing-unit">{t('pricing.rewriteUnit')}</span>
             </div>
           </div>

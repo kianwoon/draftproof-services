@@ -55,10 +55,10 @@ def test_scan_cost_charges_from_301_words():
     assert scan_service._scan_cost(1001) == 2
 
 
-def test_rewrite_cost_charges_three_tokens_per_started_1000_words():
-    assert scan_service._rewrite_cost(1) == 3
-    assert scan_service._rewrite_cost(1000) == 3
-    assert scan_service._rewrite_cost(1001) == 6
+def test_rewrite_cost_charges_five_tokens_per_started_1000_words():
+    assert scan_service._rewrite_cost(1) == 5
+    assert scan_service._rewrite_cost(1000) == 5
+    assert scan_service._rewrite_cost(1001) == 10
 
 
 @pytest.mark.asyncio
