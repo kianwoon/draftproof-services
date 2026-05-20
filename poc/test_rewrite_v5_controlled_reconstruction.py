@@ -21,12 +21,14 @@ from rewrite_v5.residual_comb import (
     build_residual_cluster_prompt,
     build_residual_cluster_route_plan_prompt,
     build_residual_cluster_retune_prompt,
+    build_borderline_verdict_cleanup_prompt,
     build_route_blueprint,
     build_unsafe_cluster_cleanup_prompt,
     generate_residual_cluster_route_plan,
     run_v5_residual_cluster_comb_experiment,
     _best_full_document_candidate,
     _best_balanced_ai_topk_candidate,
+    _best_borderline_verdict_candidate,
     _balanced_ai_topk_sort_value,
     _direct_scanner_candidate_strong_enough,
     _direct_scanner_batch_policy,
@@ -53,10 +55,19 @@ from rewrite_v5.residual_comb import (
     _text_integrity_regression,
     _would_discard_structural_progress,
     _has_incremental_movement,
+    _has_core_round_acceptance_movement,
     _residual_candidate_sort_key,
     _adaptive_initial_variant_count,
     _adaptive_retune_variant_count,
     _adaptive_writer_feedback,
+    _adaptive_cutoff_blocker_state,
+    _adaptive_cutoff_runtime_budget_seconds,
+    _adaptive_cutoff_stop_event,
+    _borderline_verdict_should_run,
+    _has_borderline_verdict_movement,
+    _borderline_rejected_candidate_feedback,
+    _borderline_verdict_candidate_crosses_boundary,
+    _score_full_document_variant,
     _should_generate_adaptive_remainder,
     _should_retune_residual_candidate,
 )
@@ -703,7 +714,7 @@ def test_v5_scanner_derived_fallback_uses_structured_generic_pressure_not_keywor
     assert diagnostics["route_plan_source"] == "scanner_derived_fallback"
     assert plan["content_profile"] == "broad_explanatory_report"
     assert plan["controlled_expansion"]["required"] is True
-    assert plan["controlled_expansion"]["move"] == "explanatory_bridge"
+    assert plan["controlled_expansion"]["move"] in {"concrete_framing", "contrast_or_specific_angle", "scope_limit", "practical_consequence"}
 
 
 def test_v5_route_plan_truncation_skips_second_planner_call():
@@ -775,6 +786,8 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
 
     assert payload["execution_brief"] == route_plan
     assert payload["writer_execution_card"]["main_operator"] == "CLAUSE_ROUTE_CHANGE"
+    assert payload["writer_style_card"]["reader_level"] == "bachelor_degree"
+    assert payload["writer_execution_card"]["style_card"]["target_texture"]
     assert payload["writer_execution_card"]["route_to_write"] == "event evidence -> visible result"
     assert payload["writer_execution_card"]["unit_actions"][0]["required_action"]
     assert payload["writer_variant_plan"][0]["variant_id"] == "v1"
@@ -785,6 +798,9 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     assert payload["length_guidance"]["preferred_max_words"] == round(section.word_count * 1.10)
     lowered = prompt.casefold()
     assert "follow execution_brief.replacement_route" in lowered
+    assert "plain bachelor-level" in lowered
+    assert "source-level vocabulary" in lowered
+    assert "polished institutional" in lowered
     assert "fallback_route_blueprint" not in lowered
     assert "source-near" not in lowered
     assert "outside examples" not in lowered
@@ -1123,6 +1139,420 @@ def test_v5_residual_acceptance_keeps_local_cluster_count_drop_without_topk_delt
     }
 
     assert _has_incremental_movement(cluster_count_drop)
+
+
+def test_v5_late_core_acceptance_rejects_tiny_non_structural_gain():
+    current_scores = {
+        "ai_delta": 8.0,
+        "topk_delta": 6.0,
+        "unsafe_cluster_count_delta": 2.0,
+        "risky_window_count_delta": 2.0,
+    }
+    tiny_gain = {
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0.0,
+            "topk_calibrated_risk": 20.0,
+        },
+        "incremental": {
+            "rank_delta": 0.4,
+            "ai_delta": 0.2,
+            "topk_delta": 0.2,
+            "unsafe_cluster_count_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+        },
+    }
+    structural_gain = {
+        **tiny_gain,
+        "incremental": {
+            **tiny_gain["incremental"],
+            "unsafe_cluster_count_delta": 1.0,
+        },
+    }
+
+    assert _has_incremental_movement(tiny_gain)
+    assert not _has_core_round_acceptance_movement(tiny_gain, current_scores=current_scores, round_index=5)
+    assert _has_core_round_acceptance_movement(structural_gain, current_scores=current_scores, round_index=5)
+    assert _has_core_round_acceptance_movement(tiny_gain, current_scores=current_scores, round_index=2)
+
+
+def test_v5_adaptive_cutoff_uses_scanner_blocker_state(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SAFE_RISKY_WINDOWS", raising=False)
+    scores = {
+        "risky_window_count": 0,
+        "unsafe_cluster_count": 4,
+        "unsafe_word_ratio": 11.0,
+    }
+    density_gate = {
+        "safe": True,
+        "unsafe_cluster_count": 4,
+        "unsafe_eligible_word_ratio": 11.0,
+        "thresholds": {
+            "max_unsafe_cluster_count": 4,
+            "max_unsafe_eligible_word_ratio": 35.0,
+        },
+    }
+
+    state = _adaptive_cutoff_blocker_state(scores, density_gate)
+    event = _adaptive_cutoff_stop_event(
+        phase="before_unsafe_cluster_cleanup",
+        current_scores=scores,
+        density_gate=density_gate,
+    )
+
+    assert state["safe"]
+    assert event is not None
+    assert event["reason"] == "scanner_blockers_safe"
+
+
+def test_v5_adaptive_cutoff_keeps_running_when_risky_windows_remain(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SAFE_RISKY_WINDOWS", raising=False)
+    scores = {
+        "risky_window_count": 1,
+        "unsafe_cluster_count": 4,
+        "unsafe_word_ratio": 11.0,
+    }
+    density_gate = {
+        "safe": True,
+        "unsafe_cluster_count": 4,
+        "unsafe_eligible_word_ratio": 11.0,
+        "thresholds": {
+            "max_unsafe_cluster_count": 4,
+            "max_unsafe_eligible_word_ratio": 35.0,
+        },
+    }
+
+    state = _adaptive_cutoff_blocker_state(scores, density_gate)
+
+    assert not state["safe"]
+    assert _adaptive_cutoff_stop_event(
+        phase="before_risky_window_cleanup",
+        current_scores=scores,
+        density_gate=density_gate,
+    ) is None
+
+
+def test_v5_adaptive_runtime_budget_scales_with_length_and_pressure(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_ADAPTIVE_RUNTIME_BUDGET", raising=False)
+    density_gate = {
+        "safe": False,
+        "unsafe_cluster_count": 4,
+        "unsafe_eligible_word_ratio": 20.0,
+        "thresholds": {
+            "max_unsafe_cluster_count": 4,
+            "max_unsafe_eligible_word_ratio": 35.0,
+        },
+    }
+    pressured_density_gate = {
+        **density_gate,
+        "unsafe_cluster_count": 10,
+        "unsafe_eligible_word_ratio": 65.0,
+    }
+    low_pressure = _adaptive_cutoff_runtime_budget_seconds(
+        original_text="one two three four five",
+        baseline_density_gate=density_gate,
+        baseline_scores={"risky_window_count": 0},
+    )
+    long_low_pressure = _adaptive_cutoff_runtime_budget_seconds(
+        original_text=" ".join(["word"] * 800),
+        baseline_density_gate=density_gate,
+        baseline_scores={"risky_window_count": 0},
+    )
+    high_pressure = _adaptive_cutoff_runtime_budget_seconds(
+        original_text=" ".join(["word"] * 800),
+        baseline_density_gate=pressured_density_gate,
+        baseline_scores={"risky_window_count": 6},
+    )
+
+    assert low_pressure is not None
+    assert long_low_pressure is not None
+    assert high_pressure is not None
+    assert long_low_pressure > low_pressure
+    assert high_pressure > long_low_pressure
+    assert high_pressure <= 720.0
+
+
+def test_v5_borderline_verdict_runs_only_after_local_blockers_are_safe(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", raising=False)
+    safe_density = {
+        "safe": True,
+        "unsafe_cluster_count": 2,
+        "unsafe_eligible_word_ratio": 4.0,
+        "thresholds": {
+            "max_unsafe_cluster_count": 4,
+            "max_unsafe_eligible_word_ratio": 35.0,
+        },
+    }
+    unsafe_density = {
+        **safe_density,
+        "safe": False,
+        "unsafe_cluster_count": 8,
+        "unsafe_eligible_word_ratio": 50.0,
+    }
+
+    assert _borderline_verdict_should_run(
+        current_scores={"ai": 49.0, "external": 42.0, "risky_window_count": 0},
+        density_gate=safe_density,
+    )
+    assert not _borderline_verdict_should_run(
+        current_scores={"ai": 49.0, "external": 42.0, "risky_window_count": 0},
+        density_gate=unsafe_density,
+    )
+    assert not _borderline_verdict_should_run(
+        current_scores={"ai": 35.0, "external": 30.0, "risky_window_count": 0},
+        density_gate=safe_density,
+    )
+
+
+def test_v5_borderline_prompt_targets_global_texture_not_local_cleanup():
+    prompt = build_borderline_verdict_cleanup_prompt(
+        current_text="First paragraph stays here.\n\nSecond paragraph stays here.",
+        current_scores={
+            "ai": 49.0,
+            "external": 42.0,
+            "topk": 79.0,
+            "unsafe_cluster_count": 2,
+            "risky_window_count": 0,
+        },
+        density_gate={
+            "safe": True,
+            "top_sentence_targets": [
+                {
+                    "sentence_id": "s001",
+                    "preview": "This shift has made the role of teachers even more important.",
+                    "top10_ratio": 0.7,
+                    "predictability_risk": 0.5,
+                }
+            ],
+        },
+        variant_count=2,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "borderline_whole_document_texture_pass"
+    assert payload["length_policy"]["preserve_paragraph_count"] == 2
+    assert "whole-document texture" in payload["scanner_state"]["remaining_problem"]
+    assert payload["target_outcome"]["preferred_ai_below"] == 45.0
+    assert "preferred_external_below" not in payload["target_outcome"]
+    assert payload["target_outcome"]["max_risky_windows_after"] == 3.0
+    assert payload["writer_variant_plan"][0]["lane_goal"] == "plain_source_near_route"
+    assert any("polished abstract bridge" in item for item in payload["editorial_action"])
+    assert payload["output_schema"]["variants"][0]["text"] == "full replacement document"
+
+
+def test_v5_borderline_acceptance_requires_verdict_gain_without_structural_regression():
+    good = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 1.2,
+            "external_delta": 0.1,
+            "topk_delta": -0.1,
+            "topk_calibrated_risk_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+        },
+    }
+    regressed = {
+        **good,
+        "incremental": {
+            **good["incremental"],
+            "unsafe_cluster_count_delta": -1.0,
+        },
+    }
+    verdict_clear_with_bounded_regression = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai": 43.5,
+            "ai_authorship": 44.0,
+            "external": 40.5,
+            "risky_window_count": 2,
+            "unsafe_cluster_count": 5,
+            "unsafe_word_ratio": 20.0,
+        },
+        "incremental": {
+            "ai_delta": 4.0,
+            "external_delta": 2.0,
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 2.0,
+            "unsafe_cluster_count_delta": -3.0,
+            "risky_window_count_delta": -2.0,
+        },
+    }
+    weak = {
+        **good,
+        "incremental": {
+            **good["incremental"],
+            "ai_delta": 0.2,
+            "external_delta": 0.2,
+        },
+    }
+
+    assert _has_borderline_verdict_movement(good)
+    assert not _has_borderline_verdict_movement(regressed)
+    assert _has_borderline_verdict_movement(verdict_clear_with_bounded_regression)
+    assert not _has_borderline_verdict_movement(weak)
+
+
+def test_v5_borderline_selector_prefers_boundary_candidate_over_mild_gain():
+    mild_gain = {
+        "variant_id": "v1",
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai": 46.4,
+            "ai_authorship": 46.0,
+            "external": 45.0,
+            "risky_window_count": 0,
+            "unsafe_cluster_count": 2,
+            "unsafe_word_ratio": 4.0,
+            "ai_delta": 20.0,
+        },
+        "incremental": {
+            "ai_delta": 3.0,
+            "external_delta": 2.0,
+            "external_ai_flag_risk_delta": 2.0,
+            "ai_authorship_delta": 3.0,
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 1.0,
+            "risky_window_count_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+    }
+    crosses_boundary = {
+        "variant_id": "v2",
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai": 44.2,
+            "ai_authorship": 44.0,
+            "external": 40.7,
+            "risky_window_count": 3,
+            "unsafe_cluster_count": 5,
+            "unsafe_word_ratio": 20.0,
+            "ai_delta": 22.0,
+        },
+        "incremental": {
+            "ai_delta": 2.0,
+            "external_delta": 1.0,
+            "external_ai_flag_risk_delta": 1.0,
+            "ai_authorship_delta": 2.0,
+            "topk_delta": 0.5,
+            "topk_calibrated_risk_delta": 1.0,
+            "risky_window_count_delta": -1.0,
+            "unsafe_cluster_count_delta": -3.0,
+        },
+    }
+
+    assert _best_borderline_verdict_candidate([mild_gain, crosses_boundary])["variant_id"] == "v2"
+
+
+def test_v5_borderline_accepts_scanner_badge_boundary_when_external_score_is_lagging():
+    scanner_badge_clear = {
+        "variant_id": "v5",
+        "apply_status": {"applied": True},
+        "candidate_report": {
+            "ai_risk_badge": {
+                "authorship_rating_code": "possible_ai_assisted",
+                "authorship_rating_label": "Possible AI-Assisted",
+                "tier": "AMBER",
+                "authorship_rating": {"code": "possible_ai_assisted", "risk_level": "medium"},
+            }
+        },
+        "scores": {
+            "ai": 44.8,
+            "ai_authorship": 45.0,
+            "external": 99.0,
+            "risky_window_count": 0,
+            "unsafe_cluster_count": 4,
+            "unsafe_word_ratio": 20.0,
+        },
+        "incremental": {
+            "ai_delta": 3.0,
+            "external_delta": 1.0,
+            "external_ai_flag_risk_delta": 2.0,
+            "ai_authorship_delta": 3.0,
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 2.0,
+            "risky_window_count_delta": 0.0,
+            "unsafe_cluster_count_delta": -2.0,
+        },
+    }
+    likely_ai_badge = {
+        **scanner_badge_clear,
+        "candidate_report": {
+            "ai_risk_badge": {
+                "authorship_rating_code": "likely_ai",
+                "authorship_rating": {"code": "likely_ai", "risk_level": "high"},
+            }
+        },
+    }
+
+    assert _borderline_verdict_candidate_crosses_boundary(scanner_badge_clear)
+    assert _has_borderline_verdict_movement(scanner_badge_clear)
+    assert not _borderline_verdict_candidate_crosses_boundary(likely_ai_badge)
+
+
+def test_v5_borderline_feedback_for_rejected_boundary_candidate():
+    row = {
+        "variant_id": "v2",
+        "apply_status": {"applied": True},
+        "candidate_report": {
+            "ai_risk_badge": {
+                "authorship_rating_code": "possible_ai_assisted",
+                "authorship_rating": {"code": "possible_ai_assisted", "risk_level": "medium"},
+            }
+        },
+        "scores": {
+            "ai": 44.5,
+            "ai_authorship": 44.0,
+            "external": 41.5,
+            "external_ai_flag_risk": 44.0,
+            "topk": 81.0,
+            "topk_calibrated_risk": 49.0,
+            "risky_window_count": 2,
+            "unsafe_cluster_count": 7,
+            "unsafe_word_ratio": 24.0,
+        },
+        "incremental": {
+            "ai_delta": 4.0,
+            "external_delta": 6.0,
+            "topk_delta": -2.0,
+            "topk_calibrated_risk_delta": -7.0,
+            "risky_window_count_delta": -2.0,
+            "unsafe_cluster_count_delta": -4.0,
+        },
+    }
+
+    feedback = _borderline_rejected_candidate_feedback(
+        row,
+        current_scores={
+            "topk": 78.0,
+            "topk_calibrated_risk": 42.0,
+            "risky_window_count": 0,
+            "unsafe_cluster_count": 3,
+        },
+    )
+
+    assert feedback["status"] == "previous_candidate_reduced_verdict_score_but_failed_local_safety"
+    assert feedback["previous_variant_id"] == "v2"
+    assert any("unsafe cluster" in item for item in feedback["must_fix"])
+
+
+def test_v5_full_document_variant_rejects_compression_before_scan(tmp_path):
+    current_text = " ".join(["source"] * 120)
+    candidate = RecompositionVariant(variant_id="v1", text="short text", word_count=2)
+
+    row = _score_full_document_variant(
+        original_text=current_text,
+        baseline_report={},
+        baseline_scores={},
+        current_text=current_text,
+        current_scores={"ai": 50.0},
+        variant=candidate,
+        output_dir=tmp_path,
+        label="compressed",
+    )
+
+    assert row["apply_status"]["applied"] is False
+    assert row["apply_status"]["reason"] == "candidate_compressed_too_much"
 
 
 def test_v5_residual_seed_generator_stays_disabled_for_content_agnostic_output():
@@ -1713,6 +2143,26 @@ def test_v5_production_runtime_budget_scales_with_input_length(monkeypatch):
 
     assert v5_production._v5_runtime_budget_seconds(short_text, config) == 180
     assert v5_production._v5_runtime_budget_seconds(long_text, config) == 495
+
+
+def test_v5_production_runtime_budget_uses_adaptive_scanner_budget(monkeypatch):
+    monkeypatch.delenv("REWRITE_SOFT_TIME_LIMIT_SECONDS", raising=False)
+    monkeypatch.setattr(v5_production, "_v5_adaptive_runtime_budget_seconds", lambda **_: 300.0)
+    config = {
+        "runtime_base_seconds": 900,
+        "runtime_seconds_per_100_words": 40.0,
+        "runtime_min_seconds": 900,
+        "runtime_max_seconds": 1800,
+        "runtime_soft_limit_buffer_seconds": 60,
+    }
+
+    budget = v5_production._v5_runtime_budget_seconds(
+        "word " * 500,
+        config,
+        original_report={"status": "ok"},
+    )
+
+    assert budget == 300
 
 
 def test_v5_provider_routing_defaults_to_throughput(monkeypatch):

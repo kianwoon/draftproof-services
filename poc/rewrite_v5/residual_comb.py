@@ -237,6 +237,7 @@ def run_v5_residual_cluster_comb_experiment(
         env_name="DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS",
         default=2,
     )
+    borderline_verdict_variant_count = _borderline_verdict_variant_count(cleanup_variants)
     direct_scanner_limit = _cleanup_round_limit(
         direct_scanner_leapfrog_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS",
@@ -257,6 +258,13 @@ def run_v5_residual_cluster_comb_experiment(
         ),
     )
     baseline_density_gate = _density_gate_for_report(current_text, current_report)
+    if budget_seconds is None:
+        budget_seconds = _adaptive_cutoff_runtime_budget_seconds(
+            original_text=original_text,
+            baseline_density_gate=baseline_density_gate,
+            baseline_scores=baseline_scores,
+        )
+    adaptive_cutoff_events: list[dict[str, Any]] = []
     unsafe_cluster_first = (
         _bool_env("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_BEFORE_CORE", False)
         and _should_start_with_unsafe_cluster_cleanup(
@@ -289,6 +297,20 @@ def run_v5_residual_cluster_comb_experiment(
         "planner_model": getattr(planner_gateway, "model", None),
         "writer_model": getattr(gateway, "model", None),
         "initial_density_gate": _compact_density_gate(baseline_density_gate),
+        "borderline_verdict_cleanup": {
+            "enabled": _borderline_verdict_cleanup_enabled(),
+            "variant_count": borderline_verdict_variant_count,
+            "pass_budget_seconds": _borderline_verdict_pass_budget_seconds(),
+        },
+        "adaptive_cutoff": {
+            "enabled": _adaptive_cutoff_enabled(),
+            "runtime_budget_enabled": budget_seconds is not None,
+            "runtime_budget_seconds": round(float(budget_seconds), 3) if budget_seconds is not None else None,
+            "initial_blocker_state": _adaptive_cutoff_blocker_state(
+                baseline_scores,
+                baseline_density_gate,
+            ),
+        },
     }
 
     rounds: list[dict[str, Any]] = []
@@ -296,6 +318,7 @@ def run_v5_residual_cluster_comb_experiment(
     risky_window_rounds: list[dict[str, Any]] = []
     unsafe_cluster_rounds: list[dict[str, Any]] = []
     final_risky_window_rounds: list[dict[str, Any]] = []
+    borderline_verdict_rounds: list[dict[str, Any]] = []
     skipped_core_signatures: set[tuple[Any, ...]] = set()
     if direct_scanner_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds):
         _emit_progress(progress_callback, 67, "Running V5 direct scanner-cluster leapfrog")
@@ -374,6 +397,13 @@ def run_v5_residual_cluster_comb_experiment(
         )
         unsafe_cluster_rounds.extend(unsafe_cluster_probe_rounds)
         raise_if_canceled()
+        event = _adaptive_cutoff_stop_event(
+            phase="after_unsafe_cluster_probe",
+            current_scores=current_scores,
+            density_gate=_density_gate_for_report(current_text, current_report),
+        )
+        if event:
+            adaptive_cutoff_events.append(event)
 
     if skip_core_after_direct:
         rounds.append({
@@ -400,6 +430,22 @@ def run_v5_residual_cluster_comb_experiment(
             _residual_progress_percent(round_index, max_rounds=max_rounds),
             f"V5 cluster route round {round_index}",
         )
+        event = _adaptive_cutoff_stop_event(
+            phase="before_core_round",
+            current_scores=current_scores,
+            density_gate=_density_gate_for_report(current_text, current_report),
+        )
+        if event:
+            adaptive_cutoff_events.append({**event, "round": round_index})
+            rounds.append({
+                "round": round_index,
+                "phase": "residual_cluster_comb",
+                "status": "stopped",
+                "reason": event["reason"],
+                "adaptive_cutoff": event,
+                "current_scores": current_scores,
+            })
+            break
         round_dir = out_dir / f"round_{round_index:02d}"
         round_dir.mkdir(parents=True, exist_ok=True)
         cluster_units = build_cluster_repair_units(
@@ -649,7 +695,11 @@ def run_v5_residual_cluster_comb_experiment(
         all_rows = rows + retuned_rows
         global_best_candidate = _best_full_document_candidate([global_best_candidate, *all_rows])
         best = _best_residual_candidate(all_rows)
-        accepted = best if best and _has_incremental_movement(best) else None
+        accepted = best if best and _has_core_round_acceptance_movement(
+            best,
+            current_scores=current_scores,
+            round_index=round_index,
+        ) else None
         round_payload = {
             "round": round_index,
             "status": "accepted" if accepted else "stopped",
@@ -693,6 +743,14 @@ def run_v5_residual_cluster_comb_experiment(
             min(75, _residual_progress_percent(round_index, max_rounds=max_rounds) + 2),
             f"Accepted V5 cluster round {round_index}",
         )
+        event = _adaptive_cutoff_stop_event(
+            phase="after_core_accept",
+            current_scores=current_scores,
+            density_gate=_density_gate_for_report(current_text, current_report),
+        )
+        if event:
+            adaptive_cutoff_events.append({**event, "round": round_index})
+            break
         if _runtime_budget_exhausted(started_at, budget_seconds):
             rounds.append(_runtime_budget_stop_record(
                 phase="residual_cluster_comb",
@@ -703,7 +761,26 @@ def run_v5_residual_cluster_comb_experiment(
             ))
             break
 
-    if not _runtime_budget_exhausted(started_at, budget_seconds) and risky_window_limit > 0:
+    event = (
+        _adaptive_cutoff_stop_event(
+            phase="before_risky_window_cleanup",
+            current_scores=current_scores,
+            density_gate=_density_gate_for_report(current_text, current_report),
+        )
+        if risky_window_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds)
+        else None
+    )
+    if event:
+        adaptive_cutoff_events.append(event)
+        risky_window_rounds.append({
+            "round": 0,
+            "phase": "risky_window_cleanup",
+            "status": "skipped",
+            "reason": event["reason"],
+            "adaptive_cutoff": event,
+            "current_scores": current_scores,
+        })
+    elif not _runtime_budget_exhausted(started_at, budget_seconds) and risky_window_limit > 0:
         _emit_progress(progress_callback, 76, "Cleaning V5 risky windows")
         (
             current_text,
@@ -734,7 +811,26 @@ def run_v5_residual_cluster_comb_experiment(
         )
         raise_if_canceled()
 
-    if (
+    event = (
+        _adaptive_cutoff_stop_event(
+            phase="before_unsafe_cluster_cleanup",
+            current_scores=current_scores,
+            density_gate=_density_gate_for_report(current_text, current_report),
+        )
+        if remaining_unsafe_cluster_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds)
+        else None
+    )
+    if event:
+        adaptive_cutoff_events.append(event)
+        unsafe_cluster_rounds.append({
+            "round": 0,
+            "phase": "unsafe_cluster_cleanup",
+            "status": "skipped",
+            "reason": event["reason"],
+            "adaptive_cutoff": event,
+            "current_scores": current_scores,
+        })
+    elif (
         not _runtime_budget_exhausted(started_at, budget_seconds)
         and remaining_unsafe_cluster_limit > 0
     ):
@@ -770,7 +866,26 @@ def run_v5_residual_cluster_comb_experiment(
         )
         raise_if_canceled()
 
-    if not _runtime_budget_exhausted(started_at, budget_seconds) and final_risky_window_limit > 0:
+    event = (
+        _adaptive_cutoff_stop_event(
+            phase="before_final_risky_window_cleanup",
+            current_scores=current_scores,
+            density_gate=_density_gate_for_report(current_text, current_report),
+        )
+        if final_risky_window_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds)
+        else None
+    )
+    if event:
+        adaptive_cutoff_events.append(event)
+        final_risky_window_rounds.append({
+            "round": 0,
+            "phase": "final_risky_window_cleanup",
+            "status": "skipped",
+            "reason": event["reason"],
+            "adaptive_cutoff": event,
+            "current_scores": current_scores,
+        })
+    elif not _runtime_budget_exhausted(started_at, budget_seconds) and final_risky_window_limit > 0:
         _emit_progress(progress_callback, 78, "Final V5 risky window cleanup")
         (
             current_text,
@@ -795,6 +910,38 @@ def run_v5_residual_cluster_comb_experiment(
             variant_count=cleanup_variants,
             progress_callback=progress_callback,
             progress_percent=78,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
+            started_at=started_at,
+            max_seconds=budget_seconds,
+        )
+        raise_if_canceled()
+
+    if (
+        not _runtime_budget_exhausted(started_at, budget_seconds)
+        and _borderline_verdict_should_run(current_scores=current_scores, density_gate=_density_gate_for_report(current_text, current_report))
+    ):
+        _emit_progress(progress_callback, 79, "Running V5 borderline texture pass")
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            borderline_verdict_rounds,
+            global_best_candidate,
+        ) = _run_borderline_verdict_cleanup_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "borderline_verdict_cleanup",
+            global_best_candidate=global_best_candidate,
+            variant_count=borderline_verdict_variant_count,
+            progress_callback=progress_callback,
+            progress_percent=79,
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
@@ -841,11 +988,17 @@ def run_v5_residual_cluster_comb_experiment(
         "risky_window_cleanup_rounds": risky_window_rounds,
         "unsafe_cluster_cleanup_rounds": unsafe_cluster_rounds,
         "final_risky_window_cleanup_rounds": final_risky_window_rounds,
+        "borderline_verdict_cleanup_rounds": borderline_verdict_rounds,
         "phase_order": phase_order,
         "accepted_checkpoints": accepted_checkpoints,
         "global_best_fallback": global_best_fallback,
         "final_scores": current_scores,
         "eligible_span_density_gate": density_gate,
+        "adaptive_cutoff": {
+            "enabled": _adaptive_cutoff_enabled(),
+            "events": adaptive_cutoff_events,
+            "final_blocker_state": _adaptive_cutoff_blocker_state(current_scores, density_gate),
+        },
         "runtime_budget": _runtime_budget_payload(started_at, budget_seconds),
         "goal": {
             "status": current_goal.get("status"),
@@ -967,6 +1120,359 @@ def _runtime_budget_seconds(value: float | None) -> float | None:
     return seconds if seconds > 0 else None
 
 
+def _adaptive_cutoff_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_ADAPTIVE_CUTOFF", True)
+
+
+def _adaptive_cutoff_runtime_budget_seconds(
+    *,
+    original_text: str,
+    baseline_density_gate: dict[str, Any],
+    baseline_scores: dict[str, Any],
+) -> float | None:
+    if not _adaptive_cutoff_enabled():
+        return None
+    if not _bool_env("DRAFTPROOF_REWRITE_V5_ADAPTIVE_RUNTIME_BUDGET", True):
+        return None
+    words = max(1, int(word_count(str(original_text or ""))))
+    state = _adaptive_cutoff_blocker_state(baseline_scores, baseline_density_gate)
+    pressure = (
+        _number(state.get("risky_window_over_limit"))
+        + _number(state.get("unsafe_cluster_over_limit"))
+        + (_number(state.get("unsafe_word_ratio_over_limit")) / 10.0)
+    )
+    base_seconds = _float_env(
+        "DRAFTPROOF_REWRITE_V5_CUTOFF_BASE_SECONDS",
+        75.0,
+        minimum=0.0,
+        maximum=900.0,
+    )
+    seconds_per_100_words = _float_env(
+        "DRAFTPROOF_REWRITE_V5_CUTOFF_SECONDS_PER_100_WORDS",
+        30.0,
+        minimum=0.0,
+        maximum=300.0,
+    )
+    seconds_per_blocker = _float_env(
+        "DRAFTPROOF_REWRITE_V5_CUTOFF_SECONDS_PER_BLOCKER",
+        20.0,
+        minimum=0.0,
+        maximum=180.0,
+    )
+    min_seconds = _float_env(
+        "DRAFTPROOF_REWRITE_V5_CUTOFF_MIN_SECONDS",
+        180.0,
+        minimum=30.0,
+        maximum=1800.0,
+    )
+    max_seconds = _float_env(
+        "DRAFTPROOF_REWRITE_V5_CUTOFF_MAX_SECONDS",
+        720.0,
+        minimum=60.0,
+        maximum=3600.0,
+    )
+    computed = base_seconds + (words / 100.0 * seconds_per_100_words) + (pressure * seconds_per_blocker)
+    if _borderline_verdict_cleanup_enabled():
+        computed += _borderline_verdict_pass_budget_seconds()
+    return max(min_seconds, min(max_seconds, computed))
+
+
+def _adaptive_cutoff_blocker_state(
+    current_scores: dict[str, Any],
+    density_gate: dict[str, Any],
+) -> dict[str, Any]:
+    scores = current_scores if isinstance(current_scores, dict) else {}
+    density = density_gate if isinstance(density_gate, dict) else {}
+    risky_limit = _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_RISKY_WINDOWS",
+        0.0,
+        minimum=0.0,
+        maximum=50.0,
+    )
+    unsafe_cluster_limit = _density_gate_threshold(
+        density,
+        "max_unsafe_cluster_count",
+        env_name="DRAFTPROOF_REWRITE_V5_DEFAULT_SAFE_UNSAFE_CLUSTERS",
+        default=4.0,
+        maximum=200.0,
+    )
+    unsafe_word_ratio_limit = _density_gate_threshold(
+        density,
+        "max_unsafe_eligible_word_ratio",
+        env_name="DRAFTPROOF_REWRITE_V5_DEFAULT_SAFE_UNSAFE_WORD_RATIO",
+        default=35.0,
+        maximum=100.0,
+    )
+    risky_windows = _number(scores.get("risky_window_count"))
+    unsafe_clusters = _number(density.get("unsafe_cluster_count"))
+    if unsafe_clusters <= 0 and "unsafe_cluster_count" not in density:
+        unsafe_clusters = _number(scores.get("unsafe_cluster_count"))
+    unsafe_word_ratio = _number(density.get("unsafe_eligible_word_ratio"))
+    if unsafe_word_ratio <= 0 and "unsafe_eligible_word_ratio" not in density:
+        unsafe_word_ratio = _number(scores.get("unsafe_word_ratio"))
+    risky_over = max(0.0, risky_windows - risky_limit)
+    unsafe_cluster_over = max(0.0, unsafe_clusters - unsafe_cluster_limit)
+    unsafe_word_ratio_over = max(0.0, unsafe_word_ratio - unsafe_word_ratio_limit)
+    unsafe_density_safe = density.get("safe") is True or (
+        unsafe_cluster_over <= 0.0
+        and unsafe_word_ratio_over <= 0.0
+    )
+    return {
+        "safe": risky_over <= 0.0 and unsafe_density_safe,
+        "risky_window_count": risky_windows,
+        "risky_window_limit": risky_limit,
+        "risky_window_over_limit": risky_over,
+        "unsafe_cluster_count": unsafe_clusters,
+        "unsafe_cluster_limit": unsafe_cluster_limit,
+        "unsafe_cluster_over_limit": unsafe_cluster_over,
+        "unsafe_word_ratio": unsafe_word_ratio,
+        "unsafe_word_ratio_limit": unsafe_word_ratio_limit,
+        "unsafe_word_ratio_over_limit": unsafe_word_ratio_over,
+        "unsafe_density_safe": unsafe_density_safe,
+        "density_gate_safe": density.get("safe"),
+    }
+
+
+def _adaptive_cutoff_stop_event(
+    *,
+    phase: str,
+    current_scores: dict[str, Any],
+    density_gate: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not _adaptive_cutoff_enabled():
+        return None
+    state = _adaptive_cutoff_blocker_state(current_scores, density_gate)
+    if not state.get("safe"):
+        return None
+    return {
+        "phase": phase,
+        "reason": "scanner_blockers_safe",
+        "blocker_state": state,
+        "density_gate": _compact_density_gate(density_gate),
+    }
+
+
+def _borderline_verdict_cleanup_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", True)
+
+
+def _borderline_verdict_variant_count(default_count: int | None = None) -> int:
+    configured = os.environ.get("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_VARIANTS")
+    if configured is not None:
+        return _int_env("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_VARIANTS", 2, minimum=1, maximum=5)
+    return max(1, min(5, int(default_count or 2)))
+
+
+def _borderline_verdict_pass_budget_seconds() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_BUDGET_SECONDS",
+        180.0,
+        minimum=0.0,
+        maximum=600.0,
+    )
+
+
+def _borderline_verdict_max_rounds() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_MAX_ROUNDS",
+        2,
+        minimum=1,
+        maximum=3,
+    )
+
+
+def _borderline_min_word_ratio() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MIN_WORD_RATIO",
+        0.85,
+        minimum=0.5,
+        maximum=1.0,
+    )
+
+
+def _borderline_max_word_ratio() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_WORD_RATIO",
+        1.35,
+        minimum=1.0,
+        maximum=2.0,
+    )
+
+
+def _borderline_verdict_should_run(
+    *,
+    current_scores: dict[str, Any],
+    density_gate: dict[str, Any],
+) -> bool:
+    if not _borderline_verdict_cleanup_enabled():
+        return False
+    if not isinstance(density_gate, dict) or density_gate.get("safe") is not True:
+        return False
+    state = _adaptive_cutoff_blocker_state(current_scores, density_gate)
+    if not state.get("safe"):
+        return False
+    ai_threshold = _float_env("DRAFTPROOF_REWRITE_V5_BORDERLINE_AI_THRESHOLD", 45.0, minimum=0.0, maximum=100.0)
+    authorship_threshold = _float_env("DRAFTPROOF_REWRITE_V5_BORDERLINE_AUTHORSHIP_THRESHOLD", 45.0, minimum=0.0, maximum=100.0)
+    external_threshold = _float_env("DRAFTPROOF_REWRITE_V5_BORDERLINE_EXTERNAL_THRESHOLD", 40.0, minimum=0.0, maximum=100.0)
+    density_threshold = _float_env("DRAFTPROOF_REWRITE_V5_BORDERLINE_QUALIFYING_DENSITY_THRESHOLD", 70.0, minimum=0.0, maximum=100.0)
+    return any(
+        _number(current_scores.get(key)) >= threshold
+        for key, threshold in (
+            ("ai", ai_threshold),
+            ("ai_authorship", authorship_threshold),
+            ("external", external_threshold),
+            ("external_ai_flag_risk", external_threshold),
+            ("qualifying_text_ai_density", density_threshold),
+        )
+    )
+
+
+def _borderline_sentence_pressure(density_gate: dict[str, Any]) -> list[dict[str, Any]]:
+    density = density_gate if isinstance(density_gate, dict) else {}
+    targets = density.get("top_sentence_targets") if isinstance(density.get("top_sentence_targets"), list) else []
+    rows: list[dict[str, Any]] = []
+    for row in targets:
+        if not isinstance(row, dict):
+            continue
+        preview = str(row.get("preview") or "").strip()
+        if not preview:
+            continue
+        rows.append({
+            "sentence_id": row.get("sentence_id"),
+            "preview": preview[:280],
+            "word_count": row.get("word_count"),
+            "generic_hits": row.get("generic_hits"),
+            "top10_ratio": row.get("top10_ratio"),
+            "top50_ratio": row.get("top50_ratio"),
+            "predictability_risk": row.get("predictability_risk"),
+        })
+        if len(rows) >= 8:
+            break
+    return rows
+
+
+def _borderline_verdict_target_outcome() -> dict[str, Any]:
+    return {
+        "preferred_ai_below": _float_env(
+            "DRAFTPROOF_REWRITE_V5_BORDERLINE_ACCEPT_AI_BELOW",
+            45.0,
+            minimum=0.0,
+            maximum=100.0,
+        ),
+        "preferred_authorship_below": _float_env(
+            "DRAFTPROOF_REWRITE_V5_BORDERLINE_ACCEPT_AUTHORSHIP_BELOW",
+            45.0,
+            minimum=0.0,
+            maximum=100.0,
+        ),
+        "max_risky_windows_after": _float_env(
+            "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_RISKY_WINDOWS_AFTER",
+            3.0,
+            minimum=0.0,
+            maximum=20.0,
+        ),
+        "max_unsafe_clusters_after": _float_env(
+            "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_UNSAFE_CLUSTERS_AFTER",
+            5.0,
+            minimum=0.0,
+            maximum=50.0,
+        ),
+        "max_unsafe_word_ratio_after": _float_env(
+            "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_UNSAFE_WORD_RATIO_AFTER",
+            35.0,
+            minimum=0.0,
+            maximum=100.0,
+        ),
+    }
+
+
+def _borderline_writer_variant_plan(
+    *,
+    variant_count: int,
+    target_outcome: dict[str, Any],
+) -> list[dict[str, Any]]:
+    templates = [
+        {
+            "variant_id": "v1",
+            "lane_goal": "plain_source_near_route",
+            "must_change": [
+                "replace abstract bridge phrases with simpler source-level wording",
+                "make the old-model to current-learning transition less polished",
+                "keep concrete school terms visible",
+            ],
+        },
+        {
+            "variant_id": "v2",
+            "lane_goal": "sentence_pressure_route_break",
+            "must_change": [
+                "rewrite the remaining high-pressure sentences by changing their starting logic",
+                "break broad claim to explanation patterns",
+                "use shorter connective sentences where the current bridge is too smooth",
+            ],
+        },
+        {
+            "variant_id": "v3",
+            "lane_goal": "concrete_relation_reframe",
+            "must_change": [
+                "turn broad institutional labels into concrete relations between students, teachers, tools, and assessment",
+                "avoid replacing simple words with formal academic wording",
+                "keep the argument intact while making the relation more direct",
+            ],
+        },
+        {
+            "variant_id": "v4",
+            "lane_goal": "list_and_rhythm_break",
+            "must_change": [
+                "break list-heavy sentence rhythm without dropping listed ideas",
+                "vary sentence weight across the document",
+                "avoid stacked categories that read like a summary template",
+            ],
+        },
+        {
+            "variant_id": "v5",
+            "lane_goal": "decisive_boundary_push",
+            "must_change": [
+                "make a stronger whole-document texture change than mild copyediting",
+                "touch several paragraph bridge sentences while preserving paragraph order",
+                "prefer plain explanatory movement over polished conclusion wording",
+            ],
+        },
+    ]
+    variants = max(1, min(5, int(variant_count or 1)))
+    selected = [dict(row) for row in templates[:variants]]
+    for index, row in enumerate(selected, start=1):
+        row["variant_id"] = f"v{index}"
+        row["target_outcome"] = target_outcome
+        row["must_preserve"] = [
+            "same paragraph count",
+            "same central argument",
+            "no new personal story or named factual claim",
+            "no compression below the minimum word policy",
+        ]
+    return selected
+
+
+def _paragraph_count(text: str) -> int:
+    return max(1, sum(1 for block in str(text or "").split("\n\n") if block.strip()))
+
+
+def _density_gate_threshold(
+    density_gate: dict[str, Any],
+    key: str,
+    *,
+    env_name: str,
+    default: float,
+    maximum: float,
+) -> float:
+    density = density_gate if isinstance(density_gate, dict) else {}
+    thresholds = density.get("thresholds") if isinstance(density.get("thresholds"), dict) else {}
+    if key in thresholds:
+        value = _number(thresholds.get(key))
+        if value > 0:
+            return value
+    return _float_env(env_name, default, minimum=0.0, maximum=maximum)
+
+
 def _planner_gateway(
     *,
     fallback_gateway: LLMGateway,
@@ -1077,6 +1583,7 @@ def build_residual_cluster_prompt(
         },
         "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=plan),
         "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=plan),
+        "writer_style_card": _writer_style_card(section=section, route_plan=plan),
         "remaining_problem_sentences": _local_unsafe_previews(local_goal or {}),
         "output_schema": {
             "variants": [
@@ -1131,6 +1638,11 @@ def build_residual_cluster_retune_prompt(
         },
         "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=plan),
         "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=plan),
+        "writer_style_card": _writer_style_card(
+            section=section,
+            route_plan=plan,
+            current_best_text=current_best_text,
+        ),
         "remaining_problem_sentences": focus,
         "retune_focus": _retune_focus_from_goal(local_goal or {}),
         "candidate_non_source_terms_to_reduce": _non_source_terms(section.text, current_best_text),
@@ -1554,10 +2066,16 @@ def _scanner_derived_controlled_expansion(
     )
     if not required:
         return {"required": False, "move": "none", "instruction": "", "why_needed": ""}
+    move = _controlled_expansion_move_for_context(
+        content_profile=content_profile,
+        primary_metric=primary_metric,
+        target_count=target_count,
+        sentence_count=sentence_count,
+    )
     return {
         "required": True,
-        "move": "explanatory_bridge",
-        "instruction": "Add one concise explanatory bridge or concrete frame that changes how the affected source units connect.",
+        "move": move,
+        "instruction": _controlled_expansion_instruction(move),
         "why_needed": "The scanner fallback sees broad affected-unit movement that will not be fixed by preserving the same route.",
     }
 
@@ -1579,6 +2097,7 @@ def _generate_residual_cluster_route_plan_once(
     prompt = build_residual_cluster_route_plan_prompt(section=section, local_goal=local_goal)
     structured = structured_json_request_options(getattr(gateway, "model", None), _route_plan_response_format())
     provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
+    started = time.monotonic()
     response = gateway.chat(
         prompt,
         system="Return only valid JSON with a route_plan object.",
@@ -1588,6 +2107,7 @@ def _generate_residual_cluster_route_plan_once(
         top_p=_float_env("DRAFTPROOF_REWRITE_V5_ROUTE_PLAN_TOP_P", 0.72, minimum=0.1, maximum=1.0),
         max_tokens=_int_env("DRAFTPROOF_REWRITE_V5_ROUTE_PLAN_MAX_TOKENS", 2600, minimum=800, maximum=6000),
     )
+    elapsed = time.monotonic() - started
     raw = response.raw_content or response.content
     parsed, diagnostics = _parse_route_plan(raw, source_text=section.text)
     return parsed, {
@@ -1598,6 +2118,7 @@ def _generate_residual_cluster_route_plan_once(
         "finish_reason": response.finish_reason,
         "native_finish_reason": response.native_finish_reason,
         "structured_output_mode": structured.get("structured_output_mode"),
+        "elapsed_seconds": round(elapsed, 3),
     }, prompt, raw
 
 
@@ -1623,6 +2144,7 @@ def _compact_route_plan_attempt(diagnostics: dict[str, Any]) -> dict[str, Any]:
         "structured_output_mode": diagnostics.get("structured_output_mode"),
         "finish_reason": diagnostics.get("finish_reason"),
         "native_finish_reason": diagnostics.get("native_finish_reason"),
+        "elapsed_seconds": diagnostics.get("elapsed_seconds"),
         "total_tokens": usage.get("total_tokens"),
         "cost": usage.get("cost"),
     }
@@ -1686,6 +2208,43 @@ def _coverage_guidance_for_route_plan(*, section: SectionUnit, route_plan: dict[
     }
 
 
+def _writer_style_card(
+    *,
+    section: SectionUnit,
+    route_plan: dict[str, Any] | None,
+    current_best_text: str | None = None,
+) -> dict[str, Any]:
+    plan = route_plan if _route_plan_valid(route_plan) else {}
+    profile = _content_profile(plan.get("content_profile"))
+    role = _cluster_role(plan.get("cluster_role"))
+    candidate_terms = _non_source_terms(section.text, current_best_text or "")[:8] if current_best_text else []
+    texture_rules = [
+        "Use plain bachelor-level report or essay wording.",
+        "Keep the source's natural vocabulary level when it is already clear.",
+        "Make route movement through sentence relation, clause order, grouping, or a narrow bridge.",
+        "Do not upgrade simple source wording into formal labels, journal-style phrasing, or professional copywriting voice.",
+        "Do not make every sentence equally balanced, equally polished, or driven by the same newly added route word.",
+    ]
+    if profile == "broad_explanatory_report":
+        texture_rules.append("For broad report content, add specificity through concrete framing or a limited bridge, not abstract summary language.")
+    elif profile in {"reflective_practice_academic", "narrative_or_case_reflection"}:
+        texture_rules.append("For reflective or case content, keep the practical event, action, or observed result ahead of broad interpretation.")
+    return {
+        "reader_level": "bachelor_degree",
+        "content_profile": profile,
+        "cluster_role": role,
+        "target_texture": [
+            "plain report or essay prose",
+            "clear but not over-polished",
+            "source-level wording with visible route movement",
+            "slightly varied sentence weight",
+        ],
+        "texture_rules": texture_rules,
+        "source_tone_anchors": _source_phrase_anchors(section.text)[:8],
+        "candidate_terms_to_reduce": candidate_terms,
+    }
+
+
 def _writer_execution_card(*, section: SectionUnit, route_plan: dict[str, Any] | None) -> dict[str, Any]:
     plan = route_plan if _route_plan_valid(route_plan) else {}
     topk = plan.get("topk_route_diagnosis") if isinstance(plan.get("topk_route_diagnosis"), dict) else {}
@@ -1723,6 +2282,7 @@ def _writer_execution_card(*, section: SectionUnit, route_plan: dict[str, Any] |
         "operator_stack": operator_stack[:5],
         "operator_execution_notes": _operator_execution_notes(operator_stack[:5]),
         "controlled_expansion": controlled_expansion,
+        "style_card": _writer_style_card(section=section, route_plan=plan),
         "hard_failures": _HARD_WRITER_FAILURES,
         "route_to_break": topk.get("predictable_path") or plan.get("failed_route"),
         "route_to_write": topk.get("replacement_route") or plan.get("replacement_route"),
@@ -1815,6 +2375,7 @@ def _adaptive_retry_rules(feedback: dict[str, Any]) -> list[str]:
         "Treat score_feedback as the reason the previous candidate batch failed.",
         "Do not repeat the rejected sentence route, opener pattern, or list rhythm.",
         "Make the next variants visibly execute writer_execution_card.main_operator.",
+        "If previous variants sounded over-polished, reduce formal labels and return to writer_style_card.source_tone_anchors.",
         "Preserve the paragraph role and avoid only hard failures: fake personal stories, fake citations, fake statistics, fake dates, fake named events, broken meaning, markup, junk, or corrupted output.",
     ]
     if reason == "topk_route_not_moved":
@@ -1829,6 +2390,7 @@ def _adaptive_retry_rules(feedback: dict[str, Any]) -> list[str]:
 def _custom_route_writer_method() -> list[str]:
     return [
         "Treat writer_execution_card as the highest-priority execution summary; it is the compact version of execution_brief.",
+        "Treat writer_style_card as the tone boundary for the replacement.",
         "If assigned_writer_variant is present, execute that one lane brief above the full writer_variant_plan.",
         "Follow the assigned route shape so variants are genuinely different route executions, not near-duplicate paraphrases.",
         "Use execution_brief.content_profile and execution_brief.cluster_role to choose the right kind of route movement.",
@@ -1843,12 +2405,16 @@ def _custom_route_writer_method() -> list[str]:
         "Use coverage_guidance to keep the replacement complete, but do not let coverage copy the old route.",
         "When writer_execution_card.controlled_expansion.required is true, every variant must execute its controlled expansion move.",
         "For broad_explanatory_report, controlled expansion may add explanatory bridges, concrete framing, scope limits, practical consequences, contrasts, or a sharper specific angle.",
+        "Write controlled expansion in the same plain source-level vocabulary; do not upgrade it into polished institutional or journal-style phrasing.",
         "Follow execution_brief.replacement_route while rewriting the whole cluster.",
         "Satisfy every execution_brief.must_change item.",
         "Preserve hard anchors from execution_brief.must_preserve, but do not treat ordinary source wording as untouchable.",
         "Follow execution_brief.sentence_plan in order, but do not copy plan labels into the replacement.",
         "Avoid execution_brief.avoid_phrases unless the phrase is a required source term.",
         "Use length_guidance; do not compress the cluster into a summary.",
+        "Use writer_style_card.source_tone_anchors where they fit naturally.",
+        "Reduce writer_style_card.candidate_terms_to_reduce when retuning a previous candidate.",
+        "Do not make every sentence equally polished, equally balanced, or driven by the same newly added route word.",
         "Change remaining_problem_sentences most strongly.",
         "Keep the same paragraph role, point of view, and referential continuity.",
         "Any new connective wording, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
@@ -1861,6 +2427,7 @@ def _custom_route_writer_method() -> list[str]:
 def _custom_route_retune_method() -> list[str]:
     return [
         "Treat writer_execution_card as the highest-priority execution summary; it is the compact version of execution_brief.",
+        "Treat writer_style_card as the tone boundary for the replacement.",
         "If assigned_writer_variant is present, execute that one lane brief above the full writer_variant_plan.",
         "Follow the assigned route shape so variants are genuinely different route executions, not near-duplicate paraphrases.",
         "Use execution_brief.content_profile and execution_brief.cluster_role to choose the right kind of route movement.",
@@ -1875,6 +2442,7 @@ def _custom_route_retune_method() -> list[str]:
         "Use coverage_guidance to keep the replacement complete, but do not let coverage copy the old route.",
         "When writer_execution_card.controlled_expansion.required is true, every variant must execute its controlled expansion move.",
         "For broad_explanatory_report, controlled expansion may add explanatory bridges, concrete framing, scope limits, practical consequences, contrasts, or a sharper specific angle.",
+        "Write controlled expansion in the same plain source-level vocabulary; do not upgrade it into polished institutional or journal-style phrasing.",
         "Follow execution_brief.replacement_route while rewriting the whole cluster again.",
         "Satisfy every execution_brief.must_change item while focusing on remaining_problem_sentences.",
         "Preserve hard anchors from execution_brief.must_preserve, but do not treat ordinary source wording as untouchable.",
@@ -1882,6 +2450,9 @@ def _custom_route_retune_method() -> list[str]:
         "Avoid execution_brief.avoid_phrases unless the phrase is a required source term.",
         "Use retune_focus and candidate_non_source_terms_to_reduce only to clean the current best wording.",
         "Use length_guidance; do not compress the cluster into a summary.",
+        "Use writer_style_card.source_tone_anchors where they fit naturally.",
+        "Reduce writer_style_card.candidate_terms_to_reduce before adding new phrasing.",
+        "Do not make every sentence equally polished, equally balanced, or driven by the same newly added route word.",
         "Keep the same paragraph role, point of view, and referential continuity.",
         "Any new connective wording, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
         "Do not trigger writer_execution_card.hard_failures.",
@@ -2056,6 +2627,7 @@ def build_risky_window_cleanup_prompt(
             "goal": "Rewrite only this window by executing the planned failed-route to replacement-route brief.",
             "execution_brief": route_plan,
             "writer_execution_card": _writer_execution_card(section=section, route_plan=route_plan),
+            "writer_style_card": _writer_style_card(section=section, route_plan=route_plan),
             "writer_variant_plan": _writer_variant_plan(variant_count=variants, route_plan=route_plan),
             "source_blocks": _source_blocks(section.text),
             "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=route_plan),
@@ -2133,12 +2705,105 @@ def build_unsafe_cluster_cleanup_prompt(
             "goal": "Rewrite only this local cluster by executing the planned failed-route to replacement-route brief.",
             "execution_brief": route_plan,
             "writer_execution_card": _writer_execution_card(section=section, route_plan=route_plan),
+            "writer_style_card": _writer_style_card(section=section, route_plan=route_plan),
             "writer_variant_plan": _writer_variant_plan(variant_count=variants, route_plan=route_plan),
             "source_blocks": _source_blocks(section.text),
             "coverage_guidance": _coverage_guidance_for_route_plan(section=section, route_plan=route_plan),
             "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=route_plan),
             "method": _custom_route_writer_method(),
         })
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def build_borderline_verdict_cleanup_prompt(
+    *,
+    current_text: str,
+    current_scores: dict[str, Any],
+    density_gate: dict[str, Any],
+    variant_count: int = 2,
+    round_index: int = 1,
+    retry_feedback: dict[str, Any] | None = None,
+) -> str:
+    variants = max(1, min(5, int(variant_count or 1)))
+    source_words = max(1, word_count(current_text))
+    target_outcome = _borderline_verdict_target_outcome()
+    payload = {
+        "task": "borderline_whole_document_texture_pass",
+        "goal": (
+            "Revise the full current_text once so the whole document reads less uniformly polished "
+            "and more like a careful bachelor-level edited draft, while preserving meaning."
+        ),
+        "round": {
+            "round_index": max(1, int(round_index or 1)),
+            "instruction": (
+                "This is a verdict-focused pass. Mild copyediting is not enough; the validator will keep only "
+                "a candidate with measurable scanner movement and safe structure."
+            ),
+        },
+        "current_text": current_text,
+        "scanner_state": {
+            "local_blockers_cleared": True,
+            "remaining_problem": "whole-document texture is still too uniform, abstract, or template-like",
+            "scores": {
+                "ai": current_scores.get("ai"),
+                "ai_authorship": current_scores.get("ai_authorship"),
+                "external": current_scores.get("external"),
+                "external_ai_flag_risk": current_scores.get("external_ai_flag_risk"),
+                "topk": current_scores.get("topk"),
+                "topk_calibrated_risk": current_scores.get("topk_calibrated_risk"),
+                "qualifying_text_ai_density": current_scores.get("qualifying_text_ai_density"),
+                "risky_window_count": current_scores.get("risky_window_count"),
+                "unsafe_cluster_count": current_scores.get("unsafe_cluster_count"),
+            },
+            "remaining_sentence_pressure": _borderline_sentence_pressure(density_gate),
+        },
+        "target_outcome": target_outcome,
+        "editorial_action": [
+            "Keep the existing paragraph order and argument.",
+            "Replace polished abstract bridge wording with plain source-level wording.",
+            "Where a sentence uses a broad institutional label, turn it into a simpler concrete relation already implied by the paragraph.",
+            "Vary sentence weight slightly; do not make every bridge sentence equally smooth.",
+            "Do not chase local unsafe clusters; the local blockers are already safe.",
+            "Touch more than one paragraph when the whole document has a uniform texture problem.",
+        ],
+        "style_boundary": [
+            "plain bachelor-level report or essay prose",
+            "clear, natural, and source-near",
+            "not casual, slangy, decorative, or fake-personal",
+            "not polished institutional, marketing, journal-style, or textbook-summary phrasing",
+        ],
+        "length_policy": {
+            "source_words": source_words,
+            "do_not_compress_below_words": round(source_words * _borderline_min_word_ratio()),
+            "more_words_allowed_if_needed": True,
+            "preserve_paragraph_count": _paragraph_count(current_text),
+        },
+        "hard_failures": [
+            "new personal story",
+            "fake citation",
+            "fake statistic",
+            "fake date",
+            "fake named event",
+            "broken meaning",
+            "lost paragraph",
+            "markdown",
+            "HTML",
+            "commentary",
+            "junk or corrupted output",
+        ],
+        "writer_variant_plan": _borderline_writer_variant_plan(
+            variant_count=variants,
+            target_outcome=target_outcome,
+        ),
+        "output_schema": {
+            "variants": [
+                {"variant_id": f"v{index}", "text": "full replacement document"}
+                for index in range(1, variants + 1)
+            ]
+        },
+    }
+    if isinstance(retry_feedback, dict) and retry_feedback:
+        payload["previous_rejection_feedback"] = retry_feedback
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -2244,6 +2909,7 @@ def build_direct_scanner_leapfrog_prompt(
     if plan:
         payload["execution_brief"] = plan
         payload["writer_execution_card"] = _writer_execution_card(section=section, route_plan=plan)
+        payload["writer_style_card"] = _writer_style_card(section=section, route_plan=plan)
         payload["writer_variant_plan"] = _writer_variant_plan(variant_count=variants, route_plan=plan)
         payload["coverage_guidance"] = _coverage_guidance_for_route_plan(section=section, route_plan=plan)
     else:
@@ -2291,6 +2957,30 @@ def generate_unsafe_cluster_cleanup_variants(
             density_cluster=density_cluster,
             variant_count=count,
             route_plan=route_plan,
+        ),
+        gateway=gateway,
+        variant_count=variant_count,
+    )
+
+
+def generate_borderline_verdict_cleanup_variants(
+    *,
+    current_text: str,
+    current_scores: dict[str, Any],
+    density_gate: dict[str, Any],
+    gateway: LLMGateway,
+    variant_count: int = 2,
+    round_index: int = 1,
+    retry_feedback: dict[str, Any] | None = None,
+) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
+    return _generate_loose_variants_from_builder(
+        prompt_builder=lambda count: build_borderline_verdict_cleanup_prompt(
+            current_text=current_text,
+            current_scores=current_scores,
+            density_gate=density_gate,
+            variant_count=count,
+            round_index=round_index,
+            retry_feedback=retry_feedback,
         ),
         gateway=gateway,
         variant_count=variant_count,
@@ -2576,6 +3266,7 @@ def _compact_parallel_lane_diagnostics(value: Any) -> dict[str, Any]:
         "status": diagnostics.get("status"),
         "reason": diagnostics.get("reason"),
         "variant_count": diagnostics.get("variant_count"),
+        "elapsed_seconds": diagnostics.get("elapsed_seconds"),
         "finish_reason": diagnostics.get("finish_reason"),
         "native_finish_reason": diagnostics.get("native_finish_reason"),
         "structured_output_mode": diagnostics.get("structured_output_mode"),
@@ -2593,6 +3284,7 @@ def _generate_loose_variants(
     variants = max(1, min(5, int(variant_count or 1)))
     structured = structured_json_request_options(getattr(gateway, "model", None), _variants_response_format(variants))
     provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
+    started = time.monotonic()
     response = gateway.chat(
         prompt,
         system="Return only valid JSON with a variants array.",
@@ -2602,6 +3294,7 @@ def _generate_loose_variants(
         top_p=_float_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_TOP_P", 0.9, minimum=0.1, maximum=1.0),
         max_tokens=max_tokens if max_tokens is not None else _int_env("DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_MAX_TOKENS", 8000, minimum=1000, maximum=12000),
     )
+    elapsed = time.monotonic() - started
     raw = response.raw_content or response.content
     parsed, diagnostics = _parse_loose_variants(raw)
     return parsed, {
@@ -2612,6 +3305,7 @@ def _generate_loose_variants(
         "finish_reason": response.finish_reason,
         "native_finish_reason": response.native_finish_reason,
         "structured_output_mode": structured.get("structured_output_mode"),
+        "elapsed_seconds": round(elapsed, 3),
     }, prompt, raw
 
 
@@ -2827,6 +3521,38 @@ def _controlled_expansion_move(value: Any) -> str:
     return "none"
 
 
+def _controlled_expansion_move_for_context(
+    *,
+    content_profile: str,
+    primary_metric: str,
+    target_count: int,
+    sentence_count: int,
+) -> str:
+    profile = _content_profile(content_profile)
+    metric = _primary_metric(primary_metric)
+    if profile != "broad_explanatory_report":
+        return "explanatory_bridge"
+    if metric == "topk_density":
+        return "contrast_or_specific_angle" if target_count >= 3 else "concrete_framing"
+    if metric == "unsafe_cluster_count":
+        return "scope_limit" if target_count >= 3 else "practical_consequence"
+    if sentence_count >= 4:
+        return "concrete_framing"
+    return "explanatory_bridge"
+
+
+def _controlled_expansion_instruction(move: str) -> str:
+    normalized = _controlled_expansion_move(move)
+    instructions = {
+        "explanatory_bridge": "Add one short bridge that explains why two source beats belong together without turning it into a broad conclusion.",
+        "concrete_framing": "Frame the broad claim through concrete terms already visible in the cluster before returning to the wider point.",
+        "scope_limit": "Narrow the broad claim by stating its condition, limit, or practical boundary in plain wording.",
+        "practical_consequence": "Attach the claim to one practical consequence already implied by the source route.",
+        "contrast_or_specific_angle": "Use one contrast or sharper angle to break category-list movement while keeping the same source meaning.",
+    }
+    return instructions.get(normalized, "")
+
+
 def _route_plan_needs_controlled_expansion(plan: dict[str, Any]) -> bool:
     expansion = plan.get("controlled_expansion") if isinstance(plan.get("controlled_expansion"), dict) else {}
     if bool(expansion.get("required")) and _controlled_expansion_move(expansion.get("move")) != "none":
@@ -2851,10 +3577,18 @@ def _controlled_expansion_for_writer(plan: dict[str, Any]) -> dict[str, Any]:
             "why_needed": _short_string(expansion.get("why_needed"), limit=220),
         }
     if _route_plan_needs_controlled_expansion(plan):
+        actions = plan.get("affected_unit_actions") if isinstance(plan.get("affected_unit_actions"), list) else []
+        sentence_jobs = plan.get("target_sentence_jobs") if isinstance(plan.get("target_sentence_jobs"), list) else []
+        move = _controlled_expansion_move_for_context(
+            content_profile=_content_profile(plan.get("content_profile")),
+            primary_metric=_primary_metric(plan.get("primary_metric")),
+            target_count=sum(1 for row in actions if isinstance(row, dict)),
+            sentence_count=max(len(sentence_jobs), len(actions)),
+        )
         return {
             "required": True,
-            "move": "explanatory_bridge",
-            "instruction": "Add one controlled bridge or concrete frame that makes the broad route less generic.",
+            "move": move,
+            "instruction": _controlled_expansion_instruction(move),
             "why_needed": "The route plan identifies broad generic movement that cannot be fixed by preserving the old route.",
         }
     return {
@@ -3338,6 +4072,95 @@ def _score_residual_variant(
         "incremental": _incremental_deltas(scores, current_scores),
         "local_scores": local_after_scores,
         "local_goal": local_after_goal,
+        "candidate_text": candidate_text,
+        "candidate_report": candidate_report,
+        "candidate_goal": candidate_goal,
+    }
+
+
+def _score_full_document_variant(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_scores: dict[str, Any],
+    variant: RecompositionVariant,
+    output_dir: Path,
+    label: str,
+) -> dict[str, Any]:
+    candidate_text = str(variant.text or "").strip()
+    source_words = max(1, word_count(current_text))
+    candidate_words = max(1, word_count(candidate_text))
+    apply_status: dict[str, Any] = {
+        "applied": True,
+        "scope": "full_document",
+        "source_words": source_words,
+        "candidate_words": candidate_words,
+    }
+    if not candidate_text:
+        apply_status.update({"applied": False, "reason": "empty_candidate_text"})
+    elif candidate_words < round(source_words * _borderline_min_word_ratio()):
+        apply_status.update({"applied": False, "reason": "candidate_compressed_too_much"})
+    elif candidate_words > round(source_words * _borderline_max_word_ratio()):
+        apply_status.update({"applied": False, "reason": "candidate_expanded_too_much"})
+    elif _paragraph_count(candidate_text) != _paragraph_count(current_text):
+        apply_status.update({
+            "applied": False,
+            "reason": "paragraph_count_changed",
+            "source_paragraph_count": _paragraph_count(current_text),
+            "candidate_paragraph_count": _paragraph_count(candidate_text),
+        })
+    if apply_status.get("applied"):
+        source_integrity = minimal_replacement_text_integrity(current_text)
+        candidate_integrity = minimal_replacement_text_integrity(candidate_text)
+        integrity_regression = _text_integrity_regression(source_integrity, candidate_integrity)
+        if not integrity_regression.get("passed"):
+            apply_status.update({
+                "applied": False,
+                "reason": "candidate_text_integrity_regressed",
+                "source_integrity": source_integrity,
+                "candidate_integrity": candidate_integrity,
+                "integrity_regression": integrity_regression,
+            })
+    if not apply_status.get("applied"):
+        return {
+            "section_id": "full_document",
+            "variant_id": variant.variant_id,
+            "label": label,
+            "text": candidate_text,
+            "word_count": candidate_words,
+            "apply_status": apply_status,
+            "scores": current_scores,
+            "incremental": {},
+            "local_scores": {},
+            "local_goal": {},
+        }
+
+    candidate_report = _scan_report(candidate_text)
+    candidate_goal = evaluate_rewrite_goal(
+        original_text=original_text,
+        candidate_text=candidate_text,
+        original_report=baseline_report,
+        candidate_report=candidate_report,
+    ).to_dict()
+    candidate_goal = _with_v5_density_gate(candidate_text, candidate_report, candidate_goal)
+    scores = _score_summary(original_text, candidate_report, candidate_goal)
+    _add_deltas(scores, baseline_scores)
+    safe_name = label.replace("/", "_")
+    (output_dir / f"{safe_name}.txt").write_text(candidate_text)
+    (output_dir / f"{safe_name}_scan.json").write_text(json.dumps(candidate_report, ensure_ascii=False, indent=2))
+    return {
+        "section_id": "full_document",
+        "variant_id": variant.variant_id,
+        "label": label,
+        "text": candidate_text,
+        "word_count": candidate_words,
+        "apply_status": apply_status,
+        "scores": scores,
+        "incremental": _incremental_deltas(scores, current_scores),
+        "local_scores": {},
+        "local_goal": {},
         "candidate_text": candidate_text,
         "candidate_report": candidate_report,
         "candidate_goal": candidate_goal,
@@ -3850,6 +4673,121 @@ def _run_unsafe_cluster_cleanup_pass(
     return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 
 
+def _run_borderline_verdict_cleanup_pass(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
+    variant_count: int,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 79,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    retry_feedback: dict[str, Any] | None = None
+    for round_index in range(1, _borderline_verdict_max_rounds() + 1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="borderline_verdict_cleanup",
+                round_index=round_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        density = _density_gate_for_report(current_text, current_report)
+        if not _borderline_verdict_should_run(current_scores=current_scores, density_gate=density):
+            rounds.append({
+                "round": round_index,
+                "phase": "borderline_verdict_cleanup",
+                "status": "skipped",
+                "reason": "not_borderline_or_blockers_not_safe",
+                "current_scores": current_scores,
+                "density_gate": _compact_density_gate(density),
+            })
+            break
+
+        round_dir = output_dir / f"round_{round_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        variants, llm_diagnostics, prompt, completion = generate_borderline_verdict_cleanup_variants(
+            current_text=current_text,
+            current_scores=current_scores,
+            density_gate=density,
+            gateway=gateway,
+            variant_count=variant_count,
+            round_index=round_index,
+            retry_feedback=retry_feedback,
+        )
+        (round_dir / "borderline_prompt.json.txt").write_text(prompt)
+        (round_dir / "borderline_completion.json.txt").write_text(completion)
+        rows = [
+            _score_full_document_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                variant=variant,
+                output_dir=round_dir,
+                label=f"borderline_r{round_index}_{variant.variant_id}",
+            )
+            for variant in variants
+        ]
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *rows])
+        selected = _best_borderline_verdict_candidate(rows)
+        accepted = selected if selected and _has_borderline_verdict_movement(selected) else None
+        round_payload = {
+            "round": round_index,
+            "phase": "borderline_verdict_cleanup",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_borderline_verdict_movement" if accepted else "no_borderline_verdict_movement",
+            "generator_diagnostics": llm_diagnostics,
+            "retry_feedback": retry_feedback,
+            "current_scores": current_scores,
+            "density_gate": _compact_density_gate(density),
+            "candidates": [_compact_residual_row(row) for row in rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(round_payload)
+        (round_dir / "round_result.json").write_text(json.dumps(round_payload, ensure_ascii=False, indent=2))
+        if not accepted:
+            retry_feedback = _borderline_rejected_candidate_feedback(selected, current_scores=current_scores)
+            if retry_feedback and round_index < _borderline_verdict_max_rounds():
+                continue
+            break
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "borderline_verdict_cleanup",
+                "round": round_index,
+                "reason": "accepted_borderline_verdict_movement",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
+        _emit_progress(progress_callback, progress_percent, f"Accepted V5 borderline texture pass {round_index}")
+        if _borderline_verdict_candidate_crosses_boundary(accepted):
+            break
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+
 def _accepted_state(
     *,
     accepted: dict[str, Any],
@@ -3880,6 +4818,16 @@ def _best_unsafe_cluster_cleanup_candidate(rows: list[dict[str, Any]]) -> dict[s
     if not eligible:
         return None
     return max(eligible, key=_unsafe_cluster_cleanup_sort_key)
+
+
+def _best_borderline_verdict_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    eligible = [row for row in rows if (row.get("apply_status") or {}).get("applied")]
+    if not eligible:
+        return None
+    accepted = [row for row in eligible if _has_borderline_verdict_movement(row)]
+    if accepted:
+        return max(accepted, key=_borderline_verdict_sort_key)
+    return max(eligible, key=_borderline_verdict_sort_key)
 
 
 def _best_balanced_ai_topk_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -3999,6 +4947,35 @@ def _unsafe_cluster_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
         _number(incremental.get("ai_delta")),
         _number(scores.get("rank_delta")),
     )
+
+
+def _borderline_verdict_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    boundary_crossed = 1.0 if _borderline_verdict_candidate_crosses_boundary(row) else 0.0
+    return (
+        boundary_crossed,
+        _borderline_verdict_boundary_margin(scores),
+        _number(incremental.get("ai_delta")),
+        _number(incremental.get("external_delta")),
+        _number(incremental.get("external_ai_flag_risk_delta")),
+        _number(incremental.get("ai_authorship_delta")),
+        _number(incremental.get("qualifying_text_ai_density_delta")),
+        _number(incremental.get("topk_calibrated_risk_delta")),
+        _number(incremental.get("topk_delta")),
+        _number(scores.get("ai_delta")),
+        _number(scores.get("external_delta")),
+        _number(scores.get("rank_delta")),
+    )
+
+
+def _borderline_verdict_boundary_margin(scores: dict[str, Any]) -> float:
+    if not isinstance(scores, dict):
+        return 0.0
+    target = _borderline_verdict_target_outcome()
+    ai_margin = _number(target.get("preferred_ai_below")) - _number(scores.get("ai"))
+    authorship_margin = _number(target.get("preferred_authorship_below")) - _number(scores.get("ai_authorship"))
+    return max(ai_margin, authorship_margin)
 
 
 def _balanced_ai_topk_sort_value(row: dict[str, Any]) -> tuple[float, ...]:
@@ -4126,6 +5103,199 @@ def _has_risky_window_cleanup_movement(row: dict[str, Any]) -> bool:
         and _number(incremental.get("topk_calibrated_risk_delta")) >= 0
         and _number(incremental.get("ai_delta")) >= 0
     )
+
+
+def _has_borderline_verdict_movement(row: dict[str, Any]) -> bool:
+    if not (row.get("apply_status") or {}).get("applied"):
+        return False
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    min_topk_delta = _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MIN_TOPK_DELTA",
+        -0.35,
+        minimum=-10.0,
+        maximum=10.0,
+    )
+    min_topk_risk_delta = _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MIN_TOPK_RISK_DELTA",
+        -0.35,
+        minimum=-10.0,
+        maximum=10.0,
+    )
+    if _number(incremental.get("topk_delta")) < min_topk_delta:
+        return False
+    if _number(incremental.get("topk_calibrated_risk_delta")) < min_topk_risk_delta:
+        return False
+    min_ai = _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MIN_AI_DELTA",
+        1.0,
+        minimum=0.0,
+        maximum=20.0,
+    )
+    min_external = _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MIN_EXTERNAL_DELTA",
+        1.0,
+        minimum=0.0,
+        maximum=20.0,
+    )
+    directional = (
+        _number(incremental.get("ai_delta")) >= min_ai
+        or _number(incremental.get("external_delta")) >= min_external
+        or _number(incremental.get("external_ai_flag_risk_delta")) >= min_external
+        or _number(incremental.get("ai_authorship_delta")) >= min_ai
+    )
+    if not directional:
+        return False
+    if (
+        _number(incremental.get("risky_window_count_delta")) >= 0
+        and _number(incremental.get("unsafe_cluster_count_delta")) >= 0
+    ):
+        return True
+    return _borderline_verdict_candidate_crosses_boundary(row)
+
+
+def _borderline_verdict_candidate_crosses_boundary(row: dict[str, Any]) -> bool:
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    required_score_keys = {
+        "ai",
+        "ai_authorship",
+        "risky_window_count",
+        "unsafe_cluster_count",
+        "unsafe_word_ratio",
+    }
+    if not required_score_keys.issubset(set(scores)):
+        return False
+    if not _borderline_verdict_score_target_met(scores, row=row):
+        return False
+    if _number(scores.get("risky_window_count")) > _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_RISKY_WINDOWS_AFTER",
+        3.0,
+        minimum=0.0,
+        maximum=20.0,
+    ):
+        return False
+    if _number(scores.get("unsafe_cluster_count")) > _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_UNSAFE_CLUSTERS_AFTER",
+        5.0,
+        minimum=0.0,
+        maximum=50.0,
+    ):
+        return False
+    if _number(scores.get("unsafe_word_ratio")) > _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_UNSAFE_WORD_RATIO_AFTER",
+        35.0,
+        minimum=0.0,
+        maximum=100.0,
+    ):
+        return False
+    return True
+
+
+def _borderline_verdict_score_target_met(scores: dict[str, Any], row: dict[str, Any] | None = None) -> bool:
+    badge_boundary = _borderline_verdict_badge_boundary(row)
+    if badge_boundary is not None:
+        return badge_boundary
+    ai_clear = _number(scores.get("ai")) <= _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_ACCEPT_AI_BELOW",
+        45.0,
+        minimum=0.0,
+        maximum=100.0,
+    )
+    authorship_clear = _number(scores.get("ai_authorship")) <= _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_ACCEPT_AUTHORSHIP_BELOW",
+        45.0,
+        minimum=0.0,
+        maximum=100.0,
+    )
+    return ai_clear or authorship_clear
+
+
+def _borderline_verdict_badge_clears_likely_ai(row: dict[str, Any] | None) -> bool:
+    return _borderline_verdict_badge_boundary(row) is True
+
+
+def _borderline_verdict_badge_boundary(row: dict[str, Any] | None) -> bool | None:
+    if not isinstance(row, dict):
+        return None
+    report = row.get("candidate_report") if isinstance(row.get("candidate_report"), dict) else {}
+    badge = report.get("ai_risk_badge") if isinstance(report.get("ai_risk_badge"), dict) else {}
+    code = str(
+        badge.get("authorship_rating_code")
+        or ((badge.get("authorship_rating") or {}).get("code") if isinstance(badge.get("authorship_rating"), dict) else "")
+    ).strip().casefold()
+    risk_level = str(
+        (badge.get("authorship_rating") or {}).get("risk_level")
+        if isinstance(badge.get("authorship_rating"), dict)
+        else ""
+    ).strip().casefold()
+    if not code:
+        return None
+    if risk_level == "high":
+        return False
+    return code not in {"likely_ai", "ai_generated", "ai_generated_signals"}
+
+
+def _borderline_rejected_candidate_feedback(
+    row: dict[str, Any] | None,
+    *,
+    current_scores: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(row, dict) or not (row.get("apply_status") or {}).get("applied"):
+        return {}
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    if not _borderline_verdict_score_target_met(scores, row=row):
+        return {}
+    issues: list[str] = []
+    if _number(incremental.get("topk_delta")) < 0:
+        issues.append("top-k density worsened; change the route without creating a more predictable sentence path")
+    if _number(incremental.get("topk_calibrated_risk_delta")) < 0:
+        issues.append("calibrated top-k risk worsened; avoid smoother template-like bridges")
+    if _number(incremental.get("risky_window_count_delta")) < 0:
+        issues.append("risky windows increased; keep the score movement but make the affected windows less uniformly polished")
+    if _number(incremental.get("unsafe_cluster_count_delta")) < 0:
+        issues.append("unsafe clusters increased; do not spread the edit across too many new high-pressure clusters")
+    if _number(scores.get("unsafe_cluster_count")) > _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_UNSAFE_CLUSTERS_AFTER",
+        5.0,
+        minimum=0.0,
+        maximum=50.0,
+    ):
+        issues.append("unsafe cluster count after rewrite is above the allowed borderline tolerance")
+    if _number(scores.get("risky_window_count")) > _float_env(
+        "DRAFTPROOF_REWRITE_V5_BORDERLINE_MAX_RISKY_WINDOWS_AFTER",
+        3.0,
+        minimum=0.0,
+        maximum=20.0,
+    ):
+        issues.append("risky window count after rewrite is above the allowed borderline tolerance")
+    if not issues:
+        return {}
+    return {
+        "status": "previous_candidate_reduced_verdict_score_but_failed_local_safety",
+        "previous_variant_id": row.get("variant_id"),
+        "previous_scores": {
+            "ai": scores.get("ai"),
+            "ai_authorship": scores.get("ai_authorship"),
+            "external": scores.get("external"),
+            "external_ai_flag_risk": scores.get("external_ai_flag_risk"),
+            "topk": scores.get("topk"),
+            "topk_calibrated_risk": scores.get("topk_calibrated_risk"),
+            "risky_window_count": scores.get("risky_window_count"),
+            "unsafe_cluster_count": scores.get("unsafe_cluster_count"),
+        },
+        "current_scores_to_protect": {
+            "topk": current_scores.get("topk"),
+            "topk_calibrated_risk": current_scores.get("topk_calibrated_risk"),
+            "risky_window_count": current_scores.get("risky_window_count"),
+            "unsafe_cluster_count": current_scores.get("unsafe_cluster_count"),
+        },
+        "must_fix": issues,
+        "next_attempt": [
+            "Preserve the verdict-score improvement pattern, but do not let top-k, risky windows, or unsafe clusters regress beyond tolerance.",
+            "Use smaller route changes in the windows that became unsafe; do not rewrite the whole document into a new polished template.",
+            "Prefer plain concrete sentence routes over broad abstract bridges.",
+        ],
+    }
 
 
 def _has_balanced_ai_topk_movement(row: dict[str, Any]) -> bool:
@@ -4266,6 +5436,48 @@ def _has_incremental_movement(row: dict[str, Any]) -> bool:
     return any(
         _number(incremental.get(key)) > 0
         for key in ("unsafe_cluster_count_delta", "rank_delta", "ai_delta", "topk_delta", "external_delta")
+    )
+
+
+def _has_core_round_acceptance_movement(
+    row: dict[str, Any],
+    *,
+    current_scores: dict[str, Any],
+    round_index: int,
+) -> bool:
+    if not _has_incremental_movement(row):
+        return False
+    if not _late_core_acceptance_gate_active(current_scores=current_scores, round_index=round_index):
+        return True
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    if _number(incremental.get("unsafe_cluster_count_delta")) > 0:
+        return True
+    if _number(incremental.get("risky_window_count_delta")) > 0:
+        return True
+    min_ai = _float_env("DRAFTPROOF_REWRITE_V5_LATE_CORE_MIN_AI_DELTA", 0.5, minimum=0.0, maximum=20.0)
+    min_topk = _float_env("DRAFTPROOF_REWRITE_V5_LATE_CORE_MIN_TOPK_DELTA", 0.5, minimum=0.0, maximum=20.0)
+    return _number(incremental.get("ai_delta")) >= min_ai and _number(incremental.get("topk_delta")) >= min_topk
+
+
+def _late_core_acceptance_gate_active(
+    *,
+    current_scores: dict[str, Any],
+    round_index: int,
+) -> bool:
+    start_round = _int_env("DRAFTPROOF_REWRITE_V5_LATE_CORE_GATE_START_ROUND", 5, minimum=1, maximum=20)
+    if int(round_index or 0) < start_round:
+        return False
+    trigger_ai = _float_env("DRAFTPROOF_REWRITE_V5_LATE_CORE_GATE_AFTER_AI_DELTA", 5.0, minimum=0.0, maximum=100.0)
+    trigger_topk = _float_env("DRAFTPROOF_REWRITE_V5_LATE_CORE_GATE_AFTER_TOPK_DELTA", 5.0, minimum=0.0, maximum=100.0)
+    trigger_structural = _float_env("DRAFTPROOF_REWRITE_V5_LATE_CORE_GATE_AFTER_STRUCTURAL_DELTA", 2.0, minimum=0.0, maximum=100.0)
+    return any(
+        _number(value) >= threshold
+        for value, threshold in (
+            (current_scores.get("ai_delta"), trigger_ai),
+            (current_scores.get("topk_delta"), trigger_topk),
+            (current_scores.get("unsafe_cluster_count_delta"), trigger_structural),
+            (current_scores.get("risky_window_count_delta"), trigger_structural),
+        )
     )
 
 
@@ -5298,12 +6510,26 @@ def _compact_residual_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "label": row.get("label"),
         "word_count": row.get("word_count"),
         "scores": row.get("scores"),
+        "authorship_rating": _compact_authorship_rating(row.get("candidate_report")),
         "incremental": row.get("incremental"),
         "local_scores": row.get("local_scores"),
         "apply_status": row.get("apply_status"),
         "selection_policy": row.get("selection_policy"),
         "direct_scanner_batch": row.get("direct_scanner_batch"),
         "text": row.get("text"),
+    }
+
+
+def _compact_authorship_rating(report: Any) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    badge = report.get("ai_risk_badge") if isinstance(report.get("ai_risk_badge"), dict) else {}
+    rating = badge.get("authorship_rating") if isinstance(badge.get("authorship_rating"), dict) else {}
+    return {
+        "code": badge.get("authorship_rating_code") or rating.get("code"),
+        "label": badge.get("authorship_rating_label") or rating.get("label"),
+        "risk_level": rating.get("risk_level"),
+        "tier": badge.get("tier"),
     }
 
 

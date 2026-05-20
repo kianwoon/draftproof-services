@@ -73,12 +73,18 @@ def main() -> None:
             if isinstance(result.get("final_risky_window_cleanup_rounds"), list)
             else []
         )
+        borderline_verdict_cleanup_rounds = (
+            result.get("borderline_verdict_cleanup_rounds")
+            if isinstance(result.get("borderline_verdict_cleanup_rounds"), list)
+            else []
+        )
         all_rounds = (
             direct_scanner_leapfrog_rounds
             + rounds
             + risky_window_cleanup_rounds
             + unsafe_cluster_cleanup_rounds
             + final_risky_window_cleanup_rounds
+            + borderline_verdict_cleanup_rounds
         )
         global_best_fallback = result.get("global_best_fallback") if isinstance(result.get("global_best_fallback"), dict) else {}
         rows.append({
@@ -92,6 +98,7 @@ def main() -> None:
             "accepted_risky_window_cleanup_rounds": sum(1 for row in risky_window_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
             "accepted_unsafe_cluster_cleanup_rounds": sum(1 for row in unsafe_cluster_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
             "accepted_final_risky_window_cleanup_rounds": sum(1 for row in final_risky_window_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
+            "accepted_borderline_verdict_cleanup_rounds": sum(1 for row in borderline_verdict_cleanup_rounds if isinstance(row, dict) and row.get("accepted")),
             "scores_before": _score_brief(baseline),
             "scores_after": _score_brief(final),
             "deltas": {

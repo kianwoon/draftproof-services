@@ -21,7 +21,14 @@ from rewrite_v4.production import (
     _truncate_text,
 )
 
-from .residual_comb import _compact_density_gate, run_v5_residual_cluster_comb_experiment
+from .experiment import _score_summary
+from .residual_comb import (
+    _adaptive_cutoff_runtime_budget_seconds,
+    _compact_density_gate,
+    _density_gate_for_report,
+    _with_v5_density_gate,
+    run_v5_residual_cluster_comb_experiment,
+)
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -225,7 +232,11 @@ def run_rewrite_pipeline_v5(
     original_text = _extract_original_text(detect_json)
     config = _production_config()
     provider_routing = _v5_provider_routing()
-    runtime_budget_seconds = _v5_runtime_budget_seconds(original_text, config)
+    runtime_budget_seconds = _v5_runtime_budget_seconds(
+        original_text,
+        config,
+        original_report=detect_json,
+    )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     pipeline_version = "rewrite_v5_residual_cluster_comb"
@@ -493,7 +504,12 @@ def _score_deltas(original_scores: dict[str, Any], final_scores: dict[str, Any])
     return deltas
 
 
-def _v5_runtime_budget_seconds(original_text: str, config: dict[str, Any]) -> int:
+def _v5_runtime_budget_seconds(
+    original_text: str,
+    config: dict[str, Any],
+    *,
+    original_report: dict[str, Any] | None = None,
+) -> int:
     words = max(1, word_count(str(original_text or "")))
     estimated = float(config.get("runtime_base_seconds") or 0) + (
         (words / 100.0) * float(config.get("runtime_seconds_per_100_words") or 0.0)
@@ -503,7 +519,7 @@ def _v5_runtime_budget_seconds(original_text: str, config: dict[str, Any]) -> in
         int(config.get("runtime_min_seconds") or 60),
         soft_limit - int(config.get("runtime_soft_limit_buffer_seconds") or 120),
     )
-    return max(
+    legacy_budget = max(
         int(config.get("runtime_min_seconds") or 60),
         min(
             int(config.get("runtime_max_seconds") or 720),
@@ -511,6 +527,46 @@ def _v5_runtime_budget_seconds(original_text: str, config: dict[str, Any]) -> in
             int(round(estimated)),
         ),
     )
+    adaptive_budget = _v5_adaptive_runtime_budget_seconds(
+        original_text=original_text,
+        original_report=original_report,
+    )
+    if adaptive_budget is None:
+        return legacy_budget
+    return max(
+        60,
+        min(
+            int(config.get("runtime_max_seconds") or 720),
+            soft_cap,
+            int(round(adaptive_budget)),
+        ),
+    )
+
+
+def _v5_adaptive_runtime_budget_seconds(
+    *,
+    original_text: str,
+    original_report: dict[str, Any] | None,
+) -> float | None:
+    if not isinstance(original_report, dict):
+        return None
+    try:
+        goal = evaluate_rewrite_goal(
+            original_text=original_text,
+            candidate_text=original_text,
+            original_report=original_report,
+            candidate_report=original_report,
+        ).to_dict()
+        goal = _with_v5_density_gate(original_text, original_report, goal)
+        density_gate = _density_gate_for_report(original_text, original_report)
+        scores = _score_summary(original_text, original_report, goal)
+        return _adaptive_cutoff_runtime_budget_seconds(
+            original_text=original_text,
+            baseline_density_gate=density_gate,
+            baseline_scores=scores,
+        )
+    except Exception:
+        return None
 
 
 def _generated_candidate_count(rounds: list[Any]) -> int:
