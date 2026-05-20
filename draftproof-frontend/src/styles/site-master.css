@@ -3933,6 +3933,15 @@ th {
 
 .td-findings, .td-words, .td-score { color: var(--muted); }
 .muted-link { color: var(--muted); font-size: .84rem; }
+
+.reports-ai-footnote {
+  max-width: 860px;
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: .82rem;
+  font-weight: 650;
+  line-height: 1.55;
+}
 .td-actions {
   display: flex;
   gap: 8px;

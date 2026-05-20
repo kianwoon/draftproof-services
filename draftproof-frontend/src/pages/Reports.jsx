@@ -128,76 +128,79 @@ export default function Reports() {
             <Link to="/scan" className="btn btn-primary">{t('reports.startScanning')}</Link>
           </div>
         ) : (
-          <div className="reports-table-wrap">
-            <table className="reports-table">
-              <thead>
-                <tr>
-                  <th>{t('reports.date')}</th>
-                  <th>{t('reports.status')}</th>
-                  <th>{t('reports.reviewTier')}</th>
-                  <th>{t('reports.aiSignal')}</th>
-                  <th>{t('reports.writing')}</th>
-                  <th>{t('reports.findings')}</th>
-                  <th>{t('reports.words')}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {scans.map((scan) => {
-                  const statusTone = scan.status === 'processing' ? 'active' : scan.status === 'completed' ? 'positive' : scan.status === 'failed' ? 'negative' : 'neutral';
-                  const tierTone = TIER_TONES[scan.tier] || 'neutral';
-                  return (
-                    <tr key={scan.id}>
-                      <td className="td-date">{formatDate(scan.created_at, locale)}</td>
-                      <td>
-                        <span className={`status-badge status-badge-${statusTone}`}>
-                          {t(`reports.statuses.${scan.status}`, { defaultValue: scan.status || t('reports.statuses.pending') })}
-                        </span>
-                      </td>
-                      <td>
-                        {scan.tier ? (
-                          <span className={`tier-badge tier-badge-${tierTone}`}>
-                            {t(`reports.tiers.${scan.tier}`, { defaultValue: scan.tier })}
+          <>
+            <div className="reports-table-wrap">
+              <table className="reports-table">
+                <thead>
+                  <tr>
+                    <th>{t('reports.date')}</th>
+                    <th>{t('reports.status')}</th>
+                    <th>{t('reports.reviewTier')}</th>
+                    <th>{t('reports.aiSignal')}</th>
+                    <th>{t('reports.writing')}</th>
+                    <th>{t('reports.findings')}</th>
+                    <th>{t('reports.words')}</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scans.map((scan) => {
+                    const statusTone = scan.status === 'processing' ? 'active' : scan.status === 'completed' ? 'positive' : scan.status === 'failed' ? 'negative' : 'neutral';
+                    const tierTone = TIER_TONES[scan.tier] || 'neutral';
+                    return (
+                      <tr key={scan.id}>
+                        <td className="td-date">{formatDate(scan.created_at, locale)}</td>
+                        <td>
+                          <span className={`status-badge status-badge-${statusTone}`}>
+                            {t(`reports.statuses.${scan.status}`, { defaultValue: scan.status || t('reports.statuses.pending') })}
                           </span>
-                        ) : '—'}
-                      </td>
-                      <td className="td-score">
-                        {scan.ai_score != null ? (
-                          <strong className={`score-value score-value-${tierTone}`}>{formatMetricPercent(calibratedReportAiScore(scan.ai_score), 0)}</strong>
-                        ) : '—'}
-                      </td>
-                      <td className="td-score">
-                        {scan.writing_score != null ? (
-                          <strong className="score-value score-value-positive">{scan.writing_score.toFixed(0)}%</strong>
-                        ) : '—'}
-                      </td>
-                      <td className="td-findings">{scan.finding_count ?? '—'}</td>
-                      <td className="td-words">{scan.word_count?.toLocaleString() ?? '—'}</td>
-                      <td>
-                        <div className="td-actions">
-                          {scan.status === 'completed' && (
-                            <Link to={`/report/${scan.id}`} className="btn btn-secondary btn-small">
-                              {t('reports.view')}
-                            </Link>
-                          )}
-                          {scan.status !== 'processing' && (
-                            <button
-                              className="btn btn-small btn-delete"
-                              disabled={deletingId === scan.id}
-                              onClick={() => setConfirmTarget(scan.id)}
-                              title={t('reports.deleteTitle')}
-                            >
-                              {deletingId === scan.id ? '…' : t('reports.delete')}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td>
+                          {scan.tier ? (
+                            <span className={`tier-badge tier-badge-${tierTone}`}>
+                              {t(`reports.tiers.${scan.tier}`, { defaultValue: scan.tier })}
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td className="td-score">
+                          {scan.ai_score != null ? (
+                            <strong className={`score-value score-value-${tierTone}`}>{formatMetricPercent(calibratedReportAiScore(scan.ai_score), 0)}</strong>
+                          ) : '—'}
+                        </td>
+                        <td className="td-score">
+                          {scan.writing_score != null ? (
+                            <strong className="score-value score-value-positive">{scan.writing_score.toFixed(0)}%</strong>
+                          ) : '—'}
+                        </td>
+                        <td className="td-findings">{scan.finding_count ?? '—'}</td>
+                        <td className="td-words">{scan.word_count?.toLocaleString() ?? '—'}</td>
+                        <td>
+                          <div className="td-actions">
+                            {scan.status === 'completed' && (
+                              <Link to={`/report/${scan.id}`} className="btn btn-secondary btn-small">
+                                {t('reports.view')}
+                              </Link>
+                            )}
+                            {scan.status !== 'processing' && (
+                              <button
+                                className="btn btn-small btn-delete"
+                                disabled={deletingId === scan.id}
+                                onClick={() => setConfirmTarget(scan.id)}
+                                title={t('reports.deleteTitle')}
+                              >
+                                {deletingId === scan.id ? '…' : t('reports.delete')}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="reports-ai-footnote">{t('reports.aiSignalFootnote')}</p>
+          </>
         )}
 
         {totalPages > 1 && (
