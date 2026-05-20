@@ -4541,11 +4541,10 @@ th {
 
 .report-hero {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 2rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.35rem;
   margin-bottom: 2.5rem;
-  flex-wrap: wrap;
 }
 
 .report-hero-title-row {
@@ -4616,10 +4615,11 @@ th {
 
 .report-hero-actions {
   display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: .75rem;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: clamp(1rem, 2.4vw, 1.5rem);
   flex-wrap: wrap;
+  margin-left: calc(76px + 1.45rem);
 }
 
 .rewrite-action-group {
@@ -6412,11 +6412,13 @@ th {
 @media (max-width: 768px) {
   .reports-table-wrap { overflow-x: auto; }
   .reports-table { min-width: 780px; }
-  .report-hero { flex-direction: column; align-items: flex-start; }
+  .report-hero { align-items: flex-start; }
   .report-hero-title-row { align-items: flex-start; }
   .report-hero-actions {
     width: 100%;
+    margin-left: 0;
     justify-content: flex-start;
+    gap: .8rem;
   }
   .rewrite-action-group {
     flex: 1 1 220px;
