@@ -4351,6 +4351,25 @@ th {
   flex-wrap: wrap;
 }
 
+.rewrite-action-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .4rem;
+  max-width: 310px;
+}
+
+.rewrite-action-group .rewrite-btn {
+  align-self: flex-start;
+}
+
+.rewrite-action-group span {
+  color: #64748b;
+  font-size: .76rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
 .download-pdf-btn,
 .rewrite-btn,
 .rewrite-results-link {
@@ -6127,6 +6146,13 @@ th {
   .report-hero-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+  .rewrite-action-group {
+    flex: 1 1 220px;
+    max-width: none;
+  }
+  .rewrite-action-group .rewrite-btn {
+    align-self: stretch;
   }
   .download-pdf-btn,
   .rewrite-btn {

@@ -1039,14 +1039,17 @@ export default function Report() {
                 </a>
               )}
               {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
-                <button
-                  type="button"
-                  className="rewrite-btn"
-                  onClick={handleRewrite}
-                  disabled={rewriteLoading || rewriteCanceling}
-                >
-                  {rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
-                </button>
+                <div className="rewrite-action-group">
+                  <button
+                    type="button"
+                    className="rewrite-btn"
+                    onClick={handleRewrite}
+                    disabled={rewriteLoading || rewriteCanceling}
+                  >
+                    {rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
+                  </button>
+                  <span>{t('report.rewrite.emailPdfNotice')}</span>
+                </div>
               )}
               {rewriteInProgress && currentRewrite?.id && (
                 <button
@@ -1093,6 +1096,7 @@ export default function Report() {
                 <div className="rewrite-progress-footnote">
                   {rewriteElapsedLabel && <span>{t('report.rewrite.elapsed', { elapsed: rewriteElapsedLabel })}</span>}
                   <span>{t('report.rewrite.keepOpen')}</span>
+                  <span>{t('report.rewrite.emailPdfProgress')}</span>
                 </div>
               )}
             </div>
