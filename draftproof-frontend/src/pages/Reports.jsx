@@ -5,6 +5,7 @@ import { listScans, deleteScan } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import CodeTexture from '../components/CodeTexture';
+import { calibratedReportAiScore, formatMetricPercent } from './report/reportHelpers';
 
 const PAGE_SIZE = 10;
 
@@ -162,7 +163,7 @@ export default function Reports() {
                       </td>
                       <td className="td-score">
                         {scan.ai_score != null ? (
-                          <strong className={`score-value score-value-${tierTone}`}>{scan.ai_score.toFixed(0)}%</strong>
+                          <strong className={`score-value score-value-${tierTone}`}>{formatMetricPercent(calibratedReportAiScore(scan.ai_score), 0)}</strong>
                         ) : '—'}
                       </td>
                       <td className="td-score">
