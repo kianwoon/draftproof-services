@@ -238,6 +238,7 @@ def run_v5_residual_cluster_comb_experiment(
         default=2,
     )
     borderline_verdict_variant_count = _borderline_verdict_variant_count(cleanup_variants)
+    final_topk_sentence_route_enabled = _final_topk_sentence_route_enabled()
     direct_scanner_limit = _cleanup_round_limit(
         direct_scanner_leapfrog_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS",
@@ -302,6 +303,14 @@ def run_v5_residual_cluster_comb_experiment(
             "variant_count": borderline_verdict_variant_count,
             "pass_budget_seconds": _borderline_verdict_pass_budget_seconds(),
         },
+        "final_topk_sentence_route": {
+            "enabled": final_topk_sentence_route_enabled,
+            "target_limit": _final_topk_sentence_route_target_limit(),
+            "batch_size": _final_topk_sentence_route_batch_size(),
+            "variant_count": _final_topk_sentence_route_variant_count(),
+            "min_topk_delta": _final_topk_sentence_route_min_topk_delta(),
+            "min_calibrated_delta": _final_topk_sentence_route_min_calibrated_delta(),
+        },
         "adaptive_cutoff": {
             "enabled": _adaptive_cutoff_enabled(),
             "runtime_budget_enabled": budget_seconds is not None,
@@ -319,6 +328,7 @@ def run_v5_residual_cluster_comb_experiment(
     unsafe_cluster_rounds: list[dict[str, Any]] = []
     final_risky_window_rounds: list[dict[str, Any]] = []
     borderline_verdict_rounds: list[dict[str, Any]] = []
+    final_topk_sentence_route_rounds: list[dict[str, Any]] = []
     skipped_core_signatures: set[tuple[Any, ...]] = set()
     if direct_scanner_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds):
         _emit_progress(progress_callback, 67, "Running V5 direct scanner-cluster leapfrog")
@@ -948,6 +958,38 @@ def run_v5_residual_cluster_comb_experiment(
         )
         raise_if_canceled()
 
+    if (
+        final_topk_sentence_route_enabled
+        and not _runtime_budget_exhausted(started_at, budget_seconds)
+        and _final_topk_sentence_route_should_run(current_scores=current_scores, density_gate=_density_gate_for_report(current_text, current_report))
+    ):
+        _emit_progress(progress_callback, 80, "Running V5 final top-k sentence route resolver")
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            final_topk_sentence_route_rounds,
+            global_best_candidate,
+        ) = _run_final_topk_sentence_route_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "final_topk_sentence_route",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=80,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
+            started_at=started_at,
+            max_seconds=budget_seconds,
+        )
+        raise_if_canceled()
+
     global_best_fallback = {
         "applied": False,
         "reason": "phase_accepted_result_remained_best",
@@ -989,6 +1031,7 @@ def run_v5_residual_cluster_comb_experiment(
         "unsafe_cluster_cleanup_rounds": unsafe_cluster_rounds,
         "final_risky_window_cleanup_rounds": final_risky_window_rounds,
         "borderline_verdict_cleanup_rounds": borderline_verdict_rounds,
+        "final_topk_sentence_route_rounds": final_topk_sentence_route_rounds,
         "phase_order": phase_order,
         "accepted_checkpoints": accepted_checkpoints,
         "global_best_fallback": global_best_fallback,
@@ -4788,6 +4831,120 @@ def _run_borderline_verdict_cleanup_pass(
     return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 
 
+def _run_final_topk_sentence_route_pass(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 80,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    targets = _final_topk_sentence_route_targets(current_text, current_report, current_goal)
+    if not targets:
+        rounds.append({
+            "round": 0,
+            "phase": "final_topk_sentence_route",
+            "status": "skipped",
+            "reason": "no_topk_sentence_targets",
+            "current_scores": current_scores,
+            "density_gate": _compact_density_gate(_density_gate_for_report(current_text, current_report)),
+        })
+        return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+    batch_size = _final_topk_sentence_route_batch_size()
+    variant_count = _final_topk_sentence_route_variant_count()
+    for batch_index, offset in enumerate(range(0, len(targets), batch_size), start=1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="final_topk_sentence_route",
+                round_index=batch_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        batch_targets = targets[offset:offset + batch_size]
+        batch_targets = [target for target in batch_targets if str(target.get("sentence") or "") in current_text]
+        if not batch_targets:
+            continue
+        _emit_progress(progress_callback, progress_percent, f"V5 final top-k sentence route batch {batch_index}")
+        round_dir = output_dir / f"batch_{batch_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        variants, llm_diagnostics, prompt, completion = generate_final_topk_sentence_route_variants(
+            current_text=current_text,
+            current_scores=current_scores,
+            targets=batch_targets,
+            gateway=gateway,
+            variant_count=variant_count,
+        )
+        (round_dir / "topk_sentence_route_prompt.json.txt").write_text(prompt)
+        (round_dir / "topk_sentence_route_completion.json.txt").write_text(completion)
+        rows = [
+            _score_final_topk_sentence_route_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                targets=batch_targets,
+                variant=variant,
+                output_dir=round_dir,
+                label=f"topk_sentence_route_b{batch_index}_{variant.get('variant_id')}",
+            )
+            for variant in variants
+        ]
+        selected = _best_final_topk_sentence_route_candidate(rows)
+        accepted = selected if selected and _has_final_topk_sentence_route_movement(selected) else None
+        round_payload = {
+            "round": batch_index,
+            "phase": "final_topk_sentence_route",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_topk_sentence_route_movement" if accepted else "no_topk_sentence_route_movement",
+            "generator_diagnostics": llm_diagnostics,
+            "current_scores": current_scores,
+            "targets": batch_targets,
+            "candidates": [_compact_residual_row(row) | {
+                "applied_repairs": len(row.get("applied_repairs") or []),
+            } for row in rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(round_payload)
+        (round_dir / "round_result.json").write_text(json.dumps(round_payload, ensure_ascii=False, indent=2))
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *rows])
+        if not accepted:
+            continue
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / f"after_batch_{batch_index:02d}.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "final_topk_sentence_route",
+                "round": batch_index,
+                "reason": "accepted_topk_sentence_route_movement",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+
 def _accepted_state(
     *,
     accepted: dict[str, Any],
@@ -4804,6 +4961,467 @@ def _accepted_state(
     ).to_dict()
     scores = accepted.get("scores") if isinstance(accepted.get("scores"), dict) else _score_summary(original_text, report, goal)
     return text, report, goal, scores
+
+
+def generate_final_topk_sentence_route_variants(
+    *,
+    current_text: str,
+    current_scores: dict[str, Any],
+    targets: list[dict[str, Any]],
+    gateway: LLMGateway,
+    variant_count: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
+    variants = max(1, min(5, int(variant_count or 1)))
+    prompt = build_final_topk_sentence_route_prompt(
+        current_scores=current_scores,
+        targets=targets,
+        variant_count=variants,
+    )
+    structured = structured_json_request_options(
+        getattr(gateway, "model", None),
+        _final_topk_sentence_route_response_format(variants, len(targets)),
+    )
+    provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
+    started = time.monotonic()
+    response = gateway.chat(
+        prompt,
+        system="Return only valid JSON with a variants array.",
+        response_format=structured.get("response_format") or {"type": "json_object"},
+        provider=provider,
+        temperature=_float_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_TEMPERATURE", 0.58, minimum=0.0, maximum=1.0),
+        top_p=_float_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_TOP_P", 0.92, minimum=0.1, maximum=1.0),
+        max_tokens=_int_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_MAX_TOKENS", 3500, minimum=1200, maximum=9000),
+    )
+    elapsed = time.monotonic() - started
+    raw = response.raw_content or response.content
+    parsed, diagnostics = parse_json_object(raw, required_keys={"variants"})
+    if parsed is None:
+        return [], {
+            **diagnostics,
+            "model": response.model,
+            "provider": response.raw.get("provider"),
+            "usage": response.usage,
+            "finish_reason": response.finish_reason,
+            "native_finish_reason": response.native_finish_reason,
+            "structured_output_mode": structured.get("structured_output_mode"),
+            "elapsed_seconds": round(elapsed, 3),
+        }, prompt, raw
+    rows = _sanitize_final_topk_sentence_route_variants(parsed.get("variants"), targets=targets)
+    return rows, {
+        **diagnostics,
+        "status": "ok",
+        "valid_variant_count": len(rows),
+        "model": response.model,
+        "provider": response.raw.get("provider"),
+        "usage": response.usage,
+        "finish_reason": response.finish_reason,
+        "native_finish_reason": response.native_finish_reason,
+        "structured_output_mode": structured.get("structured_output_mode"),
+        "elapsed_seconds": round(elapsed, 3),
+    }, prompt, raw
+
+
+def build_final_topk_sentence_route_prompt(
+    *,
+    current_scores: dict[str, Any],
+    targets: list[dict[str, Any]],
+    variant_count: int,
+) -> str:
+    payload = {
+        "task": "final_topk_sentence_route_replacement",
+        "objective": "Treat exact high top-k sentences by changing sentence route, not just words. Do not rewrite unrelated sentences.",
+        "current_scores": {
+            key: current_scores.get(key)
+            for key in (
+                "ai",
+                "topk",
+                "topk_calibrated_risk",
+                "external",
+                "unsafe_cluster_count",
+                "risky_window_count",
+            )
+        },
+        "target_sentences": targets,
+        "method": (
+            "For each sentence, identify the sentence job, describe the current route, "
+            "then write a same-meaning replacement with a different route."
+        ),
+        "operators": [
+            "CLAUSE_ROUTE_CHANGE",
+            "ABSTRACT_TO_ACTION",
+            "LIST_TO_SPECIFIC_CONCERN",
+            "BRIDGE_DELETE_OR_MERGE",
+            "SENTENCE_SPLIT",
+            "CONCRETE_STUDENT_OR_TEACHER_ACTION",
+            "ENDING_DEPREDICT",
+        ],
+        "rules": [
+            "Use every target_id exactly once in each variant.",
+            "Preserve the meaning of each sentence.",
+            "Do not add fake citations, statistics, dates, named events, or personal anecdotes.",
+            "Do not make the writing more academic.",
+            "Avoid synonym replacement as the main method.",
+            "Prefer plain wording over polished wording.",
+            "Avoid neat abstract list endings.",
+            "Avoid not only/but also structure.",
+            "The after text can be one or two sentences if that breaks the route better.",
+        ],
+        "variant_plan": [
+            {"variant_id": f"v{index}", "goal": "different route candidates for the same target sentences"}
+            for index in range(1, max(1, min(5, int(variant_count or 1))) + 1)
+        ],
+        "output_schema": {
+            "variants": [
+                {
+                    "variant_id": "v1",
+                    "repairs": [
+                        {
+                            "target_id": "t001",
+                            "sentence_job": "bridge",
+                            "current_route": "old route",
+                            "repair_route": "new route",
+                            "after": "replacement",
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _score_final_topk_sentence_route_variant(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_scores: dict[str, Any],
+    targets: list[dict[str, Any]],
+    variant: dict[str, Any],
+    output_dir: Path,
+    label: str,
+) -> dict[str, Any]:
+    lookup = {str(target.get("target_id") or ""): str(target.get("sentence") or "") for target in targets}
+    candidate_text = current_text
+    applied: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for repair in variant.get("repairs") if isinstance(variant.get("repairs"), list) else []:
+        if not isinstance(repair, dict):
+            continue
+        target_id = str(repair.get("target_id") or "")
+        before = lookup.get(target_id) or ""
+        after = str(repair.get("after") or "").strip()
+        if not target_id or target_id in used or not before or not after or before == after:
+            continue
+        if before not in candidate_text:
+            continue
+        candidate_text = candidate_text.replace(before, after, 1)
+        used.add(target_id)
+        applied.append({
+            "target_id": target_id,
+            "before": before,
+            "after": after,
+            "sentence_job": repair.get("sentence_job"),
+            "current_route": repair.get("current_route"),
+            "repair_route": repair.get("repair_route"),
+        })
+    candidate_words = word_count(candidate_text)
+    apply_status: dict[str, Any] = {
+        "applied": len(applied) == len(targets),
+        "scope": "final_topk_sentence_route",
+        "target_count": len(targets),
+        "applied_repair_count": len(applied),
+        "source_words": word_count(current_text),
+        "candidate_words": candidate_words,
+    }
+    if not apply_status["applied"]:
+        apply_status["reason"] = "not_all_target_sentences_repaired"
+    elif _paragraph_count(candidate_text) != _paragraph_count(current_text):
+        apply_status.update({
+            "applied": False,
+            "reason": "paragraph_count_changed",
+            "source_paragraph_count": _paragraph_count(current_text),
+            "candidate_paragraph_count": _paragraph_count(candidate_text),
+        })
+    else:
+        source_integrity = minimal_replacement_text_integrity(current_text)
+        candidate_integrity = minimal_replacement_text_integrity(candidate_text)
+        integrity_regression = _text_integrity_regression(source_integrity, candidate_integrity)
+        if not integrity_regression.get("passed"):
+            apply_status.update({
+                "applied": False,
+                "reason": "candidate_text_integrity_regressed",
+                "source_integrity": source_integrity,
+                "candidate_integrity": candidate_integrity,
+                "integrity_regression": integrity_regression,
+            })
+    if not apply_status.get("applied"):
+        return {
+            "section_id": "final_topk_sentence_route",
+            "variant_id": variant.get("variant_id"),
+            "label": label,
+            "text": candidate_text,
+            "word_count": candidate_words,
+            "apply_status": apply_status,
+            "scores": current_scores,
+            "incremental": {},
+            "candidate_text": candidate_text,
+            "applied_repairs": applied,
+        }
+    candidate_report = _scan_report(candidate_text)
+    candidate_goal = evaluate_rewrite_goal(
+        original_text=original_text,
+        candidate_text=candidate_text,
+        original_report=baseline_report,
+        candidate_report=candidate_report,
+    ).to_dict()
+    candidate_goal = _with_v5_density_gate(candidate_text, candidate_report, candidate_goal)
+    scores = _score_summary(original_text, candidate_report, candidate_goal)
+    _add_deltas(scores, baseline_scores)
+    safe_name = label.replace("/", "_")
+    (output_dir / f"{safe_name}.txt").write_text(candidate_text)
+    (output_dir / f"{safe_name}_scan.json").write_text(json.dumps(candidate_report, ensure_ascii=False, indent=2))
+    return {
+        "section_id": "final_topk_sentence_route",
+        "variant_id": variant.get("variant_id"),
+        "label": label,
+        "text": candidate_text,
+        "word_count": candidate_words,
+        "apply_status": apply_status,
+        "scores": scores,
+        "incremental": _incremental_deltas(scores, current_scores),
+        "candidate_text": candidate_text,
+        "candidate_report": candidate_report,
+        "candidate_goal": candidate_goal,
+        "applied_repairs": applied,
+    }
+
+
+def _final_topk_sentence_route_targets(
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+) -> list[dict[str, Any]]:
+    limit = _final_topk_sentence_route_target_limit()
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    density = (
+        current_goal.get("eligible_span_density_gate")
+        if isinstance(current_goal.get("eligible_span_density_gate"), dict)
+        else _density_gate_for_report(current_text, current_report)
+    )
+    for row in density.get("top_sentence_targets") if isinstance(density.get("top_sentence_targets"), list) else []:
+        if not isinstance(row, dict):
+            continue
+        sentence = str(row.get("preview") or "").strip()
+        if not sentence or sentence not in current_text or sentence.casefold() in seen:
+            continue
+        seen.add(sentence.casefold())
+        rows.append({
+            "target_id": f"t{len(rows) + 1:03d}",
+            "sentence_id": row.get("sentence_id"),
+            "sentence": sentence,
+            "source": "eligible_span_density_gate",
+            "top10_ratio": row.get("top10_ratio"),
+            "top50_ratio": row.get("top50_ratio"),
+            "predictability_risk": row.get("predictability_risk"),
+        })
+        if len(rows) >= limit:
+            return rows
+
+    predictability = current_report.get("predictability") if isinstance(current_report.get("predictability"), dict) else {}
+    sentence_rows = predictability.get("all_sentences") or predictability.get("sentences") or []
+    ranked: list[dict[str, Any]] = []
+    for index, item in enumerate(sentence_rows if isinstance(sentence_rows, list) else []):
+        if not isinstance(item, dict):
+            continue
+        sentence = str(item.get("sentence") or item.get("text") or "").strip()
+        if not sentence or sentence not in current_text or sentence.casefold() in seen:
+            continue
+        top10 = _number(item.get("top10_ratio") or item.get("top_10_ratio") or item.get("top10"))
+        top50 = _number(item.get("top50_ratio") or item.get("top_50_ratio") or item.get("top50"))
+        risk = _number(item.get("predictability_risk") or item.get("risk") or item.get("score"))
+        ranked.append({
+            "sentence_id": item.get("sentence_id") or f"s{index + 1:03d}",
+            "sentence": sentence,
+            "source": "predictability_sentence_rows",
+            "top10_ratio": round(top10, 4),
+            "top50_ratio": round(top50, 4),
+            "predictability_risk": round(risk, 4),
+            "route_score": round(top10 * 0.55 + top50 * 0.20 + risk * 0.20, 4),
+        })
+    ranked.sort(key=lambda row: _number(row.get("route_score")), reverse=True)
+    for row in ranked:
+        sentence = str(row.get("sentence") or "")
+        if sentence.casefold() in seen:
+            continue
+        seen.add(sentence.casefold())
+        rows.append({
+            "target_id": f"t{len(rows) + 1:03d}",
+            **row,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _sanitize_final_topk_sentence_route_variants(value: Any, *, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    target_ids = {str(target.get("target_id") or "") for target in targets}
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(item, dict):
+            continue
+        variant_id = str(item.get("variant_id") or f"v{index}")
+        repairs: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for repair in item.get("repairs") if isinstance(item.get("repairs"), list) else []:
+            if not isinstance(repair, dict):
+                continue
+            target_id = str(repair.get("target_id") or "")
+            if target_id not in target_ids or target_id in seen:
+                continue
+            after = " ".join(str(repair.get("after") or "").split())
+            if not after:
+                continue
+            repairs.append({
+                "target_id": target_id,
+                "sentence_job": str(repair.get("sentence_job") or "")[:80],
+                "current_route": str(repair.get("current_route") or "")[:180],
+                "repair_route": str(repair.get("repair_route") or "")[:180],
+                "after": after,
+            })
+            seen.add(target_id)
+        if repairs:
+            rows.append({
+                "variant_id": variant_id,
+                "repairs": repairs,
+            })
+    return rows
+
+
+def _best_final_topk_sentence_route_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    eligible = [row for row in rows if (row.get("apply_status") or {}).get("applied")]
+    if not eligible:
+        return None
+    accepted = [row for row in eligible if _has_final_topk_sentence_route_movement(row)]
+    if accepted:
+        return max(accepted, key=_final_topk_sentence_route_sort_key)
+    return max(eligible, key=_final_topk_sentence_route_sort_key)
+
+
+def _has_final_topk_sentence_route_movement(row: dict[str, Any]) -> bool:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    min_topk = _final_topk_sentence_route_min_topk_delta()
+    min_calibrated = _final_topk_sentence_route_min_calibrated_delta()
+    if (
+        _number(incremental.get("topk_delta")) < min_topk
+        and _number(incremental.get("topk_calibrated_risk_delta")) < min_calibrated
+    ):
+        return False
+    if _number(incremental.get("risky_window_count_delta")) < 0:
+        return False
+    if _number(incremental.get("unsafe_cluster_count_delta")) < 0:
+        return False
+    return True
+
+
+def _final_topk_sentence_route_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    return (
+        _number(incremental.get("topk_delta")) * 3.0 + _number(incremental.get("topk_calibrated_risk_delta")) * 1.5,
+        _number(incremental.get("topk_delta")),
+        _number(incremental.get("topk_calibrated_risk_delta")),
+        _number(incremental.get("ai_delta")),
+        _number(incremental.get("external_delta")),
+        _number(incremental.get("unsafe_cluster_count_delta")),
+    )
+
+
+def _final_topk_sentence_route_should_run(*, current_scores: dict[str, Any], density_gate: dict[str, Any]) -> bool:
+    if not _final_topk_sentence_route_enabled():
+        return False
+    topk = _number(current_scores.get("topk"))
+    calibrated = _number(current_scores.get("topk_calibrated_risk"))
+    if topk >= _float_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_MIN_TOPK", 72.0, minimum=0.0, maximum=100.0):
+        return True
+    if calibrated >= _float_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_MIN_CALIBRATED_RISK", 30.0, minimum=0.0, maximum=100.0):
+        return True
+    return bool(density_gate.get("top_sentence_targets"))
+
+
+def _final_topk_sentence_route_response_format(variant_count: int, target_count: int) -> dict[str, Any]:
+    repairs_schema = {
+        "type": "object",
+        "properties": {
+            "target_id": {"type": "string"},
+            "sentence_job": {"type": "string"},
+            "current_route": {"type": "string"},
+            "repair_route": {"type": "string"},
+            "after": {"type": "string"},
+        },
+        "required": ["target_id", "sentence_job", "current_route", "repair_route", "after"],
+        "additionalProperties": False,
+    }
+    variant_schema = {
+        "type": "object",
+        "properties": {
+            "variant_id": {"type": "string"},
+            "repairs": {
+                "type": "array",
+                "items": repairs_schema,
+                "minItems": max(1, int(target_count or 1)),
+                "maxItems": max(1, int(target_count or 1)),
+            },
+        },
+        "required": ["variant_id", "repairs"],
+        "additionalProperties": False,
+    }
+    count = max(1, min(5, int(variant_count or 1)))
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "final_topk_sentence_route_variants",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "variants": {
+                        "type": "array",
+                        "items": variant_schema,
+                        "minItems": count,
+                        "maxItems": count,
+                    },
+                },
+                "required": ["variants"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _final_topk_sentence_route_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", True)
+
+
+def _final_topk_sentence_route_target_limit() -> int:
+    return _int_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_TARGET_LIMIT", 8, minimum=1, maximum=16)
+
+
+def _final_topk_sentence_route_batch_size() -> int:
+    return _int_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_BATCH_SIZE", 2, minimum=1, maximum=4)
+
+
+def _final_topk_sentence_route_variant_count() -> int:
+    return _int_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_VARIANTS", 4, minimum=1, maximum=5)
+
+
+def _final_topk_sentence_route_min_topk_delta() -> float:
+    return _float_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_MIN_TOPK_DELTA", 0.01, minimum=0.0, maximum=20.0)
+
+
+def _final_topk_sentence_route_min_calibrated_delta() -> float:
+    return _float_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_MIN_CALIBRATED_DELTA", 0.0, minimum=0.0, maximum=50.0)
 
 
 def _best_risky_window_cleanup_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:

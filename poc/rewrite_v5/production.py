@@ -349,6 +349,11 @@ def run_rewrite_pipeline_v5(
         if isinstance(payload.get("borderline_verdict_cleanup_rounds"), list)
         else []
     )
+    final_topk_sentence_route_rounds = (
+        payload.get("final_topk_sentence_route_rounds")
+        if isinstance(payload.get("final_topk_sentence_route_rounds"), list)
+        else []
+    )
     all_rounds = (
         direct_scanner_leapfrog_rounds
         + rounds
@@ -356,6 +361,7 @@ def run_rewrite_pipeline_v5(
         + unsafe_cluster_cleanup_rounds
         + final_risky_window_cleanup_rounds
         + borderline_verdict_cleanup_rounds
+        + final_topk_sentence_route_rounds
     )
     accepted = [
         row.get("accepted")
@@ -719,6 +725,11 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("borderline_verdict_cleanup_rounds"), list)
         else []
     )
+    final_topk_sentence_route_rounds = (
+        payload.get("final_topk_sentence_route_rounds")
+        if isinstance(payload.get("final_topk_sentence_route_rounds"), list)
+        else []
+    )
     all_rounds = (
         direct_scanner_leapfrog_rounds
         + rounds
@@ -726,6 +737,7 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         + unsafe_cluster_cleanup_rounds
         + final_risky_window_cleanup_rounds
         + borderline_verdict_cleanup_rounds
+        + final_topk_sentence_route_rounds
     )
     return {
         "stage": payload.get("stage"),
@@ -743,5 +755,6 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "unsafe_cluster_cleanup_rounds": _compact_v5_rounds(unsafe_cluster_cleanup_rounds),
         "final_risky_window_cleanup_rounds": _compact_v5_rounds(final_risky_window_cleanup_rounds),
         "borderline_verdict_cleanup_rounds": _compact_v5_rounds(borderline_verdict_cleanup_rounds),
+        "final_topk_sentence_route_rounds": _compact_v5_rounds(final_topk_sentence_route_rounds),
         "global_best_fallback": payload.get("global_best_fallback"),
     }
