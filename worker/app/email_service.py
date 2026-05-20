@@ -8,6 +8,17 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5
+SCAN_REPORT_OUTCOME_LABELS = {
+    "low": "Low Risk",
+    "moderate": "Moderate Risk",
+    "high": "High Risk",
+    "green": "Low Risk",
+    "amber": "Moderate Risk",
+    "orange": "High Risk",
+    "red": "Critical Risk",
+}
+
 
 class EmailConfigurationError(RuntimeError):
     """Raised when email sending is enabled but required settings are missing."""
@@ -28,6 +39,42 @@ def _from_header(settings) -> str:
         raise EmailConfigurationError("EMAIL_FROM_ADDRESS is required")
     name = (settings.EMAIL_FROM_NAME or "").strip()
     return f"{name} <{address}>" if name else address
+
+
+def _metric_percent(value: float | int | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number * 100 if abs(number) <= 1 else number
+
+
+def _display_ai_score(value: float | int | None) -> float | None:
+    percent = _metric_percent(value)
+    return None if percent is None else percent * REPORT_AI_SCORE_DISPLAY_MULTIPLIER
+
+
+def _format_score(value: float | int | None) -> str | None:
+    percent = _metric_percent(value)
+    if percent is None:
+        return None
+    return f"{percent:.2f}".rstrip("0").rstrip(".")
+
+
+def _format_display_ai_score(value: float | int | None) -> str | None:
+    score = _display_ai_score(value)
+    if score is None:
+        return None
+    return f"{score:.0f}"
+
+
+def _scan_report_outcome_label(tier: str | None) -> str | None:
+    if not tier:
+        return None
+    normalized = str(tier).strip().lower()
+    return SCAN_REPORT_OUTCOME_LABELS.get(normalized) or str(tier).strip()
 
 
 def build_rewrite_completion_email(
@@ -90,12 +137,15 @@ def build_scan_completion_email(
     settings,
 ) -> dict:
     details = [f"Scan ID: {scan_id}"]
-    if tier:
-        details.append(f"Report outcome: {tier}")
-    if ai_score is not None:
-        details.append(f"AI likelihood score: {ai_score}%")
-    if writing_score is not None:
-        details.append(f"Writing score: {writing_score}%")
+    report_outcome = _scan_report_outcome_label(tier)
+    if report_outcome:
+        details.append(f"Report outcome: {report_outcome}")
+    formatted_ai_score = _format_display_ai_score(ai_score)
+    if formatted_ai_score is not None:
+        details.append(f"AI likelihood score: {formatted_ai_score}%")
+    formatted_writing_score = _format_score(writing_score)
+    if formatted_writing_score is not None:
+        details.append(f"Writing score: {formatted_writing_score}%")
     if finding_count is not None:
         details.append(f"Findings: {finding_count}")
     details_text = "\n".join(details)

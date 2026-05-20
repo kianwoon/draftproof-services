@@ -91,7 +91,7 @@ def test_build_scan_completion_email_attaches_report_pdf():
     assert payload["subject"] == "Your DraftProof scan report is ready"
     assert "Scan ID: scan-1" in payload["text"]
     assert "Report outcome: possible AI-assisted" in payload["text"]
-    assert "AI likelihood score: 42.5%" in payload["text"]
+    assert "AI likelihood score: 21%" in payload["text"]
     assert "Writing score: 81%" in payload["text"]
     assert "Findings: 3" in payload["text"]
     assert payload["attachments"] == [
@@ -102,6 +102,24 @@ def test_build_scan_completion_email_attaches_report_pdf():
             "content": "JVBERi0xLjcgc2Nhbg==",
         }
     ]
+
+
+def test_build_scan_completion_email_formats_page_aligned_outcome_and_ai_score():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="4957c85d-f913-40eb-892c-addf0850b02f",
+        tier="amber",
+        ai_score=36.66,
+        writing_score=44.05,
+        finding_count=37,
+        pdf_bytes=b"%PDF-1.7 scan",
+        settings=_settings(),
+    )
+
+    assert "Report outcome: Moderate Risk" in payload["text"]
+    assert "AI likelihood score: 18%" in payload["text"]
+    assert "Writing score: 44.05%" in payload["text"]
+    assert "Findings: 37" in payload["text"]
 
 
 def test_send_rewrite_completion_email_skips_when_disabled(monkeypatch):
