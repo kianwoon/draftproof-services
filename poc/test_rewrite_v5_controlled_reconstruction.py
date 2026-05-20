@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import rewrite_v5.production as v5_production
+import rewrite_v5.residual_comb as v5_residual_comb
 from rewrite_v3.text_integrity import minimal_replacement_text_integrity
 from rewrite_v5.cluster_mass import build_cluster_mass_prompt
 from rewrite_v5.experiment import (
@@ -44,8 +45,10 @@ from rewrite_v5.residual_comb import (
     _runtime_budget_exhausted,
     _runtime_budget_stop_record,
     _section_apply_boundary_integrity,
+    _run_unsafe_cluster_cleanup_pass,
     _serial_variant_max_tokens,
     _should_start_with_unsafe_cluster_cleanup,
+    _unsafe_cluster_cleanup_stop_after_misses,
     _unsafe_cluster_probe_round_limit,
     _text_integrity_regression,
     _would_discard_structural_progress,
@@ -287,9 +290,9 @@ def test_v5_residual_cluster_prompt_uses_compact_repair_task():
     assert "bypass" not in lowered
     assert "current_route" not in lowered
     assert "relevant to the source topic" in lowered
-    assert "unverifiable named facts" in lowered
+    assert "fake citations" in lowered
     assert "source viewpoint" in lowered
-    assert "source-near" in lowered
+    assert "source-near" not in lowered
 
 
 def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores():
@@ -336,7 +339,7 @@ def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores(
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
     assert "relevant to the source topic" in lowered
-    assert "unverifiable named facts" in lowered
+    assert "fake citations" in lowered
 
 
 def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
@@ -384,7 +387,8 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
     assert "route_strategy_options" in payload
     assert "route_plan" in payload["output_schema"]
     lowered = prompt.casefold()
-    assert "allow source-supported specificity" in lowered
+    assert "controlled_expansion_move_options" in payload
+    assert "controlled expansion" in lowered
     assert "do not use a reflective-practice route for broad report content" not in lowered
     assert set(payload["output_schema"]["route_plan"].keys()) == {
         "content_profile",
@@ -401,6 +405,7 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
         "affected_unit_actions",
         "must_change",
         "must_preserve",
+        "controlled_expansion",
         "sentence_plan",
         "avoid_phrases",
         "length_target",
@@ -652,6 +657,55 @@ def test_v5_route_plan_uses_scanner_derived_fallback_when_planners_fail():
     assert plan["topk_route_diagnosis"]["primary_operator"] == "CLAUSE_ROUTE_CHANGE"
 
 
+def test_v5_scanner_derived_fallback_uses_structured_generic_pressure_not_keywords():
+    source = (
+        "Cities change when transport, housing, jobs, and public services move at different speeds. "
+        "The result is often a broad pressure on daily life."
+    )
+    section = SectionUnit(
+        section_id="route_generic",
+        heading="Density cluster",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={},
+    )
+    local_goal = {
+        "eligible_span_density_gate": {
+            "top_sentence_targets": [
+                {
+                    "sentence_id": "s001",
+                    "preview": "Cities change when transport, housing, jobs, and public services move at different speeds.",
+                    "word_count": 12,
+                    "generic_hits": 3,
+                }
+            ],
+            "recommended_actions": ["CLAUSE_ROUTE_CHANGE"],
+        }
+    }
+
+    class FailingGateway:
+        provider = None
+        model = "z-ai/glm-5.1"
+
+        def chat(self, *_args, **_kwargs):
+            return _FakeV5LLMResponse('{"not_route_plan": true}', model=self.model)
+
+    plan, diagnostics, _prompt, _raw = generate_residual_cluster_route_plan(
+        section=section,
+        local_goal=local_goal,
+        planner_gateway=FailingGateway(),
+        fallback_gateway=None,
+    )
+
+    assert diagnostics["route_plan_source"] == "scanner_derived_fallback"
+    assert plan["content_profile"] == "broad_explanatory_report"
+    assert plan["controlled_expansion"]["required"] is True
+    assert plan["controlled_expansion"]["move"] == "explanatory_bridge"
+
+
 def test_v5_route_plan_truncation_skips_second_planner_call():
     source = (
         "The paragraph gives a broad explanation of a topic. "
@@ -732,6 +786,8 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     lowered = prompt.casefold()
     assert "follow execution_brief.replacement_route" in lowered
     assert "fallback_route_blueprint" not in lowered
+    assert "source-near" not in lowered
+    assert "outside examples" not in lowered
 
 
 def test_v5_residual_prompt_can_carry_score_feedback_for_adaptive_retry():
@@ -762,6 +818,56 @@ def test_v5_residual_prompt_can_carry_score_feedback_for_adaptive_retry():
 
     assert payload["score_feedback"] == feedback
     assert any("did not move top-k" in rule for rule in payload["adaptive_retry_rules"])
+    assert not any("outside examples" in rule for rule in payload["adaptive_retry_rules"])
+
+
+def test_v5_broad_report_writer_requires_controlled_expansion_without_old_guards():
+    section = SectionUnit(
+        section_id="density_cluster_usa",
+        heading="Density cluster",
+        text=(
+            "The United States has a large economy and an important role in the world. "
+            "It has many industries, strong universities, and influence in politics and culture. "
+            "These factors make the country powerful, but they also create pressure and disagreement."
+        ),
+        start_char=0,
+        end_char=231,
+        paragraph_count=1,
+        word_count=38,
+        metadata={},
+    )
+    route_plan = {
+        **_sample_route_plan(),
+        "content_profile": "broad_explanatory_report",
+        "cluster_role": "background_context",
+        "dominant_failure_pattern": "category_dump",
+        "route_strategy": "group_and_bridge",
+        "controlled_expansion": {
+            "required": True,
+            "move": "concrete_framing",
+            "instruction": "Frame the broad country claim through one concrete relation between economy, institutions, and public pressure.",
+            "why_needed": "The current route stacks categories without a bridge.",
+        },
+        "must_preserve": [
+            {"source_quote": "large economy", "preserve_as": "economic claim"}
+        ],
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=3,
+        route_plan=route_plan,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    lowered = prompt.casefold()
+
+    assert payload["writer_execution_card"]["controlled_expansion"]["required"] is True
+    assert payload["writer_execution_card"]["controlled_expansion"]["move"] == "concrete_framing"
+    assert all(row["controlled_expansion_move"] == "concrete_framing" for row in payload["writer_variant_plan"])
+    assert "source-near" not in lowered
+    assert "outside examples" not in lowered
+    assert "unverifiable named facts" not in lowered
 
 
 def test_v5_adaptive_writer_feedback_triggers_topk_route_retry(monkeypatch):
@@ -855,7 +961,8 @@ def test_v5_direct_scanner_leapfrog_prompt_uses_scanner_cluster_and_small_varian
     lowered = prompt.casefold()
     assert "fake-human" in lowered
     assert "return the whole document" in lowered
-    assert "source-supported specificity" in lowered
+    assert "controlled specificity" in lowered
+    assert "source-near" not in lowered
     assert "do not upgrade factual wording into encyclopedia-style substitutes" not in lowered
 
 
@@ -1145,6 +1252,137 @@ def test_v5_unsafe_cluster_acceptance_prioritizes_cluster_movement_over_rank_ext
     assert not _has_unsafe_cluster_cleanup_movement(ai_regression)
 
 
+def test_v5_unsafe_cluster_later_round_rejects_tiny_local_only_gain(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_MIN_GAIN_START_ROUND", "2")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_MIN_AI_DELTA", "0.5")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_MIN_TOPK_DELTA", "0.5")
+    tiny_local_only = {
+        "incremental": {
+            "unsafe_cluster_count_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.2,
+            "topk_delta": 0.4,
+        },
+        "local_scores": {
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 6.0,
+            "topk_delta": 2.0,
+            "rank_delta": 1.0,
+        },
+    }
+    enough_ai = {
+        **tiny_local_only,
+        "incremental": {**tiny_local_only["incremental"], "ai_delta": 0.5},
+    }
+    enough_topk = {
+        **tiny_local_only,
+        "incremental": {**tiny_local_only["incremental"], "topk_delta": 0.5},
+    }
+    cluster_drop = {
+        **tiny_local_only,
+        "incremental": {**tiny_local_only["incremental"], "unsafe_cluster_count_delta": 1.0},
+    }
+
+    assert _has_unsafe_cluster_cleanup_movement(tiny_local_only, cleanup_index=1)
+    assert not _has_unsafe_cluster_cleanup_movement(tiny_local_only, cleanup_index=2)
+    assert _has_unsafe_cluster_cleanup_movement(enough_ai, cleanup_index=2)
+    assert _has_unsafe_cluster_cleanup_movement(enough_topk, cleanup_index=2)
+    assert _has_unsafe_cluster_cleanup_movement(cluster_drop, cleanup_index=2)
+
+
+def test_v5_unsafe_cluster_cleanup_stops_after_consecutive_misses(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_STOP_AFTER_MISSES", "3")
+    assert _unsafe_cluster_cleanup_stop_after_misses() == 3
+    text = "This paragraph still has a generic unsafe cluster."
+    section = SectionUnit(
+        section_id="density-1",
+        heading="",
+        text=text,
+        start_char=0,
+        end_char=len(text),
+        paragraph_count=1,
+        word_count=8,
+        metadata={},
+    )
+    generated_rounds: list[int] = []
+
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_density_gate_for_report",
+        lambda _text, _report: {"safe": False, "unsafe_cluster_count": 1},
+    )
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_select_density_cluster_section",
+        lambda *_args, **_kwargs: (section, {"cluster_id": "density-1"}, ("density-1",)),
+    )
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "generate_residual_cluster_route_plan",
+        lambda **_kwargs: ({"status": "test_plan"}, {"status": "ok"}, "plan prompt", "plan completion"),
+    )
+
+    def fake_generate_variants(**_kwargs):
+        generated_rounds.append(len(generated_rounds) + 1)
+        return (
+            [RecompositionVariant(variant_id="v1", text=text, word_count=8)],
+            {"status": "ok"},
+            "prompt",
+            "completion",
+        )
+
+    def fake_score_variant(**_kwargs):
+        return {
+            "variant_id": "v1",
+            "text": text,
+            "candidate_text": text,
+            "apply_status": {"applied": True},
+            "scores": {"rank_delta": 0.0},
+            "incremental": {
+                "unsafe_cluster_count_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+                "topk_calibrated_risk_delta": 0.0,
+                "ai_delta": 0.0,
+                "topk_delta": 0.0,
+            },
+            "local_scores": {
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "topk_delta": 0.0,
+                "rank_delta": 0.0,
+            },
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "generate_unsafe_cluster_cleanup_variants", fake_generate_variants)
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score_variant)
+
+    *_state, rounds, _best = _run_unsafe_cluster_cleanup_pass(
+        original_text=text,
+        baseline_report={},
+        baseline_scores={},
+        current_text=text,
+        current_report={},
+        current_goal={},
+        current_scores={"ai": 50.0},
+        gateway=SimpleNamespace(),
+        planner_gateway=SimpleNamespace(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+        max_rounds=8,
+        variant_count=1,
+    )
+
+    assert generated_rounds == [1, 2, 3]
+    assert [row["reason"] for row in rounds] == [
+        "no_unsafe_cluster_movement",
+        "no_unsafe_cluster_movement",
+        "no_unsafe_cluster_movement",
+        "unsafe_cluster_miss_limit_reached",
+    ]
+    assert rounds[-1]["consecutive_no_unsafe_cluster_movement"] == 3
+
+
 def test_v5_risky_window_cleanup_prompt_targets_whole_window_without_detector_language():
     section = build_section_units(
         "Johnny built confidence through role playing. "
@@ -1196,7 +1434,7 @@ def test_v5_risky_window_cleanup_prompt_can_use_route_plan_brief():
     assert payload["length_guidance"]["preferred_max_words"] == round(section.word_count * 1.10)
 
 
-def test_v5_unsafe_cluster_cleanup_prompt_is_local_and_source_near():
+def test_v5_unsafe_cluster_cleanup_prompt_is_local_without_old_source_near_guard():
     section = build_section_units(
         "The client gave him a card after the event. "
         "That made the learning visible.",
@@ -1224,6 +1462,7 @@ def test_v5_unsafe_cluster_cleanup_prompt_is_local_and_source_near():
     lowered = prompt.casefold()
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
+    assert "source-near" not in lowered
 
 
 def test_v5_unsafe_cluster_cleanup_prompt_can_use_route_plan_brief():
@@ -1267,6 +1506,16 @@ def test_v5_parallel_variant_fanout_uses_one_variant_prompts(monkeypatch):
         payload = {
             "task": "test_parallel_generation",
             "source_word_count": 70,
+            "writer_variant_plan": [
+                {
+                    "variant_id": f"v{index}",
+                    "main_operator": "CLAUSE_ROUTE_CHANGE",
+                    "route_shape": f"shape{index}",
+                    "execution_rule": f"execute shape {index}",
+                    "must_differ_from_other_variants": "use a distinct route",
+                }
+                for index in range(1, count + 1)
+            ],
             "output_schema": {
                 "variants": [
                     {"variant_id": f"v{index}", "text": "..."}
@@ -1285,6 +1534,8 @@ def test_v5_parallel_variant_fanout_uses_one_variant_prompts(monkeypatch):
             calls.append({"prompt": payload, "kwargs": kwargs})
             lane = payload["parallel_generation_lane"]["lane"]
             assert len(payload["output_schema"]["variants"]) == 1
+            assert len(payload["writer_variant_plan"]) == 1
+            assert payload["assigned_writer_variant"]["route_shape"] == f"shape{lane}"
             return _FakeV5LLMResponse(json.dumps({
                 "variants": [
                     {
@@ -1308,6 +1559,10 @@ def test_v5_parallel_variant_fanout_uses_one_variant_prompts(monkeypatch):
     assert diagnostics["parallel_call_count"] == 3
     assert diagnostics["parallel_worker_limit"] == 2
     assert len(calls) == 3
+    assert [
+        call["prompt"]["assigned_writer_variant"]["route_shape"]
+        for call in calls
+    ] == ["shape1", "shape2", "shape3"]
     assert all(call["kwargs"]["max_tokens"] == 1460 for call in calls)
     assert json.loads(prompt_log)["parallel_variant_generation"] is True
     assert json.loads(completion_log)["parallel_variant_generation"] is True

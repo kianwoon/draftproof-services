@@ -106,6 +106,26 @@ _ROUTE_PLAN_STRATEGIES = {
 }
 
 
+_CONTROLLED_EXPANSION_MOVES = {
+    "none": "No added bridge is required; route movement can happen through sentence order and clause route.",
+    "explanatory_bridge": "Add a short bridge that explains why two source beats belong together.",
+    "concrete_framing": "Frame a broad claim through concrete source terms or practical context.",
+    "scope_limit": "Narrow an over-broad claim by stating its limit or condition.",
+    "practical_consequence": "Attach the claim to a practical consequence already implied by the source route.",
+    "contrast_or_specific_angle": "Use a contrast or sharper angle to break category-list movement.",
+}
+
+
+_HARD_WRITER_FAILURES = [
+    "corrupted JSON or malformed output",
+    "unsafe markup, markdown, labels, or commentary",
+    "broken source meaning or missing hard anchors",
+    "fake personal story when the source has no personal story",
+    "fake citation, statistic, date, named event, or named factual claim",
+    "junk text or repeated filler",
+]
+
+
 def run_v5_residual_cluster_comb_experiment(
     *,
     input_text: str,
@@ -928,6 +948,15 @@ def _unsafe_cluster_probe_round_limit(total_rounds: int) -> int:
     return max(1, min(total, round(total * share)))
 
 
+def _unsafe_cluster_cleanup_stop_after_misses() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_STOP_AFTER_MISSES",
+        3,
+        minimum=0,
+        maximum=12,
+    )
+
+
 def _runtime_budget_seconds(value: float | None) -> float | None:
     if value is None:
         return None
@@ -1181,6 +1210,7 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
             "mixed",
         ],
         "topk_operator_options": sorted(_TOPK_ROUTE_OPERATORS),
+        "controlled_expansion_move_options": _CONTROLLED_EXPANSION_MOVES,
         "content_profile_rubrics": _ROUTE_PLAN_CONTENT_PROFILES,
         "cluster_role_options": _ROUTE_PLAN_CLUSTER_ROLES,
         "failure_pattern_options": _ROUTE_PLAN_FAILURE_PATTERNS,
@@ -1197,7 +1227,8 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
             "Do not use synonym replacement as a top-k action unless it is incidental to a route change.",
             "First choose content_profile and cluster_role from the supplied options.",
             "Then choose dominant_failure_pattern and route_strategy from the supplied options.",
-            "Use the chosen content_profile rubric to design the route; for broad_explanatory_report, allow source-supported specificity, explanatory bridges, and concrete framing.",
+            "Use the chosen content_profile rubric to design the route; for broad_explanatory_report, do not let old wording block controlled expansion when genericness is the problem.",
+            "When the affected units are broad, generic, category-stacked, or compressed, set controlled_expansion.required to true and choose one executable expansion move.",
             "Use the chosen cluster_role to decide what the cluster is supposed to do in the document.",
             "When cluster.source_block_count is greater than 1, the replacement route must cover every source block instead of compressing the cluster into only the opening topic.",
             "Make source_block_plan cover every cluster.source_blocks item.",
@@ -1208,7 +1239,8 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
             "Describe failed_route as the current sentence movement problem in plain editorial language.",
             "Describe replacement_route as the new route the writer should follow, using source-supported events and claims.",
             "Make must_change concrete enough that the writer can execute it without seeing fallback rules.",
-            "Make must_preserve exact source anchors: each source_quote must be copied verbatim from cluster.source_text.",
+            "Make must_preserve contain only hard source anchors that must survive; do not turn every source beat into a preservation blocker.",
+            "Each must_preserve.source_quote must be copied verbatim from cluster.source_text.",
             "Do not put summaries in must_preserve.source_quote; never write phrases like 'the fact that' unless those words are in cluster.source_text.",
             "Use must_preserve.preserve_as only as a short meaning label for the exact source quote.",
             "If a preservation item cannot be copied exactly from cluster.source_text, omit it.",
@@ -1217,7 +1249,8 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
             "Choose length_target from same_length, slight_expand, or expand.",
             "Use same_length when route can change without added bridging, slight_expand when one bridge is needed, and expand only when compression is the main weakness.",
             "Explain reason_this_should_move_score as a plain cause-effect expectation about route movement, not a score promise.",
-            "Any added bridge, specificity, or framing must be relevant to the source topic, consistent with nearby context, and must not introduce unverifiable named facts, statistics, citations, dates, or new events.",
+            "Any added bridge, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
+            "Hard failures are fake personal stories, fake citations, fake statistics, fake dates, fake named events, corrupted output, junk text, or broken meaning.",
             "Preserve cluster.referential_continuity in the replacement route.",
             "If a pronoun is linked to a name in before_context, plan for natural name/pronoun continuity and do not tell the writer to explain the reference parenthetically.",
             "Use plain editorial task language that a writer can execute.",
@@ -1245,7 +1278,7 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
                         "block_id": "b01",
                         "current_job": "what this source block does now",
                         "rewrite_job": "what the writer must make this block do",
-                        "must_preserve": ["exact or source-near material from this block"]
+                        "must_preserve": ["exact hard source material from this block"]
                     }
                 ],
                 "target_sentence_jobs": [
@@ -1275,6 +1308,12 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
                         "preserve_as": "short meaning label",
                     }
                 ],
+                "controlled_expansion": {
+                    "required": True,
+                    "move": "none | explanatory_bridge | concrete_framing | scope_limit | practical_consequence | contrast_or_specific_angle",
+                    "instruction": "one executable expansion instruction for the writer",
+                    "why_needed": "why this expansion should help the affected route"
+                },
                 "sentence_plan": ["..."],
                 "avoid_phrases": ["..."],
                 "length_target": "same_length | slight_expand | expand",
@@ -1412,8 +1451,13 @@ def _scanner_derived_route_plan(*, section: SectionUnit, local_goal: dict[str, A
         return None
     first_unit = affected_unit_actions[0]
     primary_metric = "topk_density" if _local_top_sentence_targets(local_goal) else "unsafe_cluster_count"
+    content_profile = _scanner_derived_content_profile(
+        section=section,
+        local_goal=local_goal,
+        affected_units=affected_units,
+    )
     raw_plan = {
-        "content_profile": _scanner_derived_content_profile(source_text),
+        "content_profile": content_profile,
         "primary_metric": primary_metric,
         "cluster_role": "mixed_section" if len(source_blocks) > 1 else "reasoning_or_analysis",
         "dominant_failure_pattern": "category_dump" if len(sentences) >= 4 else "claim_chain",
@@ -1445,6 +1489,12 @@ def _scanner_derived_route_plan(*, section: SectionUnit, local_goal: dict[str, A
         "avoid_phrases": [],
         "length_target": "same_length",
         "reason_this_should_move_score": "The plan attacks the affected sentence route directly instead of asking for a broader paraphrase.",
+        "controlled_expansion": _scanner_derived_controlled_expansion(
+            content_profile=content_profile,
+            primary_metric=primary_metric,
+            affected_units=affected_units,
+            sentence_count=len(sentences),
+        ),
     }
     sanitized = _sanitize_route_plan(raw_plan, source_text=source_text)
     return sanitized if _route_plan_valid(sanitized) else None
@@ -1467,18 +1517,49 @@ def _scanner_derived_route_plan_diagnostics(
     }
 
 
-def _scanner_derived_content_profile(source_text: str) -> str:
-    lowered = source_text.casefold()
-    first_person = {" i ", " my ", " me ", " we ", " our "}
-    if any(token in f" {lowered} " for token in first_person):
-        return "reflective_practice_academic"
-    process_terms = {" step ", " method ", " process ", " technique ", " practice ", " procedure "}
-    if any(token in f" {lowered} " for token in process_terms):
-        return "technical_or_process_explanation"
-    argument_terms = {" because ", " therefore ", " concern ", " problem ", " should ", " however "}
-    if any(token in f" {lowered} " for token in argument_terms):
-        return "argumentative_explanatory_essay"
-    return "broad_explanatory_report"
+def _scanner_derived_content_profile(
+    *,
+    section: SectionUnit,
+    local_goal: dict[str, Any],
+    affected_units: list[dict[str, Any]],
+) -> str:
+    metadata = section.metadata if isinstance(section.metadata, dict) else {}
+    for key in ("content_profile", "document_profile", "scanner_content_profile"):
+        profile = _content_profile(metadata.get(key) or local_goal.get(key))
+        if profile != "mixed_or_unknown":
+            return profile
+    targets = _local_top_sentence_targets(local_goal)
+    generic_pressure = any(_number(row.get("generic_hits")) > 0 for row in targets)
+    block_count = max(1, int(section.paragraph_count or 1))
+    sentence_count = len(_sentences(section.text))
+    target_count = sum(1 for row in affected_units if row.get("is_scanner_target"))
+    if generic_pressure or target_count >= 3 or sentence_count >= 4:
+        return "broad_explanatory_report"
+    if block_count > 1:
+        return "mixed_or_unknown"
+    return "mixed_or_unknown"
+
+
+def _scanner_derived_controlled_expansion(
+    *,
+    content_profile: str,
+    primary_metric: str,
+    affected_units: list[dict[str, Any]],
+    sentence_count: int,
+) -> dict[str, Any]:
+    target_count = sum(1 for row in affected_units if row.get("is_scanner_target"))
+    required = (
+        _content_profile(content_profile) == "broad_explanatory_report"
+        and (_primary_metric(primary_metric) in {"topk_density", "unsafe_cluster_count"} or target_count >= 3 or sentence_count >= 4)
+    )
+    if not required:
+        return {"required": False, "move": "none", "instruction": "", "why_needed": ""}
+    return {
+        "required": True,
+        "move": "explanatory_bridge",
+        "instruction": "Add one concise explanatory bridge or concrete frame that changes how the affected source units connect.",
+        "why_needed": "The scanner fallback sees broad affected-unit movement that will not be fixed by preserving the same route.",
+    }
 
 
 def _route_plan_failure_is_truncation(diagnostics: dict[str, Any]) -> bool:
@@ -1609,6 +1690,7 @@ def _writer_execution_card(*, section: SectionUnit, route_plan: dict[str, Any] |
     plan = route_plan if _route_plan_valid(route_plan) else {}
     topk = plan.get("topk_route_diagnosis") if isinstance(plan.get("topk_route_diagnosis"), dict) else {}
     actions = plan.get("affected_unit_actions") if isinstance(plan.get("affected_unit_actions"), list) else []
+    controlled_expansion = _controlled_expansion_for_writer(plan)
     operator_stack: list[str] = []
     for row in actions:
         if not isinstance(row, dict):
@@ -1640,6 +1722,8 @@ def _writer_execution_card(*, section: SectionUnit, route_plan: dict[str, Any] |
         "main_operator": primary_operator,
         "operator_stack": operator_stack[:5],
         "operator_execution_notes": _operator_execution_notes(operator_stack[:5]),
+        "controlled_expansion": controlled_expansion,
+        "hard_failures": _HARD_WRITER_FAILURES,
         "route_to_break": topk.get("predictable_path") or plan.get("failed_route"),
         "route_to_write": topk.get("replacement_route") or plan.get("replacement_route"),
         "do_not_do": do_not_do[:8],
@@ -1670,6 +1754,7 @@ def _writer_variant_plan(*, variant_count: int, route_plan: dict[str, Any] | Non
     count = max(1, min(5, int(variant_count or 1)))
     plan = route_plan if _route_plan_valid(route_plan) else {}
     primary_operator = _topk_route_operator((plan.get("topk_route_diagnosis") or {}).get("primary_operator") if isinstance(plan.get("topk_route_diagnosis"), dict) else None)
+    controlled_expansion = _controlled_expansion_for_writer(plan)
     operators = [primary_operator]
     for row in plan.get("affected_unit_actions", []) if isinstance(plan.get("affected_unit_actions"), list) else []:
         if not isinstance(row, dict):
@@ -1681,7 +1766,7 @@ def _writer_variant_plan(*, variant_count: int, route_plan: dict[str, Any] | Non
     fallback_shapes = [
         {
             "route_shape": "main_operator_direct",
-            "execution_rule": "Use the main operator directly and keep the replacement close to the source wording.",
+            "execution_rule": "Use the main operator directly and make the route change visible before polishing wording.",
         },
         {
             "route_shape": "subject_or_clause_reanchor",
@@ -1709,6 +1794,16 @@ def _writer_variant_plan(*, variant_count: int, route_plan: dict[str, Any] | Non
             "main_operator": operator,
             "route_shape": shape["route_shape"],
             "execution_rule": shape["execution_rule"],
+            "controlled_expansion_move": (
+                controlled_expansion["move"]
+                if controlled_expansion.get("required")
+                else "none"
+            ),
+            "controlled_expansion_instruction": (
+                controlled_expansion["instruction"]
+                if controlled_expansion.get("required")
+                else ""
+            ),
             "must_differ_from_other_variants": "Use a different opener, clause order, or sentence boundary from the other variants.",
         })
     return rows
@@ -1720,7 +1815,7 @@ def _adaptive_retry_rules(feedback: dict[str, Any]) -> list[str]:
         "Treat score_feedback as the reason the previous candidate batch failed.",
         "Do not repeat the rejected sentence route, opener pattern, or list rhythm.",
         "Make the next variants visibly execute writer_execution_card.main_operator.",
-        "Preserve the same source facts and paragraph role; do not add outside examples.",
+        "Preserve the paragraph role and avoid only hard failures: fake personal stories, fake citations, fake statistics, fake dates, fake named events, broken meaning, markup, junk, or corrupted output.",
     ]
     if reason == "topk_route_not_moved":
         rules.insert(1, "The previous batch did not move top-k; every next variant must change the affected sentence route before changing wording.")
@@ -1734,7 +1829,8 @@ def _adaptive_retry_rules(feedback: dict[str, Any]) -> list[str]:
 def _custom_route_writer_method() -> list[str]:
     return [
         "Treat writer_execution_card as the highest-priority execution summary; it is the compact version of execution_brief.",
-        "Follow writer_variant_plan so variants are genuinely different route executions, not near-duplicate paraphrases.",
+        "If assigned_writer_variant is present, execute that one lane brief above the full writer_variant_plan.",
+        "Follow the assigned route shape so variants are genuinely different route executions, not near-duplicate paraphrases.",
         "Use execution_brief.content_profile and execution_brief.cluster_role to choose the right kind of route movement.",
         "Use execution_brief.primary_metric to understand which scanner movement the rewrite is supposed to cause.",
         "When execution_brief.primary_metric is topk_density, use execution_brief.topk_route_diagnosis to break the predictable next-word path.",
@@ -1744,19 +1840,19 @@ def _custom_route_writer_method() -> list[str]:
         "Execute every execution_brief.affected_unit_actions row using its operator_stack; if affected_text is only paraphrased, the rewrite is not enough.",
         "Execute execution_brief.source_block_plan block by block; each block must keep its central source material.",
         "Execute execution_brief.target_sentence_jobs for the risky sentences; do not leave those sentence routes unchanged.",
-        "Satisfy coverage_guidance before style changes; do not omit source blocks or central source beats.",
-        "When execution_brief.content_profile is broad_explanatory_report, add source-supported specificity, explanatory bridges, or concrete framing when that helps break generic wording.",
+        "Use coverage_guidance to keep the replacement complete, but do not let coverage copy the old route.",
+        "When writer_execution_card.controlled_expansion.required is true, every variant must execute its controlled expansion move.",
+        "For broad_explanatory_report, controlled expansion may add explanatory bridges, concrete framing, scope limits, practical consequences, contrasts, or a sharper specific angle.",
         "Follow execution_brief.replacement_route while rewriting the whole cluster.",
         "Satisfy every execution_brief.must_change item.",
-        "Preserve every execution_brief.must_preserve.source_quote; use preserve_as only as the meaning hint.",
+        "Preserve hard anchors from execution_brief.must_preserve, but do not treat ordinary source wording as untouchable.",
         "Follow execution_brief.sentence_plan in order, but do not copy plan labels into the replacement.",
         "Avoid execution_brief.avoid_phrases unless the phrase is a required source term.",
         "Use length_guidance; do not compress the cluster into a summary.",
         "Change remaining_problem_sentences most strongly.",
-        "Keep the same source subjects, actions, evidence, outcome, point of view, and referential continuity.",
-        "Use simple source-near wording where it works.",
-        "Any new connective wording, specificity, or framing must be relevant to the source topic, consistent with nearby context, and must not introduce unverifiable named facts, statistics, citations, dates, or new events.",
-        "Do not replace the source context with a different scene.",
+        "Keep the same paragraph role, point of view, and referential continuity.",
+        "Any new connective wording, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
+        "Do not trigger writer_execution_card.hard_failures.",
         "Do not return a fragment; the replacement must cover the whole source cluster.",
         "Do not write a plan, label, explanation of the method, or bullet list.",
     ]
@@ -1765,7 +1861,8 @@ def _custom_route_writer_method() -> list[str]:
 def _custom_route_retune_method() -> list[str]:
     return [
         "Treat writer_execution_card as the highest-priority execution summary; it is the compact version of execution_brief.",
-        "Follow writer_variant_plan so variants are genuinely different route executions, not near-duplicate paraphrases.",
+        "If assigned_writer_variant is present, execute that one lane brief above the full writer_variant_plan.",
+        "Follow the assigned route shape so variants are genuinely different route executions, not near-duplicate paraphrases.",
         "Use execution_brief.content_profile and execution_brief.cluster_role to choose the right kind of route movement.",
         "Use execution_brief.primary_metric to understand which scanner movement the rewrite is supposed to cause.",
         "When execution_brief.primary_metric is topk_density, use execution_brief.topk_route_diagnosis to break the predictable next-word path.",
@@ -1775,18 +1872,19 @@ def _custom_route_retune_method() -> list[str]:
         "Execute every execution_brief.affected_unit_actions row using its operator_stack; if affected_text is only paraphrased, the rewrite is not enough.",
         "Execute execution_brief.source_block_plan block by block; each block must keep its central source material.",
         "Execute execution_brief.target_sentence_jobs for the risky sentences; do not leave those sentence routes unchanged.",
-        "Satisfy coverage_guidance before style changes; do not omit source blocks or central source beats.",
-        "When execution_brief.content_profile is broad_explanatory_report, add source-supported specificity, explanatory bridges, or concrete framing when that helps break generic wording.",
+        "Use coverage_guidance to keep the replacement complete, but do not let coverage copy the old route.",
+        "When writer_execution_card.controlled_expansion.required is true, every variant must execute its controlled expansion move.",
+        "For broad_explanatory_report, controlled expansion may add explanatory bridges, concrete framing, scope limits, practical consequences, contrasts, or a sharper specific angle.",
         "Follow execution_brief.replacement_route while rewriting the whole cluster again.",
         "Satisfy every execution_brief.must_change item while focusing on remaining_problem_sentences.",
-        "Preserve every execution_brief.must_preserve.source_quote; use preserve_as only as the meaning hint.",
+        "Preserve hard anchors from execution_brief.must_preserve, but do not treat ordinary source wording as untouchable.",
         "Follow execution_brief.sentence_plan in order, but do not copy plan labels into the replacement.",
         "Avoid execution_brief.avoid_phrases unless the phrase is a required source term.",
         "Use retune_focus and candidate_non_source_terms_to_reduce only to clean the current best wording.",
         "Use length_guidance; do not compress the cluster into a summary.",
-        "Keep the same source subjects, actions, evidence, outcome, point of view, and referential continuity.",
-        "Any new connective wording, specificity, or framing must be relevant to the source topic, consistent with nearby context, and must not introduce unverifiable named facts, statistics, citations, dates, or new events.",
-        "Do not replace the source context with a different scene.",
+        "Keep the same paragraph role, point of view, and referential continuity.",
+        "Any new connective wording, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
+        "Do not trigger writer_execution_card.hard_failures.",
         "Do not return a fragment; the replacement must cover the whole source cluster.",
         "Do not write a plan, label, explanation of the method, or bullet list.",
     ]
@@ -1803,15 +1901,15 @@ def _fallback_route_writer_method() -> list[str]:
         "Change the route of remaining_problem_sentences most strongly.",
         "Do not keep an avoid_openers item as the opening sentence.",
         "Preserve each source-supported beat unless two adjacent beats are naturally merged.",
-        "Stay source-near: keep simple source words when they already work.",
+        "Use simple wording where it works, but do not let old wording block required route movement.",
         "Use cluster.source_phrase_anchors where they fit naturally.",
         "Do not upgrade simple source wording into formal domain-theory labels.",
         "Keep the same source subjects, actions, evidence, outcome, and point of view.",
         "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
         "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
         "If the source uses I or my, keep that source viewpoint instead of replacing it with a detached narrator.",
-        "Any new connective wording, specificity, or framing must be relevant to the source topic, consistent with nearby context, and must not introduce unverifiable named facts, statistics, citations, dates, or new events.",
-        "Do not replace the source context with a different scene.",
+        "Any new connective wording, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
+        "Reject hard failures: fake personal stories, fake citations, fake statistics, fake dates, fake named events, broken meaning, markup, junk, or corrupted output.",
         "Do not return a fragment; the replacement must cover the whole source cluster.",
         "Do not write a plan, label, explanation of the method, or bullet list.",
         "Avoid abstract summary language. Make the movement happen through the event.",
@@ -1828,7 +1926,7 @@ def _fallback_route_retune_method() -> list[str]:
         "Do not copy fallback_route_blueprint labels or step names into the replacement.",
         "Break any packed sentence into clearer event movement if needed.",
         "Preserve each source_event_beats item unless two adjacent beats are naturally merged.",
-        "Stay source-near: keep simple source words when they already work.",
+        "Use simple wording where it works, but do not let old wording block required route movement.",
         "Use cluster.source_phrase_anchors where they fit naturally.",
         "Reduce candidate_non_source_terms_to_reduce by replacing them with source wording where possible.",
         "Do not upgrade simple source wording into formal domain-theory labels.",
@@ -1836,8 +1934,8 @@ def _fallback_route_retune_method() -> list[str]:
         "Preserve cluster.referential_continuity; do not replace a specific source subject with a generic category label.",
         "If cluster.referential_continuity gives an established name, use the name or the source pronoun naturally; do not write explanatory referent phrases like 'referring to'.",
         "Use concrete source action, process, or event wording from the same source context instead of summary wording.",
-        "Any new connective wording, specificity, or framing must be relevant to the source topic, consistent with nearby context, and must not introduce unverifiable named facts, statistics, citations, dates, or new events.",
-        "Do not replace the source context with a different scene.",
+        "Any new connective wording, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
+        "Reject hard failures: fake personal stories, fake citations, fake statistics, fake dates, fake named events, broken meaning, markup, junk, or corrupted output.",
         "Do not return a fragment; the replacement must cover the whole source cluster.",
         "Do not write a plan, label, explanation of the method, or bullet list.",
     ]
@@ -1935,7 +2033,8 @@ def build_risky_window_cleanup_prompt(
             "preferred_max_words": max(12, round(source_words * 1.20)),
         },
         "constraints": [
-            "Any added bridge, specificity, or framing must be relevant to the source topic, consistent with nearby context, and must not introduce unverifiable named facts, statistics, citations, dates, or new events.",
+            "Any added bridge, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
+            "Reject hard failures: fake personal stories, fake citations, fake statistics, fake dates, fake named events, broken meaning, markup, junk, or corrupted output.",
             "Keep the source-supported viewpoint and stance.",
             "Do not return the whole document.",
             "Do not write a plan or explanation.",
@@ -2000,8 +2099,8 @@ def build_unsafe_cluster_cleanup_prompt(
         },
         "repair_moves": [
             "Change the local route, not just one synonym.",
-            "Tie any broad claim back to concrete words already in source_cluster or nearby context.",
-            "Keep the wording plain and source-near.",
+            "When broad_generic_pressure is true, add a concrete frame, explanatory bridge, scope limit, or practical consequence instead of a synonym swap.",
+            "Use plain wording, but do not let old wording block the route change.",
             "If the cluster contains an obvious splice or duplicate word, repair it cleanly while preserving meaning.",
         ],
         "must_preserve": [
@@ -2016,7 +2115,8 @@ def build_unsafe_cluster_cleanup_prompt(
             "preferred_max_words": max(12, round(source_words * 1.25)),
         },
         "constraints": [
-            "Any added bridge, specificity, or framing must be relevant to the source topic, consistent with nearby context, and must not introduce unverifiable named facts, statistics, citations, dates, or new events.",
+            "Any added bridge, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
+            "Reject hard failures: fake personal stories, fake citations, fake statistics, fake dates, fake named events, broken meaning, markup, junk, or corrupted output.",
             "Do not make the writing casual or slangy.",
             "Do not return the whole document.",
             "Do not write a plan or explanation.",
@@ -2105,7 +2205,7 @@ def build_direct_scanner_leapfrog_prompt(
         },
         "target_texture": [
             "plain bachelor-level report or essay wording",
-            "source-near concrete words",
+            "concrete wording that moves the route",
             "uneven but clear sentence route",
             "no polished abstract summary",
         ],
@@ -2120,15 +2220,15 @@ def build_direct_scanner_leapfrog_prompt(
             "Follow execution_brief.replacement_route when execution_brief is present.",
             "For top-k work, directly execute writer_execution_card.route_to_write and avoid writer_execution_card.do_not_do.",
             "Satisfy execution_brief.must_change and target_sentence_jobs without copying plan labels.",
-            "Write a source-near replacement for the whole selected cluster, not a synonym patch.",
+            "Write a route-changing replacement for the whole selected cluster, not a synonym patch.",
             "Keep the central source facts, subjects, actions, outcomes, citations, quotations, and viewpoint.",
-            "For broad_explanatory_report clusters, allow source-supported specificity, explanatory bridges, and concrete framing.",
-            "Prefer concrete bridges already licensed by the selected cluster or its immediate context.",
+            "For broad_explanatory_report clusters, use controlled specificity, explanatory bridges, concrete framing, scope limits, practical consequences, contrasts, or sharper specific angles when genericness is the blocker.",
             "Remove repeated category-dump wording when it does not carry a distinct source fact.",
             "Do not make every sentence the same length or the same polished shape.",
         ],
         "constraints": [
-            "Any added bridge, specificity, or framing must be relevant to the source topic, consistent with nearby context, and must not introduce unverifiable named facts, statistics, citations, dates, or new events.",
+            "Any added bridge, specificity, or framing must be relevant to the source topic and consistent with nearby context.",
+            "Reject hard failures: fake personal stories, fake citations, fake statistics, fake dates, fake named events, broken meaning, markup, junk, or corrupted output.",
             "Do not make the writing casual or slangy.",
             "Do not return the whole document.",
             "Do not write a plan or explanation.",
@@ -2258,7 +2358,7 @@ def _generate_parallel_loose_variants(
     variant_count: int,
     worker_limit: int,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
-    base_prompt = prompt_builder(1)
+    base_prompt = prompt_builder(variant_count)
     base_max_tokens = _int_env(
         "DRAFTPROOF_REWRITE_V5_RESIDUAL_COMB_MAX_TOKENS",
         8000,
@@ -2382,15 +2482,35 @@ def _parallel_lane_prompt(prompt: str, *, lane_index: int, lane_count: int) -> s
         return prompt
     if not isinstance(payload, dict):
         return prompt
+    assigned_variant = _assigned_writer_variant(payload, lane_index=lane_index)
+    if assigned_variant:
+        payload["assigned_writer_variant"] = assigned_variant
+        payload["writer_variant_plan"] = [assigned_variant]
+    output_schema = payload.get("output_schema") if isinstance(payload.get("output_schema"), dict) else {}
+    if isinstance(output_schema, dict):
+        output_schema["variants"] = [{"variant_id": "v1", "text": "..."}]
+        payload["output_schema"] = output_schema
     payload["parallel_generation_lane"] = {
         "lane": lane_index,
         "total_lanes": lane_count,
+        "assigned_variant_id": assigned_variant.get("variant_id") if assigned_variant else f"v{lane_index}",
         "instruction": (
-            "Produce one independent replacement candidate for this lane. "
+            "Produce one independent replacement candidate for this lane by executing assigned_writer_variant when present. "
             "Do not mention the lane or add commentary."
         ),
     }
     return prefix + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _assigned_writer_variant(payload: dict[str, Any], *, lane_index: int) -> dict[str, Any]:
+    plans = payload.get("writer_variant_plan")
+    if not isinstance(plans, list) or not plans:
+        return {}
+    index = max(0, min(len(plans) - 1, int(lane_index or 1) - 1))
+    row = plans[index] if isinstance(plans[index], dict) else {}
+    if not row:
+        return {}
+    return dict(row)
 
 
 def _parallel_single_variant_max_tokens(prompt: str, base_max_tokens: int) -> int:
@@ -2522,6 +2642,7 @@ def _parse_route_plan(raw: str, *, source_text: str) -> tuple[dict[str, Any] | N
         "target_sentence_job_count": len(sanitized.get("target_sentence_jobs") or []),
         "must_change_count": len(sanitized.get("must_change") or []),
         "must_preserve_count": len(sanitized.get("must_preserve") or []),
+        "controlled_expansion": sanitized.get("controlled_expansion"),
         "sentence_plan_count": len(sanitized.get("sentence_plan") or []),
         "length_target": sanitized.get("length_target"),
     }
@@ -2548,6 +2669,7 @@ def _sanitize_route_plan(plan: dict[str, Any], *, source_text: str) -> dict[str,
         "avoid_phrases": _supported_or_short_list(plan.get("avoid_phrases"), source_text=source, limit=12),
         "length_target": _length_target(plan.get("length_target")),
         "reason_this_should_move_score": _short_string(plan.get("reason_this_should_move_score"), limit=320),
+        "controlled_expansion": _sanitize_controlled_expansion(plan.get("controlled_expansion")),
     }
 
 
@@ -2683,6 +2805,63 @@ def _sanitize_topk_route_diagnosis(value: Any) -> dict[str, str]:
         "primary_operator": _topk_route_operator(row.get("primary_operator")),
         "replacement_route": _short_string(row.get("replacement_route"), limit=300),
         "insufficient_edit": _short_string(row.get("insufficient_edit"), limit=220),
+    }
+
+
+def _sanitize_controlled_expansion(value: Any) -> dict[str, Any]:
+    row = value if isinstance(value, dict) else {}
+    move = _controlled_expansion_move(row.get("move"))
+    required = bool(row.get("required")) and move != "none"
+    return {
+        "required": required,
+        "move": move if required else "none",
+        "instruction": _short_string(row.get("instruction"), limit=260),
+        "why_needed": _short_string(row.get("why_needed"), limit=220),
+    }
+
+
+def _controlled_expansion_move(value: Any) -> str:
+    move = _short_string(value, limit=80)
+    if move in _CONTROLLED_EXPANSION_MOVES:
+        return move
+    return "none"
+
+
+def _route_plan_needs_controlled_expansion(plan: dict[str, Any]) -> bool:
+    expansion = plan.get("controlled_expansion") if isinstance(plan.get("controlled_expansion"), dict) else {}
+    if bool(expansion.get("required")) and _controlled_expansion_move(expansion.get("move")) != "none":
+        return True
+    profile = _content_profile(plan.get("content_profile"))
+    failure = _failure_pattern(plan.get("dominant_failure_pattern"))
+    metric = _primary_metric(plan.get("primary_metric"))
+    return (
+        profile == "broad_explanatory_report"
+        and failure in {"category_dump", "claim_chain", "transition_stack", "mixed"}
+        and metric in {"topk_density", "unsafe_cluster_count", "risky_window_count", "mixed"}
+    )
+
+
+def _controlled_expansion_for_writer(plan: dict[str, Any]) -> dict[str, Any]:
+    expansion = plan.get("controlled_expansion") if isinstance(plan.get("controlled_expansion"), dict) else {}
+    if bool(expansion.get("required")) and _controlled_expansion_move(expansion.get("move")) != "none":
+        return {
+            "required": True,
+            "move": _controlled_expansion_move(expansion.get("move")),
+            "instruction": _short_string(expansion.get("instruction"), limit=260),
+            "why_needed": _short_string(expansion.get("why_needed"), limit=220),
+        }
+    if _route_plan_needs_controlled_expansion(plan):
+        return {
+            "required": True,
+            "move": "explanatory_bridge",
+            "instruction": "Add one controlled bridge or concrete frame that makes the broad route less generic.",
+            "why_needed": "The route plan identifies broad generic movement that cannot be fixed by preserving the old route.",
+        }
+    return {
+        "required": False,
+        "move": "none",
+        "instruction": "",
+        "why_needed": "",
     }
 
 
@@ -2956,6 +3135,20 @@ def _route_plan_response_format() -> dict[str, Any]:
                                     "additionalProperties": False,
                                 },
                             },
+                            "controlled_expansion": {
+                                "type": "object",
+                                "properties": {
+                                    "required": {"type": "boolean"},
+                                    "move": {
+                                        "type": "string",
+                                        "enum": list(_CONTROLLED_EXPANSION_MOVES.keys()),
+                                    },
+                                    "instruction": {"type": "string"},
+                                    "why_needed": {"type": "string"},
+                                },
+                                "required": ["required", "move", "instruction", "why_needed"],
+                                "additionalProperties": False,
+                            },
                             "sentence_plan": {
                                 "type": "array",
                                 "minItems": 1,
@@ -2989,6 +3182,7 @@ def _route_plan_response_format() -> dict[str, Any]:
                             "affected_unit_actions",
                             "must_change",
                             "must_preserve",
+                            "controlled_expansion",
                             "sentence_plan",
                             "avoid_phrases",
                             "length_target",
@@ -3505,7 +3699,20 @@ def _run_unsafe_cluster_cleanup_pass(
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
     skipped: set[tuple[Any, ...]] = set()
+    consecutive_unsafe_misses = 0
+    unsafe_miss_limit = _unsafe_cluster_cleanup_stop_after_misses()
     for cleanup_index in range(1, max(0, int(max_rounds or 0)) + 1):
+        if unsafe_miss_limit > 0 and consecutive_unsafe_misses >= unsafe_miss_limit:
+            rounds.append({
+                "round": cleanup_index,
+                "phase": "unsafe_cluster_cleanup",
+                "status": "stopped",
+                "reason": "unsafe_cluster_miss_limit_reached",
+                "consecutive_no_unsafe_cluster_movement": consecutive_unsafe_misses,
+                "miss_limit": unsafe_miss_limit,
+                "current_scores": current_scores,
+            })
+            break
         if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
             rounds.append(_runtime_budget_stop_record(
                 phase="unsafe_cluster_cleanup",
@@ -3597,7 +3804,11 @@ def _run_unsafe_cluster_cleanup_pass(
         ]
         global_best_candidate = _best_full_document_candidate([global_best_candidate, *rows])
         selected = _best_unsafe_cluster_cleanup_candidate(rows)
-        accepted = selected if selected and _has_unsafe_cluster_cleanup_movement(selected) else None
+        accepted = (
+            selected
+            if selected and _has_unsafe_cluster_cleanup_movement(selected, cleanup_index=cleanup_index)
+            else None
+        )
         round_payload = {
             "round": cleanup_index,
             "phase": "unsafe_cluster_cleanup",
@@ -3615,8 +3826,10 @@ def _run_unsafe_cluster_cleanup_pass(
         rounds.append(round_payload)
         (round_dir / "round_result.json").write_text(json.dumps(round_payload, ensure_ascii=False, indent=2))
         if not accepted:
+            consecutive_unsafe_misses += 1
             skipped.add(signature)
             continue
+        consecutive_unsafe_misses = 0
         current_text, current_report, current_goal, current_scores = _accepted_state(
             accepted=accepted,
             original_text=original_text,
@@ -3962,17 +4175,56 @@ def _has_balanced_ai_topk_movement(row: dict[str, Any]) -> bool:
     )
 
 
-def _has_unsafe_cluster_cleanup_movement(row: dict[str, Any]) -> bool:
+def _has_unsafe_cluster_cleanup_movement(
+    row: dict[str, Any],
+    *,
+    cleanup_index: int | None = None,
+) -> bool:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     local = row.get("local_scores") if isinstance(row.get("local_scores"), dict) else {}
     has_cluster_count_drop = _number(incremental.get("unsafe_cluster_count_delta")) > 0
     has_local_cluster_movement = _local_cluster_directionally_improved(local)
     return (
         (has_cluster_count_drop or has_local_cluster_movement)
+        and _has_unsafe_cluster_cleanup_marginal_gain(row, cleanup_index=cleanup_index)
         and _number(incremental.get("risky_window_count_delta")) >= 0
         and _number(incremental.get("unsafe_cluster_count_delta")) >= 0
         and _number(incremental.get("topk_calibrated_risk_delta")) >= 0
         and _number(incremental.get("ai_delta")) >= 0
+    )
+
+
+def _has_unsafe_cluster_cleanup_marginal_gain(
+    row: dict[str, Any],
+    *,
+    cleanup_index: int | None = None,
+) -> bool:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    if _number(incremental.get("unsafe_cluster_count_delta")) > 0:
+        return True
+    start_round = _int_env(
+        "DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_MIN_GAIN_START_ROUND",
+        2,
+        minimum=1,
+        maximum=12,
+    )
+    if cleanup_index is None or int(cleanup_index or 0) < start_round:
+        return True
+    min_ai = _float_env(
+        "DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_MIN_AI_DELTA",
+        0.5,
+        minimum=0.0,
+        maximum=20.0,
+    )
+    min_topk = _float_env(
+        "DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_MIN_TOPK_DELTA",
+        0.5,
+        minimum=0.0,
+        maximum=20.0,
+    )
+    return (
+        _number(incremental.get("ai_delta")) >= min_ai
+        or _number(incremental.get("topk_delta")) >= min_topk
     )
 
 
@@ -4700,7 +4952,7 @@ def _retune_focus_from_goal(local_goal: dict[str, Any]) -> list[str]:
     if isinstance(gate, dict) and not gate.get("top_unsafe_clusters"):
         focus.append("The unsafe sentence density is cleared; keep that route but make the wording less formally paraphrased.")
     if isinstance(authorship, dict) and _number(authorship.get("topk_calibrated_risk")) > 25.0:
-        focus.append("The remaining problem is calibrated top-k: stay closer to simple source wording and avoid formal substitute terms.")
+        focus.append("The remaining problem is calibrated top-k: change the sentence route and avoid formal substitute terms.")
     return focus[:3]
 
 
@@ -4874,7 +5126,7 @@ def _sentence_jobs_for_blueprint(*, beats: list[str], start_index: int) -> list[
         return []
     jobs: list[str] = []
     if start_index == 0:
-        jobs.append("Sentence 1: restate the starting situation using simple source-near wording.")
+        jobs.append("Sentence 1: restate the starting situation in simple wording while changing the route.")
         if len(beats) >= 4:
             jobs.append("Sentence 2: explain why this starting point shaped the next source action or claim.")
         for index, beat in enumerate(beats[1:], start=2):

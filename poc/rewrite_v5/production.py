@@ -91,6 +91,7 @@ def _production_config() -> dict[str, Any]:
         "direct_scanner_leapfrog_batches": _int_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_BATCHES", 2, minimum=1, maximum=3),
         "risky_window_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_RISKY_WINDOW_CLEANUP_ROUNDS", 2, minimum=0, maximum=12),
         "unsafe_cluster_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_CLEANUP_ROUNDS", 12, minimum=0, maximum=12),
+        "unsafe_cluster_stop_after_misses": _int_env("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_STOP_AFTER_MISSES", 3, minimum=0, maximum=12),
         "unsafe_cluster_probe_share": _float_env("DRAFTPROOF_REWRITE_V5_UNSAFE_CLUSTER_PROBE_SHARE", 0.25, minimum=0.0, maximum=1.0),
         "final_risky_window_cleanup_rounds": _int_env("DRAFTPROOF_REWRITE_V5_FINAL_RISKY_WINDOW_CLEANUP_ROUNDS", 2, minimum=0, maximum=12),
         "cleanup_variant_count": _int_env("DRAFTPROOF_REWRITE_V5_CLEANUP_VARIANTS", 5, minimum=1, maximum=5),
