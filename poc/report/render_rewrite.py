@@ -62,6 +62,19 @@ def _with_ai_reference(text: str, score) -> str:
     return f"{text} · {suffix}" if suffix else text
 
 
+def _ai_signal_stamp(score) -> dict:
+    if not isinstance(score, (int, float)):
+        return {"label": "AI Review", "color": "#334155", "bg": "#f8fafc"}
+    value = float(score)
+    if value >= 60:
+        return {"label": "High AI Signal", "color": "#b91c1c", "bg": "#fef2f2"}
+    if value >= 40:
+        return {"label": "Likely AI", "color": "#c2410c", "bg": "#fff7ed"}
+    if value >= _TURNITIN_AI_REFERENCE_THRESHOLD:
+        return {"label": "AI Review", "color": "#b45309", "bg": "#fff7ed"}
+    return {"label": "Low AI Signal", "color": "#15803d", "bg": "#f0fdf4"}
+
+
 def _wq_score(report: dict) -> float:
     score = _badge(report).get("writing_quality_score", 0)
     return float(score) if isinstance(score, (int, float)) else 0.0
@@ -139,11 +152,10 @@ def _scan_contribution(scan: dict) -> dict:
 
 def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) -> str:
     contribution = _scan_contribution(rewritten_scan)
-    rating_label = _authorship_label(rewritten_scan) or result_label
-    rating = str(rating_label or "Review").strip().upper()
     ai_score = _pct(_ai_score(rewritten_scan)) if rewritten_scan else None
     calibrated = contribution.get("calibrated")
     risk = calibrated if calibrated is not None else ai_score
+    stamp = _ai_signal_stamp(risk)
     risk_text = f"{risk}% calibrated risk" if risk is not None else "Calibrated risk unavailable"
     risk_text = _with_ai_reference(risk_text, risk)
     scan_score = f"{ai_score}%" if ai_score is not None else "-"
@@ -173,9 +185,9 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
         """
     return f"""
 <div class="dp-rewrite-outcome-panel">
-  <div class="dp-rewrite-stamp">
-    <span>Rewritten Outcome</span>
-    <strong>{html.escape(rating)}</strong>
+  <div class="dp-rewrite-stamp" style="color:{stamp["color"]};border-color:{stamp["color"]};background:{stamp["bg"]}">
+    <span>Rewritten AI Signal</span>
+    <strong>{html.escape(stamp["label"].upper())}</strong>
     <em>{html.escape(risk_text)}</em>
   </div>
   <div class="dp-rewrite-scan-summary">

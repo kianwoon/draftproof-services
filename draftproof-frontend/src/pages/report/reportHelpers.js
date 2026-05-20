@@ -136,6 +136,32 @@ function formatMetricPercent(value, digits = 0) {
 
 const REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5;
 const TURNITIN_AI_REFERENCE_THRESHOLD = 20;
+const AI_SIGNAL_STAMP_LEVELS = [
+  {
+    min: 60,
+    labelKey: 'report.aiSignalStamp.high',
+    color: '#b91c1c',
+    bg: '#fef2f2',
+  },
+  {
+    min: 40,
+    labelKey: 'report.aiSignalStamp.likely',
+    color: '#c2410c',
+    bg: '#fff7ed',
+  },
+  {
+    min: TURNITIN_AI_REFERENCE_THRESHOLD,
+    labelKey: 'report.aiSignalStamp.review',
+    color: '#b45309',
+    bg: '#fff7ed',
+  },
+  {
+    min: 0,
+    labelKey: 'report.aiSignalStamp.low',
+    color: '#15803d',
+    bg: '#f0fdf4',
+  },
+];
 
 function calibratedReportAiScore(value) {
   const percent = metricValue(value);
@@ -767,6 +793,23 @@ function formatAuthorshipSealDetailWithReference(detail, referenceScore, t) {
   return detail ? `${detail} · ${suffix}` : suffix;
 }
 
+function getAiSignalStamp(score, t) {
+  const value = metricValue(score);
+  const level = AI_SIGNAL_STAMP_LEVELS.find((item) => value != null && value >= item.min) || {
+    labelKey: 'report.aiSignalStamp.review',
+    color: '#334155',
+    bg: '#f8fafc',
+  };
+  return {
+    label: t(level.labelKey),
+    score: value,
+    tone: {
+      color: level.color,
+      bg: level.bg,
+    },
+  };
+}
+
 function getAuthorshipTone(rating = {}) {
   const code = String(rating.code || rating.short_label || rating.label || '').toLowerCase();
   if (code.includes('insufficient') || code.includes('too short')) {
@@ -1243,6 +1286,7 @@ export {
   deriveCalibratedAuthorshipRating,
   formatAuthorshipSealDetail,
   formatAuthorshipSealDetailWithReference,
+  getAiSignalStamp,
   getAuthorshipTone,
   formatSignedDelta,
   formatPlainScore,

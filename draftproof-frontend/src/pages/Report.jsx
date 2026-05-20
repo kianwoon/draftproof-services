@@ -31,6 +31,7 @@ import {
   deriveCalibratedAuthorshipRating,
   formatAuthorshipSealDetail,
   formatAuthorshipSealDetailWithReference,
+  getAiSignalStamp,
   getAuthorshipTone,
   formatSignedDelta,
   formatPlainScore,
@@ -489,15 +490,10 @@ export default function Report() {
     hasRewriteComparisonData(rewriteResultReport) &&
     (rewrittenTransformation || rewrittenTransformationSummary || rewrittenAiScore != null)
   );
-  const sealAuthorshipRating = hasRewriteSignalComparison && rewrittenAuthorshipRating
-    ? rewrittenAuthorshipRating
-    : authorshipRating;
-  const sealAuthorshipTone = getAuthorshipTone(sealAuthorshipRating);
-  const sealAuthorshipFullLabel = sealAuthorshipRating.label || (hasRewriteSignalComparison ? rewrittenBadge.authorship_rating_label : badge.authorship_rating_label) || null;
-  const sealAuthorshipLabel = sealAuthorshipRating.short_label || sealAuthorshipFullLabel;
   const sealReferenceScore = hasRewriteSignalComparison
     ? rewrittenCalibratedAuthorshipRisk
     : calibratedAuthorshipRisk;
+  const sealAiSignalStamp = getAiSignalStamp(sealReferenceScore, t);
   const sealAuthorshipDetail = formatAuthorshipSealDetailWithReference(
     hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
     sealReferenceScore,
@@ -741,13 +737,13 @@ export default function Report() {
         <div
           className="transformation-authorship-seal"
           style={{
-            '--rating-color': sealAuthorshipTone.color,
-            '--rating-bg': sealAuthorshipTone.bg,
+            '--rating-color': sealAiSignalStamp.tone.color,
+            '--rating-bg': sealAiSignalStamp.tone.bg,
           }}
         >
-          <span>{hasRewriteSignalComparison ? t('report.transformation.rewrittenOutcome') : t('report.summary.authorshipRating')}</span>
-          <strong title={sealAuthorshipFullLabel || sealAuthorshipLabel || undefined}>
-            {sealAuthorshipLabel || t('report.transformation.notRated')}
+          <span>{hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal')}</span>
+          <strong title={sealAiSignalStamp.label}>
+            {sealAiSignalStamp.label}
           </strong>
           <em>
             {sealAuthorshipDetail}

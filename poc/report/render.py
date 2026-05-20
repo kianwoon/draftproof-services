@@ -528,6 +528,19 @@ def _authorship_rating_tone(rating: dict) -> dict:
     return {"color": "#334155", "bg": "#f8fafc"}
 
 
+def _ai_signal_stamp(score) -> dict:
+    value = _tf_pct(score)
+    if value is None:
+        return {"label": "AI Review", "color": "#334155", "bg": "#f8fafc"}
+    if value >= 60:
+        return {"label": "High AI Signal", "color": "#b91c1c", "bg": "#fef2f2"}
+    if value >= 40:
+        return {"label": "Likely AI", "color": "#c2410c", "bg": "#fff7ed"}
+    if value >= _TURNITIN_AI_REFERENCE_THRESHOLD:
+        return {"label": "AI Review", "color": "#b45309", "bg": "#fff7ed"}
+    return {"label": "Low AI Signal", "color": "#15803d", "bg": "#f0fdf4"}
+
+
 def _display_authorship_rating_from_badge(
     badge: dict,
     sample_context: dict | None = None,
@@ -588,8 +601,9 @@ def _executive_signal_chart_html(
         or badge.get("authorship_rating_label")
         or "Not Rated"
     )
-    rating_tone = _authorship_rating_tone(rating)
     calibrated_score = _tf_pct(features.get("calibrated_ai_risk"))
+    rating_tone = _authorship_rating_tone(rating)
+    stamp = _ai_signal_stamp(calibrated_score)
     ai_components = badge.get("ai_components") or {}
     topk_score = _tf_pct(ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")))
     topk_calibrated_score = _tf_pct(ai_components.get("topk_calibrated_risk"))
@@ -708,11 +722,11 @@ def _executive_signal_chart_html(
         '</div>',
         (
             '<div class="dp-rating-seal" style="'
-            f'--rating-color:{rating_tone["color"]};--rating-bg:{rating_tone["bg"]};'
-            f'color:{rating_tone["color"]};border-color:{rating_tone["color"]};background:{rating_tone["bg"]}">'
+            f'--rating-color:{stamp["color"]};--rating-bg:{stamp["bg"]};'
+            f'color:{stamp["color"]};border-color:{stamp["color"]};background:{stamp["bg"]}">'
         ),
-        '<span>Authorship Rating</span>',
-        f'<strong>{escape(rating_label)}</strong>',
+        '<span>AI Signal</span>',
+        f'<strong>{escape(stamp["label"])}</strong>',
         f'<em>{escape(rating_detail)}</em>',
         '</div>',
         '</header>',

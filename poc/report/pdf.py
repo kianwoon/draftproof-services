@@ -164,7 +164,7 @@ img[src^="https://img.shields.io"] { height: 18px; }
 
 .dp-rewrite-stamp strong {
     display: block;
-    color: #1f2937;
+    color: inherit;
     font-size: 21pt;
     line-height: 1;
 }

@@ -335,6 +335,8 @@ export const resources = {
           originalVsRewritten: 'Original vs rewritten pattern',
           patternAnalysis: 'Pattern analysis',
           rewrittenOutcome: 'Rewritten Outcome',
+          rewrittenAiSignal: 'Rewritten AI Signal',
+          aiSignal: 'AI Signal',
           notRated: 'Not Rated',
           confidence: '{{value}} confidence',
           rewriteComparison: 'Rewrite Comparison',
@@ -466,6 +468,12 @@ export const resources = {
           belowReference: 'below 20% reference',
           thresholdExceeded: 'review threshold exceeded',
           rawSignal: '{{value}} raw signal',
+        },
+        aiSignalStamp: {
+          low: 'Low AI Signal',
+          review: 'AI Review',
+          likely: 'Likely AI',
+          high: 'High AI Signal',
         },
         rewrite: {
           queued: 'Queued',
@@ -1045,6 +1053,8 @@ export const resources = {
           originalVsRewritten: '原始与改写模式对比',
           patternAnalysis: '模式分析',
           rewrittenOutcome: '改写结果',
+          rewrittenAiSignal: '改写后 AI 信号',
+          aiSignal: 'AI 信号',
           notRated: '未评级',
           confidence: '{{value}} 置信度',
           rewriteComparison: '改写对比',
@@ -1176,6 +1186,12 @@ export const resources = {
           belowReference: '低于 20% 参考线',
           thresholdExceeded: '已超过审阅阈值',
           rawSignal: '{{value}} 原始信号',
+        },
+        aiSignalStamp: {
+          low: '低 AI 信号',
+          review: 'AI 审阅',
+          likely: '可能 AI',
+          high: '高 AI 信号',
         },
         rewrite: {
           queued: '已排队',
