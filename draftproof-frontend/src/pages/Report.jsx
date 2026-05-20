@@ -30,6 +30,7 @@ import {
   deriveAuthorshipRatingFallback,
   deriveCalibratedAuthorshipRating,
   formatAuthorshipSealDetail,
+  formatAuthorshipSealDetailWithReference,
   getAuthorshipTone,
   formatSignedDelta,
   formatPlainScore,
@@ -494,9 +495,14 @@ export default function Report() {
   const sealAuthorshipTone = getAuthorshipTone(sealAuthorshipRating);
   const sealAuthorshipFullLabel = sealAuthorshipRating.label || (hasRewriteSignalComparison ? rewrittenBadge.authorship_rating_label : badge.authorship_rating_label) || null;
   const sealAuthorshipLabel = sealAuthorshipRating.short_label || sealAuthorshipFullLabel;
-  const sealAuthorshipDetail = hasRewriteSignalComparison
-    ? rewrittenAuthorshipSealDetail
-    : authorshipSealDetail;
+  const sealReferenceScore = hasRewriteSignalComparison
+    ? rewrittenCalibratedAuthorshipRisk
+    : calibratedAuthorshipRisk;
+  const sealAuthorshipDetail = formatAuthorshipSealDetailWithReference(
+    hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
+    sealReferenceScore,
+    t
+  );
   const transformationOriginalScore = hasRewriteSignalComparison
     ? (rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk ?? originalComparisonAiScore)
     : originalComparisonAiScore;
@@ -764,6 +770,7 @@ export default function Report() {
             ))}
           </div>
         )}
+        <p className="transformation-reference-note">{t('report.transformation.turnitinReferenceNote')}</p>
       </div>
     </section>
   ) : null;

@@ -4925,6 +4925,14 @@ th {
   font-weight: 750;
 }
 
+.transformation-reference-note {
+  margin: 1rem 0 0;
+  color: #64748b;
+  font-size: .82rem;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
 /* Submitted content signal map */
 .submitted-content-review {
   margin: 0 0 2.25rem;

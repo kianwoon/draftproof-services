@@ -148,11 +148,30 @@ def _tf_pct(value) -> float | None:
 
 
 _REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5
+_TURNITIN_AI_REFERENCE_THRESHOLD = 20
+_TURNITIN_AI_REFERENCE_NOTE = (
+    "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage "
+    "because low-range results are less reliable. DraftProof scores are review signals, not verdicts."
+)
 
 
 def _display_ai_score(value) -> float | None:
     score = _tf_pct(value)
     return None if score is None else score * _REPORT_AI_SCORE_DISPLAY_MULTIPLIER
+
+
+def _ai_reference_suffix(score) -> str | None:
+    value = _tf_pct(score)
+    if value is None:
+        return None
+    if value < _TURNITIN_AI_REFERENCE_THRESHOLD:
+        return "below 20% reference"
+    return "review threshold exceeded"
+
+
+def _with_ai_reference(text: str, score) -> str:
+    suffix = _ai_reference_suffix(score)
+    return f"{text} · {suffix}" if suffix else text
 
 
 def _report_transformation_feature_fallbacks(data: dict | None) -> dict:
@@ -607,6 +626,8 @@ def _executive_signal_chart_html(
         rating_detail = f"{calibrated_score:.0f}% calibrated risk"
     else:
         rating_detail = f"{(_tf_pct(badge.get('ai_likelihood_score')) or 0.0):.0f}% raw signal"
+    rating_reference_score = calibrated_score if calibrated_score is not None else badge.get("ai_likelihood_score")
+    rating_detail = _with_ai_reference(rating_detail, rating_reference_score)
     ai_score = _display_ai_score(badge.get("ai_likelihood_score")) or 0.0
     writing_score = _tf_pct(badge.get("writing_quality_score")) or 0.0
     contribution = _transformation_contribution_summary(features, rows, badge)
@@ -734,6 +755,7 @@ def _executive_signal_chart_html(
         ])
     if confidence_note:
         html.append(f'<p class="dp-confidence-note">{escape(confidence_note)}</p>')
+    html.append(f'<p class="dp-ai-reference-note">{escape(_TURNITIN_AI_REFERENCE_NOTE)}</p>')
     html.extend([
         '</section>',
         '</div>',
@@ -1079,6 +1101,8 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"![{_abt_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.0f}%`")
         if _rating_label:
             lines.append(f"**Authorship Rating:** {_rating_label}")
+        lines.append("")
+        lines.append(f"> {_TURNITIN_AI_REFERENCE_NOTE}")
 
         # Writing Quality badge beside AI badge
         wq_tier_header = _ab.get("writing_quality_tier", "")

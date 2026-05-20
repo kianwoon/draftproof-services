@@ -367,6 +367,7 @@ export const resources = {
           mainDrivers: 'Main drivers: {{drivers}}.',
           rewrittenContributionEstimate: 'Rewritten contribution estimate from the completed rewrite scan.',
           noSinglePattern: 'No single transformation pattern dominates',
+          turnitinReferenceNote: 'Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage because low-range results are less reliable. DraftProof scores are review signals, not verdicts.',
           labels: {
             fully_ai_written: 'Fully AI-written pattern',
             ai_cleaned_human_writing: 'AI-cleaned human writing pattern',
@@ -462,6 +463,8 @@ export const resources = {
           calibratedTopk: '{{value}} calibrated top-k',
           topk: '{{value}} top-k',
           calibratedRisk: '{{value}} calibrated risk',
+          belowReference: 'below 20% reference',
+          thresholdExceeded: 'review threshold exceeded',
           rawSignal: '{{value}} raw signal',
         },
         rewrite: {
@@ -1074,6 +1077,7 @@ export const resources = {
           mainDrivers: '主要驱动因素：{{drivers}}。',
           rewrittenContributionEstimate: '来自已完成改写扫描的改写贡献估计。',
           noSinglePattern: '没有单一转换模式占主导',
+          turnitinReferenceNote: 'Turnitin 参考：低于 20% 的 AI 分数可能显示为 *%，而不是精确百分比，因为低分区间结果可靠性较低。DraftProof 分数仅供审阅，不是判定。',
           labels: {
             fully_ai_written: '完全 AI 写作模式',
             ai_cleaned_human_writing: 'AI 润色人类写作模式',
@@ -1169,6 +1173,8 @@ export const resources = {
           calibratedTopk: '{{value}} 校准 Top-k',
           topk: '{{value}} Top-k',
           calibratedRisk: '{{value}} 校准风险',
+          belowReference: '低于 20% 参考线',
+          thresholdExceeded: '已超过审阅阈值',
           rawSignal: '{{value}} 原始信号',
         },
         rewrite: {

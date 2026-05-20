@@ -8,6 +8,11 @@ from typing import List, Dict, Any, Optional
 
 _TIER_ORDER = ["critical", "high", "medium", "low"]
 _REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5
+_TURNITIN_AI_REFERENCE_THRESHOLD = 20
+_TURNITIN_AI_REFERENCE_NOTE = (
+    "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage "
+    "because low-range results are less reliable. DraftProof scores are review signals, not verdicts."
+)
 
 
 def _count_findings(report_or_findings: dict) -> int:
@@ -42,6 +47,19 @@ def _ai_score(report: dict) -> float:
 
 def _display_ai_score(value: float) -> float:
     return float(value) * _REPORT_AI_SCORE_DISPLAY_MULTIPLIER
+
+
+def _ai_reference_suffix(score) -> str | None:
+    if not isinstance(score, (int, float)):
+        return None
+    if float(score) < _TURNITIN_AI_REFERENCE_THRESHOLD:
+        return "below 20% reference"
+    return "review threshold exceeded"
+
+
+def _with_ai_reference(text: str, score) -> str:
+    suffix = _ai_reference_suffix(score)
+    return f"{text} · {suffix}" if suffix else text
 
 
 def _wq_score(report: dict) -> float:
@@ -127,6 +145,7 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
     calibrated = contribution.get("calibrated")
     risk = calibrated if calibrated is not None else ai_score
     risk_text = f"{risk}% calibrated risk" if risk is not None else "Calibrated risk unavailable"
+    risk_text = _with_ai_reference(risk_text, risk)
     scan_score = f"{ai_score}%" if ai_score is not None else "-"
     human = contribution.get("human")
     ai = contribution.get("ai")
@@ -164,6 +183,7 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
     <h3>{html.escape(_authorship_label(rewritten_scan) or result_label)}</h3>
     <b>{html.escape(scan_score)}</b>
     <p>{html.escape(str(summary_text))}</p>
+    <p class="dp-ai-reference-note">{html.escape(_TURNITIN_AI_REFERENCE_NOTE)}</p>
     <div class="dp-outcome-chips">{''.join(metric_chips)}</div>
     {bars}
   </div>

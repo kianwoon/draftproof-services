@@ -135,6 +135,7 @@ function formatMetricPercent(value, digits = 0) {
 }
 
 const REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5;
+const TURNITIN_AI_REFERENCE_THRESHOLD = 20;
 
 function calibratedReportAiScore(value) {
   const percent = metricValue(value);
@@ -752,6 +753,20 @@ function formatAuthorshipSealDetail({
   return t('report.seal.rawSignal', { value: formatMetricPercent(fallbackScore, 0) });
 }
 
+function formatAiReferenceSuffix(score, t) {
+  const value = metricValue(score);
+  if (value == null) return null;
+  return value < TURNITIN_AI_REFERENCE_THRESHOLD
+    ? t('report.seal.belowReference')
+    : t('report.seal.thresholdExceeded');
+}
+
+function formatAuthorshipSealDetailWithReference(detail, referenceScore, t) {
+  const suffix = formatAiReferenceSuffix(referenceScore, t);
+  if (!suffix) return detail;
+  return detail ? `${detail} · ${suffix}` : suffix;
+}
+
 function getAuthorshipTone(rating = {}) {
   const code = String(rating.code || rating.short_label || rating.label || '').toLowerCase();
   if (code.includes('insufficient') || code.includes('too short')) {
@@ -1227,6 +1242,7 @@ export {
   deriveAuthorshipRatingFallback,
   deriveCalibratedAuthorshipRating,
   formatAuthorshipSealDetail,
+  formatAuthorshipSealDetailWithReference,
   getAuthorshipTone,
   formatSignedDelta,
   formatPlainScore,

@@ -202,6 +202,14 @@ img[src^="https://img.shields.io"] { height: 18px; }
     font-weight: 700;
 }
 
+.dp-rewrite-scan-summary .dp-ai-reference-note {
+    margin: 4pt 0 7pt;
+    color: #64748b;
+    font-size: 7pt;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
 .dp-outcome-chips span {
     display: inline-block;
     margin: 0 4pt 4pt 0;
@@ -444,6 +452,14 @@ img[src^="https://img.shields.io"] { height: 18px; }
     font-size: 7.3pt;
     font-style: normal;
     font-weight: 800;
+}
+
+.dp-ai-reference-note {
+    margin: 8pt 13pt 0;
+    color: #64748b;
+    font-size: 7.5pt;
+    font-weight: 700;
+    line-height: 1.45;
 }
 
 .dp-scan-head {
