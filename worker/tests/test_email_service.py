@@ -110,13 +110,14 @@ def test_build_scan_completion_email_formats_page_aligned_outcome_and_ai_score()
         scan_id="4957c85d-f913-40eb-892c-addf0850b02f",
         tier="amber",
         ai_score=36.66,
+        ai_signal_score=15,
         writing_score=44.05,
         finding_count=37,
         pdf_bytes=b"%PDF-1.7 scan",
         settings=_settings(),
     )
 
-    assert "Report outcome: Moderate Risk" in payload["text"]
+    assert "Report outcome: Low AI Signal" in payload["text"]
     assert "AI likelihood score: 18%" in payload["text"]
     assert "Writing score: 44.05%" in payload["text"]
     assert "Findings: 37" in payload["text"]

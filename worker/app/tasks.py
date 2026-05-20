@@ -298,6 +298,21 @@ def _debug_integrity_layers(report_json: dict | None, badge: dict | None) -> dic
     }
 
 
+def _scan_email_ai_signal_score(report_json: dict | None) -> float | int | None:
+    if not isinstance(report_json, dict):
+        return None
+    badge = report_json.get("ai_risk_badge") or {}
+    transformation = badge.get("transformation_classification") or {}
+    features = transformation.get("features") or {}
+    if features.get("calibrated_ai_risk") is not None:
+        return features.get("calibrated_ai_risk")
+    intelligence = report_json.get("scan_intelligence") or {}
+    contribution = ((intelligence.get("transformation") or {}).get("contribution") or {})
+    if contribution.get("calibrated_ai_risk") is not None:
+        return contribution.get("calibrated_ai_risk")
+    return contribution.get("adjusted_ai_risk")
+
+
 def _configure_torch_threads(torch) -> int | None:
     """Apply explicit Torch CPU thread settings when configured."""
     raw_threads = (
@@ -1416,6 +1431,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
                     scan_id=job_id,
                     tier=tier,
                     ai_score=ai_score,
+                    ai_signal_score=_scan_email_ai_signal_score(results_json),
                     writing_score=writing_score,
                     finding_count=finding_count,
                     pdf_bytes=pdf_bytes,

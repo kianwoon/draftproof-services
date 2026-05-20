@@ -18,6 +18,12 @@ SCAN_REPORT_OUTCOME_LABELS = {
     "orange": "High Risk",
     "red": "Critical Risk",
 }
+AI_SIGNAL_STAMP_LEVELS = [
+    (60, "High AI Signal"),
+    (40, "Likely AI"),
+    (20, "AI Review"),
+    (0, "Low AI Signal"),
+]
 
 
 class EmailConfigurationError(RuntimeError):
@@ -77,6 +83,16 @@ def _scan_report_outcome_label(tier: str | None) -> str | None:
     return SCAN_REPORT_OUTCOME_LABELS.get(normalized) or str(tier).strip()
 
 
+def _ai_signal_stamp_label(score: float | int | None) -> str | None:
+    percent = _metric_percent(score)
+    if percent is None:
+        return None
+    for minimum, label in AI_SIGNAL_STAMP_LEVELS:
+        if percent >= minimum:
+            return label
+    return "AI Review"
+
+
 def build_rewrite_completion_email(
     *,
     recipient_email: str,
@@ -130,6 +146,7 @@ def build_scan_completion_email(
     scan_id: str,
     tier: str | None = None,
     ai_score: float | int | None = None,
+    ai_signal_score: float | int | None = None,
     writing_score: float | int | None = None,
     finding_count: int | None = None,
     pdf_bytes: bytes | None = None,
@@ -137,7 +154,7 @@ def build_scan_completion_email(
     settings,
 ) -> dict:
     details = [f"Scan ID: {scan_id}"]
-    report_outcome = _scan_report_outcome_label(tier)
+    report_outcome = _ai_signal_stamp_label(ai_signal_score) or _scan_report_outcome_label(tier)
     if report_outcome:
         details.append(f"Report outcome: {report_outcome}")
     formatted_ai_score = _format_display_ai_score(ai_score)
@@ -246,6 +263,7 @@ def send_scan_completion_email(
     scan_id: str,
     tier: str | None = None,
     ai_score: float | int | None = None,
+    ai_signal_score: float | int | None = None,
     writing_score: float | int | None = None,
     finding_count: int | None = None,
     pdf_bytes: bytes | None = None,
@@ -266,6 +284,7 @@ def send_scan_completion_email(
             scan_id=scan_id,
             tier=tier,
             ai_score=ai_score,
+            ai_signal_score=ai_signal_score,
             writing_score=writing_score,
             finding_count=finding_count,
             pdf_bytes=pdf_bytes,
