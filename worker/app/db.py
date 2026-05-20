@@ -46,6 +46,20 @@ def get_scan_job(job_id: str) -> Optional[dict]:
         return cur.fetchone()
 
 
+def get_scan_user_email(job_id: str) -> Optional[str]:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT users.email
+               FROM scan_jobs
+               JOIN users ON users.id = scan_jobs.user_id
+               WHERE scan_jobs.id = %s""",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        return row["email"] if row and row.get("email") else None
+
+
 def update_job_status(job_id: str, status: str, **fields):
     """Update scan_job status and optional fields."""
     def _fields(include_progress: bool = True):

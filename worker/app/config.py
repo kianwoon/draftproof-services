@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     DRAFTPROOF_REWRITE_V4_ENABLED: bool = True
     DRAFTPROOF_REWRITE_V2_ENABLED: bool = True
     DRAFTPROOF_REWRITE_V3_ENABLED: bool = False
+    SCAN_COMPLETION_EMAIL_ENABLED: bool = False
     REWRITE_COMPLETION_EMAIL_ENABLED: bool = False
     EMAIL_PROVIDER: str = "cloudflare"
     EMAIL_FROM_ADDRESS: str = "support@draftproof.app"

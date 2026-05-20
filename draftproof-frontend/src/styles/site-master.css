@@ -3939,6 +3939,13 @@ th {
   line-height: 1.45;
 }
 
+.scan-delivery-note {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .scan-textarea {
   width: 100%;
   min-height: 420px;

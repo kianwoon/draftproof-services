@@ -2,14 +2,17 @@ from types import SimpleNamespace
 
 from app.email_service import (
     build_rewrite_completion_email,
+    build_scan_completion_email,
     send_email,
     send_rewrite_completion_email,
+    send_scan_completion_email,
 )
 
 
 def _settings(**overrides):
     defaults = {
         "REWRITE_COMPLETION_EMAIL_ENABLED": True,
+        "SCAN_COMPLETION_EMAIL_ENABLED": True,
         "EMAIL_PROVIDER": "cloudflare",
         "EMAIL_FROM_ADDRESS": "support@draftproof.app",
         "EMAIL_FROM_NAME": "DraftProof Support",
@@ -71,6 +74,36 @@ def test_build_rewrite_completion_email_truncates_large_content():
     assert "[Content truncated in email." in payload["text"]
 
 
+def test_build_scan_completion_email_attaches_report_pdf():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-1",
+        tier="possible AI-assisted",
+        ai_score=42.5,
+        writing_score=81,
+        finding_count=3,
+        pdf_bytes=b"%PDF-1.7 scan",
+        settings=_settings(),
+    )
+
+    assert payload["to"] == "student@example.com"
+    assert payload["from"] == "DraftProof Support <support@draftproof.app>"
+    assert payload["subject"] == "Your DraftProof scan report is ready"
+    assert "Scan ID: scan-1" in payload["text"]
+    assert "Report outcome: possible AI-assisted" in payload["text"]
+    assert "AI likelihood score: 42.5%" in payload["text"]
+    assert "Writing score: 81%" in payload["text"]
+    assert "Findings: 3" in payload["text"]
+    assert payload["attachments"] == [
+        {
+            "filename": "draftproof-scan-scan-1.pdf",
+            "type": "application/pdf",
+            "disposition": "attachment",
+            "content": "JVBERi0xLjcgc2Nhbg==",
+        }
+    ]
+
+
 def test_send_rewrite_completion_email_skips_when_disabled(monkeypatch):
     sent = []
     monkeypatch.setattr("app.email_service.send_email", lambda payload, *, settings: sent.append(payload))
@@ -82,6 +115,36 @@ def test_send_rewrite_completion_email_skips_when_disabled(monkeypatch):
         final_text="Rewritten content here.",
         pdf_bytes=b"%PDF-1.7 example",
         settings=_settings(REWRITE_COMPLETION_EMAIL_ENABLED=False),
+    )
+
+    assert result is False
+    assert sent == []
+
+
+def test_send_scan_completion_email_skips_when_disabled(monkeypatch):
+    sent = []
+    monkeypatch.setattr("app.email_service.send_email", lambda payload, *, settings: sent.append(payload))
+
+    result = send_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-1",
+        pdf_bytes=b"%PDF-1.7 scan",
+        settings=_settings(SCAN_COMPLETION_EMAIL_ENABLED=False),
+    )
+
+    assert result is False
+    assert sent == []
+
+
+def test_send_scan_completion_email_skips_without_pdf(monkeypatch):
+    sent = []
+    monkeypatch.setattr("app.email_service.send_email", lambda payload, *, settings: sent.append(payload))
+
+    result = send_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-1",
+        pdf_bytes=b"",
+        settings=_settings(),
     )
 
     assert result is False

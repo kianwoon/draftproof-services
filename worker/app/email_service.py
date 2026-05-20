@@ -77,6 +77,56 @@ def build_rewrite_completion_email(
     return payload
 
 
+def build_scan_completion_email(
+    *,
+    recipient_email: str,
+    scan_id: str,
+    tier: str | None = None,
+    ai_score: float | int | None = None,
+    writing_score: float | int | None = None,
+    finding_count: int | None = None,
+    pdf_bytes: bytes | None = None,
+    pdf_filename: str | None = None,
+    settings,
+) -> dict:
+    details = [f"Scan ID: {scan_id}"]
+    if tier:
+        details.append(f"Report outcome: {tier}")
+    if ai_score is not None:
+        details.append(f"AI likelihood score: {ai_score}%")
+    if writing_score is not None:
+        details.append(f"Writing score: {writing_score}%")
+    if finding_count is not None:
+        details.append(f"Findings: {finding_count}")
+    details_text = "\n".join(details)
+
+    subject = "Your DraftProof scan report is ready"
+    text = (
+        "Hi,\n\n"
+        "Your DraftProof scan is complete. A PDF copy of your report is attached.\n\n"
+        f"{details_text}\n\n"
+        "You can also open DraftProof to review the full interactive report and start a guided rewrite when available.\n\n"
+        "DraftProof Support\n"
+        f"{settings.EMAIL_FROM_ADDRESS}"
+    )
+    payload = {
+        "to": recipient_email,
+        "from": _from_header(settings),
+        "subject": subject,
+        "text": text,
+    }
+    if pdf_bytes:
+        payload["attachments"] = [
+            {
+                "filename": pdf_filename or f"draftproof-scan-{scan_id}.pdf",
+                "type": "application/pdf",
+                "disposition": "attachment",
+                "content": base64.b64encode(pdf_bytes).decode("ascii"),
+            }
+        ]
+    return payload
+
+
 def send_email(payload: dict, *, settings) -> bool:
     if (settings.EMAIL_PROVIDER or "").strip().lower() != "cloudflare":
         raise EmailConfigurationError("Only EMAIL_PROVIDER=cloudflare is supported")
@@ -137,4 +187,41 @@ def send_rewrite_completion_email(
         return send_email(payload, settings=settings)
     except Exception:
         logger.warning("Rewrite completion email failed for %s", rewrite_id, exc_info=True)
+        return False
+
+
+def send_scan_completion_email(
+    *,
+    recipient_email: str | None,
+    scan_id: str,
+    tier: str | None = None,
+    ai_score: float | int | None = None,
+    writing_score: float | int | None = None,
+    finding_count: int | None = None,
+    pdf_bytes: bytes | None = None,
+    settings,
+) -> bool:
+    if not settings.SCAN_COMPLETION_EMAIL_ENABLED:
+        return False
+    if not recipient_email:
+        logger.info("Skipping scan completion email for %s: missing recipient", scan_id)
+        return False
+    if not pdf_bytes:
+        logger.info("Skipping scan completion email for %s: missing PDF", scan_id)
+        return False
+
+    try:
+        payload = build_scan_completion_email(
+            recipient_email=recipient_email,
+            scan_id=scan_id,
+            tier=tier,
+            ai_score=ai_score,
+            writing_score=writing_score,
+            finding_count=finding_count,
+            pdf_bytes=pdf_bytes,
+            settings=settings,
+        )
+        return send_email(payload, settings=settings)
+    except Exception:
+        logger.warning("Scan completion email failed for %s", scan_id, exc_info=True)
         return False

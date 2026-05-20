@@ -24,6 +24,7 @@ from .storage import upload_report_files
 from .progress import publish_rewrite_progress, publish_scan_progress
 from .db import (
     get_scan_job,
+    get_scan_user_email,
     update_job_status,
     capture_credits,
     get_rewrite_job,
@@ -34,7 +35,7 @@ from .db import (
     capture_rewrite_credits,
     release_rewrite_credits,
 )
-from .email_service import send_rewrite_completion_email
+from .email_service import send_rewrite_completion_email, send_scan_completion_email
 from celery.signals import worker_process_init
 from celery.exceptions import SoftTimeLimitExceeded
 
@@ -1408,6 +1409,20 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 job_id, status="completed",
                 progress_percent=100, progress_message="Scan complete",
             )
+            try:
+                recipient_email = get_scan_user_email(job_id)
+                send_scan_completion_email(
+                    recipient_email=recipient_email,
+                    scan_id=job_id,
+                    tier=tier,
+                    ai_score=ai_score,
+                    writing_score=writing_score,
+                    finding_count=finding_count,
+                    pdf_bytes=pdf_bytes,
+                    settings=settings,
+                )
+            except Exception:
+                logger.warning("Scan completion email hook failed for %s", job_id, exc_info=True)
 
             return {"status": "completed", "tier": tier, "findings": finding_count}
 

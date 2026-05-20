@@ -283,6 +283,7 @@ export default function Scan() {
             <button type="submit" className="btn btn-primary" disabled={busy}>
               {busy ? (status || t('scan.scanning')) : t('scan.start')}
             </button>
+            <p className="scan-delivery-note">{t('scan.emailPdfNotice')}</p>
 
             {showProgress && (
               <div className="scan-progress" role="status" aria-live="polite">
