@@ -1,7 +1,7 @@
 {
   "name": "DraftProof",
   "short_name": "DraftProof",
-  "description": "Pre-submission writing integrity reviews for students, educators, and researchers.",
+  "description": "Turnitin-safe pre-submission essay reviews for college and university students.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0D1B2A",
