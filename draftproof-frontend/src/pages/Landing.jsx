@@ -6,6 +6,7 @@ export default function Landing() {
   const { t } = useTranslation();
   const checks = t('landing.checks', { returnObjects: true });
   const whyCards = t('landing.whyCards', { returnObjects: true });
+  const helpCards = t('landing.helpCards', { returnObjects: true });
   const contentStrategies = t('landing.contentStrategies', { returnObjects: true });
   const beliefs = t('landing.beliefs', { returnObjects: true });
 
@@ -87,6 +88,28 @@ export default function Landing() {
           </div>
 
           <SampleReportPreview />
+        </div>
+      </section>
+
+      <section id="help" className="landing-section help-section">
+        <div className="section-inner">
+          <div className="help-heading">
+            <div>
+              <p className="eyebrow">{t('landing.helpEyebrow')}</p>
+              <h2>{t('landing.helpTitle')}</h2>
+            </div>
+            <p>{t('landing.helpLead')}</p>
+          </div>
+
+          <div className="help-grid">
+            {helpCards.map((card, index) => (
+              <article className="help-card" key={card.title}>
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                <h3>{card.title}</h3>
+                <p>{card.body}</p>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 

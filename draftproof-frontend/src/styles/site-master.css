@@ -2131,6 +2131,82 @@ th {
   font-size: clamp(2rem, 3vw, 2.5rem);
 }
 
+.help-section {
+  background: var(--surface);
+  border-bottom: .5px solid rgba(13, 27, 42, .06);
+}
+
+.help-heading {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(320px, .75fr);
+  gap: clamp(24px, 5vw, 64px);
+  align-items: end;
+  margin-bottom: 34px;
+}
+
+.help-heading h2 {
+  margin-bottom: 0;
+}
+
+.help-heading > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: .5px solid rgba(13, 27, 42, .10);
+  border-radius: 14px;
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.help-card {
+  min-height: 240px;
+  padding: 26px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .86), rgba(255, 255, 255, .48)),
+    var(--surface-soft);
+  border-right: .5px solid rgba(13, 27, 42, .08);
+}
+
+.help-card:last-child {
+  border-right: 0;
+}
+
+.help-card > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 32px;
+  border: 1px solid rgba(58, 168, 118, .22);
+  border-radius: 999px;
+  color: var(--green-dark);
+  background: rgba(58, 168, 118, .10);
+  font-size: .78rem;
+  font-weight: 850;
+}
+
+.help-card h3 {
+  max-width: 220px;
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: 1.08rem;
+  line-height: 1.25;
+}
+
+.help-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: .9rem;
+  line-height: 1.62;
+}
+
 .why-card-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2460,6 +2536,7 @@ th {
 @media (max-width: 900px) {
   .landing-hero-grid,
   .why-card-grid,
+  .help-heading,
   .strategy-heading,
   .sample-report-layout,
   .belief-row-grid {
@@ -2479,6 +2556,15 @@ th {
   }
   .strategy-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .help-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .help-card:nth-child(2n) {
+    border-right: 0;
+  }
+  .help-card:nth-child(n + 3) {
+    border-top: .5px solid rgba(13, 27, 42, .08);
   }
   .strategy-card:nth-child(4n) {
     border-right: .5px solid rgba(13, 27, 42, .08);
@@ -2515,9 +2601,17 @@ th {
     gap: 32px;
   }
   .review-grid,
+  .help-grid,
   .strategy-grid,
   .check-line {
     grid-template-columns: 1fr;
+  }
+  .help-card,
+  .help-card:nth-child(2n) {
+    border-right: 0;
+  }
+  .help-card + .help-card {
+    border-top: .5px solid rgba(13, 27, 42, .08);
   }
   .sample-report-section {
     padding-inline: 16px;
