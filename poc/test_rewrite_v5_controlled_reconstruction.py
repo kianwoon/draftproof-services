@@ -2645,6 +2645,38 @@ def test_v5_goal_density_enrichment_overrides_existing_goal_density(monkeypatch)
     assert enriched["eligible_span_density_gate"]["unsafe_cluster_count"] == 14
 
 
+def test_v5_compact_payload_includes_borderline_verdict_rounds():
+    payload = {
+        "stage": "v5_residual_cluster_comb",
+        "baseline_scores": {"ai": 70.0},
+        "final_scores": {"ai": 49.0},
+        "rounds": [],
+        "risky_window_cleanup_rounds": [],
+        "unsafe_cluster_cleanup_rounds": [],
+        "final_risky_window_cleanup_rounds": [],
+        "borderline_verdict_cleanup_rounds": [
+            {
+                "round": 1,
+                "phase": "borderline_verdict_cleanup",
+                "status": "accepted",
+                "reason": "accepted_borderline_verdict_movement",
+                "accepted": {
+                    "section_id": "full_document",
+                    "variant_id": "v2",
+                    "scores": {"ai_delta": 2.0},
+                },
+                "candidates": [{"variant_id": "v1"}, {"variant_id": "v2"}],
+            }
+        ],
+    }
+
+    compact = v5_production._compact_v5_payload(payload)
+
+    assert compact["accepted_rounds"] == 1
+    assert compact["borderline_verdict_cleanup_rounds"][0]["status"] == "accepted"
+    assert compact["borderline_verdict_cleanup_rounds"][0]["candidate_count"] == 2
+
+
 def test_v5_core_round_skips_failed_cluster_and_continues_to_next_target(tmp_path, monkeypatch):
     module = v5_production.run_v5_residual_cluster_comb_experiment.__globals__
     attempted_sections: list[str] = []
@@ -3077,8 +3109,25 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
             "status": "mitigation_failed_no_safe_candidate",
             "goal_met": False,
             "reason": "candidate_failed_strict_detector_safe_goal",
+            "eligible_span_density_gate": {
+                "source": "scanner.repair_units_v2",
+                "safe": False,
+                "unsafe_cluster_count": 10,
+            },
         }
     ))
+    monkeypatch.setattr(
+        v5_production,
+        "_with_v5_density_gate",
+        lambda _text, _report, goal: {
+            **dict(goal),
+            "eligible_span_density_gate": {
+                "source": "eligible_span_density_v1",
+                "safe": True,
+                "unsafe_cluster_count": 4,
+            },
+        },
+    )
     monkeypatch.setattr(v5_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
 
     result = v5_production.run_rewrite_pipeline_v5(
@@ -3104,6 +3153,9 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     assert summary["rewrite_effective_config"]["provider_routing"] == provider_routing
     assert summary["rewrite_effective_config"]["planner_model"] == "z-ai/glm-5.1"
     assert summary["final_text"] == "This is the rewritten document."
+    assert summary["rewrite_goal_status"]["eligible_span_density_gate"]["source"] == "eligible_span_density_v1"
+    assert summary["rewrite_goal_status"]["eligible_span_density_gate"]["safe"] is True
+    assert summary["rewrite_goal_status"]["eligible_span_density_gate"]["unsafe_cluster_count"] == 4
     layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
     assert layer["phase_order"]["unsafe_cluster_first"] is True
     assert emitted_checkpoints

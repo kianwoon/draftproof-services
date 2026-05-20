@@ -312,12 +312,17 @@ def run_rewrite_pipeline_v5(
     original_report = detect_json
     final_report = _scan_report(final_text) if final_text.strip() != original_text.strip() else original_report
     raise_if_canceled()
-    final_goal = evaluate_rewrite_goal(
-        original_text=original_text,
-        candidate_text=final_text,
-        original_report=original_report,
-        candidate_report=final_report,
-    ).to_dict()
+    payload_goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
+    if payload_goal:
+        final_goal = dict(payload_goal)
+    else:
+        final_goal = evaluate_rewrite_goal(
+            original_text=original_text,
+            candidate_text=final_text,
+            original_report=original_report,
+            candidate_report=final_report,
+        ).to_dict()
+    final_goal = _with_v5_density_gate(final_text, final_report, final_goal)
     rounds = payload.get("rounds") if isinstance(payload.get("rounds"), list) else []
     direct_scanner_leapfrog_rounds = (
         payload.get("direct_scanner_leapfrog_rounds")
@@ -339,12 +344,18 @@ def run_rewrite_pipeline_v5(
         if isinstance(payload.get("final_risky_window_cleanup_rounds"), list)
         else []
     )
+    borderline_verdict_cleanup_rounds = (
+        payload.get("borderline_verdict_cleanup_rounds")
+        if isinstance(payload.get("borderline_verdict_cleanup_rounds"), list)
+        else []
+    )
     all_rounds = (
         direct_scanner_leapfrog_rounds
         + rounds
         + risky_window_cleanup_rounds
         + unsafe_cluster_cleanup_rounds
         + final_risky_window_cleanup_rounds
+        + borderline_verdict_cleanup_rounds
     )
     accepted = [
         row.get("accepted")
@@ -703,12 +714,18 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("final_risky_window_cleanup_rounds"), list)
         else []
     )
+    borderline_verdict_cleanup_rounds = (
+        payload.get("borderline_verdict_cleanup_rounds")
+        if isinstance(payload.get("borderline_verdict_cleanup_rounds"), list)
+        else []
+    )
     all_rounds = (
         direct_scanner_leapfrog_rounds
         + rounds
         + risky_window_cleanup_rounds
         + unsafe_cluster_cleanup_rounds
         + final_risky_window_cleanup_rounds
+        + borderline_verdict_cleanup_rounds
     )
     return {
         "stage": payload.get("stage"),
@@ -725,5 +742,6 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "risky_window_cleanup_rounds": _compact_v5_rounds(risky_window_cleanup_rounds),
         "unsafe_cluster_cleanup_rounds": _compact_v5_rounds(unsafe_cluster_cleanup_rounds),
         "final_risky_window_cleanup_rounds": _compact_v5_rounds(final_risky_window_cleanup_rounds),
+        "borderline_verdict_cleanup_rounds": _compact_v5_rounds(borderline_verdict_cleanup_rounds),
         "global_best_fallback": payload.get("global_best_fallback"),
     }
