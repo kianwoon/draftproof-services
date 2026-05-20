@@ -9,6 +9,7 @@ export default function Landing() {
   const helpCards = t('landing.helpCards', { returnObjects: true });
   const contentStrategies = t('landing.contentStrategies', { returnObjects: true });
   const beliefs = t('landing.beliefs', { returnObjects: true });
+  const reportValueCards = t('landing.reportValueCards', { returnObjects: true });
 
   return (
     <main className="landing-page">
@@ -83,6 +84,14 @@ export default function Landing() {
               <span>{t('landing.samplePoint1')}</span>
               <span>{t('landing.samplePoint2')}</span>
               <span>{t('landing.samplePoint3')}</span>
+            </div>
+            <div className="sample-report-value-grid" aria-label={t('landing.reportValueLabel')}>
+              {reportValueCards.map((card) => (
+                <article key={card.title}>
+                  <strong>{card.title}</strong>
+                  <p>{card.body}</p>
+                </article>
+              ))}
             </div>
             <Link to="/scan" className="btn btn-primary">{t('landing.runOwnScan')}</Link>
           </div>
@@ -230,6 +239,7 @@ function SampleReportPreview() {
   const { t } = useTranslation();
   const sampleReportStats = t('landing.sampleStats', { returnObjects: true });
   const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
+  const sampleScoreSignals = t('landing.sampleScoreSignals', { returnObjects: true });
 
   return (
     <article className="sample-report-preview" aria-label={t('landing.reportPreviewLabel')}>
@@ -264,6 +274,22 @@ function SampleReportPreview() {
         <div className="sample-contribution-bars">
           <SampleSignalBar label={t('landing.humanContribution')} value={100} tone="human" />
           <SampleSignalBar label={t('landing.aiTransformation')} value={0} tone="ai" />
+        </div>
+      </div>
+
+      <div className="sample-score-profile">
+        <div className="sample-score-profile-head">
+          <span>{t('landing.scoreProfile')}</span>
+          <strong>{t('landing.whyScoreMoved')}</strong>
+        </div>
+        <div className="sample-score-profile-grid">
+          {sampleScoreSignals.map((signal) => (
+            <div className={`sample-score-signal is-${signal.tone}`} key={signal.label}>
+              <span>{signal.label}</span>
+              <strong>{signal.value}</strong>
+              <em>{signal.detail}</em>
+            </div>
+          ))}
         </div>
       </div>
 
