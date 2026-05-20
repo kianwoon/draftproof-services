@@ -147,6 +147,14 @@ def _tf_pct(value) -> float | None:
     return max(0.0, min(100.0, number))
 
 
+_REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5
+
+
+def _display_ai_score(value) -> float | None:
+    score = _tf_pct(value)
+    return None if score is None else score * _REPORT_AI_SCORE_DISPLAY_MULTIPLIER
+
+
 def _report_transformation_feature_fallbacks(data: dict | None) -> dict:
     if not isinstance(data, dict):
         return {}
@@ -599,7 +607,7 @@ def _executive_signal_chart_html(
         rating_detail = f"{calibrated_score:.0f}% calibrated risk"
     else:
         rating_detail = f"{(_tf_pct(badge.get('ai_likelihood_score')) or 0.0):.0f}% raw signal"
-    ai_score = _tf_pct(badge.get("ai_likelihood_score")) or 0.0
+    ai_score = _display_ai_score(badge.get("ai_likelihood_score")) or 0.0
     writing_score = _tf_pct(badge.get("writing_quality_score")) or 0.0
     contribution = _transformation_contribution_summary(features, rows, badge)
 
@@ -1063,7 +1071,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     if report.ai_risk_badge:
         _ab = report.ai_risk_badge
         _abt = _ab.get("tier", "")
-        _abs = _ab.get("ai_likelihood_score", 0)
+        _abs = _display_ai_score(_ab.get("ai_likelihood_score")) or 0.0
         _rating = _display_authorship_rating_from_badge(_ab, data.get("document_context", {}), data)
         _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
         _sc = _shield_colors.get(_abt, "lightgrey")

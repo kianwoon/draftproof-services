@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 
 
 _TIER_ORDER = ["critical", "high", "medium", "low"]
+_REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5
 
 
 def _count_findings(report_or_findings: dict) -> int:
@@ -37,6 +38,10 @@ def _badge(report: dict) -> dict:
 def _ai_score(report: dict) -> float:
     score = _badge(report).get("ai_likelihood_score", 0)
     return float(score) if isinstance(score, (int, float)) else 0.0
+
+
+def _display_ai_score(value: float) -> float:
+    return float(value) * _REPORT_AI_SCORE_DISPLAY_MULTIPLIER
 
 
 def _wq_score(report: dict) -> float:
@@ -544,17 +549,21 @@ def render_rewrite_report(
         lines.append("")
         lines.append("| Metric | Original | Final Output | Change |")
         lines.append("|--------|----------|--------------|--------|")
-        lines.append(f"| **AI Likelihood** | `{orig_ai:.2f}%` | `{new_ai:.2f}%` | `{ai_delta:+.2f}%` |")
+        lines.append(
+            f"| **AI Likelihood** | `{_display_ai_score(orig_ai):.0f}%` | "
+            f"`{_display_ai_score(new_ai):.0f}%` | `{_display_ai_score(ai_delta):+.0f}%` |"
+        )
         detect_scores = summary.get("detect_scores") or {}
         turnitin_before = summary.get("turnitin_like_ai_score_before", detect_scores.get("turnitin_like_ai_score_before"))
         turnitin_after = summary.get("turnitin_like_ai_score_after", detect_scores.get("turnitin_like_ai_score_after"))
         turnitin_drop = summary.get("turnitin_like_ai_score_drop", detect_scores.get("turnitin_like_ai_score_drop"))
         turnitin_target = summary.get("turnitin_like_target_score", detect_scores.get("turnitin_like_target_score"))
         if isinstance(turnitin_before, (int, float)) and isinstance(turnitin_after, (int, float)):
-            target_note = f" target < `{float(turnitin_target):.0f}%`" if isinstance(turnitin_target, (int, float)) else ""
+            target_note = f" target < `{_display_ai_score(float(turnitin_target)):.0f}%`" if isinstance(turnitin_target, (int, float)) else ""
             lines.append(
-                f"| **Turnitin-like AI Score** | `{float(turnitin_before):.2f}%` | "
-                f"`{float(turnitin_after):.2f}%`{target_note} | `{float(turnitin_drop or 0.0):+.2f}% drop` |"
+                f"| **Turnitin-like AI Score** | `{_display_ai_score(float(turnitin_before)):.0f}%` | "
+                f"`{_display_ai_score(float(turnitin_after)):.0f}%`{target_note} | "
+                f"`{_display_ai_score(float(turnitin_drop or 0.0)):+.0f}% drop` |"
             )
         footprint_gate = summary.get("ai_footprint_gate") or {}
         footprint_drops = footprint_gate.get("drops") or {}

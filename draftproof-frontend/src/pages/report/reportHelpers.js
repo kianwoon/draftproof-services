@@ -134,6 +134,13 @@ function formatMetricPercent(value, digits = 0) {
   return `${percent.toFixed(digits)}%`;
 }
 
+const REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5;
+
+function calibratedReportAiScore(value) {
+  const percent = metricValue(value);
+  return percent == null ? null : percent * REPORT_AI_SCORE_DISPLAY_MULTIPLIER;
+}
+
 function metricValue(value) {
   if (value == null || Number.isNaN(Number(value))) return null;
   const number = Number(value);
@@ -1208,6 +1215,7 @@ export {
   evidenceLabel,
   translateAuthorshipRating,
   formatMetricPercent,
+  calibratedReportAiScore,
   clampPercent,
   buildTransformationSignals,
   transformationSignalFeatureMap,

@@ -37,6 +37,7 @@ from report.render import (
     _transformation_contribution_summary,
     render_markdown,
 )
+from report.render_rewrite import render_rewrite_report
 
 
 def assert_equal(actual, expected, message):
@@ -845,11 +846,34 @@ assert_true(
     "PDF markdown hides the executive transformation signal chart",
 )
 assert_true(
-    "Score `9%`" in scan_markdown
+    "Score `5%`" in scan_markdown
     and "Score `54%`" in scan_markdown
-    and ">9%</span><span class=\"dp-summary-label\">Raw AI-Style Signal" in scan_markdown
+    and ">5%</span><span class=\"dp-summary-label\">Raw AI-Style Signal" in scan_markdown
     and ">54%</span><span class=\"dp-summary-label\">Writing Score" in scan_markdown,
-    "PDF markdown rounds report-level AI and writing scores to zero decimal places",
+    "PDF markdown calibrates report-level AI scores and rounds display values to zero decimal places",
+)
+rewrite_markdown = render_rewrite_report(
+    {
+        "detect_scan_original": {
+            "ai_risk_badge": {"ai_likelihood_score": 40.0, "writing_quality_score": 20.0},
+            "findings": {},
+        },
+        "detect_scan_rewritten": {
+            "ai_risk_badge": {"ai_likelihood_score": 30.0, "writing_quality_score": 20.0},
+            "findings": {},
+        },
+        "turnitin_like_ai_score_before": 40.0,
+        "turnitin_like_ai_score_after": 30.0,
+        "turnitin_like_ai_score_drop": 10.0,
+        "turnitin_like_target_score": 35.0,
+    },
+    [],
+    [],
+)
+assert_true(
+    "| **AI Likelihood** | `20%` | `15%` | `-5%` |" in rewrite_markdown
+    and "| **Turnitin-like AI Score** | `20%` | `15%` target < `18%` | `+5% drop` |" in rewrite_markdown,
+    "rewrite markdown/PDF calibrates original and rewritten AI score displays",
 )
 assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],

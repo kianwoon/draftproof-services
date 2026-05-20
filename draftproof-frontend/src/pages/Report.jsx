@@ -22,6 +22,7 @@ import {
   evidenceLabel,
   translateAuthorshipRating,
   formatMetricPercent,
+  calibratedReportAiScore,
   clampPercent,
   buildTransformationSignals,
   transformationSignalFeatureMap,
@@ -628,7 +629,7 @@ export default function Report() {
       )}
       {rawAuthorshipSignal != null && (
         <div className="report-stat">
-          <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(rawAuthorshipSignal, 0)}</span>
+          <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(calibratedReportAiScore(rawAuthorshipSignal), 0)}</span>
           <span className="report-stat-label">{t('report.summary.rawAiSignal')}</span>
         </div>
       )}
@@ -671,7 +672,7 @@ export default function Report() {
               </div>
             )}
           </div>
-          <em>{formatMetricPercent(variantAiScore, 0)}</em>
+          <em>{formatMetricPercent(calibratedReportAiScore(variantAiScore), 0)}</em>
         </div>
         {summary && (
           <div className="transformation-ratio-summary">
@@ -809,11 +810,11 @@ export default function Report() {
         <em>{rewriteBandDetail}</em>
       </div>
       <div className="rewrite-summary-stat">
-        <span>{formatMetricPercent(rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk, 0)}</span>
+        <span>{formatMetricPercent(calibratedReportAiScore(rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk), 0)}</span>
         <small>{t('report.rewrite.aiBefore')}</small>
       </div>
       <div className="rewrite-summary-stat">
-        <span>{formatMetricPercent(rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk, 0)}</span>
+        <span>{formatMetricPercent(calibratedReportAiScore(rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk), 0)}</span>
         <small>{t('report.rewrite.aiAfter')}</small>
       </div>
       <div className="rewrite-summary-stat">
