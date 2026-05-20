@@ -17,6 +17,8 @@ import {
   formatDate,
   signalLabel,
   signalDescription,
+  translatedSignal,
+  translatedGroup,
   transformationLabel,
   confidenceLabel,
   evidenceLabel,
@@ -25,6 +27,9 @@ import {
   calibratedReportAiScore,
   clampPercent,
   buildTransformationSignals,
+  buildPairedTransformationSignals,
+  groupTransformationSignals,
+  getTransformationSignalImprovement,
   transformationSignalFeatureMap,
   buildTransformationSummary,
   deriveAuthorshipRatingFallback,
@@ -771,6 +776,131 @@ export default function Report() {
     </section>
   ) : null;
 
+  const scoreProfilePairs = transformationSignals.length > 0
+    ? buildPairedTransformationSignals(
+      transformationSignals,
+      hasRewriteSignalComparison ? rewrittenTransformationSignals : []
+    )
+    : [];
+  const scoreProfileGroups = groupTransformationSignals(scoreProfilePairs).map((group) => translatedGroup(group, t));
+  const scoreProfileSummaryGroups = scoreProfileGroups.slice(0, 3).map((group) => {
+    const signalEntries = group.signals.map((pair) => {
+      const current = hasRewriteSignalComparison ? (pair.rewritten || pair.original) : pair.original;
+      const baseline = hasRewriteSignalComparison ? pair.original : null;
+      return {
+        pair,
+        current,
+        improvement: getTransformationSignalImprovement(current, baseline),
+      };
+    });
+    const improvedCount = signalEntries.filter((entry) => entry.improvement).length;
+    const topEntry = [...signalEntries].sort((a, b) => Number(b.current?.value || 0) - Number(a.current?.value || 0))[0];
+    return {
+      ...group,
+      improvedCount,
+      topSignal: topEntry?.current ? translatedSignal(topEntry.current, t) : null,
+      topValue: topEntry?.current?.value,
+    };
+  });
+  const scoreProfileSummaryText = hasRewriteSignalComparison
+    ? t('report.scoreProfile.summaryRewrite')
+    : transformationSummary?.summary || t('report.scoreProfile.summaryOriginal');
+  const scoreProfileSection = scoreProfileGroups.length > 0 ? (
+    <section className="score-profile-section" aria-label={t('report.scoreProfile.sectionLabel')}>
+      <div className="score-profile-head">
+        <div>
+          <span className="score-profile-kicker">{t('report.scoreProfile.kicker')}</span>
+          <h2>{t('report.scoreProfile.title')}</h2>
+          <p>{scoreProfileSummaryText}</p>
+        </div>
+        <div className="score-profile-stat">
+          <strong>{scoreProfilePairs.length}</strong>
+          <span>{t('report.scoreProfile.trackedSignals')}</span>
+        </div>
+      </div>
+      <div className="score-profile-summary-grid">
+        {scoreProfileSummaryGroups.map((group) => (
+          <article key={group.id} className={`score-profile-summary-card is-${group.id}`}>
+            <span>{group.label}</span>
+            <strong>{group.topSignal?.label || t('report.scoreProfile.noSignal')}</strong>
+            <p>{group.description || t('report.scoreProfile.groupFallback')}</p>
+            <div className="score-profile-summary-meta">
+              {group.topValue != null && (
+                <em>{t('report.scoreProfile.leadingSignal', { value: Math.round(group.topValue) })}</em>
+              )}
+              {hasRewriteSignalComparison && (
+                <em>{t('report.scoreProfile.improvedSignals', { count: group.improvedCount })}</em>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+      <details className="score-profile-details">
+        <summary>
+          <span>{t('report.scoreProfile.viewDetails')}</span>
+          <em>{t('report.scoreProfile.viewDetailsHint')}</em>
+        </summary>
+        <div className="score-profile-detail-grid">
+          {scoreProfileGroups.map((group) => (
+            <section key={group.id} className={`score-profile-group is-${group.id}`}>
+              <div className="score-profile-group-head">
+                <div>
+                  <h3>{group.label}</h3>
+                  {group.description && <p>{group.description}</p>}
+                </div>
+                <span>{t('report.transformation.signals', { count: group.signals.length })}</span>
+              </div>
+              <div className="score-profile-bars">
+                {group.signals.map((pair) => {
+                  const originalSignal = pair.original ? translatedSignal(pair.original, t) : null;
+                  const rewrittenSignal = pair.rewritten ? translatedSignal(pair.rewritten, t) : null;
+                  const currentSignal = hasRewriteSignalComparison ? (rewrittenSignal || originalSignal) : originalSignal;
+                  const improvement = getTransformationSignalImprovement(pair.rewritten, pair.original);
+                  const signalColor = currentSignal?.color || pair.color || '#0f766e';
+                  return (
+                    <div key={pair.key} className="score-profile-row">
+                      <div className="score-profile-row-head">
+                        <span title={currentSignal?.description || pair.description}>{currentSignal?.label || pair.label}</span>
+                        <strong>{currentSignal?.value != null ? formatMetricPercent(currentSignal.value, 0) : t('report.transformation.notPresent')}</strong>
+                      </div>
+                      <div className="score-profile-track" aria-hidden="true">
+                        {originalSignal?.value != null && hasRewriteSignalComparison && (
+                          <i className="score-profile-fill is-original" style={{ width: `${originalSignal.value}%` }} />
+                        )}
+                        {currentSignal?.value != null && (
+                          <i
+                            className="score-profile-fill is-current"
+                            style={{ width: `${currentSignal.value}%`, '--score-profile-color': signalColor }}
+                          />
+                        )}
+                      </div>
+                      <div className="score-profile-row-foot">
+                        {hasRewriteSignalComparison && originalSignal?.value != null && rewrittenSignal?.value != null ? (
+                          <span>{t('report.scoreProfile.originalToRewritten', {
+                            original: Math.round(originalSignal.value),
+                            rewritten: Math.round(rewrittenSignal.value),
+                          })}</span>
+                        ) : (
+                          <span>{currentSignal?.description}</span>
+                        )}
+                        {improvement && (
+                          <em>{t('report.transformation.improvedFromTo', {
+                            from: Math.round(improvement.from),
+                            to: Math.round(improvement.to),
+                          })}</em>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      </details>
+    </section>
+  ) : null;
+
   const rewriteOutcome = rewriteResultSummary?.outcome || '';
   const rewriteOutcomeText = rewriteOutcome
     ? rewriteOutcome.replaceAll('_', ' ')
@@ -1092,6 +1222,8 @@ export default function Report() {
             </div>
           </section>
         )}
+
+        {scoreProfileSection}
 
       </div>
     </main>

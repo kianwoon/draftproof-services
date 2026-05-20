@@ -344,6 +344,7 @@ function buildTransformationSignals(features = {}, suppliedSignals = []) {
         description: TRANSFORMATION_SIGNAL_DESCRIPTIONS[key] || supplied?.description || 'Scanner signal used to interpret the transformation pattern.',
         family: supplied?.family,
         higherScoreMeans: supplied?.higher_score_means,
+        color: SIGNAL_COLORS[key],
         value,
       };
     })
@@ -391,6 +392,7 @@ function buildPairedTransformationSignals(originalSignals = [], rewrittenSignals
       key,
       label: reference.label || TRANSFORMATION_SIGNAL_LABELS[key] || key.replaceAll('_', ' '),
       description: reference.description || TRANSFORMATION_SIGNAL_DESCRIPTIONS[key] || 'Scanner signal used to interpret the transformation pattern.',
+      color: reference.color || SIGNAL_COLORS[key],
       original,
       rewritten,
     };
