@@ -84,6 +84,7 @@ export default function Header() {
         {user && <Link to="/history">{t('nav.history')}</Link>}
         <Link to="/why">{t('nav.why')}</Link>
         <Link to="/pricing">{t('nav.pricing')}</Link>
+        <Link to="/faq">{t('nav.faq')}</Link>
         <Link to="/#report">{t('nav.sampleReport')}</Link>
       </nav>
 
@@ -131,6 +132,7 @@ export default function Header() {
             {user && <Link to="/history" className="mobile-link">{t('nav.history')}</Link>}
             <Link to="/why" className="mobile-link">{t('nav.why')}</Link>
             <Link to="/pricing" className="mobile-link">{t('nav.pricing')}</Link>
+            <Link to="/faq" className="mobile-link">{t('nav.faq')}</Link>
             <Link to="/#report" className="mobile-link">{t('nav.sampleReport')}</Link>
             <div className="mobile-menu-actions">
               {user ? (

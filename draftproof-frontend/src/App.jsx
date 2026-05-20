@@ -14,6 +14,7 @@ import Report from './pages/Report';
 import Rewrite from './pages/Rewrite';
 import Reports from './pages/Reports';
 import Pricing from './pages/Pricing';
+import FAQ from './pages/FAQ';
 import Why from './pages/Why';
 import Privacy from './pages/Privacy';
 import Security from './pages/Security';
@@ -74,6 +75,7 @@ export default function App() {
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/pricing" element={<Pricing />} />
+            <Route path="/faq" element={<FAQ />} />
             <Route path="/why" element={<Why />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/security" element={<Security />} />

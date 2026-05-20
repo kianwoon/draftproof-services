@@ -27,6 +27,12 @@ export const PAGE_META = {
     canonical: '/pricing',
     schemaType: 'WebPage',
   },
+  '/faq': {
+    titleKey: 'seo.faqTitle',
+    descriptionKey: 'seo.faqDescription',
+    canonical: '/faq',
+    schemaType: 'FAQPage',
+  },
   '/privacy': {
     titleKey: 'seo.privacyTitle',
     descriptionKey: 'seo.privacyDescription',

@@ -24,6 +24,7 @@ export default function Footer() {
           <Link to="/#engine">{t('footer.howItWorks')}</Link>
           <Link to="/#report">{t('footer.sampleReport')}</Link>
           <Link to="/pricing">{t('footer.pricing')}</Link>
+          <Link to="/faq">{t('footer.faq')}</Link>
           <Link to="/privacy">{t('footer.privacy')}</Link>
           <Link to="/security">{t('footer.security')}</Link>
           <a href={`mailto:${t('footer.supportEmail')}`}>{t('footer.supportEmail')}</a>

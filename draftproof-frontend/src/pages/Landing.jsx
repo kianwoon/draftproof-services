@@ -225,6 +225,7 @@ export default function Landing() {
             <a href="#engine">{t('footer.howItWorks')}</a>
             <a href="#report">{t('footer.sampleReport')}</a>
             <Link to="/pricing">{t('footer.pricing')}</Link>
+            <Link to="/faq">{t('footer.faq')}</Link>
             <Link to="/privacy">{t('footer.privacy')}</Link>
             <Link to="/security">{t('footer.security')}</Link>
             <a href={`mailto:${t('footer.supportEmail')}`}>{t('footer.supportEmail')}</a>
