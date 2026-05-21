@@ -53,6 +53,8 @@ class ReportOut(BaseModel):
     tier: Optional[str] = None
     ai_score: Optional[float] = None
     writing_score: Optional[float] = None
+    word_count: Optional[int] = None
+    rewrite_token_cost: Optional[int] = None
     ai_risk_badge: Optional[Any] = None
     report_md_url: Optional[str] = None
     report_pdf_url: Optional[str] = None

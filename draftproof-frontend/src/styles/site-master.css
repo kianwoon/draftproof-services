@@ -4913,6 +4913,18 @@ th {
   align-self: flex-end;
 }
 
+.rewrite-token-estimate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 34rem;
+  color: #0f172a;
+  font-size: .8rem;
+  font-weight: 850;
+  line-height: 1.35;
+  text-align: right;
+}
+
 .rewrite-action-group span {
   color: #64748b;
   font-size: .76rem;
@@ -6783,6 +6795,11 @@ th {
     max-width: none;
   }
   .rewrite-action-group span { white-space: normal; }
+  .rewrite-token-estimate {
+    justify-content: flex-start;
+    max-width: none;
+    text-align: left;
+  }
   .rewrite-action-group .rewrite-btn {
     align-self: stretch;
   }

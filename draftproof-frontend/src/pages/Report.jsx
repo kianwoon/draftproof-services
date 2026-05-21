@@ -495,6 +495,14 @@ export default function Report() {
   const rewriteInProgress = isRewriteActive(currentRewrite?.status);
   const hasCompletedRewrite = currentRewrite?.status === 'completed';
   const hasRewriteResult = hasCompletedRewrite && Boolean(currentRewrite?.id);
+  const submittedWordCount = Number.isFinite(Number(report.word_count)) ? Number(report.word_count) : null;
+  const rewriteTokenCost = Number.isFinite(Number(report.rewrite_token_cost)) ? Number(report.rewrite_token_cost) : null;
+  const rewriteTokenEstimate = submittedWordCount != null && rewriteTokenCost != null
+    ? t('report.rewrite.tokenEstimate', {
+      tokens: t('common.token', { count: rewriteTokenCost }),
+      words: submittedWordCount.toLocaleString(locale),
+    })
+    : null;
   const hasRewriteSignalComparison = Boolean(
     hasRewriteResult &&
     hasRewriteComparisonData(rewriteResultReport) &&
@@ -1179,6 +1187,9 @@ export default function Report() {
                   >
                     {rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
                   </button>
+                  {rewriteTokenEstimate && (
+                    <strong className="rewrite-token-estimate">{rewriteTokenEstimate}</strong>
+                  )}
                   <span>{t('report.rewrite.emailPdfNotice')}</span>
                 </div>
               )}
