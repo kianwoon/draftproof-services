@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
@@ -240,14 +240,43 @@ export default function Landing() {
 function SampleReportPreview() {
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState('aiSignal');
+  const [isAutoPaused, setIsAutoPaused] = useState(false);
+  const [isHoverPaused, setIsHoverPaused] = useState(false);
   const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
   const sampleScoreSignals = t('landing.sampleScoreSignals', { returnObjects: true });
   const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
   const previewTabs = t('landing.reportPreviewTabs', { returnObjects: true });
+  const previewTabIds = useMemo(() => previewTabs.map((tab) => tab.id), [previewTabs]);
   const currentTab = previewTabs.find((tab) => tab.id === activeSection) || previewTabs[0];
+  const isPreviewPaused = isAutoPaused || isHoverPaused;
+
+  useEffect(() => {
+    if (isPreviewPaused || previewTabIds.length < 2) return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setActiveSection((current) => {
+        const currentIndex = previewTabIds.indexOf(current);
+        return previewTabIds[(currentIndex + 1) % previewTabIds.length] || previewTabIds[0];
+      });
+    }, 4500);
+
+    return () => window.clearTimeout(timer);
+  }, [activeSection, isPreviewPaused, previewTabIds]);
+
+  const selectPreviewTab = (tabId) => {
+    setActiveSection(tabId);
+    setIsAutoPaused(true);
+  };
 
   return (
-    <article className="sample-report-preview" aria-label={t('landing.reportPreviewLabel')}>
+    <article
+      className={`sample-report-preview${isPreviewPaused ? ' is-paused' : ''}`}
+      aria-label={t('landing.reportPreviewLabel')}
+      onMouseEnter={() => setIsHoverPaused(true)}
+      onMouseLeave={() => setIsHoverPaused(false)}
+      onFocusCapture={() => setIsAutoPaused(true)}
+    >
       <div className="sample-preview-tabs" role="tablist" aria-label={t('landing.reportPreviewTabsLabel')}>
         {previewTabs.map((tab) => (
           <button
@@ -256,7 +285,7 @@ function SampleReportPreview() {
             role="tab"
             aria-selected={activeSection === tab.id}
             className={activeSection === tab.id ? 'is-active' : ''}
-            onClick={() => setActiveSection(tab.id)}
+            onClick={() => selectPreviewTab(tab.id)}
           >
             <span>{tab.label}</span>
             <em>{tab.summary}</em>

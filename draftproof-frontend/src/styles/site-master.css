@@ -1454,7 +1454,9 @@ th {
   .btn { transition: none; }
   .code-row { animation: none !important; }
   .scan-progress-fill::after,
-  .rewrite-progress-pulse { animation: none !important; }
+  .rewrite-progress-pulse,
+  .sample-report-preview:not(.is-paused) .sample-preview-tabs button.is-active::after,
+  .sample-preview-panel > * { animation: none !important; }
 }
 
 /* ------------------------------------------------------------------
@@ -1981,6 +1983,8 @@ th {
 }
 
 .sample-preview-tabs button {
+  position: relative;
+  overflow: hidden;
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid transparent;
@@ -1991,11 +1995,33 @@ th {
   cursor: pointer;
 }
 
+.sample-preview-tabs button::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background: #0f766e;
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
 .sample-preview-tabs button:hover,
 .sample-preview-tabs button.is-active {
   border-color: #a8ead8;
   background: #ecfdf5;
   color: #0f766e;
+}
+
+.sample-report-preview:not(.is-paused) .sample-preview-tabs button.is-active::after {
+  animation: sample-tab-progress 4.5s linear forwards;
+}
+
+.sample-preview-tabs button:focus-visible {
+  outline: 3px solid rgba(15, 118, 110, .24);
+  outline-offset: 2px;
 }
 
 .sample-preview-tabs span,
@@ -2018,6 +2044,26 @@ th {
 
 .sample-preview-panel {
   min-height: 430px;
+}
+
+.sample-preview-panel > * {
+  animation: sample-panel-enter .28s var(--ease) both;
+}
+
+@keyframes sample-tab-progress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes sample-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .sample-report-pattern {
