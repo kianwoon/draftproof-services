@@ -132,12 +132,26 @@ if os.path.isdir(static_path):
             return RedirectResponse(url=f"/rewrite/{rewrite_id}", status_code=302)
         return RedirectResponse(url=f"/report/{report_id}", status_code=302)
 
-    @app.get("/{path:path}")
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def serve_spa(path: str):
-        file_path = os.path.join(static_path, path)
-        if path and os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(
-            os.path.join(static_path, "index.html"),
-            headers={"Cache-Control": "no-cache"},
-        )
+        file_path, cache_control = resolve_frontend_file(static_path, path)
+        headers = {"Cache-Control": cache_control} if cache_control else None
+        return FileResponse(file_path, headers=headers)
+
+
+def resolve_frontend_file(root_path: str, path: str) -> tuple[str, str | None]:
+    normalized = os.path.normpath(path.strip("/"))
+    if normalized in {"", "."}:
+        normalized = ""
+    elif normalized.startswith("..") or os.path.isabs(normalized):
+        normalized = ""
+
+    file_path = os.path.join(root_path, normalized)
+    if normalized and os.path.isfile(file_path):
+        return file_path, None
+
+    route_index_path = os.path.join(file_path, "index.html")
+    if normalized and os.path.isfile(route_index_path):
+        return route_index_path, "no-cache"
+
+    return os.path.join(root_path, "index.html"), "no-cache"

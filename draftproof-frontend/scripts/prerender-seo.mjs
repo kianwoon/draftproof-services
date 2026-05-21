@@ -14,6 +14,7 @@ import {
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const distDir = join(rootDir, 'dist');
 const templatePath = join(distDir, 'index.html');
+const sitemapPath = join(distDir, 'sitemap.xml');
 
 const template = await readFile(templatePath, 'utf8');
 
@@ -26,6 +27,8 @@ for (const pathname of PRERENDER_PATHS) {
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, html);
 }
+
+await writeFile(sitemapPath, renderSitemap());
 
 console.log(`Prerendered SEO metadata for ${PRERENDER_PATHS.length} routes.`);
 
@@ -52,6 +55,16 @@ function renderRoute(html, pathname) {
       jsonLdTag(schema),
     ],
   ].reduce((currentHtml, [pattern, replacement]) => replaceRequired(currentHtml, pattern, replacement), html);
+}
+
+function renderSitemap() {
+  const urls = PRERENDER_PATHS
+    .map((pathname) => getSeoMeta(pathname, (key) => defaultTranslate(key, 'en')))
+    .filter((meta) => !/\bnoindex\b/i.test(getRobots(meta)))
+    .map((meta) => `  <url>\n    <loc>${escapeHtml(getCanonicalUrl(meta))}</loc>\n  </url>`)
+    .join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
 }
 
 function replaceRequired(html, pattern, replacement) {
