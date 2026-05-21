@@ -509,11 +509,7 @@ export default function Report() {
   const sealReferenceScore = hasRewriteSignalComparison
     ? rewrittenCalibratedAuthorshipRisk
     : calibratedAuthorshipRisk;
-  const sealScoreSource = hasRewriteSignalComparison ? transformationRewrittenScore : transformationOriginalScore;
-  const sealGaugeScore = Number.isFinite(Number(sealScoreSource))
-    ? Math.round(calibratedReportAiScore(Number(sealScoreSource)))
-    : null;
-  const sealAiSignalStamp = getAiSignalStamp(sealGaugeScore ?? sealReferenceScore, t);
+  const sealAiSignalStamp = getAiSignalStamp(sealReferenceScore, t);
   const sealRatingBadge = hasRewriteSignalComparison ? rewrittenColumnRatingBadge : originalColumnRatingBadge;
   const sealTone = sealRatingBadge.tone || sealAiSignalStamp.tone;
   const sealRatingCaption = sealRatingBadge.caption || (hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal'));
@@ -523,8 +519,6 @@ export default function Report() {
     sealReferenceScore,
     t
   );
-  const sealGaugeStroke = sealGaugeScore == null ? 0 : clampPercent(sealGaugeScore);
-  const sealGaugeLabel = sealGaugeScore == null ? '—' : `${sealGaugeScore}%`;
   const canStartRewrite = hasAIFindings && !hasRewriteResult;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
@@ -732,9 +726,14 @@ export default function Report() {
 
   const transformationScorecard = transformation && transformationSignals.length > 0 ? (
     <section className="transformation-scorecard" aria-label={t('report.transformation.scorecard')}>
-      <div className="transformation-dashboard-grid">
-        {/* Left Column (40% - Primary Diagnostics & Seal) */}
-        <div className="transformation-dashboard-left">
+      <div className="transformation-header">
+        <div className="transformation-summary">
+          <div className="transformation-icon" aria-hidden="true">
+            <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+              <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
+              <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
           <div>
             <span className="transformation-kicker">{t('report.transformation.kicker')}</span>
             <h2>{hasRewriteSignalComparison ? t('report.transformation.originalVsRewritten') : transformationLabel(transformation, t) || t('report.transformation.patternAnalysis')}</h2>
@@ -748,66 +747,40 @@ export default function Report() {
               <span className="transformation-pill">{t('report.transformation.notVerdict')}</span>
             </div>
           </div>
-
-          <div
-            className="transformation-authorship-seal-circular"
-            style={{
-              '--rating-color': sealTone.color,
-              '--rating-bg': sealTone.bg,
-            }}
-          >
-            <div className="circular-gauge-container">
-              <svg className="authorship-seal-gauge" viewBox="0 0 36 36">
-                <path
-                  className="gauge-bg"
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  fill="none"
-                  stroke="rgba(13, 27, 42, 0.06)"
-                  strokeWidth="2.5"
-                />
-                <path
-                  className="gauge-fill"
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  fill="none"
-                  stroke={sealTone.color}
-                  strokeWidth="3"
-                  strokeDasharray={`${sealGaugeStroke}, 100`}
-                  strokeLinecap="round"
-                />
-              </svg>
-              <div className="circular-gauge-content">
-                <span className="gauge-score">{sealGaugeLabel}</span>
-              </div>
-            </div>
-            <div className="seal-text-content">
-              <span>{sealRatingCaption}</span>
-              <strong>{sealRatingLabel}</strong>
-              <em>{sealAuthorshipDetail}</em>
-            </div>
-          </div>
         </div>
-
-        {/* Right Column (60% - Diagnostic Charts & Evidence) */}
-        <div className="transformation-dashboard-right">
-          <div className="transformation-chart">
-            {hasRewriteSignalComparison ? (
-              <div className="transformation-comparison-grid">
-                {renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore, originalColumnRatingBadge)}
-                {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, rewrittenColumnRatingBadge)}
-              </div>
-            ) : (
-              renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)
-            )}
-            {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
-              <div className="transformation-evidence">
-                {transformation.evidence.slice(0, 3).map((item) => (
-                  <span key={item}>{evidenceLabel(item, t)}</span>
-                ))}
-              </div>
-            )}
-            <p className="transformation-reference-note">{t('report.transformation.turnitinReferenceNote')}</p>
-          </div>
+        <div
+          className="transformation-authorship-seal"
+          style={{
+            '--rating-color': sealTone.color,
+            '--rating-bg': sealTone.bg,
+          }}
+        >
+          <span>{sealRatingCaption}</span>
+          <strong title={sealRatingBadge.fullLabel || sealRatingLabel}>
+            {sealRatingLabel}
+          </strong>
+          <em>
+            {sealAuthorshipDetail}
+          </em>
         </div>
+      </div>
+      <div className="transformation-chart">
+        {hasRewriteSignalComparison ? (
+          <div className="transformation-comparison-grid">
+            {renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore, originalColumnRatingBadge)}
+            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, rewrittenColumnRatingBadge)}
+          </div>
+        ) : (
+          renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)
+        )}
+        {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
+          <div className="transformation-evidence">
+            {transformation.evidence.slice(0, 3).map((item) => (
+              <span key={item}>{evidenceLabel(item, t)}</span>
+            ))}
+          </div>
+        )}
+        <p className="transformation-reference-note">{t('report.transformation.turnitinReferenceNote')}</p>
       </div>
     </section>
   ) : null;
