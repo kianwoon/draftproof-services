@@ -317,15 +317,6 @@ def _signal_chart_rows(features: dict, badge: dict | None = None) -> list[dict]:
     )
 
 
-def _summary_stat_html(label: str, value: str, *, color: str = "#111827", extra_class: str = "") -> str:
-    return (
-        f'<div class="dp-summary-stat {extra_class}">'
-        f'<span class="dp-summary-value" style="color:{color}">{escape(str(value))}</span>'
-        f'<span class="dp-summary-label">{escape(label)}</span>'
-        "</div>"
-    )
-
-
 _CALIBRATED_AUTHORSHIP_LEVELS = [
     {
         "min": 60,
@@ -643,33 +634,7 @@ def _executive_signal_chart_html(
     rating_reference_score = calibrated_score if calibrated_score is not None else badge.get("ai_likelihood_score")
     rating_detail = _with_ai_reference(rating_detail, rating_reference_score)
     ai_score = _display_ai_score(badge.get("ai_likelihood_score")) or 0.0
-    writing_score = _tf_pct(badge.get("writing_quality_score")) or 0.0
     contribution = _transformation_contribution_summary(features, rows, badge)
-
-    stats = [
-        (
-            '<div class="dp-summary-stat dp-risk-stat" style="background:'
-            f'{tier_bg};border-color:{tier_color}33">'
-            f'<span class="dp-risk-icon" style="color:{tier_color}">◌</span>'
-            '<span>'
-            f'<span class="dp-summary-value" style="color:{tier_color}">{escape(tier_label)}</span>'
-            '<span class="dp-summary-label">Risk Tier</span>'
-            '</span></div>'
-        ),
-        _summary_stat_html("Total Findings", str(total)),
-        _summary_stat_html("Authorship Rating", rating_label, color=rating_tone["color"]),
-        _summary_stat_html("Raw AI-Style Signal", f"{ai_score:.0f}%", color=tier_color),
-        _summary_stat_html("Writing Score", f"{writing_score:.0f}%", color="#4f46e5"),
-    ]
-    severity_stats = [
-        ("Critical", n_critical, "#b91c1c"),
-        ("High", n_high, "#b91c1c"),
-        ("Medium", n_medium, "#b45309"),
-        ("Low", n_low, "#15803d"),
-    ]
-    for label, count, color in severity_stats:
-        if count:
-            stats.append(_summary_stat_html(label, str(count), color=color))
 
     confidence = transformation.get("confidence")
     pills = []
@@ -705,9 +670,6 @@ def _executive_signal_chart_html(
 
     html = [
         '<div class="dp-executive-chart">',
-        '<div class="dp-summary-bar">',
-        *stats,
-        '</div>',
         '<section class="dp-signal-card">',
         '<header class="dp-signal-header">',
         '<div class="dp-signal-title-row">',

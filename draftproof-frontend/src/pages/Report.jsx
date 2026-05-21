@@ -1116,10 +1116,7 @@ export default function Report() {
                 </div>
               </>
             ) : (
-              <>
-                {reportSummaryBar}
-                {transformationScorecard}
-              </>
+              transformationScorecard
             )}
           </section>
         ) : (

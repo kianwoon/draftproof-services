@@ -259,64 +259,6 @@ img[src^="https://img.shields.io"] { height: 18px; }
     margin: 4pt 0 12pt;
 }
 
-.dp-summary-bar {
-    display: flex;
-    flex-wrap: nowrap;
-    align-items: stretch;
-    gap: 0;
-    margin: 0 0 12pt;
-    border: 1px solid #d8e1ea;
-    border-radius: 8pt;
-    overflow: hidden;
-    background: #fff;
-}
-
-.dp-summary-stat {
-    flex: 1 1 0;
-    min-width: 0;
-    padding: 8pt 7pt;
-    border-right: 1px solid #e2e8f0;
-}
-
-.dp-summary-stat:last-child {
-    border-right: none;
-}
-
-.dp-risk-stat {
-    display: flex;
-    align-items: center;
-    gap: 8pt;
-    flex: 1.25 1 0;
-    min-width: 0;
-}
-
-.dp-risk-icon {
-    display: inline-block;
-    width: 18pt;
-    height: 18pt;
-    font-size: 16pt;
-    line-height: 18pt;
-    text-align: center;
-}
-
-.dp-summary-value {
-    display: block;
-    color: #111827;
-    font-size: 10.5pt;
-    font-weight: 800;
-    line-height: 1.05;
-}
-
-.dp-summary-label {
-    display: block;
-    margin-top: 4pt;
-    color: #4b5563;
-    font-size: 6.8pt;
-    font-weight: 700;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-}
-
 .dp-signal-card {
     border: 1px solid #d8e1ea;
     border-radius: 8pt;

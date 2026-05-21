@@ -848,9 +848,8 @@ assert_true(
 assert_true(
     "Score `5%`" in scan_markdown
     and "Score `54%`" in scan_markdown
-    and ">5%</span><span class=\"dp-summary-label\">Raw AI-Style Signal" in scan_markdown
-    and ">54%</span><span class=\"dp-summary-label\">Writing Score" in scan_markdown,
-    "PDF markdown calibrates report-level AI scores and rounds display values to zero decimal places",
+    and 'class="dp-summary-bar"' not in scan_markdown,
+    "PDF markdown calibrates header scores and omits the duplicate summary band",
 )
 rewrite_markdown = render_rewrite_report(
     {
