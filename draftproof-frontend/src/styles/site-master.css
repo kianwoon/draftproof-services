@@ -3246,10 +3246,54 @@ th {
   color: var(--ink);
 }
 
+.dash-workflow-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.dash-workflow-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 20px;
+  border: .5px solid rgba(13, 27, 42, .07);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.dash-workflow-panel-heading {
+  margin-bottom: 18px;
+}
+
+.dash-workflow-panel-heading .brand-pill {
+  margin-bottom: 12px;
+}
+
+.dash-workflow-panel h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
+.dash-workflow-link {
+  align-self: flex-start;
+  margin-top: 22px;
+  color: var(--green-dark);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.dash-workflow-link:hover {
+  text-decoration: underline;
+}
+
 .dash-steps {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0;
+  grid-template-columns: 1fr;
+  gap: 16px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -3257,16 +3301,17 @@ th {
 
 .dash-step {
   position: relative;
-  padding: 52px 20px 0 0;
+  min-height: 32px;
+  padding: 0 0 0 48px;
 }
 
 .dash-step::before {
   content: "";
   position: absolute;
-  top: 18px;
-  left: 42px;
-  right: 20px;
-  height: 1px;
+  top: 40px;
+  bottom: -8px;
+  left: 16px;
+  width: 1px;
   background: rgba(58, 168, 118, .20);
 }
 
@@ -3316,8 +3361,10 @@ th {
     flex-direction: column;
   }
   .dash-steps {
-    grid-template-columns: 1fr 1fr;
-    row-gap: 28px;
+    gap: 16px;
+  }
+  .dash-workflow-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -3337,14 +3384,8 @@ th {
     align-items: stretch;
     flex-direction: column;
   }
-  .dash-steps {
-    grid-template-columns: 1fr;
-  }
   .dash-step {
-    padding-right: 0;
-  }
-  .dash-step::before {
-    display: none;
+    padding-left: 44px;
   }
 }
 

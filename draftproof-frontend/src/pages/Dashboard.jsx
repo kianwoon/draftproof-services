@@ -22,6 +22,7 @@ export default function Dashboard() {
   const initials = user.email?.charAt(0).toUpperCase() || '?';
   const tokenLabel = balance === null ? t('common.checking') : t('common.token', { count: balance });
   const steps = t('dashboard.steps', { returnObjects: true });
+  const rewriteSteps = t('dashboard.rewriteSteps', { returnObjects: true });
 
   return (
     <main className="dash-shell">
@@ -99,15 +100,41 @@ export default function Dashboard() {
             <h2>{t('dashboard.workflowTitle')}</h2>
           </div>
 
-          <ol className="dash-steps">
-            {steps.map((step, index) => (
-              <li className="dash-step" key={step.title}>
-                <span className="step-num">{index + 1}</span>
-                <strong>{step.title}</strong>
-                <p>{step.body}</p>
-              </li>
-            ))}
-          </ol>
+          <div className="dash-workflow-grid">
+            <div className="dash-workflow-panel">
+              <div className="dash-workflow-panel-heading">
+                <span className="brand-pill">{t('dashboard.scanWorkflowLabel')}</span>
+                <h3>{t('dashboard.scanWorkflowTitle')}</h3>
+              </div>
+              <ol className="dash-steps">
+                {steps.map((step, index) => (
+                  <li className="dash-step" key={step.title}>
+                    <span className="step-num">{index + 1}</span>
+                    <strong>{step.title}</strong>
+                    <p>{step.body}</p>
+                  </li>
+                ))}
+              </ol>
+              <Link to="/scan" className="dash-workflow-link">{t('dashboard.startScan')}</Link>
+            </div>
+
+            <div className="dash-workflow-panel">
+              <div className="dash-workflow-panel-heading">
+                <span className="brand-pill">{t('dashboard.rewriteWorkflowLabel')}</span>
+                <h3>{t('dashboard.rewriteWorkflowTitle')}</h3>
+              </div>
+              <ol className="dash-steps">
+                {rewriteSteps.map((step, index) => (
+                  <li className="dash-step" key={step.title}>
+                    <span className="step-num">{index + 1}</span>
+                    <strong>{step.title}</strong>
+                    <p>{step.body}</p>
+                  </li>
+                ))}
+              </ol>
+              <Link to="/reports" className="dash-workflow-link">{t('dashboard.openReports')}</Link>
+            </div>
+          </div>
         </section>
       </div>
     </main>
