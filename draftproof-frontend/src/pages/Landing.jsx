@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
@@ -238,66 +239,138 @@ export default function Landing() {
 
 function SampleReportPreview() {
   const { t } = useTranslation();
-  const sampleReportStats = t('landing.sampleStats', { returnObjects: true });
+  const [activeSection, setActiveSection] = useState('aiSignal');
   const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
   const sampleScoreSignals = t('landing.sampleScoreSignals', { returnObjects: true });
+  const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
+  const previewTabs = t('landing.reportPreviewTabs', { returnObjects: true });
+  const currentTab = previewTabs.find((tab) => tab.id === activeSection) || previewTabs[0];
 
   return (
     <article className="sample-report-preview" aria-label={t('landing.reportPreviewLabel')}>
-      <div className="sample-report-stats">
-        {sampleReportStats.map((stat) => (
-          <div className={`sample-report-stat${stat.tone ? ` is-${stat.tone}` : ''}`} key={stat.label}>
-            <strong>{stat.value}</strong>
-            <span>{stat.label}</span>
-          </div>
+      <div className="sample-preview-tabs" role="tablist" aria-label={t('landing.reportPreviewTabsLabel')}>
+        {previewTabs.map((tab) => (
+          <button
+            type="button"
+            key={tab.id}
+            role="tab"
+            aria-selected={activeSection === tab.id}
+            className={activeSection === tab.id ? 'is-active' : ''}
+            onClick={() => setActiveSection(tab.id)}
+          >
+            <span>{tab.label}</span>
+            <em>{tab.summary}</em>
+          </button>
         ))}
       </div>
 
-      <div className="sample-report-pattern">
-        <div>
-          <span>{t('landing.transformationPattern')}</span>
-          <h3>{t('landing.humanUncertain')}</h3>
-          <div className="sample-report-tags">
-            <em>{t('landing.lowConfidence')}</em>
-            <em>{t('landing.notVerdict')}</em>
-          </div>
-        </div>
-        <div className="sample-authorship-badge">
-          <span>{t('landing.authorshipRating')}</span>
-          <strong>{t('landing.good')}</strong>
-          <small>{t('landing.calibratedRisk')}</small>
-        </div>
-      </div>
-
-      <div className="sample-contribution">
-        <span>{t('landing.estimatedContribution')}</span>
-        <p>{t('landing.contributionBody')}</p>
-        <div className="sample-contribution-bars">
-          <SampleSignalBar label={t('landing.humanContribution')} value={100} tone="human" />
-          <SampleSignalBar label={t('landing.aiTransformation')} value={0} tone="ai" />
-        </div>
-      </div>
-
-      <div className="sample-score-profile">
-        <div className="sample-score-profile-head">
-          <span>{t('landing.scoreProfile')}</span>
-          <strong>{t('landing.whyScoreMoved')}</strong>
-        </div>
-        <div className="sample-score-profile-grid">
-          {sampleScoreSignals.map((signal) => (
-            <div className={`sample-score-signal is-${signal.tone}`} key={signal.label}>
-              <span>{signal.label}</span>
-              <strong>{signal.value}</strong>
-              <em>{signal.detail}</em>
+      <div className="sample-preview-panel" role="tabpanel" aria-label={currentTab?.label}>
+        {activeSection === 'aiSignal' && (
+          <>
+            <div className="sample-report-pattern">
+              <div className="sample-report-pattern-main">
+                <div className="sample-transformation-icon" aria-hidden="true">
+                  <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
+                    <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
+                    <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                <div>
+                  <span>{t('landing.transformationPattern')}</span>
+                  <h3>{t('landing.humanUncertain')}</h3>
+                  <div className="sample-report-tags">
+                    <em>{t('landing.lowConfidence')}</em>
+                    <em>{t('landing.notVerdict')}</em>
+                  </div>
+                </div>
+              </div>
+              <div className="sample-authorship-badge">
+                <span>{t('landing.aiSignal')}</span>
+                <strong>{t('landing.lowAiSignal')}</strong>
+                <small>{t('landing.calibratedTopk')}</small>
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
 
-      <div className="sample-report-notes">
-        {sampleReportNotes.map((note) => (
-          <span key={note}>{note}</span>
-        ))}
+            <div className="sample-report-chart">
+              <div className="sample-original-scan">
+                <div className="sample-original-head">
+                  <div>
+                    <span>{t('landing.originalScan')}</span>
+                    <strong>{t('landing.humanUncertain')}</strong>
+                  </div>
+                  <em>{t('landing.originalScanScore')}</em>
+                </div>
+
+                <div className="sample-contribution">
+                  <span>{t('landing.estimatedContribution')}</span>
+                  <p>{t('landing.contributionBody')}</p>
+                  <div className="sample-report-tags">
+                    <em>{t('landing.calibratedAiRisk')}</em>
+                    <em>{t('landing.humanAnchorDiscount')}</em>
+                    <em>{t('landing.calibrationConfidence')}</em>
+                    <em>{t('landing.reportingSuppression')}</em>
+                  </div>
+                  <div className="sample-contribution-bars">
+                    <SampleSignalBar label={t('landing.humanContribution')} value={100} tone="human" />
+                    <SampleSignalBar label={t('landing.aiTransformation')} value={0} tone="ai" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="sample-report-notes">
+                {sampleReportNotes.map((note) => (
+                  <span key={note}>{note}</span>
+                ))}
+              </div>
+              <p className="sample-reference-note">{t('landing.turnitinReference')}</p>
+            </div>
+          </>
+        )}
+
+        {activeSection === 'scoreProfile' && (
+          <div className="sample-section-card">
+            <div className="sample-section-card-head">
+              <span>{t('landing.scoreProfile')}</span>
+              <h3>{t('landing.whyScoreMoved')}</h3>
+              <p>{t('landing.scoreProfileBody')}</p>
+            </div>
+            <div className="sample-score-profile-grid">
+              {sampleScoreSignals.map((signal) => (
+                <div className={`sample-score-signal is-${signal.tone}`} key={signal.label}>
+                  <span>{signal.label}</span>
+                  <strong>{signal.value}</strong>
+                  <em>{signal.detail}</em>
+                </div>
+              ))}
+            </div>
+            <div className="sample-profile-bars">
+              <SampleSignalBar label={t('landing.aiStyleSignal')} value={18} tone="ai" />
+              <SampleSignalBar label={t('landing.sourceGroundingSignal')} value={64} tone="quality" />
+              <SampleSignalBar label={t('landing.humanAnchorSignal')} value={82} tone="human" />
+            </div>
+          </div>
+        )}
+
+        {activeSection === 'actionPlan' && (
+          <div className="sample-section-card">
+            <div className="sample-section-card-head">
+              <span>{t('landing.actionPlan')}</span>
+              <h3>{t('landing.actionPlanTitle')}</h3>
+              <p>{t('landing.actionPlanBody')}</p>
+            </div>
+            <div className="sample-action-list">
+              {sampleActionItems.map((item, index) => (
+                <article className={`sample-action-item is-${item.tone}`} key={item.title}>
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <p>{item.body}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </article>
   );
