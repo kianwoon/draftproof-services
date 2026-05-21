@@ -724,6 +724,75 @@ export default function Report() {
     );
   };
 
+  const renderSignalGaugeStrip = (summary) => {
+    if (!summary) return null;
+
+    const signalGauges = [
+      {
+        key: 'aiRisk',
+        label: t('report.transformation.smartSignals.aiRisk'),
+        value: summary.adjustedAiRisk,
+        tone: summary.adjustedAiRisk <= 20 ? 'positive' : summary.adjustedAiRisk <= 35 ? 'warning' : 'danger',
+      },
+      {
+        key: 'humanAnchor',
+        label: t('report.transformation.smartSignals.humanAnchor'),
+        value: summary.humanAnchorDiscount,
+        tone: 'positive',
+      },
+      {
+        key: 'confidence',
+        label: t('report.transformation.smartSignals.confidence'),
+        value: summary.calibrationConfidence,
+        tone: 'info',
+      },
+      {
+        key: 'suppression',
+        label: t('report.transformation.smartSignals.suppression'),
+        value: summary.reportingSuppression,
+        tone: 'neutral',
+      },
+    ].filter((item) => Number.isFinite(Number(item.value)));
+
+    if (signalGauges.length === 0) return null;
+
+    return (
+      <div className="transformation-signal-gauge-strip" aria-label={t('report.transformation.smartSignalsLabel')}>
+        {signalGauges.map((item) => {
+          const value = Math.round(clampPercent(Number(item.value)) ?? 0);
+          return (
+            <div
+              key={item.key}
+              className={`transformation-signal-gauge is-${item.tone}`}
+              role="meter"
+              aria-label={item.label}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={value}
+              aria-valuetext={t('report.transformation.smartSignalsValue', { label: item.label, value })}
+            >
+              <svg viewBox="0 0 92 50" aria-hidden="true" focusable="false">
+                <path
+                  className="transformation-signal-gauge-track"
+                  d="M12 42 A34 34 0 0 1 80 42"
+                  pathLength="100"
+                />
+                <path
+                  className="transformation-signal-gauge-fill"
+                  d="M12 42 A34 34 0 0 1 80 42"
+                  pathLength="100"
+                  strokeDasharray={`${value} 100`}
+                />
+              </svg>
+              <strong>{value}%</strong>
+              <span>{item.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const transformationScorecard = transformation && transformationSignals.length > 0 ? (
     <section className="transformation-scorecard" aria-label={t('report.transformation.scorecard')}>
       <div className="transformation-header">
@@ -748,6 +817,7 @@ export default function Report() {
             </div>
           </div>
         </div>
+        {!hasRewriteSignalComparison && renderSignalGaugeStrip(transformationSummary)}
         <div
           className="transformation-authorship-seal"
           style={{
