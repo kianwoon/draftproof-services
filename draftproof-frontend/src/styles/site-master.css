@@ -7290,11 +7290,11 @@ th {
 .transformation-authorship-seal-circular {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 20px;
+  gap: 24px;
+  padding: 24px;
   background: var(--rating-bg);
   border: 0.5px solid rgba(13, 27, 42, 0.08);
-  border-left: 4.5px solid var(--rating-color);
+  border-left: 6px solid var(--rating-color);
   border-radius: 12px;
   margin-top: 10px;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -7308,8 +7308,8 @@ th {
 
 .circular-gauge-container {
   position: relative;
-  width: 90px;
-  height: 90px;
+  width: 120px;
+  height: 120px;
   flex-shrink: 0;
 }
 
@@ -7331,7 +7331,7 @@ th {
 }
 
 .gauge-score {
-  font-size: 1.15rem;
+  font-size: 1.55rem;
   font-weight: 850;
   color: var(--navy-950);
 }
@@ -7360,7 +7360,7 @@ th {
 }
 
 .seal-text-content strong {
-  font-size: 1.15rem;
+  font-size: 1.45rem;
   font-weight: 850;
   color: var(--rating-color);
   margin-top: 4px;
@@ -7368,7 +7368,7 @@ th {
 }
 
 .seal-text-content em {
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-style: normal;
   font-weight: 600;
   color: var(--muted);

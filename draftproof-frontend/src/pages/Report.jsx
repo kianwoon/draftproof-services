@@ -500,26 +500,31 @@ export default function Report() {
     hasRewriteComparisonData(rewriteResultReport) &&
     (rewrittenTransformation || rewrittenTransformationSummary || rewrittenAiScore != null)
   );
-  const sealReferenceScore = hasRewriteSignalComparison
-    ? rewrittenCalibratedAuthorshipRisk
-    : calibratedAuthorshipRisk;
-  const sealAiSignalStamp = getAiSignalStamp(sealReferenceScore, t);
-  const sealAuthorshipDetail = formatAuthorshipSealDetailWithReference(
-    hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
-    sealReferenceScore,
-    t
-  );
-  const sealGaugeScore = Number.isFinite(Number(sealReferenceScore))
-    ? Math.round(Number(sealReferenceScore))
-    : null;
-  const sealGaugeStroke = sealGaugeScore == null ? 0 : clampPercent(sealGaugeScore);
-  const sealGaugeLabel = sealGaugeScore == null ? '—' : `${sealGaugeScore}%`;
   const transformationOriginalScore = hasRewriteSignalComparison
     ? (rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk ?? originalComparisonAiScore)
     : originalComparisonAiScore;
   const transformationRewrittenScore = hasRewriteSignalComparison
     ? (rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk ?? rewrittenAiScore)
     : rewrittenAiScore;
+  const sealReferenceScore = hasRewriteSignalComparison
+    ? rewrittenCalibratedAuthorshipRisk
+    : calibratedAuthorshipRisk;
+  const sealScoreSource = hasRewriteSignalComparison ? transformationRewrittenScore : transformationOriginalScore;
+  const sealGaugeScore = Number.isFinite(Number(sealScoreSource))
+    ? Math.round(calibratedReportAiScore(Number(sealScoreSource)))
+    : null;
+  const sealAiSignalStamp = getAiSignalStamp(sealGaugeScore ?? sealReferenceScore, t);
+  const sealRatingBadge = hasRewriteSignalComparison ? rewrittenColumnRatingBadge : originalColumnRatingBadge;
+  const sealTone = sealRatingBadge.tone || sealAiSignalStamp.tone;
+  const sealRatingCaption = sealRatingBadge.caption || (hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal'));
+  const sealRatingLabel = sealRatingBadge.label || sealAiSignalStamp.label;
+  const sealAuthorshipDetail = formatAuthorshipSealDetailWithReference(
+    hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
+    sealReferenceScore,
+    t
+  );
+  const sealGaugeStroke = sealGaugeScore == null ? 0 : clampPercent(sealGaugeScore);
+  const sealGaugeLabel = sealGaugeScore == null ? '—' : `${sealGaugeScore}%`;
   const canStartRewrite = hasAIFindings && !hasRewriteResult;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
@@ -747,8 +752,8 @@ export default function Report() {
           <div
             className="transformation-authorship-seal-circular"
             style={{
-              '--rating-color': sealAiSignalStamp.tone.color,
-              '--rating-bg': sealAiSignalStamp.tone.bg,
+              '--rating-color': sealTone.color,
+              '--rating-bg': sealTone.bg,
             }}
           >
             <div className="circular-gauge-container">
@@ -764,7 +769,7 @@ export default function Report() {
                   className="gauge-fill"
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                   fill="none"
-                  stroke={sealAiSignalStamp.tone.color}
+                  stroke={sealTone.color}
                   strokeWidth="3"
                   strokeDasharray={`${sealGaugeStroke}, 100`}
                   strokeLinecap="round"
@@ -775,8 +780,8 @@ export default function Report() {
               </div>
             </div>
             <div className="seal-text-content">
-              <span>{hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal')}</span>
-              <strong>{sealAiSignalStamp.label}</strong>
+              <span>{sealRatingCaption}</span>
+              <strong>{sealRatingLabel}</strong>
               <em>{sealAuthorshipDetail}</em>
             </div>
           </div>
