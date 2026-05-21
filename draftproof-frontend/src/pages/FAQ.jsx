@@ -1,10 +1,14 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
+import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 export default function FAQ() {
   const { t } = useTranslation();
+  const location = useLocation();
+  const locale = getLocaleFromPathname(location.pathname);
+  const publicPath = (path) => localizePath(path, locale);
   const groups = t('faqPage.groups', { returnObjects: true });
 
   return (
@@ -30,8 +34,8 @@ export default function FAQ() {
             <p>{t('faqPage.helpBody')}</p>
           </div>
           <div className="faq-intro-actions">
-            <Link to="/scan" className="btn btn-primary">{t('faqPage.startScan')}</Link>
-            <Link to="/#report" className="btn btn-secondary">{t('faqPage.viewSample')}</Link>
+            <Link to="/signin?next=/scan" className="btn btn-primary">{t('faqPage.startScan')}</Link>
+            <Link to={publicPath('/#report')} className="btn btn-secondary">{t('faqPage.viewSample')}</Link>
           </div>
         </section>
 
@@ -64,8 +68,8 @@ export default function FAQ() {
           <h2>{t('faqPage.ctaTitle')}</h2>
           <p>{t('faqPage.ctaBody')}</p>
           <div className="hero-actions">
-            <Link to="/scan" className="btn btn-primary">{t('faqPage.startScan')}</Link>
-            <Link to="/pricing" className="btn btn-secondary">{t('faqPage.viewPricing')}</Link>
+            <Link to="/signin?next=/scan" className="btn btn-primary">{t('faqPage.startScan')}</Link>
+            <Link to={publicPath('/pricing')} className="btn btn-secondary">{t('faqPage.viewPricing')}</Link>
           </div>
         </section>
 

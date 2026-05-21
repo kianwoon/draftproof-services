@@ -1,10 +1,14 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
+import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 export default function Why() {
   const { t } = useTranslation();
+  const location = useLocation();
+  const locale = getLocaleFromPathname(location.pathname);
+  const publicPath = (path) => localizePath(path, locale);
   const sections = t('whyPage.sections', { returnObjects: true });
   const beliefs = t('whyPage.beliefs', { returnObjects: true });
 
@@ -42,7 +46,7 @@ export default function Why() {
         ))}
 
         <section className="why-section why-beliefs">
-          <span className="why-num">06</span>
+          <span className="why-num">{String(sections.length + 1).padStart(2, '0')}</span>
           <h2>{t('whyPage.beliefsTitle')}</h2>
           <p>{t('whyPage.beliefsIntro')}</p>
           <ul className="why-beliefs-list">
@@ -56,8 +60,8 @@ export default function Why() {
           <p>{t('whyPage.ctaBody')}</p>
           <p className="why-highlight">{t('whyPage.ctaHighlight')}</p>
           <div className="hero-actions" style={{ justifyContent: 'center' }}>
-            <Link to="/scan" className="btn btn-primary">{t('whyPage.ctaRun')}</Link>
-            <Link to="/#engine" className="btn btn-secondary">{t('whyPage.ctaHow')}</Link>
+            <Link to="/signin?next=/scan" className="btn btn-primary">{t('whyPage.ctaRun')}</Link>
+            <Link to={publicPath('/#engine')} className="btn btn-secondary">{t('whyPage.ctaHow')}</Link>
           </div>
         </section>
 

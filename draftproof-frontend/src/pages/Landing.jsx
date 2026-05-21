@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
+import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 export default function Landing() {
   const { t } = useTranslation();
+  const location = useLocation();
+  const locale = getLocaleFromPathname(location.pathname);
+  const publicPath = (path) => localizePath(path, locale);
   const checks = t('landing.checks', { returnObjects: true });
   const whyCards = t('landing.whyCards', { returnObjects: true });
   const helpCards = t('landing.helpCards', { returnObjects: true });
   const contentStrategies = t('landing.contentStrategies', { returnObjects: true });
   const beliefs = t('landing.beliefs', { returnObjects: true });
   const reportValueCards = t('landing.reportValueCards', { returnObjects: true });
+  const humanWrittenSignals = t('landing.humanWrittenSignals', { returnObjects: true });
 
   return (
     <main className="landing-page">
@@ -26,7 +31,7 @@ export default function Landing() {
             <p className="lead">{t('landing.heroLead')}</p>
 
             <div className="hero-actions" id="check">
-              <Link to="/scan" className="btn btn-ghost">{t('landing.runCheck')}</Link>
+              <Link to="/signin?next=/scan" className="btn btn-ghost">{t('landing.runCheck')}</Link>
               <a href="#report" className="btn btn-ghost">{t('landing.viewSample')}</a>
             </div>
 
@@ -76,6 +81,30 @@ export default function Landing() {
         </div>
       </section>
 
+      <section className="landing-section human-written-section">
+        <div className="section-inner human-written-layout">
+          <div>
+            <p className="eyebrow">{t('landing.humanWrittenEyebrow')}</p>
+            <h2>{t('landing.humanWrittenTitle')}</h2>
+            <p>{t('landing.humanWrittenBody1')}</p>
+            <p>{t('landing.humanWrittenBody2')}</p>
+          </div>
+
+          <div className="human-written-panel">
+            <ul className="signal-list" aria-label={t('landing.humanWrittenSignalsLabel')}>
+              {humanWrittenSignals.map((signal) => (
+                <li key={signal}>{signal}</li>
+              ))}
+            </ul>
+            <div className="human-written-guardrails">
+              <span>{t('landing.humanWrittenGuardrail1')}</span>
+              <span>{t('landing.humanWrittenGuardrail2')}</span>
+              <strong>{t('landing.humanWrittenPunch')}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="report" className="landing-section sample-report-section">
         <div className="section-inner sample-report-layout">
           <div className="sample-report-copy">
@@ -95,7 +124,7 @@ export default function Landing() {
                 </article>
               ))}
             </div>
-            <Link to="/scan" className="btn btn-primary">{t('landing.runOwnScan')}</Link>
+            <Link to={publicPath('/essay-checker')} className="btn btn-primary">{t('landing.runOwnScan')}</Link>
           </div>
 
           <SampleReportPreview />
@@ -211,7 +240,7 @@ export default function Landing() {
           <p className="brand-pill">{t('landing.ctaPill')}</p>
           <h2>{t('landing.ctaTitle')}</h2>
           <p>{t('landing.ctaBody')}</p>
-          <Link to="/scan" className="btn btn-ghost">{t('landing.ctaButton')}</Link>
+          <Link to="/signin?next=/scan" className="btn btn-ghost">{t('landing.ctaButton')}</Link>
           <small>{t('landing.ctaSmall')}</small>
         </div>
       </section>
@@ -219,7 +248,7 @@ export default function Landing() {
       <footer className="landing-footer">
         <div className="section-inner landing-footer-inner">
           <div>
-            <Link to="/" className="footer-wordmark">DraftProof</Link>
+            <Link to={publicPath('/')} className="footer-wordmark">DraftProof</Link>
             <p>{t('footer.disclaimer')}</p>
             <PageFreshness path="/" className="footer-freshness" />
           </div>
@@ -227,10 +256,11 @@ export default function Landing() {
             <a href="#product">{t('footer.product')}</a>
             <a href="#engine">{t('footer.howItWorks')}</a>
             <a href="#report">{t('footer.sampleReport')}</a>
-            <Link to="/pricing">{t('footer.pricing')}</Link>
-            <Link to="/faq">{t('footer.faq')}</Link>
-            <Link to="/privacy">{t('footer.privacy')}</Link>
-            <Link to="/security">{t('footer.security')}</Link>
+            <Link to={publicPath('/essay-checker')}>{t('footer.essayChecker')}</Link>
+            <Link to={publicPath('/pricing')}>{t('footer.pricing')}</Link>
+            <Link to={publicPath('/faq')}>{t('footer.faq')}</Link>
+            <Link to={publicPath('/privacy')}>{t('footer.privacy')}</Link>
+            <Link to={publicPath('/security')}>{t('footer.security')}</Link>
             <a href={`mailto:${t('footer.supportEmail')}`}>{t('footer.supportEmail')}</a>
           </nav>
         </div>

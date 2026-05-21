@@ -2541,6 +2541,78 @@ th {
   line-height: 1.62;
 }
 
+.human-written-section {
+  background: var(--surface);
+  border-bottom: .5px solid rgba(13, 27, 42, .06);
+}
+
+.human-written-layout {
+  display: grid;
+  grid-template-columns: minmax(0, .95fr) minmax(340px, .72fr);
+  gap: clamp(28px, 5vw, 72px);
+  align-items: center;
+}
+
+.human-written-layout h2 {
+  margin-bottom: 20px;
+}
+
+.human-written-layout p {
+  max-width: 700px;
+  margin-bottom: 14px;
+}
+
+.human-written-panel {
+  padding: 26px;
+  border: .5px solid rgba(13, 27, 42, .10);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.signal-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0;
+  margin: 0 0 22px;
+  list-style: none;
+}
+
+.signal-list li {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border: .5px solid rgba(13, 27, 42, .08);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--navy-900);
+  font-size: .86rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.human-written-guardrails {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 18px;
+  border-top: .5px solid rgba(13, 27, 42, .10);
+}
+
+.human-written-guardrails span {
+  color: var(--muted);
+  font-size: .86rem;
+}
+
+.human-written-guardrails strong {
+  margin-top: 4px;
+  color: var(--green-dark);
+  font-size: .96rem;
+  line-height: 1.45;
+}
+
 .why-card-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2889,6 +2961,7 @@ th {
   .landing-hero-grid,
   .why-card-grid,
   .help-heading,
+  .human-written-layout,
   .strategy-heading,
   .sample-report-layout,
   .belief-row-grid {
@@ -2931,6 +3004,16 @@ th {
   .check-line {
     grid-template-columns: 1fr 1fr;
   }
+  .essay-checker-intro {
+    grid-template-columns: 1fr;
+  }
+  .essay-checker-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .essay-checker-cta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   .landing-footer-inner {
     flex-direction: column;
   }
@@ -2971,8 +3054,10 @@ th {
     gap: 32px;
   }
   .review-grid,
+  .signal-list,
   .help-grid,
   .strategy-grid,
+  .essay-checker-grid,
   .check-line {
     grid-template-columns: 1fr;
   }
@@ -3042,13 +3127,15 @@ th {
 .app-page,
 .dash-shell,
 .pricing-shell,
-.why-shell {
+.why-shell,
+.essay-checker-shell {
   background: var(--surface-soft);
 }
 
 .app-page .container,
 .pricing-shell .container,
-.why-shell .container {
+.why-shell .container,
+.essay-checker-shell .container {
   max-width: var(--max-w);
   margin: 0 auto;
   padding: 48px clamp(24px, 4vw, 48px) 72px;
@@ -3799,6 +3886,85 @@ th {
   color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+/* ── Essay Checker SEO Page ───────────────── */
+.essay-checker-hero .hero-actions {
+  margin: 24px 0 0;
+}
+
+.essay-checker-intro {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.essay-checker-intro > div,
+.essay-checker-section,
+.essay-checker-cta {
+  padding: 28px;
+  border: .5px solid rgba(13, 27, 42, .08);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.essay-checker-intro h2,
+.essay-checker-section h2,
+.essay-checker-cta h2 {
+  margin-bottom: 12px;
+  font-size: 1.45rem;
+}
+
+.essay-checker-intro p,
+.essay-checker-section p,
+.essay-checker-cta p {
+  margin-bottom: 0;
+}
+
+.essay-checker-section {
+  margin-bottom: 24px;
+}
+
+.essay-checker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.essay-checker-grid article {
+  min-height: 176px;
+  padding: 20px;
+  border: .5px solid rgba(13, 27, 42, .08);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.essay-checker-grid article > span {
+  display: block;
+  margin-bottom: 18px;
+  color: rgba(13, 27, 42, .22);
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+
+.essay-checker-grid h3 {
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.essay-checker-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.essay-checker-cta p {
+  max-width: 680px;
 }
 
 /* ── FAQ Page ─────────────────────────────── */

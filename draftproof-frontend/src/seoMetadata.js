@@ -1,4 +1,11 @@
 import { resources } from './i18n/resources.js';
+import {
+  DEFAULT_LOCALE,
+  SEO_LOCALES,
+  getLocaleFromPathname,
+  localizePath,
+  stripLocaleFromPathname,
+} from './localeRouting.js';
 
 const configuredSiteUrl =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SITE_URL)
@@ -21,6 +28,13 @@ export const PAGE_META = {
     descriptionKey: 'seo.whyDescription',
     canonical: '/why',
     schemaType: 'AboutPage',
+    freshness: { type: 'reviewed', date: '2026-05-21' },
+  },
+  '/essay-checker': {
+    titleKey: 'seo.essayCheckerTitle',
+    descriptionKey: 'seo.essayCheckerDescription',
+    canonical: '/essay-checker',
+    schemaType: 'WebPage',
     freshness: { type: 'reviewed', date: '2026-05-21' },
   },
   '/pricing': {
@@ -61,16 +75,25 @@ export const PAGE_META = {
 };
 
 export const PRIVATE_PREFIXES = ['/dashboard', '/scan', '/reports', '/report/', '/rewrite/', '/buy', '/history', '/auth/callback'];
-export const PRERENDER_PATHS = Object.keys(PAGE_META);
+export const PRERENDER_PATHS = Object.keys(PAGE_META).flatMap((pathname) => (
+  SEO_LOCALES.map((locale) => localizePath(pathname, locale))
+));
 
-export function defaultTranslate(key, language = 'en') {
-  return key.split('.').reduce((value, part) => value?.[part], resources[language]?.translation) || key;
+export function defaultTranslate(key, language = DEFAULT_LOCALE) {
+  return getResourceValue(key, language) || key;
 }
 
 export function getSeoMeta(pathname, translate = defaultTranslate) {
-  const metaConfig = PAGE_META[pathname] || privateMeta(pathname);
+  const locale = getLocaleFromPathname(pathname);
+  const basePathname = stripLocaleFromPathname(pathname);
+  const metaConfig = PAGE_META[basePathname] || privateMeta(basePathname);
+  const canonical = localizePath(metaConfig.canonical, locale);
   return {
     ...metaConfig,
+    basePathname,
+    canonical,
+    locale,
+    alternates: getAlternates(metaConfig.canonical),
     title: translate(metaConfig.titleKey),
     description: translate(metaConfig.descriptionKey),
   };
@@ -103,6 +126,22 @@ export function buildSchema(meta, url, translate = defaultTranslate) {
     });
   }
 
+  if (meta.schemaType === 'FAQPage') {
+    return withFreshness(meta, {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      name: meta.title,
+      url,
+      description: meta.description,
+      mainEntity: getFaqEntities(meta.locale),
+      isPartOf: {
+        '@type': 'WebSite',
+        name: 'DraftProof',
+        url: SITE_URL,
+      },
+    });
+  }
+
   return withFreshness(meta, {
     '@context': 'https://schema.org',
     '@type': meta.schemaType,
@@ -115,6 +154,19 @@ export function buildSchema(meta, url, translate = defaultTranslate) {
       url: SITE_URL,
     },
   });
+}
+
+export function getAlternateUrls(meta) {
+  return Object.fromEntries(
+    Object.entries(meta.alternates || {}).map(([locale, pathname]) => [
+      locale === DEFAULT_LOCALE ? 'en' : 'zh-CN',
+      `${SITE_URL}${pathname}`,
+    ])
+  );
+}
+
+export function getHtmlLang(locale = DEFAULT_LOCALE) {
+  return locale === 'zh' ? 'zh-CN' : 'en';
 }
 
 export function getFreshnessLabelKey(meta) {
@@ -152,6 +204,32 @@ function privateMeta(pathname) {
     };
   }
   return PAGE_META['/'];
+}
+
+function getAlternates(canonical) {
+  return {
+    en: localizePath(canonical, 'en'),
+    zh: localizePath(canonical, 'zh'),
+  };
+}
+
+function getFaqEntities(locale = DEFAULT_LOCALE) {
+  const groups = getResourceValue('faqPage.groups', locale);
+  if (!Array.isArray(groups)) return [];
+  return groups.flatMap((group) => (
+    (group.items || []).map((item) => ({
+      '@type': 'Question',
+      name: item.q,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: item.a,
+      },
+    }))
+  ));
+}
+
+function getResourceValue(key, language = DEFAULT_LOCALE) {
+  return key.split('.').reduce((value, part) => value?.[part], resources[language]?.translation);
 }
 
 function normalizeSiteUrl(url) {

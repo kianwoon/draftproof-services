@@ -6,7 +6,9 @@ import {
   PRERENDER_PATHS,
   buildSchema,
   defaultTranslate,
+  getAlternateUrls,
   getCanonicalUrl,
+  getHtmlLang,
   getRobots,
   getSeoMeta,
 } from '../src/seoMetadata.js';
@@ -33,15 +35,18 @@ await writeFile(sitemapPath, renderSitemap());
 console.log(`Prerendered SEO metadata for ${PRERENDER_PATHS.length} routes.`);
 
 function renderRoute(html, pathname) {
-  const meta = getSeoMeta(pathname, (key) => defaultTranslate(key, 'en'));
+  const locale = pathname === '/zh' || pathname.startsWith('/zh/') ? 'zh' : 'en';
+  const meta = getSeoMeta(pathname, (key) => defaultTranslate(key, locale));
   const canonicalUrl = getCanonicalUrl(meta);
-  const schema = buildSchema(meta, canonicalUrl, (key) => defaultTranslate(key, 'en'));
+  const schema = buildSchema(meta, canonicalUrl, (key) => defaultTranslate(key, locale));
 
   return [
+    [/<html lang="[^"]*">/, `<html lang="${getHtmlLang(locale)}">`],
     [/<title>.*?<\/title>/s, `<title>${escapeHtml(meta.title)}</title>`],
     [/<meta name="description"[^>]*>/, metaTag('description', meta.description)],
     [/<meta name="robots"[^>]*>/, metaTag('robots', getRobots(meta))],
     [/<link rel="canonical"[^>]*>/, `<link rel="canonical" href="${escapeAttribute(canonicalUrl)}" />`],
+    [/<link rel="alternate" hreflang="en"[^>]*>\n    <link rel="alternate" hreflang="zh-CN"[^>]*>\n    <link rel="alternate" hreflang="x-default"[^>]*>/, alternateTags(meta, canonicalUrl)],
     [/<meta property="og:title"[^>]*>/, propertyTag('og:title', meta.title)],
     [/<meta property="og:description"[^>]*>/, propertyTag('og:description', meta.description)],
     [/<meta property="og:url"[^>]*>/, propertyTag('og:url', canonicalUrl)],
@@ -83,6 +88,14 @@ function metaTag(name, content) {
 
 function propertyTag(property, content) {
   return `<meta property="${escapeAttribute(property)}" content="${escapeAttribute(content)}" />`;
+}
+
+function alternateTags(meta, canonicalUrl) {
+  const pageAlternates = getAlternateUrls(meta);
+  const alternates = { ...pageAlternates, 'x-default': pageAlternates.en || canonicalUrl };
+  return Object.entries(alternates)
+    .map(([hreflang, href]) => `<link rel="alternate" hreflang="${escapeAttribute(hreflang)}" href="${escapeAttribute(href)}" />`)
+    .join('\n    ');
 }
 
 function jsonLdTag(schema) {

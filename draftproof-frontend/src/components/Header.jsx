@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import LanguageSwitcher from './LanguageSwitcher';
+import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 export default function Header() {
   const { user, logout, balance } = useAuth();
@@ -12,6 +13,8 @@ export default function Header() {
   const [scanOpen, setScanOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const locale = getLocaleFromPathname(location.pathname);
+  const publicPath = (path) => localizePath(path, locale);
 
   useEffect(() => { setScanOpen(false); setMenuOpen(false); }, [location.pathname]);
 
@@ -26,15 +29,15 @@ export default function Header() {
 
   const handleLogout = async () => {
     await logout();
-    navigate('/', { replace: true });
+    navigate(publicPath('/'), { replace: true });
   };
 
   const isScanActive = ['/scan', '/reports'].includes(location.pathname);
-  const isLanding = location.pathname === '/';
+  const isLanding = location.pathname === '/' || location.pathname === '/zh';
 
   return (
     <header className={`site-header${isLanding ? ' site-header-dark' : ''}`} aria-label={t('nav.main')}>
-      <Link to="/" className="brand" aria-label={t('nav.home')}>
+      <Link to={publicPath('/')} className="brand" aria-label={t('nav.home')}>
         <span className="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 32 32" role="img">
             <path d="M16 3 27 7v8c0 7.2-4.6 11.8-11 14C9.6 26.8 5 22.2 5 15V7l11-4Z" />
@@ -82,10 +85,11 @@ export default function Header() {
         )}
         {user && <Link to="/buy">{t('nav.buyTokens')}</Link>}
         {user && <Link to="/history">{t('nav.history')}</Link>}
-        <Link to="/why">{t('nav.why')}</Link>
-        <Link to="/pricing">{t('nav.pricing')}</Link>
-        <Link to="/faq">{t('nav.faq')}</Link>
-        <Link to="/#report">{t('nav.sampleReport')}</Link>
+        <Link to={publicPath('/why')}>{t('nav.why')}</Link>
+        <Link to={publicPath('/essay-checker')}>{t('nav.essayChecker')}</Link>
+        <Link to={publicPath('/pricing')}>{t('nav.pricing')}</Link>
+        <Link to={publicPath('/faq')}>{t('nav.faq')}</Link>
+        <Link to={publicPath('/#report')}>{t('nav.sampleReport')}</Link>
       </nav>
 
       {user ? (
@@ -106,7 +110,7 @@ export default function Header() {
       ) : (
         <div className="header-actions">
           <LanguageSwitcher compact />
-          <Link to="/signin" className="btn btn-primary btn-small">
+          <Link to={publicPath('/signin')} className="btn btn-primary btn-small">
             {t('nav.startReview')}
           </Link>
         </div>
@@ -130,15 +134,16 @@ export default function Header() {
             {user && <Link to="/reports" className="mobile-link">{t('nav.reports')}</Link>}
             {user && <Link to="/buy" className="mobile-link">{t('nav.buyTokens')}</Link>}
             {user && <Link to="/history" className="mobile-link">{t('nav.history')}</Link>}
-            <Link to="/why" className="mobile-link">{t('nav.why')}</Link>
-            <Link to="/pricing" className="mobile-link">{t('nav.pricing')}</Link>
-            <Link to="/faq" className="mobile-link">{t('nav.faq')}</Link>
-            <Link to="/#report" className="mobile-link">{t('nav.sampleReport')}</Link>
+            <Link to={publicPath('/why')} className="mobile-link">{t('nav.why')}</Link>
+            <Link to={publicPath('/essay-checker')} className="mobile-link">{t('nav.essayChecker')}</Link>
+            <Link to={publicPath('/pricing')} className="mobile-link">{t('nav.pricing')}</Link>
+            <Link to={publicPath('/faq')} className="mobile-link">{t('nav.faq')}</Link>
+            <Link to={publicPath('/#report')} className="mobile-link">{t('nav.sampleReport')}</Link>
             <div className="mobile-menu-actions">
               {user ? (
                 <button onClick={() => { handleLogout(); setMenuOpen(false); }} className="btn btn-secondary">{t('nav.signOut')}</button>
               ) : (
-                <Link to="/signin" className="btn btn-primary">{t('nav.startReview')}</Link>
+                <Link to={publicPath('/signin')} className="btn btn-primary">{t('nav.startReview')}</Link>
               )}
             </div>
           </div>

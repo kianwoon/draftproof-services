@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -18,8 +19,10 @@ import FAQ from './pages/FAQ';
 import Why from './pages/Why';
 import Privacy from './pages/Privacy';
 import Security from './pages/Security';
+import EssayChecker from './pages/EssayChecker';
 import BuyTokens from './pages/BuyTokens';
 import PurchaseHistory from './pages/PurchaseHistory';
+import { getLocaleFromPathname } from './localeRouting';
 
 function HomeRedirect() {
   const { user, loading } = useAuth();
@@ -63,7 +66,15 @@ function ScrollToHash() {
 
 export default function App() {
   const { pathname } = useLocation();
-  const hideFooter = pathname === '/';
+  const { i18n } = useTranslation();
+  const hideFooter = pathname === '/' || pathname === '/zh';
+
+  useEffect(() => {
+    const routeLocale = getLocaleFromPathname(pathname);
+    if (routeLocale !== i18n.resolvedLanguage && routeLocale !== i18n.language) {
+      i18n.changeLanguage(routeLocale);
+    }
+  }, [pathname, i18n]);
 
   return (
     <AuthProvider>
@@ -73,15 +84,24 @@ export default function App() {
         <main className="app-main">
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
+            <Route path="/zh" element={<HomeRedirect />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/pricing" element={<Pricing />} />
+            <Route path="/zh/pricing" element={<Pricing />} />
             <Route path="/faq" element={<FAQ />} />
+            <Route path="/zh/faq" element={<FAQ />} />
             <Route path="/why" element={<Why />} />
+            <Route path="/zh/why" element={<Why />} />
+            <Route path="/essay-checker" element={<EssayChecker />} />
+            <Route path="/zh/essay-checker" element={<EssayChecker />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route path="/zh/privacy" element={<Privacy />} />
             <Route path="/security" element={<Security />} />
+            <Route path="/zh/security" element={<Security />} />
             <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />
             <Route path="/history" element={<ProtectedRoute><PurchaseHistory /></ProtectedRoute>} />
             <Route path="/signin" element={<SignIn />} />
+            <Route path="/zh/signin" element={<SignIn />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/scan" element={<ProtectedRoute><Scan /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />

@@ -4,7 +4,9 @@ import { useTranslation } from 'react-i18next';
 import {
   DEFAULT_IMAGE,
   buildSchema,
+  getAlternateUrls,
   getCanonicalUrl,
+  getHtmlLang,
   getRobots,
   getSeoMeta,
 } from '../seoMetadata';
@@ -18,9 +20,11 @@ export default function Seo() {
     const canonicalUrl = getCanonicalUrl(meta);
 
     document.title = meta.title;
+    document.documentElement.lang = getHtmlLang(meta.locale);
     setMeta('description', meta.description);
     setMeta('robots', getRobots(meta));
     setCanonical(canonicalUrl);
+    setAlternates(getAlternateUrls(meta));
 
     setProperty('og:site_name', 'DraftProof');
     setProperty('og:type', 'website');
@@ -71,6 +75,18 @@ function setCanonical(href) {
     document.head.appendChild(tag);
   }
   tag.setAttribute('href', href);
+}
+
+function setAlternates(alternates) {
+  document.querySelectorAll('link[rel="alternate"][hreflang]').forEach((tag) => tag.remove());
+  Object.entries({ ...alternates, 'x-default': alternates.en }).forEach(([hreflang, href]) => {
+    const tag = document.createElement('link');
+    tag.setAttribute('rel', 'alternate');
+    tag.setAttribute('hreflang', hreflang);
+    tag.setAttribute('href', href);
+    tag.dataset.seoAlternate = 'true';
+    document.head.appendChild(tag);
+  });
 }
 
 function setJsonLd(schema) {
