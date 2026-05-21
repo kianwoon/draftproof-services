@@ -3157,6 +3157,20 @@ th {
   margin: 0;
 }
 
+.dash-free-note {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 18px !important;
+  padding: 9px 12px;
+  border: .5px solid rgba(58, 168, 118, .22);
+  border-radius: 8px;
+  background: rgba(58, 168, 118, .10);
+  color: var(--green-dark);
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .dash-card-footer {
   display: flex;
   align-items: center;

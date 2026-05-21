@@ -57,6 +57,7 @@ export default function Dashboard() {
               <span className="brand-pill">{t('dashboard.preSubmission')}</span>
               <h2>{t('dashboard.startTitle')}</h2>
               <p>{t('dashboard.startBody')}</p>
+              <p className="dash-free-note">{t('dashboard.freeScanNote')}</p>
             </div>
             <div className="dash-card-footer">
               <span>{t('dashboard.tokenRate')}</span>
