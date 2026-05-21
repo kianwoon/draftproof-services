@@ -9,6 +9,8 @@ export const resources = {
         pageOf: 'Page {{page}} of {{totalPages}}',
         previous: 'Previous',
         next: 'Next',
+        lastUpdated: 'Last updated',
+        lastReviewed: 'Last reviewed',
       },
       nav: {
         main: 'Main navigation',
@@ -885,6 +887,8 @@ export const resources = {
         pageOf: '第 {{page}} 页，共 {{totalPages}} 页',
         previous: '上一页',
         next: '下一页',
+        lastUpdated: '最后更新',
+        lastReviewed: '最后审阅',
       },
       nav: {
         main: '主导航',

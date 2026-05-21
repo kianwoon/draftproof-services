@@ -2854,6 +2854,12 @@ th {
   font-size: 12px;
 }
 
+.landing-footer .footer-freshness {
+  justify-content: flex-start;
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+
 .landing-footer nav {
   display: flex;
   gap: 28px;
@@ -3161,8 +3167,33 @@ th {
   font-weight: 600;
 }
 
+.app-hero-stat time {
+  font: inherit;
+}
+
 .app-hero:not(.app-hero-dark) .app-hero-stat strong {
   color: var(--ink);
+}
+
+.page-freshness {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 920px;
+  margin: 22px auto 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.page-freshness span {
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.page-freshness time {
+  font: inherit;
+  color: var(--muted);
 }
 
 .app-hero-dark .btn-ghost {

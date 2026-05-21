@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
+import PageFreshness from '../components/PageFreshness';
 
 export default function FAQ() {
   const { t } = useTranslation();
@@ -67,6 +68,8 @@ export default function FAQ() {
             <Link to="/pricing" className="btn btn-secondary">{t('faqPage.viewPricing')}</Link>
           </div>
         </section>
+
+        <PageFreshness path="/faq" />
       </div>
     </main>
   );

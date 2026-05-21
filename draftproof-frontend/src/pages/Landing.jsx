@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
+import PageFreshness from '../components/PageFreshness';
 
 export default function Landing() {
   const { t } = useTranslation();
@@ -220,6 +221,7 @@ export default function Landing() {
           <div>
             <Link to="/" className="footer-wordmark">DraftProof</Link>
             <p>{t('footer.disclaimer')}</p>
+            <PageFreshness path="/" className="footer-freshness" />
           </div>
           <nav aria-label={t('footer.product')}>
             <a href="#product">{t('footer.product')}</a>

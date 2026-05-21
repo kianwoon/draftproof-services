@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import CodeTexture from '../components/CodeTexture';
+import PageFreshness from '../components/PageFreshness';
 
 export default function Pricing() {
   const { user } = useAuth();
@@ -92,6 +93,8 @@ export default function Pricing() {
             </div>
           ))}
         </section>
+
+        <PageFreshness path="/pricing" />
       </div>
     </main>
   );

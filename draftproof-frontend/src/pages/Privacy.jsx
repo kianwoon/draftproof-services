@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
+import { FreshnessStat } from '../components/PageFreshness';
 
 export default function Privacy() {
   const { t } = useTranslation();
@@ -15,11 +16,7 @@ export default function Privacy() {
             <h1>{t('legal.privacy.title')}</h1>
             <p className="lead">{t('legal.privacy.lead')}</p>
           </div>
-          <div className="app-hero-stat">
-            <span>{t('legal.lastUpdated')}</span>
-            <strong>{t('legal.may2026')}</strong>
-            <small>{t('legal.privacy.stat')}</small>
-          </div>
+          <FreshnessStat path="/privacy" detail={t('legal.privacy.stat')} />
         </section>
 
         {sections.map((section) => (

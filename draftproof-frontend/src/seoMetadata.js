@@ -14,36 +14,42 @@ export const PAGE_META = {
     descriptionKey: 'seo.defaultDescription',
     canonical: '/',
     schemaType: 'SoftwareApplication',
+    freshness: { type: 'reviewed', date: '2026-05-21' },
   },
   '/why': {
     titleKey: 'seo.whyTitle',
     descriptionKey: 'seo.whyDescription',
     canonical: '/why',
     schemaType: 'AboutPage',
+    freshness: { type: 'reviewed', date: '2026-05-21' },
   },
   '/pricing': {
     titleKey: 'seo.pricingTitle',
     descriptionKey: 'seo.pricingDescription',
     canonical: '/pricing',
     schemaType: 'WebPage',
+    freshness: { type: 'updated', date: '2026-05-21' },
   },
   '/faq': {
     titleKey: 'seo.faqTitle',
     descriptionKey: 'seo.faqDescription',
     canonical: '/faq',
     schemaType: 'FAQPage',
+    freshness: { type: 'reviewed', date: '2026-05-21' },
   },
   '/privacy': {
     titleKey: 'seo.privacyTitle',
     descriptionKey: 'seo.privacyDescription',
     canonical: '/privacy',
     schemaType: 'PrivacyPolicy',
+    freshness: { type: 'updated', date: '2026-05-21' },
   },
   '/security': {
     titleKey: 'seo.securityTitle',
     descriptionKey: 'seo.securityDescription',
     canonical: '/security',
     schemaType: 'WebPage',
+    freshness: { type: 'updated', date: '2026-05-21' },
   },
   '/signin': {
     titleKey: 'seo.signInTitle',
@@ -80,7 +86,7 @@ export function getRobots(meta) {
 
 export function buildSchema(meta, url, translate = defaultTranslate) {
   if (meta.schemaType === 'SoftwareApplication') {
-    return {
+    return withFreshness(meta, {
       '@context': 'https://schema.org',
       '@type': 'SoftwareApplication',
       name: 'DraftProof',
@@ -94,10 +100,10 @@ export function buildSchema(meta, url, translate = defaultTranslate) {
         priceCurrency: 'USD',
         description: translate('seo.offerDescription'),
       },
-    };
+    });
   }
 
-  return {
+  return withFreshness(meta, {
     '@context': 'https://schema.org',
     '@type': meta.schemaType,
     name: meta.title,
@@ -108,6 +114,29 @@ export function buildSchema(meta, url, translate = defaultTranslate) {
       name: 'DraftProof',
       url: SITE_URL,
     },
+  });
+}
+
+export function getFreshnessLabelKey(meta) {
+  return meta.freshness?.type === 'reviewed' ? 'common.lastReviewed' : 'common.lastUpdated';
+}
+
+export function formatFreshnessDate(date, locale = 'en') {
+  const [year, month, day] = String(date).split('-').map(Number);
+  if (!year || !month || !day) return date;
+  const normalizedLocale = String(locale).toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+  return new Intl.DateTimeFormat(normalizedLocale, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(new Date(year, month - 1, day));
+}
+
+function withFreshness(meta, schema) {
+  if (!meta.freshness?.date) return schema;
+  return {
+    ...schema,
+    dateModified: meta.freshness.date,
   };
 }
 

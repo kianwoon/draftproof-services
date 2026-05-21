@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
+import PageFreshness from '../components/PageFreshness';
 
 export default function Why() {
   const { t } = useTranslation();
@@ -59,6 +60,8 @@ export default function Why() {
             <Link to="/#engine" className="btn btn-secondary">{t('whyPage.ctaHow')}</Link>
           </div>
         </section>
+
+        <PageFreshness path="/why" />
       </div>
     </main>
   );

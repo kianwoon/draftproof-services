@@ -61,7 +61,10 @@ function renderSitemap() {
   const urls = PRERENDER_PATHS
     .map((pathname) => getSeoMeta(pathname, (key) => defaultTranslate(key, 'en')))
     .filter((meta) => !/\bnoindex\b/i.test(getRobots(meta)))
-    .map((meta) => `  <url>\n    <loc>${escapeHtml(getCanonicalUrl(meta))}</loc>\n  </url>`)
+    .map((meta) => {
+      const lastmod = meta.freshness?.date ? `\n    <lastmod>${escapeHtml(meta.freshness.date)}</lastmod>` : '';
+      return `  <url>\n    <loc>${escapeHtml(getCanonicalUrl(meta))}</loc>${lastmod}\n  </url>`;
+    })
     .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
