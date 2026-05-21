@@ -13,7 +13,7 @@ from app.models.db import async_session, ScanJob, CreditAccount, CreditReservati
 from app.services import progress_stream
 
 
-FREE_SCAN_WORD_LIMIT = 300
+FREE_SCAN_WORD_LIMIT = 500
 _STALE_THRESHOLD = timedelta(minutes=10)
 _PROCESSING_HEARTBEAT_STALE_THRESHOLD = timedelta(minutes=5)
 _ACTIVE_SCAN_STATUSES = ("pending", "processing", "retrying")
@@ -21,7 +21,7 @@ _PROCESSING_SCAN_STATUSES = ("processing",)
 
 
 def _scan_cost(word_count: int) -> int:
-    """Free through 300 words, then 1 token per started 1,000 words."""
+    """Free through 500 words, then 1 token per started 1,000 words."""
     if word_count <= FREE_SCAN_WORD_LIMIT:
         return 0
     return max(1, -(-word_count // 1000))

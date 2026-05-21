@@ -44,13 +44,13 @@ def _stream_id(at: datetime) -> str:
     return f"{int(at.timestamp() * 1000)}-0"
 
 
-def test_scan_cost_is_free_through_300_words():
+def test_scan_cost_is_free_through_500_words():
     assert scan_service._scan_cost(1) == 0
-    assert scan_service._scan_cost(300) == 0
+    assert scan_service._scan_cost(500) == 0
 
 
-def test_scan_cost_charges_from_301_words():
-    assert scan_service._scan_cost(301) == 1
+def test_scan_cost_charges_from_501_words():
+    assert scan_service._scan_cost(501) == 1
     assert scan_service._scan_cost(1000) == 1
     assert scan_service._scan_cost(1001) == 2
 
@@ -76,13 +76,13 @@ async def test_create_free_scan_does_not_require_credit_account(monkeypatch):
     result = await scan_service.create_scan(
         "paste",
         user_id="00000000-0000-0000-0000-000000000001",
-        text=words(300),
+        text=words(500),
     )
 
     assert result["status"] == "pending"
     assert fake_session.committed is True
     assert len(fake_session.added) == 1
-    assert fake_session.added[0].word_count == 300
+    assert fake_session.added[0].word_count == 500
     assert len(fake_task.calls) == 1
 
 

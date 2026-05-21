@@ -9,7 +9,7 @@ import CodeTexture from '../components/CodeTexture';
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
 const START_SCAN_TIMEOUT_MS = 20000;
-const FREE_SCAN_WORD_LIMIT = 300;
+const FREE_SCAN_WORD_LIMIT = 500;
 
 export default function Scan() {
   const { t } = useTranslation();
