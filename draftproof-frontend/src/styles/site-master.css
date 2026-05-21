@@ -7259,3 +7259,308 @@ th {
   color: #3aa876 !important;
   opacity: 1 !important;
 }
+
+/* ==================================================================
+   DraftProof Report Page Premium UI/UX Redesign
+   ================================================================== */
+
+/* Asymmetric Grid Dashboard scorecard layout */
+.transformation-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 32px;
+  padding: 28px 24px;
+}
+
+.transformation-dashboard-left {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  border-right: 0.5px solid rgba(13, 27, 42, 0.08);
+  padding-right: 32px;
+}
+
+.transformation-dashboard-right {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* Premium circular progress indicator (Authorship Seal) */
+.transformation-authorship-seal-circular {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px;
+  background: var(--rating-bg);
+  border: 0.5px solid rgba(13, 27, 42, 0.08);
+  border-left: 4.5px solid var(--rating-color);
+  border-radius: 12px;
+  margin-top: 10px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.transformation-authorship-seal-circular:hover {
+  background: #ffffff;
+  border-color: rgba(13, 27, 42, 0.16);
+  border-left-color: var(--rating-color);
+}
+
+.circular-gauge-container {
+  position: relative;
+  width: 90px;
+  height: 90px;
+  flex-shrink: 0;
+}
+
+.authorship-seal-gauge {
+  width: 100%;
+  height: 100%;
+}
+
+.circular-gauge-content {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.gauge-score {
+  font-size: 1.15rem;
+  font-weight: 850;
+  color: var(--navy-950);
+}
+
+.gauge-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+
+.seal-text-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.seal-text-content span {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.seal-text-content strong {
+  font-size: 1.15rem;
+  font-weight: 850;
+  color: var(--rating-color);
+  margin-top: 4px;
+  line-height: 1.1;
+}
+
+.seal-text-content em {
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.35;
+}
+
+/* Academic Document Viewer Styling */
+.submitted-document {
+  background: #ffffff;
+  border-radius: 12px;
+  font-family: "Georgia", serif;
+  font-size: 1.05rem;
+  line-height: 1.85;
+  color: #1a202c;
+  padding: 36px 42px;
+  border: 0.5px solid rgba(13, 27, 42, 0.08);
+  box-shadow: none; /* strict guidelines check */
+}
+
+/* Soft digital highlighter annotations */
+.submitted-highlight {
+  border-bottom: 2px solid var(--signal-color);
+  background: color-mix(in srgb, var(--signal-color) 8%, white) !important;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: 0 1px;
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: none !important;
+}
+
+.submitted-highlight:hover,
+.submitted-highlight.is-selected {
+  background: color-mix(in srgb, var(--signal-color) 16%, white) !important;
+  border-bottom-width: 2.5px;
+  outline: none;
+}
+
+/* Floating Sidebar Inspector Look */
+.submitted-signal-panel {
+  background: #fbfbfa !important;
+  border-left: 0.5px solid rgba(13, 27, 42, 0.08);
+  padding: 24px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 16px !important;
+  transition: all 0.25s ease;
+}
+
+.submitted-panel-note {
+  border: 0.5px solid rgba(13, 27, 42, 0.08) !important;
+  border-left: 3.5px solid var(--gold) !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  padding: 14px 16px !important;
+}
+
+/* Interactive Score Profile tab dashboard */
+.score-profile-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  padding: 24px;
+  background: #f8fafc;
+  border-bottom: 0.5px solid rgba(13, 27, 42, 0.08);
+}
+
+.score-profile-summary-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  min-height: 150px;
+  padding: 20px;
+  background: #ffffff;
+  border: 0.5px solid rgba(13, 27, 42, 0.08);
+  border-radius: 12px;
+  cursor: pointer;
+  font: inherit;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.score-profile-summary-card:hover {
+  background: #fafaf9;
+  border-color: rgba(13, 27, 42, 0.16);
+}
+
+.score-profile-summary-card:focus-visible {
+  outline: 3px solid rgba(14, 116, 144, 0.35);
+  outline-offset: 3px;
+}
+
+/* Tab active accents following guidelines (thick left border) */
+.score-profile-summary-card.is-ai_authorship {
+  border-left: 4.5px solid #c2410c;
+}
+.score-profile-summary-card.is-human_authenticity {
+  border-left: 4.5px solid #16a34a;
+}
+.score-profile-summary-card.is-quality_calibration {
+  border-left: 4.5px solid #0e7490;
+}
+
+.score-profile-summary-card.is-active,
+.score-profile-summary-card[aria-selected="true"] {
+  background: #ffffff;
+  border-color: rgba(13, 27, 42, 0.2);
+}
+
+.score-profile-summary-card.is-active span,
+.score-profile-summary-card[aria-selected="true"] span {
+  color: var(--navy-950);
+  font-weight: 800;
+}
+
+.score-profile-summary-card.is-ai_authorship.is-active {
+  border-left-width: 6px;
+  border-color: #c2410c;
+  background: #fffcfb;
+}
+
+.score-profile-summary-card.is-human_authenticity.is-active {
+  border-left-width: 6px;
+  border-color: #16a34a;
+  background: #fcfdfb;
+}
+
+.score-profile-summary-card.is-quality_calibration.is-active {
+  border-left-width: 6px;
+  border-color: #0e7490;
+  background: #fbfdfd;
+}
+
+/* Focused group detail dashboard animation */
+.score-profile-focused-detail {
+  padding: 24px;
+  background: #ffffff;
+  animation: tabFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.score-profile-focused-detail .score-profile-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 0.5px solid rgba(13, 27, 42, 0.08);
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+}
+
+.score-profile-focused-detail h3 {
+  font-size: 1.15rem;
+  font-weight: 850;
+  color: var(--navy-950);
+  margin: 0;
+}
+
+.score-profile-focused-detail p {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: 4px 0 0;
+  font-weight: 650;
+}
+
+@keyframes tabFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 960px) {
+  .transformation-dashboard-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 16px;
+  }
+
+  .transformation-dashboard-left {
+    border-right: none;
+    border-bottom: 0.5px solid rgba(13, 27, 42, 0.08);
+    padding-right: 0;
+    padding-bottom: 24px;
+  }
+
+  .score-profile-summary-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 16px;
+  }
+}

@@ -80,6 +80,7 @@ export default function Report() {
   const [rewriteResultReport, setRewriteResultReport] = useState(null);
   const [rewriteElapsedSeconds, setRewriteElapsedSeconds] = useState(0);
   const [selectedSegmentId, setSelectedSegmentId] = useState(null);
+  const [activeProfileTab, setActiveProfileTab] = useState(null);
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
   const rewriteTimerStartRef = useRef(null);
@@ -206,6 +207,10 @@ export default function Report() {
 
     return true;
   }, [closeRewriteEventSource, pollRewriteStatus, showReviewOnlyRewriteNotice, syncRewriteJob, t]);
+
+  useEffect(() => {
+    setActiveProfileTab(null);
+  }, [id]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -504,6 +509,11 @@ export default function Report() {
     sealReferenceScore,
     t
   );
+  const sealGaugeScore = Number.isFinite(Number(sealReferenceScore))
+    ? Math.round(Number(sealReferenceScore))
+    : null;
+  const sealGaugeStroke = sealGaugeScore == null ? 0 : clampPercent(sealGaugeScore);
+  const sealGaugeLabel = sealGaugeScore == null ? '—' : `${sealGaugeScore}%`;
   const transformationOriginalScore = hasRewriteSignalComparison
     ? (rewriteResultSummary?.original_ai_authorship ?? rewriteResultSummary?.original_risk ?? originalComparisonAiScore)
     : originalComparisonAiScore;
@@ -717,14 +727,9 @@ export default function Report() {
 
   const transformationScorecard = transformation && transformationSignals.length > 0 ? (
     <section className="transformation-scorecard" aria-label={t('report.transformation.scorecard')}>
-      <div className="transformation-header">
-        <div className="transformation-summary">
-          <div className="transformation-icon" aria-hidden="true">
-            <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
-              <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
-              <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
+      <div className="transformation-dashboard-grid">
+        {/* Left Column (40% - Primary Diagnostics & Seal) */}
+        <div className="transformation-dashboard-left">
           <div>
             <span className="transformation-kicker">{t('report.transformation.kicker')}</span>
             <h2>{hasRewriteSignalComparison ? t('report.transformation.originalVsRewritten') : transformationLabel(transformation, t) || t('report.transformation.patternAnalysis')}</h2>
@@ -738,40 +743,66 @@ export default function Report() {
               <span className="transformation-pill">{t('report.transformation.notVerdict')}</span>
             </div>
           </div>
-        </div>
-        <div
-          className="transformation-authorship-seal"
-          style={{
-            '--rating-color': sealAiSignalStamp.tone.color,
-            '--rating-bg': sealAiSignalStamp.tone.bg,
-          }}
-        >
-          <span>{hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal')}</span>
-          <strong title={sealAiSignalStamp.label}>
-            {sealAiSignalStamp.label}
-          </strong>
-          <em>
-            {sealAuthorshipDetail}
-          </em>
-        </div>
-      </div>
-      <div className="transformation-chart">
-        {hasRewriteSignalComparison ? (
-          <div className="transformation-comparison-grid">
-            {renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore, originalColumnRatingBadge)}
-            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, rewrittenColumnRatingBadge)}
+
+          <div
+            className="transformation-authorship-seal-circular"
+            style={{
+              '--rating-color': sealAiSignalStamp.tone.color,
+              '--rating-bg': sealAiSignalStamp.tone.bg,
+            }}
+          >
+            <div className="circular-gauge-container">
+              <svg className="authorship-seal-gauge" viewBox="0 0 36 36">
+                <path
+                  className="gauge-bg"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  fill="none"
+                  stroke="rgba(13, 27, 42, 0.06)"
+                  strokeWidth="2.5"
+                />
+                <path
+                  className="gauge-fill"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  fill="none"
+                  stroke={sealAiSignalStamp.tone.color}
+                  strokeWidth="3"
+                  strokeDasharray={`${sealGaugeStroke}, 100`}
+                  strokeLinecap="round"
+                />
+              </svg>
+              <div className="circular-gauge-content">
+                <span className="gauge-score">{sealGaugeLabel}</span>
+              </div>
+            </div>
+            <div className="seal-text-content">
+              <span>{hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal')}</span>
+              <strong>{sealAiSignalStamp.label}</strong>
+              <em>{sealAuthorshipDetail}</em>
+            </div>
           </div>
-        ) : (
-          renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)
-        )}
-        {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
-          <div className="transformation-evidence">
-            {transformation.evidence.slice(0, 3).map((item) => (
-              <span key={item}>{evidenceLabel(item, t)}</span>
-            ))}
+        </div>
+
+        {/* Right Column (60% - Diagnostic Charts & Evidence) */}
+        <div className="transformation-dashboard-right">
+          <div className="transformation-chart">
+            {hasRewriteSignalComparison ? (
+              <div className="transformation-comparison-grid">
+                {renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore, originalColumnRatingBadge)}
+                {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, rewrittenColumnRatingBadge)}
+              </div>
+            ) : (
+              renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)
+            )}
+            {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
+              <div className="transformation-evidence">
+                {transformation.evidence.slice(0, 3).map((item) => (
+                  <span key={item}>{evidenceLabel(item, t)}</span>
+                ))}
+              </div>
+            )}
+            <p className="transformation-reference-note">{t('report.transformation.turnitinReferenceNote')}</p>
           </div>
-        )}
-        <p className="transformation-reference-note">{t('report.transformation.turnitinReferenceNote')}</p>
+        </div>
       </div>
     </section>
   ) : null;
@@ -805,6 +836,38 @@ export default function Report() {
   const scoreProfileSummaryText = hasRewriteSignalComparison
     ? t('report.scoreProfile.summaryRewrite')
     : transformationSummary?.summary || t('report.scoreProfile.summaryOriginal');
+  const scoreProfileTabIds = scoreProfileSummaryGroups.map((group) => group.id);
+  const currentActiveTab = scoreProfileTabIds.includes(activeProfileTab)
+    ? activeProfileTab
+    : scoreProfileTabIds[0];
+  const activeGroup = scoreProfileGroups.find((g) => g.id === currentActiveTab);
+  const focusScoreProfileTab = (tabId) => {
+    if (!tabId) return;
+    requestAnimationFrame(() => {
+      document.getElementById(`score-profile-tab-${tabId}`)?.focus();
+    });
+  };
+  const handleScoreProfileTabKeyDown = (event, groupId) => {
+    const currentIndex = scoreProfileTabIds.indexOf(groupId);
+    if (currentIndex < 0) return;
+
+    const lastIndex = scoreProfileTabIds.length - 1;
+    const nextByKey = {
+      ArrowRight: currentIndex === lastIndex ? 0 : currentIndex + 1,
+      ArrowDown: currentIndex === lastIndex ? 0 : currentIndex + 1,
+      ArrowLeft: currentIndex === 0 ? lastIndex : currentIndex - 1,
+      ArrowUp: currentIndex === 0 ? lastIndex : currentIndex - 1,
+      Home: 0,
+      End: lastIndex,
+    };
+    if (!(event.key in nextByKey)) return;
+
+    event.preventDefault();
+    const nextTabId = scoreProfileTabIds[nextByKey[event.key]];
+    setActiveProfileTab(nextTabId);
+    focusScoreProfileTab(nextTabId);
+  };
+
   const scoreProfileSection = scoreProfileGroups.length > 0 ? (
     <section className="score-profile-section" aria-label={t('report.scoreProfile.sectionLabel')}>
       <div className="score-profile-head">
@@ -818,86 +881,106 @@ export default function Report() {
           <span>{t('report.scoreProfile.trackedSignals')}</span>
         </div>
       </div>
-      <div className="score-profile-summary-grid">
-        {scoreProfileSummaryGroups.map((group) => (
-          <article key={group.id} className={`score-profile-summary-card is-${group.id}`}>
-            <span>{group.label}</span>
-            <strong>{group.topSignal?.label || t('report.scoreProfile.noSignal')}</strong>
-            <p>{group.description || t('report.scoreProfile.groupFallback')}</p>
-            <div className="score-profile-summary-meta">
-              {group.topValue != null && (
-                <em>{t('report.scoreProfile.leadingSignal', { value: Math.round(group.topValue) })}</em>
-              )}
-              {hasRewriteSignalComparison && (
-                <em>{t('report.scoreProfile.improvedSignals', { count: group.improvedCount })}</em>
-              )}
-            </div>
-          </article>
-        ))}
+      <div
+        className="score-profile-summary-grid"
+        role="tablist"
+        aria-label={t('report.scoreProfile.sectionLabel')}
+      >
+        {scoreProfileSummaryGroups.map((group) => {
+          const isActive = group.id === currentActiveTab;
+          return (
+            <button
+              key={group.id}
+              type="button"
+              role="tab"
+              id={`score-profile-tab-${group.id}`}
+              aria-selected={isActive}
+              aria-controls={`score-profile-panel-${group.id}`}
+              tabIndex={isActive ? 0 : -1}
+              onClick={() => setActiveProfileTab(group.id)}
+              onKeyDown={(event) => handleScoreProfileTabKeyDown(event, group.id)}
+              className={`score-profile-summary-card is-${group.id}${isActive ? ' is-active' : ''}`}
+            >
+              <span>{group.label}</span>
+              <strong>{group.topSignal?.label || t('report.scoreProfile.noSignal')}</strong>
+              <p>{group.description || t('report.scoreProfile.groupFallback')}</p>
+              <div className="score-profile-summary-meta">
+                {group.topValue != null && (
+                  <em>{t('report.scoreProfile.leadingSignal', { value: Math.round(group.topValue) })}</em>
+                )}
+                {hasRewriteSignalComparison && (
+                  <em>{t('report.scoreProfile.improvedSignals', { count: group.improvedCount })}</em>
+                )}
+              </div>
+            </button>
+          );
+        })}
       </div>
-      <details className="score-profile-details">
-        <summary>
-          <span>{t('report.scoreProfile.viewDetails')}</span>
-          <em>{t('report.scoreProfile.viewDetailsHint')}</em>
-        </summary>
-        <div className="score-profile-detail-grid">
-          {scoreProfileGroups.map((group) => (
-            <section key={group.id} className={`score-profile-group is-${group.id}`}>
-              <div className="score-profile-group-head">
-                <div>
-                  <h3>{group.label}</h3>
-                  {group.description && <p>{group.description}</p>}
-                </div>
-                <span>{t('report.transformation.signals', { count: group.signals.length })}</span>
+
+      {activeGroup && (
+        <div
+          className="score-profile-focused-detail"
+          key={activeGroup.id}
+          id={`score-profile-panel-${activeGroup.id}`}
+          role="tabpanel"
+          tabIndex={0}
+          aria-labelledby={`score-profile-tab-${activeGroup.id}`}
+        >
+          <section className={`score-profile-group is-${activeGroup.id}`}>
+            <div className="score-profile-group-head">
+              <div>
+                <h3>{activeGroup.label}</h3>
+                {activeGroup.description && <p>{activeGroup.description}</p>}
               </div>
-              <div className="score-profile-bars">
-                {group.signals.map((pair) => {
-                  const originalSignal = pair.original ? translatedSignal(pair.original, t) : null;
-                  const rewrittenSignal = pair.rewritten ? translatedSignal(pair.rewritten, t) : null;
-                  const currentSignal = hasRewriteSignalComparison ? (rewrittenSignal || originalSignal) : originalSignal;
-                  const improvement = getTransformationSignalImprovement(pair.rewritten, pair.original);
-                  const signalColor = currentSignal?.color || pair.color || '#0f766e';
-                  return (
-                    <div key={pair.key} className="score-profile-row">
-                      <div className="score-profile-row-head">
-                        <span title={currentSignal?.description || pair.description}>{currentSignal?.label || pair.label}</span>
-                        <strong>{currentSignal?.value != null ? formatMetricPercent(currentSignal.value, 0) : t('report.transformation.notPresent')}</strong>
-                      </div>
-                      <div className="score-profile-track" aria-hidden="true">
-                        {originalSignal?.value != null && hasRewriteSignalComparison && (
-                          <i className="score-profile-fill is-original" style={{ width: `${originalSignal.value}%` }} />
-                        )}
-                        {currentSignal?.value != null && (
-                          <i
-                            className="score-profile-fill is-current"
-                            style={{ width: `${currentSignal.value}%`, '--score-profile-color': signalColor }}
-                          />
-                        )}
-                      </div>
-                      <div className="score-profile-row-foot">
-                        {hasRewriteSignalComparison && originalSignal?.value != null && rewrittenSignal?.value != null ? (
-                          <span>{t('report.scoreProfile.originalToRewritten', {
-                            original: Math.round(originalSignal.value),
-                            rewritten: Math.round(rewrittenSignal.value),
-                          })}</span>
-                        ) : (
-                          <span>{currentSignal?.description}</span>
-                        )}
-                        {improvement && (
-                          <em>{t('report.transformation.improvedFromTo', {
-                            from: Math.round(improvement.from),
-                            to: Math.round(improvement.to),
-                          })}</em>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
+              <span>{t('report.transformation.signals', { count: activeGroup.signals.length })}</span>
+            </div>
+            <div className="score-profile-bars">
+              {activeGroup.signals.map((pair) => {
+                const originalSignal = pair.original ? translatedSignal(pair.original, t) : null;
+                const rewrittenSignal = pair.rewritten ? translatedSignal(pair.rewritten, t) : null;
+                const currentSignal = hasRewriteSignalComparison ? (rewrittenSignal || originalSignal) : originalSignal;
+                const improvement = getTransformationSignalImprovement(pair.rewritten, pair.original);
+                const signalColor = currentSignal?.color || pair.color || '#0f766e';
+                return (
+                  <div key={pair.key} className="score-profile-row">
+                     <div className="score-profile-row-head">
+                       <span title={currentSignal?.description || pair.description}>{currentSignal?.label || pair.label}</span>
+                       <strong>{currentSignal?.value != null ? formatMetricPercent(currentSignal.value, 0) : t('report.transformation.notPresent')}</strong>
+                     </div>
+                     <div className="score-profile-track" aria-hidden="true">
+                       {originalSignal?.value != null && hasRewriteSignalComparison && (
+                         <i className="score-profile-fill is-original" style={{ width: `${originalSignal.value}%` }} />
+                       )}
+                       {currentSignal?.value != null && (
+                         <i
+                           className="score-profile-fill is-current"
+                           style={{ width: `${currentSignal.value}%`, '--score-profile-color': signalColor }}
+                         />
+                       )}
+                     </div>
+                     <div className="score-profile-row-foot">
+                       {hasRewriteSignalComparison && originalSignal?.value != null && rewrittenSignal?.value != null ? (
+                         <span>{t('report.scoreProfile.originalToRewritten', {
+                           original: Math.round(originalSignal.value),
+                           rewritten: Math.round(rewrittenSignal.value),
+                         })}</span>
+                       ) : (
+                         <span>{currentSignal?.description}</span>
+                       )}
+                       {improvement && (
+                         <em>{t('report.transformation.improvedFromTo', {
+                           from: Math.round(improvement.from),
+                           to: Math.round(improvement.to),
+                         })}</em>
+                       )}
+                     </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         </div>
-      </details>
+      )}
     </section>
   ) : null;
 
