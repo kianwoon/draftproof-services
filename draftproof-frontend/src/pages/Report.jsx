@@ -129,6 +129,82 @@ function buildTrackedDiff(originalText, currentText) {
   ].filter((part) => part.text);
 }
 
+function findTextRange(haystack, needle) {
+  if (!haystack || !needle) return null;
+  const start = haystack.indexOf(needle);
+  if (start < 0) return null;
+  return { start, end: start + needle.length };
+}
+
+function changedTextRange(previousText, nextText) {
+  let start = 0;
+  const previousLength = previousText.length;
+  const nextLength = nextText.length;
+
+  while (
+    start < previousLength &&
+    start < nextLength &&
+    previousText[start] === nextText[start]
+  ) {
+    start += 1;
+  }
+
+  let previousEnd = previousLength;
+  let nextEnd = nextLength;
+  while (
+    previousEnd > start &&
+    nextEnd > start &&
+    previousText[previousEnd - 1] === nextText[nextEnd - 1]
+  ) {
+    previousEnd -= 1;
+    nextEnd -= 1;
+  }
+
+  return { start, previousEnd, nextEnd, delta: nextEnd - previousEnd };
+}
+
+function adjustHighlightedRange(range, previousText, nextText) {
+  if (!range) return null;
+  const change = changedTextRange(previousText, nextText);
+  const nextLength = nextText.length;
+
+  if (change.previousEnd <= range.start) {
+    return {
+      ...range,
+      start: Math.max(0, Math.min(nextLength, range.start + change.delta)),
+      end: Math.max(0, Math.min(nextLength, range.end + change.delta)),
+    };
+  }
+
+  if (change.start >= range.end) {
+    return {
+      ...range,
+      start: Math.max(0, Math.min(nextLength, range.start)),
+      end: Math.max(0, Math.min(nextLength, range.end)),
+    };
+  }
+
+  const start = Math.max(0, Math.min(nextLength, Math.min(range.start, change.start)));
+  const end = Math.max(
+    start,
+    Math.min(nextLength, Math.max(range.end + change.delta, change.nextEnd))
+  );
+
+  return { ...range, start, end };
+}
+
+function highlightedEditorParts(text, range) {
+  if (!range || range.end <= range.start) return [{ type: 'plain', text }];
+  const start = Math.max(0, Math.min(text.length, range.start));
+  const end = Math.max(start, Math.min(text.length, range.end));
+
+  return [
+    { type: 'plain', text: text.slice(0, start) },
+    { type: 'selected', text: text.slice(start, end) },
+    { type: 'plain', text: text.slice(end) },
+  ].filter((part) => part.text);
+}
+
 export default function Report() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -159,12 +235,14 @@ export default function Report() {
   const [submittedRescanBusy, setSubmittedRescanBusy] = useState(false);
   const [submittedRescanStatus, setSubmittedRescanStatus] = useState(null);
   const [submittedRescanError, setSubmittedRescanError] = useState(null);
+  const [submittedHighlightRange, setSubmittedHighlightRange] = useState(null);
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
   const rewriteTimerStartRef = useRef(null);
   const watchedRewriteIdsRef = useRef(new Set());
   const notifiedRewriteIdsRef = useRef(new Set());
   const submittedEditorRef = useRef(null);
+  const submittedHighlightRef = useRef(null);
 
   const notifyRewriteCompleted = useCallback((job) => {
     if (!job?.id || notifiedRewriteIdsRef.current.has(job.id)) return;
@@ -325,6 +403,7 @@ export default function Report() {
     setSubmittedRescanBusy(false);
     setSubmittedRescanStatus(null);
     setSubmittedRescanError(null);
+    setSubmittedHighlightRange(null);
   }, [id]);
 
   useEffect(() => {
@@ -389,6 +468,19 @@ export default function Report() {
 
     return () => window.clearTimeout(timer);
   }, [id, report?.id, submittedDraftLoaded, submittedDraftText]);
+
+  useEffect(() => {
+    if (!submittedEditorOpen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !submittedRescanBusy) {
+        setSubmittedEditorOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [submittedEditorOpen, submittedRescanBusy]);
 
   useEffect(() => {
     if (rewritePollRef.current) {
@@ -646,19 +738,33 @@ export default function Report() {
   const selectedSentenceDraftStatus = selectedSegment?.text && submittedDraftText.includes(selectedSegment.text)
     ? t('report.submitted.editor.sentenceUnchanged')
     : t('report.submitted.editor.sentenceEdited');
+  const submittedEditorHighlightParts = highlightedEditorParts(submittedDraftText, submittedHighlightRange);
 
-  const focusSentenceInSubmittedEditor = (sentenceText) => {
+  const focusSentenceInSubmittedEditor = (segment) => {
     const editor = submittedEditorRef.current;
-    if (!editor || !sentenceText) return;
-    const start = submittedDraftText.indexOf(sentenceText);
+    if (!editor || !segment?.text) return;
+    const existingRange = submittedHighlightRange?.segmentId === segment.id ? submittedHighlightRange : null;
+    const range = findTextRange(submittedDraftText, segment.text) || existingRange;
+    setSubmittedHighlightRange(range ? { ...range, segmentId: segment.id } : null);
     editor.focus();
-    if (start >= 0) {
-      editor.setSelectionRange(start, start + sentenceText.length);
+    if (range) {
+      editor.setSelectionRange(range.start, range.start);
     }
+  };
+
+  const syncSubmittedHighlightScroll = () => {
+    if (!submittedEditorRef.current || !submittedHighlightRef.current) return;
+    submittedHighlightRef.current.scrollTop = submittedEditorRef.current.scrollTop;
+    submittedHighlightRef.current.scrollLeft = submittedEditorRef.current.scrollLeft;
   };
 
   const resetSubmittedDraft = async () => {
     setSubmittedDraftText(originalSubmittedText);
+    setSubmittedHighlightRange((current) => {
+      if (!selectedSegment?.text || !current) return null;
+      const range = findTextRange(originalSubmittedText, selectedSegment.text);
+      return range ? { ...range, segmentId: selectedSegment.id } : null;
+    });
     setSubmittedDraftStatus('idle');
     setSubmittedDraftUpdatedAt(null);
     setSubmittedRescanError(null);
@@ -1508,6 +1614,10 @@ export default function Report() {
                   onClick={() => {
                     setSubmittedEditorOpen(true);
                     setSubmittedRescanError(null);
+                    if (selectedSegment?.text) {
+                      const range = findTextRange(submittedDraftText, selectedSegment.text);
+                      setSubmittedHighlightRange(range ? { ...range, segmentId: selectedSegment.id } : null);
+                    }
                   }}
                 >
                   {t('report.submitted.editor.editDraft')}
@@ -1603,6 +1713,16 @@ export default function Report() {
             {submittedEditorOpen && (
               <div className="submitted-editor-backdrop" role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
                 <div className="submitted-editor-sheet">
+                  <button
+                    type="button"
+                    className="submitted-editor-close-button"
+                    aria-label={t('report.submitted.editor.close')}
+                    title={t('report.submitted.editor.close')}
+                    onClick={() => setSubmittedEditorOpen(false)}
+                    disabled={submittedRescanBusy}
+                  >
+                    X
+                  </button>
                   <div className="submitted-editor-head">
                     <div>
                       <span className="submitted-content-kicker">{t('report.submitted.editor.kicker')}</span>
@@ -1658,16 +1778,33 @@ export default function Report() {
                           </button>
                         </div>
                       </div>
-                      <textarea
-                        ref={submittedEditorRef}
-                        className="submitted-editor-textarea"
-                        value={submittedDraftText}
-                        onChange={(event) => {
-                          setSubmittedDraftText(event.target.value);
-                          setSubmittedRescanError(null);
-                        }}
-                        spellCheck="true"
-                      />
+                      <div className="submitted-editor-textarea-wrap">
+                        <div
+                          ref={submittedHighlightRef}
+                          className="submitted-editor-highlight-layer"
+                          aria-hidden="true"
+                        >
+                          {submittedEditorHighlightParts.map((part, index) => (
+                            <span key={`${part.type}-${index}`} className={`submitted-editor-highlight-${part.type}`}>
+                              {part.text}
+                            </span>
+                          ))}
+                          {'\n'}
+                        </div>
+                        <textarea
+                          ref={submittedEditorRef}
+                          className="submitted-editor-textarea"
+                          value={submittedDraftText}
+                          onChange={(event) => {
+                            const nextText = event.target.value;
+                            setSubmittedHighlightRange((range) => adjustHighlightedRange(range, submittedDraftText, nextText));
+                            setSubmittedDraftText(nextText);
+                            setSubmittedRescanError(null);
+                          }}
+                          onScroll={syncSubmittedHighlightScroll}
+                          spellCheck="true"
+                        />
+                      </div>
                       {(submittedRescanStatus || submittedRescanError) && (
                         <div className={`submitted-rescan-status${submittedRescanError ? ' is-error' : ''}`}>
                           {submittedRescanError || submittedRescanStatus}
@@ -1704,7 +1841,7 @@ export default function Report() {
                               className={`submitted-affected-item${isSelected ? ' is-selected' : ''}`}
                               onClick={() => {
                                 setSelectedSegmentId(segment.id);
-                                focusSentenceInSubmittedEditor(segment.text);
+                                focusSentenceInSubmittedEditor(segment);
                               }}
                             >
                               <span>{segment.sentence_id}</span>
