@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import rewrite_v5.production as v5_production
 import rewrite_v5.residual_comb as v5_residual_comb
+from report import render_rewrite as rewrite_report
 from rewrite_v3.text_integrity import minimal_replacement_text_integrity
 from rewrite_v5.cluster_mass import build_cluster_mass_prompt
 from rewrite_v5.experiment import (
@@ -490,6 +491,40 @@ def test_v5_production_author_proxy_review_status_uses_candidate_audit():
         final_text="Changed text.",
         original_text="Original text.",
     )
+
+
+def test_v5_rewrite_report_author_proxy_status_overrides_external_stamp():
+    summary = {
+        "outcome": "rewrite_candidate_generated_needs_author_review",
+        "strict_goal_status": "mitigation_failed_no_safe_candidate",
+        "public_candidate_warning": "author_proxy_candidate_requires_review",
+        "best_candidate_author_review_required": True,
+        "best_candidate_external_review_required": False,
+        "author_proxy_context": {"active": True, "review_required": True},
+    }
+    rewritten_scan = {
+        "ai_risk_badge": {
+            "ai_likelihood_score": 18,
+            "authorship_rating": {"short_label": "Human / uncertain pattern"},
+        },
+        "scan_intelligence": {
+            "transformation": {
+                "contribution": {
+                    "human_contribution_ratio": 0.98,
+                    "ai_transformation_ratio": 0.02,
+                    "calibrated_ai_risk": 0.16,
+                }
+            }
+        },
+    }
+
+    html = rewrite_report._outcome_stamp_html(summary, "Author review required", rewritten_scan)
+
+    assert rewrite_report._requires_author_review(summary)
+    assert not rewrite_report._requires_external_review(summary)
+    assert "AUTHOR REVIEW" in html
+    assert "Author review required" in html
+    assert "External review required" not in html
 
 
 def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores():

@@ -78,6 +78,8 @@ def _ai_signal_stamp(score) -> dict:
 def _requires_external_review(summary: dict) -> bool:
     if not isinstance(summary, dict):
         return False
+    if _requires_author_review(summary):
+        return False
     return (
         summary.get("best_candidate_external_review_required") is True
         or summary.get("public_candidate_warning") == "best_candidate_requires_external_review"
@@ -87,7 +89,27 @@ def _requires_external_review(summary: dict) -> bool:
     )
 
 
+def _requires_author_review(summary: dict) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    author_proxy_context = summary.get("author_proxy_context") if isinstance(summary.get("author_proxy_context"), dict) else {}
+    return (
+        summary.get("best_candidate_author_review_required") is True
+        or summary.get("public_candidate_warning") == "author_proxy_candidate_requires_review"
+        or summary.get("outcome") == "rewrite_candidate_generated_needs_author_review"
+        or summary.get("status") == "rewrite_candidate_generated_needs_author_review"
+        or author_proxy_context.get("review_required") is True
+    )
+
+
 def _rewrite_stamp(summary: dict, risk) -> dict:
+    if _requires_author_review(summary):
+        return {
+            "caption": "Rewritten Rating",
+            "label": "Author Review",
+            "color": "#0f766e",
+            "bg": "#ecfdf5",
+        }
     if _requires_external_review(summary):
         return {
             "caption": "Rewritten Rating",
@@ -179,16 +201,19 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
     ai_score = _pct(_ai_score(rewritten_scan)) if rewritten_scan else None
     calibrated = contribution.get("calibrated")
     risk = calibrated if calibrated is not None else ai_score
+    author_review_required = _requires_author_review(summary)
     external_review_required = _requires_external_review(summary)
     stamp = _rewrite_stamp(summary, risk)
     risk_text = (
-        "External review required"
+        "Author review required"
+        if author_review_required
+        else "External review required"
         if external_review_required
         else f"{risk}% calibrated risk"
         if risk is not None
         else "Calibrated risk unavailable"
     )
-    if not external_review_required:
+    if not author_review_required and not external_review_required:
         risk_text = _with_ai_reference(risk_text, risk)
     scan_score = f"{ai_score}%" if ai_score is not None else "-"
     human = contribution.get("human")
