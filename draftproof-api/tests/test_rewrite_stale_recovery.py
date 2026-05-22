@@ -6,6 +6,24 @@ import pytest
 from app.services import rewrite_service
 
 
+def test_completed_external_review_candidate_is_not_reused():
+    assert rewrite_service._completed_rewrite_report_is_reusable(
+        {
+            "status": "rewrite_candidate_generated_needs_external_review",
+            "summary": {
+                "rewrite_pipeline_version": "rewrite_v4_normalized_repair",
+                "outcome": "rewrite_candidate_generated_needs_external_review",
+                "strict_goal_status": "mitigation_failed_no_safe_candidate",
+                "best_candidate_external_review_required": True,
+                "detect_scores": {
+                    "original_ai": 48.32,
+                    "rewritten_ai": 34.02,
+                },
+            },
+        }
+    ) is False
+
+
 def _stream_id(at: datetime) -> str:
     return f"{int(at.timestamp() * 1000)}-0"
 

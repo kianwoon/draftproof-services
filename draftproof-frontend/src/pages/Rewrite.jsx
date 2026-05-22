@@ -14,6 +14,14 @@ function countWords(value) {
   return normalized ? normalized.split(/\s+/).length : 0;
 }
 
+function getSentenceOriginal(row) {
+  return row?.orig_sentence ?? row?.original ?? '';
+}
+
+function getSentenceRewritten(row) {
+  return row?.new_sentence ?? row?.rewritten ?? '';
+}
+
 function renderPlaceholderText(value) {
   return String(value || '').split(/(\[[^\[\]]+\])/g).map((part, index) => {
     if (!part) return null;
@@ -124,12 +132,24 @@ export default function Rewrite() {
   ).filter(Boolean);
   const manualSuggestions = (summary.manual_suggestions || report?.manual_suggestions || []).filter(Boolean);
   const sentenceRows = (report?.sentence_comparison || []).filter(
-    (row) => normalizeSentence(row.orig_sentence) !== normalizeSentence(row.new_sentence)
+    (row) => normalizeSentence(getSentenceOriginal(row)) !== normalizeSentence(getSentenceRewritten(row))
   );
-  const outcome = summary.outcome || (rewrite?.status === 'completed' ? 'completed' : rewrite?.status || '');
+  const requiresExternalReview = (
+    summary.best_candidate_external_review_required === true ||
+    summary.public_candidate_warning === 'best_candidate_requires_external_review' ||
+    summary.strict_goal_status === 'mitigation_failed_no_safe_candidate' ||
+    summary.outcome === 'rewrite_candidate_generated_needs_external_review' ||
+    report?.status === 'rewrite_candidate_generated_needs_external_review'
+  );
+  const outcome = requiresExternalReview
+    ? 'rewrite_candidate_generated_needs_external_review'
+    : summary.outcome || (rewrite?.status === 'completed' ? 'completed' : rewrite?.status || '');
   const outcomeLabel = outcome
     ? t(`rewritePage.outcomes.${outcome}`, { defaultValue: outcome.replaceAll('_', ' ') })
     : '';
+  const outcomeTone = requiresExternalReview
+    ? { background: '#fffbeb', color: '#92400e', borderColor: '#fde68a' }
+    : { background: '#f0fdf4', color: '#15803d', borderColor: '#bbf7d0' };
   const scanId = rewrite?.scan_id;
   const rewrittenWordCount = countWords(report?.final_text);
 
@@ -149,8 +169,11 @@ export default function Rewrite() {
             <h1>{t('rewritePage.title')}</h1>
           </div>
           {outcome && (
-            <div className="report-hero-tier" style={{ background: '#f0fdf4' }}>
-              <span style={{ color: '#15803d', fontWeight: 700 }}>
+            <div
+              className="report-hero-tier"
+              style={{ background: outcomeTone.background, border: `1px solid ${outcomeTone.borderColor}` }}
+            >
+              <span style={{ color: outcomeTone.color, fontWeight: 700 }}>
                 {outcomeLabel}
               </span>
             </div>
@@ -165,6 +188,13 @@ export default function Rewrite() {
         )}
 
         {error && <ErrorReload message={error} />}
+
+        {requiresExternalReview && report?.final_text && (
+          <section className="rewrite-status-alert">
+            <strong>{t('rewritePage.externalReviewTitle')}</strong>
+            <p>{t('rewritePage.externalReviewCopy')}</p>
+          </section>
+        )}
 
         {report?.final_text && (
           <section className="rewritten-document-section">
@@ -204,8 +234,8 @@ export default function Rewrite() {
                   {sentenceRows.map((row, i) => (
                     <tr key={`${row.index || i}-${i}`}>
                       <td>{row.index ?? i + 1}</td>
-                      <td>{row.orig_sentence || '-'}</td>
-                      <td>{row.new_sentence || '-'}</td>
+                      <td>{getSentenceOriginal(row) || '-'}</td>
+                      <td>{getSentenceRewritten(row) || '-'}</td>
                     </tr>
                   ))}
                 </tbody>

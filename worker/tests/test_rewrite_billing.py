@@ -56,6 +56,26 @@ def test_rewrite_billing_releases_no_safe_candidate_even_with_diagnostic_text():
     assert decision["reason"] == "non_billable_status:mitigation_failed_no_safe_candidate"
 
 
+def test_rewrite_billing_releases_external_review_candidate_even_when_text_changed():
+    decision = _rewrite_billing_decision(
+        {"status": "rewrite_candidate_generated_needs_external_review"},
+        {
+            "status": "rewrite_candidate_generated_needs_external_review",
+            "original_text": "This is the original draft.",
+            "final_text": "This is a changed candidate that still needs external review.",
+            "summary": {
+                "outcome": "rewrite_candidate_generated_needs_external_review",
+                "strict_goal_status": "mitigation_failed_no_safe_candidate",
+                "best_candidate_external_review_required": True,
+                "public_candidate_warning": "best_candidate_requires_external_review",
+            },
+        },
+    )
+
+    assert decision["billable"] is False
+    assert decision["reason"] == "external_review_required_status:rewrite_candidate_generated_needs_external_review"
+
+
 def test_rewrite_billing_releases_original_preserved_text():
     decision = _rewrite_billing_decision(
         {"status": "rewritten"},

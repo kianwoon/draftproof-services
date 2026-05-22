@@ -76,6 +76,14 @@ NON_BILLABLE_REWRITE_OUTCOMES = {
     "topk_blocked",
 }
 
+EXTERNAL_REVIEW_REWRITE_STATUSES = {
+    "rewrite_candidate_generated_needs_external_review",
+}
+
+EXTERNAL_REVIEW_REWRITE_WARNINGS = {
+    "best_candidate_requires_external_review",
+}
+
 
 def _selected_rewrite_pipeline(settings_obj) -> str:
     """Return the first enabled rewrite pipeline in production priority order."""
@@ -148,8 +156,12 @@ def _rewrite_billing_decision(pipeline_result: dict, rewrite_json: dict) -> dict
 
     status = str(pipeline_result.get("status") or rewrite_json.get("status") or "").strip()
     outcome = str(summary.get("outcome") or summary.get("strict_goal_status") or "").strip()
+    strict_goal_status = str(summary.get("strict_goal_status") or "").strip()
+    public_warning = str(summary.get("public_candidate_warning") or "").strip()
     normalized_status = status.lower()
     normalized_outcome = outcome.lower()
+    normalized_strict_goal_status = strict_goal_status.lower()
+    normalized_public_warning = public_warning.lower()
 
     if normalized_status in NON_BILLABLE_REWRITE_OUTCOMES:
         return {
@@ -158,10 +170,45 @@ def _rewrite_billing_decision(pipeline_result: dict, rewrite_json: dict) -> dict
             "status": status,
             "outcome": outcome,
         }
+    if normalized_status in EXTERNAL_REVIEW_REWRITE_STATUSES:
+        return {
+            "billable": False,
+            "reason": f"external_review_required_status:{normalized_status}",
+            "status": status,
+            "outcome": outcome,
+        }
     if normalized_outcome in NON_BILLABLE_REWRITE_OUTCOMES:
         return {
             "billable": False,
             "reason": f"non_billable_outcome:{normalized_outcome}",
+            "status": status,
+            "outcome": outcome,
+        }
+    if normalized_outcome in EXTERNAL_REVIEW_REWRITE_STATUSES:
+        return {
+            "billable": False,
+            "reason": f"external_review_required_outcome:{normalized_outcome}",
+            "status": status,
+            "outcome": outcome,
+        }
+    if normalized_strict_goal_status in NON_BILLABLE_REWRITE_OUTCOMES:
+        return {
+            "billable": False,
+            "reason": f"non_billable_strict_goal:{normalized_strict_goal_status}",
+            "status": status,
+            "outcome": outcome,
+        }
+    if summary.get("best_candidate_external_review_required") is True:
+        return {
+            "billable": False,
+            "reason": "external_review_required",
+            "status": status,
+            "outcome": outcome,
+        }
+    if normalized_public_warning in EXTERNAL_REVIEW_REWRITE_WARNINGS:
+        return {
+            "billable": False,
+            "reason": f"external_review_required_warning:{normalized_public_warning}",
             "status": status,
             "outcome": outcome,
         }

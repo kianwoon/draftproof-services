@@ -1017,7 +1017,7 @@ function buildRewriteResultSummary(rewriteReport) {
   const originalFindings = countRewriteFindings(originalScan.findings) ?? detectScores.original_findings;
   const rewrittenFindings = countRewriteFindings(rewrittenScan.findings) ?? detectScores.rewritten_findings;
   const changedSentences = (rewriteReport?.sentence_comparison || []).filter(
-    (row) => String(row.orig_sentence || '').trim() !== String(row.new_sentence || '').trim()
+    (row) => String(row.orig_sentence ?? row.original ?? '').trim() !== String(row.new_sentence ?? row.rewritten ?? '').trim()
   ).length;
 
   return {

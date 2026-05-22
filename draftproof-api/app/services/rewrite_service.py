@@ -19,6 +19,13 @@ _ACTIVE_REWRITE_STATUSES = ("pending", "processing", "retrying")
 _STALE_RECOVERY_STATUSES = ("pending", "retrying")
 _V4_REWRITE_PIPELINE_VERSION = "rewrite_v4_normalized_repair"
 _ORIGINAL_PRESERVED_OUTCOME = "original_preserved"
+_EXTERNAL_REVIEW_OUTCOMES = {"rewrite_candidate_generated_needs_external_review"}
+_NON_REUSABLE_STRICT_GOAL_STATUSES = {
+    "mitigation_failed_no_safe_candidate",
+    "needs_author_context",
+    "no_safe_rewrite_applied",
+    "topk_blocked",
+}
 _REPHRASABLE_TYPES = {
     "high_predictability",
     "medium_predictability",
@@ -127,6 +134,12 @@ def _completed_rewrite_report_is_reusable(report_json: dict | None) -> bool:
 
     outcome = summary.get("outcome") or report_json.get("status")
     if outcome == _ORIGINAL_PRESERVED_OUTCOME or summary.get("no_text_change") is True:
+        return False
+    if outcome in _EXTERNAL_REVIEW_OUTCOMES:
+        return False
+    if summary.get("best_candidate_external_review_required") is True:
+        return False
+    if summary.get("strict_goal_status") in _NON_REUSABLE_STRICT_GOAL_STATUSES:
         return False
 
     detect_scores = summary.get("detect_scores")
