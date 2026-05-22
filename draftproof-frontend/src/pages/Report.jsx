@@ -6,6 +6,7 @@ import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
 import { deleteReportDraft, getReportDraft, saveReportDraft } from '../utils/reportDraftStorage';
+import { countWords, scanTokensRequired } from '../utils/scanBilling';
 import {
   requestBrowserNotificationPermission,
   showBrowserNotification,
@@ -739,6 +740,8 @@ export default function Report() {
     ? t('report.submitted.editor.sentenceUnchanged')
     : t('report.submitted.editor.sentenceEdited');
   const submittedEditorHighlightParts = highlightedEditorParts(submittedDraftText, submittedHighlightRange);
+  const submittedDraftWordCount = countWords(submittedDraftText);
+  const submittedDraftTokensRequired = scanTokensRequired(submittedDraftWordCount);
 
   const focusSentenceInSubmittedEditor = (segment) => {
     const editor = submittedEditorRef.current;
@@ -1776,6 +1779,13 @@ export default function Report() {
                           >
                             {submittedRescanBusy ? t('report.submitted.editor.rescanning') : t('report.submitted.editor.rescanDraft')}
                           </button>
+                          <span className="submitted-rescan-token-note">
+                            {t('scan.word', { count: submittedDraftWordCount })}
+                            {' · '}
+                            {submittedDraftTokensRequired > 0
+                              ? t('scan.tokensRequired', { count: submittedDraftTokensRequired })
+                              : t('scan.freeScan')}
+                          </span>
                         </div>
                       </div>
                       <div className="submitted-editor-textarea-wrap">

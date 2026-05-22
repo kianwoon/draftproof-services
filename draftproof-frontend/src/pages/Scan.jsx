@@ -5,11 +5,11 @@ import { startScanWithText, getScanStatus, buildApiEventUrl } from '../api/draft
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import CodeTexture from '../components/CodeTexture';
+import { countWords, scanTokensRequired } from '../utils/scanBilling';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
 const START_SCAN_TIMEOUT_MS = 20000;
-const FREE_SCAN_WORD_LIMIT = 500;
 
 export default function Scan() {
   const { t } = useTranslation();
@@ -27,8 +27,8 @@ export default function Scan() {
   const { refreshBalance, balance, logout } = useAuth();
   const abortRef = useRef(null);
   const eventSourceRef = useRef(null);
-  const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
-  const tokensRequired = wordCount > FREE_SCAN_WORD_LIMIT ? Math.max(1, Math.ceil(wordCount / 1000)) : 0;
+  const wordCount = countWords(text);
+  const tokensRequired = scanTokensRequired(wordCount);
 
   // Cancel in-flight polling on unmount
   useEffect(() => {

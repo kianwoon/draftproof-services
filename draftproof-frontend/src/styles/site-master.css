@@ -6406,6 +6406,15 @@ th {
   flex-wrap: wrap;
 }
 
+.submitted-rescan-token-note {
+  flex: 0 0 100%;
+  margin-top: -.3rem;
+  color: #64748b;
+  font-size: .76rem;
+  font-weight: 800;
+  text-align: right;
+}
+
 .submitted-save-state {
   display: inline-flex;
   align-items: center;
